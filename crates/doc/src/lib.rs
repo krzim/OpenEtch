@@ -272,15 +272,17 @@ mod tests {
 
     #[test]
     fn document_round_trips_through_json() {
-        let mut doc = Document::default();
-        doc.stock = Some(Stock {
-            name: "tag".into(),
-            shape: StockShape::Circle { diameter_mm: 30.0 },
-            thickness_mm: 1.0,
-            material: Some("stainless 304".into()),
-            center: [0.0, 0.0],
-            rotation_deg: 0.0,
-        });
+        let doc = Document {
+            stock: Some(Stock {
+                name: "tag".into(),
+                shape: StockShape::Circle { diameter_mm: 30.0 },
+                thickness_mm: 1.0,
+                material: Some("stainless 304".into()),
+                center: [0.0, 0.0],
+                rotation_deg: 0.0,
+            }),
+            ..Document::default()
+        };
         let json = serde_json::to_string(&doc).unwrap();
         let back: Document = serde_json::from_str(&json).unwrap();
         assert_eq!(doc, back);
