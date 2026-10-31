@@ -1,0 +1,44 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+publish = false
+
+[workspace.dependencies]
+# internal
+lmc = { path = "crates/lmc" }
+corfile = { path = "crates/corfile" }
+doc = { path = "crates/doc" }
+commands = { path = "crates/commands" }
+plan = { path = "crates/plan" }
+machine = { path = "crates/machine" }
+
+# shared
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+schemars = "1"
+kurbo = { version = "0.13", features = ["serde"] }
+toml = "0.9"
+tracing = "0.1"
+
+# geometry / import
+usvg = { version = "0.49", default-features = false }
+lyon_algorithms = "1"
+i_overlay = "9.1"
+
+# machine I/O
+nusb = "0.2"
+
+# engine
+tokio = { version = "1", features = ["full"] }
+axum = { version = "0.8", features = ["ws"] }
+tower-http = { version = "0.6", features = ["fs", "cors"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rmcp = { version = "3.8", features = ["server", "macros", "transport-streamable-http-server"] }
+resvg = { version = "0.49", default-features = false }
+base64 = "0.22"
