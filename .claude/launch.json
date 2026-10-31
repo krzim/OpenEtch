@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "openetch-sim",
+      "runtimeExecutable": "cargo",
+      "runtimeArgs": ["run", "-q", "-p", "engine", "--", "--config-dir", "target/sim-config"],
+      "port": 7878
+    }
+  ]
+}
