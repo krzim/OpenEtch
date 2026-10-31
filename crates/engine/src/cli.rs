@@ -11,9 +11,9 @@ pub const DEFAULT_PROFILE: &str = "fixtures/b6-mopa-60w.toml";
 pub const DEFAULT_WEB_DIR: &str = "web/dist";
 
 /// Usage text for `--help`.
-pub const USAGE: &str = "galvo-studio: laser design and control engine
+pub const USAGE: &str = "openetch: laser design and control engine
 
-USAGE: galvo-studio [OPTIONS]
+USAGE: openetch [OPTIONS]
 
 OPTIONS:
   --listen <addr>       Address to serve on (default 127.0.0.1:7878). Off loopback a token is required.

@@ -1,4 +1,4 @@
-// Vite config for the galvo-studio web UI. In development the engine runs separately on 127.0.0.1:7878; /api (HTTP and
+// Vite config for the OpenEtch web UI. In development the engine runs separately on 127.0.0.1:7878; /api (HTTP and
 // the /api/events WebSocket) and /mcp are proxied to it. `npm run build` writes web/dist, which the engine serves.
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";

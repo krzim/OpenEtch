@@ -202,7 +202,7 @@ async fn approve_run(
 ) -> Result<Json<Value>, EngineError> {
     if has_mcp_marker(&headers) {
         tracing::warn!(run_id = %id, "refused run approval from an MCP client");
-        return Err(EngineError::Forbidden("runs can only be approved by a person in the galvo-studio UI".into()));
+        return Err(EngineError::Forbidden("runs can only be approved by a person in the OpenEtch UI".into()));
     }
     let b: OriginBody = body_or_default(&body)?;
     if parse_origin(b.origin.as_ref())? != commands::Origin::Ui {

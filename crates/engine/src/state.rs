@@ -19,7 +19,7 @@ use crate::{EngineError, Event};
 
 /// The message every pending-run answer carries.
 pub const APPROVAL_MESSAGE: &str = "The run is pending. Nothing fires until a person reviews and approves it in the \
-    galvo-studio UI (Laser workspace). Agents cannot approve runs.";
+    OpenEtch UI (Laser workspace). Agents cannot approve runs.";
 
 /// Shared engine state. See the module docs.
 pub struct AppState {

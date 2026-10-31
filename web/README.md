@@ -1,6 +1,6 @@
-# galvo-studio web UI
+# OpenEtch web UI
 
-Fusion 360-style front end for the galvo-studio engine: React 18 + TypeScript + Vite, plain CSS, no runtime
+Fusion 360-style front end for the OpenEtch engine: React 18 + TypeScript + Vite, plain CSS, no runtime
 dependencies beyond `react` and `react-dom`. It talks only to the engine API described in `../ARCHITECTURE.md`.
 
 ## Run

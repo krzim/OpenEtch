@@ -47,7 +47,7 @@ pub const TOOL_NAMES: [&str; 12] = [
 ];
 
 /// Server instructions shown to the model.
-pub const INSTRUCTIONS: &str = "galvo-studio controls a fiber galvo laser (ComMarker B6 MOPA 60W) and its live design \
+pub const INSTRUCTIONS: &str = "OpenEtch controls a fiber galvo laser (ComMarker B6 MOPA 60W) and its live design \
 document, shared with people using the web UI.
 
 Coordinates: everything is millimetres and degrees in the FIELD FRAME: origin at the centre of the galvo field, +X to \
@@ -64,7 +64,7 @@ Workflow:
 frame_stop.
 7. job_request_run - create a pending run.
 
-Firing the laser always requires a person to approve the pending run in the galvo-studio UI. You cannot approve or \
+Firing the laser always requires a person to approve the pending run in the OpenEtch UI. You cannot approve or \
 start a run. machine_stop is always available and stops everything.
 
 Use list_commands for every command's input schema; execute runs one command, batch runs several as one undo step \
@@ -221,7 +221,7 @@ impl GalvoMcp {
                 "job_request_run",
                 "Request a run",
                 "Plan and encode the current document and create a PENDING run. This does not fire the laser: a \
-                 person must review and approve it in the galvo-studio UI. Returns the run id, a summary and stats.",
+                 person must review and approve it in the OpenEtch UI. Returns the run id, a summary and stats.",
                 false,
             ),
             tool::<NoArgs>(
@@ -345,7 +345,7 @@ impl GalvoMcp {
 impl ServerHandler for GalvoMcp {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(Implementation::new("galvo-studio", env!("CARGO_PKG_VERSION")))
+            .with_server_info(Implementation::new("OpenEtch", env!("CARGO_PKG_VERSION")))
             .with_instructions(INSTRUCTIONS)
     }
 

@@ -36,7 +36,7 @@ export function TopBar(p: TopBarProps) {
     <header className="topbar">
       <div className="brand">
         <span className="brand-mark" aria-hidden="true" />
-        <span className="brand-name">galvo-studio</span>
+        <span className="brand-name">OpenEtch</span>
         {p.docName && <span className="doc-name">{p.docName}</span>}
       </div>
       <nav className="workspaces" role="tablist" aria-label="Workspace">

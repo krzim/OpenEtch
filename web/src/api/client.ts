@@ -10,7 +10,7 @@ import type {
   Preview,
 } from "./types.ts";
 
-const TOKEN_KEY = "galvo-studio.token";
+const TOKEN_KEY = "openetch.token";
 
 /**
  * Read `?token=` from the page URL, persist it, and strip it from the address bar so it is not shared by accident.

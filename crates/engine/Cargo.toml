@@ -1,6 +1,6 @@
 [package]
 name = "engine"
-description = "galvo-studio engine: HTTP/WebSocket API, MCP server, run approval."
+description = "OpenEtch engine: HTTP/WebSocket API, MCP server, run approval."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,7 +11,7 @@ name = "engine"
 path = "src/lib.rs"
 
 [[bin]]
-name = "galvo-studio"
+name = "openetch"
 path = "src/main.rs"
 
 [features]

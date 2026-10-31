@@ -1,4 +1,4 @@
-//! `galvo-studio`: start the engine. See `galvo-studio --help` and the `engine` library docs.
+//! `openetch`: start the OpenEtch engine. See `openetch --help` and the `engine` library docs.
 
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -18,7 +18,7 @@ fn main() -> ExitCode {
             return ExitCode::SUCCESS;
         }
         Err(e) => {
-            eprintln!("galvo-studio: {e}");
+            eprintln!("openetch: {e}");
             return ExitCode::from(2);
         }
     };
@@ -30,14 +30,14 @@ fn main() -> ExitCode {
     let runtime = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
         Err(e) => {
-            eprintln!("galvo-studio: cannot start the async runtime: {e}");
+            eprintln!("openetch: cannot start the async runtime: {e}");
             return ExitCode::FAILURE;
         }
     };
     match runtime.block_on(run(config)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("galvo-studio: {e}");
+            eprintln!("openetch: {e}");
             ExitCode::FAILURE
         }
     }
@@ -106,11 +106,11 @@ async fn run(config: Config) -> Result<(), String> {
     let host = if host.contains(':') && !host.starts_with('<') { format!("[{host}]") } else { host };
     let port = config.listen.port();
     match &token {
-        Some(t) => println!("galvo-studio: open http://{host}:{port}/?token={t}"),
-        None => println!("galvo-studio: open http://{host}:{port}/"),
+        Some(t) => println!("openetch: open http://{host}:{port}/?token={t}"),
+        None => println!("openetch: open http://{host}:{port}/"),
     }
     println!(
-        "galvo-studio: MCP endpoint http://{host}:{port}/mcp{}",
+        "openetch: MCP endpoint http://{host}:{port}/mcp{}",
         if token.is_some() { " (Authorization: Bearer <token>)" } else { "" }
     );
 

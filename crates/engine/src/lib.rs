@@ -1,4 +1,4 @@
-//! The galvo-studio engine: one process that owns the live document and the laser, and serves them to the web UI
+//! The OpenEtch engine: one process that owns the live document and the laser, and serves them to the web UI
 //! (HTTP + WebSocket) and to AI agents (MCP, Streamable HTTP at `/mcp`). See ARCHITECTURE.md.
 //!
 //! - [`AppState`]: the [`commands::Session`], the [`hw::Machine`] (controller behind its own mutex, driven from
