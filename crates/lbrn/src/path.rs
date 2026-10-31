@@ -111,16 +111,24 @@ fn control(x: Option<f64>, y: Option<f64>) -> Result<Option<Point>, LbrnError> {
     }
 }
 
-/// Parse a `PrimList` whose indices must be below `vertices`.
-pub(crate) fn parse_prims(text: &str, vertices: usize) -> Result<Prims, LbrnError> {
-    match text.trim() {
-        "LineClosed" => return Ok(Prims::LineClosed),
-        "LineOpen" => return Ok(Prims::LineOpen),
-        _ => {}
+/// Parse a `PrimList` whose indices must be below `vertices`, refusing more than `max` segments. Returns the
+/// primitives and their segment count.
+pub(crate) fn parse_prims(text: &str, vertices: usize, max: usize) -> Result<(Prims, usize), LbrnError> {
+    let too_many = || LbrnError::TooLarge(format!("more than {max} path segments (a shared list counts once per use)"));
+    let whole = match text.trim() {
+        "LineClosed" => Some((Prims::LineClosed, vertices)),
+        "LineOpen" => Some((Prims::LineOpen, vertices.saturating_sub(1))),
+        _ => None,
+    };
+    if let Some((prims, n)) = whole {
+        return if n > max { Err(too_many()) } else { Ok((prims, n)) };
     }
     let mut s = Scan(text);
     let mut out = Vec::new();
     while !s.at_end() {
+        if out.len() >= max {
+            return Err(too_many());
+        }
         let bezier = if s.take("L") {
             false
         } else if s.take("B") {
@@ -135,7 +143,8 @@ pub(crate) fn parse_prims(text: &str, vertices: usize) -> Result<Prims, LbrnErro
         }
         out.push(Prim { bezier, from, to });
     }
-    Ok(Prims::List(out))
+    let n = out.len();
+    Ok((Prims::List(out), n))
 }
 
 pub(crate) fn write_vertices(v: &[Vertex]) -> String {
@@ -327,19 +336,25 @@ mod tests {
 
     #[test]
     fn parses_prims_and_checks_indices() {
-        assert_eq!(parse_prims(" LineClosed ", 2).unwrap(), Prims::LineClosed);
-        let p = parse_prims("L0 1B1 2L2 0", 3).unwrap();
+        assert_eq!(parse_prims(" LineClosed ", 2, 9).unwrap(), (Prims::LineClosed, 2));
+        let p = parse_prims("L0 1B1 2L2 0", 3, 9).unwrap();
         assert_eq!(
             p,
-            Prims::List(vec![
-                Prim { bezier: false, from: 0, to: 1 },
-                Prim { bezier: true, from: 1, to: 2 },
-                Prim { bezier: false, from: 2, to: 0 },
-            ])
+            (
+                Prims::List(vec![
+                    Prim { bezier: false, from: 0, to: 1 },
+                    Prim { bezier: true, from: 1, to: 2 },
+                    Prim { bezier: false, from: 2, to: 0 },
+                ]),
+                3
+            )
         );
-        assert!(parse_prims("L0 3", 3).is_err());
-        assert!(parse_prims("Q0 1", 3).is_err());
-        assert!(parse_prims("L0", 3).is_err());
+        assert!(parse_prims("L0 3", 3, 9).is_err());
+        assert!(parse_prims("Q0 1", 3, 9).is_err());
+        assert!(parse_prims("L0", 3, 9).is_err());
+        assert!(matches!(parse_prims("L0 1L1 2L2 0", 3, 2), Err(LbrnError::TooLarge(_))));
+        assert!(matches!(parse_prims("LineOpen", 5, 3), Err(LbrnError::TooLarge(_))));
+        assert_eq!(parse_prims("LineOpen", 5, 4).unwrap().1, 4);
     }
 
     #[test]
@@ -347,7 +362,7 @@ mod tests {
         // Square closed by returning to vertex 0, then an open polyline on its own vertices.
         let d = PathData {
             vertices: parse_vertices("V0 0V10 0V10 10V0 10V20 0V30 0V30 10", 99).unwrap(),
-            prims: parse_prims("L0 1L1 2L2 3L3 0L4 5L5 6", 7).unwrap(),
+            prims: parse_prims("L0 1L1 2L2 3L3 0L4 5L5 6", 7, 99).unwrap().0,
         };
         let b = d.to_bez();
         let els = b.elements();
@@ -371,7 +386,7 @@ mod tests {
         let text = (write_vertices(&d.vertices), write_prims(&d.prims));
         let parsed = PathData {
             vertices: parse_vertices(&text.0, 99).unwrap(),
-            prims: parse_prims(&text.1, d.vertices.len()).unwrap(),
+            prims: parse_prims(&text.1, d.vertices.len(), 99).unwrap().0,
         };
         assert_eq!(parsed, d);
         let back = parsed.to_bez();

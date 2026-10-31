@@ -233,7 +233,7 @@ fn assert_same_geometry(a: &Object, b: &Object, tol: f64) {
 }
 
 fn layer(d: &mut Document, name: &str, color: &str, f: impl FnOnce(&mut Layer)) -> String {
-    let id = d.alloc_id("layer");
+    let id = d.alloc_id("layer").unwrap();
     let mut l = Layer::new(id.clone(), name, color);
     f(&mut l);
     d.layers.push(l);
@@ -241,7 +241,7 @@ fn layer(d: &mut Document, name: &str, color: &str, f: impl FnOnce(&mut Layer)) 
 }
 
 fn object(d: &mut Document, layer: &str, geometry: Geometry, transform: Affine) {
-    let id = d.alloc_id("obj");
+    let id = d.alloc_id("obj").unwrap();
     d.objects.push(Object { id: id.clone(), name: id, layer: layer.into(), geometry, transform });
 }
 
@@ -505,4 +505,189 @@ fn objects_on_missing_layers_and_empty_paths_are_reported() {
     assert!(warnings.iter().any(|w| w.contains("missing layer")), "{warnings:?}");
     assert!(warnings.iter().any(|w| w.contains("empty path")), "{warnings:?}");
     assert!(warnings.iter().any(|w| w.contains("outside the 150 mm field")), "{warnings:?}");
+}
+
+/// A project whose first path defines a `PrimList` of `prims` segments and `reuses` more paths that only refer to it.
+fn shared_list_project(prims: usize, reuses: usize) -> String {
+    let mut s = String::from("<LightBurnProject>\n<Shape Type=\"Path\" CutIndex=\"0\" VertID=\"1\" PrimID=\"1\">");
+    s.push_str("<XForm>1 0 0 1 75 75</XForm><VertList>V0 0c0x1c1x1V1 0c0x1c1x1</VertList><PrimList>");
+    for _ in 0..prims {
+        s.push_str("L0 1");
+    }
+    s.push_str("</PrimList></Shape>\n");
+    for _ in 0..reuses {
+        s.push_str("<Shape Type=\"Path\" CutIndex=\"0\" VertID=\"1\" PrimID=\"1\">");
+        s.push_str("<XForm>1 0 0 1 75 75</XForm></Shape>\n");
+    }
+    s.push_str("</LightBurnProject>");
+    s
+}
+
+#[test]
+fn reusing_a_shared_prim_list_counts_every_use() {
+    // 20k segments used 120 times is 2.4 M segments from a file of about 90 kB: refused before it is expanded.
+    let text = shared_list_project(20_000, 119);
+    assert!(text.len() < 100_000);
+    let e = parse(&text).unwrap_err();
+    assert!(matches!(&e, LbrnError::TooLarge(m) if m.contains("path segments")), "{e}");
+    // A few uses are fine, and each one is its own object.
+    let (_, objects, _) = import(&shared_list_project(1_000, 3));
+    assert_eq!(objects.len(), 4);
+    // LineOpen counts its vertices too.
+    let mut verts = String::new();
+    for i in 0..100_000 {
+        verts.push_str(&format!("V{i} 0"));
+    }
+    let mut big = format!(
+        "<LightBurnProject><Shape Type=\"Path\" VertID=\"1\" PrimID=\"1\"><VertList>{verts}</VertList>\
+         <PrimList>LineOpen</PrimList></Shape>"
+    );
+    for _ in 0..25 {
+        big.push_str("<Shape Type=\"Path\" VertID=\"1\" PrimID=\"1\"/>");
+    }
+    big.push_str("</LightBurnProject>");
+    assert!(matches!(parse(&big), Err(LbrnError::TooLarge(_))));
+}
+
+#[test]
+fn many_distinct_warnings_are_capped_and_fast() {
+    let mut s = String::from("<LightBurnProject>");
+    for i in 0..20_000 {
+        s.push_str(&format!("<Shape Type=\"Text\" CutIndex=\"0\" Str=\"t{i}\"><XForm>1 0 0 1 75 75</XForm></Shape>"));
+    }
+    s.push_str("</LightBurnProject>");
+    let start = std::time::Instant::now();
+    let (_, objects, warnings) = import(&s);
+    assert!(start.elapsed().as_secs() < 10, "took {:?}", start.elapsed());
+    assert!(objects.is_empty());
+    assert_eq!(warnings.len(), 201, "200 distinct warnings and a summary line");
+    assert!(warnings[0].contains("\"t0\" was skipped"), "{}", warnings[0]);
+    assert!(warnings[200].contains("19800 more warning"), "{}", warnings[200]);
+}
+
+#[test]
+fn hostile_extras_and_names_still_export_valid_xml() {
+    let mut d = sample_document();
+    let evil = "lbrn2.evil a=\"1\"/><Shape Type=\"Rect\" CutIndex=\"0\" W=\"5\" H=\"5\"/><x";
+    d.layers[0].extras.insert(evil.into(), "1".into());
+    d.layers[0].extras.insert("lbrn2.".into(), "2".into());
+    d.layers[0].extras.insert("lbrn2.sub1.bad tag".into(), "3".into());
+    d.layers[0].sub_layers.push(CutSettings::default());
+    d.layers[0].extras.insert("lbrn2.ok".into(), "a\u{1}b\u{FFFE}<&>".into());
+    d.layers[1].name = "De\u{1}ep\u{0}".into();
+    d.objects[0].name = "obj\u{7}".into();
+    let (p, warnings) = from_document(&d, FIELD).unwrap();
+    let skipped = warnings.iter().filter(|w| w.contains("is not a LightBurn tag name")).count();
+    assert_eq!(skipped, 3, "{warnings:?}");
+    let text = write(&p);
+    assert!(!text.contains("evil") && !text.contains('\u{1}') && !text.contains('\u{0}'), "{text}");
+    assert!(!text.contains("< Value"), "an empty tag name is never written");
+    let back = parse(&text).expect("valid XML");
+    assert_eq!(back.shapes.len(), p.shapes.len(), "no injected shape");
+    assert_eq!(back.shapes.len(), d.objects.len());
+    assert_eq!(back.cut_settings[1].params.name.as_deref(), Some("Deep"));
+    assert_eq!(back.cut_settings[0].params.other.get("ok").map(String::as_str), Some("ab<&>"));
+    let (layers, _, _) = to_document(&back, FIELD).unwrap();
+    assert_eq!(layers[1].name, "Deep");
+    assert!(layers.iter().all(|l| l.extras.keys().all(|k| doc::is_extras_key(k))), "{layers:?}");
+}
+
+#[test]
+fn imported_names_and_tags_load_back_from_openetch() {
+    // Tags and names LightBurn files can hold but an .openetch file may not are cleaned on import, so a saved import
+    // always loads again.
+    let text = "<LightBurnProject><CutSetting type=\"Cut\"><index Value=\"0\"/><name Value=\"a&#9;b&#10;c\"/>\
+        <gr\u{f6}\u{df}e Value=\"1\"/><frequency Value=\"20000\"/></CutSetting>\
+        <Shape Type=\"Text\" CutIndex=\"0\" Str=\"x&#9;y\"><BackupPath Type=\"Path\"><VertList>V0 0V1 1</VertList>\
+        <PrimList>L0 1</PrimList></BackupPath><XForm>1 0 0 1 75 75</XForm></Shape></LightBurnProject>";
+    let (layers, objects, warnings) = import(text);
+    assert_eq!(layers[0].name, "a b c");
+    assert_eq!(objects[0].name, "x y");
+    assert!(warnings.iter().any(|w| w.contains("gr\u{f6}\u{df}e") && w.contains("dropped")), "{warnings:?}");
+    let d = Document { layers, objects, ..Document::default() };
+    doc::file::from_openetch_json(&doc::file::try_to_openetch_json(&d).unwrap()).unwrap();
+}
+
+#[test]
+fn overflowing_or_singular_placements_are_skipped() {
+    let text = "<LightBurnProject>\
+        <Shape Type=\"Group\"><XForm>1e200 0 0 1e200 0 0</XForm><Children>\
+          <Shape Type=\"Group\"><XForm>1e200 0 0 1e200 0 0</XForm><Children>\
+            <Shape Type=\"Rect\" CutIndex=\"0\" W=\"1\" H=\"1\"><XForm>1 0 0 1 0 0</XForm></Shape>\
+          </Children></Shape></Children></Shape>\
+        <Shape Type=\"Rect\" CutIndex=\"0\" W=\"1e308\" H=\"1\"><XForm>10 0 0 1 75 75</XForm></Shape>\
+        <Shape Type=\"Ellipse\" CutIndex=\"0\" Rx=\"1\" Ry=\"1\"><XForm>1 0 1 0 75 75</XForm></Shape>\
+        <Shape Type=\"Rect\" CutIndex=\"0\" W=\"2\" H=\"2\"><XForm>1 0 0 1 75 75</XForm></Shape>\
+        </LightBurnProject>";
+    let (_, objects, warnings) = import(text);
+    assert_eq!(objects.len(), 1, "only the sound rectangle is kept");
+    assert!(objects[0].bounds().x0.is_finite());
+    let skipped: Vec<_> = warnings.iter().filter(|w| w.contains("a shape was skipped")).collect();
+    assert!(!skipped.is_empty() && skipped.iter().any(|w| w.contains("cannot be inverted")), "{warnings:?}");
+    let d = Document { objects, ..Document::default() };
+    assert_eq!(d.numeric_problem(), None);
+}
+
+#[test]
+fn subname_and_library_settings_round_trip() {
+    let clb = r#"<LightBurnLibrary><Material name="Steel"><Entry Thickness="-1" NoThickTitle="Mark">
+      <CutSetting type="Scan">
+        <index Value="0"/><name Value=""/><maxPower Value="37"/><speed Value="158"/><frequency Value="40000"/>
+        <subname Value="dark"/>
+        <SubLayer type="Scan" index="1">
+          <maxPower Value="50"/><speed Value="3000"/><frequency Value="80000"/><subname Value="clean"/>
+        </SubLayer>
+        <SubLayer type="Cut" index="2"><maxPower Value="10"/><speed Value="500"/><subname Value="edge"/></SubLayer>
+      </CutSetting></Entry></Material></LightBurnLibrary>"#;
+    let entry = &lbrn::parse_library(clb).unwrap()[0];
+    let (l, _) = lbrn::cut_setting_to_layer(&entry.setting, "layer-1");
+    assert_eq!(l.extras.get("lbrn2.subname").map(String::as_str), Some("dark"));
+    let d = Document { layers: vec![l.clone()], ..Document::default() };
+    let (p, warnings) = from_document(&d, FIELD).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let cs = &p.cut_settings[0];
+    assert_eq!(cs.params.subname.as_deref(), Some("dark"), "the layer's own subname is exported");
+    assert_eq!(cs.sub_layers[0].params.subname.as_deref(), Some("clean"));
+    assert_eq!(cs.sub_layers[1].params.subname.as_deref(), Some("edge"));
+    assert_eq!(cs.sub_layers[1].params.frequency, None, "the sub-layer had no frequency");
+    let back = parse_library_entry_of(&write(&p));
+    let (back_layer, _) = lbrn::cut_setting_to_layer(&back, "layer-1");
+    assert_eq!(back_layer.extras, l.extras);
+    assert_eq!((back_layer.settings, back_layer.sub_layers), (l.settings, l.sub_layers));
+}
+
+/// The first cut setting of a written project.
+fn parse_library_entry_of(project: &str) -> lbrn::CutSetting {
+    parse(project).unwrap().cut_settings.remove(0)
+}
+
+#[test]
+fn a_missing_frequency_stays_missing_until_changed() {
+    let text = "<LightBurnProject><CutSetting type=\"Cut\"><index Value=\"0\"/><maxPower Value=\"20\"/>\
+        <speed Value=\"100\"/></CutSetting>\
+        <Shape Type=\"Rect\" CutIndex=\"0\" W=\"2\" H=\"2\"><XForm>1 0 0 1 75 75</XForm></Shape></LightBurnProject>";
+    let (layers, objects, warnings) = import(text);
+    assert!(warnings.iter().any(|w| w.contains("no frequency")), "{warnings:?}");
+    assert_eq!(layers[0].extras.get(lbrn::FREQUENCY_ABSENT_KEY).map(String::as_str), Some("1"));
+    let mut d = Document { layers, objects, ..Document::default() };
+    let out = write(&from_document(&d, FIELD).unwrap().0);
+    assert!(!out.contains("<frequency") && !out.contains("frequency_absent"), "{out}");
+    // Once the frequency is set (layer.update removes the marker), it is written.
+    d.layers[0].extras.remove(lbrn::FREQUENCY_ABSENT_KEY);
+    d.layers[0].settings.frequency_khz = 45.0;
+    let out = write(&from_document(&d, FIELD).unwrap().0);
+    assert!(out.contains("<frequency Value=\"45000\"/>"), "{out}");
+}
+
+#[test]
+fn shapes_on_layer_indices_lightburn_lacks_are_reported() {
+    let text = "<LightBurnProject><Shape Type=\"Rect\" CutIndex=\"40\" W=\"2\" H=\"2\"><XForm>1 0 0 1 75 75</XForm>\
+        </Shape></LightBurnProject>";
+    let (layers, objects, warnings) = import(text);
+    assert_eq!(objects.len(), 1);
+    assert!(!layers[0].output);
+    assert!(warnings.iter().any(|w| w.contains("layer index 40") && w.contains("non-output")), "{warnings:?}");
+    // T1 and T2 are real LightBurn layers: no such warning.
+    let t2 = text.replace("CutIndex=\"40\"", "CutIndex=\"31\"");
+    assert!(!import(&t2).2.iter().any(|w| w.contains("not a LightBurn layer")));
 }

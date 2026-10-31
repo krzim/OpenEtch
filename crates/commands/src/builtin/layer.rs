@@ -184,7 +184,7 @@ impl Command for LayerAdd {
                 Some(c) => util::color(Self::ID, c)?,
                 None => PALETTE[doc.layers.len() % PALETTE.len()].to_string(),
             };
-            let id = doc.alloc_id("layer");
+            let id = doc.alloc_id("layer")?;
             let mut layer = Layer::new(id.clone(), &name, &color);
             if let Some(p) = input.settings {
                 p.apply(Self::ID, &mut layer.settings)?;
@@ -251,7 +251,12 @@ impl Command for LayerUpdate {
                 changed.push("output");
             }
             if let Some(p) = input.settings {
+                let sets_frequency = p.frequency_khz.is_some();
                 p.apply(Self::ID, &mut layer.settings)?;
+                if sets_frequency {
+                    // An imported LightBurn layer without a frequency now has one to export.
+                    layer.extras.remove(lbrn::FREQUENCY_ABSENT_KEY);
+                }
                 changed.push("settings");
             }
             if changed.is_empty() {

@@ -85,13 +85,13 @@
 //! | `type` Cut / Scan / Scan+Cut | `mode` line / fill / fill_then_line; any other type kept in `extras["lbrn2.type"]` |
 //! | `maxPower` % | `power_pct` (clamped to 0..=100 with a warning) |
 //! | `speed` mm/s | `speed_mm_s` |
-//! | `frequency` Hz | `frequency_khz` (÷ 1000) |
+//! | `frequency` Hz | `frequency_khz` (÷ 1000); when absent, 30 kHz and `extras["lbrn2.frequency_absent"]`, so export leaves it out until `layer.update` sets a frequency |
 //! | `QPulseWidth` ns | `pulse_width_ns` |
 //! | `numPasses` | `passes` (clamped to 1..=1000) |
 //! | `interval`, `angle`, `anglePerPass`, `crossHatch`, `bidir` | `hatch.interval_mm`, `angle_deg`, `angle_increment_deg`, `cross_hatch`, `bidirectional` |
 //! | `doOutput`, `hide` | `output`, `visible` |
 //! | `SubLayer`s | `sub_layers` (their other values in `extras["lbrn2.subN.<tag>"]`) |
-//! | every other child (`minPower`, `PPI`, `tabCount`, ...) | `extras["lbrn2.<tag>"]`, written back verbatim |
+//! | every other child (`minPower`, `PPI`, `tabCount`, ...) | `extras["lbrn2.<tag>"]`, written back verbatim (only tags matching `[A-Za-z_][A-Za-z0-9_.-]*`; others are dropped with a warning) |
 //! | Rect / Ellipse | `Geometry::Rect` / `Ellipse`, transform = shift · XForm |
 //! | Path | `Geometry::Path` (exact lines and cubics), transform = shift · XForm |
 //! | Group | flattened: one object per leaf, transform = shift · group · child, named `Group 3.1` |
@@ -100,6 +100,11 @@
 //! | T1 tool shape (export) | `Document::stock` outline (import: an object on a non-output layer) |
 //!
 //! shift = translate(-field/2, -field/2) on import and its inverse on export.
+//!
+//! Limits: shared `VertList`/`PrimList`s are copied into every path that uses them, so vertices and segments are
+//! counted per use ([`MAX_SEGMENTS`]) and [`to_document`] caps the path elements it creates. Shapes whose placement
+//! overflows or cannot be inverted, and layer indices above 31, are reported as warnings. The writer drops characters
+//! XML 1.0 cannot hold.
 
 mod convert;
 mod model;
@@ -108,11 +113,14 @@ mod parse;
 mod path;
 mod write;
 
-pub use convert::{EXTRA_PREFIX, Imported, MAX_PASSES, cut_setting_to_layer, from_document, to_document};
+pub use convert::{
+    EXTRA_PREFIX, FREQUENCY_ABSENT, FREQUENCY_ABSENT_KEY, Imported, MAX_PASSES, cut_setting_to_layer, from_document,
+    to_document,
+};
 pub use model::{
     Backup, CutParams, CutSetting, Element, LbrnProject, PathData, Prim, Prims, Shape, ShapeKind, SubLayer, Vertex,
 };
-pub use parse::{LibraryEntry, MAX_BYTES, parse, parse_library};
+pub use parse::{LibraryEntry, MAX_BYTES, MAX_SEGMENTS, parse, parse_library};
 pub use write::write;
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]

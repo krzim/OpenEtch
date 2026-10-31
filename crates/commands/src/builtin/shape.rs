@@ -9,17 +9,23 @@ use serde_json::Value;
 use super::util::{self, invalid, transact};
 use crate::{Command, Result, Risk};
 
-/// Append a new object and return its id. `layer` must already be resolved.
+/// Append a new object and return its id. `layer` must already be resolved. Control characters in `name` (e.g.
+/// from an SVG id) become spaces.
 pub(super) fn add_object(
     doc: &mut Document,
     name: String,
     layer: String,
     geometry: Geometry,
     transform: Affine,
-) -> ObjectId {
-    let id = doc.alloc_id("obj");
+) -> Result<ObjectId> {
+    let id = doc.alloc_id("obj")?;
+    let name = if name.contains(char::is_control) {
+        name.chars().map(|c| if c.is_control() { ' ' } else { c }).collect()
+    } else {
+        name
+    };
     doc.objects.push(Object { id: id.clone(), name, layer, geometry, transform });
-    id
+    Ok(id)
 }
 
 /// Translation to `center` then rotation about it, both in the field frame.
@@ -80,7 +86,7 @@ impl Command for ShapeRect {
             let name = object_name(id, i.name.as_deref(), "Rectangle")?;
             let geometry =
                 Geometry::Rect { width_mm: i.width_mm, height_mm: i.height_mm, corner_radius_mm: i.corner_radius_mm };
-            let obj = add_object(doc, name, layer, geometry, placement(id, i.center, i.rotation_deg)?);
+            let obj = add_object(doc, name, layer, geometry, placement(id, i.center, i.rotation_deg)?)?;
             let summary = format!("added rectangle {obj} {}x{} mm", i.width_mm, i.height_mm);
             Ok((util::edit_result(doc, &[obj], &[]), summary))
         })
@@ -126,7 +132,7 @@ impl Command for ShapeEllipse {
             let layer = util::layer_or_default(doc, i.layer.as_deref())?;
             let name = object_name(id, i.name.as_deref(), "Ellipse")?;
             let geometry = Geometry::Ellipse { rx_mm: i.rx_mm, ry_mm: i.ry_mm };
-            let obj = add_object(doc, name, layer, geometry, placement(id, i.center, i.rotation_deg)?);
+            let obj = add_object(doc, name, layer, geometry, placement(id, i.center, i.rotation_deg)?)?;
             let summary = format!("added ellipse {obj} rx {} ry {} mm", i.rx_mm, i.ry_mm);
             Ok((util::edit_result(doc, &[obj], &[]), summary))
         })
@@ -164,7 +170,7 @@ impl Command for ShapePath {
             validate_path(id, &path)?;
             let layer = util::layer_or_default(doc, i.layer.as_deref())?;
             let name = object_name(id, i.name.as_deref(), "Path")?;
-            let obj = add_object(doc, name, layer, Geometry::Path { path }, Affine::IDENTITY);
+            let obj = add_object(doc, name, layer, Geometry::Path { path }, Affine::IDENTITY)?;
             let summary = format!("added path {obj}");
             Ok((util::edit_result(doc, &[obj], &[]), summary))
         })

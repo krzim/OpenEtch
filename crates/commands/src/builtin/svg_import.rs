@@ -78,13 +78,13 @@ impl Command for ImportSvg {
                         };
                         add_object(doc, name, layer.clone(), Geometry::Path { path }, Affine::IDENTITY)
                     })
-                    .collect()
+                    .collect::<Result<_>>()?
             } else {
                 let mut all = BezPath::new();
                 for (p, _) in paths {
                     all.extend(p);
                 }
-                vec![add_object(doc, base.clone(), layer.clone(), Geometry::Path { path: all }, Affine::IDENTITY)]
+                vec![add_object(doc, base.clone(), layer.clone(), Geometry::Path { path: all }, Affine::IDENTITY)?]
             };
             for c in &created {
                 if let Some(o) = doc.object(c) {

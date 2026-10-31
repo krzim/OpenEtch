@@ -54,9 +54,26 @@ test("project names follow the engine's rule", () => {
   assert.match(P.validateProjectName("a..b") ?? "", /\.\./);
 });
 
+test("Save as clashes are case-insensitive, like Windows and macOS file names", () => {
+  const list = [{ name: "ok name (1)" }, { name: "Tags" }, { name: "Ärmel" }];
+  // Review finding: "OK NAME (1)" replaced "ok name (1)" without asking.
+  assert.equal(P.projectClash(list, "OK NAME (1)", null), "ok name (1)");
+  assert.equal(P.projectClash(list, "ok name (1)", null), "ok name (1)");
+  assert.equal(P.projectClash(list, "ÄRMEL", null), "Ärmel");
+  // Decomposed "A" + combining diaeresis is the same name.
+  assert.equal(P.projectClash(list, `A${String.fromCharCode(0x308)}rmel`, null), "Ärmel");
+  assert.equal(P.projectClash(list, "ok name (2)", null), null);
+  // Saving the current project under its own name is not a clash; under another case it still asks.
+  assert.equal(P.projectClash(list, "Tags", "Tags"), null);
+  assert.equal(P.projectClash(list, "TAGS", "Tags"), "Tags");
+  assert.equal(P.projectClash(list, "Tags", "Other"), "Tags");
+  assert.equal(P.projectClash(null, "Tags", null), null);
+  assert.equal(P.projectClash(list, "", null), null);
+});
+
 test("suggested names are valid or empty", () => {
-  assert.equal(P.suggestProjectName("Captain America"), "Captain America");
-  assert.equal(P.suggestProjectName("photo on namecard!"), "photo on namecard");
+  assert.equal(P.suggestProjectName("Brass key tags"), "Brass key tags");
+  assert.equal(P.suggestProjectName("logo on card!"), "logo on card");
   assert.equal(P.suggestProjectName("..secret..file"), "secret.file");
   assert.equal(P.suggestProjectName("a/b:c"), "a b c");
   assert.equal(P.suggestProjectName("***"), "");
@@ -69,10 +86,10 @@ test("suggested names are valid or empty", () => {
 
 test("file formats, stems and download names", () => {
   assert.equal(P.fileFormat("Job.OPENETCH"), "openetch");
-  assert.equal(P.fileFormat("Color_Test.lbrn2"), "lbrn2");
+  assert.equal(P.fileFormat("Power_Grid.lbrn2"), "lbrn2");
   assert.equal(P.fileFormat("old.lbrn"), null);
   assert.equal(P.fileFormat("art.svg"), null);
-  assert.equal(P.fileStem("C:\\x\\Color Test.lbrn2"), "Color Test");
+  assert.equal(P.fileStem("C:\\x\\Power Grid.lbrn2"), "Power Grid");
   assert.equal(P.fileStem(".openetch"), ".openetch");
   assert.equal(P.downloadName("Brass tags", "lbrn2"), "Brass tags.lbrn2");
   assert.equal(P.downloadName('a/b:c*"d"', "openetch"), "a_b_c_d_.openetch");
@@ -249,4 +266,46 @@ test("project routes: list, save, open, state", async () => {
   await assert.rejects(api.saveProject("a/b"), /invalid project name/);
   reply = { status: 404, body: JSON.stringify({ ok: false, error: "no project named \"Nope\"" }) };
   await assert.rejects(api.openProject("Nope"), (e: unknown) => e instanceof ApiError && e.status === 404);
+});
+
+test("save as sends overwrite only when asked, and a 409 is a name clash", async () => {
+  reply = { status: 200, body: JSON.stringify({ ok: true, name: "Tags" }) };
+  await api.saveProject("Tags", false);
+  await api.saveProject("Tags", true);
+  assert.deepEqual(
+    calls.map((c) => String(c.body)),
+    ['{"name":"Tags","overwrite":false}', '{"name":"Tags","overwrite":true}'],
+  );
+  reply = { status: 409, body: JSON.stringify({ ok: false, error: 'a project named "tags" already exists; pass overwrite: true to replace it' }) };
+  const err = await api.saveProject("TAGS", false).then(
+    () => null,
+    (e: unknown) => e,
+  );
+  assert.ok(P.isSaveConflict(err));
+  assert.equal(P.isSaveConflict(new ApiError("bad name", 400)), false);
+  assert.equal(P.isSaveConflict("409"), false);
+});
+
+test("upload refuses a bad field size instead of dropping it, and shows the engine's 400 text", async () => {
+  const file = new Blob(["<LightBurnProject/>"]);
+  // Review finding: field_mm=NaN was silently ignored and the import used the document's 153.75 mm.
+  for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, 0, -150]) {
+    await assert.rejects(api.upload(file, "lbrn2", "replace", bad), (e: unknown) => e instanceof ApiError && e.status === 400, String(bad));
+  }
+  assert.equal(calls.length, 0);
+
+  reply = { status: 400, body: JSON.stringify({ ok: false, error: "field_mm 'abc' is not a number" }) };
+  const e = await api.upload(file, "lbrn2", "replace", 150).then(
+    () => null,
+    (x: unknown) => x,
+  );
+  const shown = P.fileError(e, "tags.lbrn2");
+  assert.ok(shown instanceof Error);
+  assert.equal(shown.message, "tags.lbrn2: field_mm 'abc' is not a number");
+  // An engine-level refusal (200 {ok:false}, e.g. field_mm above 2000) still throws the engine's message.
+  assert.throws(() => P.commandResult({ ok: false, error: "doc.import_lbrn2: field_mm must be at most 2000 (got 5000)" }), /at most 2000/);
+  // Errors without engine detail pass through unchanged.
+  const plain = new Error("engine unreachable");
+  assert.equal(P.fileError(plain, "x"), plain);
+  assert.equal(P.fileError("boom", "x"), "boom");
 });

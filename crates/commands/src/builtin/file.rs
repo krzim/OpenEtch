@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use doc::file::{from_openetch_json, to_openetch_json};
+use doc::file::{from_openetch_json, try_to_openetch_json};
 use doc::{Document, ObjectId};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 use super::layer::validate_settings;
 use super::util::{self, invalid};
-use crate::{Command, Result, Risk};
+use crate::{Command, CommandError, Result, Risk};
 
 /// Largest accepted file content (the engine's upload limit is lower).
 const MAX_CONTENT_BYTES: usize = lbrn::MAX_BYTES;
@@ -145,7 +145,8 @@ impl Command for DocSave {
     const RISK: Risk = Risk::Query;
 
     fn apply(doc: &mut Document, _input: SaveInput) -> Result<(Value, String)> {
-        Ok((json!({ "content": to_openetch_json(doc), "revision": doc.revision }), String::new()))
+        let content = try_to_openetch_json(doc).map_err(|e| CommandError::Failed(e.to_string()))?;
+        Ok((json!({ "content": content, "revision": doc.revision }), String::new()))
     }
 }
 
@@ -211,6 +212,11 @@ impl Command for ImportLbrn2 {
                 *doc = fresh;
             }
             ImportMode::Merge => {
+                // Check the ids up front, so the allocations below cannot fail half-way.
+                let needed = (layers.len() + objects.len()) as u64;
+                if doc.next_id.saturating_add(needed) > doc::MAX_ID {
+                    return Err(doc::IdsExhausted(doc.next_id).into());
+                }
                 doc.field_mm = doc.field_mm.or(Some(field_mm));
                 let before = doc.layers.len();
                 let mut map: HashMap<String, String> = HashMap::new();
@@ -228,7 +234,7 @@ impl Command for ImportLbrn2 {
                             e
                         }
                         None => {
-                            l.id = doc.alloc_id("layer");
+                            l.id = doc.alloc_id("layer")?;
                             created_layers.push(l.id.clone());
                             let new_id = l.id.clone();
                             doc.layers.push(l);
@@ -241,7 +247,7 @@ impl Command for ImportLbrn2 {
                     if let Some(layer) = map.get(&o.layer) {
                         o.layer = layer.clone();
                     }
-                    o.id = doc.alloc_id("obj");
+                    o.id = doc.alloc_id("obj")?;
                     created.push(o.id.clone());
                     doc.objects.push(o);
                 }
@@ -459,6 +465,107 @@ mod tests {
         s.undo().unwrap();
         assert_eq!(s.document().objects.len(), 1);
         assert_eq!(s.document().layers.len(), 1);
+    }
+
+    #[test]
+    fn load_refuses_documents_the_edit_commands_would_never_make() {
+        let mut s = session(None);
+        ok(&mut s, "shape.rect", json!({"width_mm": 4, "height_mm": 2}));
+        let good = s.document().clone();
+        let before = s.document().clone();
+        type Spoil = fn(&mut Document);
+        let cases: [(&str, Spoil); 8] = [
+            ("does not exist", |d| d.objects[0].layer = "layer-404".into()),
+            ("no layers", |d| {
+                d.layers.clear();
+                d.objects.clear();
+            }),
+            ("not positive", |d| {
+                d.objects[0].geometry = doc::Geometry::Rect { width_mm: -4.0, height_mm: 2.0, corner_radius_mm: 0.0 }
+            }),
+            ("cannot be inverted", |d| d.objects[0].transform = kurbo::Affine::new([0.0; 6])),
+            ("control character", |d| d.name = "x\u{0}".into()),
+            ("control character", |d| d.layers[0].name = "\u{1}".into()),
+            ("too large", |d| d.objects[0].id = "obj-18446744073709551615".into()),
+            ("extras key", |d| {
+                d.layers[0].extras.insert("lbrn2.evil a=\"1\"/><Shape/><x".into(), "1".into());
+            }),
+        ];
+        for (what, f) in cases {
+            let mut d = good.clone();
+            f(&mut d);
+            let e = run(&mut s, "doc.load", json!({"content": doc::file::to_openetch_json(&d)})).unwrap_err();
+            assert!(e.to_string().contains(what), "{what}: {e}");
+            assert_eq!(s.document(), &before);
+        }
+        ok(&mut s, "doc.load", json!({"content": doc::file::to_openetch_json(&good)}));
+    }
+
+    #[test]
+    fn edits_that_overflow_to_non_finite_geometry_are_refused() {
+        let mut s = session(Some(150.0));
+        ok(&mut s, "shape.rect", json!({"width_mm": 4, "height_mm": 2}));
+        ok(&mut s, "object.transform", json!({"ids": ["obj-2"], "scale": 1e100, "about": "origin"}));
+        let before = s.document().clone();
+        let history = s.history().len();
+        // 1e100 x 1e250 overflows to infinity.
+        let e = run(&mut s, "object.transform", json!({"ids": ["obj-2"], "scale": 1e250, "about": "origin"}))
+            .unwrap_err();
+        assert!(matches!(e, CommandError::Failed(_)) && e.to_string().contains("unusable geometry"), "{e}");
+        assert_eq!(s.document(), &before);
+        assert_eq!(s.history().len(), history);
+        // What is committed can always be saved and loaded again.
+        let saved = ok(&mut s, "doc.save", json!({}));
+        ok(&mut s, "doc.load", json!({"content": saved["content"]}));
+    }
+
+    #[test]
+    fn save_refuses_a_document_that_would_not_load_again() {
+        let mut d = Document::default();
+        d.layers[0].settings.speed_mm_s = f64::INFINITY;
+        let mut s = Session::new(d);
+        let e = run(&mut s, "doc.save", json!({})).unwrap_err();
+        assert!(e.to_string().contains("cannot save"), "{e}");
+    }
+
+    #[test]
+    fn exhausted_ids_are_an_error_not_a_panic() {
+        let mut s = Session::new(Document { next_id: doc::MAX_ID, field_mm: Some(150.0), ..Document::default() });
+        let before = s.document().clone();
+        for (id, params) in [
+            ("shape.rect", json!({"width_mm": 4, "height_mm": 2})),
+            ("layer.add", json!({"name": "x"})),
+            ("doc.import_lbrn2", json!({"content": LBRN, "mode": "merge"})),
+        ] {
+            let e = run(&mut s, id, params).unwrap_err();
+            assert!(matches!(e, CommandError::Failed(_)) && e.to_string().contains("used up"), "{id}: {e}");
+            assert_eq!(s.document(), &before, "{id}");
+        }
+        // A replacing import starts a fresh id range.
+        ok(&mut s, "doc.import_lbrn2", json!({"content": LBRN}));
+    }
+
+    #[test]
+    fn setting_the_frequency_clears_the_lightburn_no_frequency_marker() {
+        let no_freq = LBRN.replace("        <frequency Value=\"100000\"/>\n", "");
+        let mut s = session(Some(150.0));
+        ok(&mut s, "doc.import_lbrn2", json!({"content": no_freq}));
+        let marker = |s: &Session| s.document().layers[0].extras.contains_key(lbrn::FREQUENCY_ABSENT_KEY);
+        assert!(marker(&s));
+        let export = |s: &mut Session| ok(s, "doc.export_lbrn2", json!({}))["content"].as_str().unwrap().to_string();
+        assert!(!export(&mut s).contains("<frequency"), "the source had none");
+        ok(&mut s, "layer.update", json!({"id": "layer-1", "settings": {"power_pct": 40}}));
+        assert!(marker(&s), "other settings leave it");
+        ok(&mut s, "layer.update", json!({"id": "layer-1", "settings": {"frequency_khz": 60}}));
+        assert!(!marker(&s));
+        assert!(export(&mut s).contains("<frequency Value=\"60000\"/>"));
+    }
+
+    #[test]
+    fn names_with_control_characters_are_refused() {
+        let mut s = session(None);
+        assert!(run(&mut s, "layer.add", json!({"name": "a\u{1}b"})).is_err());
+        assert!(run(&mut s, "doc.rename", json!({"name": "x\ny"})).is_err());
     }
 
     #[test]

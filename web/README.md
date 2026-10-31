@@ -64,7 +64,9 @@ anywhere else.
 - **File menu** (far left of the top bar, tap to open): New (`doc.new`), Open… (the engine's projects from
   `GET /api/projects`, opened with `POST /api/projects/open`, or "Upload from this device" for a `.openetch` or `.lbrn2`
   file), Save / Save as… (`POST /api/projects/save`; Save asks for a name the first time, and Save as asks before
-  replacing an existing project), Import LightBurn… (`.lbrn2`, Replace or Merge, with the galvo field size the
+  replacing an existing project: names are compared ignoring case, since Windows and macOS file names do, and Save as
+  sends `overwrite: false` until the user taps Replace, so a 409 from the engine also turns into the Replace prompt),
+  Import LightBurn… (`.lbrn2`, Replace or Merge, with the galvo field size the
   LightBurn project was laid out for, since `.lbrn2` files do not store it), Export to LightBurn and Download
   .openetch. **Ctrl/Cmd+S** saves (anywhere, even in a field). New, Open and a replacing import ask first when the
   project has unsaved changes (all of them stay undoable).

@@ -20,22 +20,68 @@ const MAX_FIELD_MM: f64 = 2000.0;
 /// so callers merging into an existing document re-id them.
 pub type Imported = (Vec<Layer>, Vec<Object>, Vec<String>);
 
-/// Warnings with repeats counted, in first-seen order.
+/// Marker extra (`lbrn2.frequency_absent`, and `lbrn2.subN.frequency_absent` for sub-layers): the source gave no
+/// frequency, so export leaves it out again and LightBurn keeps using its own default. `layer.update` removes it when
+/// the frequency is set.
+pub const FREQUENCY_ABSENT: &str = "frequency_absent";
+/// The full [`FREQUENCY_ABSENT`] key of a layer's main settings.
+pub const FREQUENCY_ABSENT_KEY: &str = "lbrn2.frequency_absent";
+/// Most distinct warnings reported; the rest are summed up in one last line.
+const MAX_WARNINGS: usize = 200;
+/// Most path elements (points with their move and close markers) [`to_document`] creates in total; rectangles and
+/// ellipses count [`FIXED_SHAPE_ELEMENTS`]. Bounds the document (and its undo copies) whatever the file holds.
+const MAX_ELEMENTS: usize = 4_000_000;
+const FIXED_SHAPE_ELEMENTS: usize = 10;
+
+/// Warnings with repeats counted, in first-seen order. Lookups are hashed and at most [`MAX_WARNINGS`] distinct
+/// messages are kept, so a file with many different warnings costs linear time and bounded memory.
 #[derive(Default)]
-struct Warnings(Vec<(String, usize)>);
+struct Warnings {
+    list: Vec<(String, usize)>,
+    index: HashMap<String, usize>,
+    dropped: usize,
+}
 
 impl Warnings {
     fn push(&mut self, m: impl Into<String>) {
         let m = m.into();
-        match self.0.iter_mut().find(|(s, _)| *s == m) {
-            Some((_, n)) => *n += 1,
-            None => self.0.push((m, 1)),
+        if let Some(&i) = self.index.get(&m) {
+            self.list[i].1 += 1;
+        } else if self.list.len() < MAX_WARNINGS {
+            self.index.insert(m.clone(), self.list.len());
+            self.list.push((m, 1));
+        } else {
+            self.dropped += 1;
         }
     }
 
     fn into_vec(self) -> Vec<String> {
-        self.0.into_iter().map(|(m, n)| if n == 1 { m } else { format!("{m} (x{n})") }).collect()
+        let mut out: Vec<String> =
+            self.list.into_iter().map(|(m, n)| if n == 1 { m } else { format!("{m} (x{n})") }).collect();
+        if self.dropped > 0 {
+            out.push(format!("... and {} more warning(s) not listed", self.dropped));
+        }
+        out
     }
+}
+
+/// `s` with control characters (tabs, line breaks, ...) replaced by spaces: names must not hold them.
+fn clean_name(s: &str) -> String {
+    s.chars().map(|c| if c.is_control() { ' ' } else { c }).collect()
+}
+
+/// `key` shortened and escaped for a warning.
+fn shown(key: &str) -> String {
+    format!("{:?}", key.chars().take(60).collect::<String>())
+}
+
+/// `sub3.speed` → `(3, "speed")`: the extras tags of sub-layer 3. `subname` and other tags merely starting with
+/// "sub" are not sub-layer tags.
+fn sub_layer_tag(tag: &str) -> Option<(usize, &str)> {
+    let rest = tag.strip_prefix("sub")?;
+    let digits = rest.find(|c: char| !c.is_ascii_digit())?;
+    let (n, rest) = rest.split_at(digits);
+    Some((n.parse().ok()?, rest.strip_prefix('.')?))
 }
 
 fn check_field(field_mm: f64) -> Result<f64, LbrnError> {
@@ -173,6 +219,15 @@ fn show(v: Option<f64>) -> String {
     v.map(|v| v.to_string()).unwrap_or_else(|| "(missing)".into())
 }
 
+/// Keep a LightBurn value as the extra `{prefix}{tag}`, unless the tag could not be written back as an element name.
+fn keep(layer: &mut Layer, prefix: &str, tag: &str, value: String, label: &str, w: &mut Warnings) {
+    if doc::is_plain_name(tag) {
+        layer.extras.insert(format!("{prefix}{tag}"), value);
+    } else {
+        w.push(format!("{label}: setting {} has a name OpenEtch cannot keep; it was dropped", shown(tag)));
+    }
+}
+
 /// One LightBurn layer (its vector settings, or image settings when that is all there is) → an OpenEtch layer.
 fn layer_from(index: u32, cs: Option<&CutSetting>, id: String, w: &mut Warnings) -> Layer {
     let label = palette::default_name(index);
@@ -187,7 +242,8 @@ fn layer_from(index: u32, cs: Option<&CutSetting>, id: String, w: &mut Warnings)
         return layer;
     };
     let p = &cs.params;
-    let named = |s: &Option<String>| s.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    let named =
+        |s: &Option<String>| s.as_deref().map(clean_name).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
     if let Some(n) = named(&p.name).or_else(|| named(&p.subname)) {
         layer.name = n.chars().take(200).collect();
     }
@@ -204,27 +260,35 @@ fn layer_from(index: u32, cs: Option<&CutSetting>, id: String, w: &mut Warnings)
         layer.output = false;
         for (tag, value) in p.to_values() {
             if !matches!(tag.as_str(), "name" | "priority" | "hide") {
-                layer.extras.insert(format!("{EXTRA_PREFIX}{tag}"), value);
+                keep(&mut layer, EXTRA_PREFIX, &tag, value, &label, w);
             }
         }
         return layer;
     }
+    let no_frequency = |p: &CutParams| p.frequency.is_none() && !p.other.contains_key("frequency");
     let (settings, rest) = to_settings(&cs.kind, p, &label, w);
     layer.settings = settings;
+    if no_frequency(p) {
+        layer.extras.insert(FREQUENCY_ABSENT_KEY.into(), "1".into());
+    }
     for (tag, value) in rest {
         if !matches!(tag.as_str(), "name" | "priority" | "doOutput" | "hide") {
-            layer.extras.insert(format!("{EXTRA_PREFIX}{tag}"), value);
+            keep(&mut layer, EXTRA_PREFIX, &tag, value, &label, w);
         }
     }
     for (n, sub) in cs.sub_layers.iter().enumerate() {
         let key = format!("{EXTRA_PREFIX}sub{}.", n + 1);
-        let (s, rest) = to_settings(&sub.kind, &sub.params, &format!("{label} sub-layer {}", n + 1), w);
+        let sub_label = format!("{label} sub-layer {}", n + 1);
+        let (s, rest) = to_settings(&sub.kind, &sub.params, &sub_label, w);
         layer.sub_layers.push(s);
         if mode_of(&sub.kind).is_none() {
             layer.extras.insert(format!("{key}type"), sub.kind.clone());
         }
+        if no_frequency(&sub.params) {
+            layer.extras.insert(format!("{key}{FREQUENCY_ABSENT}"), "1".into());
+        }
         for (tag, value) in rest {
-            layer.extras.insert(format!("{key}{tag}"), value);
+            keep(&mut layer, &key, &tag, value, &sub_label, w);
         }
     }
     layer
@@ -253,7 +317,14 @@ fn leaf_indices(s: &Shape, out: &mut BTreeSet<u32>) {
 /// Convert a parsed project to OpenEtch layers and objects in the field frame. `field_mm` is the galvo field size the
 /// project was laid out for: LightBurn coordinates run 0..field_mm from the field's lower-left corner, so every
 /// position moves by `-field_mm / 2`.
+///
+/// Refuses (with [`LbrnError::TooLarge`]) a project that would create more than a few million path elements in
+/// total, and skips with a warning any object whose placement overflows or cannot be inverted.
 pub fn to_document(p: &LbrnProject, field_mm: f64) -> Result<Imported, LbrnError> {
+    to_document_within(p, field_mm, MAX_ELEMENTS)
+}
+
+fn to_document_within(p: &LbrnProject, field_mm: f64, max_elements: usize) -> Result<Imported, LbrnError> {
     let field = check_field(field_mm)?;
     let mut w = Warnings::default();
     for key in ["MirrorX", "MirrorY"] {
@@ -277,6 +348,12 @@ pub fn to_document(p: &LbrnProject, field_mm: f64) -> Result<Imported, LbrnError
     let mut layers = Vec::new();
     let mut layer_ids = HashMap::new();
     for i in order {
+        if i > T1 + 1 {
+            w.push(format!(
+                "{}: layer index {i} is not a LightBurn layer (0..=31); its shapes were put on a non-output layer",
+                palette::default_name(i)
+            ));
+        }
         if p.cut_settings.iter().any(|c| c.index == i && c.image)
             && p.cut_settings.iter().any(|c| c.index == i && !c.image)
         {
@@ -301,6 +378,8 @@ pub fn to_document(p: &LbrnProject, field_mm: f64) -> Result<Imported, LbrnError
         next,
         objects: Vec::new(),
         w,
+        elements: 0,
+        max_elements,
     };
     let mut counts: HashMap<&'static str, usize> = HashMap::new();
     for s in &p.shapes {
@@ -313,12 +392,13 @@ pub fn to_document(p: &LbrnProject, field_mm: f64) -> Result<Imported, LbrnError
         };
         let n = counts.entry(kind).or_default();
         *n += 1;
-        let text = s.attribute("Str").and_then(|t| t.lines().next()).map(str::trim).unwrap_or_default();
+        let text = s.attribute("Str").and_then(|t| t.lines().next()).map(clean_name).unwrap_or_default();
+        let text = text.trim();
         let name = match s.kind {
             ShapeKind::Text { .. } if !text.is_empty() => text.chars().take(100).collect(),
             _ => format!("{kind} {n}"),
         };
-        cx.shape(s, Affine::IDENTITY, name);
+        cx.shape(s, Affine::IDENTITY, name)?;
     }
     let ToDoc { objects, mut w, .. } = cx;
     let outside = objects.iter().filter(|o| !inside(o.bounds(), field)).count();
@@ -343,69 +423,100 @@ struct ToDoc {
     next: u64,
     objects: Vec<Object>,
     w: Warnings,
+    /// Path elements created so far, and the most allowed.
+    elements: usize,
+    max_elements: usize,
 }
 
 impl ToDoc {
-    fn push(&mut self, s: &Shape, name: String, geometry: Geometry, local: Affine) {
+    fn push(&mut self, s: &Shape, name: String, geometry: Geometry, local: Affine) -> Result<(), LbrnError> {
+        let elements = match &geometry {
+            Geometry::Path { path } => path.elements().len(),
+            Geometry::Rect { .. } | Geometry::Ellipse { .. } => FIXED_SHAPE_ELEMENTS,
+        };
+        self.elements = self.elements.saturating_add(elements);
+        if self.elements > self.max_elements {
+            return Err(LbrnError::TooLarge(format!(
+                "the shapes would make more than {} path elements (shared lists and groups are expanded for every \
+                 use)",
+                self.max_elements
+            )));
+        }
         let index = s.cut_index.unwrap_or(0);
         let layer = self.layer_ids.get(&index).cloned().unwrap_or_else(|| self.fallback.clone());
-        let id = format!("obj-{}", self.next);
+        let o = Object { id: format!("obj-{}", self.next), name, layer, geometry, transform: self.shift * local };
+        if let Some(problem) = o.placement_problem() {
+            self.w.push(format!("a shape was skipped: {problem} (check its scale and its groups' scales)"));
+            return Ok(());
+        }
         self.next += 1;
-        self.objects.push(Object { id, name, layer, geometry, transform: self.shift * local });
+        self.objects.push(o);
+        Ok(())
     }
 
-    fn shape(&mut self, s: &Shape, parent: Affine, name: String) {
+    fn shape(&mut self, s: &Shape, parent: Affine, name: String) -> Result<(), LbrnError> {
         let xf = parent * s.xform;
         match &s.kind {
             ShapeKind::Rect { w, h, cr } => {
                 if !(*w > 0.0 && *h > 0.0) {
                     self.w.push("a zero-size rectangle was skipped");
-                    return;
+                    return Ok(());
                 }
                 let max = w.min(*h) / 2.0;
                 let r = cr.clamp(0.0, max);
                 if r != *cr {
                     self.w.push(format!("a rectangle's corner radius {cr} mm was clamped to {r} mm"));
                 }
-                self.push(s, name, Geometry::Rect { width_mm: *w, height_mm: *h, corner_radius_mm: r }, xf);
+                self.push(s, name, Geometry::Rect { width_mm: *w, height_mm: *h, corner_radius_mm: r }, xf)
             }
             ShapeKind::Ellipse { rx, ry } => {
                 if !(*rx > 0.0 && *ry > 0.0) {
                     self.w.push("a zero-size ellipse was skipped");
-                    return;
+                    return Ok(());
                 }
-                self.push(s, name, Geometry::Ellipse { rx_mm: *rx, ry_mm: *ry }, xf);
+                self.push(s, name, Geometry::Ellipse { rx_mm: *rx, ry_mm: *ry }, xf)
             }
             ShapeKind::Path(d) => self.path(s, name, d, xf),
             ShapeKind::Group(children) => {
                 for (k, c) in children.iter().enumerate() {
-                    self.shape(c, xf, format!("{name}.{}", k + 1));
+                    self.shape(c, xf, format!("{name}.{}", k + 1))?;
                 }
+                Ok(())
             }
             ShapeKind::Text { backup } => {
                 match backup {
                     // The Text's own XForm is the live one; the backup's copy can be stale (see crate docs).
                     Some(b) => {
                         self.w.push("text was imported as its outline (BackupPath) and is no longer editable text");
-                        self.path(s, name, &b.path, xf);
+                        self.path(s, name, &b.path, xf)
                     }
-                    None => self.w.push(format!(
-                        "text \"{name}\" was skipped: it has no BackupPath outline (convert it to a path in LightBurn)"
-                    )),
+                    None => {
+                        self.w.push(format!(
+                            "text \"{name}\" was skipped: it has no BackupPath outline (convert it to a path in \
+                             LightBurn)"
+                        ));
+                        Ok(())
+                    }
                 }
             }
-            ShapeKind::Bitmap { .. } => self.w.push("a bitmap was skipped: OpenEtch does not engrave images yet"),
-            ShapeKind::Other { type_name } => self.w.push(format!("a '{type_name}' shape was skipped (unsupported)")),
+            ShapeKind::Bitmap { .. } => {
+                self.w.push("a bitmap was skipped: OpenEtch does not engrave images yet");
+                Ok(())
+            }
+            ShapeKind::Other { type_name } => {
+                self.w.push(format!("a '{type_name}' shape was skipped (unsupported)"));
+                Ok(())
+            }
         }
     }
 
-    fn path(&mut self, s: &Shape, name: String, d: &PathData, xf: Affine) {
+    fn path(&mut self, s: &Shape, name: String, d: &PathData, xf: Affine) -> Result<(), LbrnError> {
         let path = d.to_bez();
         if path.segments().next().is_none() {
             self.w.push("an empty path was skipped");
-            return;
+            return Ok(());
         }
-        self.push(s, name, Geometry::Path { path }, xf);
+        self.push(s, name, Geometry::Path { path }, xf)
     }
 }
 
@@ -413,8 +524,13 @@ fn extra<'a>(l: &'a Layer, key: &str) -> Option<&'a str> {
     l.extras.get(&format!("{EXTRA_PREFIX}{key}")).map(String::as_str)
 }
 
-/// OpenEtch settings → LightBurn `tag → value` pairs, starting from the kept extras.
-fn settings_values(s: &CutSettings, base: BTreeMap<String, String>) -> BTreeMap<String, String> {
+/// OpenEtch settings → LightBurn `tag → value` pairs, starting from the kept extras. `frequency_absent`: the source
+/// had no frequency and it was not changed since, so none is written.
+fn settings_values(
+    s: &CutSettings,
+    base: BTreeMap<String, String>,
+    frequency_absent: bool,
+) -> BTreeMap<String, String> {
     let mut v = base;
     let mut set = |k: &str, x: String| {
         v.insert(k.to_string(), x);
@@ -422,7 +538,9 @@ fn settings_values(s: &CutSettings, base: BTreeMap<String, String>) -> BTreeMap<
     set("maxPower", s.power_pct.to_string());
     set("speed", s.speed_mm_s.to_string());
     let hz = s.frequency_khz * 1000.0;
-    set("frequency", if (hz - hz.round()).abs() < 1e-6 { hz.round() } else { hz }.to_string());
+    if !frequency_absent {
+        set("frequency", if (hz - hz.round()).abs() < 1e-6 { hz.round() } else { hz }.to_string());
+    }
     set("interval", s.hatch.interval_mm.to_string());
     set("angle", s.hatch.angle_deg.to_string());
     set("crossHatch", if s.hatch.cross_hatch { "1" } else { "0" }.into());
@@ -488,17 +606,28 @@ pub fn from_document(d: &Document, field_mm: f64) -> Result<(LbrnProject, Vec<St
         let index = index_of[l.id.as_str()];
         let original = extra(l, "type");
         let tool = index >= COLOR_LAYERS || original == Some("Tool");
-        // Kept LightBurn values, minus the keys this function owns.
+        // Kept LightBurn values, minus the keys this function owns and the sub-layers' (`subN.*`). Only tags that are
+        // plain XML names are written: extras can come from a hand-edited .openetch file.
         let mut base = BTreeMap::new();
+        let mut frequency_absent = false;
         for (k, v) in &l.extras {
-            if let Some(tag) = k.strip_prefix(EXTRA_PREFIX)
-                && !tag.starts_with("sub")
-                && !matches!(tag, "index" | "type" | "image")
-            {
+            let Some(tag) = k.strip_prefix(EXTRA_PREFIX) else { continue };
+            if sub_layer_tag(tag).is_some() || matches!(tag, "index" | "type" | "image") {
+                continue;
+            }
+            if tag == FREQUENCY_ABSENT {
+                frequency_absent = true;
+            } else if doc::is_plain_name(tag) {
                 base.insert(tag.to_string(), v.clone());
+            } else {
+                w.push(format!(
+                    "layer \"{}\": extra {} is not a LightBurn tag name and was not exported",
+                    l.name,
+                    shown(k)
+                ));
             }
         }
-        let mut values = if tool { base } else { settings_values(&l.settings, base) };
+        let mut values = if tool { base } else { settings_values(&l.settings, base, frequency_absent) };
         values.insert("name".into(), l.name.clone());
         values.insert("priority".into(), priority.to_string());
         if !l.output && !tool {
@@ -511,19 +640,26 @@ pub fn from_document(d: &Document, field_mm: f64) -> Result<(LbrnProject, Vec<St
         let mut sub_layers = Vec::new();
         if !tool {
             for (n, s) in l.sub_layers.iter().enumerate() {
-                let key = format!("{EXTRA_PREFIX}sub{}.", n + 1);
                 let mut base = BTreeMap::new();
                 let mut sub_kind = None;
+                let mut frequency_absent = false;
                 for (k, v) in &l.extras {
-                    match k.strip_prefix(&key) {
-                        Some("type") => sub_kind = Some(v.as_str()),
-                        Some(tag) => {
+                    match k.strip_prefix(EXTRA_PREFIX).and_then(sub_layer_tag) {
+                        Some((m, _)) if m != n + 1 => {}
+                        Some((_, "type")) => sub_kind = Some(v.as_str()),
+                        Some((_, FREQUENCY_ABSENT)) => frequency_absent = true,
+                        Some((_, tag)) if doc::is_plain_name(tag) => {
                             base.insert(tag.to_string(), v.clone());
                         }
+                        Some(_) => w.push(format!(
+                            "layer \"{}\": extra {} is not a LightBurn tag name and was not exported",
+                            l.name,
+                            shown(k)
+                        )),
                         None => {}
                     }
                 }
-                let values = settings_values(s, base);
+                let values = settings_values(s, base, frequency_absent);
                 sub_layers.push(SubLayer {
                     kind: export_kind(sub_kind, &s.mode),
                     index: n as u32 + 1,
@@ -637,4 +773,42 @@ pub fn from_document(d: &Document, field_mm: f64) -> Result<(LbrnProject, Vec<St
 
 fn shape(kind: ShapeKind, cut_index: Option<u32>, xform: Affine) -> Shape {
     Shape { kind, cut_index, xform, attributes: vec![], children: vec![] }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn to_document_caps_the_path_elements_it_creates() {
+        let rects: String = (0..5)
+            .map(|_| r#"<Shape Type="Rect" CutIndex="0" W="1" H="1"><XForm>1 0 0 1 75 75</XForm></Shape>"#)
+            .collect();
+        let p = crate::parse(&format!("<LightBurnProject>{rects}</LightBurnProject>")).unwrap();
+        assert_eq!(to_document_within(&p, 150.0, 5 * FIXED_SHAPE_ELEMENTS).unwrap().1.len(), 5);
+        let e = to_document_within(&p, 150.0, 5 * FIXED_SHAPE_ELEMENTS - 1).unwrap_err();
+        assert!(matches!(&e, LbrnError::TooLarge(m) if m.contains("path elements")), "{e}");
+    }
+
+    #[test]
+    fn warnings_are_counted_and_capped() {
+        let mut w = Warnings::default();
+        for i in 0..(MAX_WARNINGS + 50) {
+            w.push(format!("w{i}"));
+            w.push("same");
+        }
+        let v = w.into_vec();
+        assert_eq!(v.len(), MAX_WARNINGS + 1);
+        assert_eq!(v[1], format!("same (x{})", MAX_WARNINGS + 50));
+        assert_eq!(v[MAX_WARNINGS], "... and 51 more warning(s) not listed");
+    }
+
+    #[test]
+    fn only_numbered_sub_prefixes_are_sub_layer_tags() {
+        assert_eq!(sub_layer_tag("sub1.speed"), Some((1, "speed")));
+        assert_eq!(sub_layer_tag("sub12.type"), Some((12, "type")));
+        for not_sub in ["subname", "sub.x", "sub1", "subx1.y", "speed"] {
+            assert_eq!(sub_layer_tag(not_sub), None, "{not_sub}");
+        }
+    }
 }

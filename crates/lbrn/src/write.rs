@@ -34,9 +34,24 @@ struct Writer {
     next_id: u64,
 }
 
+/// Whether XML 1.0 allows `c` in a document at all (its `Char` production). Other characters are dropped on writing,
+/// since no escape can express them.
+fn xml_char(c: char) -> bool {
+    matches!(c, '\t' | '\n' | '\r' | '\u{20}'..='\u{D7FF}' | '\u{E000}'..='\u{FFFD}' | '\u{10000}'..)
+}
+
+/// Whether `name` can be written as an element or attribute name without changing the markup around it. Names come
+/// from parsed XML or from [`doc::is_plain_name`]-checked extras; this guards the public model against anything else.
+fn safe_name(name: &str) -> bool {
+    name.chars().next().is_some_and(|c| !c.is_ascii_digit() && !matches!(c, '-' | '.'))
+        && name.chars().all(|c| {
+            xml_char(c) && !c.is_whitespace() && !matches!(c, '<' | '>' | '&' | '"' | '\'' | '/' | '=' | '?' | '!')
+        })
+}
+
 fn escape_attr(s: &str) -> String {
     let mut o = String::with_capacity(s.len());
-    for c in s.chars() {
+    for c in s.chars().filter(|c| xml_char(*c)) {
         match c {
             '&' => o.push_str("&amp;"),
             '<' => o.push_str("&lt;"),
@@ -52,7 +67,16 @@ fn escape_attr(s: &str) -> String {
 }
 
 fn escape_text(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    let mut o = String::with_capacity(s.len());
+    for c in s.chars().filter(|c| xml_char(*c)) {
+        match c {
+            '&' => o.push_str("&amp;"),
+            '<' => o.push_str("&lt;"),
+            '>' => o.push_str("&gt;"),
+            c => o.push(c),
+        }
+    }
+    o
 }
 
 fn xform_text(a: Affine) -> String {
@@ -70,10 +94,14 @@ impl Writer {
         self.indent(depth);
         self.out.push('<');
         self.out.push_str(name);
-        for (k, v) in attrs {
+        self.attributes(attrs);
+        self.out.push_str(if empty { "/>\n" } else { ">\n" });
+    }
+
+    fn attributes(&mut self, attrs: &[(String, String)]) {
+        for (k, v) in attrs.iter().filter(|(k, _)| safe_name(k)) {
             self.out.push_str(&format!(" {k}=\"{}\"", escape_attr(v)));
         }
-        self.out.push_str(if empty { "/>\n" } else { ">\n" });
     }
 
     fn close(&mut self, depth: usize, name: &str) {
@@ -92,15 +120,16 @@ impl Writer {
     }
 
     fn element(&mut self, depth: usize, e: &Element) {
+        if !safe_name(&e.name) {
+            return;
+        }
         match (&e.text, e.children.is_empty()) {
             (None, true) => self.open(depth, &e.name, &e.attributes, true),
             (Some(t), true) => {
                 self.indent(depth);
                 self.out.push('<');
                 self.out.push_str(&e.name);
-                for (k, v) in &e.attributes {
-                    self.out.push_str(&format!(" {k}=\"{}\"", escape_attr(v)));
-                }
+                self.attributes(&e.attributes);
                 self.out.push_str(&format!(">{}</{}>\n", escape_text(t), e.name));
             }
             (text, false) => {
@@ -122,7 +151,7 @@ impl Writer {
         if let Some(i) = index {
             self.value(depth, "index", &i.to_string());
         }
-        for (tag, value) in p.to_values() {
+        for (tag, value) in p.to_values().into_iter().filter(|(tag, _)| safe_name(tag)) {
             self.value(depth, &tag, &value);
         }
     }

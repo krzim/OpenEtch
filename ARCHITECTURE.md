@@ -113,11 +113,11 @@ says otherwise. `origin` is `"ui"` (default), `"script"` or `"agent:<name>"`.
 | POST | `/api/machine/frame/stop` | ends framing only; pending and approved runs are untouched → `{ "ok": true }`; with no board connected **200** `{ "ok": true, "connected": false }` |
 | POST | `/api/machine/stop` | emergency stop: abort any run or frame, cancel every run not yet streaming (`pending`, `approved`, `awaiting_confirm`; `cancelled_runs` counts them) → `{ "ok": true, "connected": true, "cancelled_runs": n }`; with no board connected **200** `{ "ok": true, "connected": false, ... }`; no token needed |
 | GET | `/api/projects` | `[{ name, modified_unix_s, size }]`: the saved projects, sorted by name; a missing projects directory lists nothing |
-| POST | `/api/projects/save` | `{ "name", "overwrite"?: bool (default true) }` → `{ "ok": true, "name", "path", "revision" }`; writes `<projects-dir>/<name>.openetch` and makes it the current project; emits `project_saved`. With `overwrite: false` an existing project other than the current one is **409** |
-| POST | `/api/projects/open` | `{ "name", "origin"? }` → `{ "ok": true, "name", "result", "revision" }`; replaces the document (`doc.load`, one undo step) and makes it the current project; unknown project 404, unusable file 400 |
+| POST | `/api/projects/save` | `{ "name", "overwrite"?: bool (default true) }` → `{ "ok": true, "name", "path", "revision" }`; writes `<projects-dir>/<name>.openetch` and makes it the current project; emits `project_saved`. With `overwrite: false` an existing project other than the current one is **409**, also one whose name differs only in case |
+| POST | `/api/projects/open` | `{ "name", "origin"? }` → `{ "ok": true, "name", "result", "revision" }`; replaces the document (`doc.load`, one undo step) and makes it the current project; a name differing only in case opens the one matching project (`name` in the answer is its name on disk; several matches are 409); unknown project 404, unusable file 400 |
 | GET | `/api/project` | `{ "name": string \| null, "saved_revision": n \| null, "revision": n, "dirty": bool }`; refetch on `document_changed` and `project_saved` |
 | GET | `/api/document/download` | `?format=openetch` (default) \| `lbrn2` → the document as a file with `Content-Disposition: attachment` (named after the project, else the document; ASCII `filename` plus UTF-8 `filename*`), `Cache-Control: no-store` and `X-OpenEtch-Warnings: <count>` (LightBurn conversion warnings; the texts come from `doc.export_lbrn2`). LightBurn files are laid out for the document's `field_mm` |
-| POST | `/api/document/upload` | `?format=openetch\|lbrn2&mode=replace\|merge&field_mm=<mm>` with the raw file as the body (UTF-8, a BOM is dropped, at most 50 MB, else **413**) → runs `doc.load` (`.openetch`, replace only) or `doc.import_lbrn2` (`field_mm` only for LightBurn; default the document's) with origin `ui`, answered like `/api/execute` (a refused file is **200** `{ "ok": false, "error" }`). Unknown query parameters, formats or modes are 400 |
+| POST | `/api/document/upload` | `?format=openetch\|lbrn2&mode=replace\|merge&field_mm=<mm>` with the raw file as the body (UTF-8, a BOM is dropped, at most 50 MB, else **413**) → runs `doc.load` (`.openetch`, replace only) or `doc.import_lbrn2` (`field_mm` only for LightBurn, a finite number, else 400; default the document's) on a blocking thread with origin `ui`, answered like `/api/execute` (a refused file is **200** `{ "ok": false, "error" }`). Unknown query parameters, formats or modes are 400 |
 | WS | `/api/events` | server → client JSON events (below) |
 | * | `/mcp` | MCP Streamable HTTP endpoint |
 
@@ -141,12 +141,18 @@ Events on `/api/events`:
 `openetch/projects`, e.g. `%APPDATA%\openetch\projects`, `~/Library/Application Support/openetch/projects`,
 `~/.local/share/openetch/projects`; created on the first save). A name is 1-100 characters of letters, digits, space,
 `-`, `_`, `.`, `(` and `)`, with no leading dot, no `..`, no leading or trailing space, and not a Windows device name
-(`con`, `nul`, `com1`, ...). Every file is also resolved against the canonical projects directory and refused unless
-it stays inside it, so links pointing elsewhere are neither read nor written through. Saves go to a fresh temporary
-file that is renamed over the old one. The engine tracks the current project (name, saved revision) in memory: save
-and open set it, `doc.new` and `doc.load` (including an `.openetch` upload) clear it, and a LightBurn import keeps
+in any case or with any extension (`con`, `prn`, `aux`, `nul`, `com0`-`com9`, `lpt0`-`lpt9`, and `com¹`-`com³`,
+`lpt¹`-`lpt³` with superscript digits). Names that differ only in case are the same project, as on Windows and macOS:
+a save that would replace a differently-cased file needs `overwrite` like any other existing project (and the file
+is then renamed to the new spelling, also on Linux), and open finds a project by another spelling when exactly one
+matches. Every file is also resolved against the canonical projects directory and refused unless it stays inside
+it, so links pointing elsewhere are neither read nor written through. Saves go to a fresh temporary file that is
+renamed over the old one. The engine tracks the current project (name, saved revision) in memory: save and open set
+it; `doc.new` and `doc.load` (including an `.openetch` upload) clear it, and so does a replacing LightBurn import
+(`doc.import_lbrn2` with `mode` `replace`, the default; the document is then unsaved), while a merging import keeps
 it. The document is dirty whenever its revision differs from the last save, open or `doc.new` (undoing back to the
-saved state still counts as a change).
+saved state still counts as a change). Document commands from `/api/execute`, `/api/batch`, uploads and the MCP
+`execute` / `batch` tools run on a blocking thread, so a large import does not stall the server.
 
 **Field size.** The engine starts with `document.field_mm` set to the machine profile's `field_mm`. `doc.new` and
 `doc.load` keep it when the new document has none and imports fill it in, so it stays set; when it is ever missing,
@@ -168,8 +174,10 @@ or deletes the operator PIN (restart the engine afterwards).
 `list_commands`, `execute`, `batch`, `inspect_document`, `render_preview` (PNG), `undo`, `redo`, plus separate machine
 tools: `machine_status`, `frame_start`, `frame_stop`, `job_request_run`, `machine_stop`, and project tools:
 `project_list` (`{projects, current}`), `project_save {name, overwrite?}` (replacing an existing project other than
-the current one needs `overwrite: true`, default false), `project_open {name}` and `project_export_lbrn2 {name}`
-(writes `<projects-dir>/<name>.lbrn2`, returns `{path, warnings, field_mm}`). Project tools take names, never paths.
+the current one needs `overwrite: true`, default false), `project_open {name}` and
+`project_export_lbrn2 {name, overwrite?}` (writes `<projects-dir>/<name>.lbrn2`; replacing an existing one, also one
+whose name differs only in case, needs `overwrite: true`, default false; returns `{path, warnings, field_mm}`).
+Project tools take names, never paths.
 File contents go through `execute` with `doc.save`, `doc.load`, `doc.import_lbrn2` and `doc.export_lbrn2`. The MCP
 surface is generated from the same command registry the UI uses; machine tools are separate so clients can approve
 them separately. No

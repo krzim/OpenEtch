@@ -14,10 +14,17 @@ pub fn transact<T>(doc: &mut Document, f: impl FnOnce(&mut Document) -> Result<T
     Ok(out)
 }
 
-/// Round to 0.1 µm for output so callers see `10` rather than `9.999999999`. Also folds `-0` into `0`.
+/// Round to 0.1 µm for output so callers see `10` rather than `9.999999999`. Also folds `-0` into `0`. Values too
+/// large to scale (beyond ~1e304) are returned as they are rather than as infinity, which JSON would write as `null`.
 pub fn r4(x: f64) -> f64 {
     let r = (x * 1e4).round() / 1e4;
-    if r == 0.0 { 0.0 } else { r }
+    if !r.is_finite() {
+        x
+    } else if r == 0.0 {
+        0.0
+    } else {
+        r
+    }
 }
 
 pub fn pt_json(p: Point) -> Value {
@@ -68,11 +75,14 @@ pub fn finite2(cmd: &str, field: &str, v: [f64; 2]) -> Result<[f64; 2]> {
     Ok(v)
 }
 
-/// Trimmed, non-empty display name.
+/// Trimmed, non-empty display name without control characters (a saved file holding one would not load).
 pub fn name(cmd: &str, field: &str, s: &str) -> Result<String> {
     let t = s.trim();
     if t.is_empty() {
         return Err(invalid(cmd, format!("{field} must not be empty")));
+    }
+    if t.contains(char::is_control) {
+        return Err(invalid(cmd, format!("{field} must not contain control characters (tabs, line breaks, ...)")));
     }
     if t.chars().count() > 200 {
         return Err(invalid(cmd, format!("{field} is longer than 200 characters")));
@@ -173,7 +183,7 @@ mod tests {
     fn doc_with(names: &[&str]) -> Document {
         let mut d = Document::default();
         for n in names {
-            let id = d.alloc_id("obj");
+            let id = d.alloc_id("obj").unwrap();
             let layer = d.layers[0].id.clone();
             d.objects.push(Object {
                 id,
@@ -220,5 +230,6 @@ mod tests {
     fn rounding_folds_negative_zero() {
         assert_eq!(r4(-0.00001).to_string(), "0");
         assert_eq!(r4(9.999999999), 10.0);
+        assert_eq!(r4(5e307), 5e307, "huge but finite values stay finite");
     }
 }

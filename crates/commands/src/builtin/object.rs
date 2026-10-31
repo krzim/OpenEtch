@@ -257,7 +257,7 @@ impl Command for Duplicate {
         transact(doc, |doc| {
             let ids = util::object_ids(Self::ID, doc, &i.ids)?;
             let [dx, dy] = util::finite2(Self::ID, "offset", i.offset)?;
-            let created = copy_objects(doc, &ids, Vec2::new(dx, dy), " copy");
+            let created = copy_objects(doc, &ids, Vec2::new(dx, dy), " copy")?;
             let mut r = util::edit_result(doc, &created, &[]);
             r["copies"] =
                 ids.iter().zip(&created).map(|(a, b)| (a.clone(), json!(b))).collect::<serde_json::Map<_, _>>().into();
@@ -267,17 +267,22 @@ impl Command for Duplicate {
 }
 
 /// Append translated copies of `ids` (which must exist) and return the new ids in the same order.
-pub(super) fn copy_objects(doc: &mut Document, ids: &[ObjectId], offset: Vec2, suffix: &str) -> Vec<ObjectId> {
+pub(super) fn copy_objects(
+    doc: &mut Document,
+    ids: &[ObjectId],
+    offset: Vec2,
+    suffix: &str,
+) -> Result<Vec<ObjectId>> {
     let originals: Vec<_> = ids.iter().filter_map(|id| doc.object(id).cloned()).collect();
     originals
         .into_iter()
         .map(|mut o| {
-            o.id = doc.alloc_id("obj");
+            o.id = doc.alloc_id("obj")?;
             o.name.push_str(suffix);
             o.transform = Affine::translate(offset) * o.transform;
             let id = o.id.clone();
             doc.objects.push(o);
-            id
+            Ok(id)
         })
         .collect()
 }

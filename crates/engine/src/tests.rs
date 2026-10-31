@@ -1031,9 +1031,11 @@ async fn upload_replaces_and_merges() {
         crate::Event::DocumentChanged { revision: 2, origin: commands::Origin::Ui }
     );
     assert_eq!(st.history().last().unwrap().origin, commands::Origin::Ui);
-    // An import changes the current project's document; it stays the current project, now unsaved.
+    // A replacing import is a new document no project holds (as the web treats it): the project name is cleared,
+    // so Save cannot overwrite "Before" with it, and it is unsaved.
     let (_, p) = send(&app, req("GET", "/api/project", None)).await;
-    assert_eq!((&p["name"], &p["dirty"]), (&json!("Before"), &json!(true)), "{p}");
+    assert_eq!((&p["name"], &p["dirty"]), (&json!(null), &json!(true)), "{p}");
+    send(&app, req("POST", "/api/projects/save", Some(json!({"name": "After"})))).await;
 
     // Merge (with a BOM, as some writers add) keeps what is there; field_mm can be given.
     let with_bom = format!("\u{feff}{LBRN2}");
@@ -1043,6 +1045,16 @@ async fn upload_replaces_and_merges() {
     assert_eq!(v["result"]["field_mm"], json!(110.0));
     assert_eq!(st.document().objects.len(), 4);
     assert_eq!(st.document().field_mm, Some(150.0), "the document keeps its own field size");
+    // A merge edits the current project's document: it stays the current project, now unsaved.
+    let (_, p) = send(&app, req("GET", "/api/project", None)).await;
+    assert_eq!((&p["name"], &p["dirty"]), (&json!("After"), &json!(true)), "{p}");
+    // The same rule through /api/execute (mode defaults to replace).
+    let (_, v) = send(&app, exec("doc.import_lbrn2", json!({"content": LBRN2, "mode": "merge"}))).await;
+    assert_eq!(v["ok"], true, "{v}");
+    assert_eq!(st.project_name().as_deref(), Some("After"));
+    let (_, v) = send(&app, exec("doc.import_lbrn2", json!({"content": LBRN2}))).await;
+    assert_eq!(v["ok"], true, "{v}");
+    assert_eq!(st.project_name(), None);
 
     // An .openetch upload replaces the document and is not a saved project.
     let saved = doc::file::to_openetch_json(&doc::Document { name: "Upload".into(), ..doc::Document::default() });
@@ -1060,6 +1072,12 @@ async fn upload_replaces_and_merges() {
         ("/api/document/upload?format=svg", LBRN2.as_bytes().to_vec(), StatusCode::BAD_REQUEST),
         ("/api/document/upload?format=lbrn2&mode=append", LBRN2.as_bytes().to_vec(), StatusCode::BAD_REQUEST),
         ("/api/document/upload?format=lbrn2&field_mm=wide", LBRN2.as_bytes().to_vec(), StatusCode::BAD_REQUEST),
+        // Rust parses these as floats; they must not fall back to the document's field size.
+        ("/api/document/upload?format=lbrn2&field_mm=NaN", LBRN2.as_bytes().to_vec(), StatusCode::BAD_REQUEST),
+        ("/api/document/upload?format=lbrn2&field_mm=nan", LBRN2.as_bytes().to_vec(), StatusCode::BAD_REQUEST),
+        ("/api/document/upload?format=lbrn2&field_mm=inf", LBRN2.as_bytes().to_vec(), StatusCode::BAD_REQUEST),
+        ("/api/document/upload?format=lbrn2&field_mm=-infinity", LBRN2.as_bytes().to_vec(), StatusCode::BAD_REQUEST),
+        ("/api/document/upload?format=lbrn2&field_mm=1e999", LBRN2.as_bytes().to_vec(), StatusCode::BAD_REQUEST),
         ("/api/document/upload?format=lbrn2&name=x", LBRN2.as_bytes().to_vec(), StatusCode::BAD_REQUEST),
         ("/api/document/upload?format=openetch&mode=merge", b"{}".to_vec(), StatusCode::BAD_REQUEST),
         ("/api/document/upload?format=lbrn2", vec![0xff, 0xfe, 0x3c], StatusCode::BAD_REQUEST),
@@ -1079,7 +1097,95 @@ async fn upload_replaces_and_merges() {
 }
 
 #[tokio::test]
+async fn project_names_differing_in_case_are_the_same_project() {
+    let st = test_state().await;
+    let app = app(&st);
+    let save = |name: &str, overwrite: Option<bool>| {
+        let mut body = json!({"name": name});
+        if let Some(o) = overwrite {
+            body["overwrite"] = json!(o);
+        }
+        req("POST", "/api/projects/save", Some(body))
+    };
+    rect(&app, 4.0, 4.0).await;
+    let (s, v) = send(&app, save("ok name (1)", None)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    send(&app, exec("doc.new", json!({}))).await;
+    rect(&app, 8.0, 8.0).await;
+
+    // A differently-cased name is the same file on Windows and macOS: refused without overwrite.
+    let (s, v) = send(&app, save("OK NAME (1)", Some(false))).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+    let error = v["error"].as_str().unwrap();
+    assert!(error.contains("ok name (1)") && error.contains("case"), "{v}");
+    let (_, list) = send(&app, req("GET", "/api/projects", None)).await;
+    assert_eq!(list.as_array().unwrap().len(), 1, "{list}");
+
+    // Open finds it by another spelling; the current project keeps the name on disk.
+    let (s, v) = send(&app, req("POST", "/api/projects/open", Some(json!({"name": "OK Name (1)"})))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["name"], "ok name (1)");
+    assert_eq!(st.project_name().as_deref(), Some("ok name (1)"));
+    // Re-casing the current project needs no overwrite; it is renamed in place, not duplicated.
+    let (s, v) = send(&app, save("OK NAME (1)", Some(false))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (_, list) = send(&app, req("GET", "/api/projects", None)).await;
+    let names: Vec<&str> = list.as_array().unwrap().iter().map(|p| p["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["OK NAME (1)"]);
+
+    // From another project, the UI's save (overwrite by default) replaces it after its confirmation.
+    send(&app, save("Other", None)).await;
+    let (s, _) = send(&app, save("ok NAME (1)", Some(false))).await;
+    assert_eq!(s, StatusCode::CONFLICT);
+    let (s, _) = send(&app, save("ok NAME (1)", None)).await;
+    assert_eq!(s, StatusCode::OK);
+    let (_, list) = send(&app, req("GET", "/api/projects", None)).await;
+    let names: Vec<&str> = list.as_array().unwrap().iter().map(|p| p["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["ok NAME (1)", "Other"]);
+    let _ = std::fs::remove_dir_all(st.projects.root().parent().unwrap());
+}
+
+/// Uploads and imports run on a blocking thread: while a large one converts, the async runtime (here a single
+/// thread) keeps serving other tasks.
+#[tokio::test(flavor = "current_thread")]
+async fn uploads_do_not_block_the_runtime() {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    let st = test_state().await;
+    let app = app(&st);
+    let shapes: String = (0..6000)
+        .map(|i| {
+            let (x, y) = (10 + i % 100, 10 + (i / 100) % 100);
+            format!(r#"<Shape Type="Rect" CutIndex="1" W="1" H="1" Cr="0"><XForm>1 0 0 1 {x} {y}</XForm></Shape>"#)
+        })
+        .collect();
+    let big = LBRN2.replace("</LightBurnProject>", &format!("{shapes}</LightBurnProject>"));
+    let (ticks, done) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicBool::new(false)));
+    let ticker = {
+        let (ticks, done) = (ticks.clone(), done.clone());
+        tokio::spawn(async move {
+            while !done.load(Ordering::SeqCst) {
+                ticks.fetch_add(1, Ordering::SeqCst);
+                tokio::task::yield_now().await;
+            }
+        })
+    };
+    let (s, v) = send(&app, raw("POST", "/api/document/upload?format=lbrn2&field_mm=150", big.clone())).await;
+    assert_eq!((s, &v["ok"]), (StatusCode::OK, &json!(true)), "{v}");
+    let during_upload = ticks.swap(0, Ordering::SeqCst);
+    let (_, v) = send(&app, exec("doc.import_lbrn2", json!({"content": big, "mode": "merge"}))).await;
+    assert_eq!(v["ok"], true, "{v}");
+    let during_execute = ticks.load(Ordering::SeqCst);
+    done.store(true, Ordering::SeqCst);
+    ticker.await.unwrap();
+    assert_eq!(st.document().objects.len(), 2 * 6002);
+    // Run on the runtime thread, the ticker would only get the few polls between the request's own await points.
+    assert!(during_upload > 100, "the runtime was blocked during the upload ({during_upload} ticks)");
+    assert!(during_execute > 100, "the runtime was blocked during the import ({during_execute} ticks)");
+}
+
+#[tokio::test]
 async fn uploads_above_50_mb_are_refused() {
+
     let st = test_state().await;
     let app = app(&st);
     let big = vec![b' '; api::MAX_UPLOAD_BYTES + 1];

@@ -3,8 +3,10 @@
 //! and rendering run on blocking threads.
 //!
 //! Projects: the document is saved to and opened from `<projects-dir>/<name>.openetch` ([`ProjectDir`]); the
-//! current project name and the revision it was saved at live in [`ProjectState`] (cleared by `doc.new` and
-//! `doc.load`, set by save and open) and are updated under the session lock, before `document_changed` is sent.
+//! current project name and the revision it was saved at live in [`ProjectState`] (cleared by `doc.new`,
+//! `doc.load` and a replacing `doc.import_lbrn2`, set by save and open) and are updated under the session lock,
+//! before `document_changed` is sent. Project names that differ only in case are the same project (Windows and
+//! macOS file names ignore case), so saves refuse to replace one unless asked to and opens find it.
 //! The document's `field_mm` comes from the machine profile when the engine starts with a document that has none,
 //! and `doc.import_lbrn2` / `doc.export_lbrn2` get the profile's field size when neither the caller nor the
 //! document gives one.
@@ -14,7 +16,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use commands::{CommandSpec, HistoryEntry, Invocation, Origin, Outcome, Risk, Session};
 use doc::Document;
-use doc::file::to_openetch_json;
+use doc::file::try_to_openetch_json;
 use plan::{PlanError, Preview};
 use serde_json::{Value, json};
 use tokio::sync::broadcast;
@@ -86,8 +88,40 @@ pub struct AppState {
     project: Mutex<ProjectState>,
 }
 
-/// Commands that replace the document with one no project file holds: they clear the current project.
+/// Commands that replace the document with one no project file holds: they clear the current project, and the new
+/// document is clean (nothing in it is unsaved).
 const REPLACING: [&str; 2] = ["doc.new", "doc.load"];
+
+/// How an invocation changes which project the document belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Replaces {
+    /// It edits the current document (or does not edit).
+    No,
+    /// `doc.new` / `doc.load`: a new document that counts as clean.
+    Clean,
+    /// A replacing LightBurn import: a new document (the current project no longer holds it) with unsaved content.
+    Unsaved,
+}
+
+fn replaces(inv: &Invocation) -> Replaces {
+    if REPLACING.contains(&inv.id.as_str()) {
+        return Replaces::Clean;
+    }
+    // `mode` defaults to replace; an invalid mode fails the command, so it never matters here.
+    let mode = inv.params.get("mode").and_then(Value::as_str);
+    if inv.id == "doc.import_lbrn2" && matches!(mode, None | Some("replace")) {
+        return Replaces::Unsaved;
+    }
+    Replaces::No
+}
+
+/// `{"content": content}` without copying the content (`json!` would clone it).
+fn content_params(content: String) -> Value {
+    let mut params = serde_json::Map::new();
+    params.insert("content".into(), Value::String(content));
+    Value::Object(params)
+}
+
 /// Commands that convert with a field size and get the profile's `field_mm` when nothing else gives one.
 const NEEDS_FIELD: [&str; 2] = ["doc.import_lbrn2", "doc.export_lbrn2"];
 
@@ -239,7 +273,7 @@ impl AppState {
         }
         let (outcomes, before, after) = {
             let mut s = lock(&self.session);
-            let mut last_edit = None;
+            let mut last_edit = Replaces::No;
             for inv in &invs {
                 if let Some(spec) = s.registry().spec(&inv.id) {
                     if !matches!(spec.risk, Risk::Query | Risk::Edit) {
@@ -249,7 +283,7 @@ impl AppState {
                         )));
                     }
                     if spec.risk == Risk::Edit {
-                        last_edit = Some(inv.id.clone());
+                        last_edit = replaces(inv);
                     }
                 }
             }
@@ -259,7 +293,7 @@ impl AppState {
                     fill_field_mm(inv, field);
                 }
             }
-            let replaced = invs.iter().any(|i| REPLACING.contains(&i.id.as_str()));
+            let replaced = invs.iter().any(|i| replaces(i) != Replaces::No);
             let before = s.document().revision;
             let outcomes = s.batch(invs, origin.clone())?;
             let after = s.document().revision;
@@ -268,8 +302,8 @@ impl AppState {
                 if let Some(name) = opened {
                     *p = ProjectState::saved(name, after);
                 } else if replaced {
-                    // Clean only when nothing was edited after the replacement in the same batch.
-                    let clean = last_edit.is_some_and(|id| REPLACING.contains(&id.as_str()));
+                    // Clean only after doc.new / doc.load with nothing edited after it in the same batch.
+                    let clean = last_edit == Replaces::Clean;
                     *p = ProjectState { name: None, saved_revision: None, clean_revision: clean.then_some(after) };
                 }
             }
@@ -310,22 +344,31 @@ impl AppState {
         tokio::task::spawn_blocking(move || dir.list()).await?
     }
 
+    /// Run `f` with the state on a blocking thread: document commands can take seconds (a 50 MB import), which
+    /// must not stall the async runtime.
+    pub async fn blocking<T: Send + 'static>(
+        self: &Arc<Self>,
+        f: impl FnOnce(&AppState) -> Result<T, EngineError> + Send + 'static,
+    ) -> Result<T, EngineError> {
+        let st = self.clone();
+        tokio::task::spawn_blocking(move || f(&st)).await?
+    }
+
     /// Save the document as project `name`. Unless `overwrite`, an existing project other than the current one is
-    /// refused (409). Emits `project_saved`. Returns `{ok, name, path, revision}`.
+    /// refused (409), also when its name differs only in case. Emits `project_saved`. Returns
+    /// `{ok, name, path, revision}`.
     pub async fn project_save(&self, name: &str, overwrite: bool) -> Result<Value, EngineError> {
         projects::validate_name(name)?;
         let (content, revision) = {
             let s = lock(&self.session);
-            (to_openetch_json(s.document()), s.document().revision)
+            (saveable(s.document())?, s.document().revision)
         };
         let dir = self.projects.clone();
         let current = self.project_name();
         let owned = name.to_owned();
         let path = tokio::task::spawn_blocking(move || {
-            if !overwrite && current.as_deref() != Some(owned.as_str()) && dir.exists(&owned)? {
-                return Err(EngineError::Conflict(format!(
-                    "a project named \"{owned}\" already exists; pass overwrite: true to replace it"
-                )));
+            if !overwrite {
+                refuse_clobber(&dir, &owned, PROJECT_EXT, current.as_deref())?;
             }
             dir.write(&owned, PROJECT_EXT, &content)
         })
@@ -336,27 +379,47 @@ impl AppState {
         Ok(json!({ "ok": true, "name": name, "path": path.display().to_string(), "revision": revision }))
     }
 
-    /// Open project `name`: replaces the document (`doc.load`, one undo step) and makes it the current project.
-    /// Returns `{ok, name, result, revision}`.
-    pub async fn project_open(&self, name: &str, origin: Origin) -> Result<Value, EngineError> {
+    /// Open project `name`: replaces the document (`doc.load`, one undo step) and makes it the current project. A
+    /// name that differs only in case finds the project when exactly one matches; the project keeps the name it
+    /// has on disk. Returns `{ok, name, result, revision}`.
+    pub async fn project_open(self: &Arc<Self>, name: &str, origin: Origin) -> Result<Value, EngineError> {
         projects::validate_name(name)?;
-        let dir = self.projects.clone();
         let owned = name.to_owned();
-        let content = tokio::task::spawn_blocking(move || dir.read(&owned)).await??;
-        let inv = Invocation { id: "doc.load".into(), params: json!({ "content": content }) };
-        let o = self.batch_opening(vec![inv], origin, Some(name.to_owned()))?.remove(0);
+        let (name, o) = self
+            .blocking(move |st| {
+                let (name, content) = st.projects.read(&owned)?;
+                let inv = Invocation { id: "doc.load".into(), params: content_params(content) };
+                let o = st.batch_opening(vec![inv], origin, Some(name.clone()))?.remove(0);
+                Ok((name, o))
+            })
+            .await?;
         Ok(json!({ "ok": true, "name": name, "result": o.result, "revision": o.revision }))
     }
 
-    /// Export the document as LightBurn to `<projects-dir>/<name>.lbrn2`, at the document's field size. Returns
+    /// Export the document as LightBurn to `<projects-dir>/<name>.lbrn2`, at the document's field size. Unless
+    /// `overwrite`, an existing `.lbrn2` of that name (ignoring case) is refused (409). Returns
     /// `{ok, path, warnings, field_mm}`.
-    pub async fn project_export_lbrn2(&self, name: &str, origin: Origin) -> Result<Value, EngineError> {
+    pub async fn project_export_lbrn2(
+        &self,
+        name: &str,
+        overwrite: bool,
+        origin: Origin,
+    ) -> Result<Value, EngineError> {
         projects::validate_name(name)?;
-        let o = self.execute(Invocation { id: "doc.export_lbrn2".into(), params: json!({}) }, origin)?;
-        let content = o.result["content"].as_str().unwrap_or_default().to_owned();
+        let mut o = self.execute(Invocation { id: "doc.export_lbrn2".into(), params: json!({}) }, origin)?;
+        let content = match o.result["content"].take() {
+            Value::String(s) => s,
+            _ => String::new(),
+        };
         let dir = self.projects.clone();
         let owned = name.to_owned();
-        let path = tokio::task::spawn_blocking(move || dir.write(&owned, LBRN2_EXT, &content)).await??;
+        let path = tokio::task::spawn_blocking(move || {
+            if !overwrite {
+                refuse_clobber(&dir, &owned, LBRN2_EXT, None)?;
+            }
+            dir.write(&owned, LBRN2_EXT, &content)
+        })
+        .await??;
         Ok(json!({
             "ok": true,
             "path": path.display().to_string(),
@@ -370,7 +433,7 @@ impl AppState {
         let (content, warnings, name) = match format {
             FileFormat::OpenEtch => {
                 let s = lock(&self.session);
-                (to_openetch_json(s.document()), Vec::new(), s.document().name.clone())
+                (saveable(s.document())?, Vec::new(), s.document().name.clone())
             }
             FileFormat::Lbrn2 => {
                 let o = self.execute(Invocation { id: "doc.export_lbrn2".into(), params: json!({}) }, Origin::Ui)?;
@@ -403,10 +466,11 @@ impl AppState {
                 if field_mm.is_some() {
                     return Err(EngineError::BadRequest("field_mm is only for LightBurn imports".into()));
                 }
-                Invocation { id: "doc.load".into(), params: json!({ "content": content }) }
+                Invocation { id: "doc.load".into(), params: content_params(content) }
             }
             FileFormat::Lbrn2 => {
-                let mut params = json!({ "content": content, "mode": if merge { "merge" } else { "replace" } });
+                let mut params = content_params(content);
+                params["mode"] = json!(if merge { "merge" } else { "replace" });
                 if let Some(f) = field_mm {
                     params["field_mm"] = json!(f);
                 }
@@ -566,6 +630,28 @@ impl AppState {
     }
 }
 
+/// The document as `.openetch` JSON, refusing one that would not load again (never written as `null`s). The
+/// session refuses to commit such a document, so this is a backstop.
+fn saveable(doc: &Document) -> Result<String, EngineError> {
+    try_to_openetch_json(doc).map_err(|e| EngineError::Internal(e.to_string()))
+}
+
+/// Refuse (409) writing `<name>.<ext>` when that would replace an existing file other than the current project's,
+/// including one whose name differs only in case.
+fn refuse_clobber(dir: &ProjectDir, name: &str, ext: &str, current: Option<&str>) -> Result<(), EngineError> {
+    let clash = dir.replaced_by(name, ext)?.into_iter().find(|existing| current != Some(existing.as_str()));
+    match clash {
+        None => Ok(()),
+        Some(existing) => {
+            let what = if ext == PROJECT_EXT { format!("a project named \"{existing}\"") } else {
+                format!("\"{existing}.{ext}\"")
+            };
+            let case = if existing == name { "" } else { " (names that differ only in case are the same file)" };
+            Err(EngineError::Conflict(format!("{what} already exists{case}; pass overwrite: true to replace it")))
+        }
+    }
+}
+
 /// Give a `doc.import_lbrn2` / `doc.export_lbrn2` invocation `field_mm` when it has none.
 fn fill_field_mm(inv: &mut Invocation, field_mm: f64) {
     if !NEEDS_FIELD.contains(&inv.id.as_str()) {
@@ -610,5 +696,15 @@ mod tests {
         assert_eq!(parse_origin(Some(&json!("agent:claude"))).unwrap(), Origin::Agent("claude".into()));
         assert_eq!(parse_origin(Some(&json!({"kind": "script"}))).unwrap(), Origin::Script);
         assert!(parse_origin(Some(&json!("root"))).is_err());
+    }
+
+    #[test]
+    fn saving_refuses_a_document_that_would_not_load_again() {
+        let good = Document::default();
+        assert!(doc::file::from_openetch_json(&saveable(&good).unwrap()).is_ok());
+        let mut bad = Document::default();
+        bad.layers[0].settings.power_pct = f64::NAN;
+        let e = saveable(&bad).unwrap_err();
+        assert_eq!(e.status(), axum::http::StatusCode::INTERNAL_SERVER_ERROR, "{e}");
     }
 }

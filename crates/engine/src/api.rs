@@ -101,8 +101,10 @@ struct ExecuteBody {
 
 async fn execute(State(st): State<Arc<AppState>>, body: Bytes) -> Result<Response, EngineError> {
     let b: ExecuteBody = body_required(&body)?;
+    drop(body);
     let origin = parse_origin(b.origin.as_ref())?;
-    match st.execute(Invocation { id: b.id, params: b.params }, origin) {
+    // Blocking thread: an import can take seconds.
+    match st.blocking(move |st| st.execute(Invocation { id: b.id, params: b.params }, origin)).await {
         Ok(o) => Ok(Json(json!({ "ok": true, "result": o.result, "revision": o.revision })).into_response()),
         Err(EngineError::Command(e)) => Ok(command_failure(e)),
         Err(e) => Err(e),
@@ -118,8 +120,9 @@ struct BatchBody {
 
 async fn batch(State(st): State<Arc<AppState>>, body: Bytes) -> Result<Response, EngineError> {
     let b: BatchBody = body_required(&body)?;
+    drop(body);
     let origin = parse_origin(b.origin.as_ref())?;
-    match st.batch(b.commands, origin) {
+    match st.blocking(move |st| st.batch(b.commands, origin)).await {
         Ok(outs) => {
             let revision = outs.last().map(|o| o.revision).unwrap_or_else(|| st.revision());
             let results: Vec<&Value> = outs.iter().map(|o| &o.result).collect();
@@ -323,22 +326,30 @@ async fn upload(
     };
     let field_mm = match q.get("field_mm") {
         None => None,
-        Some(v) => {
-            Some(v.parse::<f64>().map_err(|_| EngineError::BadRequest(format!("field_mm '{v}' is not a number")))?)
-        }
+        // `parse` accepts "NaN" and "inf", which would become JSON null (the document's field) downstream.
+        Some(v) => match v.parse::<f64>() {
+            Ok(f) if f.is_finite() => Some(f),
+            _ => return Err(EngineError::BadRequest(format!("field_mm '{v}' is not a finite number"))),
+        },
     };
     if body.is_empty() {
         return Err(EngineError::BadRequest("the upload is empty".into()));
     }
-    let text = String::from_utf8(body.to_vec()).map_err(|_| {
-        EngineError::BadRequest("the file is not UTF-8 text (expected .openetch JSON or .lbrn2 XML)".into())
-    })?;
-    // LightBurn and some editors write a byte-order mark.
-    let text = match text.strip_prefix('\u{feff}') {
-        Some(rest) => rest.to_owned(),
-        None => text,
-    };
-    match st.upload(format, merge, field_mm, text, commands::Origin::Ui) {
+    // Large files are converted and imported on a blocking thread; the body is moved, not copied.
+    let result = st
+        .blocking(move |st| {
+            // No copy when the body buffer is not shared (the usual case).
+            let mut text = String::from_utf8(Vec::from(body)).map_err(|_| {
+                EngineError::BadRequest("the file is not UTF-8 text (expected .openetch JSON or .lbrn2 XML)".into())
+            })?;
+            // LightBurn and some editors write a byte-order mark.
+            if text.starts_with('\u{feff}') {
+                text.drain(..'\u{feff}'.len_utf8());
+            }
+            st.upload(format, merge, field_mm, text, commands::Origin::Ui)
+        })
+        .await;
+    match result {
         Ok(o) => Ok(Json(json!({ "ok": true, "result": o.result, "revision": o.revision })).into_response()),
         Err(EngineError::Command(e)) => Ok(command_failure(e)),
         Err(e) => Err(e),

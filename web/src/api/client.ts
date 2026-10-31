@@ -162,8 +162,12 @@ export const api = {
   project: () => request<ProjectInfo>("GET", "/api/project"),
   /** Saved projects on the engine (`[{name, modified_unix_s, size}]`); normalize with `projectList`. */
   projects: () => request<unknown>("GET", "/api/projects"),
-  /** Save the document as `<projects-dir>/<name>.openetch` (replacing a project of that name). */
-  saveProject: (name: string) => checked("/api/projects/save", { name }, "saving the project failed"),
+  /**
+   * Save the document as `<projects-dir>/<name>.openetch`. Without `overwrite` the engine's default applies (replace);
+   * with `overwrite: false` saving over another existing project is refused with a 409 ApiError (see `isSaveConflict`).
+   */
+  saveProject: (name: string, overwrite?: boolean) =>
+    checked("/api/projects/save", overwrite === undefined ? { name } : { name, overwrite }, "saving the project failed"),
   /** Replace the document with a saved project (one undo step). */
   openProject: (name: string) => checked("/api/projects/open", { name }, "opening the project failed"),
   /**
@@ -172,7 +176,11 @@ export const api = {
    * `commandResult`.
    */
   upload: async (file: Blob, format: FileFormat, mode: ImportMode = "replace", fieldMm?: number): Promise<unknown> => {
-    const field = format === "lbrn2" && fieldMm !== undefined && Number.isFinite(fieldMm) ? `&field_mm=${fieldMm}` : "";
+    // A bad field size is refused here, never silently dropped (the import would then use the document's size).
+    if (format === "lbrn2" && fieldMm !== undefined && !(Number.isFinite(fieldMm) && fieldMm > 0)) {
+      throw new ApiError(`field_mm must be a positive number (got ${fieldMm})`, 400, { detail: `field_mm must be a positive number (got ${fieldMm})` });
+    }
+    const field = format === "lbrn2" && fieldMm !== undefined ? `&field_mm=${fieldMm}` : "";
     const path = `/api/document/upload?format=${format}&mode=${mode}${field}`;
     const headers = authHeaders("application/json");
     headers["Content-Type"] = "application/octet-stream";

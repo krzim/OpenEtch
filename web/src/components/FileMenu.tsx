@@ -14,6 +14,7 @@ import {
   currentProjectName,
   downloadName,
   fieldChoices,
+  fileError,
   fileFormat,
   fileStem,
   formatBytes,
@@ -21,7 +22,9 @@ import {
   groupWarnings,
   importMessage,
   importOutcome,
+  isSaveConflict,
   needsConfirm,
+  projectClash,
   projectDirty,
   projectList,
   sameField,
@@ -36,6 +39,9 @@ import type { Engine } from "../api/useEngine.ts";
 import { Icon, Modal, fmt } from "./ui.tsx";
 
 type Notify = (msg: string, kind?: "info" | "error") => void;
+
+/** How a save ended: saved, refused because another project has that name (ask to replace), or failed (reported). */
+export type SaveOutcome = "saved" | "exists" | "failed";
 
 /** Which File dialog is open. `back` is where Cancel on a confirmation returns to. */
 type FileModal =
@@ -62,7 +68,8 @@ export interface FileActions {
   dismissWarnings: () => void;
   newDocument: () => void;
   save: () => void;
-  saveAs: (name: string) => Promise<boolean>;
+  /** Save under `name`; `overwrite: false` lets the engine refuse to replace another project (outcome "exists"). */
+  saveAs: (name: string, overwrite?: boolean) => Promise<SaveOutcome>;
   openProject: (name: string) => void;
   uploadFile: (file: File) => void;
   importLbrn2: (file: File, mode: ImportMode, fieldMm: number) => void;
@@ -163,22 +170,23 @@ export function useFileActions(p: { engine: Engine; machineFieldMm: number | nul
   }, [guard, task, engine, detach, notify]);
 
   const saveAs = useCallback(
-    async (name: string): Promise<boolean> => {
+    async (name: string, overwrite?: boolean): Promise<SaveOutcome> => {
       const problem = validateProjectName(name);
       if (problem) {
         notify(problem, "error");
-        return false;
+        return "failed";
       }
       setBusy(true);
       try {
-        await api.saveProject(name);
+        await api.saveProject(name, overwrite);
         setDetachedFrom(undefined);
         setSuggestedName("");
         notify(`Saved "${name}".`);
-        return true;
+        return "saved";
       } catch (e) {
+        if (overwrite === false && isSaveConflict(e)) return "exists";
         report(e);
-        return false;
+        return "failed";
       } finally {
         setBusy(false);
         void engine.refreshProject();
@@ -228,7 +236,7 @@ export function useFileActions(p: { engine: Engine; machineFieldMm: number | nul
       guard(`Opening ${file.name}`, "Discard and open", () => {
         setModal(null);
         void task(async () => {
-          const result = commandResult(await api.upload(file, "openetch"));
+          const result = commandResult(await api.upload(file, "openetch").catch((e: unknown) => Promise.reject(fileError(e, file.name))));
           detach(suggestProjectName(fileStem(file.name)));
           notify(`Opened ${file.name}. Save it to keep it on the engine.`);
           showWarnings(`Opening ${file.name}`, warningList(result));
@@ -247,7 +255,7 @@ export function useFileActions(p: { engine: Engine; machineFieldMm: number | nul
           // The upload route takes the raw file (up to 50 MB) and the field size it was laid out for.
           if (file.size > MAX_UPLOAD_BYTES) throw new Error(`${file.name} is larger than ${formatBytes(MAX_UPLOAD_BYTES)}.`);
           const field = sameField(fieldMm, validField(live.current.doc?.field_mm)) ? undefined : fieldMm;
-          const result = commandResult(await api.upload(file, "lbrn2", mode, field));
+          const result = commandResult(await api.upload(file, "lbrn2", mode, field).catch((e: unknown) => Promise.reject(fileError(e, file.name))));
           await engine.refreshDoc();
           const outcome = importOutcome(result);
           if (mode === "replace") detach(suggestProjectName(fileStem(file.name)));
@@ -280,7 +288,7 @@ export function useFileActions(p: { engine: Engine; machineFieldMm: number | nul
 
   const downloadOpenetch = useCallback(() => {
     void task(async () => {
-      const { blob, filename } = await api.download("openetch");
+      const { blob, filename } = await api.download("openetch").catch((e: unknown) => Promise.reject(fileError(e, "Download")));
       // The engine names the file after its project, which this UI may have replaced (see `currentProjectName`).
       const name = (live.current.projectName !== null ? filename : null) ?? downloadName(baseName(), "openetch");
       saveBlob(blob, name);
@@ -524,17 +532,27 @@ function SaveAsDialog({ file, docName, onClose }: { file: FileActions; docName: 
   const initial = file.suggestedName || file.projectName || (docName && docName !== "Untitled" ? suggestProjectName(docName) : "");
   const [name, setName] = useState(initial);
   const [confirmReplace, setConfirmReplace] = useState(false);
+  // The engine refused the save because a project of that name exists that the list did not show (case-only clash,
+  // or saved meanwhile from elsewhere).
+  const [refused, setRefused] = useState<string | null>(null);
   const { list } = useProjectList();
   const trimmed = name.trim();
   const problem = trimmed ? validateProjectName(trimmed) : null;
-  const exists = !!list?.some((p) => p.name === trimmed) && trimmed !== file.projectName;
+  // Case-insensitive: Windows and macOS would replace "ok name" when saving "OK NAME".
+  const existing = projectClash(list, trimmed, file.projectName) ?? (refused === trimmed ? trimmed : null);
   const submit = async () => {
     if (!trimmed || problem || file.busy) return;
-    if (exists && !confirmReplace) {
+    if (existing !== null && !confirmReplace) {
       setConfirmReplace(true);
       return;
     }
-    if (await file.saveAs(trimmed)) onClose();
+    // Only an explicit Replace may overwrite; otherwise the engine refuses with 409 and this dialog asks.
+    const outcome = await file.saveAs(trimmed, confirmReplace);
+    if (outcome === "saved") onClose();
+    else if (outcome === "exists") {
+      setRefused(trimmed);
+      setConfirmReplace(true);
+    }
   };
   return (
     <Modal
@@ -569,7 +587,7 @@ function SaveAsDialog({ file, docName, onClose }: { file: FileActions; docName: 
           />
         </span>
       </label>
-      {exists && <p className="hint warn-text">A project named "{trimmed}" exists. Saving replaces it.</p>}
+      {existing !== null && <p className="hint warn-text">A project named "{existing}" exists. Saving replaces it.</p>}
       <p className="hint">Saved on the engine as {trimmed && !problem ? `"${trimmed}.openetch"` : "<name>.openetch"}.</p>
     </Modal>
   );

@@ -77,7 +77,8 @@ shell, browser). machine_stop is always available and stops everything.
 Projects (files live in the engine's projects directory; you never pass file paths): project_list, \
 project_open {name} (replaces the document; undoable), project_save {name} (saving to the current project's name \
 replaces it; replacing a different existing project needs overwrite: true, which you only pass when the person asked \
-for it), project_export_lbrn2 {name} (writes <name>.lbrn2 for LightBurn). File contents go through execute: doc.save \
+for it), project_export_lbrn2 {name, overwrite?} (writes <name>.lbrn2 for LightBurn; replacing an existing one needs \
+overwrite: true, same rule). File contents go through execute: doc.save \
 returns the .openetch JSON, doc.load replaces the document with one, doc.export_lbrn2 returns LightBurn XML, and \
 doc.import_lbrn2 {content, mode: replace|merge, field_mm} imports LightBurn XML. LightBurn files do not record the \
 galvo field size they were laid out for, and a wrong field_mm shifts everything by half the difference: when the \
@@ -145,6 +146,16 @@ struct SaveArgs {
     /// Project name: 1-100 letters, digits, spaces and - _ . ( ) (no path, no leading dot, no "..").
     name: String,
     /// Replace an existing project that is not the current one. Default false; only when the person asked.
+    #[serde(default)]
+    overwrite: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct ExportArgs {
+    /// File name without .lbrn2: 1-100 letters, digits, spaces and - _ . ( ) (no path, no leading dot, no "..").
+    name: String,
+    /// Replace an existing <name>.lbrn2. Default false; only when the person asked.
     #[serde(default)]
     overwrite: bool,
 }
@@ -286,12 +297,12 @@ impl GalvoMcp {
                  Unsaved changes stay reachable with undo. Returns {ok, name, result, revision}.",
                 false,
             ),
-            tool::<ProjectArgs>(
+            tool::<ExportArgs>(
                 "project_export_lbrn2",
                 "Export to LightBurn",
                 "Write the document as a LightBurn project <name>.lbrn2 in the projects directory (laid out for the \
-                 document's field_mm; replaces a file of that name). Returns {ok, path, warnings, field_mm}. For the \
-                 XML itself use execute doc.export_lbrn2.",
+                 document's field_mm). Replacing an existing <name>.lbrn2 needs overwrite: true. Returns {ok, path, \
+                 warnings, field_mm}. For the XML itself use execute doc.export_lbrn2.",
                 false,
             ),
         ]
@@ -314,14 +325,16 @@ impl GalvoMcp {
             }
             "execute" => {
                 let x: ExecuteArgs = args(name, a)?;
-                let o = st.execute(Invocation { id: x.id, params: Value::Object(x.params) }, Self::origin())?;
+                // Blocking thread: an import can take seconds.
+                let inv = Invocation { id: x.id, params: Value::Object(x.params) };
+                let o = st.blocking(move |st| st.execute(inv, Self::origin())).await?;
                 Ok(ok_json(json!({ "ok": true, "result": o.result, "revision": o.revision })))
             }
             "batch" => {
                 let x: BatchArgs = args(name, a)?;
                 let invs =
                     x.commands.into_iter().map(|c| Invocation { id: c.id, params: Value::Object(c.params) }).collect();
-                let outs = st.batch(invs, Self::origin())?;
+                let outs = st.blocking(move |st| st.batch(invs, Self::origin())).await?;
                 let revision = outs.last().map(|o| o.revision).unwrap_or_else(|| st.revision());
                 let results: Vec<&Value> = outs.iter().map(|o| &o.result).collect();
                 Ok(ok_json(json!({ "ok": true, "results": results, "revision": revision })))
@@ -384,8 +397,8 @@ impl GalvoMcp {
                 Ok(ok_json(st.project_open(&x.name, Self::origin()).await?))
             }
             "project_export_lbrn2" => {
-                let x: ProjectArgs = args(name, a)?;
-                Ok(ok_json(st.project_export_lbrn2(&x.name, Self::origin()).await?))
+                let x: ExportArgs = args(name, a)?;
+                Ok(ok_json(st.project_export_lbrn2(&x.name, x.overwrite, Self::origin()).await?))
             }
             other => Err(EngineError::NotFound(format!("unknown tool '{other}' (tools: {})", TOOL_NAMES.join(", ")))),
         }
@@ -465,7 +478,16 @@ mod tests {
     }
 
     #[test]
+    fn export_tool_takes_overwrite() {
+        let t = GalvoMcp::tools().into_iter().find(|t| t.name == "project_export_lbrn2").unwrap();
+        assert!(t.input_schema["properties"].get("overwrite").is_some(), "{:?}", t.input_schema);
+        assert!(t.description.as_deref().unwrap().contains("overwrite: true"));
+        assert!(INSTRUCTIONS.contains("project_export_lbrn2 {name, overwrite?}"));
+    }
+
+    #[test]
     fn tool_list_is_complete() {
+
         let names: Vec<String> = GalvoMcp::tools().iter().map(|t| t.name.to_string()).collect();
         assert_eq!(names, TOOL_NAMES.map(String::from).to_vec());
         for t in GalvoMcp::tools() {
@@ -581,6 +603,19 @@ mod tests {
         assert!(path.ends_with("Agent job.lbrn2"), "{path:?}");
         assert!(std::fs::read_to_string(&path).unwrap().contains("<LightBurnProject"));
         assert_eq!(v["field_mm"], json!(150.0));
+        // Like project_save, an existing export (also one differing only in case) needs overwrite: true.
+        std::fs::write(&path, "old").unwrap();
+        for name in ["Agent job", "AGENT JOB"] {
+            let (err, v) = call("project_export_lbrn2", json!({"name": name})).await;
+            assert!(err, "{v}");
+            assert!(v["error"].as_str().unwrap().contains("overwrite"), "{v}");
+        }
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "old", "nothing was replaced");
+        let (err, v) = call("project_export_lbrn2", json!({"name": "Agent job", "overwrite": true})).await;
+        assert!(!err, "{v}");
+        assert!(std::fs::read_to_string(&path).unwrap().contains("<LightBurnProject"));
+        let (err, v) = call("project_export_lbrn2", json!({"name": "Agent job", "overwrite": "yes"})).await;
+        assert!(err, "{v}");
 
         for bad in [json!({"name": "../x"}), json!({"name": "a/b"}), json!({}), json!({"name": "x", "path": "/tmp"})] {
             for tool in ["project_save", "project_open", "project_export_lbrn2"] {

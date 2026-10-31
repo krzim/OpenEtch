@@ -83,6 +83,21 @@ fn real_projects_import_export_reimport() {
         for w in &export_warnings {
             println!("   export warning: {w}");
         }
+        // The import is a valid .openetch project: it saves and loads again unchanged.
+        let saved = doc::file::try_to_openetch_json(&d).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let loaded = doc::file::from_openetch_json(&saved).unwrap_or_else(|e| panic!("{name}: {e}"));
+        // (serde_json without `float_roundtrip` may read a number back 1 ulp off, hence bounds rather than equality.)
+        assert_eq!(loaded.layers, d.layers, "{name}: .openetch round trip");
+        assert_eq!(loaded.objects.len(), d.objects.len(), "{name}: .openetch round trip");
+        for (a, b) in loaded.objects.iter().zip(&d.objects) {
+            assert_eq!((&a.id, &a.name, &a.layer), (&b.id, &b.name, &b.layer), "{name}: .openetch round trip");
+            assert!(near(a.bounds(), b.bounds()), "{name}: {} moved in the .openetch round trip", a.name);
+        }
+        // A frequency the source left out stays out.
+        for (l, cs) in d.layers.iter().zip(&exported.cut_settings) {
+            let source_had = p.cut_settings.iter().any(|c| c.index == cs.index && c.params.frequency.is_some());
+            assert_eq!(cs.params.frequency.is_some(), source_had, "{name}: {} frequency", l.name);
+        }
         let out = write(&exported);
         println!("   exported {} bytes (source {} bytes)", out.len(), text.len());
         if let Some(dir) = std::env::var_os("OPENETCH_LBRN_EXPORT_DIR") {
@@ -119,6 +134,17 @@ fn real_libraries_parse() {
             let (layer, w) = cut_setting_to_layer(&e.setting, "layer-1");
             assert_eq!(layer.sub_layers.len(), e.setting.sub_layers.len(), "{name}: {}", e.description);
             subs += layer.sub_layers.len();
+            // Exported as a project layer, the entry keeps its subnames and every other value.
+            let d = Document { layers: vec![layer.clone()], ..Document::default() };
+            let (p, _) = from_document(&d, FIELD_MM).unwrap();
+            let back = &parse(&write(&p)).unwrap().cut_settings[0];
+            assert_eq!(back.params.subname, e.setting.params.subname, "{name}: {}", e.description);
+            for (a, b) in back.sub_layers.iter().zip(&e.setting.sub_layers) {
+                assert_eq!(a.params.subname, b.params.subname, "{name}: {}", e.description);
+            }
+            let (again, _) = cut_setting_to_layer(back, "layer-1");
+            assert_eq!(again.extras, layer.extras, "{name}: {}", e.description);
+            assert_eq!((&again.settings, &again.sub_layers), (&layer.settings, &layer.sub_layers), "{name}");
             warnings.extend(w);
         }
         warnings.sort();

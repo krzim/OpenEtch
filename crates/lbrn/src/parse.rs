@@ -1,5 +1,6 @@
-//! `.lbrn2` (and `.clb` library) text → [`LbrnProject`]. Bounded: input size, XML nodes, nesting depth, and total
-//! path vertices (a shared `VertList` counts once per use) are all capped, and DTDs are refused.
+//! `.lbrn2` (and `.clb` library) text → [`LbrnProject`]. Bounded: input size, XML nodes, nesting depth, total path
+//! vertices and total path segments (a shared `VertList` / `PrimList` counts once per use, since every use is resolved
+//! into its own copy) are all capped, and DTDs are refused.
 
 use std::collections::HashMap;
 
@@ -15,7 +16,11 @@ pub const MAX_BYTES: usize = 64 * 1024 * 1024;
 const MAX_NODES: u32 = 4_000_000;
 const MAX_DEPTH: usize = 64;
 /// Total vertices over all paths, counting shared lists once per use.
-const MAX_VERTICES: usize = 10_000_000;
+const MAX_VERTICES: usize = 4_000_000;
+/// Total path segments (`PrimList` entries; a `LineOpen`/`LineClosed` list counts its lines) over all paths, counting
+/// shared lists once per use. A few hundred bytes reusing one large list by `PrimID` would otherwise expand to
+/// gigabytes.
+pub const MAX_SEGMENTS: usize = 2_000_000;
 
 fn malformed(m: impl Into<String>) -> LbrnError {
     LbrnError::Malformed(m.into())
@@ -198,11 +203,20 @@ fn element(n: Node<'_, '_>, depth: usize) -> Result<Element, LbrnError> {
     })
 }
 
+/// A per-list size error restated as the file-wide limit it hit.
+fn total(e: LbrnError, what: String) -> LbrnError {
+    match e {
+        LbrnError::TooLarge(_) => LbrnError::TooLarge(format!("{what} (a shared list counts once per use)")),
+        other => other,
+    }
+}
+
 #[derive(Default)]
 struct Cx<'a> {
     vert_defs: HashMap<&'a str, &'a str>,
     prim_defs: HashMap<&'a str, &'a str>,
     vertices: usize,
+    segments: usize,
 }
 
 impl<'a> Cx<'a> {
@@ -276,7 +290,8 @@ impl<'a> Cx<'a> {
             }
             (None, None) => return Err(malformed("a Path has no VertList")),
         };
-        let vertices = parse_vertices(vert_text, MAX_VERTICES - self.vertices)?;
+        let vertices = parse_vertices(vert_text, MAX_VERTICES - self.vertices)
+            .map_err(|e| total(e, format!("more than {MAX_VERTICES} path vertices in total")))?;
         self.vertices += vertices.len();
         let prim_text = match (child(n, "PrimList"), n.attribute("PrimID")) {
             (Some(l), _) => l.text().unwrap_or_default(),
@@ -285,7 +300,9 @@ impl<'a> Cx<'a> {
             }
             (None, None) => return Err(malformed("a Path has no PrimList")),
         };
-        let prims = parse_prims(prim_text, vertices.len())?;
+        let (prims, segments) = parse_prims(prim_text, vertices.len(), MAX_SEGMENTS - self.segments)
+            .map_err(|e| total(e, format!("more than {MAX_SEGMENTS} path segments in total")))?;
+        self.segments += segments;
         Ok(PathData { vertices, prims })
     }
 }

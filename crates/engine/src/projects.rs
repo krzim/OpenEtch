@@ -25,12 +25,18 @@ pub const PROJECT_EXT: &str = doc::file::EXTENSION;
 /// File name extension of LightBurn exports, without the dot.
 pub const LBRN2_EXT: &str = "lbrn2";
 
-/// Windows device names, refused as names (also with an extension, e.g. `con.openetch`) on every OS so a project
-/// saved on a Pi can be copied to a PC.
-const RESERVED: [&str; 22] = [
-    "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9", "lpt1", "lpt2",
-    "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+/// Windows device names, refused as names in any case and with any extension (e.g. `CON.backup`) on every OS so a
+/// project saved on a Pi can be copied to a PC. Windows also treats the superscript digits ¹ ² ³ as digits here.
+const RESERVED: [&str; 30] = [
+    "con", "prn", "aux", "nul", "com0", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9", "com¹",
+    "com²", "com³", "lpt0", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9", "lpt¹", "lpt²",
+    "lpt³",
 ];
+
+/// Whether two project names name the same file on a case-insensitive file system (Windows, macOS).
+pub fn same_name_ignoring_case(a: &str, b: &str) -> bool {
+    a == b || a.to_lowercase() == b.to_lowercase()
+}
 
 /// Check a project name (see the module docs). Also refuses a leading or trailing space and Windows device names.
 pub fn validate_name(name: &str) -> Result<(), EngineError> {
@@ -175,16 +181,57 @@ impl ProjectDir {
         Ok(out)
     }
 
-    /// Whether project `name` exists (as a usable file inside the directory).
-    pub fn exists(&self, name: &str) -> Result<bool, EngineError> {
-        validate_name(name)?;
-        let Some(root) = self.canonical_root(false)? else { return Ok(false) };
-        Ok(Self::resolve_existing(&root, &format!("{name}.{PROJECT_EXT}"))?.is_some())
+    /// The names (as spelled on disk) of the `<name>.<ext>` files in `root` whose name equals `name` ignoring case,
+    /// sorted. Only entries with a valid name count; links are not followed here.
+    fn case_matches_in(root: &Path, name: &str, ext: &str) -> Result<Vec<String>, EngineError> {
+        let suffix = format!(".{ext}");
+        let entries = fs::read_dir(root).map_err(|e| io_err("list", root, e))?;
+        let mut out: Vec<String> = entries
+            .flatten()
+            .filter_map(|e| e.file_name().to_str().and_then(|f| f.strip_suffix(&suffix)).map(str::to_owned))
+            .filter(|stem| validate_name(stem).is_ok() && same_name_ignoring_case(stem, name))
+            .collect();
+        out.sort();
+        Ok(out)
     }
 
-    /// Read project `name` as text.
-    pub fn read(&self, name: &str) -> Result<String, EngineError> {
+    /// The existing `<stem>.<ext>` files that writing `<name>.<ext>` replaces or clashes with: the exact name when it
+    /// exists, else every file whose name differs only in case (on Windows and macOS that is the same file; on
+    /// Linux [`ProjectDir::write`] replaces a single one too, so a project copied to a PC never clashes).
+    pub fn replaced_by(&self, name: &str, ext: &str) -> Result<Vec<String>, EngineError> {
         validate_name(name)?;
+        let Some(root) = self.canonical_root(false)? else { return Ok(Vec::new()) };
+        let matches = Self::case_matches_in(&root, name, ext)?;
+        if matches.iter().any(|m| m == name) {
+            return Ok(vec![name.to_owned()]);
+        }
+        Ok(matches)
+    }
+
+    /// The project `name` refers to, as spelled on disk: the exact name, else the only one that differs just in
+    /// case. Several case variants and no exact match (possible on Linux) is a 409; none is a 404.
+    pub fn resolve_name(&self, name: &str) -> Result<String, EngineError> {
+        validate_name(name)?;
+        let missing = || EngineError::NotFound(format!("no project named \"{name}\""));
+        let root = self.canonical_root(false)?.ok_or_else(missing)?;
+        let matches = Self::case_matches_in(&root, name, PROJECT_EXT)?;
+        if matches.iter().any(|m| m == name) {
+            return Ok(name.to_owned());
+        }
+        match matches.as_slice() {
+            [] => Err(missing()),
+            [only] => Ok(only.clone()),
+            many => Err(EngineError::Conflict(format!(
+                "several projects match \"{name}\" ignoring case ({}); use the exact name",
+                many.iter().map(|m| format!("\"{m}\"")).collect::<Vec<_>>().join(", ")
+            ))),
+        }
+    }
+
+    /// Read project `name` (found as [`ProjectDir::resolve_name`] does) as text. Returns the name as spelled on disk
+    /// and the content.
+    pub fn read(&self, name: &str) -> Result<(String, String), EngineError> {
+        let name = self.resolve_name(name)?;
         let missing = || EngineError::NotFound(format!("no project named \"{name}\""));
         let root = self.canonical_root(false)?.ok_or_else(missing)?;
         let path = Self::resolve_existing(&root, &format!("{name}.{PROJECT_EXT}"))?.ok_or_else(missing)?;
@@ -196,14 +243,16 @@ impl ProjectDir {
             )));
         }
         let bytes = fs::read(&path).map_err(|e| io_err("read", &path, e))?;
-        String::from_utf8(bytes).map_err(|_| {
+        let text = String::from_utf8(bytes).map_err(|_| {
             EngineError::BadRequest(format!("project \"{name}\" is not UTF-8 text; it is not an OpenEtch file"))
-        })
+        })?;
+        Ok((name, text))
     }
 
     /// Write `content` to `<name>.<ext>` (creating the directory), replacing any file of that name. Written to a
-    /// fresh temporary file first and renamed over the old one, so a failed write never leaves a half file.
-    /// Returns the path written.
+    /// fresh temporary file first and renamed over the old one, so a failed write never leaves a half file. When no
+    /// file has exactly this name but one differs only in case, that one is replaced (it is moved aside first and
+    /// restored if the write fails), so the file ends up spelled `name` on every OS. Returns the path written.
     pub fn write(&self, name: &str, ext: &str, content: &str) -> Result<PathBuf, EngineError> {
         validate_name(name)?;
         let root = self.canonical_root(true)?.ok_or_else(|| EngineError::Internal("no projects directory".into()))?;
@@ -211,19 +260,38 @@ impl ProjectDir {
         // Refuses a link that points outside (or nowhere) before anything is written.
         Self::resolve_existing(&root, &file)?;
         let target = root.join(&file);
+        let matches = Self::case_matches_in(&root, name, ext)?;
+        let variant = match matches.as_slice() {
+            [only] if only != name => Some(format!("{only}.{ext}")),
+            _ => None,
+        };
+        if let Some(v) = &variant {
+            Self::resolve_existing(&root, v)?;
+        }
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let n = NEXT.fetch_add(1, Ordering::SeqCst);
         let tmp = root.join(format!(".{file}.{}-{n}.tmp", std::process::id()));
+        let aside = root.join(format!(".{file}.{}-{n}.old.tmp", std::process::id()));
         let written = (|| {
             let mut f = fs::OpenOptions::new().write(true).create_new(true).open(&tmp)?;
             f.write_all(content.as_bytes())?;
             f.sync_all()?;
             drop(f);
-            fs::rename(&tmp, &target)
+            if let Some(v) = &variant {
+                fs::rename(root.join(v), &aside)?;
+            }
+            fs::rename(&tmp, &target).inspect_err(|_| {
+                if let Some(v) = &variant {
+                    let _ = fs::rename(&aside, root.join(v));
+                }
+            })
         })();
         if let Err(e) = written {
             let _ = fs::remove_file(&tmp);
             return Err(io_err("write", &target, e));
+        }
+        if variant.is_some() {
+            let _ = fs::remove_file(&aside);
         }
         Ok(target)
     }
@@ -284,6 +352,19 @@ mod tests {
             "trail ",
             "con",
             "NUL.backup",
+            "CON",
+            "Aux.openetch",
+            "prn.x.y",
+            "nul .txt",
+            "COM0",
+            "lpt0.bak",
+            "com9",
+            "COM\u{b9}",
+            "com\u{b2}.x",
+            "Com\u{b3}",
+            "LPT\u{b9}",
+            "lpt\u{b2}",
+            "lpt\u{b3}.openetch",
             "a*b",
             "a?b",
             "a\"b",
@@ -296,13 +377,64 @@ mod tests {
         }
         assert!(validate_name("../x").unwrap_err().to_string().contains("'/'"));
         assert!(validate_name("x..y").unwrap_err().to_string().contains(".."));
+        // Only the device names themselves: longer names that start with one are fine.
+        for ok in ["console", "com10", "lpt\u{b9}0", "nullable", "auxiliary (2)", "com\u{2074}", "my con"] {
+            assert!(validate_name(ok).is_ok(), "{ok}");
+        }
+        assert!(validate_name("COM\u{b9}").unwrap_err().to_string().contains("reserved device name"));
+    }
+
+    #[test]
+    fn names_differing_in_case_are_one_project() {
+        let dir = ProjectDir::new(temp_dir("projects-case").join("p"));
+        dir.write("ok name (1)", PROJECT_EXT, "lower").unwrap();
+        // Writing a differently-cased name replaces the file and spells it the new way, on every OS.
+        assert_eq!(dir.replaced_by("OK NAME (1)", PROJECT_EXT).unwrap(), ["ok name (1)"]);
+        assert_eq!(dir.resolve_name("OK Name (1)").unwrap(), "ok name (1)");
+        assert_eq!(dir.read("OK NAME (1)").unwrap(), ("ok name (1)".into(), "lower".into()));
+        dir.write("OK NAME (1)", PROJECT_EXT, "upper").unwrap();
+        let names: Vec<String> = dir.list().unwrap().into_iter().map(|p| p.name).collect();
+        assert_eq!(names, ["OK NAME (1)"]);
+        assert_eq!(dir.read("ok name (1)").unwrap(), ("OK NAME (1)".into(), "upper".into()));
+        assert!(matches!(dir.resolve_name("other"), Err(EngineError::NotFound(_))));
+        // The extension counts: a .lbrn2 of that name is a different file.
+        assert_eq!(dir.replaced_by("ok name (1)", LBRN2_EXT).unwrap(), Vec::<String>::new());
+        dir.write("ok name (1)", LBRN2_EXT, "<x/>").unwrap();
+        assert_eq!(dir.replaced_by("OK NAME (1)", LBRN2_EXT).unwrap(), ["ok name (1)"]);
+        assert_eq!(dir.read("OK NAME (1)").unwrap().1, "upper");
+        let leftovers: Vec<_> = fs::read_dir(dir.root())
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "the replaced file is removed");
+
+        // Two files differing only in case (Linux): an open by another spelling is ambiguous; the exact name works.
+        fs::write(dir.root().join("Twin.openetch"), "a").unwrap();
+        if fs::write(dir.root().join("TWIN.openetch"), "b").is_ok() && dir.case_count("twin") == 2 {
+            assert!(matches!(dir.resolve_name("twin"), Err(EngineError::Conflict(_))));
+            assert_eq!(dir.read("TWIN").unwrap().1, "b");
+            assert_eq!(dir.replaced_by("Twin", PROJECT_EXT).unwrap(), ["Twin"]);
+            assert_eq!(dir.replaced_by("twin", PROJECT_EXT).unwrap(), ["TWIN", "Twin"]);
+        } else {
+            println!("note: the file system ignores case; skipping the ambiguous-name checks");
+            assert_eq!(dir.read("twin").unwrap().1, "b");
+        }
+        let _ = fs::remove_dir_all(dir.root().parent().unwrap());
+    }
+
+    impl ProjectDir {
+        /// How many `.openetch` files match `name` ignoring case.
+        fn case_count(&self, name: &str) -> usize {
+            Self::case_matches_in(self.root(), name, PROJECT_EXT).unwrap().len()
+        }
     }
 
     #[test]
     fn write_list_read_round_trip() {
         let dir = ProjectDir::new(temp_dir("projects").join("nested"));
         assert_eq!(dir.list().unwrap(), vec![], "a missing directory lists nothing");
-        assert!(!dir.exists("a").unwrap());
+        assert_eq!(dir.replaced_by("a", PROJECT_EXT).unwrap(), Vec::<String>::new());
         assert!(matches!(dir.read("a"), Err(EngineError::NotFound(_))));
 
         let p = dir.write("b project", PROJECT_EXT, "{\"x\":1}").unwrap();
@@ -320,8 +452,8 @@ mod tests {
         assert_eq!(names, ["A", "b project"]);
         assert_eq!(list[0].size, 6);
         assert!(list[0].modified_unix_s > 1_600_000_000);
-        assert_eq!(dir.read("A").unwrap(), "second");
-        assert!(dir.exists("b project").unwrap());
+        assert_eq!(dir.read("A").unwrap(), ("A".into(), "second".into()));
+        assert_eq!(dir.replaced_by("b project", PROJECT_EXT).unwrap(), ["b project"]);
         assert!(matches!(dir.read("../A"), Err(EngineError::BadRequest(_))));
         assert!(matches!(dir.read("folder"), Err(EngineError::Conflict(_))));
         let leftovers: Vec<_> = fs::read_dir(dir.root())
@@ -372,7 +504,7 @@ mod tests {
         assert!(!base.join("elsewhere").join("new.txt").exists());
         // A link to a project inside the directory is fine.
         assert!(symlink(&dir.root().join("inside.openetch"), &dir.root().join("alias.openetch")));
-        assert_eq!(dir.read("alias").unwrap(), "in");
+        assert_eq!(dir.read("alias").unwrap().1, "in");
         let names: Vec<String> = dir.list().unwrap().into_iter().map(|p| p.name).collect();
         assert_eq!(names, ["alias", "inside"]);
         let _ = fs::remove_dir_all(&base);

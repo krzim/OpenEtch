@@ -31,6 +31,40 @@ export function validateProjectName(name: string): string | null {
   return null;
 }
 
+/** A project name folded for comparison: Windows and macOS file names ignore case, so "Tags" and "TAGS" clash. */
+function nameKey(name: string): string {
+  return name.normalize("NFC").toLowerCase();
+}
+
+/**
+ * The existing project that saving as `name` would replace, compared case-insensitively, or null. The current
+ * project under its own exact name is not a clash (Save overwrites it on purpose).
+ */
+export function projectClash(list: readonly ProjectEntry[] | null | undefined, name: string, current: string | null): string | null {
+  if (!list || !name) return null;
+  const key = nameKey(name);
+  const hit = list.find((p) => nameKey(p.name) === key && !(p.name === name && name === current));
+  return hit ? hit.name : null;
+}
+
+/**
+ * The message for a failed upload or download of `what` (a file name): the engine's own `error` text (e.g. "field_mm
+ * 'x' is not a number" for a 400, "the file is larger than 50 MB" for a 413) rather than the method/path/status
+ * prefix of the HTTP error. Anything else is returned unchanged.
+ */
+export function fileError(e: unknown, what: string): unknown {
+  if (e instanceof Error) {
+    const detail = (e as { detail?: unknown }).detail;
+    if (typeof detail === "string" && detail) return new Error(`${what}: ${detail}`);
+  }
+  return e;
+}
+
+/** Whether `e` is the engine's 409 answer to saving over an existing project without `overwrite`. */
+export function isSaveConflict(e: unknown): boolean {
+  return e instanceof Error && (e as { status?: unknown }).status === 409;
+}
+
 /** Turn a file name or document name into a valid project name, or "" when nothing usable is left. */
 export function suggestProjectName(raw: string): string {
   let s = raw.replace(/[^\p{L}\p{N} _.()-]+/gu, " ");

@@ -63,7 +63,7 @@ impl Command for Array {
                         continue;
                     }
                     let offset = Vec2::new(f64::from(c) * px, f64::from(r) * py);
-                    let copies = copy_objects(doc, &ids, offset, &format!(" [{r},{c}]"));
+                    let copies = copy_objects(doc, &ids, offset, &format!(" [{r},{c}]"))?;
                     cells.push(json!({ "row": r, "col": c, "ids": copies }));
                     created.extend(copies);
                 }

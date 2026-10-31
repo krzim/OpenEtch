@@ -70,6 +70,12 @@ pub enum CommandError {
     NothingTo(&'static str),
 }
 
+impl From<doc::IdsExhausted> for CommandError {
+    fn from(e: doc::IdsExhausted) -> Self {
+        CommandError::Failed(e.to_string())
+    }
+}
+
 pub type Result<T, E = CommandError> = std::result::Result<T, E>;
 
 /// A document command. Implementations live in `builtin`.
@@ -212,6 +218,14 @@ impl Session {
             }
         }
         if edited {
+            // Backstop for every command: JSON cannot store NaN or infinity and planning cannot use them, so a
+            // document holding one (e.g. from transforms that overflow) is never committed.
+            if let Some(problem) = self.doc.numeric_problem() {
+                self.doc = before;
+                return Err(CommandError::Failed(format!(
+                    "refused: the result would contain unusable geometry ({problem}); nothing was changed"
+                )));
+            }
             self.doc.revision = before.revision + 1;
             self.undo.push(before);
             self.redo.clear();
