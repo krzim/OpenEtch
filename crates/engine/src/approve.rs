@@ -5,7 +5,9 @@
 //!
 //! Stop is never lost: [`approve`] captures the machine's stop epoch while it claims the machine (inside the runs
 //! lock, which `AppState::stop` also takes to bump the epoch), and the run never starts streaming once the epoch has
-//! changed, even if the stop's abort sequence won the controller lock first and cleared the abort request.
+//! changed, even if the stop's abort sequence won the controller lock first and cleared the abort request. A run
+//! stopped before it holds the controller ends `cancelled` (nothing was sent for it); one stopped after it has
+//! become `running` ends `aborted`.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -22,7 +24,12 @@ use crate::{AppState, EngineError, Event};
 /// Check the operator PIN, then arm and start pending run `id` in a background task. Refused unless the PIN is
 /// right, the run is pending, made from the current document revision, and no other run holds the machine.
 pub(crate) async fn approve(state: &Arc<AppState>, id: &str, pin: Option<&str>) -> Result<Value, EngineError> {
-    state.approval.pin.verify(pin)?;
+    if let Err((e, locked_until)) = state.approval.pin.verify_reporting(pin) {
+        if let Some(until_unix_s) = locked_until {
+            state.emit(Event::ApprovalLocked { until_unix_s });
+        }
+        return Err(state.approval.pin.error(e));
+    }
     let confirm = state.approval.confirm;
     let current = state.revision();
     let (packets, epoch, run_state) = {
@@ -102,23 +109,30 @@ async fn execute(
             ConfirmEnd::Panicked(e) => return panicked(st, e).await,
         }
     }
-    st.runs().set_state(id, RunState::Running);
-    st.emit(Event::machine("run_started", Some(id.to_owned())));
     let armed = Armed::approved_in_ui(id.to_owned());
+    let (task_state, run_id) = (st.clone(), id.to_owned());
     let result = st
         .machine
         .blocking(move |m, ctl| {
-            if m.stop_epoch() != epoch {
-                return Err(ControllerError::Aborted);
+            // With the controller held, and under the runs lock that `AppState::stop` bumps the epoch under: either
+            // the stop came first (it has marked this run cancelled; nothing is sent) or the run is now `running`
+            // and a later stop aborts it.
+            {
+                let mut runs = task_state.runs();
+                if m.stop_epoch() != epoch {
+                    return None;
+                }
+                runs.set_state(&run_id, RunState::Running);
             }
-            m.ensure_ready(ctl)?;
-            ctl.run(&packets, armed)
+            task_state.emit(Event::machine("run_started", Some(run_id)));
+            Some(m.ensure_ready(ctl).and_then(|()| ctl.run(&packets, armed)))
         })
         .await;
     match result {
-        Ok(Ok(report)) => (RunState::Finished, Some(report), None),
-        Ok(Err(ControllerError::Aborted)) => (RunState::Aborted, None, Some("aborted by stop".into())),
-        Ok(Err(e)) => (RunState::Failed, None, Some(e.to_string())),
+        Ok(None) => (RunState::Cancelled, None, Some("cancelled by stop before streaming".into())),
+        Ok(Some(Ok(report))) => (RunState::Finished, Some(report), None),
+        Ok(Some(Err(ControllerError::Aborted))) => (RunState::Aborted, None, Some("aborted by stop".into())),
+        Ok(Some(Err(e))) => (RunState::Failed, None, Some(e.to_string())),
         // The blocking task panicked: the controller may have left the MO open or the laser-enable bit set.
         Err(e) => panicked(st, e.to_string()).await,
     }

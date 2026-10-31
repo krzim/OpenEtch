@@ -41,16 +41,21 @@ anywhere else.
   drag empty space to pan, wheel or pinch to zoom, two fingers to pan, tap to select (shift adds), drag a selection to
   move it (one `object.transform` translate on release). Rectangle/Ellipse tools: drag to draw, tap for 20 mm.
 - **Laser workspace**: toolpath overlay from `GET /api/preview` (marks coloured by layer, jumps dashed grey), machine
-  status, runs under way, and pending runs. **Frame** traces the job with the red pointer and **Stop frame**
+  status, runs under way, pending runs, and recent runs (finished, failed, aborted while streaming, or cancelled before
+  it). **Frame** traces the job with the red pointer and **Stop frame**
   (`POST /api/machine/frame/stop`) ends it without touching pending runs. **STOP** (`POST /api/machine/stop`) is the
   emergency stop: it sits in the top bar in every workspace, is never gated, aborts any run or frame and cancels
-  pending runs.
+  every run that has not started streaming.
 - **Approval**: each pending run shows who requested it (You or the agent's name), its revision, estimated time,
-  mark/jump length, layers and packet count. Approving takes two taps ("Approve…", then the operator PIN and "Confirm
+  mark/jump length, segment count and packet count (the packet count only while pending). Approving takes two taps ("Approve…", then the operator PIN and "Confirm
   and fire"); the confirm step reverts after 20 s without typing. The PIN is set once on the engine machine with
   `openetch set-pin`; the UI keeps it only in component state while the confirm step is open and sends it only as
-  `{"pin"}` to `POST /api/runs/{id}/approve`. Stale runs (document changed since the request) cannot be approved. The
-  engine's 403 codes `pin_not_set`, `pin_invalid`, `pin_required` and `pin_locked` get specific messages. With a
+  `{"pin"}` to `POST /api/runs/{id}/approve`; the PIN field takes 6-12 digits. Stale runs cannot be approved: the
+  engine's `stale` flag, or a run revision other than the document's (the machine status is also refetched on every
+  `document_changed`). The engine's 403 codes `pin_not_set`, `pin_invalid`, `pin_required`, `pin_locked` and
+  `pin_changed` get specific messages. While `approval.locked_until_unix_s` is set (or after an `approval_locked`
+  event) the card counts down to the unlock and Approve is disabled; `approval.pin_changed` disables it with "PIN file
+  changed - restart the engine". With a
   physical confirm input configured, an approved run shows "Press the foot pedal" while it is `awaiting_confirm`;
   STOP cancels it.
 - **Events**: `run_finished` refreshes the machine and toasts (an error toast unless the run finished cleanly);

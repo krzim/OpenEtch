@@ -231,17 +231,14 @@ impl<L: Link> Controller<L> {
         &mut self.link
     }
 
-    /// Swap in a new link (a freshly opened USB connection, or an offline placeholder after a failed connect) and
-    /// return the old one. The board behind the new link is treated as uninitialised: the profile is forgotten and
+    /// Swap in a new link (a freshly opened USB connection, or an offline placeholder after a failed connect). The
+    /// old link is dropped here rather than returned, so no caller ever holds a raw link outside [`Armed`] and
+    /// [`check_job`]. The board behind the new link is treated as uninitialised: the profile is forgotten and
     /// [`Controller::init`] must succeed again before framing or running.
-    pub fn replace_link(&mut self, link: L) -> L {
+    pub fn replace_link(&mut self, link: L) {
         self.profile = None;
         self.state = ControllerState::Uninitialized;
-        std::mem::replace(&mut self.link, link)
-    }
-
-    pub fn into_link(self) -> L {
-        self.link
+        self.link = link;
     }
 
     /// The profile `init` was given.
@@ -293,6 +290,15 @@ impl<L: Link> Controller<L> {
             self.state = ControllerState::Idle;
         }
         Ok(status)
+    }
+
+    /// Read the board's input port: `ReadPort`, reply word 1 (as galvoplotter's `wait_for_input` reads it). Used for
+    /// a physical confirmation input. Needs an initialised board; sends nothing that can emit and changes no state.
+    pub fn read_port(&mut self) -> Result<u16> {
+        if self.state == ControllerState::Uninitialized {
+            return Err(ControllerError::NotInitialized);
+        }
+        Ok(self.reply(Single::read_port())?[1])
     }
 
     /// Trace `outline` (polylines in field mm) with the red pointer `loops` times, using only
@@ -871,13 +877,24 @@ mod tests {
     #[test]
     fn replace_link_forgets_the_init() {
         let mut c = ready();
-        let old = c.replace_link(SimLink::new());
-        assert!(old.singles().is_empty(), "nothing is sent by the swap");
+        c.replace_link(SimLink::new());
         assert_eq!((c.state(), c.profile()), (ControllerState::Uninitialized, None));
         assert_eq!(c.frame(&[vec![(0.0, 0.0)]], 1), Err(ControllerError::NotInitialized));
         assert_eq!(c.run(&job(), Armed::approved_in_ui("r".into())), Err(ControllerError::NotInitialized));
         assert!(c.link().traffic().is_empty());
         c.init(&b6(), None).unwrap();
+        assert_eq!(c.state(), ControllerState::Idle);
+    }
+
+    #[test]
+    fn read_port_needs_init_and_sends_only_read_port() {
+        let mut c = controller(SimBoard::default());
+        assert_eq!(c.read_port(), Err(ControllerError::NotInitialized));
+        assert!(c.link().traffic().is_empty());
+        let mut c = ready();
+        assert!(c.read_port().is_ok());
+        assert_eq!(c.link().singles(), [Single::read_port()]);
+        assert!(c.link().packets().is_empty() && !c.link().mo_open());
         assert_eq!(c.state(), ControllerState::Idle);
     }
 

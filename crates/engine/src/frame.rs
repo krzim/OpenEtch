@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use doc::Document;
 use kurbo::PathEl;
+use machine::{ControllerError, ControllerState, LinkError};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -253,17 +254,31 @@ fn report_error(machine: &Machine, events: &broadcast::Sender<Event>, e: String)
     let _ = events.send(Event::machine("error", Some(e)));
 }
 
-/// End framing: stop the loop and turn the pointer off (`Controller::stop_frame`).
-pub async fn stop(machine: &Arc<Machine>, events: &broadcast::Sender<Event>) -> Result<(), EngineError> {
+/// End framing: stop the loop and turn the pointer off (`Controller::stop_frame`). Returns whether a board was
+/// connected: with no board (never initialised and the link disconnected, as `Machine::abort` treats it) there is
+/// nothing to turn off, and that is not an error.
+pub async fn stop(machine: &Arc<Machine>, events: &broadcast::Sender<Event>) -> Result<bool, EngineError> {
     let was = machine.is_framing();
     machine.bump_frame_gen();
+    let mut connected = true;
     if !machine.is_running() {
-        machine.blocking(|_, ctl| ctl.stop_frame()).await??;
+        connected = machine
+            .blocking(|_, ctl| {
+                let initialised = ctl.state() != ControllerState::Uninitialized;
+                match ctl.stop_frame() {
+                    Ok(()) => Ok(true),
+                    Err(ControllerError::Link(LinkError::Disconnected | LinkError::NotFound(_))) if !initialised => {
+                        Ok(false)
+                    }
+                    Err(e) => Err(e),
+                }
+            })
+            .await??;
     }
     if was {
         let _ = events.send(Event::machine("frame_stopped", None));
     }
-    Ok(())
+    Ok(connected)
 }
 
 #[cfg(test)]

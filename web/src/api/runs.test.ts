@@ -6,15 +6,22 @@ import { test } from "node:test";
 import {
   activeRuns,
   approvalErrorText,
+  approvalNotice,
   approveBlocker,
+  formatCountdown,
   formatDuration,
+  isStale,
+  lockSecondsLeft,
   okError,
   pendingRuns,
+  pinHint,
+  recentRuns,
   runFinishedToast,
   runStatRows,
   stateLabel,
   stopToast,
   validPin,
+  withApprovalLock,
 } from "./runs.ts";
 import type { MachineStatus, PendingRun } from "./types.ts";
 
@@ -65,37 +72,118 @@ test("stale runs, unset PINs and non-pending runs cannot be approved", () => {
   assert.equal(approveBlocker(run(), machine({ approval: undefined })), null);
 });
 
-test("PIN must be 4-12 digits", () => {
-  assert.ok(validPin("1234"));
+test("a pending run planned from another revision than the document shown is stale", () => {
+  // The engine has not flagged it yet (its stale flag lags until the next machine refresh).
+  assert.equal(isStale(run({ revision: 7 }), 8), true);
+  assert.equal(approveBlocker(run({ revision: 7 }), machine(), { docRevision: 8 }), "Document changed - request a new run.");
+  assert.equal(approveBlocker(run({ revision: 7 }), machine(), { docRevision: 7 }), null);
+  // Unknown revisions (no document yet, or a run without one) do not block.
+  assert.equal(approveBlocker(run({ revision: 7 }), machine(), { docRevision: null }), null);
+  assert.equal(approveBlocker(run({ revision: 7 }), machine(), { docRevision: -1 }), null);
+  assert.equal(approveBlocker(run({ revision: undefined }), machine(), { docRevision: 8 }), null);
+  assert.equal(isStale(run({ stale: true }), 7), true);
+});
+
+test("a changed PIN file blocks approvals until the engine restarts", () => {
+  const m = machine({ approval: { pin_set: true, physical_confirm: null, pin_changed: true } });
+  assert.equal(approveBlocker(run(), m), "PIN file changed - restart the engine.");
+  assert.equal(approvalNotice(m), "PIN file changed - restart the engine.");
+  assert.equal(approvalErrorText("pin_changed", "x"), "PIN file changed - restart the engine.");
+  assert.equal(approvalNotice(machine({ approval: { pin_set: true, physical_confirm: null, pin_changed: false } })), null);
+});
+
+test("a PIN lockout blocks approvals with a countdown until the engine reports it unlocked", () => {
+  const now = 1_000_000;
+  const locked = machine({ approval: { pin_set: true, physical_confirm: null, locked_until_unix_s: now + 125 } });
+  assert.equal(lockSecondsLeft(locked, now), 125);
+  assert.equal(approveBlocker(run(), locked, { nowUnixS: now }), "Too many wrong PINs. Approvals unlock in 2 min 05 s.");
+  assert.equal(approvalNotice(locked, now + 100), "Too many wrong PINs. Approvals unlock in 25 s.");
+  // Past the deadline, or null from the engine: unlocked.
+  assert.equal(lockSecondsLeft(locked, now + 125), 0);
+  assert.equal(approveBlocker(run(), locked, { nowUnixS: now + 126 }), null);
+  const unlocked = machine({ approval: { pin_set: true, physical_confirm: null, locked_until_unix_s: null } });
+  assert.equal(approveBlocker(run(), unlocked, { nowUnixS: now }), null);
+  // A clock far behind the engine's never counts past the 1 h cap.
+  const far = machine({ approval: { pin_set: true, physical_confirm: null, locked_until_unix_s: now + 86_400 } });
+  assert.equal(lockSecondsLeft(far, now), 3600);
+  // A stale run says so first.
+  assert.equal(approveBlocker(run({ stale: true }), locked, { nowUnixS: now }), "Document changed - request a new run.");
+  assert.equal(formatCountdown(0.2), "1 s");
+  assert.equal(formatCountdown(60), "1 min 00 s");
+});
+
+test("an approval_locked event updates the machine status at once", () => {
+  const m = machine();
+  const locked = withApprovalLock(m, 1234);
+  assert.equal(locked?.approval?.locked_until_unix_s, 1234);
+  assert.equal(m.approval?.locked_until_unix_s, undefined, "the old status is not mutated");
+  assert.equal(withApprovalLock(m, "soon"), m);
+  assert.equal(withApprovalLock(machine({ approval: undefined }), 1234)?.approval, undefined);
+  assert.equal(withApprovalLock(null, 1234), null);
+});
+
+test("PIN must be 6-12 digits", () => {
+  assert.ok(validPin("123456"));
   assert.ok(validPin("123456789012"));
-  assert.ok(!validPin("123"));
+  assert.ok(!validPin("1234"));
+  assert.ok(!validPin("12345"));
   assert.ok(!validPin("1234567890123"));
-  assert.ok(!validPin("12a4"));
-  assert.ok(!validPin(" 1234"));
+  assert.ok(!validPin("12a456"));
+  assert.ok(!validPin(" 123456"));
   assert.ok(!validPin(""));
+  assert.equal(pinHint(""), null);
+  assert.equal(pinHint("12345"), "At least 6 digits.");
+  assert.equal(pinHint("123456"), null);
 });
 
 test("approval error codes have specific texts", () => {
   assert.match(approvalErrorText("pin_not_set", "x"), /Run 'openetch set-pin' on the engine machine once/);
   assert.equal(approvalErrorText("pin_invalid", "x"), "Wrong PIN.");
-  assert.match(approvalErrorText("pin_locked", "x"), /locked for 60 s/);
+  assert.match(approvalErrorText("pin_locked", "x"), /Too many wrong PINs/);
   assert.match(approvalErrorText("pin_required", "x"), /Enter the operator PIN/);
   assert.equal(approvalErrorText("something_new", "engine says no"), "engine says no");
   assert.equal(approvalErrorText(undefined, "engine says no"), "engine says no");
 });
 
 test("stats rows show what will fire", () => {
-  const rows = Object.fromEntries(runStatRows(run({ stats: { ...run().stats, layer_count: 2 } })));
-  assert.equal(rows["Est. time"], "2 min 05 s");
-  assert.equal(rows["Mark"], "1.23 m");
-  assert.equal(rows["Jump"], "56.8 mm");
-  assert.equal(rows["Layers"], "2");
-  assert.equal(rows["Packets"], "3");
-  assert.equal(rows["Revision"], "r7");
-  // Layers as a list; missing fields are left out rather than shown as NaN.
-  const sparse = Object.fromEntries(runStatRows({ id: "r", stats: { layers: ["a", "b", "c"] } }));
-  assert.deepEqual(sparse, { Layers: "3" });
+  const rows = Object.fromEntries(runStatRows(run()));
+  assert.deepEqual(rows, {
+    "Est. time": "2 min 05 s",
+    Mark: "1.23 m",
+    Jump: "56.8 mm",
+    Segments: "900",
+    Packets: "3",
+    Revision: "r7",
+  });
+  // plan::Stats has no layer count, so there is no Layers row; missing fields are left out rather than shown as NaN.
+  assert.deepEqual(runStatRows({ id: "r", stats: { mark_length_mm: 2 } }), [["Mark", "2.0 mm"]]);
   assert.deepEqual(runStatRows({ id: "r" }), []);
+});
+
+test("the packet count shows only while a run is pending", () => {
+  const packets = (state: string | undefined) => Object.fromEntries(runStatRows(run({ state })))["Packets"];
+  assert.equal(packets("pending"), "3");
+  assert.equal(packets(undefined), "3");
+  // The engine drops the packets once a run is approved, and reports 0 from then on.
+  for (const state of ["approved", "awaiting_confirm", "running", "finished", "cancelled"]) {
+    assert.equal(packets(state), undefined, state);
+  }
+});
+
+test("ended runs, cancelled ones included, are listed newest first", () => {
+  const m = machine({
+    runs: [
+      run({ id: "old", state: "finished", created_unix_s: 100 }),
+      run({ id: "p", state: "pending", created_unix_s: 500 }),
+      run({ id: "c", state: "cancelled", created_unix_s: 300 }),
+      run({ id: "a", state: "aborted", created_unix_s: 200 }),
+      run({ id: "r", state: "running", created_unix_s: 400 }),
+    ],
+  });
+  assert.deepEqual(recentRuns(m).map((r) => r.id), ["c", "a", "old"]);
+  assert.deepEqual(recentRuns(m, 1).map((r) => r.id), ["c"]);
+  assert.deepEqual(recentRuns(null), []);
+  assert.equal(stateLabel("cancelled"), "Cancelled");
 });
 
 test("durations and state labels", () => {
@@ -117,12 +205,15 @@ test("run_finished toasts errors for failures and aborts", () => {
   assert.equal(failed.msg, "Run run-2 failed: usb timeout");
   const aborted = runFinishedToast({ type: "run_finished", run_id: "run-3", ok: false, state: "aborted", error: null });
   assert.deepEqual(aborted, { msg: "Run run-3 was aborted.", kind: "error" });
+  const cancelled = runFinishedToast({ type: "run_finished", id: "run-4", ok: false, state: "cancelled", error: "stopped" });
+  assert.deepEqual(cancelled, { msg: "Run run-4 was cancelled: stopped", kind: "error" });
 });
 
 test("STOP answer: connected, not connected, cancelled runs", () => {
   assert.equal(stopToast({ ok: true }), "Stop sent.");
   assert.equal(stopToast({ ok: true, connected: false }), "No laser connected; nothing to stop.");
-  assert.equal(stopToast({ ok: true, cancelled_runs: ["a", "b"] }), "Stop sent. 2 pending runs cancelled.");
+  assert.equal(stopToast({ ok: true, cancelled_runs: ["a", "b"] }), "Stop sent. 2 runs cancelled before starting.");
+  assert.equal(stopToast({ ok: true, connected: true, cancelled_runs: 1 }), "Stop sent. 1 run cancelled before starting.");
   assert.equal(stopToast(undefined), "Stop sent.");
 });
 

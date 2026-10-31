@@ -24,6 +24,13 @@ pub enum JobCheckError {
     /// A laser-on, laser-off, polygon or jump delay whose magnitude is above the profile's `max_delay_us`.
     #[error("slot {slot}: {what} of {us} µs is above the profile's limit of {max_us} µs")]
     Delay { slot: usize, what: &'static str, us: f64, max_us: f64 },
+    /// The in-list `FiberOpenMO`: the MO is opened and closed only by the run's prelude and postlude singles.
+    #[error("slot {slot}: the list opens or closes the MO (FiberOpenMO {open}); only the run prelude may")]
+    InListMo { slot: usize, open: u16 },
+    /// A `WritePort` with bits other than 0 and the profile's laser-enable mask (e.g. the red pointer or another
+    /// output).
+    #[error("slot {slot}: WritePort {bits:#06x} sets bits other than the laser-enable mask ({mask:#06x})")]
+    PortBits { slot: usize, bits: u16, mask: u16 },
     /// Only typed `lmc::ListCommand` variants may be sent; raw opcodes could set power some other way.
     #[error("slot {slot}: opcode {opcode:#06x} is not allowed in a job")]
     UnsupportedCommand { slot: usize, opcode: u16 },
@@ -32,8 +39,8 @@ pub enum JobCheckError {
 /// Check every slot of every packet (padding and anything after the end-of-list included) against `profile`:
 /// mark current <= the `max_power_pct` cap, Q-switch period within the frequency range, pulse width in the table,
 /// mark speed in 1..=the max mark speed, jump speed in 1..=`max_jump_speed_mm_s`, |laser-on|, |laser-off|,
-/// polygon and |jump| delays <= `max_delay_us`, and no `ListCommand::Other`. The list must also end with an
-/// end-of-list.
+/// polygon and |jump| delays <= `max_delay_us`, no in-list `FiberOpenMO`, every `WritePort` either 0 or exactly
+/// the profile's laser-enable mask, and no `ListCommand::Other`. The list must also end with an end-of-list.
 pub fn check_job(profile: &MachineProfile, packets: &[Packet]) -> Result<(), JobCheckError> {
     if packets.is_empty() {
         return Err(JobCheckError::Empty);
@@ -48,6 +55,7 @@ pub fn check_job(profile: &MachineProfile, packets: &[Packet]) -> Result<(), Job
     let max_units = units::speed_to_units(profile.mark_speed.max_mm_s, profile.field_mm).unwrap_or(0);
     let max_jump_units = units::speed_to_units(profile.max_jump_speed_mm_s, profile.field_mm).unwrap_or(0);
     let max_us = profile.max_delay_us;
+    let mask = profile.laser_enable_mask();
     let delay = |slot: usize, what: &'static str, us: f64| {
         if us.abs() > max_us { Err(JobCheckError::Delay { slot, what, us, max_us }) } else { Ok(()) }
     };
@@ -72,6 +80,10 @@ pub fn check_job(profile: &MachineProfile, packets: &[Packet]) -> Result<(), Job
             ListCommand::LaserOffDelay(d) => delay(slot, "laser-off delay", d.micros())?,
             ListCommand::JumpDelay(d) => delay(slot, "jump delay", d.micros())?,
             ListCommand::PolygonDelay { time_10us } => delay(slot, "polygon delay", f64::from(time_10us) * 10.0)?,
+            ListCommand::FiberOpenMo { open } => return Err(JobCheckError::InListMo { slot, open }),
+            ListCommand::WritePort { bits } if bits != 0 && bits != mask => {
+                return Err(JobCheckError::PortBits { slot, bits, mask });
+            }
             ListCommand::Other { words } => return Err(JobCheckError::UnsupportedCommand { slot, opcode: words[0] }),
             _ => {}
         }
@@ -131,6 +143,14 @@ mod tests {
         assert!(matches!(check_job(&p, &job(|l| _ = l.jump_delay(long))), Err(JobCheckError::Delay { .. })));
         let poly = units::polygon_delay_units(2010.0).unwrap();
         assert!(matches!(check_job(&p, &job(|l| _ = l.polygon_delay(poly))), Err(JobCheckError::Delay { what: "polygon delay", .. })));
+        assert!(matches!(check_job(&p, &job(|l| _ = l.fiber_open_mo())), Err(JobCheckError::InListMo { open: 1, .. })));
+        assert!(matches!(check_job(&p, &job(|l| _ = l.fiber_close_mo())), Err(JobCheckError::InListMo { open: 0, .. })));
+        let mask = p.laser_enable_mask();
+        for bits in [0x0100, mask | 0x0100, 0x0002, 0xFFFF] {
+            let refused = check_job(&p, &job(|l| _ = l.write_port(bits)));
+            assert!(matches!(refused, Err(JobCheckError::PortBits { bits: b, .. }) if b == bits), "{bits:#x}: {refused:?}");
+        }
+        assert_eq!(check_job(&p, &job(|l| _ = l.write_port(mask).write_port(0))), Ok(()));
         let raw = job(|l| _ = l.push(ListCommand::Other { words: [lmc::op::LIST_MARK_POWER_RATIO, 9, 0, 0, 0, 0] }));
         assert!(matches!(check_job(&p, &raw), Err(JobCheckError::UnsupportedCommand { .. })));
         assert_eq!(check_job(&p, &[]), Err(JobCheckError::Empty));

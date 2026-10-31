@@ -19,7 +19,7 @@ pub const MAX_PENDING: usize = 8;
 pub const KEEP_FINISHED: usize = 20;
 
 /// Where a run is in its life: `pending` -> `approved` -> (`awaiting_confirm` ->) `running` -> `finished` |
-/// `failed` | `aborted`, or `cancelled` before anything was streamed.
+/// `failed` | `aborted` (stopped while streaming), or `cancelled` (stopped or refused before streaming).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RunState {
@@ -35,10 +35,10 @@ pub enum RunState {
     Finished,
     /// The board or link failed; the abort sequence was sent.
     Failed,
-    /// Stopped by a stop request (before or while streaming).
+    /// Stopped by a stop request while `running` (streaming); the abort sequence was sent.
     Aborted,
-    /// Never started: stop pressed while pending or awaiting confirmation, the document changed, or the physical
-    /// input was not pressed in time.
+    /// Never streamed: stop pressed while pending, approved or awaiting confirmation, the document changed, or the
+    /// physical input was not pressed in time.
     Cancelled,
 }
 
@@ -153,10 +153,12 @@ impl RunStore {
         self.runs.iter().filter(|r| r.state == RunState::Pending).map(|r| r.view(current_revision)).collect()
     }
 
-    /// Cancel every pending run; returns how many.
-    pub fn cancel_pending(&mut self, reason: &str) -> usize {
+    /// Cancel every run that is not streaming yet (`pending`, `approved`, `awaiting_confirm`); returns how many. An
+    /// approved run's task sees the stop epoch change and ends without sending anything.
+    pub fn cancel_not_streaming(&mut self, reason: &str) -> usize {
         let mut n = 0;
-        for r in self.runs.iter_mut().filter(|r| r.state == RunState::Pending) {
+        let waiting = |r: &&mut Run| matches!(r.state, RunState::Pending | RunState::Approved | RunState::AwaitingConfirm);
+        for r in self.runs.iter_mut().filter(waiting) {
             r.state = RunState::Cancelled;
             r.error = Some(reason.to_owned());
             r.packets = Arc::new(Vec::new());
@@ -252,9 +254,25 @@ mod tests {
             store.add(Origin::Ui, 1, prepared()).unwrap();
         }
         assert!(matches!(store.add(Origin::Ui, 1, prepared()), Err(EngineError::Conflict(_))));
-        assert_eq!(store.cancel_pending("stop"), MAX_PENDING);
+        assert_eq!(store.cancel_not_streaming("stop"), MAX_PENDING);
         assert!(store.pending(1).is_empty());
         assert!(store.add(Origin::Ui, 1, prepared()).is_ok());
+    }
+
+    #[test]
+    fn stop_cancels_every_run_not_yet_streaming() {
+        let mut store = RunStore::default();
+        let ids: Vec<String> = (0..5).map(|_| store.add(Origin::Ui, 1, prepared()).unwrap().id.clone()).collect();
+        store.set_state(&ids[1], RunState::Approved);
+        store.set_state(&ids[2], RunState::AwaitingConfirm);
+        store.set_state(&ids[3], RunState::Running);
+        store.finish(&ids[4], RunState::Finished, None, None);
+        assert_eq!(store.cancel_not_streaming("stop"), 3);
+        let states: Vec<RunState> = ids.iter().map(|id| store.get(id).unwrap().state).collect();
+        assert_eq!(
+            states,
+            [RunState::Cancelled, RunState::Cancelled, RunState::Cancelled, RunState::Running, RunState::Finished]
+        );
     }
 
     #[test]

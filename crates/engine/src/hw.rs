@@ -2,9 +2,10 @@
 //! from blocking tasks, so a slow USB transfer never stalls the async runtime. Also the links the engine can use
 //! ([`CountingSimLink`], [`OfflineLink`]) and the profile -> `plan::Target` mapping.
 //!
-//! The controller owns its link through a [`LinkSlot`] the engine shares. The engine uses its side of the slot for
-//! exactly two things, both with the controller locked and neither able to emit: swapping in a freshly opened USB
-//! link ([`Machine::ensure_ready`]) and sending `ReadPort` ([`Machine::read_inputs`], physical run confirmation).
+//! The engine holds no link of its own: the controller owns it, and the engine reaches the board only through
+//! `Controller` methods. Swapping in a freshly opened USB link uses `Controller::replace_link`
+//! ([`Machine::ensure_ready`]) and the physical run confirmation reads inputs with `Controller::read_port`
+//! ([`Machine::read_inputs`]).
 
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, TryLockError};
@@ -172,31 +173,6 @@ impl Link for OfflineLink {
     }
 }
 
-/// The link the controller drives, shared with the engine (see the module docs). Lock order: the controller mutex
-/// first, then this one; the engine only touches the slot while it holds the controller.
-#[derive(Clone)]
-pub struct LinkSlot(Arc<Mutex<Box<dyn Link>>>);
-
-impl LinkSlot {
-    fn new(link: Box<dyn Link>) -> Self {
-        LinkSlot(Arc::new(Mutex::new(link)))
-    }
-
-    fn lock(&self) -> std::sync::MutexGuard<'_, Box<dyn Link>> {
-        self.0.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-}
-
-impl Link for LinkSlot {
-    fn send_single(&mut self, cmd: Single) -> Result<Option<Reply>, LinkError> {
-        self.lock().send_single(cmd)
-    }
-
-    fn send_packet(&mut self, packet: &Packet) -> Result<(), LinkError> {
-        self.lock().send_packet(packet)
-    }
-}
-
 /// What [`Machine::abort`] did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AbortOutcome {
@@ -209,7 +185,6 @@ pub enum AbortOutcome {
 /// The laser as the engine sees it. See the module docs.
 pub struct Machine {
     ctl: Arc<Mutex<Ctl>>,
-    link: LinkSlot,
     abort: AbortHandle,
     profile: MachineProfile,
     cor: Option<CorTable>,
@@ -250,12 +225,10 @@ impl Machine {
         cor: Option<CorTable>,
         poll: PollConfig,
     ) -> Self {
-        let slot = LinkSlot::new(link);
-        let ctl = Controller::with_settings(Box::new(slot.clone()) as Box<dyn Link>, InitSettings::default(), poll);
+        let ctl = Controller::with_settings(link, InitSettings::default(), poll);
         Machine {
             abort: ctl.abort_handle(),
             ctl: Arc::new(Mutex::new(ctl)),
-            link: slot,
             target: target_from_profile(&profile),
             profile,
             cor,
@@ -364,7 +337,7 @@ impl Machine {
             return Ok(());
         }
         if self.kind == LinkKind::Usb {
-            *self.link.lock() = open_usb()?;
+            ctl.replace_link(open_usb()?);
         }
         match ctl.init(&self.profile, self.cor.as_ref()) {
             Ok(info) => {
@@ -374,7 +347,7 @@ impl Machine {
             }
             Err(e) => {
                 if self.kind == LinkKind::Usb {
-                    *self.link.lock() = Box::new(OfflineLink);
+                    ctl.replace_link(Box::new(OfflineLink));
                 }
                 self.set_error(Some(e.to_string()));
                 Err(e)
@@ -391,11 +364,7 @@ impl Machine {
     /// Read the board's input port (`ReadPort`, reply word 1, as galvoplotter's `wait_for_input` reads it). Takes
     /// the locked controller so it can never interleave with a list being streamed. Sends nothing that can emit.
     pub fn read_inputs(&self, ctl: &mut Ctl) -> Result<u16, ControllerError> {
-        if ctl.state() == ControllerState::Uninitialized {
-            return Err(ControllerError::NotInitialized);
-        }
-        let reply = self.link.lock().send_single(Single::read_port())?;
-        reply.map(|w| w[1]).ok_or_else(|| LinkError::Io("ReadPort returned no reply".into()).into())
+        ctl.read_port()
     }
 
     /// [`Machine::request_stop`] (noticed by a running job at its next packet or poll), then send the abort sequence
@@ -500,6 +469,30 @@ mod tests {
         m.sim_counters().unwrap().set_inputs(1 << 14);
         assert_eq!(m.blocking(|m, ctl| m.read_inputs(ctl)).await.unwrap().unwrap(), 1 << 14);
         assert_eq!(m.sim_counters().unwrap().laser_singles(), 0);
+    }
+
+    /// The engine reaches the board only through `Controller`: `Machine` holds no link of its own, and no engine
+    /// module sends singles or packets itself.
+    #[test]
+    fn the_engine_keeps_no_link_of_its_own() {
+        let src = include_str!("hw.rs");
+        let start = src.find(concat!("pub struct ", "Machine {")).unwrap();
+        let fields = &src[start..start + src[start..].find("\n}").unwrap()];
+        let link_fields: Vec<&str> =
+            fields.lines().filter(|l| l.contains("Link") && !l.contains("LinkKind")).collect();
+        assert!(link_fields.is_empty(), "Machine holds a link: {link_fields:?}");
+        assert!(!src.contains(concat!("Link", "Slot")));
+        for (name, text) in [
+            ("approve.rs", include_str!("approve.rs")),
+            ("frame.rs", include_str!("frame.rs")),
+            ("state.rs", include_str!("state.rs")),
+            ("api.rs", include_str!("api.rs")),
+            ("mcp.rs", include_str!("mcp.rs")),
+        ] {
+            for call in [concat!(".send_", "single("), concat!(".send_", "packet(")] {
+                assert!(!text.contains(call), "{name} calls {call}");
+            }
+        }
     }
 
     #[tokio::test]

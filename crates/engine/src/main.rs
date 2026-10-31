@@ -20,7 +20,7 @@ fn main() -> ExitCode {
             println!("{}", cli::USAGE);
             return ExitCode::SUCCESS;
         }
-        Ok(Parsed::SetPin { config_dir }) => return set_pin(&config_dir),
+        Ok(Parsed::SetPin { config_dir, reset }) => return set_pin(&config_dir, reset),
         Err(e) => {
             eprintln!("openetch: {e}");
             return ExitCode::from(2);
@@ -47,8 +47,8 @@ fn main() -> ExitCode {
     }
 }
 
-/// `openetch set-pin`: only a person at a terminal may set the PIN.
-fn set_pin(dir: &Path) -> ExitCode {
+/// `openetch set-pin [--reset]`: only a person at a terminal may set, change or delete the PIN.
+fn set_pin(dir: &Path, reset: bool) -> ExitCode {
     if !std::io::stdin().is_terminal() {
         eprintln!(
             "openetch set-pin: refused: stdin is not a terminal. Run it yourself in a terminal; it cannot be scripted."
@@ -56,12 +56,26 @@ fn set_pin(dir: &Path) -> ExitCode {
         return ExitCode::from(2);
     }
     let stdin = std::io::stdin();
-    match pin::set_pin_dialogue(&mut stdin.lock(), &mut std::io::stdout(), dir) {
-        Ok(path) => {
-            println!(
-                "openetch: operator PIN saved to {} (a running engine uses it at the next approval)",
+    let (mut input, mut out) = (stdin.lock(), std::io::stdout());
+    let result = if reset {
+        pin::reset_pin_dialogue(&mut input, &mut out, dir).map(|outcome| match outcome {
+            pin::ResetOutcome::Deleted(path) => format!(
+                "operator PIN deleted ({}). Approvals stay disabled until you set a new PIN with `openetch set-pin`                  and restart the engine.",
                 path.display()
-            );
+            ),
+            pin::ResetOutcome::NothingToDelete(path) => format!("no operator PIN was set ({})", path.display()),
+        })
+    } else {
+        pin::set_pin_dialogue(&mut input, &mut out, dir).map(|path| {
+            format!(
+                "operator PIN saved to {}. Restart the engine to use it: a running engine refuses approvals once                  the PIN file changes.",
+                path.display()
+            )
+        })
+    };
+    match result {
+        Ok(msg) => {
+            println!("openetch: {msg}");
             ExitCode::SUCCESS
         }
         Err(e) => {
@@ -118,8 +132,8 @@ async fn run(config: Config) -> Result<(), String> {
         (None, false) => Some(generate_token()?),
     };
     let security = SecurityConfig::new(token.clone(), config.allow_hosts.clone());
-    if let Err(e) = std::fs::create_dir_all(&config.config_dir) {
-        tracing::warn!(path = %config.config_dir.display(), error = %e, "cannot create the config directory");
+    if let Err(e) = pin::create_config_dir(&config.config_dir) {
+        tracing::warn!(path = %config.config_dir.display(), error = %e, "cannot set up the config directory");
     }
     let approval = ApprovalConfig {
         pin: PinStore::new(&config.config_dir),
@@ -127,7 +141,7 @@ async fn run(config: Config) -> Result<(), String> {
     };
     if !approval.pin.is_set() {
         println!(
-            "openetch: no operator PIN is set ({}); runs cannot be approved until you run `openetch set-pin`",
+            "openetch: no operator PIN is set ({}); runs cannot be approved until you run `openetch set-pin` and              restart the engine",
             approval.pin.path().display()
         );
     }

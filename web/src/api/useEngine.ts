@@ -4,7 +4,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, batch, eventsUrl, execute, type Invocation } from "./client.ts";
-import { runFinishedToast } from "./runs.ts";
+import { runFinishedToast, withApprovalLock } from "./runs.ts";
 import type { CommandSpec, EngineEvent, GDocument, HistoryEntry, MachineStatus, Origin, Preview } from "./types.ts";
 
 /** WebSocket state shown by the connection indicator. */
@@ -202,6 +202,8 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
         switch (ev.type) {
           case "document_changed":
             if (typeof ev.revision !== "number" || ev.revision !== docRevision.current) void refreshDoc();
+            // An edit makes pending runs stale; fetch their flags now rather than at the next poll.
+            void refreshMachine();
             if (typeof ev.revision === "number" && isRemoteOrigin(ev.origin)) {
               const { revision, origin } = ev;
               setRemoteEdit((r) => ({ revision, origin, seq: (r?.seq ?? 0) + 1 }));
@@ -213,6 +215,10 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
           case "run_pending":
             void refreshMachine();
             notifyRef.current("A run is waiting for approval in the Laser workspace.", "info");
+            break;
+          case "approval_locked":
+            setMachine((m) => withApprovalLock(m, ev.until_unix_s));
+            void refreshMachine();
             break;
           case "run_finished": {
             void refreshMachine();

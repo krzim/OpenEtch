@@ -34,6 +34,9 @@ pub enum Event {
     /// An approved run ended: `state` is `finished`, `failed`, `aborted` or `cancelled`; `error` is `null` when
     /// `ok`.
     RunFinished { id: String, ok: bool, state: RunState, error: Option<String> },
+    /// Too many wrong operator PINs: approvals are locked until `until_unix_s` (Unix seconds). Each further lockout
+    /// is twice as long (see the `pin` module).
+    ApprovalLocked { until_unix_s: u64 },
 }
 
 impl Event {
@@ -97,6 +100,10 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&ev).unwrap(),
             serde_json::json!({"type": "run_finished", "id": "run-1", "ok": true, "state": "finished", "error": null})
+        );
+        assert_eq!(
+            serde_json::to_value(Event::ApprovalLocked { until_unix_s: 1_800_000_000 }).unwrap(),
+            serde_json::json!({"type": "approval_locked", "until_unix_s": 1_800_000_000u64})
         );
         let ev = Event::RunPending { run_id: "run-1".into(), origin: Origin::Agent("mcp".into()), summary: "s".into() };
         let v = serde_json::to_value(&ev).unwrap();

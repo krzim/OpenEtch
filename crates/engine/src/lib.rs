@@ -11,7 +11,8 @@
 //!   configured; `approve` is the only module that creates a `machine::Armed`, and the endpoint refuses requests that
 //!   look like they came from an MCP client. Stop is never gated and never waits behind a run (stop epoch, see
 //!   `approve`). A local process with the user's OS privileges can defeat these software checks; the hardware
-//!   E-stop/key switch and the physical input are the real guarantees.
+//!   E-stop/key switch is the real guarantee (the physical input only protects against a guessed or stolen PIN
+//!   used through the API).
 #![forbid(unsafe_code)]
 
 pub mod api;

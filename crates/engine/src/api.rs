@@ -147,9 +147,12 @@ async fn history(State(st): State<Arc<AppState>>) -> Json<Vec<commands::HistoryE
     Json(st.history())
 }
 
-async fn preview(State(st): State<Arc<AppState>>) -> Result<Json<plan::Preview>, EngineError> {
-    let (_, preview) = st.preview().await?;
-    Ok(Json(preview?))
+async fn preview(State(st): State<Arc<AppState>>) -> Result<Response, EngineError> {
+    let result = st.preview().await?;
+    match &result.1 {
+        Ok(p) => Ok(Json(p).into_response()),
+        Err(e) => Err(EngineError::Plan(e.clone())),
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -174,8 +177,7 @@ async fn frame_start(State(st): State<Arc<AppState>>, body: Bytes) -> Result<Jso
 }
 
 async fn frame_stop(State(st): State<Arc<AppState>>) -> Result<Json<Value>, EngineError> {
-    st.frame_stop().await?;
-    Ok(Json(json!({ "ok": true })))
+    Ok(Json(st.frame_stop().await?))
 }
 
 /// Emergency stop. Never gated (no token needed, see `security`).

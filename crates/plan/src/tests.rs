@@ -278,7 +278,7 @@ fn segment_budget_is_enforced() {
     let two = doc_with(vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0))], CutSettings { passes: 2, ..fill(0.1, false) });
     assert_eq!(crate::job::plan_job_within(&two, &target(), 150), Err(PlanError::TooManySegments { max: 150 }));
     assert_eq!(crate::job::plan_job_within(&one, &target(), 50), Err(PlanError::TooManySegments { max: 50 }));
-    assert_eq!(MAX_SEGMENTS, 5_000_000);
+    assert_eq!(MAX_SEGMENTS, 2_000_000);
 }
 
 #[test]

@@ -41,8 +41,10 @@ Mac, PC, phone) and Claude are clients of the same live document. The engine is 
 **What the software can and cannot promise.** The hardware E-stop and key switch are the real safety system. The
 checks below stop mistakes and keep an AI agent that only has the MCP tools from firing the laser. They do **not**
 stop a local process running with the user's OS privileges: such a process (including an agent with a shell) can read
-or replace the PIN hash file, drive the browser, talk to the engine like the UI does, or open the USB device itself.
-Only the optional physical confirmation input and the hardware E-stop/key switch hold against that.
+or replace the PIN hash file (and guess the PIN offline from it), drive the browser, talk to the engine like the UI
+does, restart the engine with other options, or open the USB device itself. Only the hardware E-stop/key switch holds
+against that. The optional physical confirmation input is enforced by the engine: it protects against a guessed or
+stolen PIN used through the engine's API, not against a process that restarts the engine or opens USB itself.
 
 - Risk classes on every command: `Query`, `Edit`, `Pointer` (red light / motion, no emission), `Emit` (laser fires).
   `/api/execute`, `/api/batch` and MCP `execute`/`batch` accept only `Query` and `Edit`.
@@ -53,11 +55,19 @@ Only the optional physical confirmation input and the hardware E-stop/key switch
   **operator PIN** turns it into an armed run (`approve` is the only engine module that creates `machine::Armed`, the
   token `Controller::run` needs). The endpoint refuses requests carrying MCP client headers or a non-`ui` origin, and
   a run whose document revision is stale.
-- **Operator PIN.** Set once by a person with `openetch set-pin` (interactive; refused unless stdin is a terminal;
-  4-12 digits; shown while typed, because std has no portable no-echo input). Stored as a salted SHA-256 hash in
+- **Operator PIN.** Set by a person with `openetch set-pin` (interactive; refused unless stdin is a terminal;
+  6-12 digits; shown while typed, because std has no portable no-echo input). Changing an existing PIN asks for the
+  current one first; `openetch set-pin --reset` deletes the PIN only after the person types a confirmation phrase,
+  and approvals then stay disabled until a new PIN is set and the engine restarts. Stored as a salted SHA-256 hash in
   `<config-dir>/operator-pin` (`--config-dir`, default the OS config dir + `openetch`, e.g. `%APPDATA%\openetch`,
-  `~/.config/openetch`) and re-read on every approval. Five wrong PINs in a row lock approvals for 60 s. MCP never
-  receives or handles PINs, and the MCP instructions tell agents they cannot and must not approve runs or set PINs.
+  `~/.config/openetch`; on Unix the directory is created `0700` and the file `0600`, written through a `create_new`
+  temp file, and a failed chmod is an error). The engine loads the hash **once** at startup. Every approval attempt
+  (and `GET /api/machine`) checks the file's size, mtime and content hash; once it has changed (rewritten, deleted or
+  created), approvals are refused with `pin_changed` until the engine restarts, and `approval.pin_changed` is true.
+  Every 5 wrong PINs in a row lock approvals, each lockout twice the previous (60 s, 120 s, 240 s, ... capped at 1 h;
+  only the right PIN or an engine restart resets the escalation, which is in memory); the engine emits `approval_locked` and reports
+  `approval.locked_until_unix_s`. MCP never receives or handles PINs, and the MCP instructions tell agents they
+  cannot and must not approve runs or set PINs.
 - **Physical confirmation (optional).** With `--confirm-input <bit 0-15>` an approved run waits (state
   `awaiting_confirm`) up to 30 s, polling `ReadPort` (reply word 1, as galvoplotter reads it), until that input is
   seen released and then pressed for 3 reads in a row; a stuck, held or inverted input therefore never confirms. Stop
@@ -70,9 +80,14 @@ Only the optional physical confirmation input and the hardware E-stop/key switch
   sends the abort sequence (and `Controller::run` aborts from its own drop guard).
 - Hard limits (max power, field bounds, mark speed) live in the machine profile and cannot be changed by command
   arguments. Layers may have at most 1000 passes (`commands` and `plan` both refuse more) and `plan_job` refuses jobs
-  above 5,000,000 segments, so one edit cannot make planning exhaust the engine's memory.
-- The engine reaches the board's link only through `Controller`, except for two non-emitting uses with the controller
-  locked: swapping in a freshly opened USB link before `init`, and `ReadPort` for the physical confirmation.
+  above 2,000,000 segments, so one edit cannot make planning exhaust the engine's memory. Previews are coalesced: at
+  most one preview plan runs at a time, and requests queued behind it share one plan of the newest document.
+- `machine::check_job` checks the encoded packets right before they are sent: power, frequency, pulse width, mark
+  and jump speed, delays, no in-list `FiberOpenMO` (the MO is opened only by the run prelude), every `WritePort`
+  either 0 or exactly the profile's laser-enable mask, and no raw opcodes.
+- The engine holds no link of its own and reaches the board only through `Controller` methods: a freshly opened USB
+  link is swapped in with `Controller::replace_link` (which forgets the init), and the physical confirmation reads
+  inputs with `Controller::read_port`.
 
 ## Engine API (HTTP, JSON)
 
@@ -90,19 +105,19 @@ says otherwise. `origin` is `"ui"` (default), `"script"` or `"agent:<name>"`.
 | GET | `/api/history` | `[HistoryEntry]` (revision, command id, origin, summary) |
 | GET | `/api/preview` | planned job: `{ segments: [{kind: "jump"|"mark", layer, from: [x,y], to: [x,y]}], stats }` in field mm; an empty document is an empty preview; a planning error (out of field, power above the limit, too many passes/segments) is **422** |
 | GET | `/api/preview.svg` | rendered preview (stock, objects, toolpath; `?jumps=false` hides travel); still renders the document on a planning error |
-| GET | `/api/machine` | `connected`, `simulated`, `busy`, `state`, `running`, `framing`, `field_mm`, `profile`, `max_power_pct`, `last_error`, `sim_counters`, `approval: { pin_set, physical_confirm: null \| { input_bit, timeout_s } }`, `pending_runs: [Run]`, `runs: [Run]` |
+| GET | `/api/machine` | `connected`, `simulated`, `busy`, `state`, `running`, `framing`, `field_mm`, `profile`, `max_power_pct`, `last_error`, `sim_counters`, `approval: { pin_set, pin_changed, locked_until_unix_s: null \| n, physical_confirm: null \| { input_bit, timeout_s } }`, `pending_runs: [Run]`, `runs: [Run]` |
 | POST | `/api/runs` | optional `{ "origin" }` → **201** `{ "ok": true, "id", "run": Run, "message" }`; plans, encodes and checks the document; sends nothing to the board; at most 8 pending |
-| POST | `/api/runs/{id}/approve` | `{ "pin": "<operator PIN>" }` → `{ "ok": true, "id", "state": "approved" \| "awaiting_confirm" }`; the run then starts in the background. PIN refusals are **403** `{ "ok": false, "error", "code": "pin_not_set" \| "pin_required" \| "pin_invalid" \| "pin_locked" }`; MCP headers or a non-`ui` origin 403; unknown run 404; not pending, stale revision or another run active 409 |
+| POST | `/api/runs/{id}/approve` | `{ "pin": "<operator PIN>" }` → `{ "ok": true, "id", "state": "approved" \| "awaiting_confirm" }`; the run then starts in the background. PIN refusals are **403** `{ "ok": false, "error", "code": "pin_not_set" \| "pin_changed" \| "pin_required" \| "pin_invalid" \| "pin_locked" }`; MCP headers or a non-`ui` origin 403; unknown run 404; not pending, stale revision or another run active 409 |
 | POST | `/api/machine/frame` | `{ "ids"?: [...], "mode"?: "bounds" \| "outline" }` → red-pointer framing (light only) until frame stop, stop, a run, or 120 s |
-| POST | `/api/machine/frame/stop` | ends framing only; pending and approved runs are untouched → `{ "ok": true }` |
-| POST | `/api/machine/stop` | emergency stop: abort any run or frame, cancel pending runs and runs not yet streaming → `{ "ok": true, "connected": true, "cancelled_runs": n }`; with no board connected **200** `{ "ok": true, "connected": false, ... }`; no token needed |
+| POST | `/api/machine/frame/stop` | ends framing only; pending and approved runs are untouched → `{ "ok": true }`; with no board connected **200** `{ "ok": true, "connected": false }` |
+| POST | `/api/machine/stop` | emergency stop: abort any run or frame, cancel every run not yet streaming (`pending`, `approved`, `awaiting_confirm`; `cancelled_runs` counts them) → `{ "ok": true, "connected": true, "cancelled_runs": n }`; with no board connected **200** `{ "ok": true, "connected": false, ... }`; no token needed |
 | WS | `/api/events` | server → client JSON events (below) |
 | * | `/mcp` | MCP Streamable HTTP endpoint |
 
 `Run` = `{ id, state, origin, revision, stale, summary, stats, packet_count, created_unix_s, error?, report? }`.
 `state` is `"pending"` → `"approved"` → (`"awaiting_confirm"` →) `"running"` → `"finished"` \| `"failed"` \|
-`"aborted"`, or `"cancelled"` (stopped before streaming, stale, or physical input not pressed in time). `stale` is
-true for a pending run whose document has changed since; it cannot be approved.
+`"aborted"` (stopped while streaming), or `"cancelled"` (stopped before streaming, stale, or physical input not
+pressed in time). `stale` is true for a pending run whose document has changed since; it cannot be approved.
 
 Events on `/api/events`:
 
@@ -112,6 +127,7 @@ Events on `/api/events`:
   "run_started" | "run_finished" | "stopped" | "error" | "lagged", "detail"?: "..." }` (refetch `GET /api/machine`)
 - `{ "type": "run_pending", "run_id", "origin", "summary" }`
 - `{ "type": "run_finished", "id", "ok": bool, "state", "error": string | null }`
+- `{ "type": "approval_locked", "until_unix_s": n }` (too many wrong PINs; approvals locked until then)
 
 **Access.** Every request's `Host` must be a loopback name, an IP literal or an `--allow-host` name, and an `Origin`
 header, when present, must be loopback, allowed or same-host (DNS-rebinding and cross-site protection). On loopback
@@ -121,7 +137,8 @@ no token is needed. Off loopback (`--listen 0.0.0.0:7878` on the Pi) a bearer to
 `POST /api/machine/stop` need no token.
 
 Default listen address `127.0.0.1:7878`. Other options: `--profile`, `--web-dir`, `--usb`, `--token`,
-`--allow-host`, `--config-dir`, `--confirm-input`; `openetch set-pin [--config-dir <path>]` sets the operator PIN.
+`--allow-host`, `--config-dir`, `--confirm-input`; `openetch set-pin [--reset] [--config-dir <path>]` sets, changes
+or deletes the operator PIN (restart the engine afterwards).
 
 ## MCP tools
 

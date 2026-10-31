@@ -745,6 +745,19 @@ textarea {
   background: #fff7e6;
 }
 
+.run-row.ended {
+  gap: 4px;
+}
+
+.run-row.ended-failed,
+.run-row.ended-aborted {
+  border-color: var(--danger);
+}
+
+.run-row.ended-cancelled {
+  background: var(--chrome-2);
+}
+
 .run-state {
   font-size: 12px;
   color: var(--text-2);

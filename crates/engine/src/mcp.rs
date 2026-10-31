@@ -292,8 +292,7 @@ impl GalvoMcp {
             }
             "frame_stop" => {
                 args::<NoArgs>(name, a)?;
-                st.frame_stop().await?;
-                Ok(ok_json(json!({ "ok": true })))
+                Ok(ok_json(st.frame_stop().await?))
             }
             "job_request_run" => {
                 args::<NoArgs>(name, a)?;
@@ -321,8 +320,8 @@ impl GalvoMcp {
         let (svg, preview) = self.state.preview_svg(opts).await?;
         let png = tokio::task::spawn_blocking(move || render::svg_to_png(&svg, width)).await??;
         let b64 = base64::engine::general_purpose::STANDARD.encode(png);
-        let doc = self.state.document();
-        let info = match &preview {
+        let doc = &preview.0;
+        let info = match &preview.1 {
             Ok(p) => json!({
                 "ok": true,
                 "revision": doc.revision,

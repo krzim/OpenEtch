@@ -14,8 +14,9 @@ use crate::{PlanError, Result, Target};
 pub const MAX_PASSES: u32 = 1000;
 
 /// Most mark segments (straight `MarkTo`s) one job may have. Planning stops as soon as a job passes it, so a
-/// document edit cannot make the engine allocate without bound.
-pub const MAX_SEGMENTS: usize = 5_000_000;
+/// document edit cannot make the engine allocate without bound: at this size a plan (polylines, plus a preview or
+/// the encoded packets) stays around a couple of hundred MB at most, which a Raspberry Pi can hold.
+pub const MAX_SEGMENTS: usize = 2_000_000;
 
 /// A whole job: passes in burn order, every polyline in field-frame mm.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]

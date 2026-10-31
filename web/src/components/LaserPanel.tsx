@@ -1,11 +1,25 @@
-// Laser workspace side panel: machine status, runs under way, pending runs with a deliberate two-step approval, and
-// preview stats. Approval is the only way the UI can make the laser fire: it needs two separate taps plus the operator
-// PIN (set on the engine machine with `openetch set-pin`), shows what will fire, and is refused for stale runs. The PIN
-// lives only in this component's state while the confirm step is open and goes only into the approve request body.
+// Laser workspace side panel: machine status, runs under way, pending runs with a deliberate two-step approval, recent
+// runs, and preview stats. Approval is the only way the UI can make the laser fire: it needs two separate taps plus the
+// operator PIN (set on the engine machine with `openetch set-pin`), shows what will fire, and is refused for stale runs,
+// a changed PIN file and a PIN lockout. The PIN lives only in this component's state while the confirm step is open and
+// goes only into the approve request body.
 
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api/client.ts";
-import { activeRuns, approvalErrorText, approveBlocker, pendingRuns, runStatRows, stateLabel, validPin } from "../api/runs.ts";
+import {
+  activeRuns,
+  approvalErrorText,
+  approvalNotice,
+  approveBlocker,
+  isStale,
+  lockSecondsLeft,
+  pendingRuns,
+  pinHint,
+  recentRuns,
+  runStatRows,
+  stateLabel,
+  validPin,
+} from "../api/runs.ts";
 import type { MachineStatus, PendingRun, Preview } from "../api/types.ts";
 import { originBadge } from "./Timeline.tsx";
 
@@ -50,11 +64,33 @@ function FragmentKV({ k, v }: { k: string; v: unknown }) {
   );
 }
 
-export function RunsCard(props: { machine: MachineStatus | null; onChanged: () => void; report: (e: unknown) => void }) {
+/** Current time in Unix seconds, re-rendering every second while approvals are locked (for the countdown). */
+function useLockClock(machine: MachineStatus | null): number {
+  const [now, setNow] = useState(() => Date.now() / 1000);
+  const locked = lockSecondsLeft(machine, Date.now() / 1000) > 0;
+  useEffect(() => {
+    setNow(Date.now() / 1000);
+    if (!locked) return;
+    const id = window.setInterval(() => setNow(Date.now() / 1000), 1000);
+    return () => window.clearInterval(id);
+  }, [locked, machine]);
+  return now;
+}
+
+export function RunsCard(props: {
+  machine: MachineStatus | null;
+  /** Revision of the document shown; a pending run planned from another one cannot be approved. */
+  docRevision: number | null;
+  onChanged: () => void;
+  report: (e: unknown) => void;
+}) {
   const pending = pendingRuns(props.machine);
   const active = activeRuns(props.machine);
+  const recent = recentRuns(props.machine);
   const approval = props.machine?.approval;
   const pedal = approval?.physical_confirm ?? null;
+  const nowUnixS = useLockClock(props.machine);
+  const notice = approvalNotice(props.machine, nowUnixS);
   return (
     <>
       {active.length > 0 && (
@@ -68,18 +104,35 @@ export function RunsCard(props: { machine: MachineStatus | null; onChanged: () =
       <section className="card">
         <h3>Pending runs</h3>
         {approval && (
-          <p className={approval.pin_set ? "muted" : "run-hint"}>
-            {approval.pin_set
-              ? `Approval needs the operator PIN${pedal ? `, then the foot pedal (input ${pedal.input_bit})` : ""}.`
-              : approvalErrorText("pin_not_set", "")}
+          <p className={notice ? "run-hint" : "muted"} role={notice ? "status" : undefined}>
+            {notice ?? `Approval needs the operator PIN${pedal ? `, then the foot pedal (input ${pedal.input_bit})` : ""}.`}
           </p>
         )}
         {pending.length === 0 ? (
           <p className="muted">None. “Request run” creates one; nothing fires until it is approved here.</p>
         ) : (
-          pending.map((r) => <PendingRunRow key={r.id} run={r} machine={props.machine} onChanged={props.onChanged} report={props.report} />)
+          pending.map((r) => (
+            <PendingRunRow
+              key={r.id}
+              run={r}
+              machine={props.machine}
+              docRevision={props.docRevision}
+              nowUnixS={nowUnixS}
+              notice={notice}
+              onChanged={props.onChanged}
+              report={props.report}
+            />
+          ))
         )}
       </section>
+      {recent.length > 0 && (
+        <section className="card">
+          <h3>Recent runs</h3>
+          {recent.map((r) => (
+            <EndedRunRow key={r.id} run={r} />
+          ))}
+        </section>
+      )}
     </>
   );
 }
@@ -137,13 +190,40 @@ function ActiveRunRow({ run, machine }: { run: PendingRun; machine: MachineStatu
   );
 }
 
-function PendingRunRow(props: { run: PendingRun; machine: MachineStatus | null; onChanged: () => void; report: (e: unknown) => void }) {
+/** A run that has ended: finished, failed, aborted while streaming, or cancelled before it streamed. */
+function EndedRunRow({ run }: { run: PendingRun }) {
+  const state = typeof run.state === "string" ? run.state : "";
+  return (
+    <div className={`run-row ended ended-${state}`}>
+      <RunHead run={run} />
+      <div className="run-state">
+        {stateLabel(run.state)}
+        {state === "cancelled" ? " (stopped before it fired)" : ""}
+      </div>
+      {run.error && <p className="run-error">{String(run.error)}</p>}
+      {run.summary && <div className="run-summary">{String(run.summary)}</div>}
+    </div>
+  );
+}
+
+function PendingRunRow(props: {
+  run: PendingRun;
+  machine: MachineStatus | null;
+  docRevision: number | null;
+  nowUnixS: number;
+  /** Machine-wide blocker already shown on the card (not repeated per run). */
+  notice: string | null;
+  onChanged: () => void;
+  report: (e: unknown) => void;
+}) {
   const { run, machine, onChanged, report } = props;
   const [step, setStep] = useState<"idle" | "confirm" | "sending">("idle");
   const [pin, setPin] = useState("");
   const [error, setError] = useState<string | null>(null);
   const pinRef = useRef<HTMLInputElement>(null);
-  const blocker = approveBlocker(run, machine);
+  const blocker = approveBlocker(run, machine, { docRevision: props.docRevision, nowUnixS: props.nowUnixS });
+  const stale = isStale(run, props.docRevision);
+  const hint = pinHint(pin);
 
   // Leaving the confirm step forgets the PIN.
   useEffect(() => {
@@ -185,10 +265,10 @@ function PendingRunRow(props: { run: PendingRun; machine: MachineStatus | null; 
   };
 
   return (
-    <div className={`run-row${step !== "idle" ? " arming" : ""}${run.stale ? " stale" : ""}`}>
+    <div className={`run-row${step !== "idle" ? " arming" : ""}${stale ? " stale" : ""}`}>
       <RunHead run={run} />
       <RunFacts run={run} />
-      {blocker && <p className="run-hint">{blocker}</p>}
+      {blocker && blocker !== props.notice && <p className="run-hint">{blocker}</p>}
       {error && <p className="run-error">{error}</p>}
       {step === "idle" && (
         <button
@@ -214,7 +294,10 @@ function PendingRunRow(props: { run: PendingRun; machine: MachineStatus | null; 
               type="password"
               inputMode="numeric"
               pattern="[0-9]*"
+              minLength={6}
               maxLength={12}
+              placeholder="6-12 digits"
+              aria-describedby={hint ? `pin-hint-${run.id}` : undefined}
               autoComplete="off"
               value={pin}
               disabled={step === "sending"}
@@ -225,6 +308,11 @@ function PendingRunRow(props: { run: PendingRun; machine: MachineStatus | null; 
               }}
             />
           </label>
+          {hint && (
+            <p className="run-hint" id={`pin-hint-${run.id}`}>
+              {hint}
+            </p>
+          )}
           <div className="btn-row">
             <button className="btn" onClick={() => setStep("idle")} disabled={step === "sending"}>
               Cancel

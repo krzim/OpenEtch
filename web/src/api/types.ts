@@ -153,9 +153,6 @@ export interface RunStats {
   estimated_time_s?: number;
   segment_count?: number;
   polyline_count?: number;
-  /** Output layers in the job (count, or the layer ids/names). */
-  layers?: number | unknown[];
-  layer_count?: number;
   [key: string]: unknown;
 }
 
@@ -187,6 +184,13 @@ export interface ApprovalInfo {
   /** False until someone runs `openetch set-pin` on the engine machine. */
   pin_set: boolean;
   physical_confirm: PhysicalConfirm | null;
+  /**
+   * The PIN file changed while the engine was running (`openetch set-pin`). The engine keeps the PIN it loaded at
+   * startup and refuses approvals (code "pin_changed") until it is restarted.
+   */
+  pin_changed?: boolean;
+  /** After repeated wrong PINs: when approvals unlock (engine clock, Unix seconds), or null when unlocked. */
+  locked_until_unix_s?: number | null;
 }
 
 /** GET /api/machine. Only `connected` is relied on; everything else is displayed when present. */
@@ -201,6 +205,12 @@ export interface MachineStatus {
   runs?: PendingRun[];
   approval?: ApprovalInfo;
   [key: string]: unknown;
+}
+
+/** `approval_locked`: too many wrong PINs; approvals are refused until `until_unix_s` (engine clock). */
+export interface ApprovalLockedEvent {
+  type: "approval_locked";
+  until_unix_s: number;
 }
 
 /** `run_finished`: an approved run ended (`state` is "finished", "failed", "aborted" or "cancelled"). */
@@ -219,4 +229,5 @@ export type EngineEvent =
   | { type: "document_changed"; revision: number; /** Who edited; absent for undo/redo. */ origin?: Origin | null }
   | { type: "machine"; [key: string]: unknown }
   | { type: "run_pending"; [key: string]: unknown }
+  | ApprovalLockedEvent
   | RunFinishedEvent;

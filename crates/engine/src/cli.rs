@@ -14,12 +14,15 @@ pub const DEFAULT_WEB_DIR: &str = "web/dist";
 pub const USAGE: &str = "openetch: laser design and control engine
 
 USAGE: openetch [OPTIONS]
-       openetch set-pin [--config-dir <path>]
+       openetch set-pin [--reset] [--config-dir <path>]
 
 COMMANDS:
-  set-pin               Set the operator PIN (4-12 digits) that approving a run needs. Interactive: run it yourself
-                        in a terminal on the engine's computer. Stored as a salted SHA-256 hash in
-                        <config-dir>/operator-pin; takes effect without restarting the engine.
+  set-pin               Set the operator PIN (6-12 digits) that approving a run needs. Interactive: run it yourself
+                        in a terminal on the engine's computer. Changing an existing PIN asks for the current one
+                        first. Stored as a salted SHA-256 hash in <config-dir>/operator-pin. A running engine refuses
+                        approvals once the file changes: restart it to use the new PIN.
+  set-pin --reset       Delete the operator PIN (forgotten PIN) after typing a confirmation phrase. Approvals stay
+                        disabled until a new PIN is set and the engine is restarted.
 
 OPTIONS:
   --listen <addr>       Address to serve on (default 127.0.0.1:7878). Off loopback a token is required.
@@ -56,9 +59,11 @@ pub struct Config {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Parsed {
     Run(Config),
-    /// `openetch set-pin`.
+    /// `openetch set-pin [--reset]`.
     SetPin {
         config_dir: PathBuf,
+        /// `--reset`: delete the PIN instead of setting one.
+        reset: bool,
     },
     Help,
 }
@@ -134,7 +139,9 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Parsed, String> 
                     _ => return Err(format!("--confirm-input must be an input bit 0-15 (got '{v}')")),
                 }
             }
-            "set-pin" => return Err("set-pin is a command of its own: openetch set-pin [--config-dir <path>]".into()),
+            "set-pin" => {
+                return Err("set-pin is a command of its own: openetch set-pin [--reset] [--config-dir <path>]".into());
+            }
             other => return Err(format!("unknown option '{other}' (see --help)")),
         }
     }
@@ -156,17 +163,19 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Parsed, String> 
 
 fn parse_set_pin(mut it: impl Iterator<Item = String>) -> Result<Parsed, String> {
     let mut dir = None;
+    let mut reset = false;
     while let Some(arg) = it.next() {
         match arg.split_once('=') {
             Some(("--config-dir", v)) => dir = Some(PathBuf::from(v)),
             _ if arg == "--config-dir" => {
                 dir = Some(PathBuf::from(it.next().ok_or("--config-dir needs a value")?));
             }
+            _ if arg == "--reset" => reset = true,
             _ if arg == "-h" || arg == "--help" => return Ok(Parsed::Help),
-            _ => return Err(format!("set-pin: unknown option '{arg}' (only --config-dir)")),
+            _ => return Err(format!("set-pin: unknown option '{arg}' (only --reset and --config-dir)")),
         }
     }
-    Ok(Parsed::SetPin { config_dir: config_dir(dir)? })
+    Ok(Parsed::SetPin { config_dir: config_dir(dir)?, reset })
 }
 
 #[cfg(test)]
@@ -204,8 +213,10 @@ mod tests {
     #[test]
     fn set_pin_command() {
         let p = |a: &[&str]| parse(a.iter().map(|s| s.to_string()));
-        assert_eq!(p(&["set-pin", "--config-dir", "x"]).unwrap(), Parsed::SetPin { config_dir: PathBuf::from("x") });
-        assert_eq!(p(&["set-pin", "--config-dir=y"]).unwrap(), Parsed::SetPin { config_dir: PathBuf::from("y") });
+        let set = |dir: &str, reset| Parsed::SetPin { config_dir: PathBuf::from(dir), reset };
+        assert_eq!(p(&["set-pin", "--config-dir", "x"]).unwrap(), set("x", false));
+        assert_eq!(p(&["set-pin", "--config-dir=y"]).unwrap(), set("y", false));
+        assert_eq!(p(&["set-pin", "--reset", "--config-dir", "z"]).unwrap(), set("z", true));
         assert!(p(&["set-pin", "--usb"]).is_err());
         assert!(p(&["--usb", "set-pin"]).is_err());
     }

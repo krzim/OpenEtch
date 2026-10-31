@@ -254,7 +254,12 @@ export function App() {
             ) : (
               <div className="props">
                 <MachineCard machine={machine} httpError={engine.httpError} />
-                <RunsCard machine={machine} onChanged={() => void engine.refreshMachine()} report={report} />
+                <RunsCard
+                  machine={machine}
+                  docRevision={doc?.revision ?? null}
+                  onChanged={() => void engine.refreshMachine()}
+                  report={report}
+                />
                 <PreviewStatsCard preview={engine.preview} enabled={previewOn} />
                 {selectedLayer && <LayerSection layer={selectedLayer} run={run} report={report} />}
               </div>

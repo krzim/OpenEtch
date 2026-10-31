@@ -1,6 +1,6 @@
-// Pure run and machine-response logic for the Laser workspace: which runs wait for approval and which are under way,
-// what a run will do (its stats), what the approval error codes mean, and what to tell the user when a run ends or
-// STOP answers. No React, no fetch, so `npm test` covers it.
+// Pure run and machine-response logic for the Laser workspace: which runs wait for approval, which are under way and
+// which ended, what a run will do (its stats), when approvals are blocked (stale run, PIN unset or changed, lockout)
+// and what the approval error codes mean, and what to tell the user when a run ends or STOP answers. No React, no fetch, so `npm test` covers it.
 
 import type { MachineStatus, PendingRun, RunFinishedEvent, RunStats } from "./types.ts";
 
@@ -25,17 +25,93 @@ function isRun(r: unknown): r is PendingRun {
   return !!r && typeof r === "object" && typeof (r as { id?: unknown }).id === "string";
 }
 
-/** Why a pending run cannot be approved right now, or null when it can. */
-export function approveBlocker(run: PendingRun, m: MachineStatus | null): string | null {
-  if (run.stale) return "Document changed - request a new run.";
-  if (run.state !== undefined && run.state !== "pending") return `Run is ${stateLabel(run.state).toLowerCase()}.`;
-  if (m?.approval && m.approval.pin_set === false) return APPROVAL_CODE_TEXT.pin_not_set;
+/** States of a run that has ended. "cancelled" runs were stopped before they streamed anything. */
+export const ENDED_STATES: readonly string[] = ["finished", "completed", "failed", "aborted", "cancelled"];
+
+/** Runs that have ended (finished, failed, aborted while streaming, cancelled before it), newest first. */
+export function recentRuns(m: MachineStatus | null, limit = 5): PendingRun[] {
+  if (!m || !Array.isArray(m.runs)) return [];
+  const ended = m.runs.filter((r) => isRun(r) && typeof r.state === "string" && ENDED_STATES.includes(r.state));
+  const t = (r: PendingRun) => (num(r.created_unix_s) ? r.created_unix_s : 0);
+  return ended
+    .map((r, i) => ({ r, i }))
+    .sort((a, b) => t(b.r) - t(a.r) || b.i - a.i)
+    .slice(0, limit)
+    .map((x) => x.r);
+}
+
+/** Seconds until approvals unlock after too many wrong PINs, or 0 when they are not locked. */
+export function lockSecondsLeft(m: MachineStatus | null, nowUnixS: number): number {
+  const until = m?.approval?.locked_until_unix_s;
+  if (!num(until)) return 0;
+  // The engine caps a lockout at 1 h; a larger value means the two clocks disagree, so do not count past it. Once the
+  // engine unlocks it reports null, which ends the lock here whatever this clock says.
+  return Math.min(3600, Math.max(0, Math.ceil(until - nowUnixS)));
+}
+
+/** "42 s", "2 min 05 s": a lockout countdown. */
+export function formatCountdown(s: number): string {
+  const total = Math.max(0, Math.ceil(s));
+  if (total < 60) return `${total} s`;
+  return `${Math.floor(total / 60)} min ${String(total % 60).padStart(2, "0")} s`;
+}
+
+/**
+ * Machine-wide reason approvals cannot happen right now (no PIN, PIN file changed, lockout with its countdown), or
+ * null. Shown once on the approval card; `approveBlocker` returns the same text for each run.
+ */
+export function approvalNotice(m: MachineStatus | null, nowUnixS: number = Date.now() / 1000): string | null {
+  const a = m?.approval;
+  if (!a) return null;
+  if (a.pin_set === false) return APPROVAL_CODE_TEXT.pin_not_set;
+  if (a.pin_changed === true) return APPROVAL_CODE_TEXT.pin_changed;
+  const left = lockSecondsLeft(m, nowUnixS);
+  if (left > 0) return `Too many wrong PINs. Approvals unlock in ${formatCountdown(left)}.`;
   return null;
 }
 
-/** The operator PIN is 4-12 digits (`openetch set-pin`). */
+/**
+ * The machine status with an `approval_locked` event applied, so the countdown shows before the next refresh. A
+ * status without `approval` (an older engine) is returned unchanged.
+ */
+export function withApprovalLock(m: MachineStatus | null, untilUnixS: unknown): MachineStatus | null {
+  if (!m?.approval || !num(untilUnixS)) return m;
+  return { ...m, approval: { ...m.approval, locked_until_unix_s: untilUnixS } };
+}
+
+export interface BlockerContext {
+  /** Revision of the document this UI shows. A run planned from another revision is treated as stale. */
+  docRevision?: number | null;
+  /** Current time in Unix seconds (for the lockout countdown); defaults to the browser clock. */
+  nowUnixS?: number;
+}
+
+/**
+ * True when the engine flagged the run stale, or it was planned from another revision than the document shown. The
+ * engine's flag arrives with the next machine refresh; the document revision may arrive first.
+ */
+export function isStale(run: PendingRun, docRevision?: number | null): boolean {
+  if (run.stale === true) return true;
+  return num(run.revision) && num(docRevision) && docRevision >= 0 && run.revision !== docRevision;
+}
+
+/** Why a pending run cannot be approved right now, or null when it can. */
+export function approveBlocker(run: PendingRun, m: MachineStatus | null, ctx: BlockerContext = {}): string | null {
+  if (isStale(run, ctx.docRevision)) return STALE_TEXT;
+  if (run.state !== undefined && run.state !== "pending") return `Run is ${stateLabel(run.state).toLowerCase()}.`;
+  return approvalNotice(m, ctx.nowUnixS ?? Date.now() / 1000);
+}
+
+const STALE_TEXT = "Document changed - request a new run.";
+
+/** The operator PIN is 6-12 digits (`openetch set-pin`). */
 export function validPin(pin: string): boolean {
-  return /^\d{4,12}$/.test(pin);
+  return /^\d{6,12}$/.test(pin);
+}
+
+/** Hint under a PIN being typed: null when it is empty or long enough. */
+export function pinHint(pin: string): string | null {
+  return pin.length > 0 && pin.length < 6 ? "At least 6 digits." : null;
 }
 
 /** User-facing text for the approval error codes (HTTP 403 `{ok:false, error, code}`). */
@@ -43,7 +119,8 @@ export const APPROVAL_CODE_TEXT: Readonly<Record<string, string>> = {
   pin_not_set: "No operator PIN is set. Run 'openetch set-pin' on the engine machine once.",
   pin_invalid: "Wrong PIN.",
   pin_required: "Enter the operator PIN.",
-  pin_locked: "Too many wrong PINs. Approvals are locked for 60 s.",
+  pin_locked: "Too many wrong PINs. Approvals are locked for a while.",
+  pin_changed: "PIN file changed - restart the engine.",
 };
 
 /** Message for a failed approval: the code's text when known, else the engine's own message. */
@@ -102,10 +179,10 @@ export function runStatRows(run: PendingRun): [string, string][] {
   if (num(s.estimated_time_s)) rows.push(["Est. time", formatDuration(s.estimated_time_s)]);
   if (num(s.mark_length_mm)) rows.push(["Mark", mm(s.mark_length_mm)]);
   if (num(s.jump_length_mm)) rows.push(["Jump", mm(s.jump_length_mm)]);
-  const layers = num(s.layer_count) ? s.layer_count : Array.isArray(s.layers) ? s.layers.length : num(s.layers) ? s.layers : null;
-  if (layers !== null) rows.push(["Layers", String(layers)]);
   if (num(s.segment_count)) rows.push(["Segments", String(s.segment_count)]);
-  if (num(run.packet_count)) rows.push(["Packets", String(run.packet_count)]);
+  // The engine drops a run's packets once it is approved, so the count means something only while it is pending.
+  const pending = run.state === undefined || run.state === "pending";
+  if (pending && num(run.packet_count)) rows.push(["Packets", String(run.packet_count)]);
   if (num(run.revision)) rows.push(["Revision", `r${run.revision}`]);
   return rows;
 }
@@ -122,7 +199,8 @@ export function runFinishedToast(ev: RunFinishedEvent): { msg: string; kind: "in
 export function stopToast(res: unknown): string {
   const r = res && typeof res === "object" ? (res as { connected?: unknown; cancelled_runs?: unknown }) : {};
   const cancelled = Array.isArray(r.cancelled_runs) ? r.cancelled_runs.length : num(r.cancelled_runs) ? r.cancelled_runs : 0;
-  const tail = cancelled > 0 ? ` ${cancelled} pending run${cancelled === 1 ? "" : "s"} cancelled.` : "";
+  // `cancelled_runs` counts every run that had not started streaming (pending, approved, waiting for the pedal).
+  const tail = cancelled > 0 ? ` ${cancelled} run${cancelled === 1 ? "" : "s"} cancelled before starting.` : "";
   if (r.connected === false) return `No laser connected; nothing to stop.${tail}`;
   return `Stop sent.${tail}`;
 }

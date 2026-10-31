@@ -20,7 +20,7 @@ use crate::security::SecurityConfig;
 use crate::{AppState, api};
 
 /// The operator PIN the test states are set up with.
-pub(crate) const TEST_PIN: &str = "2468";
+pub(crate) const TEST_PIN: &str = "246800";
 
 /// Approval config in a fresh temp config dir with [`TEST_PIN`] set.
 fn approval(confirm: Option<PhysicalConfirm>) -> ApprovalConfig {
@@ -443,30 +443,51 @@ async fn approval_pin_errors_have_codes() {
     let id = pending_run(&app).await;
     let approve = |body: Option<Value>| req("POST", &format!("/api/runs/{id}/approve"), body);
     let (_, m) = send(&app, req("GET", "/api/machine", None)).await;
-    assert_eq!(m["approval"], json!({"pin_set": false, "physical_confirm": {"input_bit": 14, "timeout_s": 30}}));
-
+    assert_eq!(
+        m["approval"],
+        json!({"pin_set": false, "pin_changed": false, "locked_until_unix_s": null,
+               "physical_confirm": {"input_bit": 14, "timeout_s": 30}})
+    );
     let (s, v) = send(&app, approve(pin_body())).await;
     assert_eq!((s, &v["code"], &v["ok"]), (StatusCode::FORBIDDEN, &json!("pin_not_set"), &json!(false)), "{v}");
-    pin::set_pin(&dir, TEST_PIN).unwrap();
-    let (_, m) = send(&app, req("GET", "/api/machine", None)).await;
-    assert_eq!(m["approval"]["pin_set"], true);
 
+    // A PIN set while the engine runs is never used: approvals are refused until a restart.
+    pin::set_pin(&dir, TEST_PIN).unwrap();
+    let (s, v) = send(&app, approve(pin_body())).await;
+    assert_eq!((s, &v["code"]), (StatusCode::FORBIDDEN, &json!("pin_changed")), "{v}");
+    let (_, m) = send(&app, req("GET", "/api/machine", None)).await;
+    assert_eq!((&m["approval"]["pin_set"], &m["approval"]["pin_changed"]), (&json!(false), &json!(true)));
+    assert_eq!(st.runs().get(&id).unwrap().state, RunState::Pending);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    // After a "restart" (a store loaded with the PIN in place):
+    let st = test_state().await;
+    let app = self::app(&st);
+    let id = pending_run(&app).await;
+    let approve = |body: Option<Value>| req("POST", &format!("/api/runs/{id}/approve"), body);
     for body in [None, Some(json!({})), Some(json!({"pin": ""}))] {
         let (s, v) = send(&app, approve(body)).await;
         assert_eq!((s, &v["code"]), (StatusCode::FORBIDDEN, &json!("pin_required")), "{v}");
     }
+    let mut events = st.subscribe();
     for _ in 1..pin::MAX_FAILURES {
-        let (s, v) = send(&app, approve(Some(json!({"pin": "1357"})))).await;
+        let (s, v) = send(&app, approve(Some(json!({"pin": "135790"})))).await;
         assert_eq!((s, &v["code"]), (StatusCode::FORBIDDEN, &json!("pin_invalid")), "{v}");
     }
-    let (s, v) = send(&app, approve(Some(json!({"pin": "1357"})))).await;
+    let (s, v) = send(&app, approve(Some(json!({"pin": "135790"})))).await;
     assert_eq!((s, &v["code"]), (StatusCode::FORBIDDEN, &json!("pin_locked")), "{v}");
+    assert!(v["error"].as_str().unwrap().contains("another"), "{v}");
+    let crate::Event::ApprovalLocked { until_unix_s } = events.recv().await.unwrap() else {
+        panic!("expected approval_locked")
+    };
+    let (_, m) = send(&app, req("GET", "/api/machine", None)).await;
+    assert_eq!(m["approval"]["locked_until_unix_s"], json!(until_unix_s));
     let (s, v) = send(&app, approve(pin_body())).await;
     assert_eq!((s, &v["code"]), (StatusCode::FORBIDDEN, &json!("pin_locked")), "the right PIN is refused while locked");
+    assert!(events.try_recv().is_err(), "a refusal while locked starts no new lockout");
     assert_eq!(st.runs().get(&id).unwrap().state, RunState::Pending);
     let c = st.machine.sim_counters().unwrap();
     assert_eq!((c.laser_singles(), c.emitting_packets()), (0, 0));
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Finding 1: STOP's abort sequence wins the controller lock before the approved run does (and clears the abort
@@ -499,7 +520,7 @@ async fn stop_between_approval_and_lock_never_runs() {
     holder.await.unwrap().unwrap().unwrap();
 
     let run = wait_final(&st, &id).await;
-    assert_eq!(run.state, RunState::Aborted, "{:?}", run.error);
+    assert_eq!(run.state, RunState::Cancelled, "stopped before streaming: {:?}", run.error);
     assert_eq!((counters.laser_singles(), counters.emitting_packets()), (0, 0));
     assert!(!st.machine.is_running());
 }
@@ -537,8 +558,10 @@ async fn stop_endpoint_during_approval_never_fires() {
         holder.await.unwrap().unwrap();
         let (s, v) = stopper.await.unwrap();
         assert_eq!((s, &v["ok"]), (StatusCode::OK, &json!(true)), "{v}");
+        // The run was approved but had not reached the controller: cancelled, and counted.
+        assert_eq!(v["cancelled_runs"], 1, "{v}");
         let run = wait_final(&st, &id).await;
-        assert_eq!(run.state, RunState::Aborted, "{:?}", run.error);
+        assert_eq!(run.state, RunState::Cancelled, "{:?}", run.error);
         assert_eq!((counters.laser_singles(), counters.emitting_packets()), (0, 0));
     }
 }
@@ -649,6 +672,7 @@ async fn stop_cancels_a_run_awaiting_confirmation() {
     tokio::time::sleep(Duration::from_millis(30)).await;
     let (s, v) = send(&app, req("POST", "/api/machine/stop", None)).await;
     assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["cancelled_runs"], 1, "an awaiting_confirm run counts: {v}");
     counters.set_inputs(1 << 14);
     let run = wait_final(&st, &id).await;
     assert_eq!(run.state, RunState::Cancelled, "{:?}", run.error);
@@ -665,6 +689,98 @@ async fn stop_without_a_board_is_ok() {
     assert_eq!(s, StatusCode::OK, "{v}");
     assert_eq!((&v["ok"], &v["connected"]), (&json!(true), &json!(false)));
 }
+
+/// With no board connected, ending a frame is not an error either.
+#[tokio::test]
+async fn frame_stop_without_a_board_is_ok() {
+    let machine = Arc::new(Machine::usb(MachineProfile::generic_lmc_fiber(), None));
+    let st = AppState::new(Session::new(doc::Document::default()), machine, SecurityConfig::default(), approval(None));
+    let (s, v) = send(&app(&st), req("POST", "/api/machine/frame/stop", None)).await;
+    assert_eq!((s, v), (StatusCode::OK, json!({"ok": true, "connected": false})));
+    // A connected board answers plain ok.
+    let st = test_state().await;
+    let (s, v) = send(&app(&st), req("POST", "/api/machine/frame/stop", None)).await;
+    assert_eq!((s, v), (StatusCode::OK, json!({"ok": true})));
+}
+
+/// A link that sleeps a little on every status poll, so a run spends real time on the board.
+struct SlowLink {
+    inner: SimLink,
+}
+
+impl Link for SlowLink {
+    fn send_single(&mut self, cmd: Single) -> Result<Option<Reply>, LinkError> {
+        if cmd == Single::get_version() {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let r = self.inner.send_single(cmd);
+        self.inner.clear_traffic();
+        r
+    }
+
+    fn send_packet(&mut self, packet: &Packet) -> Result<(), LinkError> {
+        let r = self.inner.send_packet(packet);
+        self.inner.clear_traffic();
+        r
+    }
+}
+
+/// A run stopped once it is streaming ends `aborted`, and the stop does not count it as cancelled.
+#[tokio::test]
+async fn a_streaming_run_is_aborted_not_cancelled() {
+    // The board stays BUSY after ExecuteList, so the run is still on the board when it is stopped.
+    let board = machine::SimBoard { busy_polls: usize::MAX, ..machine::SimBoard::default() };
+    let link: Box<dyn Link> = Box::new(SlowLink { inner: SimLink::with_board(board) });
+    let poll = PollConfig { finish_timeout: Some(Duration::from_secs(20)), ..PollConfig::immediate() };
+    let profile = MachineProfile::generic_lmc_fiber();
+    let machine = Arc::new(Machine::with_link(link, LinkKind::Simulated, None, profile, None, poll));
+    let st = state_on(machine, SecurityConfig::default(), approval(None)).await;
+    let app = app(&st);
+    let id = pending_run(&app).await;
+    let (s, _) = send(&app, req("POST", &format!("/api/runs/{id}/approve"), pin_body())).await;
+    assert_eq!(s, StatusCode::OK);
+    while st.runs().get(&id).unwrap().state != RunState::Running {
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    let (s, v) = send(&app, req("POST", "/api/machine/stop", None)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["cancelled_runs"], 0, "a running run is not cancelled: {v}");
+    let run = wait_final(&st, &id).await;
+    assert_eq!(run.state, RunState::Aborted, "{:?}", run.error);
+}
+
+/// Previews are coalesced: requests queued behind a running plan share one plan of the newest document instead of
+/// each planning the revision it arrived at.
+#[tokio::test]
+async fn previews_are_coalesced() {
+    let st = test_state().await;
+    let app = app(&st);
+    rect(&app, 10.0, 10.0).await;
+    // Hold the in-flight slot, as a long plan would, while requests and edits pile up.
+    let held = st.hold_preview_slot().await;
+    let mut tasks = Vec::new();
+    for i in 0..6 {
+        rect(&app, 5.0 + f64::from(i), 5.0).await;
+        let app = app.clone();
+        tasks.push(tokio::spawn(async move { send(&app, req("GET", "/api/preview", None)).await }));
+    }
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(st.previews_computed(), 0, "nothing plans while the slot is held");
+    drop(held);
+    for t in tasks {
+        let (s, v) = t.await.unwrap();
+        assert_eq!(s, StatusCode::OK, "{v}");
+        // Every answer is of the newest document (7 rectangles), not of the revision it arrived at.
+        let marks = v["segments"].as_array().unwrap().iter().filter(|g| g["kind"] == "mark").count();
+        assert_eq!(marks, 7 * 4);
+    }
+    assert_eq!(st.previews_computed(), 1, "six queued requests, one plan");
+    // The cached result is dropped once nobody waits; a request after an edit plans again.
+    rect(&app, 3.0, 3.0).await;
+    assert_eq!(send(&app, req("GET", "/api/preview", None)).await.0, StatusCode::OK);
+    assert_eq!(st.previews_computed(), 2);
+}
+
 
 /// Finding 8: ending a frame leaves runs alone.
 #[tokio::test]

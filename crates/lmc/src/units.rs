@@ -9,12 +9,13 @@
 // `_convert_power`, `list_jump`, `list_*_delay`; MIT). Changes: one error type, speed and power refuse instead of
 // saturating, no `_om` compatibility variants. The delay sign rule (`>= 0` is positive) and the polygon delay
 // encoding follow meerk40t `meerk40t/balormk/controller.py` (`list_laser_on_delay`, `list_polygon_delay`; MIT,
-// same copyright holder as below, checked against `main` on 2026-10-31).
+// checked against `main` on 2026-10-31), whose own LICENSE notice is the third copyright line below.
 //
 // MIT License
 //
 // Copyright (c) 2023 MeerK40t
 // Copyright (c) 2026 Luiz Bueno and the OpenLaser contributors
+// Copyright (c) 2021 meerk40t
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal

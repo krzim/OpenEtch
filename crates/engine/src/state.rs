@@ -2,6 +2,7 @@
 //! HTTP API and the MCP server call. Locks are std mutexes held only for short, non-awaiting sections; planning
 //! and rendering run on blocking threads.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use commands::{CommandSpec, HistoryEntry, Invocation, Origin, Outcome, Risk, Session};
@@ -23,6 +24,43 @@ pub const APPROVAL_MESSAGE: &str = "The run is pending. Nothing fires until a pe
     the OpenEtch UI (Laser workspace) with the operator PIN. Agents cannot and must not approve runs, and must never \
     ask for, handle or set the PIN.";
 
+/// A planned preview and the document it was planned from.
+pub type PreviewResult = Arc<(Document, Result<Preview, PlanError>)>;
+
+/// Coalesces preview planning: at most one computation runs at a time, and requests that queued behind it share
+/// one computation of the newest document instead of each planning the revision they arrived at.
+#[derive(Default)]
+struct PreviewGate {
+    /// Held (owned, inside the blocking task) while a preview is being planned, so a dropped request cannot let a
+    /// second computation start while the first is still running.
+    running: Arc<tokio::sync::Mutex<()>>,
+    /// The newest result, kept only while some request is waiting (memory is released when the last one leaves).
+    latest: Mutex<Option<PreviewResult>>,
+    /// Requests inside [`AppState::preview`].
+    waiting: AtomicUsize,
+    /// Plans computed (tests).
+    computed: AtomicUsize,
+}
+
+/// Counts a request in [`PreviewGate::waiting`]; the last one out drops the cached result.
+struct PreviewTicket<'a>(&'a PreviewGate);
+
+impl<'a> PreviewTicket<'a> {
+    fn new(gate: &'a PreviewGate) -> Self {
+        gate.waiting.fetch_add(1, Ordering::SeqCst);
+        PreviewTicket(gate)
+    }
+}
+
+impl Drop for PreviewTicket<'_> {
+    fn drop(&mut self) {
+        let mut latest = lock(&self.0.latest);
+        if self.0.waiting.fetch_sub(1, Ordering::SeqCst) == 1 {
+            *latest = None;
+        }
+    }
+}
+
 /// Shared engine state. See the module docs.
 pub struct AppState {
     session: Mutex<Session>,
@@ -32,6 +70,7 @@ pub struct AppState {
     pub security: SecurityConfig,
     /// Operator PIN and the optional physical confirmation input.
     pub approval: ApprovalConfig,
+    previews: Arc<PreviewGate>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -74,6 +113,7 @@ impl AppState {
             events: crate::events::channel(),
             security,
             approval,
+            previews: Arc::default(),
         })
     }
 
@@ -157,27 +197,63 @@ impl AppState {
     }
 
     /// Plan the current document (no encoding). An empty document previews as nothing rather than an error.
-    pub async fn preview(&self) -> Result<(Document, Result<Preview, PlanError>), EngineError> {
+    ///
+    /// Coalesced ([`PreviewGate`]): at most one plan runs at a time. A request that waited for a running plan
+    /// reuses the newest result if it is of the current revision, and otherwise plans the current document once
+    /// for every request queued with it, so a burst of edits never queues one plan per edit. The result can
+    /// therefore be of a newer revision than the one current when the request arrived (never an older one).
+    pub async fn preview(&self) -> Result<PreviewResult, EngineError> {
+        let gate = &*self.previews;
+        let _ticket = PreviewTicket::new(gate);
+        let running = gate.running.clone().lock_owned().await;
+        let revision = self.revision();
+        if let Some(r) = lock(&gate.latest).as_ref().filter(|r| r.0.revision == revision) {
+            return Ok(r.clone());
+        }
         let doc = self.document();
         let target = self.machine.target().clone();
+        let shared = self.previews.clone();
         Ok(tokio::task::spawn_blocking(move || {
             let preview = match plan::plan_job(&doc, &target) {
                 Ok(job) => Ok(plan::preview_plan(&job)),
                 Err(PlanError::Empty) => Ok(Preview::default()),
                 Err(e) => Err(e),
             };
-            (doc, preview)
+            let result: PreviewResult = Arc::new((doc, preview));
+            shared.computed.fetch_add(1, Ordering::SeqCst);
+            // Published before the slot is released, so the next queued request finds it; kept only while some
+            // request still waits (the ticket's drop takes the same lock).
+            let mut latest = lock(&shared.latest);
+            if shared.waiting.load(Ordering::SeqCst) > 0 {
+                *latest = Some(result.clone());
+            }
+            drop(latest);
+            drop(running);
+            result
         })
         .await?)
     }
 
+    /// Hold the preview slot as a running plan would (tests).
+    #[cfg(test)]
+    pub(crate) async fn hold_preview_slot(&self) -> tokio::sync::OwnedMutexGuard<()> {
+        self.previews.running.clone().lock_owned().await
+    }
+
+    /// How many previews have been planned (tests).
+    #[cfg(test)]
+    pub(crate) fn previews_computed(&self) -> usize {
+        self.previews.computed.load(Ordering::SeqCst)
+    }
+
     /// The preview as SVG. A plan error still renders the document (without toolpath); the error is returned
     /// alongside.
-    pub async fn preview_svg(&self, opts: RenderOptions) -> Result<(String, Result<Preview, PlanError>), EngineError> {
-        let (doc, preview) = self.preview().await?;
+    pub async fn preview_svg(&self, opts: RenderOptions) -> Result<(String, PreviewResult), EngineError> {
+        let result = self.preview().await?;
+        let (doc, preview) = &*result;
         let field = self.machine.profile().field_mm;
-        let svg = render::preview_svg(&doc, field, preview.as_ref().ok(), opts);
-        Ok((svg, preview))
+        let svg = render::preview_svg(doc, field, preview.as_ref().ok(), opts);
+        Ok((svg, result))
     }
 
     /// Plan, encode and check the current document and store it as a pending run. Never touches the machine.
@@ -214,19 +290,25 @@ impl AppState {
         frame::start(&self.machine, &self.events, outline).await
     }
 
-    /// End framing only. Pending and approved runs are left alone (that is [`AppState::stop`]).
-    pub async fn frame_stop(&self) -> Result<(), EngineError> {
-        frame::stop(&self.machine, &self.events).await
+    /// End framing only. Pending and approved runs are left alone (that is [`AppState::stop`]). `{ok: true}`, or
+    /// `{ok: true, connected: false}` when no board is connected.
+    pub async fn frame_stop(&self) -> Result<Value, EngineError> {
+        Ok(if frame::stop(&self.machine, &self.events).await? {
+            json!({ "ok": true })
+        } else {
+            json!({ "ok": true, "connected": false })
+        })
     }
 
-    /// Emergency stop: abort any run or frame, cancel pending runs and any run that has not started streaming. Never
-    /// gated and never waits behind a run: the stop epoch is bumped (under the runs lock, see the `approve` module)
-    /// before anything waits for the controller. With no board connected it answers `{ok: true, connected: false}`.
+    /// Emergency stop: abort any run or frame, cancel every run not yet streaming (pending, approved, awaiting
+    /// confirmation; `cancelled_runs` counts them). Never gated and never waits behind a run: the stop epoch is
+    /// bumped (under the runs lock, see the `approve` module) before anything waits for the controller. With no
+    /// board connected it answers `{ok: true, connected: false}`.
     pub async fn stop(&self) -> Result<Value, EngineError> {
         let cancelled = {
             let mut runs = self.runs();
             self.machine.request_stop();
-            runs.cancel_pending("cancelled by stop")
+            runs.cancel_not_streaming("cancelled by stop before streaming")
         };
         let result = self.machine.abort().await;
         let detail = match &result {
