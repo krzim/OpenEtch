@@ -4,7 +4,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, batch, eventsUrl, execute, type Invocation } from "./client.ts";
-import type { CommandSpec, EngineEvent, GDocument, HistoryEntry, MachineStatus, Preview } from "./types.ts";
+import { runFinishedToast } from "./runs.ts";
+import type { CommandSpec, EngineEvent, GDocument, HistoryEntry, MachineStatus, Origin, Preview } from "./types.ts";
 
 /** WebSocket state shown by the connection indicator. */
 export type LinkState = "connecting" | "open" | "closed";
@@ -18,6 +19,8 @@ export interface Engine {
   link: LinkState;
   /** Last HTTP error talking to the engine, cleared on the next success. */
   httpError: string | null;
+  /** The latest edit made by someone other than this UI (from `document_changed.origin`), for the timeline to flash. */
+  remoteEdit: RemoteEdit | null;
   /** Run one command (or several as one undo step) and refetch. Resolves to the result, or throws ApiError. */
   run: (inv: Invocation | Invocation[]) => Promise<unknown>;
   undo: () => Promise<void>;
@@ -25,6 +28,19 @@ export interface Engine {
   refreshDoc: () => Promise<void>;
   refreshMachine: () => Promise<void>;
   refreshPreview: () => Promise<void>;
+}
+
+/** An edit announced by `document_changed` with a non-UI origin. `seq` changes on every event so repeats re-flash. */
+export interface RemoteEdit {
+  revision: number;
+  origin: Origin;
+  seq: number;
+}
+
+/** True for origins that are not this UI (agents and scripts). */
+function isRemoteOrigin(o: Origin | null | undefined): o is Origin {
+  if (o === undefined || o === null) return false;
+  return typeof o === "string" ? o !== "ui" : o.kind !== "ui";
 }
 
 export interface EngineOptions {
@@ -66,6 +82,7 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
   const [commands, setCommands] = useState<CommandSpec[] | null>(null);
   const [link, setLink] = useState<LinkState>("connecting");
   const [httpError, setHttpError] = useState<string | null>(null);
+  const [remoteEdit, setRemoteEdit] = useState<RemoteEdit | null>(null);
 
   const notifyRef = useRef(notify);
   notifyRef.current = notify;
@@ -185,6 +202,10 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
         switch (ev.type) {
           case "document_changed":
             if (typeof ev.revision !== "number" || ev.revision !== docRevision.current) void refreshDoc();
+            if (typeof ev.revision === "number" && isRemoteOrigin(ev.origin)) {
+              const { revision, origin } = ev;
+              setRemoteEdit((r) => ({ revision, origin, seq: (r?.seq ?? 0) + 1 }));
+            }
             break;
           case "machine":
             void refreshMachine();
@@ -193,6 +214,12 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
             void refreshMachine();
             notifyRef.current("A run is waiting for approval in the Laser workspace.", "info");
             break;
+          case "run_finished": {
+            void refreshMachine();
+            const t = runFinishedToast(ev);
+            notifyRef.current(t.msg, t.kind);
+            break;
+          }
         }
       };
       ws.onclose = () => {
@@ -223,5 +250,20 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
     return () => window.clearInterval(id);
   }, [link, refreshMachine]);
 
-  return { doc, history, machine, preview, commands, link, httpError, run, undo, redo, refreshDoc, refreshMachine, refreshPreview };
+  return {
+    doc,
+    history,
+    machine,
+    preview,
+    commands,
+    link,
+    httpError,
+    remoteEdit,
+    run,
+    undo,
+    redo,
+    refreshDoc,
+    refreshMachine,
+    refreshPreview,
+  };
 }

@@ -30,7 +30,7 @@ pub struct Timing {
     pub laser_on_delay_us: f64,
     /// Laser-off delay, µs.
     pub laser_off_delay_us: f64,
-    /// Polygon (corner) delay, µs.
+    /// Polygon (corner) delay, µs. Sent in 10 µs units (`lmc::units::polygon_delay_units`; unverified encoding).
     pub polygon_delay_us: f64,
     /// End-of-mark delay, µs.
     pub end_delay_us: f64,
@@ -52,6 +52,22 @@ pub struct MarkSpeedLimits {
     pub max_mm_s: f64,
 }
 
+/// Default [`MachineProfile::max_jump_speed_mm_s`]: 4000 mm/s, LightBurn's B6 library entry (`JumpSpeed=4000`).
+/// Provisional: not measured on the machine.
+pub const DEFAULT_MAX_JUMP_SPEED_MM_S: f64 = 4000.0;
+
+/// Default [`MachineProfile::max_delay_us`]: 2000 µs. Provisional: an order of magnitude above every delay the B6
+/// profile and the references use (largest: |laser on| 300 µs, jump 200 µs), so a mistyped delay is refused.
+pub const DEFAULT_MAX_DELAY_US: f64 = 2000.0;
+
+fn default_max_jump_speed() -> f64 {
+    DEFAULT_MAX_JUMP_SPEED_MM_S
+}
+
+fn default_max_delay() -> f64 {
+    DEFAULT_MAX_DELAY_US
+}
+
 /// One laser's fixed facts and hard limits. See the module docs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -65,9 +81,9 @@ pub struct MachineProfile {
     pub field_mm: f64,
     /// Exchange the X and Y galvos (applied after negation, see [`crate::field_to_galvo`]).
     pub swap_xy: bool,
-    /// Mirror field X before it reaches the galvo.
+    /// Mirror field X (in the field frame, before any swap).
     pub negate_x: bool,
-    /// Mirror field Y before it reaches the galvo.
+    /// Mirror field Y (in the field frame, before any swap).
     pub negate_y: bool,
     /// EzCad lens correction file, relative to the profile file ([`MachineProfile::cor_path`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -86,6 +102,14 @@ pub struct MachineProfile {
     pub laser_enable_port_bit: u8,
     /// Jump speed used for red-light framing, mm/s.
     pub red_light_speed_mm_s: f64,
+    /// Hard cap on any jump (travel) speed a job or frame may send, mm/s. Missing in older profile files: defaults to
+    /// [`DEFAULT_MAX_JUMP_SPEED_MM_S`].
+    #[serde(default = "default_max_jump_speed")]
+    pub max_jump_speed_mm_s: f64,
+    /// Hard cap on the magnitude of the laser-on, laser-off, polygon and jump delays a job may send, µs. Missing in
+    /// older profile files: defaults to [`DEFAULT_MAX_DELAY_US`].
+    #[serde(default = "default_max_delay")]
+    pub max_delay_us: f64,
     pub timing: Timing,
     pub mark_speed: MarkSpeedLimits,
     /// Where values came from and what is unverified. Informational.
@@ -112,6 +136,8 @@ impl MachineProfile {
             red_light_port_bit: 8,
             laser_enable_port_bit: 0,
             red_light_speed_mm_s: 2000.0,
+            max_jump_speed_mm_s: DEFAULT_MAX_JUMP_SPEED_MM_S,
+            max_delay_us: DEFAULT_MAX_DELAY_US,
             timing: Timing {
                 laser_on_delay_us: 100.0,
                 laser_off_delay_us: 100.0,
@@ -165,6 +191,11 @@ impl MachineProfile {
         self.field_mm / 2.0
     }
 
+    /// The field size, swap and negate settings as `lmc`'s shared field transform (the one `plan` uses too).
+    pub fn field_transform(&self) -> lmc::FieldTransform {
+        lmc::FieldTransform { field_mm: self.field_mm, swap_xy: self.swap_xy, negate_x: self.negate_x, negate_y: self.negate_y }
+    }
+
     /// Mask of the laser-enable port bit.
     pub fn laser_enable_mask(&self) -> u16 {
         1u16 << (self.laser_enable_port_bit & 15)
@@ -199,8 +230,14 @@ impl MachineProfile {
         if u16::from(self.laser_enable_port_bit) != lmc::LASER_ENABLE_BIT.trailing_zeros() as u16 {
             return invalid("laser_enable_port_bit", format!("{} is unsupported: lmc uses bit 0", self.laser_enable_port_bit));
         }
-        self.speed("red_light_speed_mm_s", self.red_light_speed_mm_s)?;
-        self.speed("timing.jump_speed_mm_s", self.timing.jump_speed_mm_s)?;
+        self.speed("max_jump_speed_mm_s", self.max_jump_speed_mm_s)?;
+        for (field, mm_s) in [("red_light_speed_mm_s", self.red_light_speed_mm_s), ("timing.jump_speed_mm_s", self.timing.jump_speed_mm_s)] {
+            self.speed(field, mm_s)?;
+            if mm_s > self.max_jump_speed_mm_s {
+                return invalid(field, format!("{mm_s} mm/s is above max_jump_speed_mm_s ({})", self.max_jump_speed_mm_s));
+            }
+        }
+        positive("max_delay_us", self.max_delay_us)?;
         // The minimum is a UI bound: it may encode to 0 (1 mm/s on a 153.75 mm field); jobs refuse a 0 word.
         positive("mark_speed.min_mm_s", self.mark_speed.min_mm_s)?;
         self.speed("mark_speed.max_mm_s", self.mark_speed.max_mm_s)?;
@@ -211,12 +248,22 @@ impl MachineProfile {
         for (field, us) in [
             ("timing.laser_on_delay_us", t.laser_on_delay_us),
             ("timing.laser_off_delay_us", t.laser_off_delay_us),
-            ("timing.polygon_delay_us", t.polygon_delay_us),
             ("timing.end_delay_us", t.end_delay_us),
             ("timing.jump_delay_min_us", t.jump_delay_min_us),
             ("timing.jump_delay_max_us", t.jump_delay_max_us),
         ] {
             units::delay_word(us).map_err(|e| ProfileError::Invalid { field, reason: e.to_string() })?;
+        }
+        units::polygon_delay_units(t.polygon_delay_us).map_err(|e| ProfileError::Invalid { field: "timing.polygon_delay_us", reason: e.to_string() })?;
+        for (field, us) in [
+            ("timing.laser_on_delay_us", t.laser_on_delay_us),
+            ("timing.laser_off_delay_us", t.laser_off_delay_us),
+            ("timing.polygon_delay_us", t.polygon_delay_us),
+            ("timing.jump_delay_max_us", t.jump_delay_max_us),
+        ] {
+            if us.abs() > self.max_delay_us {
+                return invalid(field, format!("|{us}| µs is above max_delay_us ({})", self.max_delay_us));
+            }
         }
         if t.jump_delay_min_us < 0.0 || t.jump_delay_max_us < t.jump_delay_min_us {
             return invalid("timing.jump_delay_min_us", "need 0 <= jump_delay_min_us <= jump_delay_max_us".into());
@@ -261,6 +308,15 @@ mod tests {
         assert_eq!(p.red_light_speed_mm_s, 3000.0);
         assert_eq!((p.timing.laser_on_delay_us, p.timing.laser_off_delay_us, p.timing.polygon_delay_us), (-300.0, 100.0, 100.0));
         assert_eq!((p.mark_speed.min_mm_s, p.mark_speed.max_mm_s), (1.0, 10000.0));
+        assert_eq!((p.max_jump_speed_mm_s, p.max_delay_us), (4000.0, 2000.0));
+    }
+
+    #[test]
+    fn missing_limits_default() {
+        let text: String = B6.lines().filter(|l| !l.starts_with("max_jump_speed_mm_s") && !l.starts_with("max_delay_us")).collect::<Vec<_>>().join("
+");
+        let p = MachineProfile::from_toml(&text).unwrap();
+        assert_eq!((p.max_jump_speed_mm_s, p.max_delay_us), (DEFAULT_MAX_JUMP_SPEED_MM_S, DEFAULT_MAX_DELAY_US));
     }
 
     #[test]
@@ -307,6 +363,13 @@ mod tests {
         refused(|p| p.timing.jump_delay_max_us = 1.0);
         refused(|p| p.red_light_speed_mm_s = 0.0);
         refused(|p| p.mark_speed.min_mm_s = 20000.0);
+        refused(|p| p.timing.jump_speed_mm_s = 4500.0);
+        refused(|p| p.red_light_speed_mm_s = 4500.0);
+        refused(|p| p.max_jump_speed_mm_s = 0.0);
+        refused(|p| p.max_delay_us = -1.0);
+        refused(|p| p.timing.laser_on_delay_us = -2500.0);
+        refused(|p| p.timing.polygon_delay_us = 2500.0);
+        refused(|p| p.timing.polygon_delay_us = 700_000.0);
     }
 
     #[test]

@@ -1,5 +1,6 @@
 // Per-workspace toolbar, Fusion-style: icon over label, grouped. Design edits the document; Laser holds the
-// toolpath preview toggle and the machine actions (Frame uses the red pointer only; Request run never fires by itself).
+// toolpath preview toggle and the machine actions (Frame uses the red pointer only and Stop frame ends it without
+// touching pending runs; Request run never fires by itself). The emergency STOP lives in the top bar.
 
 import type { Workspace } from "./TopBar.tsx";
 import type { Tool } from "./Viewport.tsx";
@@ -22,6 +23,7 @@ export interface ToolbarProps {
   onCommands: () => void;
   onTogglePreview: () => void;
   onFrame: () => void;
+  onFrameStop: () => void;
   onRequestRun: () => void;
   onToggleLeft: () => void;
   onToggleRight: () => void;
@@ -73,6 +75,7 @@ export function Toolbar(p: ToolbarProps) {
           </div>
           <div className="tool-group">
             <Btn icon="frame" label="Frame" onClick={p.onFrame} title="Trace the job bounds with the red pointer (no emission)" />
+            <Btn icon="frameStop" label="Stop frame" onClick={p.onFrameStop} title="End red-pointer framing (pending runs are kept)" />
             <Btn icon="run" label="Request run" onClick={p.onRequestRun} title="Create a pending run; it fires only after approval" cls="tool-run" />
           </div>
         </>

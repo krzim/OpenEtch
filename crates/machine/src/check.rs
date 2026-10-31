@@ -19,6 +19,11 @@ pub enum JobCheckError {
     PulseWidth { slot: usize, ns: u16 },
     #[error("slot {slot}: mark speed {units} galvo units/ms is 0 or above the profile's limit ({max_units})")]
     MarkSpeed { slot: usize, units: u16, max_units: u16 },
+    #[error("slot {slot}: jump speed {units} galvo units/ms is 0 or above the profile's limit ({max_units})")]
+    JumpSpeed { slot: usize, units: u16, max_units: u16 },
+    /// A laser-on, laser-off, polygon or jump delay whose magnitude is above the profile's `max_delay_us`.
+    #[error("slot {slot}: {what} of {us} µs is above the profile's limit of {max_us} µs")]
+    Delay { slot: usize, what: &'static str, us: f64, max_us: f64 },
     /// Only typed `lmc::ListCommand` variants may be sent; raw opcodes could set power some other way.
     #[error("slot {slot}: opcode {opcode:#06x} is not allowed in a job")]
     UnsupportedCommand { slot: usize, opcode: u16 },
@@ -26,7 +31,9 @@ pub enum JobCheckError {
 
 /// Check every slot of every packet (padding and anything after the end-of-list included) against `profile`:
 /// mark current <= the `max_power_pct` cap, Q-switch period within the frequency range, pulse width in the table,
-/// mark speed in 1..=the max mark speed, and no `ListCommand::Other`. The list must also end with an end-of-list.
+/// mark speed in 1..=the max mark speed, jump speed in 1..=`max_jump_speed_mm_s`, |laser-on|, |laser-off|,
+/// polygon and |jump| delays <= `max_delay_us`, and no `ListCommand::Other`. The list must also end with an
+/// end-of-list.
 pub fn check_job(profile: &MachineProfile, packets: &[Packet]) -> Result<(), JobCheckError> {
     if packets.is_empty() {
         return Err(JobCheckError::Empty);
@@ -39,6 +46,11 @@ pub fn check_job(profile: &MachineProfile, packets: &[Packet]) -> Result<(), Job
     let min_period = units::frequency_to_period(profile.frequency_khz_max).unwrap_or(u16::MAX);
     let max_period = units::frequency_to_period(profile.frequency_khz_min).unwrap_or(0);
     let max_units = units::speed_to_units(profile.mark_speed.max_mm_s, profile.field_mm).unwrap_or(0);
+    let max_jump_units = units::speed_to_units(profile.max_jump_speed_mm_s, profile.field_mm).unwrap_or(0);
+    let max_us = profile.max_delay_us;
+    let delay = |slot: usize, what: &'static str, us: f64| {
+        if us.abs() > max_us { Err(JobCheckError::Delay { slot, what, us, max_us }) } else { Ok(()) }
+    };
     for (slot, words) in packets.iter().flat_map(Packet::words).enumerate() {
         match ListCommand::from_words(words) {
             ListCommand::MarkCurrent { current } if current > cap => {
@@ -53,6 +65,13 @@ pub fn check_job(profile: &MachineProfile, packets: &[Packet]) -> Result<(), Job
             ListCommand::MarkSpeed { units } if units == 0 || units > max_units => {
                 return Err(JobCheckError::MarkSpeed { slot, units, max_units });
             }
+            ListCommand::JumpSpeed { units } if units == 0 || units > max_jump_units => {
+                return Err(JobCheckError::JumpSpeed { slot, units, max_units: max_jump_units });
+            }
+            ListCommand::LaserOnDelay(d) => delay(slot, "laser-on delay", d.micros())?,
+            ListCommand::LaserOffDelay(d) => delay(slot, "laser-off delay", d.micros())?,
+            ListCommand::JumpDelay(d) => delay(slot, "jump delay", d.micros())?,
+            ListCommand::PolygonDelay { time_10us } => delay(slot, "polygon delay", f64::from(time_10us) * 10.0)?,
             ListCommand::Other { words } => return Err(JobCheckError::UnsupportedCommand { slot, opcode: words[0] }),
             _ => {}
         }
@@ -84,6 +103,9 @@ mod tests {
             l.q_switch_period(units::frequency_to_period(30.0).unwrap()).unwrap();
             l.fiber_pulse_width(200).unwrap();
             l.mark_speed(units::speed_to_units(1000.0, 153.75).unwrap()).unwrap();
+            l.jump_speed(units::speed_to_units(4000.0, 153.75).unwrap()).unwrap();
+            l.laser_on_delay(units::delay_word(-2000.0).unwrap()).laser_off_delay(units::delay_word(2000.0).unwrap());
+            l.polygon_delay(units::polygon_delay_units(2000.0).unwrap()).jump_delay(units::delay_word(2000.0).unwrap());
         });
         assert_eq!(check_job(&p, &packets), Ok(()));
     }
@@ -98,6 +120,17 @@ mod tests {
         assert!(matches!(check_job(&p, &job(|l| _ = l.fiber_pulse_width(7))), Err(JobCheckError::PulseWidth { .. })));
         let fast = units::speed_to_units(20000.0, 153.75).unwrap();
         assert!(matches!(check_job(&p, &job(|l| _ = l.mark_speed(fast))), Err(JobCheckError::MarkSpeed { .. })));
+        let fast_jump = units::speed_to_units(4100.0, 153.75).unwrap();
+        assert!(matches!(check_job(&p, &job(|l| _ = l.jump_speed(fast_jump))), Err(JobCheckError::JumpSpeed { .. })));
+        let zero_jump = job(|l| _ = l.push(ListCommand::JumpSpeed { units: 0 }));
+        assert!(matches!(check_job(&p, &zero_jump), Err(JobCheckError::JumpSpeed { units: 0, .. })));
+        let long = units::delay_word(-2001.0).unwrap();
+        let refused = |l: &mut MarkingList| _ = l.laser_on_delay(long);
+        assert!(matches!(check_job(&p, &job(refused)), Err(JobCheckError::Delay { what: "laser-on delay", .. })));
+        assert!(matches!(check_job(&p, &job(|l| _ = l.laser_off_delay(long))), Err(JobCheckError::Delay { .. })));
+        assert!(matches!(check_job(&p, &job(|l| _ = l.jump_delay(long))), Err(JobCheckError::Delay { .. })));
+        let poly = units::polygon_delay_units(2010.0).unwrap();
+        assert!(matches!(check_job(&p, &job(|l| _ = l.polygon_delay(poly))), Err(JobCheckError::Delay { what: "polygon delay", .. })));
         let raw = job(|l| _ = l.push(ListCommand::Other { words: [lmc::op::LIST_MARK_POWER_RATIO, 9, 0, 0, 0, 0] }));
         assert!(matches!(check_job(&p, &raw), Err(JobCheckError::UnsupportedCommand { .. })));
         assert_eq!(check_job(&p, &[]), Err(JobCheckError::Empty));

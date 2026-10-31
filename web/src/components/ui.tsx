@@ -184,6 +184,7 @@ const ICONS: Record<string, ReactNode> = {
   delete: <path d="M5 7h14 M9 7V4h6v3 M7 7l1 13h8l1-13" />,
   preview: <path d="M3 17l5-6 4 4 4-7 5 9 M3 20h18" />,
   frame: <path d="M4 9V4h5 M15 4h5v5 M20 15v5h-5 M9 20H4v-5" />,
+  frameStop: <path d="M4 9V4h5 M15 4h5v5 M20 15v5h-5 M9 20H4v-5 M9.5 9.5h5v5h-5z" />,
   run: <path d="M7 4l12 8-12 8z" />,
   stop: <rect x="6" y="6" width="12" height="12" rx="1" />,
   undo: <path d="M9 14L4 9l5-5 M4 9h11a5 5 0 010 10h-3" />,

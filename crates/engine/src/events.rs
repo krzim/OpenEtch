@@ -19,14 +19,11 @@ pub const EVENT_CAPACITY: usize = 256;
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
-    /// The document changed (edit, undo or redo). `origin` is who made an edit; `None` for undo/redo.
-    DocumentChanged {
-        revision: u64,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        origin: Option<Origin>,
-    },
-    /// Machine status changed: `event` is e.g. "connected", "framing", "frame_stopped", "run_started", "stopped",
-    /// "error"; clients refetch `GET /api/machine`.
+    /// The document changed (edit, undo or redo). `origin` is who made the change (an undo/redo from the UI is
+    /// `ui`, from MCP `agent`).
+    DocumentChanged { revision: u64, origin: Origin },
+    /// Machine status changed: `event` is "framing", "frame_stopped", "run_approved", "awaiting_confirm",
+    /// "run_started", "run_finished", "stopped", "error" (or "lagged"); clients refetch `GET /api/machine`.
     Machine {
         event: String,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -34,14 +31,9 @@ pub enum Event {
     },
     /// A run is waiting for approval in the UI.
     RunPending { run_id: String, origin: Origin, summary: String },
-    /// An approved run ended.
-    RunFinished {
-        run_id: String,
-        ok: bool,
-        state: RunState,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        error: Option<String>,
-    },
+    /// An approved run ended: `state` is `finished`, `failed`, `aborted` or `cancelled`; `error` is `null` when
+    /// `ok`.
+    RunFinished { id: String, ok: bool, state: RunState, error: Option<String> },
 }
 
 impl Event {
@@ -74,7 +66,8 @@ async fn pump(mut socket: WebSocket, mut rx: broadcast::Receiver<Event>) {
                 }
                 // Missed events: tell the client to refetch everything.
                 Err(broadcast::error::RecvError::Lagged(_)) => {
-                    let text = serde_json::json!({ "type": "document_changed", "revision": -1 }).to_string();
+                    let text =
+                        serde_json::json!({ "type": "document_changed", "revision": -1, "origin": null }).to_string();
                     let _ = socket.send(Message::Text(text.into())).await;
                     let _ = socket.send(Message::Text(r#"{"type":"machine","event":"lagged"}"#.into())).await;
                 }
@@ -95,8 +88,16 @@ mod tests {
 
     #[test]
     fn events_serialise_with_type_tag() {
-        let ev = Event::DocumentChanged { revision: 3, origin: None };
-        assert_eq!(serde_json::to_value(&ev).unwrap(), serde_json::json!({"type": "document_changed", "revision": 3}));
+        let ev = Event::DocumentChanged { revision: 3, origin: Origin::Ui };
+        assert_eq!(
+            serde_json::to_value(&ev).unwrap(),
+            serde_json::json!({"type": "document_changed", "revision": 3, "origin": {"kind": "ui"}})
+        );
+        let ev = Event::RunFinished { id: "run-1".into(), ok: true, state: RunState::Finished, error: None };
+        assert_eq!(
+            serde_json::to_value(&ev).unwrap(),
+            serde_json::json!({"type": "run_finished", "id": "run-1", "ok": true, "state": "finished", "error": null})
+        );
         let ev = Event::RunPending { run_id: "run-1".into(), origin: Origin::Agent("mcp".into()), summary: "s".into() };
         let v = serde_json::to_value(&ev).unwrap();
         assert_eq!(v["type"], "run_pending");

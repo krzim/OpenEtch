@@ -34,7 +34,7 @@ pub use light::{LightList, RED_POINTER_BIT};
 pub use list::MarkingList;
 pub use packet::{COMMAND_LEN, PACKET_LEN, Packet, SLOTS};
 pub use single::{REPLY_LEN, Single, StatusWord, parse_reply};
-pub use units::{CENTER, DelayWord, JPT_M7_PULSE_WIDTHS_NS, PulseDecision};
+pub use units::{CENTER, DelayWord, FieldTransform, JPT_M7_PULSE_WIDTHS_NS, PulseDecision};
 
 /// Port bit 0: the laser-enable output. [`LightList`] can never write it.
 pub const LASER_ENABLE_BIT: u16 = 0x0001;

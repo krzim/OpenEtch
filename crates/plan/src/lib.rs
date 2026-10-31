@@ -21,7 +21,7 @@ mod target;
 pub use encode::{encode, jump_delay_us};
 pub use geom::{FLATTEN_TOLERANCE_MM, Point};
 pub use hatch::MAX_SCANLINES;
-pub use job::{JobPlan, PassPlan, PassSettings, Stats, plan_job};
+pub use job::{JobPlan, MAX_PASSES, MAX_SEGMENTS, PassPlan, PassSettings, Stats, plan_job};
 pub use preview::{Preview, PreviewSegment, SegmentKind, preview_plan, simulate};
 pub use target::Target;
 
@@ -46,6 +46,12 @@ pub enum PlanError {
     Setting { layer: LayerId, what: &'static str, value: f64 },
     #[error("layer {layer}: a hatch needs more than {max} lines; check the interval")]
     TooManyHatchLines { layer: LayerId, max: usize },
+    /// More than [`MAX_PASSES`] repetitions of one layer or sub-layer.
+    #[error("layer {layer}: {passes} passes is more than the limit of {max}")]
+    TooManyPasses { layer: LayerId, passes: u32, max: u32 },
+    /// The job would have more than [`MAX_SEGMENTS`] mark segments (planning stopped there).
+    #[error("the job has more than {max} mark segments; reduce passes, hatch density or detail")]
+    TooManySegments { max: usize },
     /// A setting the board cannot represent (e.g. a speed or delay out of word range).
     #[error("layer {layer}: {source}")]
     Encode { layer: LayerId, source: LmcError },

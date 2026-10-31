@@ -120,20 +120,23 @@ async fn batch(State(st): State<Arc<AppState>>, body: Bytes) -> Result<Response,
     }
 }
 
-async fn undo(State(st): State<Arc<AppState>>) -> Response {
-    match st.undo() {
+/// `POST /api/undo` and `/api/redo`: nothing to undo/redo is `200 {ok: false, error}`, like a failed command.
+fn undo_redo_response(r: Result<u64, EngineError>) -> Response {
+    match r {
         Ok(revision) => Json(json!({ "ok": true, "revision": revision })).into_response(),
         Err(EngineError::Command(e)) => command_failure(e),
         Err(e) => e.into_response(),
     }
 }
 
-async fn redo(State(st): State<Arc<AppState>>) -> Response {
-    match st.redo() {
-        Ok(revision) => Json(json!({ "ok": true, "revision": revision })).into_response(),
-        Err(EngineError::Command(e)) => command_failure(e),
-        Err(e) => e.into_response(),
-    }
+async fn undo(State(st): State<Arc<AppState>>, body: Bytes) -> Result<Response, EngineError> {
+    let b: OriginBody = body_or_default(&body)?;
+    Ok(undo_redo_response(st.undo(parse_origin(b.origin.as_ref())?)))
+}
+
+async fn redo(State(st): State<Arc<AppState>>, body: Bytes) -> Result<Response, EngineError> {
+    let b: OriginBody = body_or_default(&body)?;
+    Ok(undo_redo_response(st.redo(parse_origin(b.origin.as_ref())?)))
 }
 
 async fn document(State(st): State<Arc<AppState>>) -> Json<doc::Document> {
@@ -175,6 +178,7 @@ async fn frame_stop(State(st): State<Arc<AppState>>) -> Result<Json<Value>, Engi
     Ok(Json(json!({ "ok": true })))
 }
 
+/// Emergency stop. Never gated (no token needed, see `security`).
 async fn machine_stop(State(st): State<Arc<AppState>>) -> Result<Json<Value>, EngineError> {
     Ok(Json(st.stop().await?))
 }
@@ -193,7 +197,18 @@ async fn request_run(State(st): State<Arc<AppState>>, body: Bytes) -> Result<Res
     Ok((StatusCode::CREATED, Json(body)).into_response())
 }
 
-/// UI-only approval. Refuses anything that looks like an MCP client or names a non-UI origin.
+/// Body of `POST /api/runs/{id}/approve`.
+#[derive(Debug, Default, Deserialize)]
+struct ApproveBody {
+    /// The operator PIN (`openetch set-pin`).
+    #[serde(default)]
+    pin: Option<String>,
+    #[serde(default)]
+    origin: Option<Value>,
+}
+
+/// Approval by a person: `{"pin": "<operator PIN>"}`. Refuses anything that looks like an MCP client or names a
+/// non-UI origin; PIN refusals are 403 with `code` (`pin_not_set`, `pin_required`, `pin_invalid`, `pin_locked`).
 async fn approve_run(
     State(st): State<Arc<AppState>>,
     UrlPath(id): UrlPath<String>,
@@ -204,9 +219,9 @@ async fn approve_run(
         tracing::warn!(run_id = %id, "refused run approval from an MCP client");
         return Err(EngineError::Forbidden("runs can only be approved by a person in the OpenEtch UI".into()));
     }
-    let b: OriginBody = body_or_default(&body)?;
+    let b: ApproveBody = body_or_default(&body)?;
     if parse_origin(b.origin.as_ref())? != commands::Origin::Ui {
         return Err(EngineError::Forbidden("runs can only be approved from the UI".into()));
     }
-    Ok(Json(approve::approve(&st, &id).await?))
+    Ok(Json(approve::approve(&st, &id, b.pin.as_deref()).await?))
 }

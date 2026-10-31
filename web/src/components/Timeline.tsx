@@ -1,8 +1,10 @@
 // Bottom "Timeline": one chip per history entry, oldest on the left, like Fusion's design timeline. Each chip carries
-// an origin badge so it is obvious what the user, an AI agent or a script changed.
+// an origin badge so it is obvious what the user, an AI agent or a script changed. An edit announced live by an agent
+// or script (`document_changed.origin`) briefly flashes its chip.
 
 import { useEffect, useRef } from "react";
 import type { HistoryEntry, Origin } from "../api/types.ts";
+import type { RemoteEdit } from "../api/useEngine.ts";
 
 /** Display label and CSS class for an origin. */
 export function originBadge(o: Origin | undefined): { label: string; cls: string } {
@@ -25,7 +27,7 @@ export function originBadge(o: Origin | undefined): { label: string; cls: string
   }
 }
 
-export function Timeline({ history, revision }: { history: HistoryEntry[]; revision: number | null }) {
+export function Timeline({ history, revision, flash }: { history: HistoryEntry[]; revision: number | null; flash?: RemoteEdit | null }) {
   const stripRef = useRef<HTMLDivElement>(null);
   // Keep the newest entry in view.
   useEffect(() => {
@@ -39,10 +41,12 @@ export function Timeline({ history, revision }: { history: HistoryEntry[]; revis
         {history.length === 0 && <span className="muted">No edits yet.</span>}
         {history.map((h, i) => {
           const b = originBadge(h.origin);
+          const flashing = !!flash && flash.revision === h.revision;
           return (
             <div
-              key={`${h.revision}-${i}`}
-              className={`tl-entry ${b.cls}${revision === h.revision ? " current" : ""}`}
+              // A new seq remounts the chip so the flash animation replays.
+              key={`${h.revision}-${i}${flashing ? `-f${flash.seq}` : ""}`}
+              className={`tl-entry ${b.cls}${revision === h.revision ? " current" : ""}${flashing ? " flash" : ""}`}
               title={`r${h.revision} · ${h.command}\n${h.summary}\nby ${b.label}`}
             >
               <span className={`badge ${b.cls}`}>{b.label}</span>

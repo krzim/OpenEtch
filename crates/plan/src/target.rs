@@ -1,9 +1,11 @@
 //! The machine facts a job is planned and encoded for, and the field mm <-> galvo word transform.
 //!
-//! `plan` does not depend on `machine`: the engine fills a [`Target`] from the machine profile.
+//! `plan` does not depend on `machine`: the engine fills a [`Target`] from the machine profile. The transform itself
+//! is `lmc::units::field_to_galvo`, the same function `machine` frames with.
 
 use doc::GalvoTiming;
-use lmc::units::{galvo_to_mm, mm_to_galvo};
+use lmc::FieldTransform;
+use lmc::units::{field_to_galvo, galvo_to_field};
 use serde::{Deserialize, Serialize};
 
 use crate::{PlanError, Result};
@@ -14,11 +16,11 @@ use crate::{PlanError, Result};
 pub struct Target {
     /// Side of the square galvo field. Points must lie strictly inside `±field_mm / 2`.
     pub field_mm: f64,
-    /// Exchange the X and Y galvo axes. Applied first, see [`Target::to_galvo`].
+    /// Exchange the X and Y galvo axes. Applied after negation, see [`Target::to_galvo`].
     pub swap_xy: bool,
-    /// Mirror the galvo X axis (after any swap).
+    /// Mirror field X (in the field frame, before any swap).
     pub negate_x: bool,
-    /// Mirror the galvo Y axis (after any swap).
+    /// Mirror field Y (in the field frame, before any swap).
     pub negate_y: bool,
     /// Hard power limit in percent. A layer above it is refused, never clamped.
     pub max_power_pct: f64,
@@ -39,37 +41,33 @@ impl Target {
     /// True when a field-frame point can be encoded: both coordinates strictly inside `±field_mm / 2`.
     ///
     /// Swap and negate keep the field symmetric, so this is checked in field mm. The bound is strict because
-    /// `+field/2` is not encodable and either sign can become `+` after a negate.
+    /// `+field/2` is not encodable and either sign can become `+` after a negate. Same bound as
+    /// `lmc::units::field_to_galvo`.
     pub fn contains(&self, p: [f64; 2]) -> bool {
         let h = self.half_field_mm();
         p.iter().all(|v| v.is_finite() && v.abs() < h)
     }
 
-    /// Field-frame mm -> galvo words: swap X/Y if `swap_xy`, then negate the resulting axes, then
-    /// [`mm_to_galvo`]. Refused (never clamped) outside the field.
+    /// The field size, swap and negate settings as `lmc`'s shared transform.
+    pub fn transform(&self) -> FieldTransform {
+        FieldTransform { field_mm: self.field_mm, swap_xy: self.swap_xy, negate_x: self.negate_x, negate_y: self.negate_y }
+    }
+
+    /// Field-frame mm -> galvo words with `lmc::units::field_to_galvo`: negate in the field frame, then swap, then
+    /// `mm_to_galvo`. Refused (never clamped) outside the field.
     pub fn to_galvo(&self, p: [f64; 2]) -> Result<(u16, u16)> {
-        let [gx, gy] = self.field_to_axes(p);
-        Ok((mm_to_galvo(gx, self.field_mm)?, mm_to_galvo(gy, self.field_mm)?))
+        Ok(field_to_galvo(p[0], p[1], &self.transform())?)
     }
 
     /// Galvo words -> field-frame mm: the inverse of [`Target::to_galvo`], up to half a galvo unit.
     pub fn from_galvo(&self, w: (u16, u16)) -> [f64; 2] {
-        let gx = galvo_to_mm(w.0, self.field_mm);
-        let gy = galvo_to_mm(w.1, self.field_mm);
-        let gx = if self.negate_x { -gx } else { gx };
-        let gy = if self.negate_y { -gy } else { gy };
-        if self.swap_xy { [gy, gx] } else { [gx, gy] }
+        let (x, y) = galvo_to_field(w.0, w.1, &self.transform());
+        [x, y]
     }
 
     /// One galvo unit in mm.
     pub fn galvo_unit_mm(&self) -> f64 {
         self.field_mm / 65535.0
-    }
-
-    /// Field-frame mm -> galvo-axis mm (swap, then negate).
-    fn field_to_axes(&self, [x, y]: [f64; 2]) -> [f64; 2] {
-        let [gx, gy] = if self.swap_xy { [y, x] } else { [x, y] };
-        [if self.negate_x { -gx } else { gx }, if self.negate_y { -gy } else { gy }]
     }
 
     /// Refuse a target whose numbers cannot describe a machine.
@@ -90,6 +88,7 @@ impl Target {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use lmc::units::mm_to_galvo;
 
     /// A 110 mm B6-like target with a JPT M7 table and LightBurn-like default timing.
     pub(crate) fn target() -> Target {
@@ -123,16 +122,36 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn swap_then_negate() {
+    fn negate_in_field_frame_then_swap() {
         let mut t = target();
         t.swap_xy = true;
         t.negate_x = true;
         let (gx, gy) = t.to_galvo([10.0, 20.0]).unwrap();
-        // Swap gives axes (20, 10); negate X gives (-20, 10).
-        assert_eq!(gx, mm_to_galvo(-20.0, 110.0).unwrap());
-        assert_eq!(gy, mm_to_galvo(10.0, 110.0).unwrap());
+        // Negate field X gives (-10, 20); swap gives galvo axes (20, -10).
+        assert_eq!(gx, mm_to_galvo(20.0, 110.0).unwrap());
+        assert_eq!(gy, mm_to_galvo(-10.0, 110.0).unwrap());
         let back = t.from_galvo((gx, gy));
         assert!((back[0] - 10.0).abs() < 0.01 && (back[1] - 20.0).abs() < 0.01);
+    }
+
+    /// All 8 swap/negate combinations: `Target` gives exactly `lmc::units::field_to_galvo`'s words (the function
+    /// `machine` frames with) and the contract's order (negate in the field frame, then swap), and refuses the
+    /// same points.
+    #[test]
+    fn all_transforms_match_lmc_and_the_contract() {
+        let w = |v: f64| mm_to_galvo(v, 110.0).unwrap();
+        for bits in 0..8u8 {
+            let t = Target { swap_xy: bits & 1 != 0, negate_x: bits & 2 != 0, negate_y: bits & 4 != 0, ..target() };
+            let lmc = lmc::units::field_to_galvo(10.0, 5.0, &t.transform()).unwrap();
+            assert_eq!(t.to_galvo([10.0, 5.0]).unwrap(), lmc, "{bits:03b}");
+            let (x, y) = (if t.negate_x { -10.0 } else { 10.0 }, if t.negate_y { -5.0 } else { 5.0 });
+            assert_eq!(lmc, if t.swap_xy { (w(y), w(x)) } else { (w(x), w(y)) }, "{bits:03b}");
+            let back = t.from_galvo(lmc);
+            assert!((back[0] - 10.0).abs() < t.galvo_unit_mm() && (back[1] - 5.0).abs() < t.galvo_unit_mm(), "{bits:03b}");
+            for p in [[55.0, 0.0], [0.0, -55.0], [54.9, -54.9]] {
+                assert_eq!(t.to_galvo(p).is_ok(), t.contains(p), "{bits:03b} {p:?}");
+            }
+        }
     }
 
     #[test]

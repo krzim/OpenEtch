@@ -96,9 +96,10 @@ impl MarkingList {
         self.push(ListCommand::LaserOffDelay(delay))
     }
 
-    /// Polygon (corner) delay.
-    pub fn polygon_delay(&mut self, delay: DelayWord) -> &mut Self {
-        self.push(ListCommand::PolygonDelay(delay))
+    /// Polygon (corner) delay in 10 µs units ([`crate::units::polygon_delay_units`]; the encoding is unverified on
+    /// hardware).
+    pub fn polygon_delay(&mut self, time_10us: u16) -> &mut Self {
+        self.push(ListCommand::PolygonDelay { time_10us })
     }
 
     /// Settling delay after each jump.
@@ -196,7 +197,7 @@ fn nonzero(v: u16, what: &'static str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::units::{delay_word, frequency_to_period, power_to_mark_current};
+    use crate::units::{delay_word, frequency_to_period, polygon_delay_units, power_to_mark_current};
     use crate::{SLOTS, decode, op};
 
     fn sample() -> MarkingList {
@@ -209,7 +210,7 @@ mod tests {
         l.mark_speed(276).unwrap();
         l.laser_on_delay(delay_word(100.0).unwrap());
         l.laser_off_delay(delay_word(120.0).unwrap());
-        l.polygon_delay(delay_word(50.0).unwrap());
+        l.polygon_delay(polygon_delay_units(50.0).unwrap());
         l.jump_delay(delay_word(400.0).unwrap());
         l.fiber_open_mo().delay_time(800);
         l.jump_to(31384, 31384).mark_to(34152, 31384).mark_to(34152, 34152);

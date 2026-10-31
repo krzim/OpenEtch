@@ -11,6 +11,10 @@ use crate::{Command, CommandError, Result, Risk};
 /// Default display colours for new layers, in order (LightBurn-like).
 const PALETTE: &[&str] = &["#1f77b4", "#d62728", "#2ca02c", "#ff7f0e", "#9467bd", "#8c564b", "#e377c2", "#17becf"];
 
+/// Most passes a layer may have. Each pass replans the whole layer, so an unbounded count would let one edit make
+/// previews and job planning allocate without limit (`plan` refuses more too).
+pub const MAX_PASSES: u32 = 1000;
+
 /// A partial [`CutSettings`]: only the fields given are changed, everything else keeps its current value.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -27,7 +31,7 @@ pub struct SettingsPatch {
     #[serde(default, deserialize_with = "double_option")]
     #[schemars(with = "Option<f64>")]
     pub pulse_width_ns: Option<Option<f64>>,
-    /// Number of times the layer is marked, >= 1.
+    /// Number of times the layer is marked, 1..=1000.
     pub passes: Option<u32>,
     /// Hatch fill settings (partial: only the fields given change).
     pub hatch: Option<HatchPatch>,
@@ -116,8 +120,8 @@ fn validate_settings(cmd: &str, s: &CutSettings) -> Result<()> {
     if let Some(pw) = s.pulse_width_ns {
         util::positive(cmd, "pulse_width_ns", pw)?;
     }
-    if s.passes == 0 {
-        return Err(invalid(cmd, "passes must be >= 1"));
+    if !(1..=MAX_PASSES).contains(&s.passes) {
+        return Err(invalid(cmd, format!("passes must be within 1..={MAX_PASSES} (got {})", s.passes)));
     }
     util::positive(cmd, "hatch.interval_mm", s.hatch.interval_mm)?;
     util::finite(cmd, "hatch.angle_deg", s.hatch.angle_deg)?;
@@ -369,6 +373,17 @@ mod tests {
         assert!(patch(json!({"passes": 0})).apply("t", &mut s).is_err());
         assert_eq!(s, CutSettings::default());
         assert!(serde_json::from_value::<SettingsPatch>(json!({"power": 40})).is_err());
+    }
+
+    #[test]
+    fn passes_are_capped() {
+        let mut s = CutSettings::default();
+        patch(json!({"passes": MAX_PASSES})).apply("t", &mut s).unwrap();
+        assert_eq!(s.passes, MAX_PASSES);
+        let e = patch(json!({"passes": MAX_PASSES + 1})).apply("t", &mut s).unwrap_err().to_string();
+        assert!(e.contains("1..=1000"), "{e}");
+        assert!(patch(json!({"passes": 4_000_000_000u32})).apply("t", &mut s).is_err());
+        assert_eq!(s.passes, MAX_PASSES);
     }
 
     /// The patch must cover every field of `CutSettings` and `Hatch`, so a field added to `doc` fails this test.

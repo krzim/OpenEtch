@@ -1,5 +1,6 @@
-// HTTP client for the engine API. Every request carries the bearer token if one is known. The UI never edits the
-// document locally: edits go through `execute`/`batch`, and callers refetch the document afterwards.
+// HTTP client for the engine API. Every request carries the bearer token in the Authorization header (the engine
+// accepts `?token=` only on the /api/events WebSocket). The UI never edits the document locally: edits go through
+// `execute`/`batch`, and callers refetch the document afterwards.
 
 import type {
   CommandSpec,
@@ -9,6 +10,7 @@ import type {
   MachineStatus,
   Preview,
 } from "./types.ts";
+import { okError } from "./runs.ts";
 
 const TOKEN_KEY = "openetch.token";
 
@@ -42,12 +44,19 @@ export function authToken(): string | null {
 
 /** An HTTP or engine-level failure, with a message suitable for a toast. */
 export class ApiError extends Error {
-  constructor(
-    message: string,
-    readonly status?: number,
-  ) {
+  /** Machine-readable `code` from the error body (e.g. "pin_invalid"), when the engine sent one. */
+  readonly code?: string;
+  /** The engine's own `error` text, without the method/path/status prefix. */
+  readonly detail?: string;
+  /** HTTP status, when the failure was an HTTP error. */
+  readonly status?: number;
+  // No parameter properties: Node's type stripping (npm test) cannot run them.
+  constructor(message: string, status?: number, extra?: { code?: string; detail?: string }) {
     super(message);
     this.name = "ApiError";
+    this.status = status;
+    this.code = extra?.code;
+    this.detail = extra?.detail;
   }
 }
 
@@ -72,9 +81,10 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     }
   }
   if (!res.ok) {
-    const msg =
-      data && typeof data === "object" && "error" in data ? String((data as { error: unknown }).error) : text || res.statusText;
-    throw new ApiError(`${method} ${path}: ${res.status} ${msg}`, res.status);
+    const obj = data && typeof data === "object" ? (data as { error?: unknown; code?: unknown }) : null;
+    const msg = obj && "error" in obj ? String(obj.error) : text || res.statusText;
+    const code = obj && typeof obj.code === "string" ? obj.code : undefined;
+    throw new ApiError(`${method} ${path}: ${res.status} ${msg}`, res.status, { code, detail: msg });
   }
   return data as T;
 }
@@ -102,23 +112,37 @@ export async function batch(commands: Invocation[]): Promise<unknown> {
   return res;
 }
 
+/** POST that throws ApiError on a 200 `{ok:false, error}` answer (e.g. undo with nothing to undo). */
+async function checked(path: string, body: unknown, what: string): Promise<unknown> {
+  const res = await request<unknown>("POST", path, body);
+  const err = okError(res, what);
+  if (err !== null) throw new ApiError(err);
+  return res;
+}
+
 export const api = {
   commands: () => request<CommandSpec[]>("GET", "/api/commands"),
   document: () => request<GDocument>("GET", "/api/document"),
   history: () => request<HistoryEntry[]>("GET", "/api/history"),
   preview: () => request<Preview>("GET", "/api/preview"),
   machine: () => request<MachineStatus>("GET", "/api/machine"),
-  /** Contract addition: POST /api/undo. */
-  undo: () => request<unknown>("POST", "/api/undo", { origin: UI_ORIGIN }),
-  /** Contract addition: POST /api/redo. */
-  redo: () => request<unknown>("POST", "/api/redo", { origin: UI_ORIGIN }),
+  /** POST /api/undo. Throws ApiError when there is nothing to undo (200 `{ok:false}`). */
+  undo: () => checked("/api/undo", { origin: UI_ORIGIN }, "nothing to undo"),
+  /** POST /api/redo. Throws ApiError when there is nothing to redo (200 `{ok:false}`). */
+  redo: () => checked("/api/redo", { origin: UI_ORIGIN }, "nothing to redo"),
   /** Red-pointer framing of the current job bounds. Never fires the laser. */
-  frame: () => request<unknown>("POST", "/api/machine/frame", {}),
-  /** Always allowed, never gated. */
+  frame: () => checked("/api/machine/frame", {}, "framing failed"),
+  /** Ends red-pointer framing only; pending runs are kept. */
+  frameStop: () => checked("/api/machine/frame/stop", {}, "stopping the frame failed"),
+  /** Emergency stop: abort whatever runs and cancel pending runs. Always allowed, never gated. */
   stop: () => request<unknown>("POST", "/api/machine/stop", {}),
   /** Creates a pending run; nothing fires until it is approved. */
   requestRun: () => request<unknown>("POST", "/api/runs", { origin: UI_ORIGIN }),
-  approveRun: (id: string) => request<unknown>("POST", `/api/runs/${encodeURIComponent(id)}/approve`, {}),
+  /**
+   * Approve a pending run with the operator PIN. The PIN goes only into this request body; it is never stored.
+   * Errors are HTTP 403 with `code` "pin_not_set" | "pin_invalid" | "pin_required" | "pin_locked".
+   */
+  approveRun: (id: string, pin: string) => request<unknown>("POST", `/api/runs/${encodeURIComponent(id)}/approve`, { pin }),
 };
 
 /** WebSocket URL for /api/events, carrying the token as `?token=` (browsers cannot set WS headers). */

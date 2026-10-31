@@ -134,14 +134,59 @@ export interface Preview {
   stats?: Record<string, unknown>;
 }
 
-/** A run requested by `job.request_run` / POST /api/runs that waits for UI approval. Fields beyond `id` are optional. */
+/** Where a run is in its life (ARCHITECTURE.md, shared run states). Unknown strings from a newer engine are kept. */
+export type RunState =
+  | "pending"
+  | "approved"
+  | "awaiting_confirm"
+  | "running"
+  | "finished"
+  | "failed"
+  | "aborted"
+  | "cancelled";
+
+/** `plan::Stats` for a run: what the approved job will do. Fields are optional so an older engine still renders. */
+export interface RunStats {
+  mark_length_mm?: number;
+  jump_length_mm?: number;
+  /** Motion plus delays; acceleration is not modelled. */
+  estimated_time_s?: number;
+  segment_count?: number;
+  polyline_count?: number;
+  /** Output layers in the job (count, or the layer ids/names). */
+  layers?: number | unknown[];
+  layer_count?: number;
+  [key: string]: unknown;
+}
+
+/** A run requested by `job.request_run` / POST /api/runs. Only `id` is guaranteed; the rest is shown when present. */
 export interface PendingRun {
   id: string;
-  state?: string;
+  state?: RunState | string;
   origin?: Origin;
+  /** Document revision the job was planned from. */
+  revision?: number;
+  /** The document changed since the run was planned; the engine refuses to approve it. */
+  stale?: boolean;
   summary?: string;
-  created_at?: string;
+  stats?: RunStats;
+  packet_count?: number;
+  created_unix_s?: number;
+  error?: string | null;
   [key: string]: unknown;
+}
+
+/** Optional physical confirmation: an approved run waits for this board input before it streams. */
+export interface PhysicalConfirm {
+  input_bit: number;
+  timeout_s: number;
+}
+
+/** GET /api/machine `approval`: how runs are approved on this engine. */
+export interface ApprovalInfo {
+  /** False until someone runs `openetch set-pin` on the engine machine. */
+  pin_set: boolean;
+  physical_confirm: PhysicalConfirm | null;
 }
 
 /** GET /api/machine. Only `connected` is relied on; everything else is displayed when present. */
@@ -152,11 +197,26 @@ export interface MachineStatus {
   /** Galvo field side length in mm. */
   field_mm?: number;
   pending_runs?: PendingRun[];
+  /** Pending and recent runs in every state. */
+  runs?: PendingRun[];
+  approval?: ApprovalInfo;
   [key: string]: unknown;
+}
+
+/** `run_finished`: an approved run ended (`state` is "finished", "failed", "aborted" or "cancelled"). */
+export interface RunFinishedEvent {
+  type: "run_finished";
+  /** Contract field; older engines sent `run_id`. */
+  id?: string;
+  run_id?: string;
+  ok: boolean;
+  state?: RunState | string;
+  error?: string | null;
 }
 
 /** Server-to-client WebSocket messages on /api/events. */
 export type EngineEvent =
-  | { type: "document_changed"; revision: number }
+  | { type: "document_changed"; revision: number; /** Who edited; absent for undo/redo. */ origin?: Origin | null }
   | { type: "machine"; [key: string]: unknown }
-  | { type: "run_pending"; [key: string]: unknown };
+  | { type: "run_pending"; [key: string]: unknown }
+  | RunFinishedEvent;

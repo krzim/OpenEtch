@@ -23,8 +23,9 @@ npm test
 ```
 
 If the engine requires a token, open the UI once as `http://host:port/?token=...`. The token is saved in
-`localStorage`, removed from the address bar, and sent as `Authorization: Bearer <token>` on every request and as
-`?token=` on the WebSocket URL.
+`localStorage`, removed from the address bar, and sent as `Authorization: Bearer <token>` on every HTTP request. Only
+the `/api/events` WebSocket carries it as `?token=` (browsers cannot set headers there); the engine refuses `?token=`
+anywhere else.
 
 ## How it works
 
@@ -40,8 +41,21 @@ If the engine requires a token, open the UI once as `http://host:port/?token=...
   drag empty space to pan, wheel or pinch to zoom, two fingers to pan, tap to select (shift adds), drag a selection to
   move it (one `object.transform` translate on release). Rectangle/Ellipse tools: drag to draw, tap for 20 mm.
 - **Laser workspace**: toolpath overlay from `GET /api/preview` (marks coloured by layer, jumps dashed grey), machine
-  status, and pending runs. Approving a run takes two taps ("Approve…" then "Confirm and fire") and the confirm step
-  times out after 8 s. **STOP** is in the top bar in every workspace and is never gated.
+  status, runs under way, and pending runs. **Frame** traces the job with the red pointer and **Stop frame**
+  (`POST /api/machine/frame/stop`) ends it without touching pending runs. **STOP** (`POST /api/machine/stop`) is the
+  emergency stop: it sits in the top bar in every workspace, is never gated, aborts any run or frame and cancels
+  pending runs.
+- **Approval**: each pending run shows who requested it (You or the agent's name), its revision, estimated time,
+  mark/jump length, layers and packet count. Approving takes two taps ("Approve…", then the operator PIN and "Confirm
+  and fire"); the confirm step reverts after 20 s without typing. The PIN is set once on the engine machine with
+  `openetch set-pin`; the UI keeps it only in component state while the confirm step is open and sends it only as
+  `{"pin"}` to `POST /api/runs/{id}/approve`. Stale runs (document changed since the request) cannot be approved. The
+  engine's 403 codes `pin_not_set`, `pin_invalid`, `pin_required` and `pin_locked` get specific messages. With a
+  physical confirm input configured, an approved run shows "Press the foot pedal" while it is `awaiting_confirm`;
+  STOP cancels it.
+- **Events**: `run_finished` refreshes the machine and toasts (an error toast unless the run finished cleanly);
+  `document_changed` with an agent or script `origin` flashes that edit's timeline chip. Undo/redo with nothing to do
+  (200 `{ok:false}`) shows the engine's message as a toast.
 - **Narrow screens** (< 1024 px, e.g. iPad portrait): the Browser and Properties panels become drawers toggled from the
   toolbar.
 
@@ -52,6 +66,7 @@ src/
   api/types.ts        wire types (Document, HistoryEntry, Preview, MachineStatus...)
   api/client.ts       fetch wrapper, auth token, endpoints
   api/commands.ts     every command id + parameter builder the UI uses
+  api/runs.ts         run lists, approval gate and error texts, stats rows, toasts (pure; tested)
   api/useEngine.ts    React hook: fetching, WebSocket events, refetch coalescing
   geometry.ts         affine maths, geometry -> SVG path, bounds (pure; tested)
   selection.ts        UI-only selection state (pure; tested)

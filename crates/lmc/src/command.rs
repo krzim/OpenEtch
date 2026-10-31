@@ -1,7 +1,8 @@
 //! Typed list commands, with a lossless mapping to and from their six wire words.
 //!
 //! Parameter layouts follow galvoplotter's `list_*` writers: a motion is `[op, x, y, angle, distance, 0]` with angle
-//! always 0; a delay is `[op, magnitude µs, sign word, 0, 0, 0]`; everything else takes one value in the first
+//! always 0; a laser/jump delay is `[op, magnitude µs, sign word, 0, 0, 0]` (the polygon delay is one
+//! 10 µs word, see [`ListCommand::PolygonDelay`]); everything else takes one value in the first
 //! parameter. A slot whose words do not fit its variant exactly (an unknown opcode, or a non-zero word where the
 //! layout has none) decodes to [`ListCommand::Other`], so `from_words(w).to_words() == w` for every `w`.
 
@@ -62,8 +63,9 @@ pub enum ListCommand {
     LaserOffDelay(DelayWord),
     /// `0x800d`.
     JumpDelay(DelayWord),
-    /// `0x800f`.
-    PolygonDelay(DelayWord),
+    /// `0x800f`: corner wait, one unsigned word in 10 µs units and no sign word (meerk40t's layout, UNVERIFIED on
+    /// hardware; see [`crate::units::polygon_delay_units`]).
+    PolygonDelay { time_10us: u16 },
     /// `0x8011`: the whole output port word.
     WritePort { bits: u16 },
     /// `0x8012`: fiber power, 0..=4095.
@@ -97,7 +99,7 @@ impl ListCommand {
             LaserOnDelay(d) => delay(op::LIST_LASER_ON_DELAY, d),
             LaserOffDelay(d) => delay(op::LIST_LASER_OFF_DELAY, d),
             JumpDelay(d) => delay(op::LIST_JUMP_DELAY, d),
-            PolygonDelay(d) => delay(op::LIST_POLYGON_DELAY, d),
+            PolygonDelay { time_10us } => one(op::LIST_POLYGON_DELAY, time_10us),
             WritePort { bits } => one(op::LIST_WRITE_PORT, bits),
             MarkCurrent { current } => one(op::LIST_MARK_CURRENT, current),
             QSwitchPeriod { period } => one(op::LIST_Q_SWITCH_PERIOD, period),
@@ -128,7 +130,7 @@ impl ListCommand {
             op::LIST_LASER_ON_DELAY if only_ab => Some(LaserOnDelay(dw)),
             op::LIST_LASER_OFF_DELAY if only_ab => Some(LaserOffDelay(dw)),
             op::LIST_JUMP_DELAY if only_ab => Some(JumpDelay(dw)),
-            op::LIST_POLYGON_DELAY if only_ab => Some(PolygonDelay(dw)),
+            op::LIST_POLYGON_DELAY if only_a => Some(PolygonDelay { time_10us: a }),
             op::LIST_WRITE_PORT if only_a => Some(WritePort { bits: a }),
             op::LIST_MARK_CURRENT if only_a => Some(MarkCurrent { current: a }),
             op::LIST_Q_SWITCH_PERIOD if only_a => Some(QSwitchPeriod { period: a }),
@@ -161,7 +163,7 @@ impl fmt::Display for ListCommand {
             LaserOnDelay(d) => delay(f, "LaserOnDelay", d),
             LaserOffDelay(d) => delay(f, "LaserOffDelay", d),
             JumpDelay(d) => delay(f, "JumpDelay", d),
-            PolygonDelay(d) => delay(f, "PolygonDelay", d),
+            PolygonDelay { time_10us } => write!(f, "PolygonDelay {time_10us}x10us"),
             WritePort { bits } => write!(f, "WritePort {bits:#06x}"),
             MarkCurrent { current } => write!(f, "MarkCurrent {current}"),
             QSwitchPeriod { period } => write!(f, "QSwitchPeriod {period}"),
@@ -184,7 +186,9 @@ mod tests {
         assert_eq!(ListCommand::JumpTo { x: 1, y: 2, distance: 3 }.to_words(), [0x8001, 1, 2, 0, 3, 0]);
         assert_eq!(ListCommand::MarkTo { x: 1, y: 2, distance: 3 }.to_words(), [0x8005, 1, 2, 0, 3, 0]);
         let d = DelayWord { magnitude: 100, sign: 0x8000 };
-        assert_eq!(ListCommand::PolygonDelay(d).to_words(), [0x800f, 100, 0x8000, 0, 0, 0]);
+        assert_eq!(ListCommand::LaserOnDelay(d).to_words(), [0x8007, 100, 0x8000, 0, 0, 0]);
+        // meerk40t's polygon delay: one 10 µs word, no sign word (unverified on hardware).
+        assert_eq!(ListCommand::PolygonDelay { time_10us: 10 }.to_words(), [0x800f, 10, 0, 0, 0, 0]);
         assert_eq!(ListCommand::FiberPulseWidth { ns: 200 }.to_words(), [0x8026, 200, 0, 0, 0, 0]);
         assert_eq!(ListCommand::EndOfList.to_words(), [0x8002, 0, 0, 0, 0, 0]);
     }
@@ -208,6 +212,9 @@ mod tests {
         assert!(matches!(ListCommand::from_words([0x8001, 10, 20, 7, 5, 0]), ListCommand::Other { .. }));
         assert!(matches!(ListCommand::from_words([0x8011, 1, 1, 0, 0, 0]), ListCommand::Other { .. }));
         assert_eq!(ListCommand::from_words([0x8021, 1, 0, 0, 0, 0]), ListCommand::FiberOpenMo { open: 1 });
+        assert_eq!(ListCommand::from_words([0x800f, 10, 0, 0, 0, 0]), ListCommand::PolygonDelay { time_10us: 10 });
+        // A sign word (galvoplotter's layout) is not the polygon delay variant: kept word for word.
+        assert!(matches!(ListCommand::from_words([0x800f, 100, 0x8000, 0, 0, 0]), ListCommand::Other { .. }));
     }
 
     #[test]

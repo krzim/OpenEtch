@@ -7,8 +7,11 @@
 //! - [`api::router`]: the axum router (`/api/*`, `/mcp`, static files with SPA fallback) behind
 //!   [`security::guard`] (Host/Origin checks against DNS rebinding, bearer token off loopback).
 //! - Safety: framing goes through `machine::Controller::frame` (light only). Nothing fires unless a person approves
-//!   a pending run with `POST /api/runs/{id}/approve`; `approve` is the only module that creates a
-//!   `machine::Armed`, and it refuses requests that look like they came from an MCP client. Stop is never gated.
+//!   a pending run with `POST /api/runs/{id}/approve` and the operator PIN ([`pin`]), plus the physical input when
+//!   configured; `approve` is the only module that creates a `machine::Armed`, and the endpoint refuses requests that
+//!   look like they came from an MCP client. Stop is never gated and never waits behind a run (stop epoch, see
+//!   `approve`). A local process with the user's OS privileges can defeat these software checks; the hardware
+//!   E-stop/key switch and the physical input are the real guarantees.
 #![forbid(unsafe_code)]
 
 pub mod api;
@@ -19,6 +22,7 @@ pub mod events;
 pub mod frame;
 pub mod hw;
 pub mod mcp;
+pub mod pin;
 pub mod render;
 pub mod runs;
 pub mod security;

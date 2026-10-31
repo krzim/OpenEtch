@@ -2,7 +2,7 @@
 //! would run); [`preview_plan`] draws a plan directly (cheap, for the live UI).
 
 use lmc::units::units_to_speed;
-use lmc::{ListCommand, Packet, TraceKind, TraceState, decode, trace_from};
+use lmc::{LASER_ENABLE_BIT, ListCommand, Packet, TraceKind, TraceState, decode, trace_from};
 use serde::{Deserialize, Serialize};
 
 use crate::geom::{Point, dist};
@@ -60,10 +60,13 @@ pub fn preview_plan(plan: &JobPlan) -> Preview {
     Preview { segments, stats: plan.stats }
 }
 
-/// Read packets back into field-frame segments with `lmc::trace_from`, starting from the field centre with the MO
-/// closed and the port at 0 (so only marks the list itself enables count as emitting).
+/// Read packets back into field-frame segments with `lmc::trace_from`, starting from the state `machine`'s run
+/// prelude leaves the board in: galvo at the field centre, MO open (`Fiber_SetMo(1)`) and the port at the
+/// laser-enable bit. The list itself never opens the MO (see the `encode` module), so a mark emits while the list
+/// keeps the laser-enable bit set.
 pub fn simulate(packets: &[Packet], target: &Target) -> Preview {
-    let (trace, _) = trace_from(packets, TraceState::default());
+    let start = TraceState { mo_open: true, port: LASER_ENABLE_BIT, ..TraceState::default() };
+    let (trace, _) = trace_from(packets, start);
     let segments: Vec<PreviewSegment> = trace
         .iter()
         .map(|s| PreviewSegment {
@@ -120,7 +123,7 @@ fn list_time_us(cmds: &[ListCommand], target: &Target) -> f64 {
             ListCommand::MarkSpeed { units } => mark_speed = speed(units),
             ListCommand::LaserOnDelay(d) => on = d.micros().max(0.0),
             ListCommand::LaserOffDelay(d) => off = d.micros().max(0.0),
-            ListCommand::PolygonDelay(d) => polygon = d.micros().max(0.0),
+            ListCommand::PolygonDelay { time_10us } => polygon = f64::from(time_10us) * 10.0,
             ListCommand::JumpDelay(d) => jump_delay = d.micros().max(0.0),
             ListCommand::DelayTime { time_10us } | ListCommand::LaserOnPoint { time_10us } => t += f64::from(time_10us) * 10.0,
             ListCommand::JumpTo { x, y, .. } => {

@@ -3,7 +3,7 @@
 //!
 //! The machine tools can frame (red pointer) and stop, and `job_request_run` creates a pending run. None of them
 //! can fire the laser: this module never creates the machine crate's arming token (only the UI approval endpoint
-//! does), and a test checks that its source does not mention it.
+//! does, with the operator PIN), never receives or handles a PIN, and a test checks that its source mentions neither.
 
 use std::sync::Arc;
 
@@ -64,8 +64,10 @@ Workflow:
 frame_stop.
 7. job_request_run - create a pending run.
 
-Firing the laser always requires a person to approve the pending run in the OpenEtch UI. You cannot approve or \
-start a run. machine_stop is always available and stops everything.
+Firing the laser always requires a person to approve the pending run in the OpenEtch UI with their operator PIN \
+(and, if configured, a physical switch on the machine). You cannot and must not approve or start a run, and you \
+must never ask for, guess, handle or set the operator PIN, or try to approve runs by any other route (HTTP, \
+shell, browser). machine_stop is always available and stops everything.
 
 Use list_commands for every command's input schema; execute runs one command, batch runs several as one undo step \
 (all-or-nothing). Edits you make are tagged as agent edits in the history and can be undone.";
@@ -274,11 +276,11 @@ impl GalvoMcp {
             }
             "undo" => {
                 args::<NoArgs>(name, a)?;
-                Ok(ok_json(json!({ "ok": true, "revision": st.undo()? })))
+                Ok(ok_json(json!({ "ok": true, "revision": st.undo(Self::origin())? })))
             }
             "redo" => {
                 args::<NoArgs>(name, a)?;
-                Ok(ok_json(json!({ "ok": true, "revision": st.redo()? })))
+                Ok(ok_json(json!({ "ok": true, "revision": st.redo(Self::origin())? })))
             }
             "machine_status" => {
                 args::<NoArgs>(name, a)?;
@@ -397,10 +399,18 @@ mod tests {
     }
 
     #[test]
+    fn instructions_forbid_approving_and_pins() {
+        assert!(INSTRUCTIONS.contains("cannot and must not approve"));
+        assert!(INSTRUCTIONS.contains("operator PIN"));
+        assert!(APPROVAL_MESSAGE.contains("must not approve"));
+    }
+
+    #[test]
     fn module_never_arms_a_run() {
         let src = include_str!("mcp.rs");
         let body = src.split("#[cfg(test)]").next().unwrap_or_default();
-        for forbidden in ["Armed", "approved_in_ui", "approve::", ".run(", "Controller"] {
+        for forbidden in ["Armed", "approved_in_ui", "approve::", ".run(", "Controller", "pin::", "PinStore", "verify("]
+        {
             assert!(!body.contains(forbidden), "mcp.rs must not reference {forbidden}");
         }
     }

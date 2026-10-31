@@ -7,7 +7,9 @@
 // Ported from openlaser-rs @ 9d81a15 `crates/types/src/galvo.rs` (MIT OR Apache-2.0, used here under MIT), whose
 // formulas come from meerk40t/galvoplotter @ fc35136 `galvo/controller.py` (`_convert_speed`, `_convert_frequency`,
 // `_convert_power`, `list_jump`, `list_*_delay`; MIT). Changes: one error type, speed and power refuse instead of
-// saturating, no `_om` compatibility variants.
+// saturating, no `_om` compatibility variants. The delay sign rule (`>= 0` is positive) and the polygon delay
+// encoding follow meerk40t `meerk40t/balormk/controller.py` (`list_laser_on_delay`, `list_polygon_delay`; MIT,
+// same copyright holder as below, checked against `main` on 2026-10-31).
 //
 // MIT License
 //
@@ -88,6 +90,50 @@ pub fn galvo_to_mm(w: u16, field_mm: f64) -> f64 {
     (f64::from(w) - 32768.0) * field_mm / WORD_MAX
 }
 
+/// How field-frame mm map onto the two galvo axes: the field size plus the profile's axis swap and mirrors.
+///
+/// This is the one definition of the transform: `plan` (the burn) and `machine` (red-light framing) both go through
+/// [`field_to_galvo`] / [`galvo_to_field`], so the frame shows exactly where the job will mark.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct FieldTransform {
+    /// Side of the square galvo field, mm.
+    pub field_mm: f64,
+    /// Exchange the axes: field X drives the galvo Y word and field Y the galvo X word. Applied after negation.
+    pub swap_xy: bool,
+    /// Mirror field X (in the field frame, before any swap).
+    pub negate_x: bool,
+    /// Mirror field Y (in the field frame, before any swap).
+    pub negate_y: bool,
+}
+
+/// Field-frame mm → galvo `(x, y)` words.
+///
+/// Order: refuse a coordinate that is not finite or not strictly inside `±field_mm / 2`; negate in the **field**
+/// frame (`negate_x` flips field x, `negate_y` flips field y); then swap (`swap_xy`); then [`mm_to_galvo`] per
+/// axis. The bound is strict on both sides (`-field/2` alone would encode) so the accepted square is the same
+/// whatever the negate settings.
+pub fn field_to_galvo(x_mm: f64, y_mm: f64, t: &FieldTransform) -> Result<(u16, u16)> {
+    let f = field(t.field_mm)?;
+    for v in [x_mm, y_mm] {
+        finite(v, "coordinate")?;
+        if v.abs() >= f / 2.0 {
+            return Err(LmcError::OutOfRange { what: "coordinate", value: v, allowed: "|coordinate| < field/2" });
+        }
+    }
+    let x = if t.negate_x { -x_mm } else { x_mm };
+    let y = if t.negate_y { -y_mm } else { y_mm };
+    let (gx, gy) = if t.swap_xy { (y, x) } else { (x, y) };
+    Ok((mm_to_galvo(gx, f)?, mm_to_galvo(gy, f)?))
+}
+
+/// Galvo `(x, y)` words → field-frame mm: the inverse of [`field_to_galvo`] (unswap, then un-negate), up to half a
+/// galvo unit.
+pub fn galvo_to_field(gx: u16, gy: u16, t: &FieldTransform) -> (f64, f64) {
+    let (ax, ay) = (galvo_to_mm(gx, t.field_mm), galvo_to_mm(gy, t.field_mm));
+    let (x, y) = if t.swap_xy { (ay, ax) } else { (ax, ay) };
+    (if t.negate_x { -x } else { x }, if t.negate_y { -y } else { y })
+}
+
 /// mm/s → galvo units per ms: `trunc(v × (65535 / field) / 1000)`.
 ///
 /// 0 is a legal word here (the list builders refuse a motion speed of 0). Above 65535 is refused (galvoplotter
@@ -141,7 +187,7 @@ pub fn mark_current_to_power(current: u16) -> f64 {
     f64::from(current) * 100.0 / 4095.0
 }
 
-/// A delay as the board takes it: magnitude in µs plus a sign word (`0x0000` for > 0, `0x8000` otherwise).
+/// A delay as the board takes it: magnitude in µs plus a sign word (`0x0000` for >= 0, `0x8000` for < 0).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DelayWord {
     /// |delay| in whole µs.
@@ -151,9 +197,9 @@ pub struct DelayWord {
 }
 
 impl DelayWord {
-    /// Sign word of a positive delay.
+    /// Sign word of a zero or positive delay.
     pub const POSITIVE: u16 = 0x0000;
-    /// Sign word of a zero or negative delay.
+    /// Sign word of a negative delay.
     pub const NEGATIVE: u16 = 0x8000;
 
     /// The delay in µs (the magnitude, negated when the sign word is [`Self::NEGATIVE`]).
@@ -163,14 +209,31 @@ impl DelayWord {
     }
 }
 
-/// µs → [`DelayWord`] as galvoplotter writes it: `(trunc(|d|), if d > 0 { 0x0000 } else { 0x8000 })`.
+/// µs → [`DelayWord`]: `(trunc(|d|), if trunc(d) >= 0 { 0x0000 } else { 0x8000 })`.
 ///
-/// So 0 → (0, 0x8000) and 0.4 → (0, 0x0000). Refused when `trunc(|d|) > 65535`.
+/// The sign follows meerk40t `balormk` (`0x0000 if delay >= 0`), so 0 → (0, 0x0000). galvoplotter @ fc35136 uses
+/// `delay > 0` and sends a zero delay as "-0" (0x8000). The sign is taken after truncation, so -0.4 → (0, 0x0000)
+/// and no "-0" is ever sent. Refused when `trunc(|d|) > 65535`.
 pub fn delay_word(us: f64) -> Result<DelayWord> {
     let v = finite(us, "delay")?;
     let magnitude = whole_word(v.abs().trunc(), "delay", us, "|delay| < 65536 µs")?;
-    let sign = if v > 0.0 { DelayWord::POSITIVE } else { DelayWord::NEGATIVE };
+    let sign = if v.trunc() < 0.0 { DelayWord::NEGATIVE } else { DelayWord::POSITIVE };
     Ok(DelayWord { magnitude, sign })
+}
+
+/// µs → `listPolygonDelay` word: one unsigned word in 10 µs units, `trunc(us / 10)`, with no sign word.
+///
+/// **UNVERIFIED on hardware.** This is meerk40t `balormk/controller.py`'s encoding
+/// (`int(min(65535, max(0, delay / 10.0)))`, checked against meerk40t `main` on 2026-10-31). galvoplotter @ fc35136
+/// disagrees: it writes `abs(delay)` in µs plus a sign word, like the other laser delays. If galvoplotter is right,
+/// a 100 µs corner delay sent this way runs as 10 µs (and the old encoding would have run it as 1000 µs). Confirm with
+/// an EzCad USB capture.
+///
+/// A negative delay becomes 0, as meerk40t clamps it (a negative corner wait means none). Unlike meerk40t, a delay
+/// above 655359 µs is refused rather than capped, as everywhere in this crate.
+pub fn polygon_delay_units(us: f64) -> Result<u16> {
+    let v = finite(us, "polygon delay")?;
+    whole_word((v.max(0.0) / 10.0).trunc(), "polygon delay", us, "<= 655359 µs")
 }
 
 /// µs → `listDelayTime` / `listLaserOnPoint` word (10 µs units): `round_ties_even(us / 10)`. Negative is refused.
@@ -313,8 +376,11 @@ mod tests {
     }
 
     #[test]
-    fn delays_keep_galvoplotter_sign_word() {
-        assert_eq!(delay_word(0.0), Ok(DelayWord { magnitude: 0, sign: 0x8000 }));
+    fn delays_use_meerk40t_sign_word() {
+        assert_eq!(delay_word(0.0), Ok(DelayWord { magnitude: 0, sign: 0 }));
+        assert_eq!(delay_word(-0.0), Ok(DelayWord { magnitude: 0, sign: 0 }));
+        assert_eq!(delay_word(-0.4), Ok(DelayWord { magnitude: 0, sign: 0 }));
+        assert_eq!(delay_word(-1.0), Ok(DelayWord { magnitude: 1, sign: 0x8000 }));
         assert_eq!(delay_word(0.4), Ok(DelayWord { magnitude: 0, sign: 0 }));
         assert_eq!(delay_word(100.0), Ok(DelayWord { magnitude: 100, sign: 0 }));
         assert_eq!(delay_word(-8.9), Ok(DelayWord { magnitude: 8, sign: 0x8000 }));
@@ -325,6 +391,53 @@ mod tests {
         assert_eq!(delay_time_units(800.0), Ok(80));
         assert!(delay_time_units(-1.0).is_err());
         assert!(delay_time_units(700_000.0).is_err());
+    }
+
+    #[test]
+    fn polygon_delay_is_one_word_of_10us() {
+        assert_eq!(polygon_delay_units(100.0), Ok(10));
+        assert_eq!(polygon_delay_units(109.9), Ok(10));
+        assert_eq!(polygon_delay_units(0.0), Ok(0));
+        assert_eq!(polygon_delay_units(-50.0), Ok(0));
+        assert_eq!(polygon_delay_units(655_359.0), Ok(65535));
+        assert!(polygon_delay_units(655_360.0).is_err());
+        assert!(polygon_delay_units(f64::NAN).is_err());
+    }
+
+    fn transforms(field_mm: f64) -> impl Iterator<Item = FieldTransform> {
+        (0..8u8).map(move |b| FieldTransform { field_mm, swap_xy: b & 1 != 0, negate_x: b & 2 != 0, negate_y: b & 4 != 0 })
+    }
+
+    #[test]
+    fn field_transform_negates_in_field_frame_then_swaps() {
+        let w = |v: f64| mm_to_galvo(v, 110.0).unwrap();
+        let unit = 110.0 / 65535.0;
+        for t in transforms(110.0) {
+            // Field (10, 5): negate in the field frame first, then swap.
+            let x = if t.negate_x { -10.0 } else { 10.0 };
+            let y = if t.negate_y { -5.0 } else { 5.0 };
+            let expected = if t.swap_xy { (w(y), w(x)) } else { (w(x), w(y)) };
+            assert_eq!(field_to_galvo(10.0, 5.0, &t), Ok(expected), "{t:?}");
+            let (bx, by) = galvo_to_field(expected.0, expected.1, &t);
+            assert!((bx - 10.0).abs() < unit && (by - 5.0).abs() < unit, "{t:?}");
+        }
+        // The case the review found: swap + negate_x sends field (10, 5) to galvo axes (5, -10).
+        let t = FieldTransform { field_mm: 110.0, swap_xy: true, negate_x: true, negate_y: false };
+        assert_eq!(field_to_galvo(10.0, 5.0, &t), Ok((w(5.0), w(-10.0))));
+    }
+
+    #[test]
+    fn field_transform_bound_is_strict_for_every_setting() {
+        for t in transforms(110.0) {
+            assert!(field_to_galvo(54.99, -54.99, &t).is_ok(), "{t:?}");
+            for (x, y) in [(55.0, 0.0), (-55.0, 0.0), (0.0, 55.0), (0.0, -55.0), (1e9, 0.0)] {
+                assert!(matches!(field_to_galvo(x, y, &t), Err(LmcError::OutOfRange { .. })), "{t:?} ({x}, {y})");
+            }
+            assert!(matches!(field_to_galvo(f64::NAN, 0.0, &t), Err(LmcError::NonFinite { .. })));
+            assert!(matches!(field_to_galvo(0.0, f64::INFINITY, &t), Err(LmcError::NonFinite { .. })));
+        }
+        let bad = FieldTransform { field_mm: 0.0, swap_xy: false, negate_x: false, negate_y: false };
+        assert!(field_to_galvo(0.0, 0.0, &bad).is_err());
     }
 
     #[test]

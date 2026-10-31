@@ -6,9 +6,16 @@ use lmc::units::nearest_pulse_width;
 use serde::{Deserialize, Serialize};
 
 use crate::geom::{Point, Subpath, dist, flatten, polyline_length};
-use crate::hatch::hatch;
+use crate::hatch::{HatchError, MAX_SCANLINES, hatch};
 use crate::order::{Chunk, order};
 use crate::{PlanError, Result, Target};
+
+/// Most repetitions (`passes`) one layer or sub-layer may ask for. The commands crate refuses more too.
+pub const MAX_PASSES: u32 = 1000;
+
+/// Most mark segments (straight `MarkTo`s) one job may have. Planning stops as soon as a job passes it, so a
+/// document edit cannot make the engine allocate without bound.
+pub const MAX_SEGMENTS: usize = 5_000_000;
 
 /// A whole job: passes in burn order, every polyline in field-frame mm.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -65,9 +72,15 @@ pub struct Stats {
 /// hatch first. Travel is ordered greedily per pass, continuing from where the previous pass ended.
 ///
 /// Refused, never clamped: a point outside the field (naming every offending object), power above the target's
-/// limit, a pulse width not in the table, and settings the board cannot encode. Passes with nothing to mark are
-/// left out.
+/// limit, a pulse width not in the table, settings the board cannot encode, more than [`MAX_PASSES`] passes, and
+/// more than [`MAX_SEGMENTS`] mark segments in total (counted while generating; planning stops at the first pass
+/// that goes over). Passes with nothing to mark are left out.
 pub fn plan_job(doc: &Document, target: &Target) -> Result<JobPlan> {
+    plan_job_within(doc, target, MAX_SEGMENTS)
+}
+
+/// [`plan_job`] with a segment budget of `max_segments` (tests use a small one).
+pub(crate) fn plan_job_within(doc: &Document, target: &Target, max_segments: usize) -> Result<JobPlan> {
     target.validate()?;
     let layers: Vec<&Layer> = doc.layers.iter().filter(|l| l.output).collect();
 
@@ -87,6 +100,7 @@ pub fn plan_job(doc: &Document, target: &Target) -> Result<JobPlan> {
 
     let mut plan = JobPlan::default();
     let mut pos: Point = [0.0, 0.0];
+    let mut segments = 0usize;
     for layer in layers {
         let subs: Vec<&Vec<Subpath>> = shapes.iter().filter(|(l, _)| *l == layer.id).map(|(_, s)| s).collect();
         for (sub_layer, cut) in std::iter::once(&layer.settings).chain(&layer.sub_layers).enumerate() {
@@ -94,9 +108,13 @@ pub fn plan_job(doc: &Document, target: &Target) -> Result<JobPlan> {
             for repeat in 0..cut.passes {
                 let angle = cut.hatch.angle_deg + f64::from(repeat) * cut.hatch.angle_increment_deg;
                 let settings = PassSettings { hatch_angle_deg: angle, ..base.clone() };
-                let (polylines, end) = pass_polylines(&layer.id, cut, angle, &subs, pos)?;
+                let (polylines, end) = pass_polylines(&layer.id, cut, angle, &subs, pos, (max_segments - segments, max_segments))?;
                 if polylines.is_empty() {
                     continue;
+                }
+                segments += segment_count(&polylines);
+                if segments > max_segments {
+                    return Err(PlanError::TooManySegments { max: max_segments });
                 }
                 pos = end;
                 plan.passes.push(PassPlan { layer_id: layer.id.clone(), sub_layer, repeat, settings, polylines });
@@ -110,6 +128,9 @@ pub fn plan_job(doc: &Document, target: &Target) -> Result<JobPlan> {
 /// Validate one `CutSettings` against the target and resolve its defaults.
 fn resolve(layer: &str, cut: &CutSettings, target: &Target) -> Result<PassSettings> {
     let invalid = |what: &'static str, value: f64| PlanError::Setting { layer: layer.into(), what, value };
+    if cut.passes > MAX_PASSES {
+        return Err(PlanError::TooManyPasses { layer: layer.into(), passes: cut.passes, max: MAX_PASSES });
+    }
     if !cut.power_pct.is_finite() || cut.power_pct < 0.0 {
         return Err(invalid("power_pct", cut.power_pct));
     }
@@ -147,14 +168,29 @@ fn resolve(layer: &str, cut: &CutSettings, target: &Target) -> Result<PassSettin
     Ok(settings)
 }
 
-/// The ordered polylines of one pass over the layer's flattened objects, and where the galvo ends.
-fn pass_polylines(layer: &str, cut: &CutSettings, angle: f64, objects: &[&Vec<Subpath>], start: Point) -> Result<(Vec<Vec<Point>>, Point)> {
+/// Mark segments of `polylines` (each polyline of n points has n - 1).
+fn segment_count(polylines: &[Vec<Point>]) -> usize {
+    polylines.iter().map(|p| p.len().saturating_sub(1)).sum()
+}
+
+/// The ordered polylines of one pass over the layer's flattened objects, and where the galvo ends. Refused with
+/// [`PlanError::TooManySegments`] as soon as the hatch lines alone pass `budget`, the segments left of the job's
+/// `max` (the caller checks the total).
+fn pass_polylines(
+    layer: &str,
+    cut: &CutSettings,
+    angle: f64,
+    objects: &[&Vec<Subpath>],
+    start: Point,
+    (budget, max): (usize, usize),
+) -> Result<(Vec<Vec<Point>>, Point)> {
     let fill = matches!(cut.mode, FillMode::Fill | FillMode::FillThenLine);
     let line = matches!(cut.mode, FillMode::Line | FillMode::FillThenLine);
     let mut out = Vec::new();
     let mut pos = start;
     if fill {
         let mut chunks = Vec::new();
+        let mut lines_made = 0usize;
         for subs in objects {
             let rings: Vec<Vec<Point>> = subs.iter().filter(|s| s.closed).map(|s| s.points.clone()).collect();
             let mut angles = vec![angle];
@@ -162,8 +198,11 @@ fn pass_polylines(layer: &str, cut: &CutSettings, angle: f64, objects: &[&Vec<Su
                 angles.push(angle + 90.0);
             }
             for a in angles {
-                let lines = hatch(&rings, a, cut.hatch.interval_mm, cut.hatch.bidirectional)
-                    .map_err(|max| PlanError::TooManyHatchLines { layer: layer.into(), max })?;
+                let lines = hatch(&rings, a, cut.hatch.interval_mm, cut.hatch.bidirectional, budget - lines_made).map_err(|e| match e {
+                    HatchError::TooManyScanlines => PlanError::TooManyHatchLines { layer: layer.into(), max: MAX_SCANLINES },
+                    HatchError::OverBudget => PlanError::TooManySegments { max },
+                })?;
+                lines_made += lines.len();
                 if !lines.is_empty() {
                     chunks.push(Chunk::Hatch { lines, bidirectional: cut.hatch.bidirectional });
                 }
@@ -209,7 +248,8 @@ fn plan_stats(plan: &JobPlan, target: &Target) -> Stats {
             time_us += t.laser_on_delay_us.max(0.0) + t.laser_off_delay_us.max(0.0) + t.end_delay_us.max(0.0);
             #[allow(clippy::cast_precision_loss)]
             let corners = segments.saturating_sub(1) as f64;
-            time_us += corners * t.polygon_delay_us.max(0.0);
+            // As encoded: whole 10 µs units (`lmc::units::polygon_delay_units`).
+            time_us += corners * (t.polygon_delay_us.max(0.0) / 10.0).trunc() * 10.0;
             pos = last;
         }
     }

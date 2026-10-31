@@ -10,8 +10,8 @@
 //!   cannot emit; [`Controller::run`] needs an [`Armed`] token that only the engine's UI approval creates;
 //!   [`Controller::abort`] is never gated.
 //!
-//! [`field_to_galvo`] is the one field mm -> galvo word conversion (swap, negate, field bounds) for `plan` and the
-//! engine to share.
+//! [`field_to_galvo`] wraps `lmc::units::field_to_galvo`, the one field mm -> galvo word conversion (field bounds,
+//! negate in the field frame, then swap) that `plan::Target` encodes jobs with too.
 #![forbid(unsafe_code)]
 
 mod armed;
@@ -33,7 +33,7 @@ pub use geometry::{FieldError, field_to_galvo};
 pub use init::InitSettings;
 pub use link::{Link, LinkError, Reply};
 pub use markcfg::MarkcfgImport;
-pub use profile::{MachineProfile, MarkSpeedLimits, ProfileError, Timing};
+pub use profile::{DEFAULT_MAX_DELAY_US, DEFAULT_MAX_JUMP_SPEED_MM_S, MachineProfile, MarkSpeedLimits, ProfileError, Timing};
 pub use sim::{SimBoard, SimLink, Traffic};
 #[cfg(feature = "usb")]
 pub use usb::{CLONE_PID, DEFAULT_TIMEOUT, DetectedBoard, LMC_PID, LMC_VID, UsbLink, UsbOptions, detect};

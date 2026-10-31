@@ -15,12 +15,22 @@ pub type HatchLine = [Point; 2];
 /// Hatch segments shorter than this are dropped (nothing to mark).
 const MIN_SEGMENT_MM: f64 = 1e-6;
 
+/// Why [`hatch`] stopped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HatchError {
+    /// More than [`MAX_SCANLINES`] scanlines would be needed (likely a unit mistake).
+    TooManyScanlines,
+    /// More than the caller's `max_lines` hatch lines; hatching stopped as soon as the budget was passed.
+    OverBudget,
+}
+
 /// Hatch the even-odd interior of `rings` (closed, without a repeated last point) with lines along `angle_deg`.
 ///
 /// Lines come out in scanline order. With `bidirectional` every other scanline runs backwards (a zig-zag);
-/// otherwise every segment runs the same way (+X of the hatch direction). `Err(n)` when more than
-/// [`MAX_SCANLINES`] scanlines would be needed.
-pub fn hatch(rings: &[Vec<Point>], angle_deg: f64, interval_mm: f64, bidirectional: bool) -> Result<Vec<HatchLine>, usize> {
+/// otherwise every segment runs the same way (+X of the hatch direction). Refused when more than
+/// [`MAX_SCANLINES`] scanlines would be needed, or as soon as more than `max_lines` lines have been made (the job's
+/// remaining segment budget), so a huge hatch never allocates past the budget.
+pub fn hatch(rings: &[Vec<Point>], angle_deg: f64, interval_mm: f64, bidirectional: bool, max_lines: usize) -> Result<Vec<HatchLine>, HatchError> {
     let rad = angle_deg.to_radians();
     let to_local = (-rad).sin_cos();
     let to_field = rad.sin_cos();
@@ -45,7 +55,7 @@ pub fn hatch(rings: &[Vec<Point>], angle_deg: f64, interval_mm: f64, bidirection
     }
     let count_f = (span / interval_mm).floor() + 1.0;
     if !count_f.is_finite() || count_f > MAX_SCANLINES as f64 {
-        return Err(MAX_SCANLINES);
+        return Err(HatchError::TooManyScanlines);
     }
     // `count_f` is finite, whole and within 1..=MAX_SCANLINES (checked above).
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
@@ -83,6 +93,9 @@ pub fn hatch(rings: &[Vec<Point>], angle_deg: f64, interval_mm: f64, bidirection
             }
         }
         out.extend(segments);
+        if out.len() > max_lines {
+            return Err(HatchError::OverBudget);
+        }
     }
     Ok(out)
 }
@@ -98,7 +111,7 @@ mod tests {
 
     #[test]
     fn square_gets_one_line_per_interval() {
-        let lines = hatch(&[square(10.0)], 0.0, 0.1, true).unwrap();
+        let lines = hatch(&[square(10.0)], 0.0, 0.1, true, usize::MAX).unwrap();
         assert_eq!(lines.len(), 100);
         for l in &lines {
             assert!(((l[1][0] - l[0][0]).abs() - 10.0).abs() < 1e-9);
@@ -107,15 +120,15 @@ mod tests {
 
     #[test]
     fn bidirectional_alternates_and_unidirectional_does_not() {
-        let zig = hatch(&[square(10.0)], 0.0, 1.0, true).unwrap();
+        let zig = hatch(&[square(10.0)], 0.0, 1.0, true, usize::MAX).unwrap();
         assert!(zig[0][1][0] > zig[0][0][0] && zig[1][1][0] < zig[1][0][0]);
-        let uni = hatch(&[square(10.0)], 0.0, 1.0, false).unwrap();
+        let uni = hatch(&[square(10.0)], 0.0, 1.0, false, usize::MAX).unwrap();
         assert!(uni.iter().all(|l| l[1][0] > l[0][0]));
     }
 
     #[test]
     fn even_odd_leaves_holes_empty() {
-        let lines = hatch(&[square(10.0), square(4.0)], 0.0, 0.5, false).unwrap();
+        let lines = hatch(&[square(10.0), square(4.0)], 0.0, 0.5, false, usize::MAX).unwrap();
         // Scanlines through the hole give two segments, the rest one.
         let through_hole = lines.iter().filter(|l| l[0][1].abs() < 2.0).count();
         assert!(through_hole > 0);
@@ -127,7 +140,7 @@ mod tests {
 
     #[test]
     fn angled_hatch_runs_along_the_angle() {
-        let lines = hatch(&[square(10.0)], 90.0, 0.5, false).unwrap();
+        let lines = hatch(&[square(10.0)], 90.0, 0.5, false, usize::MAX).unwrap();
         assert_eq!(lines.len(), 20);
         for l in &lines {
             assert!((l[0][0] - l[1][0]).abs() < 1e-9, "{l:?} is not vertical");
@@ -137,6 +150,12 @@ mod tests {
 
     #[test]
     fn absurd_interval_is_refused() {
-        assert!(hatch(&[square(100.0)], 0.0, 1e-6, true).is_err());
+        assert_eq!(hatch(&[square(100.0)], 0.0, 1e-6, true, usize::MAX), Err(HatchError::TooManyScanlines));
+    }
+
+    #[test]
+    fn budget_stops_hatching_early() {
+        assert_eq!(hatch(&[square(10.0)], 0.0, 0.1, true, 100).map(|l| l.len()), Ok(100));
+        assert_eq!(hatch(&[square(10.0)], 0.0, 0.1, true, 99), Err(HatchError::OverBudget));
     }
 }

@@ -1,8 +1,12 @@
 //! The engine's side of the laser: [`Machine`] owns the `machine::Controller` behind its own mutex and drives it
 //! from blocking tasks, so a slow USB transfer never stalls the async runtime. Also the links the engine can use
 //! ([`CountingSimLink`], [`OfflineLink`]) and the profile -> `plan::Target` mapping.
+//!
+//! The controller owns its link through a [`LinkSlot`] the engine shares. The engine uses its side of the slot for
+//! exactly two things, both with the controller locked and neither able to emit: swapping in a freshly opened USB
+//! link ([`Machine::ensure_ready`]) and sending `ReadPort` ([`Machine::read_inputs`], physical run confirmation).
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, TryLockError};
 
 use corfile::CorTable;
@@ -63,6 +67,8 @@ pub struct SimCounters {
     laser_singles: AtomicU64,
     /// Packets that are not light-only (they can fire).
     emitting_packets: AtomicU64,
+    /// The simulated input port: word 1 of every `ReadPort` reply.
+    inputs: AtomicU16,
 }
 
 impl SimCounters {
@@ -82,6 +88,15 @@ impl SimCounters {
     /// List packets that fail `lmc::emits_light_only`.
     pub fn emitting_packets(&self) -> u64 {
         self.emitting_packets.load(Ordering::SeqCst)
+    }
+
+    /// Set the simulated input port (e.g. press a foot switch on bit 14).
+    pub fn set_inputs(&self, bits: u16) {
+        self.inputs.store(bits, Ordering::SeqCst);
+    }
+
+    pub fn inputs(&self) -> u16 {
+        self.inputs.load(Ordering::SeqCst)
     }
 
     fn json(&self) -> Value {
@@ -121,8 +136,13 @@ impl Link for CountingSimLink {
         if cmd != Single::enable_laser() && single_can_fire(cmd) {
             self.counters.laser_singles.fetch_add(1, Ordering::SeqCst);
         }
-        let reply = self.inner.send_single(cmd);
+        let mut reply = self.inner.send_single(cmd);
         self.inner.clear_traffic();
+        if cmd == Single::read_port()
+            && let Ok(Some(words)) = &mut reply
+        {
+            words[1] = self.counters.inputs();
+        }
         reply
     }
 
@@ -152,9 +172,44 @@ impl Link for OfflineLink {
     }
 }
 
+/// The link the controller drives, shared with the engine (see the module docs). Lock order: the controller mutex
+/// first, then this one; the engine only touches the slot while it holds the controller.
+#[derive(Clone)]
+pub struct LinkSlot(Arc<Mutex<Box<dyn Link>>>);
+
+impl LinkSlot {
+    fn new(link: Box<dyn Link>) -> Self {
+        LinkSlot(Arc::new(Mutex::new(link)))
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Box<dyn Link>> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+impl Link for LinkSlot {
+    fn send_single(&mut self, cmd: Single) -> Result<Option<Reply>, LinkError> {
+        self.lock().send_single(cmd)
+    }
+
+    fn send_packet(&mut self, packet: &Packet) -> Result<(), LinkError> {
+        self.lock().send_packet(packet)
+    }
+}
+
+/// What [`Machine::abort`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AbortOutcome {
+    /// The abort sequence went to the board.
+    Sent,
+    /// No board is connected (USB not opened or not initialised), so there was nothing to send.
+    NotConnected,
+}
+
 /// The laser as the engine sees it. See the module docs.
 pub struct Machine {
     ctl: Arc<Mutex<Ctl>>,
+    link: LinkSlot,
     abort: AbortHandle,
     profile: MachineProfile,
     cor: Option<CorTable>,
@@ -163,6 +218,9 @@ pub struct Machine {
     sim: Option<Arc<SimCounters>>,
     /// An approved run holds this from approval until it ends.
     running: AtomicBool,
+    /// Bumped by every stop. A run captures it when it claims the machine and never starts streaming once it has
+    /// changed, so a stop can never be lost between approval and the run taking the controller lock.
+    stop_epoch: AtomicU64,
     /// Bumped to end the current frame loop; the loop owns the value it started with.
     frame_gen: AtomicU64,
     /// The generation of the frame loop that is tracing, or 0. Framing is on while it equals `frame_gen`.
@@ -184,7 +242,7 @@ impl Machine {
         Self::with_link(Box::new(OfflineLink), LinkKind::Usb, None, profile, cor, PollConfig::default())
     }
 
-    fn with_link(
+    pub(crate) fn with_link(
         link: Box<dyn Link>,
         kind: LinkKind,
         sim: Option<Arc<SimCounters>>,
@@ -192,16 +250,19 @@ impl Machine {
         cor: Option<CorTable>,
         poll: PollConfig,
     ) -> Self {
-        let ctl = Controller::with_settings(link, InitSettings::default(), poll);
+        let slot = LinkSlot::new(link);
+        let ctl = Controller::with_settings(Box::new(slot.clone()) as Box<dyn Link>, InitSettings::default(), poll);
         Machine {
             abort: ctl.abort_handle(),
             ctl: Arc::new(Mutex::new(ctl)),
+            link: slot,
             target: target_from_profile(&profile),
             profile,
             cor,
             kind,
             sim,
             running: AtomicBool::new(false),
+            stop_epoch: AtomicU64::new(0),
             frame_gen: AtomicU64::new(0),
             framing_gen: AtomicU64::new(0),
             last_error: Mutex::new(None),
@@ -238,6 +299,19 @@ impl Machine {
 
     pub(crate) fn end_run(&self) {
         self.running.store(false, Ordering::SeqCst);
+    }
+
+    /// The stop epoch (see the field docs).
+    pub fn stop_epoch(&self) -> u64 {
+        self.stop_epoch.load(Ordering::SeqCst)
+    }
+
+    /// The synchronous half of a stop: bump the stop epoch, request an abort from whatever holds the controller,
+    /// and end framing. Never waits.
+    pub fn request_stop(&self) {
+        self.stop_epoch.fetch_add(1, Ordering::SeqCst);
+        self.abort.request();
+        self.bump_frame_gen();
     }
 
     /// True while a frame loop is tracing (and has not been superseded or stopped).
@@ -290,7 +364,7 @@ impl Machine {
             return Ok(());
         }
         if self.kind == LinkKind::Usb {
-            *ctl.link_mut() = open_usb()?;
+            *self.link.lock() = open_usb()?;
         }
         match ctl.init(&self.profile, self.cor.as_ref()) {
             Ok(info) => {
@@ -300,7 +374,7 @@ impl Machine {
             }
             Err(e) => {
                 if self.kind == LinkKind::Usb {
-                    *ctl.link_mut() = Box::new(OfflineLink);
+                    *self.link.lock() = Box::new(OfflineLink);
                 }
                 self.set_error(Some(e.to_string()));
                 Err(e)
@@ -314,13 +388,34 @@ impl Machine {
         Ok(())
     }
 
-    /// Request an abort (noticed by a running job at its next packet or poll), end framing, then send the abort
-    /// sequence once the controller is free. Never gated.
-    pub async fn abort(self: &Arc<Self>) -> Result<(), EngineError> {
-        self.abort.request();
-        self.bump_frame_gen();
-        self.blocking(|_, ctl| ctl.abort()).await??;
-        Ok(())
+    /// Read the board's input port (`ReadPort`, reply word 1, as galvoplotter's `wait_for_input` reads it). Takes
+    /// the locked controller so it can never interleave with a list being streamed. Sends nothing that can emit.
+    pub fn read_inputs(&self, ctl: &mut Ctl) -> Result<u16, ControllerError> {
+        if ctl.state() == ControllerState::Uninitialized {
+            return Err(ControllerError::NotInitialized);
+        }
+        let reply = self.link.lock().send_single(Single::read_port())?;
+        reply.map(|w| w[1]).ok_or_else(|| LinkError::Io("ReadPort returned no reply".into()).into())
+    }
+
+    /// [`Machine::request_stop`] (noticed by a running job at its next packet or poll), then send the abort sequence
+    /// once the controller is free. Never gated. With no board connected there is nothing to send:
+    /// [`AbortOutcome::NotConnected`].
+    pub async fn abort(self: &Arc<Self>) -> Result<AbortOutcome, EngineError> {
+        self.request_stop();
+        let outcome = self
+            .blocking(|_, ctl| {
+                let connected = ctl.state() != ControllerState::Uninitialized;
+                match ctl.abort() {
+                    Ok(()) => Ok(AbortOutcome::Sent),
+                    Err(ControllerError::Link(LinkError::Disconnected | LinkError::NotFound(_))) if !connected => {
+                        Ok(AbortOutcome::NotConnected)
+                    }
+                    Err(e) => Err(e),
+                }
+            })
+            .await??;
+        Ok(outcome)
     }
 
     /// Status without waiting for the controller: a held lock reads as busy.
@@ -394,6 +489,29 @@ mod tests {
         assert!(single_can_fire(Single::write_port(LASER_ENABLE_BIT | 0x100)));
         assert!(!single_can_fire(Single::write_port(0x100)));
         assert!(!single_can_fire(Single::fiber_set_mo(false)));
+    }
+
+    #[tokio::test]
+    async fn read_inputs_returns_the_simulated_port() {
+        let m = Arc::new(Machine::simulated(MachineProfile::generic_lmc_fiber(), None, PollConfig::immediate()));
+        let r = m.blocking(|m, ctl| m.read_inputs(ctl)).await.unwrap();
+        assert!(matches!(r, Err(ControllerError::NotInitialized)));
+        m.connect().await.unwrap();
+        m.sim_counters().unwrap().set_inputs(1 << 14);
+        assert_eq!(m.blocking(|m, ctl| m.read_inputs(ctl)).await.unwrap().unwrap(), 1 << 14);
+        assert_eq!(m.sim_counters().unwrap().laser_singles(), 0);
+    }
+
+    #[tokio::test]
+    async fn abort_without_a_board_reports_not_connected() {
+        // Machine::usb opens nothing until connect/ensure_ready, and abort never calls those.
+        let m = Arc::new(Machine::usb(MachineProfile::generic_lmc_fiber(), None));
+        let before = m.stop_epoch();
+        assert_eq!(m.abort().await.unwrap(), AbortOutcome::NotConnected);
+        assert_eq!(m.stop_epoch(), before + 1);
+        let sim = Arc::new(Machine::simulated(MachineProfile::generic_lmc_fiber(), None, PollConfig::immediate()));
+        sim.connect().await.unwrap();
+        assert_eq!(sim.abort().await.unwrap(), AbortOutcome::Sent);
     }
 
     #[tokio::test]

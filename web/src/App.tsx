@@ -5,10 +5,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api/client.ts";
 import * as C from "./api/commands.ts";
+import { pendingRuns, stopToast } from "./api/runs.ts";
 import { useEngine } from "./api/useEngine.ts";
 import { BrowserPanel } from "./components/BrowserPanel.tsx";
 import { ArrayDialog, CommandPalette, PlaceDialog, StockDialog } from "./components/Dialogs.tsx";
-import { MachineCard, PreviewStatsCard, RunsCard, pendingRuns } from "./components/LaserPanel.tsx";
+import { MachineCard, PreviewStatsCard, RunsCard } from "./components/LaserPanel.tsx";
 import { LayerSection, PropertiesPanel } from "./components/PropertiesPanel.tsx";
 import { Timeline } from "./components/Timeline.tsx";
 import { Toolbar } from "./components/Toolbar.tsx";
@@ -100,10 +101,11 @@ export function App() {
   const undo = useCallback(() => engine.undo().catch(report), [engine, report]);
   const redo = useCallback(() => engine.redo().catch(report), [engine, report]);
 
+  // Emergency stop: aborts any run or frame and cancels pending runs. Framing alone ends with "Stop frame".
   const stop = useCallback(() => {
     api
       .stop()
-      .then(() => notify("Stop sent."))
+      .then((res) => notify(stopToast(res)))
       .catch(report)
       .finally(() => void engine.refreshMachine());
   }, [engine, notify, report]);
@@ -197,6 +199,7 @@ export function App() {
         onCommands={() => setDialog("commands")}
         onTogglePreview={() => setShowPreview((v) => !v)}
         onFrame={() => void machineAction(api.frame(), "Framing with the red pointer.")}
+        onFrameStop={() => void machineAction(api.frameStop(), "Framing stopped. Pending runs are kept.")}
         onRequestRun={() => void machineAction(api.requestRun(), "Run requested. Approve it in the Machine panel.")}
         onToggleLeft={() => setLeftOpen((v) => !v)}
         onToggleRight={() => setRightOpen((v) => !v)}
@@ -259,7 +262,7 @@ export function App() {
           </div>
         </aside>
       </div>
-      <Timeline history={engine.history} revision={doc?.revision ?? null} />
+      <Timeline history={engine.history} revision={doc?.revision ?? null} flash={engine.remoteEdit} />
 
       <input ref={fileRef} type="file" accept=".svg,image/svg+xml" hidden onChange={onImportFile} />
 

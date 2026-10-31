@@ -62,7 +62,7 @@ export function TopBar(p: TopBarProps) {
           </span>
           {p.missingCommands.length > 0 && <span className="warn-chip">{p.missingCommands.length} cmd missing</span>}
         </div>
-        <button className="btn btn-stop" onClick={p.onStop} title="Stop the machine now. Always allowed.">
+        <button className="btn btn-stop" onClick={p.onStop} title="Emergency stop: abort any run or frame and cancel pending runs. Always allowed.">
           <Icon name="stop" /> STOP
         </button>
       </div>

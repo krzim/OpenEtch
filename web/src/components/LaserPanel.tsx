@@ -1,22 +1,16 @@
-// Laser workspace side panel: machine status, pending runs with a deliberate two-step approval, and preview stats.
-// Approval is the only way the UI can make the laser fire, so it needs two separate taps and times out.
+// Laser workspace side panel: machine status, runs under way, pending runs with a deliberate two-step approval, and
+// preview stats. Approval is the only way the UI can make the laser fire: it needs two separate taps plus the operator
+// PIN (set on the engine machine with `openetch set-pin`), shows what will fire, and is refused for stale runs. The PIN
+// lives only in this component's state while the confirm step is open and goes only into the approve request body.
 
-import { useEffect, useState } from "react";
-import { api } from "../api/client.ts";
+import { useEffect, useRef, useState } from "react";
+import { api, ApiError } from "../api/client.ts";
+import { activeRuns, approvalErrorText, approveBlocker, pendingRuns, runStatRows, stateLabel, validPin } from "../api/runs.ts";
 import type { MachineStatus, PendingRun, Preview } from "../api/types.ts";
 import { originBadge } from "./Timeline.tsx";
 
-/** Pending runs from the machine status: `pending_runs`, or `runs` filtered to state "pending". */
-export function pendingRuns(m: MachineStatus | null): PendingRun[] {
-  if (!m) return [];
-  if (Array.isArray(m.pending_runs)) return m.pending_runs;
-  const runs = (m as { runs?: unknown }).runs;
-  if (Array.isArray(runs)) return (runs as PendingRun[]).filter((r) => r && (r.state === undefined || r.state === "pending"));
-  return [];
-}
-
 export function MachineCard({ machine, httpError }: { machine: MachineStatus | null; httpError: string | null }) {
-  const known = new Set(["connected", "sim", "busy", "field_mm", "pending_runs", "runs"]);
+  const known = new Set(["connected", "sim", "busy", "field_mm", "pending_runs", "runs", "approval"]);
   const extra = machine ? Object.entries(machine).filter(([k, v]) => !known.has(k) && (typeof v !== "object" || v === null)) : [];
   return (
     <section className="card">
@@ -57,49 +51,154 @@ function FragmentKV({ k, v }: { k: string; v: unknown }) {
 }
 
 export function RunsCard(props: { machine: MachineStatus | null; onChanged: () => void; report: (e: unknown) => void }) {
-  const runs = pendingRuns(props.machine);
+  const pending = pendingRuns(props.machine);
+  const active = activeRuns(props.machine);
+  const approval = props.machine?.approval;
+  const pedal = approval?.physical_confirm ?? null;
   return (
-    <section className="card">
-      <h3>Pending runs</h3>
-      {runs.length === 0 ? (
-        <p className="muted">None. “Request run” creates one; nothing fires until it is approved here.</p>
-      ) : (
-        runs.map((r) => <PendingRunRow key={r.id} run={r} onChanged={props.onChanged} report={props.report} />)
+    <>
+      {active.length > 0 && (
+        <section className="card">
+          <h3>Active run</h3>
+          {active.map((r) => (
+            <ActiveRunRow key={r.id} run={r} machine={props.machine} />
+          ))}
+        </section>
       )}
-    </section>
+      <section className="card">
+        <h3>Pending runs</h3>
+        {approval && (
+          <p className={approval.pin_set ? "muted" : "run-hint"}>
+            {approval.pin_set
+              ? `Approval needs the operator PIN${pedal ? `, then the foot pedal (input ${pedal.input_bit})` : ""}.`
+              : approvalErrorText("pin_not_set", "")}
+          </p>
+        )}
+        {pending.length === 0 ? (
+          <p className="muted">None. “Request run” creates one; nothing fires until it is approved here.</p>
+        ) : (
+          pending.map((r) => <PendingRunRow key={r.id} run={r} machine={props.machine} onChanged={props.onChanged} report={props.report} />)
+        )}
+      </section>
+    </>
   );
 }
 
-const CONFIRM_TIMEOUT_MS = 8000;
+/** The confirm step reverts to idle after this long without typing. */
+const CONFIRM_TIMEOUT_MS = 20_000;
 
-function PendingRunRow({ run, onChanged, report }: { run: PendingRun; onChanged: () => void; report: (e: unknown) => void }) {
+/** Summary, stats, packet count and revision: what this run will do. */
+function RunFacts({ run }: { run: PendingRun }) {
+  const rows = runStatRows(run);
+  return (
+    <>
+      {run.summary && <div className="run-summary">{String(run.summary)}</div>}
+      {rows.length > 0 && (
+        <dl className="kv run-stats">
+          {rows.map(([k, v]) => (
+            <FragmentKV key={k} k={k} v={v} />
+          ))}
+        </dl>
+      )}
+    </>
+  );
+}
+
+/** Run id plus who requested it ("You" or the AI agent's name). */
+function RunHead({ run }: { run: PendingRun }) {
+  const by = run.origin !== undefined ? originBadge(run.origin) : null;
+  return (
+    <div className="run-head">
+      <span className="run-id">{run.id}</span>
+      {by && (
+        <span className={`badge ${by.cls}`} title={by.cls === "origin-agent" ? "Requested by an AI agent" : undefined}>
+          {by.label}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function ActiveRunRow({ run, machine }: { run: PendingRun; machine: MachineStatus | null }) {
+  const pedal = machine?.approval?.physical_confirm ?? null;
+  return (
+    <div className="run-row active">
+      <RunHead run={run} />
+      <div className="run-state">{stateLabel(run.state)}</div>
+      {run.state === "awaiting_confirm" && (
+        <p className="pedal">
+          {pedal
+            ? `Press the foot pedal (input ${pedal.input_bit}) within ${pedal.timeout_s} s to start. STOP cancels.`
+            : "Waiting for the physical confirmation. STOP cancels."}
+        </p>
+      )}
+      <RunFacts run={run} />
+    </div>
+  );
+}
+
+function PendingRunRow(props: { run: PendingRun; machine: MachineStatus | null; onChanged: () => void; report: (e: unknown) => void }) {
+  const { run, machine, onChanged, report } = props;
   const [step, setStep] = useState<"idle" | "confirm" | "sending">("idle");
+  const [pin, setPin] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const pinRef = useRef<HTMLInputElement>(null);
+  const blocker = approveBlocker(run, machine);
+
+  // Leaving the confirm step forgets the PIN.
+  useEffect(() => {
+    if (step === "idle") setPin("");
+    if (step === "confirm") pinRef.current?.focus();
+  }, [step]);
+  // Revert after a while without typing.
   useEffect(() => {
     if (step !== "confirm") return;
     const t = window.setTimeout(() => setStep("idle"), CONFIRM_TIMEOUT_MS);
     return () => window.clearTimeout(t);
-  }, [step]);
-  const by = run.origin !== undefined ? originBadge(run.origin) : null;
+  }, [step, pin]);
+  // A run that goes stale (or a PIN that gets unset) while confirming cannot be approved any more.
+  useEffect(() => {
+    if (blocker && step === "confirm") setStep("idle");
+  }, [blocker, step]);
+
+  const canFire = step === "confirm" && !blocker && validPin(pin);
   const approve = async () => {
+    if (!canFire) return;
+    const sent = pin;
+    setPin("");
     setStep("sending");
+    setError(null);
     try {
-      await api.approveRun(run.id);
-    } catch (e) {
-      report(e);
-    } finally {
+      await api.approveRun(run.id, sent);
       setStep("idle");
+    } catch (e) {
+      const code = e instanceof ApiError ? e.code : undefined;
+      const detail = e instanceof ApiError && e.detail ? e.detail : e instanceof Error ? e.message : String(e);
+      const text = approvalErrorText(code, detail);
+      setError(text);
+      // A mistyped PIN may be retried straight away; anything else goes back to the start.
+      setStep(code === "pin_invalid" || code === "pin_required" ? "confirm" : "idle");
+      report(new Error(`Approval refused: ${text}`));
+    } finally {
       onChanged();
     }
   };
+
   return (
-    <div className={`run-row${step === "confirm" ? " arming" : ""}`}>
-      <div className="run-head">
-        <span className="run-id">{run.id}</span>
-        {by && <span className={`badge ${by.cls}`}>{by.label}</span>}
-      </div>
-      {run.summary && <div className="run-summary">{String(run.summary)}</div>}
+    <div className={`run-row${step !== "idle" ? " arming" : ""}${run.stale ? " stale" : ""}`}>
+      <RunHead run={run} />
+      <RunFacts run={run} />
+      {blocker && <p className="run-hint">{blocker}</p>}
+      {error && <p className="run-error">{error}</p>}
       {step === "idle" && (
-        <button className="btn btn-warn" onClick={() => setStep("confirm")}>
+        <button
+          className="btn btn-warn"
+          onClick={() => {
+            setError(null);
+            setStep("confirm");
+          }}
+          disabled={!!blocker}
+        >
           Approve…
         </button>
       )}
@@ -108,11 +207,29 @@ function PendingRunRow({ run, onChanged, report }: { run: PendingRun; onChanged:
           <p>
             <strong>This fires the laser.</strong> Enclosure closed, eyewear on, focus and stock checked?
           </p>
+          <label className="pin-field">
+            <span>Operator PIN</span>
+            <input
+              ref={pinRef}
+              type="password"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              maxLength={12}
+              autoComplete="off"
+              value={pin}
+              disabled={step === "sending"}
+              onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 12))}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void approve();
+                else if (e.key === "Escape") setStep("idle");
+              }}
+            />
+          </label>
           <div className="btn-row">
             <button className="btn" onClick={() => setStep("idle")} disabled={step === "sending"}>
               Cancel
             </button>
-            <button className="btn btn-danger" onClick={approve} disabled={step === "sending"}>
+            <button className="btn btn-danger" onClick={() => void approve()} disabled={!canFire}>
               {step === "sending" ? "Approving…" : "Confirm and fire"}
             </button>
           </div>

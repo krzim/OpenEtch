@@ -1,5 +1,7 @@
 //! [`field_to_galvo`]: field-frame mm -> galvo words for one machine profile.
 
+use lmc::LmcError;
+
 use crate::profile::MachineProfile;
 
 /// A point that cannot be sent to the galvos.
@@ -14,27 +16,21 @@ pub enum FieldError {
 
 /// Field-frame mm (origin at the field centre, +X right, +Y away from the operator) -> galvo `(x, y)` words.
 ///
-/// Order: refuse points not strictly inside `±field_mm / 2` on both axes; negate X and/or Y (`negate_x`,
-/// `negate_y`, in the field frame); swap the axes (`swap_xy`); then `lmc::units::mm_to_galvo` per axis. Lens
-/// correction is not applied here: the board applies the uploaded .cor table itself.
+/// A thin wrapper over `lmc::units::field_to_galvo` with the profile's [`MachineProfile::field_transform`], the one
+/// transform `plan` encodes jobs with too, so a frame shows exactly where the job will mark. Order: refuse points
+/// not strictly inside `±field_mm / 2` on both axes; negate X and/or Y in the field frame (`negate_x`,
+/// `negate_y`); swap the axes (`swap_xy`); then `mm_to_galvo` per axis. Lens correction is not applied here: the
+/// board applies the uploaded .cor table itself.
 ///
 /// The bound is strict on both sides (even though `-field/2` is encodable) so the accepted region is the same
 /// whatever the negate settings.
 pub fn field_to_galvo(profile: &MachineProfile, x_mm: f64, y_mm: f64) -> Result<(u16, u16), FieldError> {
-    if !(x_mm.is_finite() && y_mm.is_finite()) {
-        return Err(FieldError::NonFinite { x_mm, y_mm });
+    match lmc::units::field_to_galvo(x_mm, y_mm, &profile.field_transform()) {
+        Ok(words) => Ok(words),
+        Err(LmcError::NonFinite { .. }) => Err(FieldError::NonFinite { x_mm, y_mm }),
+        // A validated profile has a positive field, so anything else is the bound.
+        Err(_) => Err(FieldError::OutsideField { x_mm, y_mm, field_mm: profile.field_mm }),
     }
-    let field_mm = profile.field_mm;
-    let outside = FieldError::OutsideField { x_mm, y_mm, field_mm };
-    let half = profile.half_field_mm();
-    if x_mm.abs() >= half || y_mm.abs() >= half {
-        return Err(outside);
-    }
-    let x = if profile.negate_x { -x_mm } else { x_mm };
-    let y = if profile.negate_y { -y_mm } else { y_mm };
-    let (gx, gy) = if profile.swap_xy { (y, x) } else { (x, y) };
-    let word = |v: f64| lmc::units::mm_to_galvo(v, field_mm).map_err(|_| outside);
-    Ok((word(gx)?, word(gy)?))
 }
 
 #[cfg(test)]

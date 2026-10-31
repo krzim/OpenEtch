@@ -30,7 +30,8 @@ use lmc::Single;
 use serde::{Deserialize, Serialize};
 
 /// Board settings sent by [`crate::Controller::init`]. Defaults are galvoplotter @ fc35136's; none of them is
-/// B6-specific or verified on the B6 yet.
+/// B6-specific or verified on the B6 yet. Where the init sequence around them differs from galvoplotter's is listed
+/// under "Deviations from the reference sequences" on [`crate::Controller`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InitSettings {
     /// `SetControlMode` (galvoplotter `control_mode = 0`).

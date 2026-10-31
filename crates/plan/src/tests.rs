@@ -173,16 +173,20 @@ fn list_opens_and_closes_emission_in_order() {
     assert!(!emits_light_only(&packets));
     let cmds = decode(&packets);
     assert_eq!(cmds[0], ListCommand::ReadyMark);
-    assert_eq!(cmds[1], ListCommand::WritePort { bits: LASER_ENABLE_BIT });
-    assert_eq!(cmds[2], ListCommand::FiberOpenMo { open: 1 });
-    assert_eq!(cmds[3], ListCommand::DelayTime { time_10us: 800 });
-    assert!(matches!(cmds[4], ListCommand::JumpSpeed { .. }));
-    assert_eq!(cmds[5], ListCommand::FiberPulseWidth { ns: 200 });
-    assert_eq!(cmds[6], ListCommand::MarkCurrent { current: lmc::units::power_to_mark_current(20.0).unwrap() });
-    assert_eq!(cmds[7], ListCommand::QSwitchPeriod { period: 667 });
+    assert_eq!(cmds[1], ListCommand::DelayTime { time_10us: 800 });
+    assert_eq!(cmds[2], ListCommand::WritePort { bits: LASER_ENABLE_BIT });
+    assert!(matches!(cmds[3], ListCommand::JumpSpeed { .. }));
+    assert_eq!(cmds[4], ListCommand::FiberPulseWidth { ns: 200 });
+    assert_eq!(cmds[5], ListCommand::MarkCurrent { current: lmc::units::power_to_mark_current(20.0).unwrap() });
+    assert_eq!(cmds[6], ListCommand::QSwitchPeriod { period: 667 });
+    assert!(matches!(cmds[7], ListCommand::MarkSpeed { .. }));
+    // The target's 10 µs polygon delay is one 10 µs word (meerk40t's encoding).
+    assert_eq!(cmds[10], ListCommand::PolygonDelay { time_10us: 1 });
     let n = cmds.len();
-    assert_eq!(cmds[n - 3..], [ListCommand::FiberOpenMo { open: 0 }, ListCommand::WritePort { bits: 0 }, ListCommand::EndOfList]);
+    assert_eq!(cmds[n - 2..], [ListCommand::WritePort { bits: 0 }, ListCommand::EndOfList]);
     assert_eq!(cmds.iter().filter(|c| matches!(c, ListCommand::MarkTo { .. })).count(), 4);
+    // The MO is opened and closed only by the machine's single commands, never in-list.
+    assert!(!cmds.iter().any(|c| matches!(c, ListCommand::FiberOpenMo { .. })));
 }
 
 /// Mark segments of a preview, for comparing plan and simulation.
@@ -227,12 +231,12 @@ fn encode_then_simulate_matches_the_plan() {
 #[test]
 fn swap_and_negate_are_respected() {
     let doc = mixed_doc();
-    for (swap_xy, negate_x, negate_y) in [(true, false, false), (false, true, false), (false, false, true), (true, true, true)] {
-        let t = Target { swap_xy, negate_x, negate_y, ..target() };
+    for bits in 0..8u8 {
+        let t = Target { swap_xy: bits & 1 != 0, negate_x: bits & 2 != 0, negate_y: bits & 4 != 0, ..target() };
         assert_round_trip(&doc, &t);
     }
-    // The galvo words themselves move: field (+20, 0) is galvo X high normally and galvo Y low when swapped and
-    // Y-negated.
+    // The galvo words themselves move: field (+20, 0) is galvo X high normally and galvo Y low when X-negated (in
+    // the field frame) and then swapped.
     let s = CutSettings { mode: FillMode::Line, ..CutSettings::default() };
     let mut obj = rect("obj-1", 0.0, 0.0, (0.0, 0.0));
     let mut path = kurbo::BezPath::new();
@@ -246,8 +250,35 @@ fn swap_and_negate_are_respected() {
     };
     let plain = words(&target());
     assert!(plain.0 > 0x8000 && plain.1 == 0x8000);
-    let swapped = words(&Target { swap_xy: true, negate_y: true, ..target() });
+    let swapped = words(&Target { swap_xy: true, negate_x: true, ..target() });
     assert!(swapped.0 == 0x8000 && swapped.1 < 0x8000);
+    // Every combination encodes the job's first point exactly as `lmc::units::field_to_galvo` (the transform
+    // `machine` frames with) does.
+    for bits in 0..8u8 {
+        let t = Target { swap_xy: bits & 1 != 0, negate_x: bits & 2 != 0, negate_y: bits & 4 != 0, ..target() };
+        assert_eq!(words(&t), lmc::units::field_to_galvo(20.0, 0.0, &t.transform()).unwrap(), "{bits:03b}");
+    }
+}
+
+#[test]
+fn passes_above_the_limit_are_refused() {
+    let doc = |passes| doc_with(vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0))], CutSettings { passes, ..CutSettings::default() });
+    assert!(plan_job(&doc(MAX_PASSES), &target()).is_ok());
+    let err = plan_job(&doc(MAX_PASSES + 1), &target()).unwrap_err();
+    assert_eq!(err, PlanError::TooManyPasses { layer: "layer-1".into(), passes: MAX_PASSES + 1, max: MAX_PASSES });
+    // A huge value is refused before anything is generated.
+    assert!(matches!(plan_job(&doc(u32::MAX), &target()), Err(PlanError::TooManyPasses { .. })));
+}
+
+#[test]
+fn segment_budget_is_enforced() {
+    // 100 hatch lines per pass: one pass fits a 150-segment budget, two do not; a 50-line budget stops the hatcher.
+    let one = doc_with(vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0))], fill(0.1, false));
+    assert_eq!(crate::job::plan_job_within(&one, &target(), 150).map(|p| p.stats.segment_count), Ok(100));
+    let two = doc_with(vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0))], CutSettings { passes: 2, ..fill(0.1, false) });
+    assert_eq!(crate::job::plan_job_within(&two, &target(), 150), Err(PlanError::TooManySegments { max: 150 }));
+    assert_eq!(crate::job::plan_job_within(&one, &target(), 50), Err(PlanError::TooManySegments { max: 50 }));
+    assert_eq!(MAX_SEGMENTS, 5_000_000);
 }
 
 #[test]

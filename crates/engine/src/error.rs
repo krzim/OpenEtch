@@ -32,6 +32,10 @@ pub enum EngineError {
     Conflict(String),
     #[error("{0}")]
     Forbidden(String),
+    /// Run approval refused for operator-PIN reasons; `code` is `pin_not_set`, `pin_required`, `pin_invalid` or
+    /// `pin_locked` (see the `pin` module).
+    #[error("{message}")]
+    Approval { code: &'static str, message: String },
     #[error("{0}")]
     Internal(String),
 }
@@ -48,16 +52,19 @@ impl EngineError {
                 StatusCode::UNPROCESSABLE_ENTITY
             }
             EngineError::Machine(_) => StatusCode::BAD_GATEWAY,
-            EngineError::Forbidden(_) => StatusCode::FORBIDDEN,
+            EngineError::Forbidden(_) | EngineError::Approval { .. } => StatusCode::FORBIDDEN,
             EngineError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 
-    /// The JSON body: `{ok: false, error}`, plus `candidates` for a command that named a missing id.
+    /// The JSON body: `{ok: false, error}`, plus `candidates` for a command that named a missing id and `code` for
+    /// an approval refusal.
     pub fn body(&self) -> Value {
         let mut body = json!({ "ok": false, "error": self.to_string() });
-        if let EngineError::Command(CommandError::NotFound { candidates, .. }) = self {
-            body["candidates"] = json!(candidates);
+        match self {
+            EngineError::Command(CommandError::NotFound { candidates, .. }) => body["candidates"] = json!(candidates),
+            EngineError::Approval { code, .. } => body["code"] = json!(code),
+            _ => {}
         }
         body
     }

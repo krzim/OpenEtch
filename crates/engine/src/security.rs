@@ -5,9 +5,10 @@
 //!   name), or one of `--allow-host`. Applies to every route, including static files and `/mcp`.
 //! - **Origin** (when present): its host must be a loopback name or address, one of `--allow-host`, or the same
 //!   host as the request's `Host` (a same-origin page). `Origin: null` is refused.
-//! - **Token**: when configured, `/api/*` and `/mcp` need `Authorization: Bearer <token>` or `?token=<token>` (for
-//!   the WebSocket). Static files do not (the page reads the token from its own URL), and neither does
-//!   `POST /api/machine/stop`, which is never gated.
+//! - **Token**: when configured, `/api/*` and `/mcp` need `Authorization: Bearer <token>`. Only `GET /api/events`
+//!   (the WebSocket, which browsers cannot give headers) also accepts `?token=<token>`; everywhere else a query token
+//!   is ignored, so it does not end up in logs and history. Static files need no token (the page reads it from its
+//!   own URL), and neither does `POST /api/machine/stop`, which is never gated.
 
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -100,7 +101,12 @@ fn same(a: &str, b: &str) -> bool {
     a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
-/// Whether the request presents `token` as a bearer header or `?token=`.
+/// The one route that also accepts the token as `?token=`: the WebSocket upgrade.
+pub fn query_token_allowed(method: &Method, path: &str) -> bool {
+    method == Method::GET && path == "/api/events"
+}
+
+/// Whether the request presents `token` as a bearer header, or as `?token=` on `GET /api/events`.
 pub fn token_presented(req: &Request, token: &str) -> bool {
     let bearer = req
         .headers()
@@ -108,10 +114,11 @@ pub fn token_presented(req: &Request, token: &str) -> bool {
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer ").or_else(|| v.strip_prefix("bearer ")))
         .is_some_and(|t| same(t.trim(), token));
-    let query = req
-        .uri()
-        .query()
-        .is_some_and(|q| q.split('&').filter_map(|kv| kv.strip_prefix("token=")).any(|t| same(t, token)));
+    let query = query_token_allowed(req.method(), req.uri().path())
+        && req
+            .uri()
+            .query()
+            .is_some_and(|q| q.split('&').filter_map(|kv| kv.strip_prefix("token=")).any(|t| same(t, token)));
     bearer || query
 }
 
@@ -188,6 +195,21 @@ mod tests {
         let a = generate_token().unwrap();
         assert_eq!(a.len(), 64);
         assert_ne!(a, generate_token().unwrap());
+    }
+
+    #[test]
+    fn query_token_only_for_the_websocket() {
+        let token = "t0k3n-abcdefghijklmnop";
+        let r = |method: &str, uri: &str| {
+            Request::builder().method(method).uri(uri).body(axum::body::Body::empty()).unwrap()
+        };
+        assert!(token_presented(&r("GET", &format!("/api/events?token={token}")), token));
+        for (m, uri) in [("GET", "/api/machine"), ("POST", "/api/events"), ("POST", "/mcp"), ("GET", "/api/document")] {
+            assert!(!token_presented(&r(m, &format!("{uri}?token={token}")), token), "{m} {uri}");
+        }
+        let mut req = r("GET", "/api/machine");
+        req.headers_mut().insert(header::AUTHORIZATION, format!("Bearer {token}").parse().unwrap());
+        assert!(token_presented(&req, token));
     }
 
     #[test]

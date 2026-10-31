@@ -18,17 +18,35 @@ pub const MAX_PENDING: usize = 8;
 /// Finished runs kept for the status page.
 pub const KEEP_FINISHED: usize = 20;
 
-/// Where a run is in its life.
+/// Where a run is in its life: `pending` -> `approved` -> (`awaiting_confirm` ->) `running` -> `finished` |
+/// `failed` | `aborted`, or `cancelled` before anything was streamed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RunState {
-    /// Waiting for a person to approve it in the UI.
+    /// Waiting for a person to approve it in the UI with the operator PIN.
     Pending,
+    /// Approved; about to start (or about to wait for the physical input).
+    Approved,
+    /// Approved; waiting for the physical confirmation input (see `pin::PhysicalConfirm`).
+    AwaitingConfirm,
+    /// Being streamed to the board.
     Running,
-    Completed,
+    /// Ran to the end.
+    Finished,
+    /// The board or link failed; the abort sequence was sent.
     Failed,
-    /// Stopped before it ran (stop pressed, or the document changed).
+    /// Stopped by a stop request (before or while streaming).
+    Aborted,
+    /// Never started: stop pressed while pending or awaiting confirmation, the document changed, or the physical
+    /// input was not pressed in time.
     Cancelled,
+}
+
+impl RunState {
+    /// True once the run can no longer change.
+    pub fn is_final(self) -> bool {
+        matches!(self, RunState::Finished | RunState::Failed | RunState::Aborted | RunState::Cancelled)
+    }
 }
 
 /// A planned, encoded job.
@@ -149,7 +167,7 @@ impl RunStore {
 
     /// Drop the oldest finished runs beyond [`KEEP_FINISHED`] (and their packets).
     fn prune(&mut self) {
-        let finished = |r: &Run| !matches!(r.state, RunState::Pending | RunState::Running);
+        let finished = |r: &Run| r.state.is_final();
         let mut excess = self.runs.iter().filter(|r| finished(r)).count().saturating_sub(KEEP_FINISHED);
         self.runs.retain(|r| {
             if excess > 0 && finished(r) {
@@ -161,19 +179,20 @@ impl RunStore {
         });
     }
 
-    /// Record how an approved run ended.
-    pub fn finish(&mut self, id: &str, result: Result<RunReport, String>) {
+    /// Move an approved run to a non-final state (`awaiting_confirm`, `running`).
+    pub fn set_state(&mut self, id: &str, state: RunState) {
+        if let Some(r) = self.get_mut(id).filter(|r| !r.state.is_final()) {
+            r.state = state;
+        }
+    }
+
+    /// Record how an approved run ended (`state` is final).
+    pub fn finish(&mut self, id: &str, state: RunState, report: Option<RunReport>, error: Option<String>) {
+        debug_assert!(state.is_final());
         if let Some(r) = self.get_mut(id) {
-            match result {
-                Ok(report) => {
-                    r.state = RunState::Completed;
-                    r.report = Some(report);
-                }
-                Err(e) => {
-                    r.state = RunState::Failed;
-                    r.error = Some(e);
-                }
-            }
+            r.state = state;
+            r.report = report;
+            r.error = error;
             r.packets = Arc::new(Vec::new());
         }
         self.prune();
@@ -220,6 +239,7 @@ pub fn prepare_job(doc: &Document, target: &Target, profile: &MachineProfile) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
 
     fn prepared() -> PreparedJob {
         PreparedJob { packets: vec![Packet::empty()], stats: Stats::default(), summary: "s".into() }
@@ -250,8 +270,49 @@ mod tests {
         let mut store = RunStore::default();
         for _ in 0..(KEEP_FINISHED + 5) {
             let id = store.add(Origin::Ui, 1, prepared()).unwrap().id.clone();
-            store.finish(&id, Err("x".into()));
+            store.finish(&id, RunState::Failed, None, Some("x".into()));
         }
         assert_eq!(store.views(1).len(), KEEP_FINISHED);
+    }
+
+    #[test]
+    fn states_serialise_as_the_contract_names() {
+        let names: Vec<Value> = [
+            RunState::Pending,
+            RunState::Approved,
+            RunState::AwaitingConfirm,
+            RunState::Running,
+            RunState::Finished,
+            RunState::Failed,
+            RunState::Aborted,
+            RunState::Cancelled,
+        ]
+        .iter()
+        .map(|s| serde_json::to_value(s).unwrap())
+        .collect();
+        assert_eq!(
+            Value::Array(names),
+            serde_json::json!([
+                "pending",
+                "approved",
+                "awaiting_confirm",
+                "running",
+                "finished",
+                "failed",
+                "aborted",
+                "cancelled"
+            ])
+        );
+    }
+
+    #[test]
+    fn final_states_do_not_move() {
+        let mut store = RunStore::default();
+        let id = store.add(Origin::Ui, 1, prepared()).unwrap().id.clone();
+        store.set_state(&id, RunState::Running);
+        store.finish(&id, RunState::Aborted, None, Some("stop".into()));
+        store.set_state(&id, RunState::Running);
+        let v = store.get(&id).unwrap().view(1);
+        assert_eq!((v.state, v.packet_count, v.error.as_deref()), (RunState::Aborted, 0, Some("stop")));
     }
 }

@@ -7,7 +7,14 @@
 //! - [`Controller::run`] is the only path that opens the MO or sets the laser-enable bit. It needs an [`Armed`]
 //!   token (see its docs) and checks the packets against the profile's hard limits ([`check_job`]) first.
 //! - Any error during a run or frame triggers [`Controller::abort`]. `abort` needs no init, tries every step even
-//!   when one fails, and can be requested from another thread with an [`AbortHandle`].
+//!   when one fails, and can be requested from another thread with an [`AbortHandle`]. A run that ends any other
+//!   way than normally (an error, an early return, or a panic unwinding out of it) sends the abort sequence from a
+//!   drop guard.
+//! - The link is private: nothing outside this crate can send a single command or packet past these rules.
+//!   [`Controller::replace_link`] swaps the link and forgets the init.
+//!
+//! Where the init, run and abort sequences differ from the references is listed in one place, the
+//! "Deviations from the reference sequences" section of [`Controller`].
 
 // Init order, list streaming (READY flow control, `SetEndOfList` after each packet, `ExecuteList` once more than two
 // packets are queued), the marking prelude/postlude and the abort order follow meerk40t/galvoplotter @ fc35136
@@ -166,6 +173,33 @@ impl AbortHandle {
 }
 
 /// Drives one board through a [`Link`]. See the module docs for the safety rules.
+///
+/// # Deviations from the reference sequences
+///
+/// The references are meerk40t/galvoplotter @ fc35136 `galvo/controller.py` (`init_laser`, `abort`,
+/// `marking_configuration`, `_list_end`) and meerk40t `balormk/controller.py` (same init and abort order, checked
+/// 2026-10-31). Every difference is deliberate and listed here:
+///
+/// - **Init** ([`Controller::init`]): `GetSerialNo`, `GetVersion`, then **`StopExecute` and `WritePort(0)`** (in
+///   neither reference), then the reference order (`Reset`, correction upload, [`InitSettings::configuration`]).
+///   After an engine crash mid-run the board would otherwise keep executing its buffered list, with the
+///   laser-enable bit set, until `configuration()`'s `Fiber_SetMo(0)`.
+/// - **Init**: the references' trailing `sleep(0.05)` is not ported; frames and runs poll for READY before their
+///   first packet. A .cor whose field differs from the profile's only warns.
+/// - **Abort** ([`Controller::abort`]): `StopExecute`, `Fiber_SetMo(0)`, `ResetList`, `WritePort(0)`,
+///   `GotoXY(centre)`. The references send `StopExecute`, `Fiber_SetMo(0)`, `ResetList`, then optionally a dummy
+///   packet (an empty list ending in `EndOfList`) plus `ExecuteList`, then `Fiber_SetMo(0)` again and the port with
+///   bit 0 cleared. Here: no dummy packet or `ExecuteList` (the list was just stopped and reset); `Fiber_SetMo(0)`
+///   once; `WritePort(0)` clears the whole port, red pointer included, not only bit 0; `GotoXY(centre)` is added to
+///   park the galvos; every step is tried even when one fails; it needs no init.
+/// - **Run** ([`Controller::run`]): the prelude (`ResetList`, `WritePort(laser enable)`, `Fiber_SetMo(1)`) and
+///   postlude (`Fiber_SetMo(0)`, `WritePort(0)`, `GetMarkTime(3)`) are galvoplotter's. The list never uses the
+///   in-list `FiberOpenMO` (0x8021): the MO is opened and closed only by these singles. Unlike the references, an
+///   abort request is checked before the prelude and before every packet, waits for READY and for the end of the
+///   run are bounded by [`PollConfig`], and a run that does not finish normally (including a panic) sends the abort
+///   sequence from a drop guard.
+/// - **Frame stop** ([`Controller::stop_frame`]): `StopExecute`, `ResetList`, `WritePort(0)`; the references have no
+///   separate frame stop.
 #[derive(Debug)]
 pub struct Controller<L: Link> {
     link: L,
@@ -190,8 +224,20 @@ impl<L: Link> Controller<L> {
         &self.link
     }
 
-    pub fn link_mut(&mut self) -> &mut L {
+    /// Tests only: a `&mut L` would let a caller send `Fiber_SetMo(1)` or any packet past [`Armed`] and
+    /// [`check_job`]. Use [`Controller::replace_link`] to swap the link.
+    #[cfg(test)]
+    pub(crate) fn link_mut(&mut self) -> &mut L {
         &mut self.link
+    }
+
+    /// Swap in a new link (a freshly opened USB connection, or an offline placeholder after a failed connect) and
+    /// return the old one. The board behind the new link is treated as uninitialised: the profile is forgotten and
+    /// [`Controller::init`] must succeed again before framing or running.
+    pub fn replace_link(&mut self, link: L) -> L {
+        self.profile = None;
+        self.state = ControllerState::Uninitialized;
+        std::mem::replace(&mut self.link, link)
     }
 
     pub fn into_link(self) -> L {
@@ -212,9 +258,10 @@ impl<L: Link> Controller<L> {
         self.abort.clone()
     }
 
-    /// Connect-time setup, in galvoplotter's `init_laser` order: `GetSerialNo`, `GetVersion`, `Reset`, the correction
-    /// upload (`WriteCorTable(1)` + one `WriteCorLine` per node, or `WriteCorTable(0)` without a table), then
-    /// [`InitSettings::configuration`] (which closes the MO). Nothing here can emit.
+    /// Connect-time setup, in galvoplotter's `init_laser` order: `GetSerialNo`, `GetVersion`, then `StopExecute` and
+    /// `WritePort(0)` (a deviation, see the type docs: stops a list left running and drops the laser-enable bit),
+    /// `Reset`, the correction upload (`WriteCorTable(1)` + one `WriteCorLine` per node, or `WriteCorTable(0)` without
+    /// a table), then [`InitSettings::configuration`] (which closes the MO). Nothing here can emit.
     pub fn init(&mut self, profile: &MachineProfile, cor: Option<&CorTable>) -> Result<BoardInfo> {
         profile.validate()?;
         if let Some(field) = cor.and_then(CorTable::field_mm)
@@ -225,6 +272,8 @@ impl<L: Link> Controller<L> {
         self.state = ControllerState::Uninitialized;
         let serial = self.reply(Single::get_serial_no())?;
         let version = self.reply(Single::get_version())?;
+        self.single(Single::stop_execute())?;
+        self.single(Single::write_port(0))?;
         self.single(Single::reset())?;
         for cmd in correction_upload(cor) {
             self.single(cmd)?;
@@ -285,10 +334,15 @@ impl<L: Link> Controller<L> {
 
     /// Run a job's packets. Requires an [`Armed`] token, which only the engine's UI approval creates.
     ///
-    /// Order: [`check_job`] against the profile (nothing is sent if it fails); a running frame is stopped; prelude
-    /// `ResetList`, `WritePort(laser enable)`, `Fiber_SetMo(1)`; the packets with READY flow control, `SetEndOfList`
-    /// after each and `ExecuteList` once more than two are queued (or after the last); wait until idle; postlude
-    /// `Fiber_SetMo(0)`, `WritePort(0)`, `GetMarkTime(3)`. Any error or abort request runs [`Controller::abort`].
+    /// Order: [`check_job`] against the profile (nothing is sent if it fails); a running frame is stopped; the abort
+    /// request is checked (a pending one cancels the run before the prelude, so nothing emits); prelude
+    /// `ResetList`, `WritePort(laser enable)`, `Fiber_SetMo(1)`; the packets with READY flow control, the abort
+    /// request checked again before each, `SetEndOfList` after each and `ExecuteList` once more than two are queued
+    /// (or after the last); wait until idle; postlude `Fiber_SetMo(0)`, `WritePort(0)`, `GetMarkTime(3)`.
+    ///
+    /// Any error or abort request runs [`Controller::abort`]. From the prelude on, a drop guard also sends the
+    /// abort sequence if this call is left any other way, including a panic unwinding through it (should the link
+    /// panic again inside that abort, the process aborts, which also closes the USB handle).
     pub fn run(&mut self, packets: &[Packet], armed: Armed) -> Result<RunReport> {
         let profile = self.profile.clone().ok_or(ControllerError::NotInitialized)?;
         if self.state == ControllerState::Running {
@@ -304,16 +358,15 @@ impl<L: Link> Controller<L> {
         }
         tracing::info!(run_id = armed.run_id(), packets = packets.len(), "starting armed run");
         self.state = ControllerState::Running;
-        match self.run_inner(&profile, packets) {
-            Ok(mark_time) => {
-                self.state = ControllerState::Idle;
-                Ok(RunReport { run_id: armed.run_id().to_owned(), packets: packets.len(), mark_time })
-            }
-            Err(e) => {
-                self.abort_after(&e);
-                Err(e)
-            }
+        let mut guard = RunGuard { ctl: self, done: false };
+        let result = guard.ctl.run_inner(&profile, packets);
+        if let Err(e) = &result {
+            guard.ctl.abort_after(e);
+        } else {
+            guard.ctl.state = ControllerState::Idle;
         }
+        guard.done = true;
+        result.map(|mark_time| RunReport { run_id: armed.run_id().to_owned(), packets: packets.len(), mark_time })
     }
 
     fn run_inner(&mut self, profile: &MachineProfile, packets: &[Packet]) -> Result<Option<Reply>> {
@@ -329,7 +382,9 @@ impl<L: Link> Controller<L> {
 
     /// Emergency stop, always callable (no init needed): `StopExecute`, `Fiber_SetMo(0)`, `ResetList`,
     /// `WritePort(0)` (laser enable and pointer off), `GotoXY(centre)`. Every step is tried even if an earlier one
-    /// fails; the first error is returned. Clears any pending [`AbortHandle`] request.
+    /// fails; the first error is returned. Clears any pending [`AbortHandle`] request and leaves the controller idle
+    /// (no run state survives it: an [`Armed`] token is consumed by the run it was given to). Not gated by anything;
+    /// the engine's stop epoch, which keeps an approved run from starting after a stop, lives in the engine.
     pub fn abort(&mut self) -> Result<()> {
         let result = self.send_all(&[
             Single::stop_execute(),
@@ -436,6 +491,26 @@ impl<L: Link> Controller<L> {
     }
 }
 
+/// Held by [`Controller::run`] from the prelude on. Unless the run finished normally (`done`), dropping it sends the
+/// abort sequence: this covers a panic unwinding out of the link or the run code, which would otherwise leave the MO
+/// open and the laser-enable bit set.
+struct RunGuard<'a, L: Link> {
+    ctl: &'a mut Controller<L>,
+    done: bool,
+}
+
+impl<L: Link> Drop for RunGuard<'_, L> {
+    fn drop(&mut self) {
+        if !self.done {
+            let cause = if std::thread::panicking() { "panic during run" } else { "run left early" };
+            tracing::error!(cause, "aborting");
+            if let Err(e) = self.ctl.abort() {
+                tracing::error!(error = %e, "abort sequence failed");
+            }
+        }
+    }
+}
+
 /// The frame list for `outline`, `loops` times, as packets. See [`Controller::frame`].
 fn light_packets(profile: &MachineProfile, outline: &[Vec<(f64, f64)>], loops: u32) -> Result<Vec<Packet>> {
     if !(1..=MAX_FRAME_LOOPS).contains(&loops) {
@@ -535,15 +610,20 @@ mod tests {
         assert!(link.packets().is_empty());
         let singles = link.singles();
         let config = InitSettings::default().configuration();
-        assert_eq!(singles.len(), 3 + 1 + corfile::NODE_COUNT + config.len());
-        assert_eq!(opcodes(&singles[..4]), [op::GET_SERIAL_NO, op::GET_VERSION, op::RESET, op::WRITE_COR_TABLE]);
-        assert_eq!(singles[3], Single::write_cor_table(true));
-        let lines = &singles[4..4 + corfile::NODE_COUNT];
+        assert_eq!(singles.len(), 5 + 1 + corfile::NODE_COUNT + config.len());
+        assert_eq!(
+            opcodes(&singles[..6]),
+            [op::GET_SERIAL_NO, op::GET_VERSION, op::STOP_EXECUTE, op::WRITE_PORT, op::RESET, op::WRITE_COR_TABLE]
+        );
+        // Deviation from galvoplotter: a list left running is stopped and the port cleared right after GetVersion.
+        assert_eq!((singles[2], singles[3]), (Single::stop_execute(), Single::write_port(0)));
+        assert_eq!(singles[5], Single::write_cor_table(true));
+        let lines = &singles[6..6 + corfile::NODE_COUNT];
         assert!(lines.iter().all(|s| s.opcode() == op::WRITE_COR_LINE));
         assert_eq!(lines[0], Single::write_cor_line(0x89D8, 0x8159, true));
         assert!(lines[1..].iter().all(|s| s.0[3] == 1));
         assert_eq!(singles.iter().filter(|s| s.opcode() == op::WRITE_COR_LINE).count(), 4225);
-        assert_eq!(&singles[4 + corfile::NODE_COUNT..], config.as_slice());
+        assert_eq!(&singles[6 + corfile::NODE_COUNT..], config.as_slice());
         assert!(!singles_can_emit(&singles));
         assert!(!link.mo_open());
     }
@@ -553,8 +633,26 @@ mod tests {
         let mut c = controller(SimBoard::default());
         c.init(&b6(), None).unwrap();
         let singles = c.link().singles();
-        assert_eq!(singles[3], Single::write_cor_table(false));
-        assert_eq!(singles[4], Single::enable_laser());
+        assert_eq!(singles[5], Single::write_cor_table(false));
+        assert_eq!(singles[6], Single::enable_laser());
+    }
+
+    #[test]
+    fn init_stops_a_list_left_running() {
+        // A board still executing a list with the laser-enable bit set, as after an engine crash mid-run.
+        let mut c = controller(SimBoard::default());
+        c.link_mut().send_single(Single::write_port(1)).unwrap();
+        c.link_mut().send_single(Single::fiber_set_mo(true)).unwrap();
+        c.link_mut().send_packet(&job()[0]).unwrap();
+        c.link_mut().send_single(Single::execute_list()).unwrap();
+        assert!(c.link().executing());
+        c.link_mut().clear_traffic();
+        c.init(&b6(), None).unwrap();
+        assert!(!c.link().executing() && !c.link().mo_open());
+        assert_eq!(c.link().port(), 0);
+        let singles = c.link().singles();
+        let stop = singles.iter().position(|s| *s == Single::stop_execute()).unwrap();
+        assert_eq!(stop, 2, "StopExecute comes right after GetVersion");
     }
 
     #[test]
@@ -712,6 +810,100 @@ mod tests {
         assert!(!singles_can_emit(&c.link().singles()));
         assert!(!handle.is_requested());
         assert!(c.run(&job(), Armed::approved_in_ui("r2".into())).is_ok());
+    }
+
+    /// A link that panics on one packet, like a bug in the transport or the run code would.
+    struct PanickyLink {
+        inner: SimLink,
+        panic_at_packet: usize,
+        packets: usize,
+    }
+
+    impl Link for PanickyLink {
+        fn send_single(&mut self, cmd: Single) -> Result<Option<Reply>, LinkError> {
+            self.inner.send_single(cmd)
+        }
+
+        fn send_packet(&mut self, packet: &Packet) -> Result<(), LinkError> {
+            self.packets += 1;
+            if self.packets == self.panic_at_packet {
+                panic!("simulated panic in the middle of a run");
+            }
+            self.inner.send_packet(packet)
+        }
+    }
+
+    #[test]
+    fn panic_mid_run_sends_the_abort_sequence() {
+        let link = PanickyLink { inner: SimLink::new(), panic_at_packet: 2, packets: 0 };
+        let mut c = Controller::with_settings(link, InitSettings::default(), PollConfig::immediate());
+        c.init(&b6(), None).unwrap();
+        let packets = job();
+        assert!(packets.len() >= 2);
+        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| c.run(&packets, Armed::approved_in_ui("r".into()))));
+        assert!(unwound.is_err(), "the panic propagates to the caller");
+        let sim = &c.link().inner;
+        // The prelude had opened the MO and set the laser-enable bit; the guard closed both.
+        assert!(sim.singles().contains(&Single::fiber_set_mo(true)));
+        let tail = &sim.singles()[sim.singles().len() - 5..];
+        assert_eq!(
+            tail,
+            [Single::stop_execute(), Single::fiber_set_mo(false), Single::reset_list(), Single::write_port(0), Single::goto_xy(CENTER, CENTER, 0)]
+        );
+        assert!(!sim.mo_open() && !sim.executing());
+        assert_eq!(sim.port(), 0);
+        assert_eq!(c.state(), ControllerState::Idle);
+    }
+
+    #[test]
+    fn abort_request_is_checked_before_the_first_packet() {
+        // A stop arriving while a frame is being stopped (between the request and the prelude) still cancels the run.
+        let mut c = ready();
+        c.frame(&[vec![(0.0, 0.0), (1.0, 0.0)]], 1).unwrap();
+        c.link_mut().clear_traffic();
+        c.abort_handle().request();
+        assert_eq!(c.run(&job(), Armed::approved_in_ui("r".into())), Err(ControllerError::Aborted));
+        assert!(c.link().packets().is_empty());
+        assert!(!singles_can_emit(&c.link().singles()));
+        assert_eq!(c.state(), ControllerState::Idle);
+    }
+
+    #[test]
+    fn replace_link_forgets_the_init() {
+        let mut c = ready();
+        let old = c.replace_link(SimLink::new());
+        assert!(old.singles().is_empty(), "nothing is sent by the swap");
+        assert_eq!((c.state(), c.profile()), (ControllerState::Uninitialized, None));
+        assert_eq!(c.frame(&[vec![(0.0, 0.0)]], 1), Err(ControllerError::NotInitialized));
+        assert_eq!(c.run(&job(), Armed::approved_in_ui("r".into())), Err(ControllerError::NotInitialized));
+        assert!(c.link().traffic().is_empty());
+        c.init(&b6(), None).unwrap();
+        assert_eq!(c.state(), ControllerState::Idle);
+    }
+
+    /// Framing and the burn use one transform: for all 8 swap/negate settings, the frame's galvo words for a field
+    /// point equal `lmc::units::field_to_galvo`'s (which `plan::Target::to_galvo` also calls; plan has the mirror
+    /// test) and follow the contract's order: negate in the field frame, then swap.
+    #[test]
+    fn frame_words_match_the_shared_transform_for_every_setting() {
+        let w = |v: f64| units::mm_to_galvo(v, 153.75).unwrap();
+        for bits in 0..8u8 {
+            let profile = MachineProfile { swap_xy: bits & 1 != 0, negate_x: bits & 2 != 0, negate_y: bits & 4 != 0, ..b6() };
+            let packets = light_packets(&profile, &[vec![(10.0, 5.0), (-20.0, 7.5)]], 1).unwrap();
+            let jumps: Vec<(u16, u16)> = lmc::decode(&packets)
+                .into_iter()
+                .filter_map(|c| if let ListCommand::JumpTo { x, y, .. } = c { Some((x, y)) } else { None })
+                .collect();
+            let t = lmc::FieldTransform { field_mm: 153.75, swap_xy: profile.swap_xy, negate_x: profile.negate_x, negate_y: profile.negate_y };
+            assert_eq!(profile.field_transform(), t);
+            for (i, (x, y)) in [(10.0, 5.0), (-20.0, 7.5)].into_iter().enumerate() {
+                let direct = units::field_to_galvo(x, y, &t).unwrap();
+                assert_eq!(jumps[i], direct, "{bits:03b} ({x}, {y})");
+                assert_eq!(field_to_galvo(&profile, x, y), Ok(direct));
+                let (fx, fy) = (if t.negate_x { -x } else { x }, if t.negate_y { -y } else { y });
+                assert_eq!(direct, if t.swap_xy { (w(fy), w(fx)) } else { (w(fx), w(fy)) }, "{bits:03b}");
+            }
+        }
     }
 
     #[test]

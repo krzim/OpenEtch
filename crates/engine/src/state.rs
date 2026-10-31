@@ -11,15 +11,17 @@ use serde_json::{Value, json};
 use tokio::sync::broadcast;
 
 use crate::frame::{self, FrameRequest};
-use crate::hw::Machine;
+use crate::hw::{AbortOutcome, Machine};
+use crate::pin::ApprovalConfig;
 use crate::render::{self, RenderOptions};
 use crate::runs::{self, RunStore, RunView};
 use crate::security::SecurityConfig;
 use crate::{EngineError, Event};
 
 /// The message every pending-run answer carries.
-pub const APPROVAL_MESSAGE: &str = "The run is pending. Nothing fires until a person reviews and approves it in the \
-    OpenEtch UI (Laser workspace). Agents cannot approve runs.";
+pub const APPROVAL_MESSAGE: &str = "The run is pending. Nothing fires until a person reviews it and approves it in \
+    the OpenEtch UI (Laser workspace) with the operator PIN. Agents cannot and must not approve runs, and must never \
+    ask for, handle or set the PIN.";
 
 /// Shared engine state. See the module docs.
 pub struct AppState {
@@ -28,6 +30,8 @@ pub struct AppState {
     runs: Mutex<RunStore>,
     events: broadcast::Sender<Event>,
     pub security: SecurityConfig,
+    /// Operator PIN and the optional physical confirmation input.
+    pub approval: ApprovalConfig,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -57,13 +61,19 @@ pub fn parse_origin(v: Option<&Value>) -> Result<Origin, EngineError> {
 }
 
 impl AppState {
-    pub fn new(session: Session, machine: Arc<Machine>, security: SecurityConfig) -> Arc<Self> {
+    pub fn new(
+        session: Session,
+        machine: Arc<Machine>,
+        security: SecurityConfig,
+        approval: ApprovalConfig,
+    ) -> Arc<Self> {
         Arc::new(AppState {
             session: Mutex::new(session),
             machine,
             runs: Mutex::new(RunStore::default()),
             events: crate::events::channel(),
             security,
+            approval,
         })
     }
 
@@ -127,22 +137,22 @@ impl AppState {
             (outcomes, before, s.document().revision)
         };
         if after != before {
-            self.emit(Event::DocumentChanged { revision: after, origin: Some(origin) });
+            self.emit(Event::DocumentChanged { revision: after, origin });
         }
         Ok(outcomes)
     }
 
-    /// Undo the last edit; returns the new revision.
-    pub fn undo(&self) -> Result<u64, EngineError> {
+    /// Undo the last edit (by anyone); returns the new revision. `origin` is who asked, for the event.
+    pub fn undo(&self, origin: Origin) -> Result<u64, EngineError> {
         let rev = lock(&self.session).undo()?;
-        self.emit(Event::DocumentChanged { revision: rev, origin: None });
+        self.emit(Event::DocumentChanged { revision: rev, origin });
         Ok(rev)
     }
 
     /// Redo the last undone edit; returns the new revision.
-    pub fn redo(&self) -> Result<u64, EngineError> {
+    pub fn redo(&self, origin: Origin) -> Result<u64, EngineError> {
         let rev = lock(&self.session).redo()?;
-        self.emit(Event::DocumentChanged { revision: rev, origin: None });
+        self.emit(Event::DocumentChanged { revision: rev, origin });
         Ok(rev)
     }
 
@@ -187,10 +197,11 @@ impl AppState {
         Ok(view)
     }
 
-    /// `GET /api/machine`: machine status plus pending and recent runs.
+    /// `GET /api/machine`: machine status, how runs are approved, and pending and recent runs.
     pub fn machine_status(&self) -> Value {
         let rev = self.revision();
         let mut v = self.machine.status_json();
+        v["approval"] = self.approval.status_json();
         let store = self.runs();
         v["pending_runs"] = json!(store.pending(rev));
         v["runs"] = json!(store.views(rev));
@@ -203,18 +214,32 @@ impl AppState {
         frame::start(&self.machine, &self.events, outline).await
     }
 
-    /// Stop framing.
+    /// End framing only. Pending and approved runs are left alone (that is [`AppState::stop`]).
     pub async fn frame_stop(&self) -> Result<(), EngineError> {
         frame::stop(&self.machine, &self.events).await
     }
 
-    /// Stop everything: abort any run or frame and cancel pending runs. Never gated.
+    /// Emergency stop: abort any run or frame, cancel pending runs and any run that has not started streaming. Never
+    /// gated and never waits behind a run: the stop epoch is bumped (under the runs lock, see the `approve` module)
+    /// before anything waits for the controller. With no board connected it answers `{ok: true, connected: false}`.
     pub async fn stop(&self) -> Result<Value, EngineError> {
-        let cancelled = self.runs().cancel_pending("cancelled by stop");
+        let cancelled = {
+            let mut runs = self.runs();
+            self.machine.request_stop();
+            runs.cancel_pending("cancelled by stop")
+        };
         let result = self.machine.abort().await;
-        self.emit(Event::machine("stopped", result.as_ref().err().map(ToString::to_string)));
+        let detail = match &result {
+            Ok(AbortOutcome::Sent) => None,
+            Ok(AbortOutcome::NotConnected) => Some("no board connected".to_owned()),
+            Err(e) => Some(e.to_string()),
+        };
+        self.emit(Event::machine("stopped", detail));
         match result {
-            Ok(()) => Ok(json!({ "ok": true, "cancelled_runs": cancelled })),
+            Ok(AbortOutcome::Sent) => Ok(json!({ "ok": true, "connected": true, "cancelled_runs": cancelled })),
+            Ok(AbortOutcome::NotConnected) => {
+                Ok(json!({ "ok": true, "connected": false, "cancelled_runs": cancelled }))
+            }
             Err(e) => {
                 self.machine.set_error(Some(e.to_string()));
                 Err(EngineError::Internal(format!(

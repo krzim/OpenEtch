@@ -145,6 +145,21 @@ fn layer_lifecycle_with_partial_settings_and_undo() {
 }
 
 #[test]
+fn layer_passes_above_the_cap_are_refused() {
+    let mut s = Session::new(Document::default());
+    let e = s.execute(inv("layer.add", json!({"name": "X", "settings": {"passes": 1001}})), Origin::Ui).unwrap_err();
+    assert!(matches!(e, CommandError::InvalidInput { .. }) && e.to_string().contains("passes"), "{e}");
+    let e = s
+        .execute(inv("layer.update", json!({"id": "layer-1", "settings": {"passes": 4_000_000_000u32}})), Origin::Ui)
+        .unwrap_err();
+    assert!(e.to_string().contains("1..=1000"), "{e}");
+    assert_eq!(s.document().layers.len(), 1);
+    assert_eq!(s.document().layers[0].settings.passes, 1);
+    exec(&mut s, "layer.update", json!({"id": "layer-1", "settings": {"passes": 1000}}));
+    assert_eq!(s.document().layers[0].settings.passes, 1000);
+}
+
+#[test]
 fn unknown_fields_and_commands_are_errors() {
     let mut s = Session::new(Document::default());
     assert!(matches!(

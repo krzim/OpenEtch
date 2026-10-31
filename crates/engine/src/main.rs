@@ -1,11 +1,14 @@
 //! `openetch`: start the OpenEtch engine. See `openetch --help` and the `engine` library docs.
 
+use std::io::IsTerminal;
+use std::path::Path;
 use std::process::ExitCode;
 use std::sync::Arc;
 
 use commands::Session;
 use engine::cli::{self, Config, Parsed};
 use engine::hw::Machine;
+use engine::pin::{self, ApprovalConfig, PhysicalConfirm, PinStore};
 use engine::security::{SecurityConfig, generate_token};
 use engine::{AppState, api};
 use machine::{MachineProfile, PollConfig};
@@ -17,6 +20,7 @@ fn main() -> ExitCode {
             println!("{}", cli::USAGE);
             return ExitCode::SUCCESS;
         }
+        Ok(Parsed::SetPin { config_dir }) => return set_pin(&config_dir),
         Err(e) => {
             eprintln!("openetch: {e}");
             return ExitCode::from(2);
@@ -38,6 +42,30 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("openetch: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `openetch set-pin`: only a person at a terminal may set the PIN.
+fn set_pin(dir: &Path) -> ExitCode {
+    if !std::io::stdin().is_terminal() {
+        eprintln!(
+            "openetch set-pin: refused: stdin is not a terminal. Run it yourself in a terminal; it cannot be scripted."
+        );
+        return ExitCode::from(2);
+    }
+    let stdin = std::io::stdin();
+    match pin::set_pin_dialogue(&mut stdin.lock(), &mut std::io::stdout(), dir) {
+        Ok(path) => {
+            println!(
+                "openetch: operator PIN saved to {} (a running engine uses it at the next approval)",
+                path.display()
+            );
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("openetch set-pin: {e}");
             ExitCode::FAILURE
         }
     }
@@ -90,7 +118,27 @@ async fn run(config: Config) -> Result<(), String> {
         (None, false) => Some(generate_token()?),
     };
     let security = SecurityConfig::new(token.clone(), config.allow_hosts.clone());
-    let state = AppState::new(Session::new(doc::Document::default()), machine.clone(), security);
+    if let Err(e) = std::fs::create_dir_all(&config.config_dir) {
+        tracing::warn!(path = %config.config_dir.display(), error = %e, "cannot create the config directory");
+    }
+    let approval = ApprovalConfig {
+        pin: PinStore::new(&config.config_dir),
+        confirm: config.confirm_input.map(PhysicalConfirm::new),
+    };
+    if !approval.pin.is_set() {
+        println!(
+            "openetch: no operator PIN is set ({}); runs cannot be approved until you run `openetch set-pin`",
+            approval.pin.path().display()
+        );
+    }
+    if let Some(c) = approval.confirm {
+        println!(
+            "openetch: approved runs also wait up to {} s for input {} to be released and pressed",
+            c.timeout.as_secs(),
+            c.input_bit
+        );
+    }
+    let state = AppState::new(Session::new(doc::Document::default()), machine.clone(), security, approval);
 
     let web_dir = config.web_dir.is_dir().then_some(config.web_dir.as_path());
     if web_dir.is_none() {

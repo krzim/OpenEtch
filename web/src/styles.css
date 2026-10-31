@@ -736,6 +736,61 @@ textarea {
   margin: 0 0 8px;
 }
 
+.run-row.stale {
+  background: var(--chrome-2);
+}
+
+.run-row.active {
+  border-color: var(--warn);
+  background: #fff7e6;
+}
+
+.run-state {
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.run-stats {
+  margin: 0;
+}
+
+.run-hint {
+  margin: 0;
+  font-size: 12.5px;
+  color: #8a4f00;
+}
+
+.run-error {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--danger);
+  font-weight: 500;
+}
+
+.pedal {
+  margin: 0;
+  font-weight: 600;
+  color: #8a4f00;
+}
+
+.pin-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.pin-field input {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--tap);
+  font-size: 18px;
+  letter-spacing: 4px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
 /* ---- viewport ---------------------------------------------------------------------------------------------- */
 
 .viewport {
@@ -948,6 +1003,22 @@ textarea {
 
 .tl-entry.current {
   box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+/* An agent or script edit that just arrived over /api/events. */
+.tl-entry.flash {
+  animation: tl-flash 1.6s ease-out 1;
+}
+
+@keyframes tl-flash {
+  0%,
+  30% {
+    background: #efe7ff;
+    box-shadow: 0 0 0 3px var(--agent);
+  }
+  100% {
+    background: #fff;
+  }
 }
 
 .tl-cmd {

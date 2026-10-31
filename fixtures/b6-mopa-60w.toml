@@ -11,6 +11,9 @@
 # - laser_on/laser_off/polygon delays: LightBurn's values for the B6, taken from a public B6 LightBurn log.
 # - end delay, jump speed, jump delays: meerk40t/galvoplotter @ fc35136 defaults. jump_distance_limit_mm is a
 #   placeholder (galvoplotter has no default).
+# - max_jump_speed_mm_s: LightBurn's B6 library entry (JumpSpeed=4000). PROVISIONAL, not measured on this machine.
+# - max_delay_us: PROVISIONAL sanity cap on |laser on/off/polygon/jump delay|, well above every value used here.
+# - polygon_delay_us is sent as one 10 us word (meerk40t's encoding; galvoplotter disagrees). UNVERIFIED on hardware.
 
 name = "ComMarker B6 MOPA 60W"
 laser_source = "JPT M7 MOPA 60W"
@@ -26,18 +29,22 @@ max_power_pct = 100.0
 red_light_port_bit = 8
 laser_enable_port_bit = 0
 red_light_speed_mm_s = 3000.0
+max_jump_speed_mm_s = 4000.0   # LightBurn B6 library JumpSpeed=4000 (provisional)
+max_delay_us = 2000.0          # provisional sanity cap
 notes = [
     "field, swap/negate, cor_file, red light speed, frequency range and mark speed limits from markcfg7.ini",
     "GALVOX / GALVONEGATE0/1 meaning unverified",
     "laser on/off/polygon delays from a public B6 LightBurn log",
     "red pointer bit 8 / laser enable bit 0 are galvoplotter defaults, unconfirmed on this machine",
     "jump_distance_limit_mm is a placeholder",
+    "max_jump_speed_mm_s (LightBurn B6 JumpSpeed=4000) and max_delay_us are provisional",
+    "polygon delay encoding (one 10 us word, meerk40t) is unverified on hardware",
 ]
 
 [timing]
 laser_on_delay_us = -300.0   # LightBurn B6 (public log)
 laser_off_delay_us = 100.0   # LightBurn B6 (public log)
-polygon_delay_us = 100.0     # LightBurn B6 (public log)
+polygon_delay_us = 100.0     # LightBurn B6 (public log); sent as 10 x 10 us (unverified encoding)
 end_delay_us = 300.0         # galvoplotter default
 jump_speed_mm_s = 2000.0     # galvoplotter travel_speed default
 jump_delay_min_us = 8.0      # galvoplotter delay_jump_short
