@@ -1,0 +1,49 @@
+# ComMarker B6 MOPA 60W (BJJCZ LMC board, USB 9588:9899, JPT M7 MOPA source, 150 mm lens).
+#
+# Sources:
+# - markcfg7.ini (this machine's EzCad config, in this folder): field_mm (FIELDSIZE), swap_xy (GALVOX=1, read as
+#   "galvo 1 = X": unverified), negate_x/negate_y (GALVONEGATE0/1: unverified axis order), cor_file (CORFILE
+#   basename), red_light_speed_mm_s (REDLIGHTSPEED), frequency range (MINPWMFREQ/MAXPWMFREQ in Hz),
+#   mark_speed (MINSPEED/MAXSPEED).
+# - JPT M7 MOPA datasheet values: pulse_widths_ns, 1..4000 kHz.
+# - Port bits: red pointer bit 8 and laser enable bit 0 (galvoplotter defaults; markcfg REDLIGHTOUTPORT=-1 means
+#   EzCad's default red-light output). Not yet confirmed on this machine.
+# - laser_on/laser_off/polygon delays: LightBurn's values for the B6, taken from a public B6 LightBurn log.
+# - end delay, jump speed, jump delays: meerk40t/galvoplotter @ fc35136 defaults. jump_distance_limit_mm is a
+#   placeholder (galvoplotter has no default).
+
+name = "ComMarker B6 MOPA 60W"
+laser_source = "JPT M7 MOPA 60W"
+field_mm = 153.75
+swap_xy = false
+negate_x = false
+negate_y = false
+cor_file = "jcz150.cor"
+pulse_widths_ns = [2, 4, 6, 9, 13, 20, 30, 45, 55, 60, 80, 100, 150, 200, 250, 300, 350, 400, 450, 500]
+frequency_khz_min = 1.0
+frequency_khz_max = 4000.0
+max_power_pct = 100.0
+red_light_port_bit = 8
+laser_enable_port_bit = 0
+red_light_speed_mm_s = 3000.0
+notes = [
+    "field, swap/negate, cor_file, red light speed, frequency range and mark speed limits from markcfg7.ini",
+    "GALVOX / GALVONEGATE0/1 meaning unverified",
+    "laser on/off/polygon delays from a public B6 LightBurn log",
+    "red pointer bit 8 / laser enable bit 0 are galvoplotter defaults, unconfirmed on this machine",
+    "jump_distance_limit_mm is a placeholder",
+]
+
+[timing]
+laser_on_delay_us = -300.0   # LightBurn B6 (public log)
+laser_off_delay_us = 100.0   # LightBurn B6 (public log)
+polygon_delay_us = 100.0     # LightBurn B6 (public log)
+end_delay_us = 300.0         # galvoplotter default
+jump_speed_mm_s = 2000.0     # galvoplotter travel_speed default
+jump_delay_min_us = 8.0      # galvoplotter delay_jump_short
+jump_delay_max_us = 200.0    # galvoplotter delay_jump_long
+jump_distance_limit_mm = 10.0  # placeholder
+
+[mark_speed]
+min_mm_s = 1.0       # markcfg7 MINSPEED
+max_mm_s = 10000.0   # markcfg7 MAXSPEED

@@ -1,1 +1,39 @@
-//! Machine profile, Link transport trait, SimLink, UsbLink (nusb), Controller.
+//! Machine profile, the [`Link`] transport trait, [`SimLink`], `UsbLink` (nusb, feature `usb`) and the
+//! [`Controller`] (init, .cor upload, light framing, run, abort).
+//!
+//! - [`MachineProfile`]: one laser's fixed facts and hard limits (field, axis swap/negate, laser source, port bits,
+//!   default timing). TOML on disk; importable from an EzCad `markcfg7` ([`MachineProfile::from_markcfg`]).
+//! - [`Link`]: sends 12-byte single commands and 3072-byte list packets. [`SimLink`] records traffic and fakes a
+//!   board for tests and the engine's simulator mode; `UsbLink` is the real board and is only compiled with the
+//!   `usb` feature.
+//! - [`Controller`]: the only thing that talks to a [`Link`]. Framing goes through `lmc`'s [`lmc::LightList`] so it
+//!   cannot emit; [`Controller::run`] needs an [`Armed`] token that only the engine's UI approval creates;
+//!   [`Controller::abort`] is never gated.
+//!
+//! [`field_to_galvo`] is the one field mm -> galvo word conversion (swap, negate, field bounds) for `plan` and the
+//! engine to share.
+#![forbid(unsafe_code)]
+
+mod armed;
+mod check;
+mod controller;
+mod geometry;
+mod init;
+mod link;
+mod markcfg;
+mod profile;
+mod sim;
+#[cfg(feature = "usb")]
+mod usb;
+
+pub use armed::Armed;
+pub use check::{JobCheckError, check_job};
+pub use controller::{AbortHandle, BoardInfo, Controller, ControllerError, ControllerState, PollConfig, RunReport};
+pub use geometry::{FieldError, field_to_galvo};
+pub use init::InitSettings;
+pub use link::{Link, LinkError, Reply};
+pub use markcfg::MarkcfgImport;
+pub use profile::{MachineProfile, MarkSpeedLimits, ProfileError, Timing};
+pub use sim::{SimBoard, SimLink, Traffic};
+#[cfg(feature = "usb")]
+pub use usb::{CLONE_PID, DEFAULT_TIMEOUT, DetectedBoard, LMC_PID, LMC_VID, UsbLink, UsbOptions, detect};
