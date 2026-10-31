@@ -16,6 +16,7 @@ doc = { path = "crates/doc" }
 commands = { path = "crates/commands" }
 plan = { path = "crates/plan" }
 machine = { path = "crates/machine" }
+lbrn = { path = "crates/lbrn" }
 
 # shared
 serde = { version = "1", features = ["derive"] }
@@ -30,6 +31,8 @@ tracing = "0.1"
 usvg = { version = "0.49", default-features = false }
 lyon_algorithms = "1"
 i_overlay = "9.1"
+# LightBurn .lbrn2 reading (writing is hand-written in crates/lbrn)
+roxmltree = "0.21"
 
 # machine I/O
 nusb = "0.2"

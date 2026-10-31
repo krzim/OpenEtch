@@ -5,6 +5,7 @@
 
 mod array;
 mod document;
+mod file;
 mod layer;
 mod object;
 mod place;
@@ -22,6 +23,11 @@ use crate::Registry;
 pub(crate) fn register_all(r: &mut Registry) {
     r.register::<document::Inspect>();
     r.register::<document::Rename>();
+    r.register::<file::DocNew>();
+    r.register::<file::DocLoad>();
+    r.register::<file::DocSave>();
+    r.register::<file::ImportLbrn2>();
+    r.register::<file::ExportLbrn2>();
     r.register::<stock::StockDefine>();
     r.register::<stock::StockClear>();
     r.register::<layer::LayerAdd>();

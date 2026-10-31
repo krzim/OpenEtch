@@ -9,7 +9,9 @@ import type {
   HistoryEntry,
   MachineStatus,
   Preview,
+  ProjectInfo,
 } from "./types.ts";
+import { contentDispositionName, type FileFormat, type ImportMode } from "./project.ts";
 import { okError } from "./runs.ts";
 
 const TOKEN_KEY = "openetch.token";
@@ -60,33 +62,46 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const headers: Record<string, string> = { Accept: "application/json" };
+function authHeaders(accept: string): Record<string, string> {
+  const headers: Record<string, string> = { Accept: accept };
   const token = authToken();
   if (token) headers.Authorization = `Bearer ${token}`;
-  if (body !== undefined) headers["Content-Type"] = "application/json";
-  let res: Response;
+  return headers;
+}
+
+async function send(method: string, path: string, init: { headers: Record<string, string>; body?: BodyInit }): Promise<Response> {
   try {
-    res = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+    return await fetch(path, { method, ...init });
   } catch (e) {
     throw new ApiError(`engine unreachable: ${e instanceof Error ? e.message : String(e)}`);
   }
+}
+
+/** Turn a non-2xx answer into an ApiError carrying the engine's `error` text and `code`. */
+function httpError(method: string, path: string, res: Response, text: string): ApiError {
+  const data = parseBody(text);
+  const obj = data && typeof data === "object" ? (data as { error?: unknown; code?: unknown }) : null;
+  const msg = obj && "error" in obj ? String(obj.error) : text || res.statusText;
+  const code = obj && typeof obj.code === "string" ? obj.code : undefined;
+  return new ApiError(`${method} ${path}: ${res.status} ${msg}`, res.status, { code, detail: msg });
+}
+
+function parseBody(text: string): unknown {
+  if (!text) return undefined;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const headers = authHeaders("application/json");
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  const res = await send(method, path, { headers, body: body === undefined ? undefined : JSON.stringify(body) });
   const text = await res.text();
-  let data: unknown = undefined;
-  if (text) {
-    try {
-      data = JSON.parse(text);
-    } catch {
-      data = text;
-    }
-  }
-  if (!res.ok) {
-    const obj = data && typeof data === "object" ? (data as { error?: unknown; code?: unknown }) : null;
-    const msg = obj && "error" in obj ? String(obj.error) : text || res.statusText;
-    const code = obj && typeof obj.code === "string" ? obj.code : undefined;
-    throw new ApiError(`${method} ${path}: ${res.status} ${msg}`, res.status, { code, detail: msg });
-  }
-  return data as T;
+  if (!res.ok) throw httpError(method, path, res, text);
+  return parseBody(text) as T;
 }
 
 /** The origin every UI edit is tagged with (ARCHITECTURE.md: `"origin": "ui"`). */
@@ -143,6 +158,36 @@ export const api = {
    * Errors are HTTP 403 with `code` "pin_not_set" | "pin_invalid" | "pin_required" | "pin_locked".
    */
   approveRun: (id: string, pin: string) => request<unknown>("POST", `/api/runs/${encodeURIComponent(id)}/approve`, { pin }),
+  /** The current project name and whether the document changed since it was saved. */
+  project: () => request<ProjectInfo>("GET", "/api/project"),
+  /** Saved projects on the engine (`[{name, modified_unix_s, size}]`); normalize with `projectList`. */
+  projects: () => request<unknown>("GET", "/api/projects"),
+  /** Save the document as `<projects-dir>/<name>.openetch` (replacing a project of that name). */
+  saveProject: (name: string) => checked("/api/projects/save", { name }, "saving the project failed"),
+  /** Replace the document with a saved project (one undo step). */
+  openProject: (name: string) => checked("/api/projects/open", { name }, "opening the project failed"),
+  /**
+   * Upload a file as the raw body: `openetch` runs `doc.load`, `lbrn2` runs `doc.import_lbrn2` in `mode`, laid out
+   * for `fieldMm` (default the document's field size). Resolves to the engine's answer; unwrap it with
+   * `commandResult`.
+   */
+  upload: async (file: Blob, format: FileFormat, mode: ImportMode = "replace", fieldMm?: number): Promise<unknown> => {
+    const field = format === "lbrn2" && fieldMm !== undefined && Number.isFinite(fieldMm) ? `&field_mm=${fieldMm}` : "";
+    const path = `/api/document/upload?format=${format}&mode=${mode}${field}`;
+    const headers = authHeaders("application/json");
+    headers["Content-Type"] = "application/octet-stream";
+    const res = await send("POST", path, { headers, body: file });
+    const text = await res.text();
+    if (!res.ok) throw httpError("POST", path, res, text);
+    return parseBody(text);
+  },
+  /** Download the document as a file, with the name from Content-Disposition when the engine sends one. */
+  download: async (format: FileFormat): Promise<{ blob: Blob; filename: string | null }> => {
+    const path = `/api/document/download?format=${format}`;
+    const res = await send("GET", path, { headers: authHeaders("*/*") });
+    if (!res.ok) throw httpError("GET", path, res, await res.text());
+    return { blob: await res.blob(), filename: contentDispositionName(res.headers.get("Content-Disposition")) };
+  },
 };
 
 /** WebSocket URL for /api/events, carrying the token as `?token=` (browsers cannot set WS headers). */

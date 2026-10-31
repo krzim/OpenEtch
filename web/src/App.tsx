@@ -9,6 +9,7 @@ import { pendingRuns, stopToast } from "./api/runs.ts";
 import { useEngine } from "./api/useEngine.ts";
 import { BrowserPanel } from "./components/BrowserPanel.tsx";
 import { ArrayDialog, CommandPalette, PlaceDialog, StockDialog } from "./components/Dialogs.tsx";
+import { FileDialogs, FileMenu, useFileActions } from "./components/FileMenu.tsx";
 import { MachineCard, PreviewStatsCard, RunsCard } from "./components/LaserPanel.tsx";
 import { LayerSection, PropertiesPanel } from "./components/PropertiesPanel.tsx";
 import { Timeline } from "./components/Timeline.tsx";
@@ -78,7 +79,11 @@ export function App() {
     return C.REQUIRED_COMMANDS.filter((id) => !have.has(id));
   }, [engine.commands]);
 
-  const fieldMm = typeof machine?.field_mm === "number" && machine.field_mm > 0 ? machine.field_mm : DEFAULT_FIELD_MM;
+  const machineFieldMm = typeof machine?.field_mm === "number" && machine.field_mm > 0 ? machine.field_mm : null;
+  const fieldMm = machineFieldMm ?? DEFAULT_FIELD_MM;
+  const file = useFileActions({ engine, machineFieldMm, fallbackFieldMm: DEFAULT_FIELD_MM, notify, report });
+  const fileModalOpen = file.modal !== null;
+  const saveFile = file.save;
   const activeLayer = selection.layer ?? doc?.layers[0]?.id ?? null;
   const runs = pendingRuns(machine);
 
@@ -110,13 +115,22 @@ export function App() {
       .finally(() => void engine.refreshMachine());
   }, [engine, notify, report]);
 
-  // Keyboard shortcuts (ignored while typing in a field).
+  // Keyboard shortcuts (ignored while typing in a field, except Ctrl/Cmd+S).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "s") {
+        // Never the browser's "save page"; Save prompts for a name the first time.
+        e.preventDefault();
+        if (dialog || fileModalOpen || e.repeat) return;
+        // Commit a field being edited (its value is sent on blur) before saving.
+        if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+        saveFile();
+        return;
+      }
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
-      if (dialog) return;
-      const mod = e.ctrlKey || e.metaKey;
+      if (dialog || fileModalOpen) return;
       if (mod && e.key.toLowerCase() === "z") {
         e.preventDefault();
         if (e.shiftKey) void redo();
@@ -138,7 +152,7 @@ export function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [dialog, tool, workspace, undo, redo, deleteSelection]);
+  }, [dialog, fileModalOpen, saveFile, tool, workspace, undo, redo, deleteSelection]);
 
   const onImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -170,6 +184,7 @@ export function App() {
   return (
     <div className={`app ws-${workspace}${narrow ? " narrow" : ""}`}>
       <TopBar
+        fileMenu={<FileMenu file={file} />}
         workspace={workspace}
         onWorkspace={switchWorkspace}
         onUndo={() => void undo()}
@@ -180,6 +195,8 @@ export function App() {
         machine={machine}
         missingCommands={missingCommands}
         docName={doc?.name ?? null}
+        projectName={file.projectName}
+        dirty={file.dirty}
         pendingRuns={runs.length}
       />
       <Toolbar
@@ -275,6 +292,7 @@ export function App() {
       {dialog === "place" && <PlaceDialog ids={selection.objects} run={run} onClose={closeDialog} />}
       {dialog === "array" && doc && <ArrayDialog doc={doc} ids={selection.objects} run={run} onClose={closeDialog} />}
       {dialog === "commands" && <CommandPalette commands={engine.commands} run={run} onClose={closeDialog} />}
+      <FileDialogs file={file} docName={doc?.name ?? null} />
 
       <div className="toasts" aria-live="polite">
         {toasts.map((t) => (

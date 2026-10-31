@@ -41,6 +41,8 @@ export interface Layer {
   output: boolean;
   settings: CutSettings;
   sub_layers: CutSettings[];
+  /** Settings from other software that OpenEtch does not model (e.g. `lbrn2.*`), kept so exports round-trip. */
+  extras?: Record<string, string>;
 }
 
 /** One kurbo `PathEl` as serde derives it, e.g. `{"MoveTo":{"x":0,"y":0}}` or `"ClosePath"`. */
@@ -93,6 +95,8 @@ export interface GDocument {
   layers: Layer[];
   objects: DocObject[];
   next_id: number;
+  /** Galvo field size the document was laid out for; the engine fills it from the machine profile. */
+  field_mm?: number | null;
 }
 
 /**
@@ -224,10 +228,36 @@ export interface RunFinishedEvent {
   error?: string | null;
 }
 
+/** GET /api/project: the engine's current project file and whether the document changed since it was saved. */
+export interface ProjectInfo {
+  /** Project name (file `<projects-dir>/<name>.openetch`), or null when the document was never saved or opened. */
+  name: string | null;
+  /** Document revision at the last save or open, or null. */
+  saved_revision: number | null;
+  revision: number;
+  dirty: boolean;
+}
+
+/** One row of GET /api/projects. */
+export interface ProjectEntry {
+  name: string;
+  modified_unix_s?: number;
+  /** File size in bytes. */
+  size?: number;
+}
+
+/** `project_saved`: the document was saved as project `name` at `revision` (by any client). */
+export interface ProjectSavedEvent {
+  type: "project_saved";
+  name: string;
+  revision: number;
+}
+
 /** Server-to-client WebSocket messages on /api/events. */
 export type EngineEvent =
   | { type: "document_changed"; revision: number; /** Who edited; absent for undo/redo. */ origin?: Origin | null }
   | { type: "machine"; [key: string]: unknown }
   | { type: "run_pending"; [key: string]: unknown }
   | ApprovalLockedEvent
-  | RunFinishedEvent;
+  | RunFinishedEvent
+  | ProjectSavedEvent;

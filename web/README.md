@@ -61,6 +61,24 @@ anywhere else.
 - **Events**: `run_finished` refreshes the machine and toasts (an error toast unless the run finished cleanly);
   `document_changed` with an agent or script `origin` flashes that edit's timeline chip. Undo/redo with nothing to do
   (200 `{ok:false}`) shows the engine's message as a toast.
+- **File menu** (far left of the top bar, tap to open): New (`doc.new`), Open… (the engine's projects from
+  `GET /api/projects`, opened with `POST /api/projects/open`, or "Upload from this device" for a `.openetch` or `.lbrn2`
+  file), Save / Save as… (`POST /api/projects/save`; Save asks for a name the first time, and Save as asks before
+  replacing an existing project), Import LightBurn… (`.lbrn2`, Replace or Merge, with the galvo field size the
+  LightBurn project was laid out for, since `.lbrn2` files do not store it), Export to LightBurn and Download
+  .openetch. **Ctrl/Cmd+S** saves (anywhere, even in a field). New, Open and a replacing import ask first when the
+  project has unsaved changes (all of them stay undoable).
+  - Uploads go to `POST /api/document/upload?format=...&mode=...` with the raw file as the body (50 MB at most). A
+    LightBurn import with a field size other than the document's adds `&field_mm=<mm>`.
+  - Downloads are fetched with the Authorization header and saved through a blob link, so they work with token auth:
+    `.openetch` from `GET /api/document/download?format=openetch` (named by its Content-Disposition), `.lbrn2` from
+    `doc.export_lbrn2` so its warnings can be shown.
+  - Import and export warnings (unset frequencies, text imported as outlines, skipped bitmaps...) appear in a
+    dismissible panel, identical lines folded with a count.
+  - The top bar shows the project name and a dot while there are unsaved changes (`GET /api/project`, refetched on
+    `document_changed` and `project_saved`). After New, an upload or a replacing import the document is shown as
+    unsaved ("Untitled") and Save asks for a name, even if the engine still names the previous project, so the old
+    project is never overwritten by accident.
 - **Narrow screens** (< 1024 px, e.g. iPad portrait): the Browser and Properties panels become drawers toggled from the
   toolbar.
 
@@ -72,8 +90,9 @@ src/
   api/client.ts       fetch wrapper, auth token, endpoints
   api/commands.ts     every command id + parameter builder the UI uses
   api/runs.ts         run lists, approval gate and error texts, stats rows, toasts (pure; tested)
+  api/project.ts      project names, file names, import/export answers and warnings, dirty state (pure; tested)
   api/useEngine.ts    React hook: fetching, WebSocket events, refetch coalescing
   geometry.ts         affine maths, geometry -> SVG path, bounds (pure; tested)
   selection.ts        UI-only selection state (pure; tested)
-  components/         TopBar, Toolbar, BrowserPanel, Viewport, PropertiesPanel, LaserPanel, Timeline, Dialogs, ui
+  components/         TopBar, FileMenu, Toolbar, BrowserPanel, Viewport, PropertiesPanel, LaserPanel, Timeline, Dialogs, ui
 ```

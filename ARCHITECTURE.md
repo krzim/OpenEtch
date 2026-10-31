@@ -18,6 +18,7 @@ Mac, PC, phone) and Claude are clients of the same live document. The engine is 
 | `lmc` | LMC wire protocol: opcodes, 12-byte single commands, 3072-byte list packets, unit conversions, list builders, decoder/disassembler. **Pure, no I/O.** | – | no (wasm-ok) |
 | `corfile` | EzCad lens correction files (`JCZ_COR_2_1`, `LMC1COR_1.0`): parse, produce the WriteCorLine upload sequence, host-side bilinear correction. **Pure.** | – | no |
 | `doc` | Document model: stock, layers with MOPA cut settings, objects (kurbo paths + affine transforms). **Pure data + geometry helpers.** | kurbo | no |
+| `lbrn` | LightBurn `.lbrn2` projects and `.clb` material libraries: parse, write, convert to and from `doc` (see "File formats"). **Pure.** | doc, kurbo, roxmltree | no |
 | `commands` | Command registry: every change to a document goes through a registered command with a JSON Schema. Session with undo/redo and an origin-tagged history. | doc | no |
 | `plan` | Document → job: flatten paths, hatch fills, order travel, encode to LMC list packets for a `MachineProfile`. Also simulation (decode packets to a preview). | doc, lmc | no |
 | `machine` | Machine profile (TOML, importable from EzCad `markcfg7`), the `Link` transport trait, `SimLink`, `UsbLink` (nusb, feature `usb`), `Controller` (init, .cor upload, light framing, run, abort). | lmc, corfile | `usb` feature only |
@@ -111,6 +112,12 @@ says otherwise. `origin` is `"ui"` (default), `"script"` or `"agent:<name>"`.
 | POST | `/api/machine/frame` | `{ "ids"?: [...], "mode"?: "bounds" \| "outline" }` → red-pointer framing (light only) until frame stop, stop, a run, or 120 s |
 | POST | `/api/machine/frame/stop` | ends framing only; pending and approved runs are untouched → `{ "ok": true }`; with no board connected **200** `{ "ok": true, "connected": false }` |
 | POST | `/api/machine/stop` | emergency stop: abort any run or frame, cancel every run not yet streaming (`pending`, `approved`, `awaiting_confirm`; `cancelled_runs` counts them) → `{ "ok": true, "connected": true, "cancelled_runs": n }`; with no board connected **200** `{ "ok": true, "connected": false, ... }`; no token needed |
+| GET | `/api/projects` | `[{ name, modified_unix_s, size }]`: the saved projects, sorted by name; a missing projects directory lists nothing |
+| POST | `/api/projects/save` | `{ "name", "overwrite"?: bool (default true) }` → `{ "ok": true, "name", "path", "revision" }`; writes `<projects-dir>/<name>.openetch` and makes it the current project; emits `project_saved`. With `overwrite: false` an existing project other than the current one is **409** |
+| POST | `/api/projects/open` | `{ "name", "origin"? }` → `{ "ok": true, "name", "result", "revision" }`; replaces the document (`doc.load`, one undo step) and makes it the current project; unknown project 404, unusable file 400 |
+| GET | `/api/project` | `{ "name": string \| null, "saved_revision": n \| null, "revision": n, "dirty": bool }`; refetch on `document_changed` and `project_saved` |
+| GET | `/api/document/download` | `?format=openetch` (default) \| `lbrn2` → the document as a file with `Content-Disposition: attachment` (named after the project, else the document; ASCII `filename` plus UTF-8 `filename*`), `Cache-Control: no-store` and `X-OpenEtch-Warnings: <count>` (LightBurn conversion warnings; the texts come from `doc.export_lbrn2`). LightBurn files are laid out for the document's `field_mm` |
+| POST | `/api/document/upload` | `?format=openetch\|lbrn2&mode=replace\|merge&field_mm=<mm>` with the raw file as the body (UTF-8, a BOM is dropped, at most 50 MB, else **413**) → runs `doc.load` (`.openetch`, replace only) or `doc.import_lbrn2` (`field_mm` only for LightBurn; default the document's) with origin `ui`, answered like `/api/execute` (a refused file is **200** `{ "ok": false, "error" }`). Unknown query parameters, formats or modes are 400 |
 | WS | `/api/events` | server → client JSON events (below) |
 | * | `/mcp` | MCP Streamable HTTP endpoint |
 
@@ -128,6 +135,22 @@ Events on `/api/events`:
 - `{ "type": "run_pending", "run_id", "origin", "summary" }`
 - `{ "type": "run_finished", "id", "ok": bool, "state", "error": string | null }`
 - `{ "type": "approval_locked", "until_unix_s": n }` (too many wrong PINs; approvals locked until then)
+- `{ "type": "project_saved", "name", "revision" }` (refetch `GET /api/project`)
+
+**Projects.** Named projects are `<projects-dir>/<name>.openetch` (`--projects-dir`, default the OS data dir +
+`openetch/projects`, e.g. `%APPDATA%\openetch\projects`, `~/Library/Application Support/openetch/projects`,
+`~/.local/share/openetch/projects`; created on the first save). A name is 1-100 characters of letters, digits, space,
+`-`, `_`, `.`, `(` and `)`, with no leading dot, no `..`, no leading or trailing space, and not a Windows device name
+(`con`, `nul`, `com1`, ...). Every file is also resolved against the canonical projects directory and refused unless
+it stays inside it, so links pointing elsewhere are neither read nor written through. Saves go to a fresh temporary
+file that is renamed over the old one. The engine tracks the current project (name, saved revision) in memory: save
+and open set it, `doc.new` and `doc.load` (including an `.openetch` upload) clear it, and a LightBurn import keeps
+it. The document is dirty whenever its revision differs from the last save, open or `doc.new` (undoing back to the
+saved state still counts as a change).
+
+**Field size.** The engine starts with `document.field_mm` set to the machine profile's `field_mm`. `doc.new` and
+`doc.load` keep it when the new document has none and imports fill it in, so it stays set; when it is ever missing,
+`doc.import_lbrn2` and `doc.export_lbrn2` called without `field_mm` get the profile's.
 
 **Access.** Every request's `Host` must be a loopback name, an IP literal or an `--allow-host` name, and an `Origin`
 header, when present, must be loopback, allowed or same-host (DNS-rebinding and cross-site protection). On loopback
@@ -137,15 +160,39 @@ no token is needed. Off loopback (`--listen 0.0.0.0:7878` on the Pi) a bearer to
 `POST /api/machine/stop` need no token.
 
 Default listen address `127.0.0.1:7878`. Other options: `--profile`, `--web-dir`, `--usb`, `--token`,
-`--allow-host`, `--config-dir`, `--confirm-input`; `openetch set-pin [--reset] [--config-dir <path>]` sets, changes
+`--allow-host`, `--config-dir`, `--confirm-input`, `--projects-dir`; `openetch set-pin [--reset] [--config-dir <path>]` sets, changes
 or deletes the operator PIN (restart the engine afterwards).
 
 ## MCP tools
 
 `list_commands`, `execute`, `batch`, `inspect_document`, `render_preview` (PNG), `undo`, `redo`, plus separate machine
-tools: `machine_status`, `frame_start`, `frame_stop`, `job_request_run`, `machine_stop`. The MCP surface is generated
-from the same command registry the UI uses; machine tools are separate so clients can approve them separately. No
+tools: `machine_status`, `frame_start`, `frame_stop`, `job_request_run`, `machine_stop`, and project tools:
+`project_list` (`{projects, current}`), `project_save {name, overwrite?}` (replacing an existing project other than
+the current one needs `overwrite: true`, default false), `project_open {name}` and `project_export_lbrn2 {name}`
+(writes `<projects-dir>/<name>.lbrn2`, returns `{path, warnings, field_mm}`). Project tools take names, never paths.
+File contents go through `execute` with `doc.save`, `doc.load`, `doc.import_lbrn2` and `doc.export_lbrn2`. The MCP
+surface is generated from the same command registry the UI uses; machine tools are separate so clients can approve
+them separately. No
 MCP tool can approve a run or touch the operator PIN, and the server instructions say agents cannot and must not.
+
+## File formats
+
+- **`.openetch`** (native project): UTF-8 JSON `{"format": "openetch", "version": 1, "document": <doc::Document>}`
+  (`doc::file`). Readers refuse other formats (XML is pointed to the LightBurn import) and newer versions, accept a
+  UTF-8 BOM, refuse duplicate ids and raise `next_id` past existing ids. `Document.field_mm` is the galvo field the
+  document was laid out for; `Layer.extras` keeps settings from other software that OpenEtch does not model (e.g.
+  `lbrn2.*`) so exports round-trip. Commands: `doc.new`, `doc.load {content}`, `doc.save` (Query, returns
+  `{content, revision}`).
+- **`.lbrn2`** (LightBurn project, `crates/lbrn`): XML; mm, y up, origin at the lower-left of LightBurn's workspace,
+  so field frame = LightBurn - `field_mm / 2`. The file does not record the field size it was laid out for, so
+  import and export take `field_mm` (default the document's); a wrong value shifts everything by half the
+  difference. CutSettings become layers (power, speed, frequency Hz to kHz, QPulseWidth ns, hatch, passes,
+  sub-layers; everything else in `extras["lbrn2.*"]`), Rect/Ellipse/Path become objects, groups are flattened, text
+  is imported as its outline (BackupPath), bitmaps and other shapes are skipped with a warning. Export keeps each
+  layer's LightBurn index and writes the stock outline on tool layer T1. Commands: `doc.import_lbrn2 {content,
+  mode?: replace|merge, field_mm?}` (Edit) and `doc.export_lbrn2 {field_mm?}` (Query, returns `{content, warnings,
+  field_mm}`). The format notes are in `crates/lbrn/src/lib.rs`.
+- **`.clb`** (LightBurn material library): read by `lbrn::parse_library` into layer settings.
 
 ## Licensing and provenance
 

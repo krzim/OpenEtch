@@ -9,6 +9,7 @@ use commands::Session;
 use engine::cli::{self, Config, Parsed};
 use engine::hw::Machine;
 use engine::pin::{self, ApprovalConfig, PhysicalConfirm, PinStore};
+use engine::projects::ProjectDir;
 use engine::security::{SecurityConfig, generate_token};
 use engine::{AppState, api};
 use machine::{MachineProfile, PollConfig};
@@ -60,7 +61,8 @@ fn set_pin(dir: &Path, reset: bool) -> ExitCode {
     let result = if reset {
         pin::reset_pin_dialogue(&mut input, &mut out, dir).map(|outcome| match outcome {
             pin::ResetOutcome::Deleted(path) => format!(
-                "operator PIN deleted ({}). Approvals stay disabled until you set a new PIN with `openetch set-pin`                  and restart the engine.",
+                "operator PIN deleted ({}). Approvals stay disabled until you set a new PIN with `openetch set-pin` \
+                 and restart the engine.",
                 path.display()
             ),
             pin::ResetOutcome::NothingToDelete(path) => format!("no operator PIN was set ({})", path.display()),
@@ -68,7 +70,8 @@ fn set_pin(dir: &Path, reset: bool) -> ExitCode {
     } else {
         pin::set_pin_dialogue(&mut input, &mut out, dir).map(|path| {
             format!(
-                "operator PIN saved to {}. Restart the engine to use it: a running engine refuses approvals once                  the PIN file changes.",
+                "operator PIN saved to {}. Restart the engine to use it: a running engine refuses approvals once \
+                 the PIN file changes.",
                 path.display()
             )
         })
@@ -141,7 +144,8 @@ async fn run(config: Config) -> Result<(), String> {
     };
     if !approval.pin.is_set() {
         println!(
-            "openetch: no operator PIN is set ({}); runs cannot be approved until you run `openetch set-pin` and              restart the engine",
+            "openetch: no operator PIN is set ({}); runs cannot be approved until you run `openetch set-pin` and \
+             restart the engine",
             approval.pin.path().display()
         );
     }
@@ -152,7 +156,11 @@ async fn run(config: Config) -> Result<(), String> {
             c.input_bit
         );
     }
-    let state = AppState::new(Session::new(doc::Document::default()), machine.clone(), security, approval);
+    // The document starts laid out for this machine's field (AppState::new also fills it in).
+    let document = doc::Document { field_mm: Some(machine.profile().field_mm), ..doc::Document::default() };
+    let projects = ProjectDir::new(&config.projects_dir);
+    tracing::info!(path = %config.projects_dir.display(), "projects directory");
+    let state = AppState::new(Session::new(document), machine.clone(), security, approval, projects);
 
     let web_dir = config.web_dir.is_dir().then_some(config.web_dir.as_path());
     if web_dir.is_none() {

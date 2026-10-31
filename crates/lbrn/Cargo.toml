@@ -1,0 +1,13 @@
+[package]
+name = "lbrn"
+description = "LightBurn .lbrn2 project files: parse, write, and convert to and from the OpenEtch document"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+doc = { workspace = true }
+kurbo = { workspace = true }
+roxmltree = { workspace = true }
+thiserror = { workspace = true }

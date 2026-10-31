@@ -32,6 +32,9 @@ pub enum EngineError {
     Conflict(String),
     #[error("{0}")]
     Forbidden(String),
+    /// An upload or project file above the size limit.
+    #[error("{0}")]
+    TooLarge(String),
     /// Run approval refused for operator-PIN reasons; `code` is `pin_not_set`, `pin_required`, `pin_invalid` or
     /// `pin_locked` (see the `pin` module).
     #[error("{message}")]
@@ -53,6 +56,7 @@ impl EngineError {
             }
             EngineError::Machine(_) => StatusCode::BAD_GATEWAY,
             EngineError::Forbidden(_) | EngineError::Approval { .. } => StatusCode::FORBIDDEN,
+            EngineError::TooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             EngineError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }

@@ -24,6 +24,7 @@ pub mod frame;
 pub mod hw;
 pub mod mcp;
 pub mod pin;
+pub mod projects;
 pub mod render;
 pub mod runs;
 pub mod security;

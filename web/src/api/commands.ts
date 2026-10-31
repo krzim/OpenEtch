@@ -19,6 +19,9 @@ export const CMD = {
   rename: "object.rename",
   layerAdd: "layer.add",
   layerUpdate: "layer.update",
+  docNew: "doc.new",
+  importLbrn2: "doc.import_lbrn2",
+  exportLbrn2: "doc.export_lbrn2",
 } as const;
 
 /** Every id in [`CMD`], for the startup check. */
@@ -125,4 +128,24 @@ export function layerUpdate(
   patch: { name?: string; color?: string; visible?: boolean; output?: boolean; settings?: CutSettingsPatch },
 ): Invocation {
   return { id: CMD.layerUpdate, params: { id, ...patch } };
+}
+
+/** Replace the document with an empty one (keeps the field size). Undoable. */
+export function docNew(name?: string): Invocation {
+  return { id: CMD.docNew, params: name ? { name } : {} };
+}
+
+/**
+ * Import a LightBurn .lbrn2 project given as text. `field_mm` is the galvo field the LightBurn project was laid out
+ * for (LightBurn files do not record it); omitted, the engine uses the document's.
+ */
+export function importLbrn2(content: string, mode: "replace" | "merge", field_mm?: number): Invocation {
+  const params: Record<string, unknown> = { content, mode };
+  if (field_mm !== undefined) params.field_mm = field_mm;
+  return { id: CMD.importLbrn2, params };
+}
+
+/** Convert the document to a LightBurn project: the result is `{content, warnings, field_mm}`. Read-only. */
+export function exportLbrn2(field_mm?: number): Invocation {
+  return { id: CMD.exportLbrn2, params: field_mm !== undefined ? { field_mm } : {} };
 }

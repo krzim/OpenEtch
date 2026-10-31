@@ -37,6 +37,8 @@ pub enum Event {
     /// Too many wrong operator PINs: approvals are locked until `until_unix_s` (Unix seconds). Each further lockout
     /// is twice as long (see the `pin` module).
     ApprovalLocked { until_unix_s: u64 },
+    /// The document was saved as project `name` at `revision` (clients refetch `GET /api/project`).
+    ProjectSaved { name: String, revision: u64 },
 }
 
 impl Event {
@@ -104,6 +106,10 @@ mod tests {
         assert_eq!(
             serde_json::to_value(Event::ApprovalLocked { until_unix_s: 1_800_000_000 }).unwrap(),
             serde_json::json!({"type": "approval_locked", "until_unix_s": 1_800_000_000u64})
+        );
+        assert_eq!(
+            serde_json::to_value(Event::ProjectSaved { name: "Coaster".into(), revision: 7 }).unwrap(),
+            serde_json::json!({"type": "project_saved", "name": "Coaster", "revision": 7})
         );
         let ev = Event::RunPending { run_id: "run-1".into(), origin: Origin::Agent("mcp".into()), summary: "s".into() };
         let v = serde_json::to_value(&ev).unwrap();

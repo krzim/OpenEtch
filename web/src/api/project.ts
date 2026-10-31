@@ -1,0 +1,229 @@
+// Pure logic for the File menu: project names, file formats and names, the engine's import/export answers and their
+// warnings, the project list, and whether the project has unsaved changes. No React, no fetch, so `npm test` covers it.
+
+import type { GDocument, ProjectEntry, ProjectInfo } from "./types.ts";
+
+/** File formats the engine reads and writes: the native project and LightBurn's. */
+export type FileFormat = "openetch" | "lbrn2";
+
+/** How `doc.import_lbrn2` treats the current document. */
+export type ImportMode = "replace" | "merge";
+
+/** The engine's limit for `POST /api/document/upload`. */
+export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
+
+/** Longest project name, in characters. */
+export const MAX_PROJECT_NAME = 100;
+
+const NAME_CHARS = /^[\p{L}\p{N} _.()-]+$/u;
+
+/**
+ * Check a project name against the engine's rule: 1-100 letters, digits, spaces and `- _ . ( )`, no leading dot, no
+ * "..". Returns the problem as a sentence, or null when the name is fine. Callers trim first.
+ */
+export function validateProjectName(name: string): string | null {
+  const n = [...name].length;
+  if (n === 0) return "Enter a name.";
+  if (n > MAX_PROJECT_NAME) return `Use at most ${MAX_PROJECT_NAME} characters.`;
+  if (!NAME_CHARS.test(name)) return "Use only letters, digits, spaces and - _ . ( )";
+  if (name.startsWith(".")) return "The name cannot start with a dot.";
+  if (name.includes("..")) return 'The name cannot contain "..".';
+  return null;
+}
+
+/** Turn a file name or document name into a valid project name, or "" when nothing usable is left. */
+export function suggestProjectName(raw: string): string {
+  let s = raw.replace(/[^\p{L}\p{N} _.()-]+/gu, " ");
+  s = s.replace(/\.{2,}/g, ".").replace(/\s+/g, " ").trim();
+  s = s.replace(/^[.\s]+/, "");
+  s = [...s].slice(0, MAX_PROJECT_NAME).join("").trim();
+  return validateProjectName(s) === null ? s : "";
+}
+
+/** The format of a picked file, from its extension, or null for anything else. */
+export function fileFormat(filename: string): FileFormat | null {
+  const f = filename.toLowerCase();
+  if (f.endsWith(".openetch")) return "openetch";
+  if (f.endsWith(".lbrn2")) return "lbrn2";
+  return null;
+}
+
+/** File name without its directory and last extension. */
+export function fileStem(filename: string): string {
+  const base = filename.split(/[\\/]/).pop() ?? filename;
+  const dot = base.lastIndexOf(".");
+  return dot > 0 ? base.slice(0, dot) : base;
+}
+
+/** The file name in a Content-Disposition header (`filename*=UTF-8''...` preferred), or null. */
+export function contentDispositionName(header: string | null | undefined): string | null {
+  if (!header) return null;
+  const star = /filename\*\s*=\s*([^']*)'[^']*'([^;]+)/i.exec(header);
+  if (star) {
+    try {
+      const v = decodeURIComponent(star[2].trim().replace(/^"|"$/g, ""));
+      if (v) return v;
+    } catch {
+      // Malformed percent-encoding: fall back to the plain parameter.
+    }
+  }
+  const quoted = /filename\s*=\s*"((?:[^"\\]|\\.)*)"/i.exec(header);
+  if (quoted) return quoted[1].replace(/\\(.)/g, "$1") || null;
+  const bare = /filename\s*=\s*([^;\s]+)/i.exec(header);
+  return bare ? bare[1] : null;
+}
+
+/** A safe download file name: `base` without characters file systems refuse, plus the format's extension. */
+export function downloadName(base: string | null | undefined, format: FileFormat): string {
+  const clean = (base ?? "").replace(/[\\/:*?"<>|\u0000-\u001f]+/g, "_").trim().replace(/^\.+/, "");
+  return `${clean || "Untitled"}.${format}`;
+}
+
+/**
+ * Unwrap an engine command answer: `{ok: true, result}` gives `result`, a bare result is returned as is, and
+ * `{ok: false, error}` throws an Error with the engine's message.
+ */
+export function commandResult(res: unknown): unknown {
+  if (res && typeof res === "object" && !Array.isArray(res)) {
+    const o = res as { ok?: unknown; error?: unknown; result?: unknown };
+    if (o.ok === false) throw new Error(typeof o.error === "string" && o.error ? o.error : "the engine refused the file");
+    if (o.ok === true && "result" in o) return o.result;
+  }
+  return res;
+}
+
+/** The `warnings` strings of an import or export result. */
+export function warningList(result: unknown): string[] {
+  if (!result || typeof result !== "object") return [];
+  const w = (result as { warnings?: unknown }).warnings;
+  return Array.isArray(w) ? w.filter((x): x is string => typeof x === "string" && x.length > 0) : [];
+}
+
+/** What a `doc.import_lbrn2` (or `doc.load`) result reports, for the toast and the warnings panel. */
+export interface ImportOutcome {
+  objects: number;
+  createdLayers: number;
+  reusedLayers: number;
+  warnings: string[];
+  fieldMm: number | null;
+}
+
+export function importOutcome(result: unknown): ImportOutcome {
+  const r = result && typeof result === "object" ? (result as Record<string, unknown>) : {};
+  const count = (v: unknown) => (Array.isArray(v) ? v.length : 0);
+  return {
+    objects: count(r.created),
+    createdLayers: count(r.created_layers ?? r.layers),
+    reusedLayers: count(r.reused_layers),
+    warnings: warningList(r),
+    fieldMm: typeof r.field_mm === "number" && Number.isFinite(r.field_mm) ? r.field_mm : null,
+  };
+}
+
+function plural(n: number, word: string): string {
+  return `${n} ${word}${n === 1 ? "" : "s"}`;
+}
+
+/** One-line toast for a finished LightBurn import. */
+export function importMessage(o: ImportOutcome, mode: ImportMode): string {
+  const layers = o.reusedLayers > 0 ? `${plural(o.createdLayers, "new layer")}, ${o.reusedLayers} reused` : plural(o.createdLayers, "layer");
+  const field = o.fieldMm !== null ? ` (field ${Number(o.fieldMm.toFixed(3))} mm)` : "";
+  const what = mode === "merge" ? "Merged" : "Imported";
+  const warn = o.warnings.length ? ` ${plural(o.warnings.length, "warning")}.` : "";
+  return `${what} ${plural(o.objects, "object")} on ${layers}${field}.${warn}`;
+}
+
+/** Identical warnings folded into one row with a count, in first-seen order. */
+export function groupWarnings(list: string[]): { text: string; count: number }[] {
+  const out: { text: string; count: number }[] = [];
+  const at = new Map<string, number>();
+  for (const w of list) {
+    const i = at.get(w);
+    if (i === undefined) {
+      at.set(w, out.length);
+      out.push({ text: w, count: 1 });
+    } else {
+      out[i].count += 1;
+    }
+  }
+  return out;
+}
+
+/** GET /api/projects as a list (an array, or `{projects: [...]}`), valid rows only, newest first. */
+export function projectList(res: unknown): ProjectEntry[] {
+  const raw = Array.isArray(res) ? res : res && typeof res === "object" ? (res as { projects?: unknown }).projects : null;
+  if (!Array.isArray(raw)) return [];
+  const rows = raw.filter((p): p is ProjectEntry => !!p && typeof p === "object" && typeof (p as { name?: unknown }).name === "string");
+  const t = (p: ProjectEntry) => (typeof p.modified_unix_s === "number" ? p.modified_unix_s : 0);
+  return rows
+    .map((p, i) => ({ p, i }))
+    .sort((a, b) => t(b.p) - t(a.p) || a.p.name.localeCompare(b.p.name) || a.i - b.i)
+    .map((x) => x.p);
+}
+
+/**
+ * Whether the document has unsaved changes. Uses the engine's `dirty`, except when the document has moved on since
+ * that answer (an edit raced the refetch): then it compares the document revision with `saved_revision`. Null when the
+ * engine reports no project state at all.
+ */
+export function projectDirty(project: ProjectInfo | null, docRevision: number | null): boolean | null {
+  if (!project) return null;
+  if (docRevision !== null && typeof project.revision === "number" && docRevision !== project.revision) {
+    return project.saved_revision === null || project.saved_revision === undefined || project.saved_revision !== docRevision;
+  }
+  return !!project.dirty;
+}
+
+/**
+ * The project the document is saved as, for the top bar and Save. `detachedFrom` is the project name the engine
+ * reported when this UI replaced the document (New, upload, LightBurn import): while the engine still reports that
+ * name, the document is not that project any more, so Save must ask for a name instead of overwriting it.
+ */
+export function currentProjectName(project: ProjectInfo | null, detachedFrom: string | null | undefined): string | null {
+  const name = project?.name ?? null;
+  if (detachedFrom !== undefined && name === detachedFrom) return null;
+  return name;
+}
+
+/** Ask before replacing the document: when it has unsaved changes, or (engine without project state) any content. */
+export function needsConfirm(dirty: boolean | null, doc: GDocument | null): boolean {
+  if (dirty !== null) return dirty;
+  return !!doc && (doc.objects.length > 0 || doc.stock !== null);
+}
+
+/** File size for the project list. */
+export function formatBytes(n: number | undefined): string {
+  if (typeof n !== "number" || !Number.isFinite(n) || n < 0) return "";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(n < 10 * 1024 ? 1 : 0)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** Modification time for the project list: relative when recent, else the local date. */
+export function formatModified(unixS: number | undefined, nowMs: number = Date.now()): string {
+  if (typeof unixS !== "number" || !Number.isFinite(unixS) || unixS <= 0) return "";
+  const ago = Math.max(0, nowMs / 1000 - unixS);
+  if (ago < 60) return "just now";
+  if (ago < 3600) return `${Math.floor(ago / 60)} min ago`;
+  if (ago < 86400) return `${Math.floor(ago / 3600)} h ago`;
+  return new Date(unixS * 1000).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+/** A usable field size, or null. */
+export function validField(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null;
+}
+
+/** Field sizes offered as one-tap choices in the LightBurn import dialog: the document's, the machine's, 110, 150. */
+export function fieldChoices(docField: number | null, machineField: number | null): number[] {
+  const out: number[] = [];
+  for (const v of [docField, machineField, 110, 150]) {
+    if (v !== null && !out.some((x) => Math.abs(x - v) < 1e-9)) out.push(v);
+  }
+  return out;
+}
+
+/** Whether two field sizes are the same to the micrometre. */
+export function sameField(a: number | null, b: number | null): boolean {
+  return a !== null && b !== null && Math.abs(a - b) < 1e-3;
+}

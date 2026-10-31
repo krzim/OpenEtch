@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Hand-written OpenEtch test fixture (not made by LightBurn): sub-layers, unusual types and out-of-range values. -->
+<LightBurnProject AppVersion="2.1.02" DeviceName="JCZFiber (Unknown)" FormatVersion="1" MaterialHeight="0" MirrorX="False" MirrorY="True">
+    <CutSetting type="Scan+Cut">
+        <index Value="2"/>
+        <name Value=""/>
+        <maxPower Value="150"/>
+        <speed Value="fast"/>
+        <frequency Value="0"/>
+        <QPulseWidth Value="13"/>
+        <numPasses Value="5000"/>
+        <anglePerPass Value="90"/>
+        <interval Value="0.002"/>
+        <angle Value="-135"/>
+        <subname Value="deep"/>
+        <priority Value="0"/>
+        <wobbleEnable Value="1"/>
+        <SubLayer type="Scan" index="1">
+            <maxPower Value="50"/>
+            <speed Value="3000"/>
+            <frequency Value="80000"/>
+            <numPasses Value="3"/>
+            <crossHatch Value="1"/>
+            <interval Value="0.05"/>
+            <angle Value="180"/>
+            <subname Value="clean"/>
+        </SubLayer>
+        <SubLayer type="Cut" index="2">
+            <maxPower Value="20"/>
+            <speed Value="800"/>
+            <frequency Value="60000"/>
+        </SubLayer>
+    </CutSetting>
+    <CutSetting type="Offset Fill">
+        <index Value="0"/>
+        <name Value="Offset"/>
+        <maxPower Value="20"/>
+        <speed Value="1000"/>
+        <frequency Value="40000"/>
+        <priority Value="1"/>
+    </CutSetting>
+    <Shape Type="Ellipse" CutIndex="7" Rx="1" Ry="1">
+        <XForm>1 0 0 1 75 75</XForm>
+    </Shape>
+    <Shape Type="Rect" CutIndex="2" W="200" H="5" Cr="9">
+        <XForm>1 0 0 1 75 75</XForm>
+    </Shape>
+</LightBurnProject>

@@ -20,7 +20,7 @@ impl Command for Inspect {
     type Input = InspectInput;
     const ID: &'static str = "doc.inspect";
     const TITLE: &'static str = "Inspect document";
-    const DESCRIPTION: &'static str = "Structured summary of the document: name, revision, stock (shape, size, \
+    const DESCRIPTION: &'static str = "Structured summary of the document: name, revision, field_mm, stock (shape, size, \
         material, field-frame centre and bounds), layers with full cut settings, objects with layer, kind and \
         field-frame bounds in mm, and warnings (objects outside the stock, empty layers, objects that will not run). \
         Read-only.";
@@ -93,6 +93,7 @@ fn inspect(doc: &Document) -> Value {
     json!({
         "name": doc.name,
         "revision": doc.revision,
+        "field_mm": doc.field_mm,
         "frame": "field frame, mm: origin at the galvo field centre, +X right, +Y away from the operator",
         "stock": stock,
         "layers": layers,

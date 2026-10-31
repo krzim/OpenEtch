@@ -3,9 +3,13 @@
 //!
 //! This crate is plain data plus geometry helpers. It never changes itself: all edits go through `commands`.
 
+use std::collections::BTreeMap;
+
 use kurbo::{Affine, BezPath, Rect, Shape};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
+pub mod file;
 
 pub type ObjectId = String;
 pub type LayerId = String;
@@ -15,6 +19,10 @@ pub struct Document {
     /// Bumped by every successful command; clients use it to detect changes.
     pub revision: u64,
     pub name: String,
+    /// Galvo field size in mm the document was laid out for. The engine fills it in from the machine profile for
+    /// new and opened documents that have none; LightBurn import/export uses it to move between frames.
+    #[serde(default)]
+    pub field_mm: Option<f64>,
     pub stock: Option<Stock>,
     pub layers: Vec<Layer>,
     pub objects: Vec<Object>,
@@ -24,7 +32,15 @@ pub struct Document {
 
 impl Default for Document {
     fn default() -> Self {
-        let mut doc = Document { revision: 0, name: "Untitled".into(), stock: None, layers: vec![], objects: vec![], next_id: 1 };
+        let mut doc = Document {
+            revision: 0,
+            name: "Untitled".into(),
+            field_mm: None,
+            stock: None,
+            layers: vec![],
+            objects: vec![],
+            next_id: 1,
+        };
         let id = doc.alloc_id("layer");
         doc.layers.push(Layer::new(id, "Layer 1", "#1f77b4"));
         doc
@@ -115,11 +131,24 @@ pub struct Layer {
     pub settings: CutSettings,
     /// Extra passes with their own settings (LightBurn sub-layers), run after `settings`.
     pub sub_layers: Vec<CutSettings>,
+    /// Settings from other software that OpenEtch does not model (e.g. `lbrn2.minPower`), kept so exports
+    /// round-trip. Keys are prefixed with the format they came from. Never used for planning.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extras: BTreeMap<String, String>,
 }
 
 impl Layer {
     pub fn new(id: LayerId, name: &str, color: &str) -> Self {
-        Layer { id, name: name.into(), color: color.into(), visible: true, output: true, settings: CutSettings::default(), sub_layers: vec![] }
+        Layer {
+            id,
+            name: name.into(),
+            color: color.into(),
+            visible: true,
+            output: true,
+            settings: CutSettings::default(),
+            sub_layers: vec![],
+            extras: BTreeMap::new(),
+        }
     }
 }
 
@@ -272,7 +301,8 @@ mod tests {
 
     #[test]
     fn document_round_trips_through_json() {
-        let doc = Document {
+        let mut doc = Document {
+            field_mm: Some(153.75),
             stock: Some(Stock {
                 name: "tag".into(),
                 shape: StockShape::Circle { diameter_mm: 30.0 },
@@ -283,8 +313,19 @@ mod tests {
             }),
             ..Document::default()
         };
+        doc.layers[0].extras.insert("lbrn2.minPower".into(), "12".into());
         let json = serde_json::to_string(&doc).unwrap();
         let back: Document = serde_json::from_str(&json).unwrap();
         assert_eq!(doc, back);
+    }
+
+    #[test]
+    fn older_json_without_new_fields_still_loads() {
+        let mut v = serde_json::to_value(Document::default()).unwrap();
+        v.as_object_mut().unwrap().remove("field_mm");
+        assert!(v["layers"][0].get("extras").is_none(), "empty extras are not serialized");
+        let back: Document = serde_json::from_value(v).unwrap();
+        assert_eq!(back.field_mm, None);
+        assert!(back.layers[0].extras.is_empty());
     }
 }

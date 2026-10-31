@@ -31,7 +31,7 @@ use crate::{AppState, EngineError};
 pub const MCP_AGENT: &str = "mcp";
 
 /// Every tool, in listing order.
-pub const TOOL_NAMES: [&str; 12] = [
+pub const TOOL_NAMES: [&str; 16] = [
     "list_commands",
     "execute",
     "batch",
@@ -44,6 +44,10 @@ pub const TOOL_NAMES: [&str; 12] = [
     "frame_stop",
     "job_request_run",
     "machine_stop",
+    "project_list",
+    "project_save",
+    "project_open",
+    "project_export_lbrn2",
 ];
 
 /// Server instructions shown to the model.
@@ -56,7 +60,8 @@ machine_status.field_mm, about 153.75 mm); every object must lie strictly inside
 
 Workflow:
 1. stock.define - describe the physical piece (shape, size, thickness, where it sits in the field).
-2. Import or draw art: art.import_svg, shape.rect / shape.ellipse / shape.path.
+2. Import or draw art: art.import_svg, doc.import_lbrn2 (a LightBurn project), shape.rect / shape.ellipse / \
+shape.path.
 3. art.place - fit and anchor the art on the stock (margins, alignment).
 4. layer.update - set the layer's cut settings (power %, speed, frequency, MOPA pulse width, fill/hatch, passes).
 5. render_preview - look at the result and the toolpath; inspect_document for exact numbers and warnings.
@@ -68,6 +73,15 @@ Firing the laser always requires a person to approve the pending run in the Open
 (and, if configured, a physical switch on the machine). You cannot and must not approve or start a run, and you \
 must never ask for, guess, handle or set the operator PIN, or try to approve runs by any other route (HTTP, \
 shell, browser). machine_stop is always available and stops everything.
+
+Projects (files live in the engine's projects directory; you never pass file paths): project_list, \
+project_open {name} (replaces the document; undoable), project_save {name} (saving to the current project's name \
+replaces it; replacing a different existing project needs overwrite: true, which you only pass when the person asked \
+for it), project_export_lbrn2 {name} (writes <name>.lbrn2 for LightBurn). File contents go through execute: doc.save \
+returns the .openetch JSON, doc.load replaces the document with one, doc.export_lbrn2 returns LightBurn XML, and \
+doc.import_lbrn2 {content, mode: replace|merge, field_mm} imports LightBurn XML. LightBurn files do not record the \
+galvo field size they were laid out for, and a wrong field_mm shifts everything by half the difference: when the \
+person has not said (e.g. a 150 mm or 110 mm LightBurn workspace), ask, or check the import warnings and bounds.
 
 Use list_commands for every command's input schema; execute runs one command, batch runs several as one undo step \
 (all-or-nothing). Edits you make are tagged as agent edits in the history and can be undone.";
@@ -116,6 +130,23 @@ struct RenderArgs {
     /// Draw travel (laser-off) moves as dashed grey lines. Default true.
     #[serde(default)]
     show_jumps: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct ProjectArgs {
+    /// Project name: 1-100 letters, digits, spaces and - _ . ( ) (no path, no leading dot, no "..").
+    name: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct SaveArgs {
+    /// Project name: 1-100 letters, digits, spaces and - _ . ( ) (no path, no leading dot, no "..").
+    name: String,
+    /// Replace an existing project that is not the current one. Default false; only when the person asked.
+    #[serde(default)]
+    overwrite: bool,
 }
 
 fn schema<T: JsonSchema>() -> Arc<JsonObject> {
@@ -233,6 +264,36 @@ impl GalvoMcp {
                  allowed.",
                 false,
             ),
+            tool::<NoArgs>(
+                "project_list",
+                "List projects",
+                "Saved projects in the engine's projects directory: {projects: [{name, modified_unix_s, size}], \
+                 current: {name, saved_revision, revision, dirty}}.",
+                true,
+            ),
+            tool::<SaveArgs>(
+                "project_save",
+                "Save the project",
+                "Save the document as <name>.openetch in the projects directory and make it the current project. \
+                 Replacing an existing project other than the current one needs overwrite: true. Returns {ok, name, \
+                 path, revision}.",
+                false,
+            ),
+            tool::<ProjectArgs>(
+                "project_open",
+                "Open a project",
+                "Replace the document with saved project <name> (one undo step) and make it the current project. \
+                 Unsaved changes stay reachable with undo. Returns {ok, name, result, revision}.",
+                false,
+            ),
+            tool::<ProjectArgs>(
+                "project_export_lbrn2",
+                "Export to LightBurn",
+                "Write the document as a LightBurn project <name>.lbrn2 in the projects directory (laid out for the \
+                 document's field_mm; replaces a file of that name). Returns {ok, path, warnings, field_mm}. For the \
+                 XML itself use execute doc.export_lbrn2.",
+                false,
+            ),
         ]
     }
 
@@ -309,6 +370,22 @@ impl GalvoMcp {
             "machine_stop" => {
                 args::<NoArgs>(name, a)?;
                 Ok(ok_json(st.stop().await?))
+            }
+            "project_list" => {
+                args::<NoArgs>(name, a)?;
+                Ok(ok_json(json!({ "projects": st.project_list().await?, "current": st.project_status() })))
+            }
+            "project_save" => {
+                let x: SaveArgs = args(name, a)?;
+                Ok(ok_json(st.project_save(&x.name, x.overwrite).await?))
+            }
+            "project_open" => {
+                let x: ProjectArgs = args(name, a)?;
+                Ok(ok_json(st.project_open(&x.name, Self::origin()).await?))
+            }
+            "project_export_lbrn2" => {
+                let x: ProjectArgs = args(name, a)?;
+                Ok(ok_json(st.project_export_lbrn2(&x.name, Self::origin()).await?))
             }
             other => Err(EngineError::NotFound(format!("unknown tool '{other}' (tools: {})", TOOL_NAMES.join(", ")))),
         }
@@ -454,6 +531,64 @@ mod tests {
         assert_eq!(r.is_error, Some(true));
         let r = mcp.call("undo", obj(json!({"extra": 1}))).await;
         assert_eq!(r.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn project_tools_save_open_list_and_export() {
+        let st = test_state().await;
+        let mcp = GalvoMcp::new(st.clone());
+        let call = |name: &'static str, v: Value| {
+            let mcp = mcp.clone();
+            async move {
+                let r = mcp.call(name, obj(v)).await;
+                (r.is_error == Some(true), serde_json::from_str::<Value>(&text_of(&r)).unwrap_or_default())
+            }
+        };
+        let (err, v) = call("project_list", json!({})).await;
+        assert!(!err, "{v}");
+        assert_eq!(v["projects"], json!([]));
+        assert_eq!(v["current"]["name"], Value::Null);
+
+        let lbrn = crate::tests::LBRN2;
+        let (err, v) = call("execute", json!({"id": "doc.import_lbrn2", "params": {"content": lbrn}})).await;
+        assert!(!err, "{v}");
+        assert_eq!(v["result"]["field_mm"], json!(150.0), "the profile's field when none is given");
+        let (err, v) = call("project_save", json!({"name": "Agent job"})).await;
+        assert!(!err, "{v}");
+        assert_eq!(v["name"], "Agent job");
+        let (err, v) = call("project_list", json!({})).await;
+        assert!(!err);
+        assert_eq!(v["projects"][0]["name"], "Agent job");
+        assert_eq!(v["current"], json!({"name": "Agent job", "saved_revision": 1, "revision": 1, "dirty": false}));
+
+        // Agents cannot silently replace another project.
+        call("execute", json!({"id": "doc.new", "params": {}})).await;
+        let (err, v) = call("project_save", json!({"name": "Agent job"})).await;
+        assert!(err, "{v}");
+        assert!(v["error"].as_str().unwrap().contains("overwrite"), "{v}");
+        let (err, _) = call("project_save", json!({"name": "Agent job", "overwrite": true})).await;
+        assert!(!err);
+        call("execute", json!({"id": "doc.rename", "params": {"name": "Changed"}})).await;
+
+        let (err, v) = call("project_open", json!({"name": "Agent job"})).await;
+        assert!(!err, "{v}");
+        assert_eq!(st.document().name, "Untitled");
+        assert_eq!(st.history().last().unwrap().origin, Origin::Agent(MCP_AGENT.into()));
+
+        let (err, v) = call("project_export_lbrn2", json!({"name": "Agent job"})).await;
+        assert!(!err, "{v}");
+        let path = std::path::PathBuf::from(v["path"].as_str().unwrap());
+        assert!(path.ends_with("Agent job.lbrn2"), "{path:?}");
+        assert!(std::fs::read_to_string(&path).unwrap().contains("<LightBurnProject"));
+        assert_eq!(v["field_mm"], json!(150.0));
+
+        for bad in [json!({"name": "../x"}), json!({"name": "a/b"}), json!({}), json!({"name": "x", "path": "/tmp"})] {
+            for tool in ["project_save", "project_open", "project_export_lbrn2"] {
+                let (err, v) = call(tool, bad.clone()).await;
+                assert!(err, "{tool} {bad}: {v}");
+            }
+        }
+        let _ = std::fs::remove_dir_all(st.projects.root().parent().unwrap());
     }
 
     #[tokio::test]

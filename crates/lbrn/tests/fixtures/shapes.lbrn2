@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Hand-written OpenEtch test fixture (not made by LightBurn). Laid out for a 150 mm field: centre (75, 75). -->
+<LightBurnProject AppVersion="1.4.00" FormatVersion="1" MaterialHeight="0" MirrorX="False" MirrorY="False">
+    <Thumbnail Source="iVBORw0KGgo="/>
+    <VariableText>
+        <Start Value="0"/>
+        <End Value="999"/>
+        <Current Value="0"/>
+        <Increment Value="1"/>
+        <AutoAdvance Value="0"/>
+    </VariableText>
+    <UIPrefs>
+        <Optimize_ByLayer Value="0"/>
+        <Optimize_OverlapDist Value="0.025"/>
+    </UIPrefs>
+    <CutSetting type="Scan">
+        <index Value="0"/>
+        <name Value="Fill"/>
+        <minPower Value="12"/>
+        <maxPower Value="30"/>
+        <speed Value="2000"/>
+        <frequency Value="100000"/>
+        <QPulseWidth Value="200"/>
+        <crossHatch Value="1"/>
+        <interval Value="0.03"/>
+        <angle Value="90"/>
+        <priority Value="0"/>
+        <tabCount Value="1"/>
+    </CutSetting>
+    <CutSetting type="Cut">
+        <index Value="1"/>
+        <name Value="Outline"/>
+        <maxPower Value="40"/>
+        <speed Value="1000"/>
+        <frequency Value="30000"/>
+        <numPasses Value="2"/>
+        <bidir Value="0"/>
+        <priority Value="1"/>
+    </CutSetting>
+    <CutSetting type="Cut">
+        <index Value="3"/>
+        <name Value="Guide"/>
+        <maxPower Value="10"/>
+        <speed Value="500"/>
+        <frequency Value="20000"/>
+        <priority Value="2"/>
+        <doOutput Value="0"/>
+        <hide Value="1"/>
+    </CutSetting>
+    <CutSetting_Img type="Image">
+        <index Value="5"/>
+        <name Value="Photo"/>
+        <maxPower Value="60"/>
+        <speed Value="1000"/>
+        <frequency Value="45000"/>
+        <interval Value="0.05"/>
+        <priority Value="3"/>
+        <ditherMode Value="dithered"/>
+    </CutSetting_Img>
+    <CutSetting type="Tool">
+        <index Value="30"/>
+        <name Value="T1"/>
+        <priority Value="4"/>
+    </CutSetting>
+    <Shape Type="Rect" CutIndex="0" W="20" H="10" Cr="2">
+        <XForm>1 0 0 1 75 75</XForm>
+    </Shape>
+    <Shape Type="Ellipse" CutIndex="1" Rx="5" Ry="3">
+        <XForm>0 1 -1 0 95 75</XForm>
+    </Shape>
+    <!-- A triangle with one curved side; defines the shared lists 1 and 2. -->
+    <Shape Type="Path" CutIndex="1" VertID="1" PrimID="2">
+        <XForm>1 0 0 1 75 50</XForm>
+        <VertList>V-5 0c0x1c1x1V5 0c0x5c0y3c1x1V0 8c0x1c1x2c1y8</VertList>
+        <PrimList>L0 1B1 2L2 0</PrimList>
+    </Shape>
+    <!-- Reuses both shared lists, 20 mm further left. -->
+    <Shape Type="Path" CutIndex="1" VertID="1" PrimID="2">
+        <XForm>1 0 0 1 55 50</XForm>
+    </Shape>
+    <Shape Type="Path" CutIndex="0" VertID="3">
+        <XForm>1 0 0 1 0 0</XForm>
+        <VertList>V60 100c0x1c1x1V70 100c0x1c1x1V70 110c0x1c1x1</VertList>
+        <PrimList>LineClosed</PrimList>
+    </Shape>
+    <Shape Type="Group">
+        <XForm>2 0 0 2 100 100</XForm>
+        <Children>
+            <Shape Type="Group">
+                <XForm>1 0 0 1 5 0</XForm>
+                <Children>
+                    <Shape Type="Rect" CutIndex="3" W="2" H="2" Cr="0">
+                        <XForm>1 0 0 1 0 0</XForm>
+                    </Shape>
+                    <Shape Type="Path" CutIndex="3" VertID="4" PrimID="5">
+                        <XForm>1 0 0 1 0 5</XForm>
+                        <VertList>V0 0c0x1c1x1V1 0c0x1c1x1</VertList>
+                        <PrimList>L0 1</PrimList>
+                    </Shape>
+                </Children>
+            </Shape>
+        </Children>
+    </Shape>
+    <Shape Type="Text" CutIndex="0" Font="Arial,-1,100,5,50,0,0,0,0,0" Str="Hi&#10;there" H="4" LS="0" LnS="0" Ah="1" Av="1" Weld="1" HasBackupPath="1">
+        <BackupPath Type="Path" CutIndex="0">
+            <XForm>1 0 0 1 75 30</XForm>
+            <VertList>V-1 -2c0x1c1x1V1 -2c0x1c1x1V1 2c0x1c1x1V-1 2c0x1c1x1</VertList>
+            <PrimList>L0 1L1 2L2 3L3 0</PrimList>
+        </BackupPath>
+        <XForm>1 0 0 1 75 30</XForm>
+    </Shape>
+    <Shape Type="Text" CutIndex="0" Font="Arial,-1,100,5,50,0,0,0,0,0" Str="No outline" H="4">
+        <XForm>1 0 0 1 75 20</XForm>
+    </Shape>
+    <Shape Type="Bitmap" CutIndex="5" W="10" H="10" Gamma="1" File="dot.png" Data="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==">
+        <XForm>1 0 0 1 40 40</XForm>
+    </Shape>
+    <Shape Type="Star" CutIndex="0" N="5">
+        <XForm>1 0 0 1 75 75</XForm>
+        <Extra Value="1"/>
+    </Shape>
+    <Shape Type="Rect" CutIndex="30" W="140" H="140" Cr="0">
+        <XForm>1 0 0 1 75 75</XForm>
+    </Shape>
+    <Notes ShowOnLoad="0" Notes="hand-written fixture"/>
+</LightBurnProject>

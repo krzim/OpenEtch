@@ -15,6 +15,7 @@ use tower::ServiceExt;
 
 use crate::hw::{LinkKind, Machine};
 use crate::pin::{self, ApprovalConfig, PhysicalConfirm, PinStore};
+use crate::projects::ProjectDir;
 use crate::runs::{Run, RunState};
 use crate::security::SecurityConfig;
 use crate::{AppState, api};
@@ -29,6 +30,11 @@ fn approval(confirm: Option<PhysicalConfirm>) -> ApprovalConfig {
     ApprovalConfig { pin: PinStore::new(&dir), confirm }
 }
 
+/// A fresh, not yet created projects directory under the temp dir.
+pub(crate) fn test_projects() -> ProjectDir {
+    ProjectDir::new(pin::temp_dir("projects").join("projects"))
+}
+
 /// A connected engine state on the simulated board with the generic profile.
 pub(crate) async fn test_state() -> Arc<AppState> {
     test_state_with(SecurityConfig::default()).await
@@ -41,7 +47,7 @@ async fn test_state_with(security: SecurityConfig) -> Arc<AppState> {
 
 async fn state_on(machine: Arc<Machine>, security: SecurityConfig, approval: ApprovalConfig) -> Arc<AppState> {
     machine.connect().await.expect("sim connects");
-    AppState::new(Session::new(doc::Document::default()), machine, security, approval)
+    AppState::new(Session::new(doc::Document::default()), machine, security, approval, test_projects())
 }
 
 /// The approve body with the right PIN.
@@ -684,7 +690,13 @@ async fn stop_cancels_a_run_awaiting_confirmation() {
 async fn stop_without_a_board_is_ok() {
     // Machine::usb opens nothing until connect, which this test never calls.
     let machine = Arc::new(Machine::usb(MachineProfile::generic_lmc_fiber(), None));
-    let st = AppState::new(Session::new(doc::Document::default()), machine, SecurityConfig::default(), approval(None));
+    let st = AppState::new(
+        Session::new(doc::Document::default()),
+        machine,
+        SecurityConfig::default(),
+        approval(None),
+        test_projects(),
+    );
     let (s, v) = send(&app(&st), req("POST", "/api/machine/stop", None)).await;
     assert_eq!(s, StatusCode::OK, "{v}");
     assert_eq!((&v["ok"], &v["connected"]), (&json!(true), &json!(false)));
@@ -694,7 +706,13 @@ async fn stop_without_a_board_is_ok() {
 #[tokio::test]
 async fn frame_stop_without_a_board_is_ok() {
     let machine = Arc::new(Machine::usb(MachineProfile::generic_lmc_fiber(), None));
-    let st = AppState::new(Session::new(doc::Document::default()), machine, SecurityConfig::default(), approval(None));
+    let st = AppState::new(
+        Session::new(doc::Document::default()),
+        machine,
+        SecurityConfig::default(),
+        approval(None),
+        test_projects(),
+    );
     let (s, v) = send(&app(&st), req("POST", "/api/machine/frame/stop", None)).await;
     assert_eq!((s, v), (StatusCode::OK, json!({"ok": true, "connected": false})));
     // A connected board answers plain ok.
@@ -813,4 +831,301 @@ async fn undo_events_carry_the_origin() {
         events.recv().await.unwrap(),
         crate::Event::DocumentChanged { revision: 2, origin: commands::Origin::Agent("cli".into()) }
     );
+}
+
+/// A hand-written LightBurn project: one fill layer, a 20x10 rectangle centred at (80, 75) and a triangle, laid
+/// out for a 150 mm field (the generic profile's).
+pub(crate) const LBRN2: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<LightBurnProject AppVersion="1.4.00" FormatVersion="1" MaterialHeight="0" MirrorX="False" MirrorY="False">
+    <CutSetting type="Scan">
+        <index Value="1"/>
+        <name Value="Fill"/>
+        <maxPower Value="30"/>
+        <speed Value="2000"/>
+        <frequency Value="100000"/>
+        <QPulseWidth Value="200"/>
+        <priority Value="0"/>
+    </CutSetting>
+    <Shape Type="Rect" CutIndex="1" W="20" H="10" Cr="0">
+        <XForm>1 0 0 1 80 75</XForm>
+    </Shape>
+    <Shape Type="Path" CutIndex="1" VertID="0" PrimID="0">
+        <XForm>1 0 0 1 75 75</XForm>
+        <VertList>V0 0c0x1c1x1V5 0c0x1c1x1V5 5c0x1c1x1</VertList>
+        <PrimList>L0 1L1 2L2 0</PrimList>
+    </Shape>
+</LightBurnProject>"#;
+
+fn exec(id: &str, params: Value) -> Request<Body> {
+    req("POST", "/api/execute", Some(json!({"id": id, "params": params})))
+}
+
+/// A raw (non-JSON) request body.
+fn raw(method: &str, uri: &str, body: impl Into<Body>) -> Request<Body> {
+    Request::builder().method(method).uri(uri).header("host", "localhost:7878").body(body.into()).unwrap()
+}
+
+/// GET a file: status, headers and body text.
+async fn fetch(app: &Router, uri: &str) -> (StatusCode, axum::http::HeaderMap, String) {
+    let res = app.clone().oneshot(req("GET", uri, None)).await.unwrap();
+    let (status, headers) = (res.status(), res.headers().clone());
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    (status, headers, String::from_utf8_lossy(&bytes).into_owned())
+}
+
+#[tokio::test]
+async fn projects_save_open_and_list() {
+    let st = test_state().await;
+    let app = app(&st);
+    let (_, doc) = send(&app, req("GET", "/api/document", None)).await;
+    assert_eq!(doc["field_mm"], json!(st.machine.profile().field_mm), "set from the profile at startup");
+    let (s, v) = send(&app, req("GET", "/api/project", None)).await;
+    assert_eq!((s, v), (StatusCode::OK, json!({"name": null, "saved_revision": null, "revision": 0, "dirty": false})));
+    let (s, v) = send(&app, req("GET", "/api/projects", None)).await;
+    assert_eq!((s, v), (StatusCode::OK, json!([])), "a missing projects dir lists nothing");
+
+    rect(&app, 10.0, 5.0).await;
+    let (_, v) = send(&app, req("GET", "/api/project", None)).await;
+    assert_eq!(v["dirty"], true);
+
+    let mut events = st.subscribe();
+    let (s, v) = send(&app, req("POST", "/api/projects/save", Some(json!({"name": "Coaster (v2)"})))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!((&v["ok"], &v["name"]), (&json!(true), &json!("Coaster (v2)")));
+    let path = std::path::PathBuf::from(v["path"].as_str().unwrap());
+    assert!(path.ends_with("Coaster (v2).openetch") && path.is_file(), "{path:?}");
+    assert_eq!(events.recv().await.unwrap(), crate::Event::ProjectSaved { name: "Coaster (v2)".into(), revision: 1 });
+    let (_, v) = send(&app, req("GET", "/api/project", None)).await;
+    assert_eq!(v, json!({"name": "Coaster (v2)", "saved_revision": 1, "revision": 1, "dirty": false}));
+    let saved_doc = st.document();
+
+    let (_, list) = send(&app, req("GET", "/api/projects", None)).await;
+    assert_eq!(list.as_array().unwrap().len(), 1, "{list}");
+    assert_eq!(list[0]["name"], "Coaster (v2)");
+    assert!(list[0]["size"].as_u64().unwrap() > 100);
+    assert!(list[0]["modified_unix_s"].as_u64().unwrap() > 1_600_000_000);
+
+    // doc.new clears the project; the empty document is clean.
+    let (_, v) = send(&app, exec("doc.new", json!({}))).await;
+    assert_eq!(v["ok"], true, "{v}");
+    let (_, v) = send(&app, req("GET", "/api/project", None)).await;
+    assert_eq!(v, json!({"name": null, "saved_revision": null, "revision": 2, "dirty": false}));
+
+    let (s, v) = send(&app, req("POST", "/api/projects/open", Some(json!({"name": "Coaster (v2)"})))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["result"]["created"], json!(["obj-2"]));
+    assert_eq!(v["revision"], 3);
+    let doc = st.document();
+    assert_eq!(doc::Document { revision: 0, ..doc }, doc::Document { revision: 0, ..saved_doc });
+    let (_, v) = send(&app, req("GET", "/api/project", None)).await;
+    assert_eq!(v, json!({"name": "Coaster (v2)", "saved_revision": 3, "revision": 3, "dirty": false}));
+    // Opening is one undo step like any edit.
+    assert_eq!(st.history().last().unwrap().command, "doc.load");
+
+    // Save as another name, then saving over it: the UI's save replaces by default, MCP's does not.
+    let (s, _) = send(&app, req("POST", "/api/projects/save", Some(json!({"name": "Other"})))).await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, _) = send(&app, req("POST", "/api/projects/save", Some(json!({"name": "Coaster (v2)"})))).await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, v) =
+        send(&app, req("POST", "/api/projects/save", Some(json!({"name": "Other", "overwrite": false})))).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+    let (s, _) =
+        send(&app, req("POST", "/api/projects/save", Some(json!({"name": "Coaster (v2)", "overwrite": false})))).await;
+    assert_eq!(s, StatusCode::OK, "saving the current project needs no overwrite");
+
+    let (s, v) = send(&app, req("POST", "/api/projects/open", Some(json!({"name": "Missing"})))).await;
+    assert_eq!((s, &v["ok"]), (StatusCode::NOT_FOUND, &json!(false)), "{v}");
+    let (s, _) = send(&app, req("POST", "/api/projects/open", Some(json!({"name": "Other", "overwrite": true})))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    let (s, _) = send(&app, req("POST", "/api/projects/save", Some(json!({})))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    // A corrupt project file is refused and leaves the document alone.
+    std::fs::write(st.projects.root().join("Broken.openetch"), "{nope").unwrap();
+    let rev = st.revision();
+    let (s, v) = send(&app, req("POST", "/api/projects/open", Some(json!({"name": "Broken"})))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
+    assert_eq!(st.revision(), rev);
+    let _ = std::fs::remove_dir_all(st.projects.root().parent().unwrap());
+}
+
+#[tokio::test]
+async fn project_names_cannot_leave_the_directory() {
+    let st = test_state().await;
+    let app = app(&st);
+    rect(&app, 4.0, 4.0).await;
+    let root = st.projects.root().to_path_buf();
+    let base = root.parent().unwrap().to_path_buf();
+    for name in ["../x", "a/b", "..", ".hidden", "C:\\x", "..\\x", "/etc/passwd", "x/../../y", "", "con"] {
+        for route in ["/api/projects/save", "/api/projects/open"] {
+            let (s, v) = send(&app, req("POST", route, Some(json!({"name": name})))).await;
+            assert_eq!(s, StatusCode::BAD_REQUEST, "{route} {name:?}: {v}");
+            assert!(v["error"].as_str().unwrap().contains("invalid project name"), "{v}");
+        }
+    }
+    assert!(!base.join("x.openetch").exists());
+    assert!(!root.exists(), "nothing was written");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[tokio::test]
+async fn download_names_the_file() {
+    let st = test_state().await;
+    let app = app(&st);
+    rect(&app, 10.0, 10.0).await;
+    let (s, h, body) = fetch(&app, "/api/document/download?format=openetch").await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(h["content-type"], "application/json; charset=utf-8");
+    assert_eq!(
+        h["content-disposition"],
+        "attachment; filename=\"Untitled.openetch\"; filename*=UTF-8''Untitled.openetch"
+    );
+    assert_eq!(h["cache-control"], "no-store");
+    assert_eq!(doc::file::from_openetch_json(&body).unwrap(), st.document());
+    // The default format is openetch.
+    assert_eq!(fetch(&app, "/api/document/download").await.2, body);
+
+    // A non-ASCII document name: an ASCII fallback plus the UTF-8 name.
+    let (_, v) = send(&app, exec("doc.rename", json!({"name": "Schild \"Müller\""}))).await;
+    assert_eq!(v["ok"], true, "{v}");
+    let (_, h, _) = fetch(&app, "/api/document/download?format=openetch").await;
+    assert_eq!(
+        h["content-disposition"],
+        "attachment; filename=\"Schild _M_ller_.openetch\"; filename*=UTF-8''Schild%20%22M%C3%BCller%22.openetch"
+    );
+    // The project name wins over the document name.
+    send(&app, req("POST", "/api/projects/save", Some(json!({"name": "Mug wrap"})))).await;
+    let (s, h, body) = fetch(&app, "/api/document/download?format=lbrn2").await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(h["content-type"], "application/xml; charset=utf-8");
+    assert_eq!(h["content-disposition"], "attachment; filename=\"Mug wrap.lbrn2\"; filename*=UTF-8''Mug%20wrap.lbrn2");
+    assert_eq!(h["x-openetch-warnings"], "0");
+    assert!(body.starts_with("<?xml") && body.contains("<LightBurnProject"), "{body}");
+    // The rectangle at the field centre lands at the centre of LightBurn's 150 mm workspace.
+    assert!(body.contains("1 0 0 1 75 75"), "{body}");
+
+    let (s, v) = send(&app, req("GET", "/api/document/download?format=svg", None)).await;
+    assert_eq!((s, &v["ok"]), (StatusCode::BAD_REQUEST, &json!(false)), "{v}");
+    let (s, _) = send(&app, req("GET", "/api/document/download?format=openetch&x=1", None)).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    assert!(st.history().iter().all(|h| h.command != "doc.export_lbrn2"), "downloads are not edits");
+    let _ = std::fs::remove_dir_all(st.projects.root().parent().unwrap());
+}
+
+#[tokio::test]
+async fn upload_replaces_and_merges() {
+    let st = test_state().await;
+    let app = app(&st);
+    rect(&app, 4.0, 4.0).await;
+    send(&app, req("POST", "/api/projects/save", Some(json!({"name": "Before"})))).await;
+
+    let mut events = st.subscribe();
+    let (s, v) = send(&app, raw("POST", "/api/document/upload?format=lbrn2&mode=replace", LBRN2)).await;
+    assert_eq!((s, &v["ok"]), (StatusCode::OK, &json!(true)), "{v}");
+    assert_eq!(v["result"]["created"].as_array().unwrap().len(), 2, "{v}");
+    assert_eq!(v["result"]["mode"], "replace");
+    assert_eq!(v["result"]["field_mm"], json!(150.0), "the document's (profile's) field");
+    assert_eq!(v["result"]["bounds"]["min"], json!([-5.0, -5.0]));
+    assert_eq!(
+        events.recv().await.unwrap(),
+        crate::Event::DocumentChanged { revision: 2, origin: commands::Origin::Ui }
+    );
+    assert_eq!(st.history().last().unwrap().origin, commands::Origin::Ui);
+    // An import changes the current project's document; it stays the current project, now unsaved.
+    let (_, p) = send(&app, req("GET", "/api/project", None)).await;
+    assert_eq!((&p["name"], &p["dirty"]), (&json!("Before"), &json!(true)), "{p}");
+
+    // Merge (with a BOM, as some writers add) keeps what is there; field_mm can be given.
+    let with_bom = format!("\u{feff}{LBRN2}");
+    let (_, v) = send(&app, raw("POST", "/api/document/upload?format=lbrn2&mode=merge&field_mm=110", with_bom)).await;
+    assert_eq!(v["ok"], true, "{v}");
+    assert_eq!(v["result"]["reused_layers"].as_array().unwrap().len(), 1, "{v}");
+    assert_eq!(v["result"]["field_mm"], json!(110.0));
+    assert_eq!(st.document().objects.len(), 4);
+    assert_eq!(st.document().field_mm, Some(150.0), "the document keeps its own field size");
+
+    // An .openetch upload replaces the document and is not a saved project.
+    let saved = doc::file::to_openetch_json(&doc::Document { name: "Upload".into(), ..doc::Document::default() });
+    let (_, v) = send(&app, raw("POST", "/api/document/upload?format=openetch", saved)).await;
+    assert_eq!(v["ok"], true, "{v}");
+    assert_eq!(st.document().name, "Upload");
+    assert_eq!(st.document().field_mm, Some(150.0), "the file had none: the document's is kept");
+    let (_, p) = send(&app, req("GET", "/api/project", None)).await;
+    assert_eq!((&p["name"], &p["dirty"]), (&json!(null), &json!(false)), "{p}");
+
+    // Refusals: all JSON, nothing changed.
+    let rev = st.revision();
+    for (uri, body, status) in [
+        ("/api/document/upload", LBRN2.as_bytes().to_vec(), StatusCode::BAD_REQUEST),
+        ("/api/document/upload?format=svg", LBRN2.as_bytes().to_vec(), StatusCode::BAD_REQUEST),
+        ("/api/document/upload?format=lbrn2&mode=append", LBRN2.as_bytes().to_vec(), StatusCode::BAD_REQUEST),
+        ("/api/document/upload?format=lbrn2&field_mm=wide", LBRN2.as_bytes().to_vec(), StatusCode::BAD_REQUEST),
+        ("/api/document/upload?format=lbrn2&name=x", LBRN2.as_bytes().to_vec(), StatusCode::BAD_REQUEST),
+        ("/api/document/upload?format=openetch&mode=merge", b"{}".to_vec(), StatusCode::BAD_REQUEST),
+        ("/api/document/upload?format=lbrn2", vec![0xff, 0xfe, 0x3c], StatusCode::BAD_REQUEST),
+        ("/api/document/upload?format=lbrn2", Vec::new(), StatusCode::BAD_REQUEST),
+    ] {
+        let (s, v) = send(&app, raw("POST", uri, body)).await;
+        assert_eq!((s, &v["ok"]), (status, &json!(false)), "{uri}: {v}");
+    }
+    // A file the command refuses answers like /api/execute: 200 {ok: false}.
+    let (s, v) = send(&app, raw("POST", "/api/document/upload?format=openetch", LBRN2)).await;
+    assert_eq!((s, &v["ok"]), (StatusCode::OK, &json!(false)), "{v}");
+    assert!(v["error"].as_str().unwrap().contains("import"), "{v}");
+    let (s, v) = send(&app, raw("POST", "/api/document/upload?format=lbrn2&field_mm=-3", LBRN2)).await;
+    assert_eq!((s, &v["ok"]), (StatusCode::OK, &json!(false)), "{v}");
+    assert_eq!(st.revision(), rev);
+    let _ = std::fs::remove_dir_all(st.projects.root().parent().unwrap());
+}
+
+#[tokio::test]
+async fn uploads_above_50_mb_are_refused() {
+    let st = test_state().await;
+    let app = app(&st);
+    let big = vec![b' '; api::MAX_UPLOAD_BYTES + 1];
+    let (s, v) = send(&app, raw("POST", "/api/document/upload?format=lbrn2", big)).await;
+    assert_eq!((s, &v["ok"]), (StatusCode::PAYLOAD_TOO_LARGE, &json!(false)), "{v}");
+    assert!(v["error"].as_str().unwrap().contains("50 MB"), "{v}");
+    // The 50 MB limit is the upload route's own: other routes keep theirs.
+    const { assert!(api::MAX_UPLOAD_BYTES > api::MAX_BODY_BYTES) };
+    let (s, _) = send(&app, raw("POST", "/api/execute", vec![b' '; api::MAX_BODY_BYTES + 1])).await;
+    assert_eq!(s, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(st.revision(), 0);
+}
+
+/// Real LightBurn projects (never in the repo): every `.lbrn2` in the directories listed in
+/// `OPENETCH_LBRN_SAMPLES` (OS path-list separator) is uploaded, saved, reopened, downloaded as LightBurn and
+/// uploaded again with the same object count.
+#[tokio::test]
+async fn real_lightburn_files_go_through_the_routes() {
+    let Some(dirs) = std::env::var_os("OPENETCH_LBRN_SAMPLES") else {
+        println!("note: OPENETCH_LBRN_SAMPLES is not set; skipping the real-file route test");
+        return;
+    };
+    let files: Vec<std::path::PathBuf> = std::env::split_paths(&dirs)
+        .filter_map(|d| std::fs::read_dir(d).ok())
+        .flat_map(|rd| rd.flatten().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "lbrn2"))
+        .collect();
+    for path in files {
+        let st = test_state().await;
+        let app = app(&st);
+        let bytes = std::fs::read(&path).unwrap();
+        let (s, v) = send(&app, raw("POST", "/api/document/upload?format=lbrn2&field_mm=150", bytes)).await;
+        assert_eq!((s, &v["ok"]), (StatusCode::OK, &json!(true)), "{}: {v}", path.display());
+        let objects = st.document().objects.len();
+        let (s, v) = send(&app, req("POST", "/api/projects/save", Some(json!({"name": "sample"})))).await;
+        assert_eq!(s, StatusCode::OK, "{v}");
+        send(&app, exec("doc.new", json!({}))).await;
+        let (s, v) = send(&app, req("POST", "/api/projects/open", Some(json!({"name": "sample"})))).await;
+        assert_eq!(s, StatusCode::OK, "{v}");
+        assert_eq!(st.document().objects.len(), objects);
+        let (s, _, xml) = fetch(&app, "/api/document/download?format=lbrn2").await;
+        assert_eq!(s, StatusCode::OK);
+        let (_, v) = send(&app, raw("POST", "/api/document/upload?format=lbrn2", xml)).await;
+        assert_eq!(v["ok"], true, "{v}");
+        assert_eq!(st.document().objects.len(), objects, "{}", path.display());
+        println!("{}: {objects} object(s) through upload, save, open, download, upload", path.display());
+        let _ = std::fs::remove_dir_all(st.projects.root().parent().unwrap());
+    }
 }

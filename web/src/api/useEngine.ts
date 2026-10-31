@@ -1,11 +1,11 @@
-// The engine connection as a React hook: fetches the document, history, machine status and preview, listens on the
+// The engine connection as a React hook: fetches the document, history, machine status, project and preview, listens on the
 // /api/events WebSocket, and exposes `run` for edits. The document is only ever replaced by a fresh GET; edits are
 // commands, followed by a refetch (on the `document_changed` event, and after each execute response as a fallback).
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, batch, eventsUrl, execute, type Invocation } from "./client.ts";
 import { runFinishedToast, withApprovalLock } from "./runs.ts";
-import type { CommandSpec, EngineEvent, GDocument, HistoryEntry, MachineStatus, Origin, Preview } from "./types.ts";
+import type { CommandSpec, EngineEvent, GDocument, HistoryEntry, MachineStatus, Origin, Preview, ProjectInfo } from "./types.ts";
 
 /** WebSocket state shown by the connection indicator. */
 export type LinkState = "connecting" | "open" | "closed";
@@ -16,6 +16,8 @@ export interface Engine {
   machine: MachineStatus | null;
   preview: Preview | null;
   commands: CommandSpec[] | null;
+  /** GET /api/project, or null until it answers (or when the engine has no project routes). */
+  project: ProjectInfo | null;
   link: LinkState;
   /** Last HTTP error talking to the engine, cleared on the next success. */
   httpError: string | null;
@@ -28,6 +30,7 @@ export interface Engine {
   refreshDoc: () => Promise<void>;
   refreshMachine: () => Promise<void>;
   refreshPreview: () => Promise<void>;
+  refreshProject: () => Promise<void>;
 }
 
 /** An edit announced by `document_changed` with a non-UI origin. `seq` changes on every event so repeats re-flash. */
@@ -80,6 +83,7 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
   const [machine, setMachine] = useState<MachineStatus | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [commands, setCommands] = useState<CommandSpec[] | null>(null);
+  const [project, setProject] = useState<ProjectInfo | null>(null);
   const [link, setLink] = useState<LinkState>("connecting");
   const [httpError, setHttpError] = useState<string | null>(null);
   const [remoteEdit, setRemoteEdit] = useState<RemoteEdit | null>(null);
@@ -103,6 +107,17 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
     }
   });
 
+  const refreshProject = useCoalesced(async () => {
+    try {
+      const p = await api.project();
+      setProject(p && typeof p === "object" && typeof p.dirty === "boolean" ? p : null);
+    } catch (e) {
+      // An engine without project routes answers 404: no indicator, and the File menu falls back to its own checks.
+      setProject(null);
+      if (!(e instanceof ApiError && e.status === 404)) fail(e);
+    }
+  });
+
   const refreshDoc = useCoalesced(async () => {
     try {
       const [d, h] = await Promise.all([api.document(), api.history()]);
@@ -113,6 +128,8 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
       fail(e);
       return;
     }
+    // The dirty flag follows the revision.
+    void refreshProject();
     if (wantPreviewRef.current) void refreshPreview();
   });
 
@@ -202,6 +219,7 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
         switch (ev.type) {
           case "document_changed":
             if (typeof ev.revision !== "number" || ev.revision !== docRevision.current) void refreshDoc();
+            else void refreshProject();
             // An edit makes pending runs stale; fetch their flags now rather than at the next poll.
             void refreshMachine();
             if (typeof ev.revision === "number" && isRemoteOrigin(ev.origin)) {
@@ -219,6 +237,9 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
           case "approval_locked":
             setMachine((m) => withApprovalLock(m, ev.until_unix_s));
             void refreshMachine();
+            break;
+          case "project_saved":
+            void refreshProject();
             break;
           case "run_finished": {
             void refreshMachine();
@@ -248,7 +269,7 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
         ws.close();
       }
     };
-  }, [refreshDoc, refreshMachine]);
+  }, [refreshDoc, refreshMachine, refreshProject]);
 
   // Poll machine status slowly as a safety net (and faster while the socket is down).
   useEffect(() => {
@@ -262,6 +283,7 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
     machine,
     preview,
     commands,
+    project,
     link,
     httpError,
     remoteEdit,
@@ -271,5 +293,6 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
     refreshDoc,
     refreshMachine,
     refreshPreview,
+    refreshProject,
   };
 }

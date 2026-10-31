@@ -80,7 +80,7 @@ textarea {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 0 8px 0 12px;
+  padding: 0 8px 0 4px;
   background: #3c3f44;
   color: #f1f1f1;
   border-bottom: 1px solid #2b2d31;
@@ -206,6 +206,250 @@ textarea {
   padding: 1px 6px;
   font-size: 11px;
 }
+
+/* ---- File menu and project indicator ---------------------------------------------------------------------- */
+
+.file-menu {
+  position: relative;
+  flex: none;
+}
+
+.file-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: var(--tap);
+  padding: 0 8px 0 12px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: #f1f1f1;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.file-btn:hover,
+.file-btn.open {
+  background: #4b4f55;
+}
+
+.menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 150;
+  min-width: 240px;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.25);
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.menu-item:hover:not(:disabled),
+.menu-item:focus-visible {
+  background: var(--accent-soft);
+  outline: 0;
+}
+
+.menu-item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.menu-hint {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.menu-sep {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--border-soft);
+}
+
+.project {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.doc-name.unsaved {
+  font-style: italic;
+}
+
+.dirty-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f1b31c;
+  flex: none;
+}
+
+.section-label {
+  color: var(--text-2);
+  margin: 2px 0 6px;
+}
+
+.project-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.project-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-height: 48px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.project-row:hover:not(:disabled) {
+  background: var(--chrome-2);
+}
+
+.project-row.current {
+  border-color: var(--accent);
+}
+
+.project-row-name {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.project-row-meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.file-pick {
+  flex: 1;
+  min-width: 0;
+  justify-content: flex-start;
+}
+
+.file-pick-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 8px 92px;
+}
+
+.chip {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: #fff;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.chip.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.warn-text {
+  color: #8a4f00;
+}
+
+.warn-panel {
+  position: fixed;
+  left: 12px;
+  bottom: 76px;
+  z-index: 90;
+  width: min(480px, calc(100vw - 24px));
+  max-height: 45vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--warn);
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.2);
+}
+
+.warn-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 4px 2px 12px;
+  font-weight: 600;
+  background: #fff7e6;
+  border-bottom: 1px solid var(--border-soft);
+  border-radius: 8px 8px 0 0;
+}
+
+.warn-list {
+  margin: 0;
+  padding: 8px 12px 10px 28px;
+  overflow-y: auto;
+  font-size: 13px;
+}
+
+.warn-list li {
+  margin: 3px 0;
+  overflow-wrap: anywhere;
+}
+
+.warn-count {
+  margin-left: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+@media (max-width: 640px) {
+  .chip-row {
+    margin-left: 0;
+  }
+}
+
+/* The workspace switcher shrinks (and scrolls sideways) before STOP ever does. */
+.topbar .workspaces {
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.topbar-actions {
+  flex: none;
+}
+
 
 /* ---- buttons ----------------------------------------------------------------------------------------------- */
 
@@ -1345,5 +1589,35 @@ textarea {
   }
   .btn-stop {
     min-width: 72px;
+  }
+}
+
+/* Phones: the File button joins the top bar, so tighten it (after the 760px rules, which it overrides). */
+@media (max-width: 480px) {
+  .topbar {
+    gap: 6px;
+  }
+  .brand-mark,
+  .file-btn .icon {
+    display: none;
+  }
+  .file-btn {
+    padding: 0 8px;
+  }
+  .workspaces button {
+    padding: 0 8px;
+  }
+  .topbar-actions {
+    gap: 4px;
+  }
+  .topbar .icon-btn {
+    min-width: 34px;
+  }
+  .conn {
+    padding: 0 4px;
+  }
+  .btn-stop {
+    min-width: 64px;
+    padding: 0 10px;
   }
 }

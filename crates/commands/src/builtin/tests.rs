@@ -19,6 +19,11 @@ fn exec(s: &mut Session, id: &str, params: Value) -> Value {
 const ALL_IDS: &[&str] = &[
     "doc.inspect",
     "doc.rename",
+    "doc.new",
+    "doc.load",
+    "doc.save",
+    "doc.import_lbrn2",
+    "doc.export_lbrn2",
     "stock.define",
     "stock.clear",
     "layer.add",
@@ -44,7 +49,8 @@ fn registry_lists_every_command_with_documented_schema() {
     assert_eq!(ids, ALL_IDS);
     for spec in s.registry().specs() {
         assert!(!spec.description.is_empty() && spec.description.len() < 700, "{}", spec.id);
-        assert_eq!(spec.risk == Risk::Query, spec.id == "doc.inspect");
+        let query = matches!(spec.id, "doc.inspect" | "doc.save" | "doc.export_lbrn2");
+        assert_eq!(spec.risk == Risk::Query, query, "{}", spec.id);
         let props = spec.input_schema["properties"].as_object();
         for (name, p) in props.into_iter().flatten() {
             // Every field carries a description, directly or through a referenced definition.
@@ -200,8 +206,15 @@ fn agent_workflow_import_place_array() {
     assert_eq!(s.history()[0].origin, Origin::Agent("test".into()));
 }
 
+const LBRN: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<LightBurnProject AppVersion="1.4.00" FormatVersion="1">
+    <CutSetting type="Cut"><index Value="0"/><maxPower Value="20"/><speed Value="500"/><frequency Value="30000"/></CutSetting>
+    <Shape Type="Ellipse" CutIndex="0" Rx="3" Ry="2"><XForm>1 0 0 1 75 75</XForm></Shape>
+</LightBurnProject>"#;
+
 #[test]
 fn undo_redo_for_each_edit_command() {
+    let loaded = Document { name: "Loaded".into(), ..Document::default() };
     let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><circle cx="10" cy="10" r="5"/></svg>"#;
     let steps: Vec<(&str, Value)> = vec![
         ("doc.rename", json!({"name": "Coasters"})),
@@ -224,6 +237,10 @@ fn undo_redo_for_each_edit_command() {
         ("object.delete", json!({"ids": ["obj-5"]})),
         ("layer.delete", json!({"id": "layer-2", "reassign_to": "layer-1"})),
         ("stock.clear", json!({})),
+        ("doc.import_lbrn2", json!({"content": LBRN, "mode": "merge", "field_mm": 150})),
+        ("doc.import_lbrn2", json!({"content": LBRN, "field_mm": 150})),
+        ("doc.load", json!({"content": doc::file::to_openetch_json(&loaded)})),
+        ("doc.new", json!({"name": "Fresh"})),
     ];
     let mut s = Session::new(Document::default());
     for (id, params) in steps {

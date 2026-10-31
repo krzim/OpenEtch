@@ -111,7 +111,7 @@ impl SettingsPatch {
 }
 
 /// Sanity limits only; the machine profile's hard limits are enforced by `plan`/`machine`, not here.
-fn validate_settings(cmd: &str, s: &CutSettings) -> Result<()> {
+pub(super) fn validate_settings(cmd: &str, s: &CutSettings) -> Result<()> {
     if !(0.0..=100.0).contains(&s.power_pct) {
         return Err(invalid(cmd, format!("power_pct must be within 0..=100 (got {})", s.power_pct)));
     }

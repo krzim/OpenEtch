@@ -8,6 +8,7 @@ publish.workspace = true
 
 [dependencies]
 doc = { workspace = true }
+lbrn = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 schemars = { workspace = true }

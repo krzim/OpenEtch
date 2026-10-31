@@ -33,6 +33,9 @@ OPTIONS:
   --allow-host <name>   Extra host name accepted in Host/Origin headers (repeatable), e.g. galvo.local.
   --config-dir <path>   Engine config directory (operator PIN). Default: the OS config dir + openetch, e.g.
                         %APPDATA%\\openetch or ~/.config/openetch.
+  --projects-dir <path> Where named projects (.openetch) and LightBurn exports are saved. Default: the OS data dir
+                        + openetch/projects, e.g. %APPDATA%\\openetch\\projects or ~/.local/share/openetch/projects;
+                        created on the first save.
   --confirm-input <bit> Also require a physical input (0-15, ReadPort) after PIN approval: the run waits up to 30 s
                         for the input to be released and then pressed. The B6's markcfg suggests a foot pedal on 14
                         (unverified).
@@ -53,6 +56,8 @@ pub struct Config {
     pub config_dir: PathBuf,
     /// Input bit for physical run confirmation, if any.
     pub confirm_input: Option<u8>,
+    /// Where named projects are saved.
+    pub projects_dir: PathBuf,
 }
 
 /// What the command line asked for.
@@ -102,6 +107,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Parsed, String> 
     }
     let mut listen: Option<String> = None;
     let mut config: Option<PathBuf> = None;
+    let mut projects_dir: Option<PathBuf> = None;
     let mut confirm_input = None;
     let mut profile: Option<PathBuf> = None;
     let mut web_dir: Option<PathBuf> = None;
@@ -132,6 +138,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Parsed, String> 
             }
             "--allow-host" => allow_hosts.push(value("--allow-host")?),
             "--config-dir" => config = Some(PathBuf::from(value("--config-dir")?)),
+            "--projects-dir" => projects_dir = Some(PathBuf::from(value("--projects-dir")?)),
             "--confirm-input" => {
                 let v = value("--confirm-input")?;
                 match v.parse::<u8>() {
@@ -158,6 +165,9 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Parsed, String> 
         allow_hosts,
         config_dir: config_dir(config)?,
         confirm_input,
+        projects_dir: projects_dir
+            .or_else(crate::projects::default_projects_dir)
+            .ok_or("cannot find the OS data directory; pass --projects-dir <path>")?,
     }))
 }
 
@@ -208,6 +218,9 @@ mod tests {
         let c = run(&["--config-dir", "cfg", "--confirm-input=14"]);
         assert_eq!((c.config_dir, c.confirm_input), (PathBuf::from("cfg"), Some(14)));
         assert_eq!(run(&[]).confirm_input, None);
+        assert_eq!(run(&["--projects-dir", "p"]).projects_dir, PathBuf::from("p"));
+        assert_eq!(run(&["--projects-dir=q"]).projects_dir, PathBuf::from("q"));
+        assert!(run(&[]).projects_dir.ends_with(Path::new("openetch").join("projects")));
     }
 
     #[test]

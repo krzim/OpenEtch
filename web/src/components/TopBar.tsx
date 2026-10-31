@@ -1,13 +1,18 @@
-// Top bar: app name, Fusion-style workspace switcher, undo/redo, the always-visible Stop button, and the connection
-// indicator (WebSocket state, engine reachability, and any command ids the UI needs that the engine lacks).
+// Top bar: the File menu (far left), app name, project name with an unsaved-changes dot, Fusion-style workspace
+// switcher, undo/redo, the always-visible Stop button, and the connection indicator (WebSocket state, engine
+// reachability, and any command ids the UI needs that the engine lacks).
 
+import type { ReactNode } from "react";
 import type { LinkState } from "../api/useEngine.ts";
 import type { MachineStatus } from "../api/types.ts";
+import { ProjectIndicator } from "./FileMenu.tsx";
 import { Icon } from "./ui.tsx";
 
 export type Workspace = "design" | "laser";
 
 export interface TopBarProps {
+  /** The File menu button. */
+  fileMenu: ReactNode;
   workspace: Workspace;
   onWorkspace: (w: Workspace) => void;
   onUndo: () => void;
@@ -18,6 +23,10 @@ export interface TopBarProps {
   machine: MachineStatus | null;
   missingCommands: string[];
   docName: string | null;
+  /** The saved project the document is, or null. */
+  projectName: string | null;
+  /** Unsaved changes; null when the engine reports no project state. */
+  dirty: boolean | null;
   pendingRuns: number;
 }
 
@@ -34,10 +43,11 @@ export function TopBar(p: TopBarProps) {
     .join("\n");
   return (
     <header className="topbar">
+      {p.fileMenu}
       <div className="brand">
         <span className="brand-mark" aria-hidden="true" />
         <span className="brand-name">OpenEtch</span>
-        {p.docName && <span className="doc-name">{p.docName}</span>}
+        <ProjectIndicator name={p.projectName} docName={p.docName} dirty={p.dirty} />
       </div>
       <nav className="workspaces" role="tablist" aria-label="Workspace">
         {(["design", "laser"] as const).map((w) => (

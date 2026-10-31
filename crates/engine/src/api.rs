@@ -1,11 +1,13 @@
 //! The HTTP API (ARCHITECTURE.md "Engine API") plus `/mcp` and the static web UI, as one axum [`Router`].
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
 use axum::body::Bytes;
+use axum::extract::rejection::{BytesRejection, QueryRejection};
 use axum::extract::{DefaultBodyLimit, Path as UrlPath, Query, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{HeaderMap, HeaderName, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router, middleware};
@@ -18,11 +20,13 @@ use tower_http::services::{ServeDir, ServeFile};
 use crate::frame::FrameRequest;
 use crate::render::RenderOptions;
 use crate::security::{self, has_mcp_marker};
-use crate::state::parse_origin;
+use crate::state::{FileFormat, parse_origin};
 use crate::{AppState, EngineError, approve, events, mcp};
 
 /// Largest request body (SVG imports can be large; the commands crate refuses imports over 20 MB).
 pub const MAX_BODY_BYTES: usize = 32 * 1024 * 1024;
+/// Largest file `POST /api/document/upload` accepts.
+pub const MAX_UPLOAD_BYTES: usize = crate::projects::MAX_FILE_BYTES;
 
 /// The whole app: `/api/*`, `/mcp`, and `web_dir` (with SPA fallback to `index.html`) when given, all behind
 /// [`security::guard`].
@@ -44,6 +48,12 @@ pub fn router(state: Arc<AppState>, web_dir: Option<&Path>) -> Router {
         .route("/runs", post(request_run))
         .route("/runs/{id}/approve", post(approve_run))
         .route("/events", get(events::events_ws))
+        .route("/projects", get(project_list))
+        .route("/projects/save", post(project_save))
+        .route("/projects/open", post(project_open))
+        .route("/project", get(project_status))
+        .route("/document/download", get(download))
+        .route("/document/upload", post(upload).layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES)))
         .fallback(api_not_found)
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES));
     let mut app = Router::new().nest("/api", api).nest_service("/mcp", mcp::service(state.clone()));
@@ -197,6 +207,142 @@ async fn request_run(State(st): State<Arc<AppState>>, body: Bytes) -> Result<Res
     let view = st.request_run(origin).await?;
     let body = json!({ "ok": true, "id": view.id, "run": view, "message": crate::state::APPROVAL_MESSAGE });
     Ok((StatusCode::CREATED, Json(body)).into_response())
+}
+
+async fn project_list(State(st): State<Arc<AppState>>) -> Result<Json<Value>, EngineError> {
+    Ok(Json(json!(st.project_list().await?)))
+}
+
+async fn project_status(State(st): State<Arc<AppState>>) -> Json<Value> {
+    Json(st.project_status())
+}
+
+/// Body of `POST /api/projects/save` and `/api/projects/open`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectBody {
+    name: String,
+    /// Save only: replace an existing project other than the current one (default true; the UI confirms first).
+    #[serde(default)]
+    overwrite: Option<bool>,
+    #[serde(default)]
+    origin: Option<Value>,
+}
+
+async fn project_save(State(st): State<Arc<AppState>>, body: Bytes) -> Result<Json<Value>, EngineError> {
+    let b: ProjectBody = body_required(&body)?;
+    Ok(Json(st.project_save(&b.name, b.overwrite.unwrap_or(true)).await?))
+}
+
+async fn project_open(State(st): State<Arc<AppState>>, body: Bytes) -> Result<Json<Value>, EngineError> {
+    let b: ProjectBody = body_required(&body)?;
+    if b.overwrite.is_some() {
+        return Err(EngineError::BadRequest("overwrite is only for saving".into()));
+    }
+    let origin = parse_origin(b.origin.as_ref())?;
+    Ok(Json(st.project_open(&b.name, origin).await?))
+}
+
+/// Query of the download and upload routes, parsed by hand so every mistake is a JSON error.
+type FileQuery = Result<Query<HashMap<String, String>>, QueryRejection>;
+
+fn file_query(q: FileQuery, allowed: &[&str]) -> Result<HashMap<String, String>, EngineError> {
+    let Query(q) = q.map_err(|e| EngineError::BadRequest(format!("bad query: {e}")))?;
+    if let Some(k) = q.keys().find(|k| !allowed.contains(&k.as_str())) {
+        return Err(EngineError::BadRequest(format!("unknown query parameter '{k}' (allowed: {})", allowed.join(", "))));
+    }
+    Ok(q)
+}
+
+/// `name` made safe for a `Content-Disposition` header: an ASCII `filename` (other characters become `_`) and an
+/// RFC 5987 `filename*` with the full UTF-8 name.
+fn content_disposition(stem: &str, ext: &str) -> String {
+    let stem: String = stem.chars().filter(|c| !c.is_control() && !matches!(c, '/' | '\\')).collect();
+    let stem = match stem.trim() {
+        "" => "Untitled",
+        s => s,
+    };
+    let file = format!("{stem}.{ext}");
+    let ascii: String = file
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, ' ' | '-' | '_' | '.' | '(' | ')') { c } else { '_' })
+        .collect();
+    let mut encoded = String::new();
+    for b in file.bytes() {
+        if b.is_ascii_alphanumeric() || b"!#$&+-.^_`|~".contains(&b) {
+            encoded.push(char::from(b));
+        } else {
+            encoded.push_str(&format!("%{b:02X}"));
+        }
+    }
+    format!("attachment; filename=\"{ascii}\"; filename*=UTF-8''{encoded}")
+}
+
+/// `GET /api/document/download?format=openetch|lbrn2` (default openetch): the document as a file. A LightBurn
+/// export also sends `X-OpenEtch-Warnings: <count>` (the warnings themselves come from `doc.export_lbrn2`).
+async fn download(State(st): State<Arc<AppState>>, q: FileQuery) -> Result<Response, EngineError> {
+    let q = file_query(q, &["format"])?;
+    let format = FileFormat::parse(q.get("format").map_or("openetch", String::as_str))?;
+    let file = st.download(format)?;
+    let content_type = match format {
+        FileFormat::OpenEtch => "application/json; charset=utf-8",
+        FileFormat::Lbrn2 => "application/xml; charset=utf-8",
+    };
+    let disposition = content_disposition(&file.stem, format.extension());
+    let headers = [
+        (header::CONTENT_TYPE, content_type.to_owned()),
+        (header::CONTENT_DISPOSITION, disposition),
+        (header::CACHE_CONTROL, "no-store".to_owned()),
+        (HeaderName::from_static("x-openetch-warnings"), file.warnings.len().to_string()),
+    ];
+    Ok((headers, file.content).into_response())
+}
+
+/// `POST /api/document/upload?format=openetch|lbrn2&mode=replace|merge[&field_mm=150]` with the raw file as the
+/// body (at most [`MAX_UPLOAD_BYTES`], UTF-8). Runs `doc.load` or `doc.import_lbrn2` with origin `ui`; answers like
+/// `/api/execute` (a failing command is 200 `{ok: false, error}`).
+async fn upload(
+    State(st): State<Arc<AppState>>,
+    q: FileQuery,
+    body: Result<Bytes, BytesRejection>,
+) -> Result<Response, EngineError> {
+    let q = file_query(q, &["format", "mode", "field_mm"])?;
+    let body = body.map_err(|e| match e.status() {
+        StatusCode::PAYLOAD_TOO_LARGE => {
+            EngineError::TooLarge(format!("the file is larger than {} MB", MAX_UPLOAD_BYTES / (1024 * 1024)))
+        }
+        _ => EngineError::BadRequest(format!("cannot read the upload: {e}")),
+    })?;
+    let format = FileFormat::parse(q.get("format").map(String::as_str).ok_or_else(|| {
+        EngineError::BadRequest("the format query parameter is required (openetch or lbrn2)".into())
+    })?)?;
+    let merge = match q.get("mode").map(String::as_str) {
+        None | Some("replace") => false,
+        Some("merge") => true,
+        Some(other) => return Err(EngineError::BadRequest(format!("unknown mode '{other}' (replace or merge)"))),
+    };
+    let field_mm = match q.get("field_mm") {
+        None => None,
+        Some(v) => {
+            Some(v.parse::<f64>().map_err(|_| EngineError::BadRequest(format!("field_mm '{v}' is not a number")))?)
+        }
+    };
+    if body.is_empty() {
+        return Err(EngineError::BadRequest("the upload is empty".into()));
+    }
+    let text = String::from_utf8(body.to_vec()).map_err(|_| {
+        EngineError::BadRequest("the file is not UTF-8 text (expected .openetch JSON or .lbrn2 XML)".into())
+    })?;
+    // LightBurn and some editors write a byte-order mark.
+    let text = match text.strip_prefix('\u{feff}') {
+        Some(rest) => rest.to_owned(),
+        None => text,
+    };
+    match st.upload(format, merge, field_mm, text, commands::Origin::Ui) {
+        Ok(o) => Ok(Json(json!({ "ok": true, "result": o.result, "revision": o.revision })).into_response()),
+        Err(EngineError::Command(e)) => Ok(command_failure(e)),
+        Err(e) => Err(e),
+    }
 }
 
 /// Body of `POST /api/runs/{id}/approve`.
