@@ -67,9 +67,62 @@ struct Active {
     estimated_time_s: f64,
     /// When the current iteration started streaming.
     started: Option<Instant>,
-    /// Time spent paused in the current iteration.
+    /// Time spent paused in the current iteration (finished pauses).
     paused: Duration,
+    /// When the pause in progress began (see [`Active::account`]).
+    pause_began: Option<Instant>,
+    /// The last elapsed time reported, so the clock never runs backwards.
+    last_elapsed: f64,
     last_tick: Option<Instant>,
+}
+
+impl Active {
+    /// Follow the pause state at `now`: a pause starts the moment it is first seen (by the ticker or a status read)
+    /// and ends when it is first seen over, so the elapsed time stands still while paused and never jumps back.
+    fn account(&mut self, paused: bool, now: Instant) {
+        if self.started.is_none() {
+            self.pause_began = None;
+            return;
+        }
+        match (paused, self.pause_began) {
+            (true, None) => self.pause_began = Some(now),
+            (false, Some(b)) => {
+                self.paused += now.saturating_duration_since(b);
+                self.pause_began = None;
+            }
+            _ => {}
+        }
+    }
+
+    /// Seconds of marking in the current iteration at `now` (paused time excluded), never less than last reported.
+    fn elapsed(&mut self, now: Instant) -> f64 {
+        let Some(s) = self.started else { return 0.0 };
+        let held = self.pause_began.map_or(Duration::ZERO, |b| now.saturating_duration_since(b));
+        let e = now.saturating_duration_since(s).saturating_sub(self.paused).saturating_sub(held).as_secs_f64();
+        self.last_elapsed = self.last_elapsed.max(e);
+        self.last_elapsed
+    }
+}
+
+/// Packets the board may hold ahead of the one it executes: it takes a new list packet only when it reports READY,
+/// and the controller sends `ExecuteList` once more than two are queued, so all but the last [`PACKETS_AHEAD`] sent
+/// packets are taken as done ("acknowledged").
+pub const PACKETS_AHEAD: usize = 2;
+
+/// Job progress (0..1) from the packets and the time estimate (JOB-050). The packets bound it: at least the
+/// acknowledged ones (`sent - PACKETS_AHEAD`) are done and at most the sent ones, and the time estimate places it
+/// between them. With no packet count (`total` 0) it is by time alone. Never 1 before the job has ended.
+pub fn blended_progress(sent: usize, total: usize, elapsed_s: f64, estimated_s: f64) -> (f64, &'static str) {
+    let by_time = if estimated_s > 0.0 { (elapsed_s / estimated_s).clamp(0.0, 1.0) } else { 0.0 };
+    if total == 0 {
+        return (by_time.min(0.99), "time");
+    }
+    let sent = sent.min(total);
+    let low = sent.saturating_sub(PACKETS_AHEAD) as f64 / total as f64;
+    let high = sent as f64 / total as f64;
+    let p = by_time.clamp(low, high);
+    let source = if p == by_time { "time" } else { "packets" };
+    (p.min(0.99), source)
 }
 
 /// Counter, Stop At and the active job. See the module docs.
@@ -159,6 +212,8 @@ impl JobTracker {
             estimated_time_s,
             started: None,
             paused: Duration::ZERO,
+            pause_began: None,
+            last_elapsed: 0.0,
             last_tick: None,
         });
     }
@@ -177,6 +232,8 @@ impl JobTracker {
             a.waiting_for_input = false;
             a.started = Some(Instant::now());
             a.paused = Duration::ZERO;
+            a.pause_began = None;
+            a.last_elapsed = 0.0;
             a.last_tick = None;
         }
     }
@@ -201,39 +258,42 @@ impl JobTracker {
         lock(&self.active).as_ref().map(|a| a.run_id.clone())
     }
 
-    /// Account paused time (called by the progress ticker).
+    /// Account paused time (called by the progress ticker; status reads do it too).
     pub(crate) fn tick(&self, paused: bool) {
         if let Some(a) = lock(&self.active).as_mut() {
             let now = Instant::now();
-            if let Some(last) = a.last_tick
-                && paused
-                && a.started.is_some()
-            {
-                a.paused += now - last;
-            }
+            a.account(paused, now);
             a.last_tick = Some(now);
         }
     }
 
     /// `GET /api/job` for `device` (the active device): `{active, run_id, state, iteration, iterations, completed,
-    /// packets_sent, packets_total, part, parts, paused, elapsed_s, estimated_time_s, remaining_s, progress, count,
-    /// stop_at, end_after_current}`.
+    /// packets_sent, packets_acknowledged, packets_total, part, parts, paused, elapsed_s, estimated_time_s,
+    /// remaining_s, progress, progress_source, count, stop_at, end_after_current}`. `progress` blends the packets
+    /// acknowledged with the time estimate ([`blended_progress`]); `elapsed_s` stands still while paused.
     pub fn status(&self, machine: &Machine, device: &str) -> Value {
-        let a = lock(&self.active).clone();
         let count = self.count(device);
         let stop_at = self.stop_at();
-        let Some(a) = a else {
-            return json!({
-                "active": false, "run_id": null, "state": "idle", "iteration": 0, "iterations": null, "completed": 0,
-                "packets_sent": 0, "packets_total": 0, "part": 0, "parts": 0, "paused": false, "elapsed_s": 0.0,
-                "estimated_time_s": 0.0, "remaining_s": 0.0, "progress": 0.0, "count": count, "stop_at": stop_at,
-                "end_after_current": false,
-            });
-        };
         let p = machine.progress();
         // A pause asked for between iterations holds the job too (module `approve`).
         let paused = p.paused || machine.pause_requested();
-        let elapsed = a.started.map_or(0.0, |s| (s.elapsed().saturating_sub(a.paused)).as_secs_f64());
+        let snapshot = {
+            let mut guard = lock(&self.active);
+            guard.as_mut().map(|a| {
+                let now = Instant::now();
+                a.account(paused, now);
+                let elapsed = a.elapsed(now);
+                (a.clone(), elapsed)
+            })
+        };
+        let Some((a, elapsed)) = snapshot else {
+            return json!({
+                "active": false, "run_id": null, "state": "idle", "iteration": 0, "iterations": null, "completed": 0,
+                "packets_sent": 0, "packets_acknowledged": 0, "packets_total": 0, "part": 0, "parts": 0, "paused": false,
+                "elapsed_s": 0.0, "estimated_time_s": 0.0, "remaining_s": 0.0, "progress": 0.0, "progress_source": "time",
+                "count": count, "stop_at": stop_at, "end_after_current": false,
+            });
+        };
         let state = if paused {
             "paused"
         } else if a.waiting_for_input {
@@ -244,10 +304,11 @@ impl JobTracker {
             "running"
         };
         let est = a.estimated_time_s;
-        let by_time = if est > 0.0 { (elapsed / est).min(1.0) } else { 0.0 };
-        // Packets are buffered ahead of the galvo, so the time estimate is the better guide; never report done
-        // before the board is.
-        let progress = if a.started.is_some() { by_time.min(0.99) } else { 0.0 };
+        let sent = if a.started.is_some() { p.packets_sent } else { 0 };
+        let (progress, source) =
+            if a.started.is_some() { blended_progress(sent, p.packets_total, elapsed, est) } else { (0.0, "time") };
+        // What is left: by the clock, or by the progress when the packets say the job is further on.
+        let remaining = if a.started.is_some() { (est - elapsed).max(0.0).min(est * (1.0 - progress)) } else { est };
         json!({
             "active": true,
             "run_id": a.run_id,
@@ -256,15 +317,17 @@ impl JobTracker {
             "iteration": a.iteration,
             "iterations": a.iterations,
             "completed": a.completed,
-            "packets_sent": if a.started.is_some() { p.packets_sent } else { 0 },
+            "packets_sent": sent,
+            "packets_acknowledged": sent.saturating_sub(PACKETS_AHEAD),
             "packets_total": p.packets_total,
             "part": p.part,
             "parts": p.parts,
             "paused": paused,
             "elapsed_s": elapsed,
             "estimated_time_s": est,
-            "remaining_s": if a.started.is_some() { (est - elapsed).max(0.0) } else { est },
+            "remaining_s": remaining,
             "progress": progress,
+            "progress_source": source,
             "count": count,
             "stop_at": stop_at,
             "end_after_current": self.ending(),
@@ -304,6 +367,56 @@ mod tests {
         let third = JobTracker::default();
         third.open(path);
         assert_eq!((third.count("b6"), third.count("other")), (0, 1));
+    }
+
+    #[test]
+    fn progress_blends_packets_and_time() {
+        // No packet count: by time, never done.
+        assert_eq!(blended_progress(0, 0, 5.0, 10.0), (0.5, "time"));
+        assert_eq!(blended_progress(0, 0, 50.0, 10.0).0, 0.99);
+        // A fast stream (the simulator): the packets pull it ahead of the clock.
+        let (p, s) = blended_progress(80, 100, 0.1, 10.0);
+        assert!((p - 0.78).abs() < 1e-12 && s == "packets", "{p} {s}");
+        // The clock ahead of the packets (a slow board): held back to what was sent.
+        let (p, s) = blended_progress(10, 100, 9.0, 10.0);
+        assert!((p - 0.10).abs() < 1e-12 && s == "packets");
+        // Between the bounds: the time estimate.
+        assert_eq!(blended_progress(52, 100, 5.0, 10.0), (0.5, "time"));
+        assert_eq!(blended_progress(100, 100, 10.0, 10.0).0, 0.99, "done only when the job ends");
+        assert_eq!(blended_progress(500, 100, 0.0, 0.0).0, 0.98, "sent beyond the total is capped");
+    }
+
+    #[test]
+    fn elapsed_stands_still_while_paused_and_never_goes_back() {
+        let t0 = Instant::now();
+        let mut a = Active {
+            run_id: "r".into(),
+            device: "d".into(),
+            iteration: 1,
+            iterations: Some(1),
+            completed: 0,
+            waiting_for_input: false,
+            estimated_time_s: 10.0,
+            started: Some(t0),
+            paused: Duration::ZERO,
+            pause_began: None,
+            last_elapsed: 0.0,
+            last_tick: None,
+        };
+        let at = |ms: u64| t0 + Duration::from_millis(ms);
+        a.account(false, at(1000));
+        assert!((a.elapsed(at(1000)) - 1.0).abs() < 1e-9);
+        // Paused at 1.2 s (first seen then), read at 1.7 s and 2.9 s: stands at 1.2 s.
+        a.account(true, at(1200));
+        assert!((a.elapsed(at(1700)) - 1.2).abs() < 1e-9);
+        a.account(true, at(2900));
+        assert!((a.elapsed(at(2900)) - 1.2).abs() < 1e-9);
+        // Resumed (seen at 3.0 s): counts on from 1.2 s.
+        a.account(false, at(3000));
+        assert!((a.elapsed(at(3000)) - 1.2).abs() < 1e-9);
+        assert!((a.elapsed(at(3500)) - 1.7).abs() < 1e-9);
+        // A read with an earlier instant never reports less than before.
+        assert!((a.elapsed(at(3100)) - 1.7).abs() < 1e-9);
     }
 
     #[test]

@@ -426,7 +426,7 @@ impl Command for ConvertToPath {
     type Input = IdsInput;
     const ID: &'static str = "path.convert";
     const TITLE: &'static str = "Convert to path";
-    const DESCRIPTION: &'static str = "Turn rectangles, ellipses and text into plain paths (lines and Bézier curves, \
+    const DESCRIPTION: &'static str = "Turn rectangles, ellipses, polygons and text into plain paths (lines and Bézier curves, \
         same shape and placement), so their nodes can be edited; their size or text settings are gone afterwards. Paths are \
         left as they are; images cannot be converted. Fails when nothing converts. Returns affected ids, `skipped` \
         and bounds.";
@@ -442,7 +442,7 @@ impl Command for ConvertToPath {
             for id in &ids {
                 let o = util::object(doc, id)?;
                 match o.geometry {
-                    Geometry::Rect { .. } | Geometry::Ellipse { .. } | Geometry::Text(_) => {
+                    Geometry::Rect { .. } | Geometry::Ellipse { .. } | Geometry::Polygon { .. } | Geometry::Text(_) => {
                         let local = pathutil::clean_local(&o.geometry);
                         pathutil::set_local_path(doc, id, local)?;
                         affected.push(id.clone());
@@ -452,7 +452,9 @@ impl Command for ConvertToPath {
                 }
             }
             if affected.is_empty() {
-                return Err(CommandError::Failed(format!("{cmd}: nothing to convert (only rectangles, ellipses and text convert)")));
+                return Err(CommandError::Failed(format!(
+                    "{cmd}: nothing to convert (only rectangles, ellipses, polygons and text convert)"
+                )));
             }
             let mut r = util::edit_result(doc, &[], &affected);
             r["skipped"] = json!(skipped);
@@ -466,8 +468,15 @@ impl Command for ConvertToPath {
 pub struct OptimizeInput {
     /// Exact object or group ids (a group stands for all its members).
     pub ids: Vec<ObjectId>,
-    /// How far (mm, 0..=10) the result may stray from the original. 0.01 is a good start.
-    pub tolerance_mm: f64,
+    /// "Fit shapes to lines": how far (mm, 0..=10) the result may stray from the original while nodes are removed
+    /// and near-straight curves become lines. 0.01 is a good start. Left out: no line fitting.
+    pub tolerance_mm: Option<f64>,
+    /// "Fit shapes to arcs": runs of 4 or more short lines lying on a circle within this many mm (0..=10) become true
+    /// arcs. Left out: off.
+    pub arcs_mm: Option<f64>,
+    /// "Smooth source shapes": runs of lines become smooth curves passing within this many mm (0..=10) of every
+    /// original point (larger smooths more and rounds small details). Left out: off.
+    pub smooth_mm: Option<f64>,
 }
 
 /// `path.optimize`.
@@ -477,30 +486,56 @@ impl Command for Optimize {
     type Input = OptimizeInput;
     const ID: &'static str = "path.optimize";
     const TITLE: &'static str = "Optimize shapes";
-    const DESCRIPTION: &'static str = "Remove redundant nodes within tolerance_mm (field frame): zero-length segments \
-        go, curves straight within the tolerance become lines, and runs of lines lose collinear and near-collinear \
-        nodes (Douglas-Peucker; LightBurn's Optimize with \"fit to lines\"). Other curves are kept; arcs are not \
-        fitted and nothing is smoothed. Rectangles and ellipses become paths. Fails when no node can go. Returns \
-        affected ids, `nodes_before`, `nodes_after` and bounds.";
+    const DESCRIPTION: &'static str = "LightBurn's Optimize Selected Shapes; each option has its own tolerance (field \
+        mm) and they run in this order: smooth_mm (runs of lines become smooth Béziers within the tolerance of every \
+        point; corners over about 60° stay), arcs_mm (runs of 4+ lines on a circle become true arcs), tolerance_mm \
+        (fit to lines: zero-length segments go, near-straight curves become lines, near-collinear nodes merge). Give \
+        at least one; other curves are kept. Primitives become paths. Fails when nothing changes. Returns affected \
+        ids, `nodes_before`, `nodes_after`, `arcs_fitted`, `runs_smoothed` and bounds.";
     const RISK: Risk = Risk::Edit;
 
     fn apply(doc: &mut Document, i: OptimizeInput) -> Result<(Value, String)> {
         transact(doc, |doc| {
             let cmd = Self::ID;
             let ids = util::object_ids(cmd, doc, &i.ids)?;
-            let tol = tolerance(cmd, i.tolerance_mm)?;
+            let lines = i.tolerance_mm.map(|t| tolerance(cmd, t)).transpose()?;
+            let opt = |field: &str, v: Option<f64>| -> Result<Option<f64>> {
+                v.map(|t| {
+                    let t = util::non_negative(cmd, field, t)?;
+                    if t > 10.0 { Err(invalid(cmd, format!("{field} must be at most 10"))) } else { Ok(t) }
+                })
+                .transpose()
+            };
+            let arcs = opt("arcs_mm", i.arcs_mm)?;
+            let smooth = opt("smooth_mm", i.smooth_mm)?;
+            if lines.is_none() && arcs.is_none() && smooth.is_none() {
+                return Err(invalid(cmd, "give at least one of tolerance_mm (fit to lines), arcs_mm and smooth_mm"));
+            }
             util::check_unlocked(cmd, doc, &ids)?;
-            let (mut before, mut after) = (0, 0);
+            let (mut before, mut after, mut arcs_fitted, mut smoothed) = (0, 0, 0, 0);
             let mut affected = Vec::new();
             for id in &ids {
                 let path = pathutil::vector_path(cmd, util::object(doc, id)?)?;
                 let subs = split(&path);
                 let mut out = Vec::with_capacity(subs.len());
                 for s in &subs {
-                    let (o, st) = ops::optimize(s, tol);
-                    before += st.nodes_before;
-                    after += st.nodes_after;
-                    out.push(o);
+                    before += s.node_count();
+                    let mut cur = s.clone();
+                    if let Some(t) = smooth {
+                        let (o, n) = geom::fit::smooth(&cur, t);
+                        smoothed += n;
+                        cur = o;
+                    }
+                    if let Some(t) = arcs {
+                        let (o, n) = geom::fit::fit_arcs(&cur, t);
+                        arcs_fitted += n;
+                        cur = o;
+                    }
+                    if let Some(t) = lines {
+                        cur = ops::optimize(&cur, t).0;
+                    }
+                    after += cur.node_count();
+                    out.push(cur);
                 }
                 if out != subs {
                     pathutil::set_field_path(doc, id, &join(&out))?;
@@ -508,11 +543,13 @@ impl Command for Optimize {
                 }
             }
             if affected.is_empty() {
-                return Err(CommandError::Failed(format!("{cmd}: nothing to optimize within {tol} mm")));
+                return Err(CommandError::Failed(format!("{cmd}: nothing to optimize within the tolerances")));
             }
             let mut r = util::edit_result(doc, &[], &affected);
             r["nodes_before"] = json!(before);
             r["nodes_after"] = json!(after);
+            r["arcs_fitted"] = json!(arcs_fitted);
+            r["runs_smoothed"] = json!(smoothed);
             Ok((r, format!("optimized {} ({before} → {after} nodes)", affected.join(", "))))
         })
     }
@@ -555,9 +592,10 @@ impl Command for Fillet {
     const ID: &'static str = "path.fillet";
     const TITLE: &'static str = "Fillet corners";
     const DESCRIPTION: &'static str = "Round corners with circular arcs of radius_mm (LightBurn's Radius tool; \
-        negative: a concave bite). Only corners between two straight lines are rounded; a radius must fit on both \
-        lines (half each when the neighbouring corner is rounded too), else the corner is skipped with the reason. \
-        A rectangle with corners all keeps being a rectangle with that corner radius when it fits; other shapes \
+        negative: a concave bite). A corner is a node turning by more than 1° between lines, a line and a curve, or \
+        two curves (the arc is tangent to both sides). The arc must fit: on a line, half of it when the neighbouring \
+        corner is rounded too; on a curve, its half nearest the corner then; else the corner is skipped with the \
+        reason. A rectangle with corners all stays a rectangle with that corner radius when it fits; other shapes \
         become paths. Fails when no corner is rounded. Returns affected ids, `filleted` and `skipped` per object, \
         and bounds.";
     const RISK: Risk = Risk::Edit;
@@ -609,7 +647,7 @@ impl Command for Fillet {
                 for s in &subs {
                     let n = s.node_count();
                     let want: Vec<usize> = match &nodes {
-                        None => ops::line_corners(s),
+                        None => ops::sharp_corners(s),
                         Some(list) => list.iter().filter(|&&k| k >= base && k < base + n).map(|k| k - base).collect(),
                     };
                     let (f, applied, sk) = ops::fillet(s, &want, r);
@@ -633,7 +671,7 @@ impl Command for Fillet {
                 let why = report
                     .values()
                     .find_map(|v| v["skipped"].get(0).and_then(|s| s["reason"].as_str()).map(str::to_string))
-                    .unwrap_or_else(|| "no corners between straight lines".into());
+                    .unwrap_or_else(|| "no sharp corners".into());
                 return Err(CommandError::Failed(format!("{cmd}: no corner was rounded ({why})")));
             }
             let mut res = util::edit_result(doc, &[], &affected);

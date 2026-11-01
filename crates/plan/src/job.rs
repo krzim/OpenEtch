@@ -13,7 +13,7 @@ use lmc::PulseDecision;
 use lmc::units::nearest_pulse_width;
 use serde::{Deserialize, Serialize};
 
-use crate::geom::{Point, Subpath, dist, flatten, polyline_length};
+use crate::geom::{Point, Subpath, dist, flatten_within, polyline_length};
 use crate::hatch::{HatchError, MAX_SCANLINES, hatch};
 use crate::image::{Gray, MAX_IMAGE_DOTS, Placed, RasterError, Run, clip_runs, raster_slice};
 use crate::cutopts;
@@ -228,7 +228,8 @@ pub(crate) fn plan_job_within(doc: &Document, target: &Target, max_segments: usi
             Some(doc.expand_group_ids(ids))
         }
     };
-    let mut layers: Vec<&Layer> = doc.layers.iter().filter(|l| l.output).collect();
+    // Tool layers (T1 / T2) never output, whatever their output flag says.
+    let mut layers: Vec<&Layer> = doc.layers.iter().filter(|l| l.emits()).collect();
     // A rotary job's design wraps around the work: only X is bounded by the field (the strips are checked after
     // mapping).
     let in_field = |p: Point| if rotary.is_some() { p[0].is_finite() && p[0].abs() < target.half_field_mm() && p[1].is_finite() } else { target.contains(p) };
@@ -243,7 +244,9 @@ pub(crate) fn plan_job_within(doc: &Document, target: &Target, max_segments: usi
         group_rank.entry(g).or_insert(next);
     }
 
-    // Flatten every output object once and check the field before any settings work.
+    // Flatten every output object once (at the document's or device's curve tolerance) and check the field before
+    // any settings work.
+    let curve_tolerance = target.curve_tolerance(doc);
     let mut outside: Vec<ObjectId> = Vec::new();
     let mut shapes: Vec<ShapeIn> = Vec::new();
     let mut images: Vec<&Object> = Vec::new();
@@ -251,7 +254,7 @@ pub(crate) fn plan_job_within(doc: &Document, target: &Target, max_segments: usi
         if selected.as_ref().is_some_and(|s| !s.contains(&obj.id)) {
             continue;
         }
-        let subs = flatten(&obj.field_path());
+        let subs = flatten_within(&obj.field_path(), curve_tolerance);
         if subs.iter().flat_map(|s| &s.points).any(|&p| !in_field(p)) {
             outside.push(obj.id.clone());
         }

@@ -676,6 +676,7 @@ dependencies = [
 name = "doc"
 version = "0.1.0"
 dependencies = [
+ "geom",
  "kurbo",
  "schemars",
  "serde",
@@ -1412,6 +1413,7 @@ dependencies = [
  "doc",
  "kurbo",
  "roxmltree 0.21.2",
+ "serde",
  "thiserror",
 ]
 

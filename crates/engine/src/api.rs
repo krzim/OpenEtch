@@ -74,6 +74,8 @@ pub fn router(state: Arc<AppState>, web_dir: Option<&Path>) -> Router {
         .merge(crate::api_machine::routes())
         .merge(crate::api_libs::routes())
         .merge(crate::userfiles::routes())
+        .merge(crate::documents::routes())
+        .merge(crate::artlib::routes())
         .fallback(api_not_found)
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES));
     let mut app = Router::new().nest("/api", api).nest_service("/mcp", mcp::service(state.clone()));
@@ -238,15 +240,29 @@ async fn preview(
     let Query(q) = q.map_err(|e| EngineError::BadRequest(format!("bad query: {e}")))?;
     let result = st.preview().await?;
     match &result.1 {
-        Ok(p) => match q.layers {
-            None => Ok(Json(p).into_response()),
-            Some(list) => {
-                let ids: Vec<&str> = list.split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
-                let mut p = p.clone();
-                p.retain_layers(&ids);
-                Ok(Json(p).into_response())
+        Ok(p) => {
+            let mut v = match q.layers {
+                None => serde_json::to_value(p),
+                Some(list) => {
+                    let ids: Vec<&str> = list.split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
+                    let mut p = p.clone();
+                    p.retain_layers(&ids);
+                    serde_json::to_value(&p)
+                }
             }
-        },
+            .map_err(|e| EngineError::Internal(e.to_string()))?;
+            // LAY-034: each layer's LightBurn settings that will not be executed (only where there are some).
+            if let Some(layers) = v.get_mut("layers").and_then(Value::as_array_mut) {
+                for l in layers {
+                    let Some(layer) = l["layer_id"].as_str().and_then(|id| result.0.layer(id)) else { continue };
+                    let u = lbrn::unexecuted_settings(layer);
+                    if !u.is_empty() {
+                        l["unsupported"] = json!(u);
+                    }
+                }
+            }
+            Ok(Json(v).into_response())
+        }
         Err(e) => Err(EngineError::Plan(e.clone())),
     }
 }

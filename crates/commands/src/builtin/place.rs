@@ -34,7 +34,7 @@ pub enum Anchor {
 
 impl Anchor {
     /// Direction from the centre: -1, 0 or 1 per axis, +Y being "top".
-    fn dir(self) -> (f64, f64) {
+    pub(super) fn dir(self) -> (f64, f64) {
         match self {
             Anchor::Center => (0.0, 0.0),
             Anchor::TopLeft => (-1.0, 1.0),

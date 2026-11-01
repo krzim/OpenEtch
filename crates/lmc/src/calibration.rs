@@ -198,6 +198,15 @@ pub struct LensMeasurements {
     pub diagonal_up_mm: f64,
     /// Diagonal from the top-left to the bottom-right corner.
     pub diagonal_down_mm: f64,
+    /// Optional, for the X skew on its own: how far the top-left corner lies to the right (+) or left (-) of the
+    /// bottom-left corner, measured against a straight edge along the machine's Y axis (a set square on the
+    /// material's edge or the jig).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_shift_mm: Option<f64>,
+    /// Optional, for the Y skew on its own: how far the bottom-right corner lies above (+, away from the operator) or
+    /// below (-) the bottom-left corner, measured against a straight edge along the machine's X axis.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub right_shift_mm: Option<f64>,
 }
 
 /// The lens test pattern for a square of side `size_mm` centred in the field: the square, the two centre lines and
@@ -222,9 +231,15 @@ pub enum CalibrationError {
 
 /// New corrections from measurements of the test square (side `size_mm`) marked with `current`, for a field
 /// `field_mm` wide: the scale, bulge and trapezoid of each axis are solved so the three measured widths (top, middle,
-/// bottom) and heights (left, middle, right) come out at `size_mm`, and the X skew from the two diagonals. Offset and
-/// angle are kept. Assumes the lens error is small and of the model's shape (see the module docs), so a second
-/// test mark after applying the result should be close to exact; repeat to refine.
+/// bottom) and heights (left, middle, right) come out at `size_mm`, and the skews from the corners. Offset and angle
+/// are kept. Assumes the lens error is small and of the model's shape (see the module docs), so a second test mark
+/// after applying the result should be close to exact; repeat to refine.
+///
+/// Skew: the two diagonals only show how far the square's corners are from 90°, which is the sum of the X skew
+/// (`x += kx·y`) and the Y skew (`y += ky·x`): `up² − down² = 4·(kx + ky)·S²`. Which axis leans needs a reference
+/// along the machine's axes: [`LensMeasurements::top_shift_mm`] gives `kx = shift / S` and
+/// [`LensMeasurements::right_shift_mm`] gives `ky = shift / S`. With both, both skews come from them; with one, the
+/// other is the diagonals' sum minus it; with neither, the diagonals go to the X skew (as before Y skew was solved).
 pub fn solve_lens_calibration(
     current: &Calibration,
     field_mm: f64,
@@ -253,6 +268,13 @@ pub fn solve_lens_calibration(
             return bad(format!("{name} = {v} mm is not a plausible measurement of a {size_mm} mm square"));
         }
     }
+    for (name, v) in [("top_shift_mm", m.top_shift_mm), ("right_shift_mm", m.right_shift_mm)] {
+        if let Some(v) = v
+            && !(v.is_finite() && v.abs() < size_mm * 0.2)
+        {
+            return bad(format!("{name} = {v} mm is not a plausible corner shift of a {size_mm} mm square"));
+        }
+    }
     let va = size_mm / field_mm; // a / h with a = size / 2, h = field / 2
     // Width multipliers the current correction applies at the top, bottom and middle of the square (X), and at the
     // right, left and middle (Y).
@@ -273,10 +295,18 @@ pub fn solve_lens_calibration(
         solve(current.scale_x, current.trapezoid_x, current.bulge_x, m.top_mm, m.bottom_mm, m.middle_x_mm);
     let (scale_y, trapezoid_y, bulge_y) =
         solve(current.scale_y, current.trapezoid_y, current.bulge_y, m.right_mm, m.left_mm, m.middle_y_mm);
-    // A shear k (x += k·y) of a square of side S makes the diagonals differ: up² − down² = 4·k·S².
+    // Shears kx (x += kx·y) and ky (y += ky·x) of a square of side S make the diagonals differ:
+    // up² − down² = 4·(kx + ky)·S² (see the function docs for telling them apart).
     let k = (m.diagonal_up_mm.powi(2) - m.diagonal_down_mm.powi(2)) / (4.0 * size_mm * size_mm);
-    let skew_x = current.skew_x - k;
-    let out = Calibration { scale_x, scale_y, bulge_x, bulge_y, skew_x, trapezoid_x, trapezoid_y, ..*current };
+    let (kx, ky) = match (m.top_shift_mm, m.right_shift_mm) {
+        (Some(t), Some(r)) => (t / size_mm, r / size_mm),
+        (Some(t), None) => (t / size_mm, k - t / size_mm),
+        (None, Some(r)) => (k - r / size_mm, r / size_mm),
+        (None, None) => (k, 0.0),
+    };
+    let skew_x = current.skew_x - kx;
+    let skew_y = current.skew_y - ky;
+    let out = Calibration { scale_x, scale_y, bulge_x, bulge_y, skew_x, skew_y, trapezoid_x, trapezoid_y, ..*current };
     match out.problem(field_mm) {
         Some(p) => bad(format!("the measurements need a correction outside the accepted range ({p}); check them")),
         None => Ok(out),
@@ -389,6 +419,8 @@ mod tests {
                 middle_y_mm: mark(0.0, a).1 - mark(0.0, -a).1,
                 diagonal_up_mm: d(mark(-a, -a), mark(a, a)),
                 diagonal_down_mm: d(mark(-a, a), mark(a, -a)),
+                top_shift_mm: None,
+                right_shift_mm: None,
             }
         };
         let mut corr = Calibration::default();
@@ -415,6 +447,8 @@ mod tests {
             middle_y_mm: 100.0,
             diagonal_up_mm: 141.4,
             diagonal_down_mm: 141.4,
+            top_shift_mm: None,
+            right_shift_mm: None,
         };
         let c = Calibration::default();
         let ok = solve_lens_calibration(&c, F, 100.0, &m).unwrap();
@@ -422,6 +456,50 @@ mod tests {
         assert!(solve_lens_calibration(&c, F, 100.0, &LensMeasurements { top_mm: 10.0, ..m }).is_err());
         assert!(solve_lens_calibration(&c, F, 200.0, &m).is_err());
         assert!(solve_lens_calibration(&c, F, 100.0, &LensMeasurements { left_mm: f64::NAN, ..m }).is_err());
+        assert!(solve_lens_calibration(&c, F, 100.0, &LensMeasurements { top_shift_mm: Some(30.0), ..m }).is_err());
+        assert!(solve_lens_calibration(&c, F, 100.0, &LensMeasurements { right_shift_mm: Some(f64::NAN), ..m }).is_err());
+    }
+
+    /// JOB-044: a lens that shears both axes. The diagonals alone only see the sum; with the corner shifts against a
+    /// reference both skews are solved, and with one shift plus the diagonals as well.
+    #[test]
+    fn the_wizard_solves_both_skews() {
+        let lens = Calibration { skew_x: 1.004, skew_y: 0.997, scale_x: 1.01, bulge_y: 1.003, ..Calibration::default() };
+        let size = 100.0;
+        let a = size / 2.0;
+        let measure = |corr: &Calibration, top: bool, right: bool| {
+            let mark = |x: f64, y: f64| {
+                let (p, q) = corr.apply(x, y, F);
+                lens.apply(p, q, F)
+            };
+            let d = |p: (f64, f64), q: (f64, f64)| (p.0 - q.0).hypot(p.1 - q.1);
+            LensMeasurements {
+                top_mm: mark(a, a).0 - mark(-a, a).0,
+                bottom_mm: mark(a, -a).0 - mark(-a, -a).0,
+                middle_x_mm: mark(a, 0.0).0 - mark(-a, 0.0).0,
+                left_mm: mark(-a, a).1 - mark(-a, -a).1,
+                right_mm: mark(a, a).1 - mark(a, -a).1,
+                middle_y_mm: mark(0.0, a).1 - mark(0.0, -a).1,
+                diagonal_up_mm: d(mark(-a, -a), mark(a, a)),
+                diagonal_down_mm: d(mark(-a, a), mark(a, -a)),
+                top_shift_mm: top.then(|| mark(-a, a).0 - mark(-a, -a).0),
+                right_shift_mm: right.then(|| mark(a, -a).1 - mark(-a, -a).1),
+            }
+        };
+        for (top, right) in [(true, true), (true, false), (false, true)] {
+            let mut corr = Calibration::default();
+            for _ in 0..4 {
+                corr = solve_lens_calibration(&corr, F, size, &measure(&corr, top, right)).unwrap();
+            }
+            let m = measure(&corr, true, true);
+            assert!(m.top_shift_mm.unwrap().abs() < 0.02, "{top} {right}: {m:?} {corr:?}");
+            assert!(m.right_shift_mm.unwrap().abs() < 0.02, "{top} {right}: {m:?} {corr:?}");
+            assert!((m.diagonal_up_mm - m.diagonal_down_mm).abs() < 0.05, "{m:?}");
+            assert!(corr.skew_x < 1.0 && corr.skew_y > 1.0, "both skews cancel the lens: {corr:?}");
+        }
+        // Without a reference only the sum is known: it goes to X, the Y skew stays neutral.
+        let only = solve_lens_calibration(&Calibration::default(), F, size, &measure(&Calibration::default(), false, false)).unwrap();
+        assert_eq!(only.skew_y, 1.0);
     }
 
     #[test]

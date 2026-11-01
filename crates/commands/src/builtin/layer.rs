@@ -431,6 +431,9 @@ impl Command for LayerUpdate {
                 changed.push("visible");
             }
             if let Some(v) = input.output {
+                if v && let Some(t) = layer.tool {
+                    return Err(invalid(Self::ID, format!("{id} is tool layer {}: tool layers never output", t.name())));
+                }
                 layer.output = v;
                 changed.push("output");
             }
@@ -463,6 +466,69 @@ impl Command for LayerUpdate {
                 result["settings"] = serde_json::to_value(&l.settings).unwrap_or(Value::Null);
             }
             Ok((result, format!("updated layer {id} ({})", changed.join(", "))))
+        })
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LayerToolInput {
+    /// "T1" or "T2" (LightBurn's tool layers); null with `id` makes that layer an ordinary one again (output stays
+    /// off).
+    pub tool: Option<doc::ToolLayer>,
+    /// The layer to make that tool layer. Without it, the document's tool layer `tool` is returned, made first when
+    /// there is none.
+    pub id: Option<String>,
+}
+
+/// `layer.tool`.
+pub struct LayerTool;
+
+impl Command for LayerTool {
+    type Input = LayerToolInput;
+    const ID: &'static str = "layer.tool";
+    const TITLE: &'static str = "Tool layer";
+    const DESCRIPTION: &'static str = "LightBurn's tool layers T1 and T2: layers for guides, alignment marks, print-and-cut \
+        and framing outlines that never output (planning skips them; `layer.update` refuses output on), are framed \
+        with the job (and alone with frame's tool_layers_only) and export to LightBurn as its tool layers. `{tool}` \
+        adds that tool layer (named T1 / T2, LightBurn's colour, output off; refused, naming it, when the document \
+        has it); `{tool, id}` makes layer `id` that tool layer (output turned off); `{tool: null, id}` makes it an \
+        ordinary layer again. Returns {id, created, tool}.";
+    const RISK: Risk = Risk::Edit;
+
+    fn apply(doc: &mut Document, input: LayerToolInput) -> Result<(Value, String)> {
+        transact(doc, |doc| match (input.tool, input.id) {
+            (None, None) => Err(invalid(Self::ID, "give tool (T1 or T2), id, or both")),
+            (Some(t), None) => {
+                if let Some(l) = doc.layers.iter().find(|l| l.tool == Some(t)) {
+                    // Refused rather than an empty undo step; the message names the layer.
+                    return Err(CommandError::Failed(format!("tool layer {} already exists: {}", t.name(), l.id)));
+                }
+                let id = doc.alloc_id("layer")?;
+                let mut l = Layer::new(id.clone(), t.name(), lbrn::palette::color(t.index()));
+                l.output = false;
+                l.tool = Some(t);
+                doc.layers.push(l);
+                Ok((json!({ "id": id, "created": [id], "affected": [], "tool": t, "bounds": Value::Null }), format!("added tool layer {}", t.name())))
+            }
+            (tool, Some(id)) => {
+                let id = util::layer(doc, &id)?.id.clone();
+                if let Some(t) = tool
+                    && let Some(other) = doc.layers.iter().find(|l| l.tool == Some(t) && l.id != id)
+                {
+                    return Err(CommandError::Failed(format!("{} is already tool layer {}", other.id, t.name())));
+                }
+                let layer = doc.layer_mut(&id).ok_or_else(|| CommandError::Failed(format!("layer {id} vanished")))?;
+                if layer.tool == tool {
+                    return Err(CommandError::NothingTo("change: the layer is already that"));
+                }
+                layer.tool = tool;
+                if tool.is_some() {
+                    layer.output = false;
+                }
+                let what = tool.map_or("an ordinary layer".to_string(), |t| format!("tool layer {}", t.name()));
+                Ok((json!({ "id": id, "created": [], "affected": [], "tool": tool, "bounds": Value::Null }), format!("made {id} {what}")))
+            }
         })
     }
 }
@@ -761,5 +827,35 @@ mod tests {
         assert!(run(&mut s, "layer.move", json!({"id": first, "to_index": -1})).is_err());
         assert!(run(&mut s, "layer.move", json!({"id": first, "index": 1})).is_err());
         assert_eq!((order(&s), s.document().revision), (before, rev), "refusals change nothing");
+    }
+
+    /// LAY-042: LightBurn's tool layers.
+    #[test]
+    fn tool_layers_are_added_kept_off_and_cleared() {
+        let mut s = crate::Session::new(Document::default());
+        let r = run(&mut s, "layer.tool", json!({"tool": "T1"})).unwrap();
+        let t1 = r["id"].as_str().unwrap().to_owned();
+        let l = s.document().layer(&t1).unwrap();
+        assert_eq!((l.name.as_str(), l.output, l.tool, l.color.as_str()), ("T1", false, Some(doc::ToolLayer::T1), lbrn::palette::color(30)));
+        assert!(!l.emits());
+        let e = run(&mut s, "layer.tool", json!({"tool": "T1"})).unwrap_err().to_string();
+        assert!(e.contains(&t1), "names the existing one: {e}");
+        assert!(run(&mut s, "layer.update", json!({"id": t1, "output": true})).is_err(), "tool layers never output");
+        assert!(run(&mut s, "layer.update", json!({"id": t1, "name": "Jig"})).is_ok());
+        // Make an ordinary layer T2; T1 cannot be taken twice; clear it again.
+        let first = s.document().layers[0].id.clone();
+        assert!(run(&mut s, "layer.tool", json!({"tool": "T1", "id": first})).is_err());
+        run(&mut s, "layer.tool", json!({"tool": "T2", "id": first})).unwrap();
+        let l = s.document().layer(&first).unwrap();
+        assert_eq!((l.tool, l.output), (Some(doc::ToolLayer::T2), false));
+        assert!(run(&mut s, "layer.tool", json!({"tool": "T2", "id": first})).is_err(), "no-op refused");
+        run(&mut s, "layer.tool", json!({"tool": null, "id": first})).unwrap();
+        assert_eq!(s.document().layer(&first).unwrap().tool, None);
+        assert!(run(&mut s, "layer.update", json!({"id": first, "output": true})).is_ok());
+        assert!(run(&mut s, "layer.tool", json!({})).is_err());
+        // Saved and loaded with the document.
+        let text = doc::file::to_openetch_json(s.document());
+        let back = doc::file::from_openetch_json(&text).unwrap();
+        assert_eq!(back.layer(&t1).unwrap().tool, Some(doc::ToolLayer::T1));
     }
 }

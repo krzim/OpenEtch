@@ -38,6 +38,9 @@ pub enum EngineError {
     /// An upload or project file above the size limit.
     #[error("{0}")]
     TooLarge(String),
+    /// A file in a format the engine cannot read (415), e.g. LightBurn's binary `.lbart`.
+    #[error("{0}")]
+    Unsupported(String),
     /// Run approval refused for operator-PIN reasons; `code` is `pin_not_set`, `pin_required`, `pin_invalid` or
     /// `pin_locked` (see the `pin` module).
     #[error("{message}")]
@@ -62,6 +65,7 @@ impl EngineError {
             EngineError::Machine(_) => StatusCode::BAD_GATEWAY,
             EngineError::Forbidden(_) | EngineError::Approval { .. } => StatusCode::FORBIDDEN,
             EngineError::TooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
+            EngineError::Unsupported(_) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             EngineError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }

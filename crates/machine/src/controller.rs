@@ -916,7 +916,7 @@ fn light_packets(profile: &MachineProfile, outline: &[Vec<(f64, f64)>], loops: u
         )));
     }
     let mut list = LightList::new();
-    list.jump_speed(units::speed_to_units(speed, profile.field_mm)?)?;
+    list.jump_speed(units::speed_to_units(speed, profile.field_transform().speed_field_mm())?)?;
     list.jump_delay(units::delay_word(profile.timing.jump_delay_max_us)?);
     let mut lit = false;
     for _ in 0..loops {

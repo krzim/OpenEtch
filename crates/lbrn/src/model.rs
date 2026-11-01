@@ -185,6 +185,7 @@ pub(crate) const TAG_ORDER: &[&str] = &[
     "tabSize",
     "halftoneAngle",
     "negative",
+    "cellsPerInch",
     "ditherMode",
     "cleanupPass",
     "dpi",

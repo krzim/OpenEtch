@@ -31,7 +31,7 @@ use crate::{AppState, EngineError};
 pub const MCP_AGENT: &str = "mcp";
 
 /// Every tool, in listing order.
-pub const TOOL_NAMES: [&str; 20] = [
+pub const TOOL_NAMES: [&str; 22] = [
     "list_commands",
     "execute",
     "batch",
@@ -51,6 +51,8 @@ pub const TOOL_NAMES: [&str; 20] = [
     "history_list",
     "history_goto",
     "lightburn_devices",
+    "documents_list",
+    "document_activate",
     "devices_list",
 ];
 
@@ -115,7 +117,12 @@ active|rolled_back|failed) and the marker (index of the last applied step). hist
 forward without losing steps; an edit made after history_goto is inserted after the marker and the later steps are \
 replayed (a step that no longer applies is kept as failed). undo/redo move the marker by one step; an edit made \
 after undo discards the undone steps (marker_moved_by and undone_steps in history_list say which applies). doc.new, \
-doc.load, project_open and a replacing doc.import_lbrn2 start a fresh timeline (only that step can be undone).";
+doc.load, project_open and a replacing doc.import_lbrn2 start a fresh timeline (only that step can be undone).
+
+Several documents can be open at once (like LightBurn's New Window): documents_list shows them and which one is \
+active; every other tool works on the active document. document_activate {id} switches the active document (each \
+has its own timeline and project); the person sees the switch in the UI, so only switch when the task needs \
+another open document, and say so.";
 
 /// The MCP server handler. Cheap to clone; one per MCP session.
 #[derive(Clone)]
@@ -178,6 +185,13 @@ struct SaveArgs {
     /// Replace an existing project that is not the current one. Default false; only when the person asked.
     #[serde(default)]
     overwrite: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct DocumentArgs {
+    /// Open document id from documents_list, e.g. "default" or "doc-2".
+    id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -382,6 +396,22 @@ impl GalvoMcp {
                 true,
             ),
             tool::<NoArgs>(
+                "documents_list",
+                "Open documents",
+                "The documents open in the engine (LightBurn's New Window): {active, documents: [{id, name, project, \
+                 display_name, document_name, revision, dirty, objects, layers, active}]}. Every other tool works on \
+                 the active document.",
+                true,
+            ),
+            tool::<DocumentArgs>(
+                "document_activate",
+                "Switch the active document",
+                "Make open document <id> (from documents_list) the active one: the document tools, previews, runs and \
+                 framing then use it, and the UI shows it. Each document keeps its own undo timeline. Returns {ok, \
+                 active, revision}.",
+                false,
+            ),
+            tool::<NoArgs>(
                 "devices_list",
                 "Devices",
                 "OpenEtch's devices, like LightBurn's Devices window: {active, devices: [{id, name, display_name, \
@@ -492,6 +522,14 @@ impl GalvoMcp {
             "history_goto" => {
                 let x: GotoArgs = args(name, a)?;
                 Ok(ok_json(st.blocking(move |st| st.history_goto(x.marker, Self::origin())).await?))
+            }
+            "documents_list" => {
+                args::<NoArgs>(name, a)?;
+                Ok(ok_json(st.documents_view()))
+            }
+            "document_activate" => {
+                let x: DocumentArgs = args(name, a)?;
+                Ok(ok_json(st.activate_document(&x.id, Self::origin())?))
             }
             "devices_list" => {
                 args::<NoArgs>(name, a)?;
@@ -610,7 +648,8 @@ mod tests {
         assert!(t.annotations.as_ref().and_then(|a| a.read_only_hint) == Some(true));
         assert!(INSTRUCTIONS.contains("only a person can do it"));
         for name in TOOL_NAMES {
-            assert!(!name.contains("activate") && !name.contains("device_import"), "{name}");
+            // Switching the active document is allowed; activating a device is not.
+            assert!(!(name.contains("device") && name.contains("activate")) && !name.contains("device_import"), "{name}");
         }
     }
 

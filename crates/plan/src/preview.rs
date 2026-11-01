@@ -384,7 +384,7 @@ pub fn simulate(packets: &[Packet], target: &Target) -> Preview {
 /// jump delays, laser on/off delays per mark run, polygon delays between consecutive marks, and explicit waits.
 fn list_time_us(cmds: &[ListCommand], target: &Target) -> f64 {
     let unit = target.galvo_unit_mm();
-    let speed = |units: u16| units_to_speed(units, target.field_mm);
+    let speed = |units: u16| units_to_speed(units, target.transform().speed_field_mm());
     let (mut jump_speed, mut mark_speed) = (0.0, 0.0);
     let (mut on, mut off, mut polygon, mut jump_delay) = (0.0, 0.0, 0.0, 0.0);
     let mut pos = (lmc::CENTER, lmc::CENTER);

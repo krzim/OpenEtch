@@ -112,6 +112,47 @@ pub struct Document {
     /// existing mask mean nothing ([`Document::image_mask`]).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub image_masks: BTreeMap<ObjectId, ObjectId>,
+    /// Manual guidelines (LightBurn's guides dragged out of the rulers), saved with the project so every browser sees
+    /// them. Left out of JSON while empty. They are drawing aids only: never planned, exported or burned.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub guides: Vec<Guide>,
+    /// Curve tolerance for job output in mm (LightBurn's Curve Tolerance): how far a flattened polyline may stray from
+    /// a curve. `None` uses the device's setting, else [`DEFAULT_CURVE_TOLERANCE_MM`]. Left out of JSON while `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub curve_tolerance_mm: Option<f64>,
+}
+
+/// Most guides a document keeps (`guide.add` refuses more; a loaded file with more is refused).
+pub const MAX_GUIDES: usize = 1000;
+
+/// Largest |position| of a guide, mm (1 km).
+pub const MAX_GUIDE_MM: f64 = 1e6;
+
+/// Default output curve tolerance in mm (finer than LightBurn's 0.05 mm default; galvo marks show facets sooner).
+pub const DEFAULT_CURVE_TOLERANCE_MM: f64 = 0.01;
+
+/// Allowed output curve tolerances in mm: finer than 0.001 mm only multiplies points, coarser than 1 mm visibly
+/// facets small curves.
+pub const CURVE_TOLERANCE_RANGE_MM: std::ops::RangeInclusive<f64> = 0.001..=1.0;
+
+/// One manual guideline: a vertical (`axis: x`, the line `x = position_mm`) or horizontal (`axis: y`, the line
+/// `y = position_mm`) line across the workspace, in field mm.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct Guide {
+    /// Stable id ("guide-3"), allocated from the document's id counter.
+    pub id: String,
+    pub axis: GuideAxis,
+    pub position_mm: f64,
+}
+
+/// Which coordinate a [`Guide`] fixes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum GuideAxis {
+    /// A vertical guide at `x = position_mm` (dragged from the top ruler).
+    X,
+    /// A horizontal guide at `y = position_mm` (dragged from the left ruler).
+    Y,
 }
 
 /// Project notes (LightBurn's File > Show Notes, Ctrl+Alt+N).
@@ -169,6 +210,8 @@ impl Default for Document {
             pages: Vec::new(),
             active_page: None,
             image_masks: BTreeMap::new(),
+            guides: Vec::new(),
+            curve_tolerance_mm: None,
         };
         let id = doc.alloc_id("layer").expect("a new document has ids to spare");
         doc.layers.push(Layer::new(id, "Layer 1", "#1f77b4"));
@@ -206,6 +249,14 @@ impl Document {
             && !f.is_finite()
         {
             return Some(format!("field_mm is {f}"));
+        }
+        if let Some(g) = self.guides.iter().find(|g| !g.position_mm.is_finite()) {
+            return Some(format!("guide {} is at {}", g.id, g.position_mm));
+        }
+        if let Some(t) = self.curve_tolerance_mm
+            && !CURVE_TOLERANCE_RANGE_MM.contains(&t)
+        {
+            return Some(format!("curve_tolerance_mm is {t} (allowed 0.001..=1)"));
         }
         if let Some([w, h]) = self.workspace_mm
             && !(w.is_finite() && h.is_finite())
@@ -449,6 +500,45 @@ pub struct Layer {
     /// are not edited directly. `None` (left out of JSON): not linked.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub link: Option<PresetLink>,
+    /// LightBurn's tool layers T1 / T2 (LAY-042): a layer for guides, alignment marks and framing outlines that never
+    /// outputs (planning skips it whatever `output` says, and commands keep `output` off), is framed with the job,
+    /// and exports as LightBurn's tool layer of that number. `None` (left out of JSON): an ordinary layer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool: Option<ToolLayer>,
+}
+
+/// Which of LightBurn's two tool layers a layer is ([`Layer::tool`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+pub enum ToolLayer {
+    T1,
+    T2,
+}
+
+impl ToolLayer {
+    /// LightBurn's `CutIndex` (30 and 31).
+    pub fn index(self) -> u32 {
+        match self {
+            ToolLayer::T1 => 30,
+            ToolLayer::T2 => 31,
+        }
+    }
+
+    /// The tool layer of LightBurn index `index`, if it is one.
+    pub fn from_index(index: u32) -> Option<Self> {
+        match index {
+            30 => Some(ToolLayer::T1),
+            31 => Some(ToolLayer::T2),
+            _ => None,
+        }
+    }
+
+    /// "T1" or "T2".
+    pub fn name(self) -> &'static str {
+        match self {
+            ToolLayer::T1 => "T1",
+            ToolLayer::T2 => "T2",
+        }
+    }
 }
 
 /// A layer's link to a material library preset (LightBurn's `LinkPath`).
@@ -481,7 +571,13 @@ impl Layer {
             sub_layers: vec![],
             extras: BTreeMap::new(),
             link: None,
+            tool: None,
         }
+    }
+
+    /// Whether the layer can mark: output on and not a tool layer.
+    pub fn emits(&self) -> bool {
+        self.output && self.tool.is_none()
     }
 }
 
@@ -887,6 +983,11 @@ impl Object {
                 corner_radius_mm.is_finite() && corners(width_mm / 2.0, height_mm / 2.0).into_iter().all(ok)
             }
             Geometry::Ellipse { rx_mm, ry_mm } => corners(*rx_mm, *ry_mm).into_iter().all(ok),
+            Geometry::Polygon { radius_mm, corner_radius_mm, star_ratio, .. } => {
+                corner_radius_mm.is_finite()
+                    && star_ratio.is_none_or(f64::is_finite)
+                    && corners(*radius_mm, *radius_mm).into_iter().all(ok)
+            }
             Geometry::Image { width_mm, height_mm, adjust, .. } => {
                 let a = adjust;
                 [a.gamma, a.contrast, a.brightness, a.enhance_radius, a.enhance_amount, a.denoise]
@@ -923,6 +1024,20 @@ pub enum Geometry {
     Ellipse { rx_mm: f64, ry_mm: f64 },
     /// Arbitrary path (imported vector art, text outlines).
     Path { path: BezPath },
+    /// A regular polygon or star (LightBurn's Polygon and Star tools), kept parametric so Shape Properties can edit
+    /// it (`shape.update`): `sides` corners (3..=1000) on a circle of `radius_mm` around the local origin, the first
+    /// corner straight up (+Y), counter-clockwise; with `star_ratio` (0 < r < 1) a star whose inner corners lie at
+    /// `radius_mm * star_ratio`. `corner_radius_mm` rounds every corner where it fits (others stay sharp). The
+    /// outline is [`Geometry::local_path`] (`geom::shapes`); LightBurn has no polygon shape in `.lbrn2`, so exports
+    /// write it as a path.
+    Polygon {
+        sides: u32,
+        radius_mm: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        star_ratio: Option<f64>,
+        #[serde(default)]
+        corner_radius_mm: f64,
+    },
     /// A bitmap, `width_mm` x `height_mm` centred on the local origin (the transform may scale, rotate or mirror it).
     /// `data_base64` is the encoded file (of type `mime`, e.g. `image/png`) in standard base64. It is shared, so
     /// copies of the document (undo steps) do not copy the image. Jobs engrave it with its layer's
@@ -948,6 +1063,9 @@ impl Geometry {
             }
             Geometry::Ellipse { rx_mm, ry_mm } => kurbo::Ellipse::new((0.0, 0.0), (rx_mm, ry_mm), 0.0).to_path(0.01),
             Geometry::Path { ref path } => path.clone(),
+            Geometry::Polygon { sides, radius_mm, star_ratio, corner_radius_mm } => {
+                polygon_outline(sides, radius_mm, star_ratio, corner_radius_mm).unwrap_or_default()
+            }
             Geometry::Text(ref t) => t.outline.clone(),
             Geometry::Image { width_mm, height_mm, .. } => {
                 Rect::from_center_size((0.0, 0.0), (width_mm, height_mm)).to_path(0.01)
@@ -955,11 +1073,12 @@ impl Geometry {
         }
     }
 
-    /// A short lowercase name of the kind: `rect`, `ellipse`, `path`, `image` or `text`.
+    /// A short lowercase name of the kind: `rect`, `ellipse`, `polygon`, `path`, `image` or `text`.
     pub fn kind_name(&self) -> &'static str {
         match self {
             Geometry::Rect { .. } => "rect",
             Geometry::Ellipse { .. } => "ellipse",
+            Geometry::Polygon { .. } => "polygon",
             Geometry::Path { .. } => "path",
             Geometry::Image { .. } => "image",
             Geometry::Text(_) => "text",
@@ -967,9 +1086,75 @@ impl Geometry {
     }
 }
 
+/// Why polygon parameters cannot describe a shape (`None` when they can): sides outside 3..=1000, a radius that is
+/// not a positive number up to 1e6 mm, a star ratio outside (0, 1), a negative or non-finite corner radius.
+pub fn polygon_problem(sides: u32, radius_mm: f64, star_ratio: Option<f64>, corner_radius_mm: f64) -> Option<String> {
+    if !(3..=geom::shapes::MAX_SIDES).contains(&sides) {
+        return Some(format!("sides must be 3..={} (got {sides})", geom::shapes::MAX_SIDES));
+    }
+    if !(radius_mm.is_finite() && radius_mm > 0.0 && radius_mm <= 1e6) {
+        return Some(format!("radius_mm must be > 0 and at most 1e6 (got {radius_mm})"));
+    }
+    if let Some(r) = star_ratio
+        && !(r.is_finite() && r > 0.0 && r < 1.0)
+    {
+        return Some(format!("star_ratio must be between 0 and 1 exclusive (got {r})"));
+    }
+    if !(corner_radius_mm.is_finite() && corner_radius_mm >= 0.0) {
+        return Some(format!("corner_radius_mm must be >= 0 (got {corner_radius_mm})"));
+    }
+    None
+}
+
+/// The outline of a [`Geometry::Polygon`] in its own frame, `None` when the parameters are unusable.
+pub fn polygon_outline(sides: u32, radius_mm: f64, star_ratio: Option<f64>, corner_radius_mm: f64) -> Option<BezPath> {
+    if polygon_problem(sides, radius_mm, star_ratio, corner_radius_mm).is_some() {
+        return None;
+    }
+    let pts = geom::shapes::polygon_points(sides, radius_mm, star_ratio).ok()?;
+    Some(geom::shapes::polygon_path(&pts, corner_radius_mm).0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn polygon_geometry_is_parametric_and_round_trips() {
+        let g = Geometry::Polygon { sides: 6, radius_mm: 10.0, star_ratio: None, corner_radius_mm: 0.0 };
+        let p = g.local_path();
+        let expect = 1.5 * 3f64.sqrt() * 100.0;
+        assert!((p.area() - expect).abs() < 1e-9, "{}", p.area());
+        assert_eq!(g.kind_name(), "polygon");
+        let json = serde_json::to_value(&g).unwrap();
+        let want = serde_json::json!({"kind": "polygon", "sides": 6, "radius_mm": 10.0, "corner_radius_mm": 0.0});
+        assert_eq!(json, want);
+        assert_eq!(serde_json::from_value::<Geometry>(json).unwrap(), g);
+        let star = Geometry::Polygon { sides: 5, radius_mm: 10.0, star_ratio: Some(0.5), corner_radius_mm: 1.0 };
+        assert!(star.local_path().area() > 0.0 && star.local_path().area() < p.area());
+        let bad = Geometry::Polygon { sides: 2, radius_mm: 10.0, star_ratio: None, corner_radius_mm: 0.0 };
+        assert!(bad.local_path().elements().is_empty());
+        assert!(polygon_problem(5, 1.0, Some(1.0), 0.0).is_some());
+        assert!(polygon_problem(5, f64::NAN, None, 0.0).is_some());
+        assert!(polygon_problem(5, 1.0, None, -1.0).is_some());
+        assert!(polygon_problem(5, 1.0, Some(0.4), 0.2).is_none());
+    }
+
+    #[test]
+    fn guides_and_curve_tolerance_round_trip_and_are_checked() {
+        let mut doc = Document::default();
+        assert!(!serde_json::to_string(&doc).unwrap().contains("guides"), "left out while empty");
+        doc.guides.push(Guide { id: "guide-2".into(), axis: GuideAxis::X, position_mm: 12.5 });
+        doc.curve_tolerance_mm = Some(0.05);
+        let back: Document = serde_json::from_str(&serde_json::to_string(&doc).unwrap()).unwrap();
+        assert_eq!(back, doc);
+        assert_eq!(doc.numeric_problem(), None);
+        doc.curve_tolerance_mm = Some(5.0);
+        assert!(doc.numeric_problem().unwrap().contains("curve_tolerance_mm"));
+        doc.curve_tolerance_mm = None;
+        doc.guides[0].position_mm = f64::NAN;
+        assert!(doc.numeric_problem().unwrap().contains("guide-2"));
+    }
 
     #[test]
     fn default_document_has_one_layer() {

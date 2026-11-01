@@ -168,6 +168,9 @@ pub struct Run {
     pub origin: Origin,
     /// Document revision the packets were made from. Approval is refused once the document has moved on.
     pub revision: u64,
+    /// The open document the packets were made from (module `documents`). Approval is refused while another one is
+    /// active, also should its revision ever match.
+    pub document_id: String,
     pub summary: String,
     pub stats: Stats,
     /// The job as lists, each after an optional extension-axis move (one part for a plain job).
@@ -197,6 +200,8 @@ pub struct RunView {
     pub state: RunState,
     pub origin: Origin,
     pub revision: u64,
+    /// The open document the run was made from (`GET /api/documents`).
+    pub document_id: String,
     /// True when the document changed after the run was requested; such a run cannot be approved.
     pub stale: bool,
     pub summary: String,
@@ -221,6 +226,7 @@ impl Run {
             state: self.state,
             origin: self.origin.clone(),
             revision: self.revision,
+            document_id: self.document_id.clone(),
             stale: self.state == RunState::Pending && self.revision != current_revision,
             summary: self.summary.clone(),
             stats: self.stats,
@@ -243,8 +249,9 @@ pub struct RunStore {
 }
 
 impl RunStore {
-    /// Store a new pending run. Refused when [`MAX_PENDING`] runs already wait.
-    pub fn add(&mut self, origin: Origin, revision: u64, prepared: PreparedJob) -> Result<&Run, EngineError> {
+    /// Store a new pending run (of the `default` document until the caller sets [`Run::document_id`]). Refused when
+    /// [`MAX_PENDING`] runs already wait.
+    pub fn add(&mut self, origin: Origin, revision: u64, prepared: PreparedJob) -> Result<&mut Run, EngineError> {
         if self.runs.iter().filter(|r| r.state == RunState::Pending).count() >= MAX_PENDING {
             return Err(EngineError::Conflict(format!(
                 "{MAX_PENDING} runs are already waiting for approval; approve or stop them first"
@@ -257,6 +264,7 @@ impl RunStore {
             state: RunState::Pending,
             origin,
             revision,
+            document_id: crate::documents::DEFAULT_DOCUMENT.into(),
             summary: prepared.summary,
             stats: prepared.stats,
             parts: Arc::new(prepared.parts),
@@ -268,7 +276,7 @@ impl RunStore {
             completed: 0,
         });
         self.prune();
-        Ok(self.runs.last().expect("just pushed"))
+        Ok(self.runs.last_mut().expect("just pushed"))
     }
 
     pub fn get(&self, id: &str) -> Option<&Run> {

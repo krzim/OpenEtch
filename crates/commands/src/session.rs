@@ -284,6 +284,13 @@ impl Session {
         HistoryView { marker: self.marker, marker_moved_by: self.moved_by, undone_steps: self.undone_steps(), steps }
     }
 
+    /// Make the live revision at least `min` without changing the document or the timeline. A host that keeps several
+    /// sessions (several open documents) calls this when one becomes the active document again, so revisions stay
+    /// unique across them and every cache or stale check keyed by revision sees a change.
+    pub fn raise_revision(&mut self, min: u64) {
+        self.doc.revision = self.doc.revision.max(min);
+    }
+
     /// Run one command. `Query` commands do not create a step or bump the revision.
     pub fn execute(&mut self, inv: Invocation, origin: Origin) -> Result<Outcome> {
         self.batch(vec![inv], origin).map(|mut v| v.remove(0))
@@ -481,6 +488,20 @@ mod tests {
 
     fn inv(id: &str, params: Value) -> Invocation {
         Invocation { id: id.into(), params }
+    }
+
+    #[test]
+    fn raising_the_revision_keeps_the_document_and_timeline() {
+        let mut s = Session::new(Document::default());
+        exec(&mut s, "shape.rect", json!({"width_mm": 5, "height_mm": 5}));
+        let before = s.document().clone();
+        s.raise_revision(40);
+        assert_eq!(s.document().revision, 40);
+        assert_eq!(s.document().objects, before.objects);
+        s.raise_revision(10);
+        assert_eq!(s.document().revision, 40, "never lowered");
+        assert_eq!(s.undo().unwrap(), 41, "later revisions count on from the raised one");
+        assert!(s.document().objects.is_empty());
     }
 
     fn exec(s: &mut Session, id: &str, params: Value) -> Value {

@@ -130,7 +130,8 @@ fn odd_device_is_clamped_and_reported() {
     println!("{}", diff_table(&diffs));
     p.validate().unwrap();
     assert_eq!(p.field_mm, 110.0);
-    assert!(diff(&diffs, "field_mm").unwrap().note.contains("110 x 100"));
+    assert_eq!(p.field_height_mm, Some(100.0), "a 110 x 100 field keeps its own height");
+    assert!(diff(&diffs, "field_height_mm").is_some());
     // Galvo 1 is X: swapped, X on galvo 1 (sign -1) and mirrored: negate_x = true ^ true.
     assert!(p.swap_xy);
     assert!(!p.negate_x && !p.negate_y);

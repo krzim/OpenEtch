@@ -303,3 +303,21 @@ fn calibration_changes_the_encoded_words() {
     assert_eq!(first(&t), lmc::units::field_to_galvo(-5.0, -5.0, &t.transform()).unwrap().0);
     assert!(first(&t) > first(&target()));
 }
+
+#[test]
+fn curve_tolerance_from_the_document_or_device_sets_how_finely_curves_are_marked() {
+    let circle = Object::new("obj-1".into(), "c", "layer-1".into(), Geometry::Ellipse { rx_mm: 20.0, ry_mm: 20.0 }, Affine::IDENTITY);
+    let mut d = doc_with(vec![circle], CutSettings::default());
+    let points = |d: &Document, t: &Target| plan_job(d, t).unwrap().passes[0].polylines[0].len();
+    let fine = points(&d, &target());
+    let device = Target { curve_tolerance_mm: Some(0.5), ..target() };
+    let coarse = points(&d, &device);
+    assert!(coarse * 3 < fine, "{coarse} vs {fine}");
+    d.curve_tolerance_mm = Some(0.01);
+    assert_eq!(points(&d, &device), fine, "the document's setting wins over the device's");
+    // A non-square field bounds Y by its height.
+    let tall = Object::new("obj-2".into(), "r", "layer-1".into(), Geometry::Rect { width_mm: 2.0, height_mm: 2.0, corner_radius_mm: 0.0 }, Affine::translate((0.0, 40.0)));
+    let d = doc_with(vec![tall], CutSettings::default());
+    assert!(plan_job(&d, &target()).is_ok());
+    assert!(matches!(plan_job(&d, &Target { field_height_mm: Some(60.0), ..target() }), Err(PlanError::OutOfField { .. })));
+}

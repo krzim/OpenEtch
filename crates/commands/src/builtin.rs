@@ -4,6 +4,8 @@
 //! [`CommandError::NotFound`](crate::CommandError::NotFound) listing close matches.
 
 mod arrange;
+// Art Library items (the engine keeps the libraries).
+mod art_library;
 mod array;
 mod document;
 #[cfg(not(target_arch = "wasm32"))]
@@ -41,11 +43,20 @@ pub(crate) mod files;
 mod image_tools;
 mod pages;
 
+// Design aids and constructions: shape properties, selection queries, page positions, guides, curve tolerance,
+// extend, warp, tangent circles, rubber band, toolpath to path.
+mod construct;
+mod design;
+#[cfg(test)]
+mod design_review_tests;
+#[cfg(test)]
+mod design_tests;
 #[cfg(test)]
 mod geom_tests;
 #[cfg(test)]
 mod tests;
 
+pub use art_library::{ART_FORMAT, ArtFragment, ArtLayer, art_fragment};
 pub use file::{ORIGIN_KEY, WorkspaceOrigin, lbrn2_device_name};
 
 use crate::Registry;
@@ -64,6 +75,7 @@ pub(crate) fn register_all(r: &mut Registry) {
     r.register::<layer::LayerUpdate>();
     r.register::<layer::LayerDelete>();
     r.register::<layer::LayerMove>();
+    r.register::<layer::LayerTool>();
     r.register::<sub_layer::SubAdd>();
     r.register::<sub_layer::SubUpdate>();
     r.register::<sub_layer::SubDelete>();
@@ -73,6 +85,7 @@ pub(crate) fn register_all(r: &mut Registry) {
     r.register::<shape::ShapeEllipse>();
     r.register::<shape::ShapePath>();
     r.register::<svg_import::ImportSvg>();
+    r.register::<art_library::ArtInsert>();
     r.register::<object::Transform>();
     r.register::<object::SetLayer>();
     r.register::<object::Rename>();
@@ -95,6 +108,7 @@ pub(crate) fn register_all(r: &mut Registry) {
     #[cfg(not(target_arch = "wasm32"))]
     r.register::<dxf::ImportDxf>();
     register_geometry(r);
+    register_design(r);
     register_text(r);
     register_libs(r);
     register_files(r);
@@ -178,6 +192,25 @@ fn register_geometry(r: &mut Registry) {
     r.register::<order::MakeSame>();
     r.register::<order::RotateTo>();
     r.register::<order::ScaleTo>();
+}
+
+/// Design aids and constructions (`design`, `construct`).
+fn register_design(r: &mut Registry) {
+    r.register::<design::ShapeUpdate>();
+    r.register::<design::SelectOpen>();
+    r.register::<design::SelectOpenOnFill>();
+    r.register::<design::SelectContained>();
+    r.register::<design::MoveToPagePosition>();
+    r.register::<design::GuideAdd>();
+    r.register::<design::GuideMove>();
+    r.register::<design::GuideDelete>();
+    r.register::<design::SetCurveTolerance>();
+    r.register::<construct::Extend>();
+    r.register::<construct::PathWarp>();
+    r.register::<construct::TangentCandidates>();
+    r.register::<construct::TangentCircle>();
+    r.register::<construct::RubberBand>();
+    r.register::<construct::ToolpathToPath>();
 }
 
 /// Text, variable text, barcodes and fonts (`text` module).

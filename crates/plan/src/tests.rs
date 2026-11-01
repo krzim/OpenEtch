@@ -115,6 +115,16 @@ fn layers_without_output_are_skipped() {
     assert_eq!(encode(&plan, &target()), Err(PlanError::Empty));
 }
 
+/// LAY-042: a tool layer (T1 / T2) never outputs, even with its output flag on (e.g. a hand-edited file).
+#[test]
+fn tool_layers_never_output() {
+    let mut doc = doc_with(vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0))], CutSettings::default());
+    doc.layers[0].tool = Some(doc::ToolLayer::T1);
+    doc.layers[0].output = true;
+    let plan = plan_job(&doc, &target()).unwrap();
+    assert!(plan.passes.is_empty());
+}
+
 #[test]
 fn out_of_field_is_refused_naming_the_objects() {
     let doc = doc_with(

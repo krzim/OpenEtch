@@ -91,8 +91,8 @@ impl PassWords {
         delay_word(tm.min_jump_delay_us)?;
         delay_word(tm.max_jump_delay_us)?;
         Ok(PassWords {
-            jump_speed: nonzero(speed_to_units(tm.jump_speed_mm_s, t.field_mm)?, "jump speed")?,
-            mark_speed: nonzero(speed_to_units(s.speed_mm_s, t.field_mm)?, "mark speed")?,
+            jump_speed: nonzero(speed_to_units(tm.jump_speed_mm_s, t.transform().speed_field_mm())?, "jump speed")?,
+            mark_speed: nonzero(speed_to_units(s.speed_mm_s, t.transform().speed_field_mm())?, "mark speed")?,
             mark_current: power_to_mark_current(s.power_pct)?,
             q_period: frequency_to_period(s.frequency_khz)?,
             pulse_width: s.pulse_width_ns.map(|ns| pulse_width_word(f64::from(ns), &t.pulse_widths_ns)).transpose()?,

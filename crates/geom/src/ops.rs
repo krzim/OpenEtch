@@ -6,6 +6,7 @@ use kurbo::{
     Arc, BezPath, CubicBez, Line, ParamCurve, ParamCurveArclen, ParamCurveNearest, PathEl, PathSeg, Point, Vec2,
 };
 
+pub use crate::fillet::{fillet, sharp_corners};
 use crate::flatten::{flatten, point_in_ring, polygon_area};
 use crate::subpath::{SubPath, join, slice, split, with_end, with_start};
 use crate::{EPS, Result, TOLERANCE, invalid};
@@ -426,7 +427,7 @@ pub fn optimize(sub: &SubPath, tolerance: f64) -> (SubPath, OptimizeStats) {
 
 /// Turn angle (radians, 0 = straight on) at node `k` of a subpath between two line segments, with the segments'
 /// directions, or `None` when the node is not between two lines.
-fn line_corner(sub: &SubPath, k: usize) -> Option<(Vec2, Vec2, f64, f64, f64)> {
+pub(crate) fn line_corner(sub: &SubPath, k: usize) -> Option<(Vec2, Vec2, f64, f64, f64)> {
     let n = sub.segs.len();
     let (inc, out) = if sub.closed {
         ((k + n - 1) % n, k % n)
@@ -450,7 +451,8 @@ fn line_corner(sub: &SubPath, k: usize) -> Option<(Vec2, Vec2, f64, f64, f64)> {
     Some((u, v, turn, la, lb))
 }
 
-/// The nodes of `sub` that are corners between two lines turning by more than 1°: what a fillet of "all" rounds.
+/// The nodes of `sub` that are corners between two lines turning by more than 1° (the polygon generator rounds these;
+/// a fillet of "all" rounds every [`sharp_corners`] node, curves included).
 pub fn line_corners(sub: &SubPath) -> Vec<usize> {
     (0..sub.node_count()).filter(|&k| line_corner(sub, k).is_some_and(|c| c.2.abs() > 1f64.to_radians())).collect()
 }
@@ -462,7 +464,7 @@ pub struct Skipped {
     pub reason: String,
 }
 
-fn arc_segments(arc: &Arc, from: Point, to: Point) -> Vec<PathSeg> {
+pub(crate) fn arc_segments(arc: &Arc, from: Point, to: Point) -> Vec<PathSeg> {
     let mut segs = Vec::new();
     let mut last = from;
     for el in arc.append_iter(1e-4) {
@@ -475,91 +477,6 @@ fn arc_segments(arc: &Arc, from: Point, to: Point) -> Vec<PathSeg> {
         segs[n] = with_end(segs[n], to);
     }
     segs
-}
-
-/// Round the given corner nodes of one subpath with circular arcs of `radius` mm (LightBurn's Radius tool). A
-/// negative radius cuts a concave "bite" of that radius centred on the corner instead. Only corners between two
-/// straight lines can be filleted; a corner is skipped (with the reason) when it is not such a corner, is (almost)
-/// straight, or the arc does not fit: it must fit on each adjacent line, sharing a line with a neighbouring fillet
-/// half and half.
-pub fn fillet(sub: &SubPath, corners: &[usize], radius: f64) -> (SubPath, Vec<usize>, Vec<Skipped>) {
-    let mut skipped = Vec::new();
-    let mut plan: HashMap<usize, (Point, Point, Vec<PathSeg>)> = HashMap::new();
-    if !(radius.is_finite() && radius != 0.0) {
-        let all = corners.iter().map(|&k| Skipped { node: k, reason: "the radius must be a non-zero number".into() });
-        return (sub.clone(), vec![], all.collect());
-    }
-    let wanted: HashSet<usize> = corners.iter().copied().collect();
-    let r = radius.abs();
-    let n = sub.segs.len();
-    let mut ks: Vec<usize> = wanted.iter().copied().collect();
-    ks.sort_unstable();
-    for &k in &ks {
-        if k >= sub.node_count() {
-            skipped.push(Skipped { node: k, reason: "no such node".into() });
-            continue;
-        }
-        let Some((u, v, turn, la, lb)) = line_corner(sub, k) else {
-            skipped.push(Skipped { node: k, reason: "not a corner between two straight lines".into() });
-            continue;
-        };
-        if turn.abs() <= 1f64.to_radians() {
-            skipped.push(Skipped { node: k, reason: "the lines meet (almost) straight".into() });
-            continue;
-        }
-        let t = if radius > 0.0 { r * (turn.abs() / 2.0).tan() } else { r };
-        // Share a line with a neighbouring corner that is filleted too.
-        let neighbour = |m: usize| wanted.contains(&m) && line_corner(sub, m).is_some();
-        let prev_node = if sub.closed { (k + n - 1) % n } else { k.wrapping_sub(1) };
-        let next_node = if sub.closed { (k + 1) % n } else { k + 1 };
-        let room_a = la * if neighbour(prev_node) { 0.5 } else { 1.0 };
-        let room_b = lb * if neighbour(next_node) { 0.5 } else { 1.0 };
-        if !(t.is_finite() && t <= room_a + 1e-9 && t <= room_b + 1e-9) {
-            skipped.push(Skipped { node: k, reason: format!("a radius of {r} mm does not fit at this corner") });
-            continue;
-        }
-        let c = sub.node(k);
-        let (p_in, p_out) = (c - u * t, c + v * t);
-        let arc = if radius > 0.0 {
-            let left = turn > 0.0;
-            let normal = if left { Vec2::new(-u.y, u.x) } else { Vec2::new(u.y, -u.x) };
-            let center = p_in + normal * r;
-            let start = (p_in - center).atan2();
-            Arc::new(center, (r, r), start, turn, 0.0)
-        } else {
-            let start = (-u).atan2();
-            let sweep = (-u).cross(v).atan2((-u).dot(v));
-            Arc::new(c, (r, r), start, sweep, 0.0)
-        };
-        plan.insert(k, (p_in, p_out, arc_segments(&arc, p_in, p_out)));
-    }
-    let mut out = Vec::new();
-    for (i, seg) in sub.segs.iter().enumerate() {
-        let start_node = i;
-        let end_node = if i + 1 == n && sub.closed { 0 } else { i + 1 };
-        let mut s = *seg;
-        if let Some((_, p_out, arc)) = plan.get(&start_node) {
-            out.extend(arc.iter().copied());
-            s = with_start(s, *p_out);
-        }
-        if let Some((p_in, _, _)) = plan.get(&end_node) {
-            s = with_end(s, *p_in);
-        }
-        if !is_zero_length(&s) {
-            out.push(s);
-        }
-    }
-    for i in 1..out.len() {
-        let p = out[i - 1].end();
-        out[i] = with_start(out[i], p);
-    }
-    if sub.closed && !out.is_empty() {
-        let last = out.len() - 1;
-        out[last] = with_end(out[last], out[0].start());
-    }
-    let mut applied: Vec<usize> = plan.keys().copied().collect();
-    applied.sort_unstable();
-    (SubPath { segs: out, closed: sub.closed }, applied, skipped)
 }
 
 /// What [`trim`] did.

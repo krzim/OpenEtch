@@ -86,7 +86,9 @@ impl Drop for PreviewTicket<'_> {
 
 /// Shared engine state. See the module docs.
 pub struct AppState {
-    session: Mutex<Session>,
+    /// The active document's session (module `documents`: the other open documents wait in [`AppState::documents`]
+    /// and are swapped in when activated).
+    pub(crate) session: Mutex<Session>,
     pub machine: Arc<Machine>,
     runs: Mutex<RunStore>,
     events: broadcast::Sender<Event>,
@@ -97,7 +99,13 @@ pub struct AppState {
     /// Where named projects are saved.
     pub projects: ProjectDir,
     /// The current project. Locked only while the session lock is held or with no other lock, never the reverse.
-    project: Mutex<ProjectState>,
+    pub(crate) project: Mutex<ProjectState>,
+    /// The open documents other than the active one, the active one's id and the revision high-water mark (module
+    /// `documents`). Locked only while the session lock (and possibly the project lock) is held, or with no other
+    /// lock; never the reverse.
+    pub(crate) documents: Mutex<crate::documents::DocSet>,
+    /// The Art Library store under the projects directory (module `artlib`).
+    pub art: crate::artlib::ArtStore,
     /// LightBurn's devices (field size of LightBurn imports, `GET /api/lightburn`). None until configured
     /// ([`LightBurn::configure`]); never locked while the session lock is held.
     pub lightburn: LightBurn,
@@ -274,7 +282,7 @@ pub struct DownloadFile {
     pub warnings: Vec<String>,
 }
 
-fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+pub(crate) fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
@@ -326,6 +334,8 @@ impl AppState {
             previews: Arc::default(),
             projects,
             project: Mutex::new(project),
+            documents: Mutex::new(crate::documents::DocSet::default()),
+            art: crate::artlib::ArtStore::default(),
             lightburn: LightBurn::default(),
             devices: Mutex::new(devices),
             job: JobTracker::default(),
@@ -554,12 +564,17 @@ impl AppState {
         lock(&self.session).history_view()
     }
 
-    /// Announce a document change (when the revision moved) and the timeline (always).
-    fn announce(&self, before: u64, after: u64, origin: Origin, (marker, steps): (usize, usize)) {
+    /// Announce a document change (when the revision moved) and the timeline (always) of open document `document_id`.
+    pub(crate) fn announce(&self, before: u64, after: u64, origin: Origin, (marker, steps): (usize, usize), document_id: String) {
         if after != before {
-            self.emit(Event::DocumentChanged { revision: after, origin });
+            self.emit(Event::DocumentChanged { revision: after, origin, document_id: document_id.clone() });
         }
-        self.emit(Event::HistoryChanged { marker, steps, revision: after });
+        self.emit(Event::HistoryChanged { marker, steps, revision: after, document_id });
+    }
+
+    /// The active document's id (`default` for the first one; see `GET /api/documents`).
+    pub fn active_document_id(&self) -> String {
+        lock(&self.documents).active.clone()
     }
 
     /// Roll the timeline to `marker` (0 = before the first step). Returns `{ok, marker, revision}`.
@@ -577,13 +592,13 @@ impl AppState {
         origin: Origin,
         op: impl FnOnce(&mut Session) -> Result<u64, commands::CommandError>,
     ) -> Result<Value, EngineError> {
-        let (before, after, hist) = {
+        let (before, after, hist, doc_id) = {
             let mut s = lock(&self.session);
             let before = s.document().revision;
             let after = op(&mut s)?;
-            (before, after, (s.marker(), s.history().len()))
+            (before, after, (s.marker(), s.history().len()), self.active_document_id())
         };
-        self.announce(before, after, origin, hist);
+        self.announce(before, after, origin, hist, doc_id);
         Ok(json!({ "ok": true, "marker": hist.0, "revision": after }))
     }
 
@@ -654,7 +669,7 @@ impl AppState {
                 .find(|i| i.id == "doc.import_lbrn2" && replaces(i) == Replaces::Unsaved)
                 .and_then(|i| i.params.get("name").and_then(Value::as_str).and_then(projects::display_name))
         });
-        let (mut outcomes, before, after, hist) = {
+        let (mut outcomes, before, after, hist, doc_id) = {
             let mut s = lock(&self.session);
             let mut last_edit = Replaces::No;
             for inv in &invs {
@@ -704,7 +719,7 @@ impl AppState {
                 // it, and undo only returns to documents that had one), so it is only reported.
                 tracing::warn!(revision = after, "the document has no field_mm");
             }
-            (outcomes, before, after, (s.marker(), s.history().len()))
+            (outcomes, before, after, (s.marker(), s.history().len()), self.active_document_id())
         };
         for (i, source, device) in field_sources {
             if let Some(Value::Object(r)) = outcomes.get_mut(i).map(|o| &mut o.result) {
@@ -715,7 +730,7 @@ impl AppState {
             }
         }
         if after != before {
-            self.announce(before, after, origin, hist);
+            self.announce(before, after, origin, hist, doc_id);
         }
         Ok(outcomes)
     }
@@ -761,12 +776,14 @@ impl AppState {
     /// `{ok, name, path, revision}`.
     pub async fn project_save(&self, name: &str, overwrite: bool) -> Result<Value, EngineError> {
         projects::validate_name(name)?;
-        let (content, revision) = {
+        // The document, which open document it is and its project, read together: another document may become the
+        // active one at any moment, and its project must not decide whether this save may replace a file.
+        let (content, revision, doc_id, current) = {
             let s = lock(&self.session);
-            (saveable(s.document())?, s.document().revision)
+            let current = lock(&self.project).name.clone();
+            (saveable(s.document())?, s.document().revision, self.active_document_id(), current)
         };
         let dir = self.projects.clone();
-        let current = self.project_name();
         let owned = name.to_owned();
         let keep = self.files.settings().backups_keep;
         let path = tokio::task::spawn_blocking(move || {
@@ -778,9 +795,10 @@ impl AppState {
             dir.write(&owned, PROJECT_EXT, &content)
         })
         .await??;
-        *lock(&self.project) = ProjectState::saved(name.to_owned(), revision);
+        // The document saved may have stopped being the active one while the file was written.
+        self.set_project_of(&doc_id, ProjectState::saved(name.to_owned(), revision));
         tracing::info!(name, revision, path = %path.display(), "project saved");
-        self.emit(Event::ProjectSaved { name: name.to_owned(), revision });
+        self.emit(Event::ProjectSaved { name: name.to_owned(), revision, document_id: doc_id });
         Ok(json!({ "ok": true, "name": name, "path": path.display().to_string(), "revision": revision }))
     }
 
@@ -1069,7 +1087,11 @@ impl AppState {
     /// active device's job count is the run index for auto-rotating fills.
     pub async fn request_run_with(&self, origin: Origin, options: RunOptions) -> Result<RunView, EngineError> {
         self.require_controllable()?;
-        let doc = self.document();
+        // The document and which open document it is, read together (module `documents`).
+        let (doc, document_id) = {
+            let s = lock(&self.session);
+            (s.document().clone(), self.active_document_id())
+        };
         let revision = doc.revision;
         let config = self.machine.config();
         let generation = config.generation;
@@ -1095,6 +1117,7 @@ impl AppState {
                 return Err(EngineError::Conflict("the device changed while the run was planned; request it again".into()));
             }
             let run = store.add(origin.clone(), revision, prepared)?;
+            run.document_id = document_id;
             run.view(revision)
         };
         tracing::info!(run_id = %view.id, ?origin, "run requested; waiting for approval in the UI");

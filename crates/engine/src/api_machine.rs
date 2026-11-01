@@ -23,6 +23,8 @@
 //! | PUT | `/api/devices/{id}/cor` | `?name=<file>.cor`, the file as the body: load a lens correction file (UI only) |
 //! | DELETE | `/api/devices/{id}/cor` | clear it (UI only) |
 //! | POST | `/api/devices/import/markcfg` | `?name=`, an EzCad `markcfg7` as the body: a new device (UI only) |
+//! | GET | `/api/sim/inputs` | `{simulated, bits}`: the simulated board's input port (`bits` null on USB) |
+//! | POST | `/api/sim/inputs` | `{bits: 0..=65535}` → `{ok, bits}`: set the simulated input port (word 1 of `ReadPort`) so the foot pedal (Start Marking), Stop Marking, Door Protect and Start Framing inputs can be exercised end to end. Only while the machine link is the simulator (403 on USB); refuses MCP client headers (403), as a switch press stands for a person |
 
 use std::sync::Arc;
 
@@ -68,6 +70,33 @@ pub(crate) fn routes() -> Router<Arc<AppState>> {
             put(device_cor_load).delete(device_cor_clear).layer(DefaultBodyLimit::max(MAX_MACHINE_FILE)),
         )
         .route("/devices/import/markcfg", post(device_import_markcfg).layer(DefaultBodyLimit::max(MAX_MACHINE_FILE)))
+        .route("/sim/inputs", get(sim_inputs).post(sim_set_inputs))
+}
+
+async fn sim_inputs(State(st): State<Arc<AppState>>) -> Json<Value> {
+    let counters = st.machine.sim_counters();
+    Json(json!({ "simulated": counters.is_some(), "bits": counters.map(|c| c.inputs()) }))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SimInputsBody {
+    bits: u16,
+}
+
+async fn sim_set_inputs(State(st): State<Arc<AppState>>, headers: HeaderMap, body: Bytes) -> Result<Json<Value>, EngineError> {
+    if has_mcp_marker(&headers) {
+        return Err(EngineError::Forbidden("the simulated inputs stand for switches a person presses; not from MCP".into()));
+    }
+    let counters = match st.machine.sim_counters() {
+        Some(c) if st.machine.kind() == crate::hw::LinkKind::Simulated => c,
+        _ => return Err(EngineError::Forbidden("the machine link is a real board (USB): its inputs cannot be set".into())),
+    };
+    let b: SimInputsBody =
+        serde_json::from_slice(&body).map_err(|e| EngineError::BadRequest(format!("bad JSON body (expected {{\"bits\": 0..=65535}}): {e}")))?;
+    counters.set_inputs(b.bits);
+    tracing::info!(bits = b.bits, "simulated inputs set");
+    Ok(Json(json!({ "ok": true, "bits": b.bits })))
 }
 
 /// Parse a JSON body; an empty body means `T::default()`.

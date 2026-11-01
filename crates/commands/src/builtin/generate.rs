@@ -45,6 +45,11 @@ pub struct PolygonInput {
     pub layer: Option<String>,
     /// Display name. Default "Polygon" or "Star".
     pub name: Option<String>,
+    /// Keep it a parametric polygon (`Geometry::Polygon`), so `shape.update` can change its sides, radius, star ratio
+    /// and corner radius later (LightBurn's Shape Properties). Default false: a plain path, for clients that do not
+    /// draw the polygon kind yet.
+    #[serde(default)]
+    pub parametric: bool,
 }
 
 /// `shape.polygon`.
@@ -56,8 +61,9 @@ impl Command for ShapePolygon {
     const TITLE: &'static str = "Polygon / star";
     const DESCRIPTION: &'static str = "Add a regular polygon (3..=1000 sides) or, with star_inner_ratio, a star, \
         sized by radius_mm (centre to corner) or width_mm, centred at `center` (field mm), first corner up, rotated \
-        counter-clockwise by rotation_deg, optionally with rounded corners. It is stored as a path. Returns the new \
-        id, `corners_left_sharp` and bounds.";
+        counter-clockwise by rotation_deg, optionally with rounded corners. It is stored as a path, or with \
+        parametric: true as a polygon whose parameters shape.update edits. Returns the new id, `corners_left_sharp` \
+        and bounds.";
     const RISK: Risk = Risk::Edit;
 
     fn apply(doc: &mut Document, i: PolygonInput) -> Result<(Value, String)> {
@@ -85,7 +91,12 @@ impl Command for ShapePolygon {
             let layer = util::layer_or_default(doc, i.layer.as_deref())?;
             let name = name_or(cmd, i.name.as_deref(), if star.is_some() { "Star" } else { "Polygon" })?;
             let t = Affine::translate((x, y)) * Affine::rotate(rot.to_radians());
-            let id = add_object(doc, name, layer, Geometry::Path { path }, t)?;
+            let geometry = if i.parametric {
+                Geometry::Polygon { sides: i.sides, radius_mm: radius, star_ratio: star, corner_radius_mm: cr }
+            } else {
+                Geometry::Path { path }
+            };
+            let id = add_object(doc, name, layer, geometry, t)?;
             let mut r = util::edit_result(doc, std::slice::from_ref(&id), &[]);
             r["corners_left_sharp"] = json!(if cr > 0.0 { sharp } else { 0 });
             Ok((r, format!("added {}-sided {} {id}", i.sides, if star.is_some() { "star" } else { "polygon" })))

@@ -129,7 +129,7 @@ async fn execute_edits_and_reports_failures() {
     let id = rect(&app, 10.0, 5.0).await;
     assert_eq!(
         events.recv().await.unwrap(),
-        crate::Event::DocumentChanged { revision: 1, origin: commands::Origin::Ui }
+        crate::Event::DocumentChanged { revision: 1, origin: commands::Origin::Ui, document_id: "default".into() }
     );
 
     let (_, doc) = send(&app, req("GET", "/api/document", None)).await;
@@ -864,7 +864,7 @@ async fn undo_events_carry_the_origin() {
     assert_eq!(v["ok"], true);
     assert_eq!(
         events.recv().await.unwrap(),
-        crate::Event::DocumentChanged { revision: 2, origin: commands::Origin::Agent("cli".into()) }
+        crate::Event::DocumentChanged { revision: 2, origin: commands::Origin::Agent("cli".into()), document_id: "default".into() }
     );
 }
 
@@ -929,7 +929,7 @@ async fn projects_save_open_and_list() {
     assert_eq!((&v["ok"], &v["name"]), (&json!(true), &json!("Coaster (v2)")));
     let path = std::path::PathBuf::from(v["path"].as_str().unwrap());
     assert!(path.ends_with("Coaster (v2).openetch") && path.is_file(), "{path:?}");
-    assert_eq!(events.recv().await.unwrap(), crate::Event::ProjectSaved { name: "Coaster (v2)".into(), revision: 1 });
+    assert_eq!(events.recv().await.unwrap(), crate::Event::ProjectSaved { name: "Coaster (v2)".into(), revision: 1, document_id: "default".into() });
     let (_, v) = send(&app, req("GET", "/api/project", None)).await;
     assert_eq!(v, json!({"name": "Coaster (v2)", "display_name": null, "saved_revision": 1, "revision": 1, "dirty": false}));
     let saved_doc = st.document();
@@ -1063,7 +1063,7 @@ async fn upload_replaces_and_merges() {
     assert_eq!(v["result"]["bounds"]["min"], json!([-5.0, -5.0]));
     assert_eq!(
         events.recv().await.unwrap(),
-        crate::Event::DocumentChanged { revision: 2, origin: commands::Origin::Ui }
+        crate::Event::DocumentChanged { revision: 2, origin: commands::Origin::Ui, document_id: "default".into() }
     );
     assert_eq!(st.history().last().unwrap().origin, commands::Origin::Ui);
     // A replacing import is a new document no project holds (as the web treats it): the project name is cleared,
@@ -1368,8 +1368,8 @@ async fn history_routes_roll_back_insert_and_delete() {
     let (s, v) = send(&app, req("POST", "/api/history/goto", Some(json!({"marker": 1})))).await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(v, json!({"ok": true, "marker": 1, "revision": 4}));
-    assert_eq!(events.recv().await.unwrap(), crate::Event::DocumentChanged { revision: 4, origin: commands::Origin::Ui });
-    assert_eq!(events.recv().await.unwrap(), crate::Event::HistoryChanged { marker: 1, steps: 3, revision: 4 });
+    assert_eq!(events.recv().await.unwrap(), crate::Event::DocumentChanged { revision: 4, origin: commands::Origin::Ui, document_id: "default".into() });
+    assert_eq!(events.recv().await.unwrap(), crate::Event::HistoryChanged { marker: 1, steps: 3, revision: 4, document_id: "default".into() });
     assert_eq!(x0(&st), Some(-5.0));
     let (_, h) = send(&app, req("GET", "/api/history", None)).await;
     let states: Vec<&str> = h["steps"].as_array().unwrap().iter().map(|s| s["state"].as_str().unwrap()).collect();

@@ -158,6 +158,8 @@ pub mod palette;
 mod parse;
 mod path;
 pub mod text;
+// LightBurn settings an imported layer keeps but OpenEtch does not execute (LAY-034).
+pub mod unexecuted;
 mod write;
 
 pub use convert::{
@@ -170,6 +172,7 @@ pub use model::{
 };
 pub use parse::{LibraryEntry, MAX_BYTES, MAX_SEGMENTS, parse, parse_library};
 pub use library::{LibEntry, Library, LibraryFormat, Material, cut_setting_from_layer, parse_clb, write_clb};
+pub use unexecuted::{UnexecutedSetting, unexecuted_settings};
 pub use write::write;
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]

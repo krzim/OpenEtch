@@ -476,6 +476,7 @@ fn layer_from(index: u32, cs: Option<&CutSetting>, id: String, w: &mut Warnings)
             w.push(format!("{label}: used by shapes but has no cut settings in the file; default settings used"));
         } else {
             layer.output = false;
+            layer.tool = doc::ToolLayer::from_index(index);
         }
         return layer;
     };
@@ -495,6 +496,7 @@ fn layer_from(index: u32, cs: Option<&CutSetting>, id: String, w: &mut Warnings)
     if is_tool(index, &cs.kind) {
         // Tool layers (T1/T2) carry no laser settings and never output.
         layer.output = false;
+        layer.tool = doc::ToolLayer::from_index(index);
         for (tag, value) in p.to_values() {
             if !matches!(tag.as_str(), "name" | "priority" | "hide") {
                 keep(&mut layer, EXTRA_PREFIX, &tag, value, &label, w);
@@ -1032,6 +1034,7 @@ impl ToDoc {
         let elements = match &geometry {
             Geometry::Path { path } => path.elements().len(),
             Geometry::Text(t) => t.outline.elements().len(),
+            Geometry::Polygon { .. } => geometry.local_path().elements().len(),
             Geometry::Rect { .. } | Geometry::Ellipse { .. } | Geometry::Image { .. } => FIXED_SHAPE_ELEMENTS,
         };
         self.elements = self.elements.saturating_add(elements);
@@ -1216,7 +1219,18 @@ pub fn from_document_in(d: &Document, frame: Frame) -> Result<(LbrnProject, Vec<
     // Assign indices: kept index, then palette colour, then the lowest free colour index.
     let mut taken = BTreeSet::new();
     let mut index_of: HashMap<&str, u32> = HashMap::new();
+    // OpenEtch's tool layers (LAY-042) are LightBurn's T1 / T2.
     for l in &d.layers {
+        if let Some(t) = l.tool
+            && taken.insert(t.index())
+        {
+            index_of.insert(&l.id, t.index());
+        }
+    }
+    for l in &d.layers {
+        if index_of.contains_key(l.id.as_str()) {
+            continue;
+        }
         let kept = extra(&l.extras, "index").and_then(|i| i.parse::<u32>().ok());
         if let Some(i) = kept.filter(|i| *i < COLOR_LAYERS || ((*i == T1 || *i == T1 + 1) && !l.output))
             && taken.insert(i)
@@ -1786,6 +1800,16 @@ impl<'a> FromDoc<'a> {
                 self.text_shape(e, &t.outline, index, &xform, xform_text.as_deref())
             }
             Geometry::Path { path } if ex(e, keys::TYPE) == Some("Text") => self.text_shape(e, path, index, &xform, xform_text.as_deref()),
+            // LightBurn has no polygon shape in .lbrn2: a parametric polygon is written as the path it draws.
+            Geometry::Polygon { .. } => {
+                attributes.clear();
+                let data = self.path_data(&BTreeMap::new(), &o.geometry.local_path(), false);
+                if data.vertices.is_empty() {
+                    w.push(format!("object {} (\"{}\") is an empty polygon and was not exported", o.id, o.name));
+                    return;
+                }
+                ShapeKind::Path(data)
+            }
             Geometry::Path { path } => {
                 let data = self.path_data(e, path, false);
                 if data.vertices.is_empty() {

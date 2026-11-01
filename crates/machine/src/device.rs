@@ -294,7 +294,7 @@ pub fn from_lightburn(dev: &LightBurnDevice, source: DeviceSource, bases: &Bases
             let base = if same_lens(dev, &bases.builtin) { ProfileBase::Builtin } else { ProfileBase::GenericJczGalvo };
             let (mut p, _) = profile_from_lightburn(dev, bases.get(base));
             p.name = display_name.clone();
-            ([p.field_mm, p.field_mm], Origin::Center, Some(base), Some(p))
+            ([p.field_mm, p.field_height_mm.unwrap_or(p.field_mm)], Origin::Center, Some(base), Some(p))
         } else {
             ([w, w], Origin::Center, None, None)
         }
@@ -334,7 +334,7 @@ impl Device {
             source: DeviceSource::Builtin,
             kind: DeviceKind::JczGalvo,
             lightburn_type: "LibUSB".into(),
-            workspace_mm: [profile.field_mm, profile.field_mm],
+            workspace_mm: [profile.field_mm, profile.field_height_mm.unwrap_or(profile.field_mm)],
             origin: Origin::Center,
             controllable: true,
             base: None,

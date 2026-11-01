@@ -44,6 +44,9 @@ pub mod library;
 pub mod prefs;
 pub mod updates;
 pub mod userfiles;
+// Several open documents (File > New Window) and the Art Library.
+pub mod artlib;
+pub mod documents;
 
 pub use error::EngineError;
 pub use events::Event;
@@ -57,3 +60,5 @@ mod job_tests;
 mod libs_tests;
 #[cfg(test)]
 mod userfiles_tests;
+#[cfg(test)]
+mod app_tests;

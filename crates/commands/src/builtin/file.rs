@@ -636,7 +636,22 @@ impl Command for ImportLbrn2 {
         r["created_groups"] = json!(created_groups);
         r["created_layers"] = json!(created_layers);
         r["reused_layers"] = json!(reused_layers);
+        // LAY-034: settings the file's layers have on that the job will not execute.
+        let mut warnings = warnings;
+        let mut unexecuted = Vec::new();
+        for lid in created_layers.iter().chain(&reused_layers) {
+            let Some(l) = doc.layer(lid) else { continue };
+            let list = lbrn::unexecuted_settings(l);
+            for u in list.iter().filter(|u| u.active == Some(true)) {
+                let sub = u.sub_layer.map(|i| format!(" (sub-layer {})", i + 1)).unwrap_or_default();
+                warnings.push(format!("{}{sub}: {} is on in the file but will not be executed by OpenEtch", l.name, u.setting));
+            }
+            if !list.is_empty() {
+                unexecuted.push(json!({ "layer_id": l.id, "name": l.name, "unsupported": list }));
+            }
+        }
         r["warnings"] = json!(warnings);
+        r["unsupported_settings"] = json!(unexecuted);
         r["mode"] = json!(mode);
         layout_json(lay, &mut r);
         // The engine replaces this when it chose the size itself.

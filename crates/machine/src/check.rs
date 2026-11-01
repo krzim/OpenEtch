@@ -52,8 +52,8 @@ pub fn check_job(profile: &MachineProfile, packets: &[Packet]) -> Result<(), Job
     let cap = units::power_to_mark_current(profile.max_power_pct).unwrap_or(0);
     let min_period = units::frequency_to_period(profile.frequency_khz_max).unwrap_or(u16::MAX);
     let max_period = units::frequency_to_period(profile.frequency_khz_min).unwrap_or(0);
-    let max_units = units::speed_to_units(profile.mark_speed.max_mm_s, profile.field_mm).unwrap_or(0);
-    let max_jump_units = units::speed_to_units(profile.max_jump_speed_mm_s, profile.field_mm).unwrap_or(0);
+    let max_units = units::speed_to_units(profile.mark_speed.max_mm_s, profile.field_transform().speed_field_mm()).unwrap_or(0);
+    let max_jump_units = units::speed_to_units(profile.max_jump_speed_mm_s, profile.field_transform().speed_field_mm()).unwrap_or(0);
     let max_us = profile.max_delay_us;
     let mask = profile.laser_enable_mask();
     // The busy / ready lights ride along with every port write of a job (`MachineProfile::io`).

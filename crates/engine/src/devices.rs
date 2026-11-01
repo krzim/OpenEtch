@@ -603,7 +603,53 @@ fn profile_summary(p: &MachineProfile) -> Value {
         "red_light_port_bit": p.red_light_port_bit,
         "red_light_speed_mm_s": p.red_light_speed_mm_s,
         "focus_light_port_bit": p.focus_light_port_bit,
+        // Every input and output bit (LightBurn's Galvo IO Ports), so the editor shows what is set: the typed
+        // fields as the profile (and `PUT /api/devices/{id}`) spell them, plus one list of each.
+        "laser_enable_port_bit": p.laser_enable_port_bit,
+        "start_mark_input_bit": p.start_mark_input_bit,
+        "stop_mark_input_bit": p.stop_mark_input_bit,
+        "io": p.io,
+        "inputs": io_inputs(p),
+        "outputs": io_outputs(p),
     })
+}
+
+/// The profile's input bits: `[{role, bit, active_low}]` (roles `start_marking`, `stop_marking`, `door_protect`,
+/// `start_framing`; start/stop marking are active high).
+fn io_inputs(p: &MachineProfile) -> Value {
+    let mut v = Vec::new();
+    if let Some(b) = p.start_mark_input_bit {
+        v.push(json!({ "role": "start_marking", "bit": b, "active_low": false }));
+    }
+    if let Some(b) = p.stop_mark_input_bit {
+        v.push(json!({ "role": "stop_marking", "bit": b, "active_low": false }));
+    }
+    for (role, port) in [("door_protect", p.io.door_protect), ("start_framing", p.io.start_framing)] {
+        if let Some(i) = port {
+            v.push(json!({ "role": role, "bit": i.bit, "active_low": i.active_low }));
+        }
+    }
+    Value::Array(v)
+}
+
+/// The profile's output bits: `[{role, bit}]` (`laser_enable`, `red_light`, `focus_light`, `busy_light`,
+/// `ready_light`, `done_marking`).
+fn io_outputs(p: &MachineProfile) -> Value {
+    let mut v = vec![
+        json!({ "role": "laser_enable", "bit": p.laser_enable_port_bit }),
+        json!({ "role": "red_light", "bit": p.red_light_port_bit }),
+    ];
+    for (role, bit) in [
+        ("focus_light", p.focus_light_port_bit),
+        ("busy_light", p.io.busy_light),
+        ("ready_light", p.io.ready_light),
+        ("done_marking", p.io.done_marking),
+    ] {
+        if let Some(b) = bit {
+            v.push(json!({ "role": role, "bit": b }));
+        }
+    }
+    Value::Array(v)
 }
 
 /// Write `dir/name` through a fresh temporary file renamed into place (creating `dir`).

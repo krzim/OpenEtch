@@ -19,9 +19,10 @@ pub const EVENT_CAPACITY: usize = 256;
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
-    /// The document changed (edit, undo or redo). `origin` is who made the change (an undo/redo from the UI is
-    /// `ui`, from MCP `agent`).
-    DocumentChanged { revision: u64, origin: Origin },
+    /// The document changed (edit, undo or redo, or another open document became the active one). `origin` is who
+    /// made the change (an undo/redo from the UI is `ui`, from MCP `agent`); `document_id` the open document (see
+    /// `GET /api/documents`; `default` for the first one).
+    DocumentChanged { revision: u64, origin: Origin, document_id: String },
     /// Machine status changed: `event` is "framing", "frame_stopped", "run_approved", "awaiting_confirm",
     /// "run_started", "run_finished", "stopped", "error" (or "lagged"); clients refetch `GET /api/machine`.
     Machine {
@@ -37,17 +38,24 @@ pub enum Event {
     /// Too many wrong operator PINs: approvals are locked until `until_unix_s` (Unix seconds). Each further lockout
     /// is twice as long (see the `pin` module).
     ApprovalLocked { until_unix_s: u64 },
-    /// The document was saved as project `name` at `revision` (clients refetch `GET /api/project`).
-    ProjectSaved { name: String, revision: u64 },
+    /// The document `document_id` was saved as project `name` at `revision` (clients refetch `GET /api/project`).
+    ProjectSaved { name: String, revision: u64, document_id: String },
     /// The timeline changed (a step was recorded, deleted or replayed, or the marker moved by undo, redo or goto):
     /// `marker` is the index of the last applied step (0 = none), `steps` how many there are. Clients refetch
     /// `GET /api/history`.
-    HistoryChanged { marker: usize, steps: usize, revision: u64 },
+    HistoryChanged { marker: usize, steps: usize, revision: u64, document_id: String },
+    /// A document was opened, closed or made active (`POST /api/documents`, `.../{id}/activate`, `.../{id}/close`):
+    /// `active` is the active document's id. Clients refetch `GET /api/documents`; when `active` changed, everything
+    /// about the document (the engine also sends `document_changed` and `history_changed` for it).
+    DocumentsChanged { active: String },
     /// Device `id` was made active (`POST /api/devices/{id}/activate`): the machine profile and workspace changed.
     /// Clients refetch `GET /api/devices` and `GET /api/machine`.
     DeviceChanged { id: String },
     /// Devices were imported or removed; clients refetch `GET /api/devices`.
     DevicesChanged,
+    /// An Art Library changed (items added, renamed, removed) or, with `library: null`, the list of libraries did;
+    /// clients refetch `GET /api/art/libraries` (and the library).
+    ArtLibraryChanged { library: Option<String> },
     /// While a job holds the machine, every 500 ms: `status` is `GET /api/job`'s answer (iteration, packets sent,
     /// paused, time remaining, count).
     JobProgress { status: serde_json::Value },
@@ -105,10 +113,14 @@ mod tests {
 
     #[test]
     fn events_serialise_with_type_tag() {
-        let ev = Event::DocumentChanged { revision: 3, origin: Origin::Ui };
+        let ev = Event::DocumentChanged { revision: 3, origin: Origin::Ui, document_id: "default".into() };
         assert_eq!(
             serde_json::to_value(&ev).unwrap(),
-            serde_json::json!({"type": "document_changed", "revision": 3, "origin": {"kind": "ui"}})
+            serde_json::json!({"type": "document_changed", "revision": 3, "origin": {"kind": "ui"}, "document_id": "default"})
+        );
+        assert_eq!(
+            serde_json::to_value(Event::DocumentsChanged { active: "doc-2".into() }).unwrap(),
+            serde_json::json!({"type": "documents_changed", "active": "doc-2"})
         );
         let ev = Event::RunFinished { id: "run-1".into(), ok: true, state: RunState::Finished, error: None };
         assert_eq!(
@@ -120,12 +132,12 @@ mod tests {
             serde_json::json!({"type": "approval_locked", "until_unix_s": 1_800_000_000u64})
         );
         assert_eq!(
-            serde_json::to_value(Event::ProjectSaved { name: "Coaster".into(), revision: 7 }).unwrap(),
-            serde_json::json!({"type": "project_saved", "name": "Coaster", "revision": 7})
+            serde_json::to_value(Event::ProjectSaved { name: "Coaster".into(), revision: 7, document_id: "default".into() }).unwrap(),
+            serde_json::json!({"type": "project_saved", "name": "Coaster", "revision": 7, "document_id": "default"})
         );
         assert_eq!(
-            serde_json::to_value(Event::HistoryChanged { marker: 2, steps: 5, revision: 9 }).unwrap(),
-            serde_json::json!({"type": "history_changed", "marker": 2, "steps": 5, "revision": 9})
+            serde_json::to_value(Event::HistoryChanged { marker: 2, steps: 5, revision: 9, document_id: "default".into() }).unwrap(),
+            serde_json::json!({"type": "history_changed", "marker": 2, "steps": 5, "revision": 9, "document_id": "default"})
         );
         assert_eq!(
             serde_json::to_value(Event::DeviceChanged { id: "jczfiber".into() }).unwrap(),

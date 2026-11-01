@@ -52,7 +52,7 @@ pub(crate) async fn approve(state: &Arc<AppState>, id: &str, pin: Option<&str>, 
     if let Some(rev) = pending_revision {
         crate::libs::check_before_approve(state, rev, checklist).await?;
     }
-    let current = state.revision();
+    let (current, active_document) = state.active_revision_and_document();
     let device = state.active_device().id;
     if state.job.at_stop(&device) {
         return Err(EngineError::Conflict(format!(
@@ -72,6 +72,16 @@ pub(crate) async fn approve(state: &Arc<AppState>, id: &str, pin: Option<&str>, 
             run.error = Some("the device changed after the run was requested".into());
             return Err(EngineError::Conflict(format!(
                 "run '{id}' was planned for another device; request a new run"
+            )));
+        }
+        // Revisions are unique across open documents (module `documents`), so the revision check below covers this;
+        // a run is still never approved while another document is active, whatever the revisions say.
+        if run.document_id != active_document {
+            run.state = RunState::Cancelled;
+            run.error = Some(format!("run of document '{}', but '{active_document}' is active", run.document_id));
+            return Err(EngineError::Conflict(format!(
+                "run '{id}' was made from document '{}' and '{active_document}' is active; request a new run",
+                run.document_id
             )));
         }
         if run.revision != current {
@@ -205,6 +215,9 @@ async fn execute(st: &Arc<AppState>, job: Job<'_>) -> Outcome {
         if let Some(bit) = start_bit {
             st.job.waiting(iteration);
             st.runs().set_state(id, RunState::AwaitingConfirm);
+            // The job state is `waiting_for_start_input` (GET /api/job); the event has the same name. The older
+            // `awaiting_start_input` is still sent for clients that listen for it (the web UI until its next batch).
+            st.emit(Event::machine("waiting_for_start_input", Some(id.to_owned())));
             st.emit(Event::machine("awaiting_start_input", Some(id.to_owned())));
             let full = job.options.full_pulse.unwrap_or(true);
             match wait_for_input(&st.machine, job.epoch, bit, full, START_INPUT_TIMEOUT, CONFIRM_POLL).await {

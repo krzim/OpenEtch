@@ -30,6 +30,7 @@ const ALL_IDS: &[&str] = &[
     "layer.update",
     "layer.delete",
     "layer.move",
+    "layer.tool",
     "layer.sub_add",
     "layer.sub_update",
     "layer.sub_delete",
@@ -39,6 +40,7 @@ const ALL_IDS: &[&str] = &[
     "shape.ellipse",
     "shape.path",
     "art.import_svg",
+    "art.insert",
     "object.transform",
     "object.set_layer",
     "object.rename",
@@ -91,6 +93,22 @@ const ALL_IDS: &[&str] = &[
     "object.make_same",
     "object.rotate_to",
     "object.scale_to",
+    // Design aids and constructions.
+    "shape.update",
+    "select.open_shapes",
+    "select.open_on_fill",
+    "select.contained",
+    "object.move_to_page_position",
+    "guide.add",
+    "guide.move",
+    "guide.delete",
+    "doc.set_curve_tolerance",
+    "node.extend",
+    "path.warp",
+    "art.tangent_circle_candidates",
+    "art.tangent_circle",
+    "art.rubber_band",
+    "art.toolpath_to_path",
     // Text, variable text, barcodes, fonts.
     "shape.text",
     "text.update",
@@ -155,6 +173,7 @@ fn registry_lists_every_command_with_documented_schema() {
             spec.id,
             "doc.inspect" | "doc.save" | "doc.export_lbrn2" | "node.list" | "var.preview_row" | "font.list"
                 | "doc.export" | "doc.print" | "image.trace_preview" | "image.export" | "image.processed" | "page.list"
+                | "select.open_shapes" | "select.open_on_fill" | "select.contained" | "art.tangent_circle_candidates"
         );
         assert_eq!(spec.risk == Risk::Query, query, "{}", spec.id);
         let props = spec.input_schema["properties"].as_object();

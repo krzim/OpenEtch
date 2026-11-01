@@ -44,6 +44,8 @@ pub enum LinkKind {
 pub fn target_from_profile(p: &MachineProfile) -> Target {
     Target {
         field_mm: p.field_mm,
+        field_height_mm: p.field_height_mm,
+        curve_tolerance_mm: p.curve_tolerance_mm,
         swap_xy: p.swap_xy,
         negate_x: p.negate_x,
         negate_y: p.negate_y,

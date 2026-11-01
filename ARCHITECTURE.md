@@ -17,9 +17,9 @@ Mac, PC, phone) and Claude are clients of the same live document. The engine is 
 |---|---|---|---|
 | `lmc` | LMC wire protocol: opcodes, 12-byte single commands, 3072-byte list packets, unit conversions, list builders, decoder/disassembler. **Pure, no I/O.** | – | no (wasm-ok) |
 | `corfile` | EzCad lens correction files (`JCZ_COR_2_1`, `LMC1COR_1.0`): parse, produce the WriteCorLine upload sequence, host-side bilinear correction. **Pure.** | – | no |
-| `doc` | Document model: stock, layers with MOPA cut settings, objects (kurbo paths + affine transforms). **Pure data + geometry helpers.** | kurbo | no |
+| `doc` | Document model: stock, layers with MOPA cut settings, objects (kurbo paths + affine transforms), guides, output curve tolerance. **Pure data + geometry helpers.** | kurbo, geom (polygon outlines) | no |
 | `lbrn` | LightBurn `.lbrn2` projects and `.clb` material libraries: parse, write, convert to and from `doc` for a galvo field or a gantry bed (`lbrn::Frame`, see "File formats"). **Pure.** | doc, kurbo, roxmltree | no |
-| `geom` | 2D geometry on kurbo paths in mm: polygon booleans, weld, cut, offsets (`i_overlay`), curve-preserving path tools (break apart, join, close, optimize, fillet, trim), node editing, generators, path walking, bounding-box nesting. **Pure.** | kurbo, i_overlay | no (wasm-ok) |
+| `geom` | 2D geometry on kurbo paths in mm: polygon booleans, weld, cut, offsets (`i_overlay`), curve-preserving path tools (break apart, join, close, optimize, arc fitting and smoothing, fillet on any corner, trim, extend), node editing, generators (polygons, convex hull, tangent circles), warp/deform, path walking, bounding-box and true-shape nesting. **Pure.** | kurbo, i_overlay | no (wasm-ok) |
 | `text` | Text like LightBurn (see "Text"): fonts (installed TrueType/OpenType via fontdb + harfrust shaping + skrifa outlines, the bundled single-line Hershey fonts, AutoCAD `.shx`, EzCad `.jsf`), layout, variable text, barcodes (rxing). **Pure** except font discovery and the clock (feature `system`). | doc, geom, kurbo | `system` feature only (wasm-ok without) |
 | `commands` | Command registry: every change to a document goes through a registered command with a JSON Schema. Session with a Fusion-style timeline (see "History timeline"). | doc, geom, text | no |
 | `plan` | Document → job: flatten paths, hatch fills, Offset Fill and kerf offsets (through `geom`), raster images (decode, adjust, dither; see "Image engraving"), order travel, encode to LMC list packets for a `MachineProfile`. Also simulation (decode packets to a preview). | doc, lmc, geom, image | no |
@@ -36,6 +36,11 @@ Mac, PC, phone) and Claude are clients of the same live document. The engine is 
 - **Gantry devices** (design-only, see "Devices") use the same frame: origin at the centre of the bed
   (`Document.workspace_mm` `[w, h]`), +Y away from the operator (toward the rear).
 - Galvo units are only used inside `lmc`/`plan`/`machine`: `0x0000..=0xFFFF` across `field_mm`, centre `0x8000`.
+  A **non-square field** (LightBurn's separate field Width and Height; `MachineProfile.field_height_mm`,
+  `FieldTransform.field_height_mm`, `plan::Target.field_height_mm`, all `None` for a square field) maps field X over
+  `field_mm` and field Y over the height, each axis onto the full word range (the swap keeps each field axis with its
+  own size); Y is bounded by `±height / 2`. Speeds convert with the larger side (`FieldTransform::speed_field_mm`), so
+  neither axis runs faster than asked. The device's workspace is then `[field_mm, height]`.
 - Axis swap / negate from the machine profile and lens correction are applied in `plan`/`machine` when converting
   field mm to galvo units, never in `doc`. Both use the one function pair `lmc::units::field_to_galvo` /
   `galvo_to_field` with a `FieldTransform { field_mm, swap_xy, negate_x, negate_y, calibration }`: points with
@@ -174,7 +179,7 @@ says otherwise. `origin` is `"ui"` (default), `"script"` or `"agent:<name>"`.
 | POST | `/api/lightburn/prefs` | LightBurn's `prefs.ini` as the raw body (at most 2 MB, else **413**): parses `DeviceList` in memory and stores only the parsed devices (`<config-dir>/lightburn-devices.json`), for an engine on a Pi without LightBurn; answers like `GET /api/lightburn`; no devices, not JSON or not UTF-8 is 400. Emits `machine` event `lightburn` |
 | DELETE | `/api/lightburn/prefs` | forgets the uploaded devices (the local `prefs.ini` is used again, if any); answers like `GET /api/lightburn`; emits `machine` event `lightburn` |
 | GET | `/api/devices` | `{ active: id, devices: [{id, name, display_name, source: "builtin" \| "lightburn-prefs" \| "lbdev" \| "manual", kind: "jcz_galvo" \| "gantry" \| "galvo_other" \| "unknown", lightburn_type, workspace_mm: [w, h], lightburn_field_mm: n \| null (galvos: the field LightBurn files are laid out for, LightBurn's Width, e.g. 153.8 on the B6 whose profile field is 153.75), origin: "center" \| "bottom_left" \| "top_left" \| "bottom_right" \| "top_right", controllable, reason: string \| null, active}] }` in list order (the built-in device first); `reason` says why a design-only device cannot be driven. See "Devices" |
-| GET | `/api/devices/{id}` | the summary plus `settings` (LightBurn's Device Settings, read-only: `[{title, rows: [{label, key, value}]}]`, `key` the LightBurn key), `profile` (JCZ galvos: name, field, swap/negate, cor file, frequency range, limits, timing, `calibration` (field offset X/Y, angle, scale, bulge, skew, trapezoid), `red_dot` (offset, scale, rest), `blanking`, `red_light_port_bit`, `red_light_speed_mm_s`, `focus_light_port_bit`), `base` (the profile it was built on) and `diffs` (`[{field, base_value, lightburn_value, note}]`, the profile against that base); unknown id 404 |
+| GET | `/api/devices/{id}` | the summary plus `settings` (LightBurn's Device Settings, read-only: `[{title, rows: [{label, key, value}]}]`, `key` the LightBurn key), `profile` (JCZ galvos: name, field, swap/negate, cor file, frequency range, limits, timing, `calibration` (field offset X/Y, angle, scale, bulge, skew, trapezoid), `red_dot` (offset, scale, rest), `blanking`, `red_light_port_bit`, `red_light_speed_mm_s`, `focus_light_port_bit`, `laser_enable_port_bit`, `start_mark_input_bit`, `stop_mark_input_bit`, `io` (Door Protect, Start Framing, Busy / Ready / Done Marking lights, Red Dot Always On), `inputs: [{role: start_marking \| stop_marking \| door_protect \| start_framing, bit, active_low}]`, `outputs: [{role: laser_enable \| red_light \| focus_light \| busy_light \| ready_light \| done_marking, bit}]`), `base` (the profile it was built on) and `diffs` (`[{field, base_value, lightburn_value, note}]`, the profile against that base); unknown id 404 |
 | POST | `/api/devices/import` | `?add=all\|<name>` (default all) with a LightBurn `.lbdev` or `prefs.ini` as the raw body (at most 2 MB, else **413**), or `?from=lightburn` and no body: the devices of LightBurn's `prefs.ini` on the engine's computer (or the uploaded one) → `{ ok, added: [id], updated: [id], skipped: [{name, reason}] }`. Parsed with the typed, privacy-safe parser; a device with the same display name, controller, connection and size as an imported one is updated (same id). Not UTF-8, not JSON or no devices 400; `add=<name>` naming no device of the file 404. Emits `devices_changed` |
 | DELETE | `/api/devices/{id}` | → `{ ok, id }`; the built-in or the active device 409; unknown 404. Emits `devices_changed` |
 | POST | `/api/devices/{id}/activate` | optional `{ "origin" }` → `{ ok, active: summary, warnings: [text] }`: makes the device active (stored; it is also the one used at the next start). Refused **409** while a run is approved, awaiting confirmation or running, or while framing; MCP headers or a non-`ui` origin **403**. Cancels pending runs, swaps the machine profile (JCZ galvos; the board is initialised again, the simulator gets a fresh `SimLink`), and new documents start at the device's workspace. Emits `device_changed`. A correction file that cannot be found is a warning (output is then uncorrected) |
@@ -196,7 +201,7 @@ says otherwise. `origin` is `"ui"` (default), `"script"` or `"agent:<name>"`.
 
 | Method | Path | Body / result |
 |---|---|---|
-| GET | `/api/job` | `{ active, run_id, state: "idle" \| "starting" \| "waiting_for_start_input" \| "running" \| "paused", iteration, iterations (null = continuous), completed, packets_sent, packets_total, part, parts, paused, elapsed_s, estimated_time_s, remaining_s, progress (0..1, by time), count, stop_at, end_after_current }` for the active device; also `GET /api/machine` `job` |
+| GET | `/api/job` | `{ active, run_id, state: "idle" \| "starting" \| "waiting_for_start_input" \| "running" \| "paused", iteration, iterations (null = continuous), completed, packets_sent, packets_acknowledged, packets_total, part, parts, paused, elapsed_s (stands still while paused, never goes back), estimated_time_s, remaining_s, progress (0..1: the time estimate held between the packets acknowledged and sent, `job::blended_progress`; below 1 until the job ends), progress_source ("time" \| "packets"), count, stop_at, end_after_current }` for the active device; also `GET /api/machine` `job` |
 | PUT | `/api/job/settings` | `{ "stop_at": n \| null }` → the job status (Stop At) |
 | POST | `/api/job/count/reset` | Reset Count of the active device → the job status |
 | POST | `/api/job/end_after_current` | a repeating or continuous job ends after its current iteration → `{ ok, active }` |
@@ -207,12 +212,14 @@ says otherwise. `origin` is `"ui"` (default), `"script"` or `"agent:<name>"`.
 | GET | `/api/machine/info` | `{ connected, profile, laser_source, laser_kind, fiber_kind, axis, serial_words?, version_words?, serial_hex? }` (GetSerialNo / GetVersion, read again when idle; words not decoded) |
 | GET | `/api/preview.png` | `?width=64..=8192` (default 1600), `?jumps=false`: the preview as a PNG download (Save Preview Image) |
 | POST | `/api/calibration/pattern` | `{ size_mm, layer? }`: adds the lens test pattern (square, centre lines, diagonals; group "Lens calibration") to the document → `{ created, group, measure: [field names] }`; marking it is an ordinary run |
-| POST | `/api/calibration/solve` | `{ size_mm, measurements: { top_mm, bottom_mm, middle_x_mm, left_mm, right_mm, middle_y_mm, diagonal_up_mm, diagonal_down_mm }, apply? }` → `{ current, calibration, applied }` for the active device (`lmc::solve_lens_calibration`: per axis scale, trapezoid and bulge from the three widths/heights, X skew from the diagonals; repeat to refine); `apply` is UI only and stores it in the device (the built-in device is read-only: 409) |
+| POST | `/api/calibration/solve` | `{ size_mm, measurements: { top_mm, bottom_mm, middle_x_mm, left_mm, right_mm, middle_y_mm, diagonal_up_mm, diagonal_down_mm, top_shift_mm?, right_shift_mm? }, apply? }` → `{ current, calibration, applied }` for the active device (`lmc::solve_lens_calibration`: per axis scale, trapezoid and bulge from the three widths/heights; the diagonals give the sum of the X and Y skews, and the corner shifts measured against a straight edge along the machine axes (top-left against bottom-left in X, bottom-right against bottom-left in Y) tell them apart: with both shifts both skews come from them, with one the other is the diagonals' sum minus it, with none the sum goes to X skew; repeat to refine); `apply` is UI only and stores it in the device (the built-in device is read-only: 409) |
 | PUT | `/api/devices/{id}` | `{ profile?: JSON merge patch of the profile, display_name? }` → `{ ok, device, reactivated, warnings }`; UI only; `machine::edit_profile`: unknown keys, invalid values, a correction file with folders, a raised hard limit (power, jump speed, delays, mark speed, frequency range, pulse table; against the profile the device was built on, else its own) and port bit changes are 400; the built-in device 409; the active device is set up again (409 while a run or framing holds the machine) |
 | POST | `/api/devices/{id}/duplicate` | → **201** `{ ok, device }`: an editable copy (source `manual`); UI only |
 | GET | `/api/devices/{id}/lbdev` | the device as a LightBurn `.lbdev` (`machine::to_lbdev`: typed keys only, the profile's values, galvo 2 as X) |
 | PUT / DELETE | `/api/devices/{id}/cor` | `?name=<file>.cor` with the file as the body (≤ 4 MB; parsed first) stores it in `<config-dir>/devices/` and sets the profile's `cor_file`; DELETE clears it; UI only (`?origin=`); the active device re-uploads its table; 409 (nothing stored) for the active device while a job holds the machine or framing is on, or when a different file of the same name is used by another device |
 | POST | `/api/devices/import/markcfg` | `?name=` with an EzCad `markcfg7` as the body → **201** `{ ok, device }` (source `markcfg`, `MachineProfile::from_markcfg`); UI only |
+| GET | `/api/sim/inputs` | `{ simulated, bits }`: the simulated board's input port word (`bits` null on USB) |
+| POST | `/api/sim/inputs` | `{ "bits": 0..=65535 }` → `{ ok, bits }`: sets the simulated input port (`ReadPort` word 1), so the foot pedal (Start Marking, also Require Full Pulse), Stop Marking, Door Protect and Start Framing inputs can be exercised end to end; **403** while the link is a real board, or with MCP client headers (a switch press stands for a person) |
 
 `GET /api/preview` segments carry `t_s`, the estimated time from the job's start to the end of the segment (the plan's
 time model including pauses and dots), for a time slider; a dot (dot mode) is a zero-length mark.
@@ -232,21 +239,65 @@ pressed in time). `stale` is true for a pending run whose document has changed s
 
 Events on `/api/events`:
 
-- `{ "type": "document_changed", "revision": n, "origin": Origin }` (after an edit, undo or redo; a client that fell
-  behind gets `revision: -1, origin: null` and should refetch everything)
+- `{ "type": "document_changed", "revision": n, "origin": Origin, "document_id" }` (after an edit, undo or redo, or when
+  another open document became the active one; `document_id` is the open document, see "Open documents"; a client
+  that fell behind gets `revision: -1, origin: null` and should refetch everything)
+- `{ "type": "documents_changed", "active": id }` (a document was opened, closed or made active; refetch
+  `GET /api/documents`)
+- `{ "type": "art_library_changed", "library": name | null }` (an Art Library changed, or with `null` the list of
+  libraries; refetch `GET /api/art/libraries`)
 - `{ "type": "machine", "event": "framing" | "frame_stopped" | "frame_updated" | "run_approved" | "awaiting_confirm" |
-  "awaiting_start_input" | "run_started" | "run_finished" | "paused" | "resumed" | "job_count" | "axis_moved" |
+  "waiting_for_start_input" (also sent as the older "awaiting_start_input" until the web UI moves over) | "run_started" | "run_finished" | "paused" | "resumed" | "job_count" | "axis_moved" |
   "stopped" | "error" | "lagged" | "lightburn" | "job_finished_sound" | "prefs", "detail"?: "..." }` (refetch `GET /api/machine`; after `lightburn`
   also `GET /api/lightburn`; after `job_count` also `GET /api/job`)
 - `{ "type": "job_progress", "status": <GET /api/job> }` every 500 ms while a job holds the machine
 - `{ "type": "run_pending", "run_id", "origin", "summary" }`
 - `{ "type": "run_finished", "id", "ok": bool, "state", "error": string | null }`
 - `{ "type": "approval_locked", "until_unix_s": n }` (too many wrong PINs; approvals locked until then)
-- `{ "type": "project_saved", "name", "revision" }` (refetch `GET /api/project`)
+- `{ "type": "project_saved", "name", "revision", "document_id" }` (refetch `GET /api/project`)
 - `{ "type": "device_changed", "id": "<device id>" }` (another device was made active; refetch `GET /api/devices` and
   `GET /api/machine`) and `{ "type": "devices_changed" }` (devices imported or removed; refetch `GET /api/devices`)
-- `{ "type": "history_changed", "marker": n, "steps": n, "revision": n }` (after every edit, undo, redo, goto or step
-  delete, right after `document_changed`; refetch `GET /api/history`)
+- `{ "type": "history_changed", "marker": n, "steps": n, "revision": n, "document_id" }` (after every edit, undo, redo,
+  goto or step delete, right after `document_changed`; refetch `GET /api/history`)
+
+**Open documents** (LightBurn's File > New Window, UX-017; `crates/engine/src/documents.rs`). The engine keeps one
+live session per open document; one is **active**, and every route and MCP tool that names no document (execute,
+undo, history, project save/open, uploads, previews, runs, framing, autosave) uses it, so single-document clients
+work unchanged on the first document, `default`. Each document has its own timeline and project state.
+`GET /api/documents` → `{active, documents: [{id, name, project, display_name, document_name, revision, dirty,
+objects, layers, active}]}`; `POST /api/documents {project?, activate? (default true)}` → **201** `{ok, id, active,
+existing, result?}` (a new document laid out for the active device, or project `project` opened into one; a project
+already open activates its document instead, **200** `existing: true`; at most 16); `POST
+/api/documents/{id}/activate`; `POST /api/documents/{id}/close {discard?}` (unsaved changes 409 without `discard`;
+the last document 409; closing the active one activates the one opened before it). Activation raises the activated
+document's revision above every revision any document has had (`Session::raise_revision`), so revisions stay unique:
+another document's pending run is stale, the preview cache never mixes documents and Require Framing Before Start asks
+again; a clean or saved document stays clean. It emits `documents_changed`, then `document_changed` and
+`history_changed` for the new active document. MCP: `documents_list` and `document_activate {id}`. A run records
+the document it was made from (`runs[].document_id`); approval refuses one whose document is not the active one,
+besides the revision check. A project opened into a new document is loaded while that document is still inactive and
+only then activated, so a switch another client makes meanwhile cannot have it replace a different document. Only the
+active document is autosaved.
+
+**Art Library** (LightBurn's Art Library window, DES-074 / UX-045; `crates/engine/src/artlib.rs`, whose module docs
+list the routes under `/api/art/libraries`). Libraries live in `<projects-dir>/art-libraries/<name>.oeart`, so every
+client of the engine shares them: New, Load (an `.oeart`), Download, Rename, Delete; items: Add Selection to Library
+(`{ids, name?}` from the active document), Import (a file, as `POST /api/document/import` formats, one item each),
+Rename, Delete, copy or move to another library, thumbnails (128 px PNG rendered when added) and insert into the
+active document (`art.insert {content, name?, center?, layer?}`: new ids, groups kept, objects on the layer of the
+same colour or a new one of that name and colour, several pieces wrapped in one group, centred on `center`; one undo
+step). Items read from a file or passed to `art.insert` must pass a project file's checks
+(`doc::file::check_document`: unique ids, sizes, names, image data, groups not inside themselves); a stored thumbnail
+that is not a PNG is rendered again; parsed libraries are kept (checked against the file's size and modification
+time) so a window's thumbnails do not re-read the file each. An item is a `commands::ArtFragment` (objects, their groups, their layers' names and colours; no cut settings,
+as in LightBurn). LightBurn's `.lbart` is a binary format with no public description and no sample was available, so
+it is not read (415 with the reason).
+
+**LightBurn settings that will not be executed** (LAY-034, `lbrn::unexecuted_settings`): per layer, the kept
+`lbrn2.*` tags whose LightBurn switch is on but OpenEtch's own option is off (Wobble, Perforation, Tabs, Flood Fill,
+Auto-rotate, Kerf Offset, Dot Mode) and unknown tags (`active: null`); gantry-only and bookkeeping tags are left out.
+`doc.import_lbrn2` warns for the active ones and returns `unsupported_settings`; `GET /api/preview` adds
+`unsupported` to each layer that has some; `GET /api/layers/unsupported` lists them for the active document.
 
 **Libraries, defaults, logs, diagnostics, camera** (`crates/engine/src/{api_libs,libs,library,prefs,joblog,
 diagnostics,updates,camera}.rs`; the module docs of `api_libs` list every route):
@@ -411,7 +462,7 @@ differs from the one in force (the list command the pass header uses; that it ap
 on the B6 is unverified), and `machine::check_job` checks every `MarkCurrent` against the cap. Runs are cached per
 image, settings and scan angle, so repeated passes cost no resampling. LightBurn's 3D Sliced mode (`3dslice`,
 `slice3d`) engraves a depth map one grey-level slice per pass (see "Files and image tools").
-Halftone cells per inch have no known LightBurn tag and are not exported (with a warning). `layer.update` takes
+Halftone cells per inch are LightBurn's `cellsPerInch` (LAY-033; seen next to `ditherMode halftone` in ComMarker's LightBurn `.clb` libraries), read and written like `halftoneAngle`. `layer.update` takes
 `settings.image` partially (`dpi` sets `interval_mm` to 25.4 / dpi; dot width within 0..=interval, minimum power
 0..=100); the plan refuses a grayscale minimum power above the machine limit.
 
@@ -445,16 +496,67 @@ geometry in place drops its `extras` (kept LightBurn shape data no longer descri
   split into subpaths, a single one into its segments: a rectangle becomes four lines); `islands` keeps holes with
   their outer contour. `path.auto_join {ids, tolerance_mm = 0.05}` (LightBurn's fixed 0.05 mm; chains whose ends meet
   close), `path.close {ids, tolerance_mm?, mode: line|move_ends}`, `path.delete_duplicates {ids?, segments?}` (same
-  layer and outline to 1 µm, whole document by default), `path.convert`, `path.optimize {ids, tolerance_mm}` (lines
-  only: collinear nodes, flat curves; no arc fitting or smoothing), `path.fillet {ids, radius_mm, corners: "all" |
-  [node]}` (line-line corners; negative radius bites; a whole rectangle keeps its corner radius), `path.trim {id, at,
-  pick_mm?}`, `path.reverse`.
+  layer and outline to 1 µm, whole document by default), `path.convert`, `path.optimize` (below), `path.fillet {ids,
+  radius_mm, corners: "all" | [node]}` (negative radius bites; a whole rectangle keeps its corner radius), `path.trim
+  {id, at, pick_mm?}`, `path.reverse`.
+- `path.optimize {ids, tolerance_mm?, arcs_mm?, smooth_mm?}` follows LightBurn's Optimize Selected Shapes: each option
+  has its own tolerance and they run smooth, arcs, lines (`geom::fit`: smoothing is Schneider's least-squares cubic
+  fitting with tangent continuity, real corners over ~60° between longer lines kept; arc fitting greedily grows
+  circles through runs of 4+ lines, every point and chord sagitta within the tolerance). Only runs of lines are
+  refitted (existing curves stay). `path.fillet` rounds any corner (a node turning > 1°): line-line exactly as before;
+  line-curve and curve-curve numerically (`geom::fillet`: the arc's centre is where both sides offset by the radius
+  cross, refined by Newton steps; curve sides are cut with `subsegment`, so they stay one Bézier). `node.extend {id,
+  at, pick_mm?, max_mm?}` (LightBurn's E) extends the open end nearest `at` straight on to the nearest line of any
+  vector object or the shape itself (`geom::extend`).
+- `path.warp {ids, mode: perspective|envelope|grid, corners? | grid?, tolerance_mm?}` (Warp Selection / Deform
+  Selection, `geom::warp`): the selection's bounds map through a homography (corners must stay convex; lines stay
+  lines), a bilinear envelope, or a bicubic patch of 4 x 4 handles (evenly spaced handles are the identity); each
+  segment is split until its mapped control points draw it within the tolerance; splitting may add at most
+  `geom::warp::MAX_WARP_SEGMENTS` segments over the whole selection.
+- `object.transform` takes `keep_copy` (transform copies and leave the originals; LightBurn's Mirror Across Line copy
+  option, for any transform). `object.move_to_page_position {ids, anchor, margin_mm?, reference: workspace|stock}` is
+  the Move Selected Objects window. `art.array` takes `spacing_x`/`spacing_y` (`center` | `gap`: padding between
+  edges), `reverse_x`/`reverse_y`, `row_shift`/`col_shift` (mm or `"half"`) and `mirror_alternate_cols`/`rows`
+  (`x`|`y`, about each copy's centre).
+- Generators: `art.tangent_circle_candidates {ids}` (Query) and `art.tangent_circle {ids, pick? | near?}` (LightBurn's
+  Generate Tangent Circle: the circles tangent to three true circles, the Apollonius problem, up to 8, in
+  `geom::construct`); `art.rubber_band {ids}` (Create Rubber-Band Outline: the convex hull of the outlines flattened
+  at 0.01 mm); `art.toolpath_to_path {ids?, layer?}` (one path per layer and sub-layer with its planned marks, first
+  repeat only, planned with a permissive target so field and power limits do not apply).
+- Selection queries (Query, LightBurn's Edit menu): `select.open_shapes {ids?}`, `select.open_on_fill {ids?}` (open
+  shapes on layers with a Fill, Fill+Line or Offset Fill pass), `select.contained {ids}` (the selection plus every
+  shape whose flattened vertices and edge midpoints all lie inside a selected closed outline, even-odd). They return
+  `ids`.
+- Shapes: `Geometry::Polygon {sides, radius_mm, star_ratio?, corner_radius_mm}` is a parametric polygon or star
+  (outline from `geom::shapes`, the same as `shape.polygon`'s path; first corner up); `shape.polygon {parametric:
+  true}` makes one (the default stays a path until the web UI draws the `polygon` kind). LightBurn's `.lbrn2` has no
+  polygon shape (none in the owner's 26 sample files), so exports write it as a path and DXF/SVG/PDF use its outline.
+  `shape.update {id, ...}` is Shape Properties: rectangle `width_mm`/`height_mm`/`corner_radius_mm` (a kept radius
+  shrinks to fit), ellipse `rx_mm`/`ry_mm`, polygon `sides`/`radius_mm`/`star_ratio` (null clears)/`corner_radius_mm`;
+  centre, rotation and layer stay; fields that do not apply are refused.
+- `art.nest {mode: "shapes", resolution_mm?}` nests true shapes (`geom::nest::shapes`): outlines and the region
+  (field, rect, the real stock outline, or an object's closed outline) are rasterised on one grid of at most 512 cells
+  a side; each part's cells cover it grown by half a cell diagonal and placed parts block cells within spacing plus
+  that, so spacing and edge gap hold however coarse the grid. Largest part first, each at its lowest (then leftmost)
+  free place over its rotations, searching only offsets that keep the part on the grid (a part larger than the region's
+  bounds is skipped); bit-row tests are bounded (6e8 word compares), parts left are `unplaced` with `budget_exhausted`.
+  Spacing and edge gap are capped at the region's diagonal (larger changes nothing) and discs are stamped as row spans,
+  so a huge gap costs no more than one that blocks everything. Outlines are flattened at 0.02 mm and that is added to the gaps.
+- Guides: `Document.guides` (`{id, axis: x|y, position_mm}`, ids from the document counter, left out of JSON while
+  empty) are saved with the project (a loaded file's guide ids count for `next_id` and must be unique among all ids,
+  at most `doc::MAX_GUIDES`, within ±`doc::MAX_GUIDE_MM`); `guide.add {axis, position_mm}`, `guide.move {id, position_mm, axis?}`,
+  `guide.delete {ids?}` (all when left out). They never plan, export or burn.
+- Output curve tolerance: `Document.curve_tolerance_mm` (`doc.set_curve_tolerance {tolerance_mm | null}`) wins over the
+  device's `MachineProfile.curve_tolerance_mm` (`plan::Target.curve_tolerance_mm`), else 0.01 mm
+  (`doc::DEFAULT_CURVE_TOLERANCE_MM`); both within 0.001..=1 mm. `plan` flattens vector objects at it
+  (`Target::curve_tolerance`); display regions and image masks keep their own tolerances.
 - `node.list {id}` (Query) and `node.move/insert/delete/break/join/set_type/segment_type`: nodes and segments numbered
   across subpaths (see `geom::nodes`); points in field mm, paths stay local under the transform.
 - `shape.polygon`, `shape.line`, `shape.circle` (an ellipse with equal radii); `art.circular_array {ids, count, center,
   angle_deg = 360, rotate_copies}`, `art.along_path {ids, path_id, count | spacing_mm, rotate_to_path}` (count includes
-  the original), `art.nest {ids, region: stock|field|{min,max}|{object}, spacing_mm, edge_mm, rotations}` (Quick
-  Nest-style bounding-box shelves; boxes never interlock; a round stock uses its inscribed square).
+  the original), `art.nest {ids, region: stock|field|{min,max}|{object}, spacing_mm, edge_mm, rotations, mode?}`
+  (default `boxes`: Quick Nest-style bounding-box shelves; boxes never interlock; a round stock uses its inscribed
+  square; `shapes`: true-shape nesting, below).
 - `object.order {ids, to: front|back|forward|backward}`: the object list order (front = end, drawn on top). Jobs burn
   layer by layer and order each layer's shapes by nearest-neighbour travel (`plan::order`), so this only breaks ties
   there and does not set the cut order. `object.lock {ids, locked}`: `Document.locked` (ids; on the document so
@@ -587,7 +689,8 @@ the current one needs `overwrite: true`, default false), `project_open {name}` a
 whose name differs only in case, needs `overwrite: true`, default false; returns `{path, warnings, field_mm}`), and
 `lightburn_devices` (`GET /api/lightburn` plus `machine`: the `lightburn` part of `GET /api/machine`) and
 `devices_list` (`GET /api/devices`, read-only: activating, importing and removing devices change the machine, so they
-are UI-only, and the server instructions say so; design-only devices refuse `frame_start` and `job_request_run`). The
+are UI-only, and the server instructions say so; design-only devices refuse `frame_start` and `job_request_run`), and
+`documents_list` / `document_activate {id}` (the open documents; every other tool works on the active one). The
 `doc.import_lbrn2` description and the server instructions state the field-size rule.
 Project tools take names, never paths.
 File contents go through `execute` with `doc.save`, `doc.load`, `doc.import_lbrn2` and `doc.export_lbrn2`. The MCP
@@ -624,7 +727,12 @@ MCP tool can approve a run or touch the operator PIN, and the server instruction
   thumbnail, `UIPrefs`, `Notes`, root attributes, layout) is kept in `extras`. Export writes it all back, with the
   source text of every number, transform and path list that did not change, so an unchanged import exports byte for
   byte (the env-gated `crates/lbrn/tests/real_samples.rs` checks every sample file). `.lbt` templates read the same
-  way. Export keeps each layer's LightBurn index and writes the stock outline on tool layer T1. Commands:
+  way. Export keeps each layer's LightBurn index and writes the stock outline on tool layer T1 (T2 when T1 is in
+  use). **Tool layers** (LAY-042): `Layer.tool` (`T1` / `T2`) is LightBurn's tool layer: it never outputs (planning
+  skips it whatever `output` says; `layer.update` refuses `output: true`), job framing includes its shapes (LightBurn
+  frames tool layers with the job; `tool_layers_only` frames them alone), it exports as `CutSetting type="Tool"` at
+  index 30 / 31 and the import sets it for those indices. `layer.tool {tool, id?}` adds one (named T1 / T2,
+  LightBurn's colour) or makes a layer one (`tool: null` clears it). Commands:
   `doc.import_lbrn2 {content, mode?: replace|merge, field_mm?, workspace_mm?, origin?, name?}` (Edit; merge brings the
   file's objects in as one group) and `doc.export_lbrn2 {field_mm?, workspace_mm?, origin?}` (Query, returns `{content,
   warnings, field_mm, workspace_mm, origin}`); `doc.new {name?, field_mm?, workspace_mm?, origin?}`. The format notes
@@ -806,7 +914,8 @@ which is also Qt's app-data location; File > Open Prefs Folder in LightBurn show
   `/api/devices`.
 - **Profile from a device** (`machine::profile_from_lightburn(device, base) -> (profile, diffs)`; table in
   `crates/machine/src/lightburn.rs`): field (`Width`; within 0.05 mm of the base keeps the base, since LightBurn shows
-  the field to 0.1 mm: the B6's 153.8 is EzCad's `FIELDSIZE=153.75`; width != height is reported), `swap_xy`,
+  the field to 0.1 mm: the B6's 153.8 is EzCad's `FIELDSIZE=153.75`; a `Height` more than 0.05 mm from it is a
+  non-square field, `field_height_mm`, and exports write it back), `swap_xy`,
   `negate_x/y`, `cor_file` (file name), laser on/off/polygon/end delays, jump speed and delays, jump distance limit,
   `mark_speed.max_mm_s` (`MaxSpeed`, 7000 on the B6: only lowers it), frequency range (only narrowed),
   `pulse_width_enabled` (`Laser_QPulseWidthEnabled`), `open_mo_delay_us` (`Laser_OpenMODelay`, default 8000),

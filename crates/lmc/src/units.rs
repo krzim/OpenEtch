@@ -98,8 +98,12 @@ pub fn galvo_to_mm(w: u16, field_mm: f64) -> f64 {
 /// [`field_to_galvo`] / [`galvo_to_field`], so the frame shows exactly where the job will mark.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FieldTransform {
-    /// Side of the square galvo field, mm.
+    /// Width of the galvo field (along field X), mm; also its height unless `field_height_mm` is set.
     pub field_mm: f64,
+    /// Height of a non-square field (along field Y), mm (LightBurn's separate field Width and Height); `None` for a
+    /// square field. Each field axis maps its own size onto the full galvo word range. Left out of JSON when `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field_height_mm: Option<f64>,
     /// Exchange the axes: field X drives the galvo Y word and field Y the galvo X word. Applied after negation.
     pub swap_xy: bool,
     /// Mirror field X (in the field frame, before any swap).
@@ -115,7 +119,18 @@ pub struct FieldTransform {
 impl FieldTransform {
     /// A transform without lens corrections.
     pub fn plain(field_mm: f64, swap_xy: bool, negate_x: bool, negate_y: bool) -> Self {
-        FieldTransform { field_mm, swap_xy, negate_x, negate_y, calibration: Calibration::default() }
+        FieldTransform { field_mm, field_height_mm: None, swap_xy, negate_x, negate_y, calibration: Calibration::default() }
+    }
+
+    /// The field height, mm: `field_height_mm`, else the square `field_mm`.
+    pub fn height_mm(&self) -> f64 {
+        self.field_height_mm.unwrap_or(self.field_mm)
+    }
+
+    /// The field size speeds are converted with: the larger side, so a speed is never exceeded along either axis
+    /// of a non-square field (the shorter axis then runs a little slower than asked).
+    pub fn speed_field_mm(&self) -> f64 {
+        self.field_mm.max(self.height_mm())
     }
 }
 
@@ -128,24 +143,26 @@ impl FieldTransform {
 /// whatever the negate settings.
 pub fn field_to_galvo(x_mm: f64, y_mm: f64, t: &FieldTransform) -> Result<(u16, u16)> {
     let f = field(t.field_mm)?;
-    for v in [x_mm, y_mm] {
+    let fh = field(t.height_mm())?;
+    for (v, size) in [(x_mm, f), (y_mm, fh)] {
         finite(v, "coordinate")?;
-        if v.abs() >= f / 2.0 {
+        if v.abs() >= size / 2.0 {
             return Err(LmcError::OutOfRange { what: "coordinate", value: v, allowed: "|coordinate| < field/2" });
         }
     }
     let (cx, cy) = t.calibration.apply(x_mm, y_mm, f);
     let x = if t.negate_x { -cx } else { cx };
     let y = if t.negate_y { -cy } else { cy };
-    let (gx, gy) = if t.swap_xy { (y, x) } else { (x, y) };
-    Ok((mm_to_galvo(gx, f)?, mm_to_galvo(gy, f)?))
+    // Each field axis keeps its own size through the swap: field X always scales by the width.
+    let (wx, wy) = (mm_to_galvo(x, f)?, mm_to_galvo(y, fh)?);
+    Ok(if t.swap_xy { (wy, wx) } else { (wx, wy) })
 }
 
 /// Galvo `(x, y)` words → field-frame mm: the inverse of [`field_to_galvo`] (unswap, then un-negate), up to half a
 /// galvo unit.
 pub fn galvo_to_field(gx: u16, gy: u16, t: &FieldTransform) -> (f64, f64) {
-    let (ax, ay) = (galvo_to_mm(gx, t.field_mm), galvo_to_mm(gy, t.field_mm));
-    let (x, y) = if t.swap_xy { (ay, ax) } else { (ax, ay) };
+    let (wx, wy) = if t.swap_xy { (gy, gx) } else { (gx, gy) };
+    let (x, y) = (galvo_to_mm(wx, t.field_mm), galvo_to_mm(wy, t.height_mm()));
     let (x, y) = (if t.negate_x { -x } else { x }, if t.negate_y { -y } else { y });
     t.calibration.invert(x, y, t.field_mm)
 }
@@ -495,5 +512,36 @@ mod tests {
         assert!(field_to_galvo(54.0, 0.0, &t).is_err());
         let json = serde_json::to_value(FieldTransform::plain(110.0, false, false, false)).unwrap();
         assert!(json.get("calibration").is_none());
+    }
+}
+
+#[cfg(test)]
+mod non_square_tests {
+    use super::*;
+
+    #[test]
+    fn non_square_field_scales_each_axis_by_its_own_size() {
+        let t = FieldTransform { field_height_mm: Some(100.0), ..FieldTransform::plain(200.0, false, false, false) };
+        assert_eq!(t.height_mm(), 100.0);
+        assert_eq!(t.speed_field_mm(), 200.0);
+        // Half way to each edge is a quarter of the word range from the centre on both axes.
+        let (gx, gy) = field_to_galvo(50.0, 25.0, &t).unwrap();
+        assert_eq!(gx, mm_to_galvo(50.0, 200.0).unwrap());
+        assert_eq!(gy, mm_to_galvo(25.0, 100.0).unwrap());
+        assert_eq!(gx, gy, "the same fraction of each axis");
+        // Y is bounded by the height, X by the width.
+        assert!(field_to_galvo(90.0, 0.0, &t).is_ok());
+        assert!(field_to_galvo(0.0, 50.0, &t).is_err());
+        // Swap keeps each field axis with its own size; the inverse undoes it.
+        for bits in 0..8u8 {
+            let t = FieldTransform { field_height_mm: Some(100.0), ..FieldTransform::plain(200.0, bits & 1 != 0, bits & 2 != 0, bits & 4 != 0) };
+            let w = field_to_galvo(-61.3, 12.7, &t).unwrap();
+            let (x, y) = galvo_to_field(w.0, w.1, &t);
+            assert!((x + 61.3).abs() < 200.0 / 65535.0 && (y - 12.7).abs() < 100.0 / 65535.0, "{bits}: {x} {y}");
+        }
+        // A square transform is unchanged and leaves the height out of JSON.
+        let sq = FieldTransform::plain(110.0, false, false, false);
+        assert_eq!(sq.height_mm(), 110.0);
+        assert!(!serde_json::to_string(&sq).unwrap().contains("field_height_mm"));
     }
 }

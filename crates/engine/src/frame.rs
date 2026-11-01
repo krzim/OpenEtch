@@ -133,8 +133,10 @@ pub fn outline_for(doc: &Document, req: &FrameRequest) -> Result<Vec<Vec<(f64, f
             }
             doc.expand_group_ids(ids).iter().filter_map(|id| doc.object(id)).collect()
         }
-        None if req.tool_layers_only => doc.objects.iter().filter(|o| doc.layer(&o.layer).is_some_and(|l| !l.output)).collect(),
-        None => doc.objects.iter().filter(|o| doc.layer(&o.layer).is_some_and(|l| l.output)).collect(),
+        // Tool layers (T1 / T2) and other layers with output off; a tool layer never has output on.
+        None if req.tool_layers_only => doc.objects.iter().filter(|o| doc.layer(&o.layer).is_some_and(|l| !l.emits())).collect(),
+        // The job, with what sits on the tool layers T1 / T2 (LightBurn frames those with the job).
+        None => doc.objects.iter().filter(|o| doc.layer(&o.layer).is_some_and(|l| l.output || l.tool.is_some())).collect(),
     };
     if objects.is_empty() {
         let what = if req.tool_layers_only { "no objects on tool layers (layers with output off)" } else { "no objects selected or on an output layer" };

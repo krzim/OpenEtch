@@ -12,7 +12,7 @@
 //! | `useDotCorrection 1` + `dotWidth` | `dot_width_mm` (with correction off both stay in `extras` and `dot_width_mm` is 0) |
 //! | `minPower` | `min_power_pct` |
 //! | `halftoneAngle` | `halftone_angle_deg` |
-//! | (unknown tag) | `halftone_cells_per_inch` is not written (no LightBurn file seen with it) |
+//! | `cellsPerInch` | `halftone_cells_per_inch` (LAY-033; seen as `<cellsPerInch Value="200" />` next to `ditherMode halftone` in the "Photo Details" Image entry of ComMarker's `MarkParam.clb` libraries for LightBurn, in the owner's files) |
 //!
 //! Values LightBurn leaves out (at its defaults) stay out while they still equal what the import assumed for them,
 //! and every value keeps its source spelling while unchanged, so an unchanged import writes the tags back byte for
@@ -89,6 +89,10 @@ pub(crate) fn image_from(
     if let Some(a) = rest.get("halftoneAngle").and_then(|v| finite(v)) {
         s.halftone_angle_deg = a;
         rest.remove("halftoneAngle");
+    }
+    if let Some(c) = rest.get("cellsPerInch").and_then(|v| finite(v)).filter(|c| *c > 0.0) {
+        s.halftone_cells_per_inch = c;
+        rest.remove("cellsPerInch");
     }
     let on = rest.get("useDotCorrection").and_then(|v| boolean(v)) == Some(true);
     if let Some(w) = rest.get("dotWidth").and_then(|v| finite(v)).filter(|w| on && *w > 0.0) {
@@ -179,12 +183,13 @@ pub(crate) fn image_values(
             v.insert("dotWidth".into(), raw.to_string());
         }
     }
-    (img.halftone_cells_per_inch != base.halftone_cells_per_inch).then(|| {
-        format!(
-            "halftone cells per inch ({}) were not exported: LightBurn's tag for them is unknown",
-            img.halftone_cells_per_inch
-        )
-    })
+    own(
+        v,
+        "cellsPerInch",
+        num_like(src("cellsPerInch"), img.halftone_cells_per_inch),
+        img.halftone_cells_per_inch == base.halftone_cells_per_inch,
+    );
+    None
 }
 
 /// Adjust Image attributes: (attribute, read from the file into OpenEtch's value, OpenEtch's value into the file).
@@ -345,10 +350,38 @@ mod tests {
         assert!(!v.contains_key("interval"));
         // Settings not from LightBurn: the shared tags and dpi always, image-only tags when not default.
         let mut v = BTreeMap::new();
-        let w = image_values(&ImageSettings { halftone_cells_per_inch: 30.0, ..ImageSettings::default() }, &mut v, None, &ImageSettings::default());
+        let w = image_values(&ImageSettings::default(), &mut v, None, &ImageSettings::default());
         let keys: Vec<&str> = v.keys().map(String::as_str).collect();
         assert_eq!(keys, ["angle", "bidir", "dpi", "interval"]);
-        assert!(w.is_some_and(|w| w.contains("halftone cells")));
+        assert!(w.is_none());
+    }
+
+    /// LAY-033: `cellsPerInch`, as ComMarker's LightBurn library writes it for a halftone Image entry.
+    #[test]
+    fn halftone_cells_per_inch_map_and_write_back() {
+        let pairs = [("minPower", "12"), ("maxPower", "61"), ("interval", "0.025"), ("cellsPerInch", "200"), ("ditherMode", "halftone"), ("dpi", "1016")];
+        let (p, mut rest) = params(&pairs);
+        let mut warnings = Vec::new();
+        let s = image_from(&p, &mut rest, &ImageSettings::default(), "Photo Details", &mut |w| warnings.push(w));
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!((s.dither, s.halftone_cells_per_inch), (DitherMode::Halftone, 200.0));
+        assert!(!rest.contains_key("cellsPerInch"), "mapped, not kept as an extra");
+        let source: Vec<(String, String)> = pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        let mut v = BTreeMap::new();
+        assert_eq!(image_values(&s, &mut v, Some(&source), &ImageSettings::default()), None);
+        assert_eq!(v.get("cellsPerInch").map(String::as_str), Some("200"), "written back as read");
+        // Changed: the new value; a setting made in OpenEtch writes it when it is not the default.
+        let mut v = BTreeMap::new();
+        image_values(&ImageSettings { halftone_cells_per_inch: 75.5, ..s.clone() }, &mut v, Some(&source), &ImageSettings::default());
+        assert_eq!(v["cellsPerInch"], "75.5");
+        let mut v = BTreeMap::new();
+        let w = image_values(&ImageSettings { halftone_cells_per_inch: 30.0, ..ImageSettings::default() }, &mut v, None, &ImageSettings::default());
+        assert_eq!((v.get("cellsPerInch").map(String::as_str), w), (Some("30"), None));
+        // An unusable value stays in extras and the default is used.
+        let (p, mut rest) = params(&[("cellsPerInch", "-3"), ("ditherMode", "halftone")]);
+        let s = image_from(&p, &mut rest, &ImageSettings::default(), "C00", &mut |_| {});
+        assert_eq!(s.halftone_cells_per_inch, ImageSettings::default().halftone_cells_per_inch);
+        assert_eq!(rest.get("cellsPerInch").map(String::as_str), Some("-3"));
     }
 
     #[test]

@@ -16,7 +16,7 @@ use serde_json::Value;
 mod builtin;
 mod session;
 
-pub use builtin::{ORIGIN_KEY, WorkspaceOrigin, lbrn2_device_name};
+pub use builtin::{ART_FORMAT, ArtFragment, ArtLayer, ORIGIN_KEY, WorkspaceOrigin, art_fragment, lbrn2_device_name};
 /// Text hooks for the engine: plan runs from [`prepare_output`]; after a finished run, when [`auto_advance_due`],
 /// execute `var.advance {"auto": true}`.
 pub use builtin::text::{BARCODE_KEY, auto_advance_due, prepare_output};

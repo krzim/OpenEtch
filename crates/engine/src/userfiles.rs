@@ -271,13 +271,24 @@ pub fn autosave_now(st: &AppState, force: bool) -> Result<Option<PathBuf>, Engin
     if s.autosave_minutes == 0 && !force {
         return Ok(None);
     }
-    let status = st.project_status();
-    let revision = status["revision"].as_u64().unwrap_or(0);
+    // The document and its project status, read together: another open document may become the active one between
+    // two reads, and its content must not be autosaved under this one's name (module `documents`).
+    let mut read = None;
+    for _ in 0..8 {
+        let doc = st.document();
+        let status = st.project_status();
+        if status["revision"].as_u64() == Some(doc.revision) {
+            read = Some((status, doc));
+            break;
+        }
+    }
+    // Still changing under us: the next tick tries again.
+    let Some((status, doc)) = read else { return Ok(None) };
+    let revision = doc.revision;
     let dirty = status["dirty"].as_bool().unwrap_or(false);
     if !force && (!dirty || st.files.autosaved_revision.load(Ordering::SeqCst) == revision) {
         return Ok(None);
     }
-    let doc = st.document();
     let text = doc::file::try_to_openetch_json(&doc).map_err(|e| EngineError::Internal(e.to_string()))?;
     let stem = status["name"]
         .as_str()
@@ -494,7 +505,7 @@ async fn image_processed(State(st): State<Arc<AppState>>, UrlPath(id): UrlPath<S
 }
 
 /// The import command and its parameters for a format (the file in `content` or `data_base64`).
-fn import_invocation(format: &str, bytes: Vec<u8>, q: &HashMap<String, String>) -> Result<Invocation, EngineError> {
+pub(crate) fn import_invocation(format: &str, bytes: Vec<u8>, q: &HashMap<String, String>) -> Result<Invocation, EngineError> {
     let text = |bytes: Vec<u8>| -> Result<String, EngineError> {
         let mut t = String::from_utf8(bytes).map_err(|_| EngineError::BadRequest(format!("a {format} file must be UTF-8 text")))?;
         if t.starts_with('\u{feff}') {

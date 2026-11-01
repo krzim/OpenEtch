@@ -87,6 +87,12 @@ pub fn from_openetch_json(text: &str) -> Result<Document, FileError> {
     Ok(doc)
 }
 
+/// The structural checks [`from_openetch_json`] makes (unique ids, names, sizes, layers, groups without cycles,
+/// numbers, pages), for a document put together some other way (an Art Library item, see `commands::ArtFragment`).
+pub fn check_document(doc: &Document) -> Result<(), FileError> {
+    check(doc)
+}
+
 /// Structural checks a deserialized document can still fail, plus the `next_id` repair.
 fn validate(doc: &mut Document) -> Result<(), FileError> {
     check(doc)?;
@@ -108,6 +114,7 @@ fn numbered_ids(doc: &Document) -> impl Iterator<Item = u64> + '_ {
         .map(|l| &l.id)
         .chain(doc.objects.iter().map(|o| &o.id))
         .chain(doc.groups.iter().map(|g| &g.id))
+        .chain(doc.guides.iter().map(|g| &g.id))
         .chain(pages);
     ids.filter_map(|id| id.rsplit_once('-').and_then(|(_, n)| n.parse::<u64>().ok()))
 }
@@ -152,6 +159,22 @@ fn check(doc: &Document) -> Result<(), FileError> {
             return Err(invalid(format!("id '{id}' is used more than once")));
         }
     }
+    // Guides take their ids from the same counter (`guide.add`), so they are unique among every id and count for
+    // the `next_id` repair; at most as many as `guide.add` keeps, within the range it accepts.
+    if doc.guides.len() > crate::MAX_GUIDES {
+        return Err(invalid(format!("the document has {} guides (at most {})", doc.guides.len(), crate::MAX_GUIDES)));
+    }
+    for g in &doc.guides {
+        if g.id.is_empty() || g.id.len() > 64 || g.id.chars().any(char::is_control) {
+            return Err(invalid(format!("guide id {:?} is not usable", g.id.chars().take(80).collect::<String>())));
+        }
+        if !seen.insert(g.id.as_str()) {
+            return Err(invalid(format!("id '{}' is used more than once", g.id)));
+        }
+        if !(g.position_mm.is_finite() && g.position_mm.abs() <= crate::MAX_GUIDE_MM) {
+            return Err(invalid(format!("guide {} is at {} (at most ±{} mm)", g.id, g.position_mm, crate::MAX_GUIDE_MM)));
+        }
+    }
     if let Some(n) = numbered_ids(doc).find(|n| *n >= MAX_ID) {
         return Err(invalid(format!("id number {n} is too large (ids must stay below 2^53)")));
     }
@@ -183,6 +206,12 @@ fn check(doc: &Document) -> Result<(), FileError> {
                 width_mm > 0.0 && height_mm > 0.0 && corner_radius_mm >= 0.0
             }
             Geometry::Ellipse { rx_mm, ry_mm } => rx_mm > 0.0 && ry_mm > 0.0,
+            Geometry::Polygon { sides, radius_mm, star_ratio, corner_radius_mm } => {
+                if let Some(p) = crate::polygon_problem(sides, radius_mm, star_ratio, corner_radius_mm) {
+                    return Err(invalid(format!("object {}: {p}", o.id)));
+                }
+                true
+            }
             Geometry::Path { .. } => true,
             Geometry::Text(ref t) => {
                 if let Some(p) = t.problem() {
@@ -365,6 +394,35 @@ mod tests {
         assert!(from_openetch_json(&to_openetch_json(&d)).is_err());
         d.workspace_mm = Some([400.0, 300.0]);
         assert_eq!(from_openetch_json(&to_openetch_json(&d)).unwrap().workspace_mm, Some([400.0, 300.0]));
+    }
+
+    /// A hand-edited file cannot make `guide.add` hand out an id a guide already has (the id counter is raised past
+    /// guide ids too), nor hold duplicate, unusable or out-of-range guides.
+    #[test]
+    fn guide_ids_count_for_the_counter_and_are_checked() {
+        use crate::{Guide, GuideAxis};
+        let guide = |id: &str, p: f64| Guide { id: id.into(), axis: GuideAxis::X, position_mm: p };
+        let mut d = sample();
+        d.next_id = 1;
+        d.guides = vec![guide("guide-50", 1.0)];
+        let mut back = from_openetch_json(&to_openetch_json(&d)).unwrap();
+        assert_eq!(back.next_id, 51, "raised past guide-50");
+        assert_ne!(back.alloc_id("guide").unwrap(), "guide-50");
+        let mut bad = d.clone();
+        bad.guides.push(guide("guide-50", 2.0));
+        refused(&bad, "more than once");
+        let mut bad = d.clone();
+        bad.guides[0].id = "obj-2".into();
+        refused(&bad, "more than once");
+        let mut bad = d.clone();
+        bad.guides[0].id = "g\u{7}".into();
+        refused(&bad, "not usable");
+        let mut bad = d.clone();
+        bad.guides[0].position_mm = 1e300;
+        refused(&bad, "guide-50");
+        let mut bad = d.clone();
+        bad.guides = (0..=crate::MAX_GUIDES).map(|k| guide(&format!("guide-{}", k + 100), 0.0)).collect();
+        refused(&bad, "guides");
     }
 
     fn refused(d: &Document, what: &str) {

@@ -357,8 +357,17 @@ pub struct MachineProfile {
     /// Laser source description (e.g. "JPT M7 MOPA 60W"); informational.
     #[serde(default)]
     pub laser_source: String,
-    /// Side of the square galvo field, mm. Galvo words `0x0000..=0xFFFF` span it.
+    /// Width of the galvo field (field X), mm, and its height unless `field_height_mm` is set. Galvo words
+    /// `0x0000..=0xFFFF` span it.
     pub field_mm: f64,
+    /// Height of a non-square field (field Y), mm (LightBurn's separate field Width and Height); `None` (the
+    /// default, left out of JSON) for a square field of `field_mm`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field_height_mm: Option<f64>,
+    /// Output curve tolerance for this device, mm (LightBurn's Curve Tolerance): how far flattened polylines may
+    /// stray from curves, 0.001..=1. A document's own setting wins; `None` (the default) means 0.01 mm.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub curve_tolerance_mm: Option<f64>,
     /// Exchange the X and Y galvos (applied after negation, see [`crate::field_to_galvo`]).
     pub swap_xy: bool,
     /// Mirror field X (in the field frame, before any swap).
@@ -457,6 +466,8 @@ impl MachineProfile {
             name: "Generic LMC fiber".into(),
             laser_source: String::new(),
             field_mm: 150.0,
+            field_height_mm: None,
+            curve_tolerance_mm: None,
             swap_xy: false,
             negate_x: false,
             negate_y: false,
@@ -547,6 +558,7 @@ impl MachineProfile {
     pub fn field_transform(&self) -> lmc::FieldTransform {
         lmc::FieldTransform {
             field_mm: self.field_mm,
+            field_height_mm: self.field_height_mm,
             swap_xy: self.swap_xy,
             negate_x: self.negate_x,
             negate_y: self.negate_y,
@@ -564,6 +576,16 @@ impl MachineProfile {
         let invalid = |field: &'static str, reason: String| Err(ProfileError::Invalid { field, reason });
         if !(self.field_mm.is_finite() && self.field_mm > 0.0) {
             return invalid("field_mm", format!("{} must be a positive number of mm", self.field_mm));
+        }
+        if let Some(h) = self.field_height_mm
+            && !(h.is_finite() && h > 0.0)
+        {
+            return invalid("field_height_mm", format!("{h} must be a positive number of mm"));
+        }
+        if let Some(t) = self.curve_tolerance_mm
+            && !(t.is_finite() && (0.001..=1.0).contains(&t))
+        {
+            return invalid("curve_tolerance_mm", format!("{t} must be within 0.001..=1 mm"));
         }
         if self.pulse_widths_ns.is_empty() {
             return invalid("pulse_widths_ns", "the table is empty".into());
@@ -624,7 +646,7 @@ impl MachineProfile {
             || !(0.5..=2.0).contains(&d.scale_x)
             || !(0.5..=2.0).contains(&d.scale_y)
             || d.rest_x_mm.abs() >= self.half_field_mm()
-            || d.rest_y_mm.abs() >= self.half_field_mm()
+            || d.rest_y_mm.abs() >= self.field_height_mm.unwrap_or(self.field_mm) / 2.0
         {
             return invalid(
                 "red_dot",

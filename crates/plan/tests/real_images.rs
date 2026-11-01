@@ -46,6 +46,8 @@ fn samples(exts: &[&str]) -> Option<Vec<PathBuf>> {
 fn target(field_mm: f64) -> Target {
     Target {
         field_mm,
+        field_height_mm: None,
+        curve_tolerance_mm: None,
         swap_xy: false,
         negate_x: false,
         negate_y: false,

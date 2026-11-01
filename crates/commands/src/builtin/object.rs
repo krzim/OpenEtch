@@ -81,6 +81,10 @@ pub struct TransformInput {
     pub shear_deg: Option<[f64; 2]>,
     /// Mirror across the line through points a and b (field mm), after rotate and before translate.
     pub mirror_line: Option<MirrorLine>,
+    /// Leave the originals where they are and transform copies of them instead (LightBurn's Mirror Across Line copy
+    /// option; works for every transform). The copies are returned as `created`. Default false.
+    #[serde(default)]
+    pub keep_copy: bool,
 }
 
 /// A mirror line through two distinct field-frame points.
@@ -110,14 +114,18 @@ impl Command for Transform {
     const DESCRIPTION: &'static str = "Move, rotate, scale, shear and/or mirror objects as one selection in the field \
         frame (mm, degrees counter-clockwise). Order: scale, shear, mirror, rotate (all about the pivot, default the \
         selection's bounds centre), then mirror_line (across a line through two points), then translate. Locked \
-        objects are refused. Returns the affected ids and their resulting field-frame bounds.";
+        objects are refused. With keep_copy the originals stay and copies (named \" copy\", groups copied as \
+        groups) are transformed; locked originals may be copied. Returns the affected (or created) ids and their \
+        resulting field-frame bounds.";
     const RISK: Risk = Risk::Edit;
 
     fn apply(doc: &mut Document, i: TransformInput) -> Result<(Value, String)> {
         transact(doc, |doc| {
             let id = Self::ID;
             let ids = util::object_ids(id, doc, &i.ids)?;
-            util::check_unlocked(id, doc, &ids)?;
+            if !i.keep_copy {
+                util::check_unlocked(id, doc, &ids)?;
+            }
             let pivot = match i.about.unwrap_or(Pivot::Named(NamedPivot::Center)) {
                 Pivot::Named(NamedPivot::Center) => doc.bounds_of(&ids).map(|b| b.center()).unwrap_or(Point::ORIGIN),
                 Pivot::Named(NamedPivot::Origin) => Point::ORIGIN,
@@ -176,6 +184,14 @@ impl Command for Transform {
                     id,
                     "nothing to do: give at least one of translate, rotate_deg, scale, shear_deg, mirror, mirror_line",
                 ));
+            }
+            if i.keep_copy {
+                let copies = copy_objects(doc, &ids, Vec2::ZERO, " copy")?;
+                apply_affine(doc, &copies, t);
+                let summary = format!("{} on copies {} of {}", parts.join(", "), copies.join(", "), ids.join(", "));
+                let mut r = util::edit_result(doc, &copies, &[]);
+                r["copies"] = ids.iter().zip(&copies).map(|(a, b)| (a.clone(), json!(b))).collect::<serde_json::Map<_, _>>().into();
+                return Ok((r, summary));
             }
             apply_affine(doc, &ids, t);
             Ok((util::edit_result(doc, &[], &ids), format!("{} on {}", parts.join(", "), ids.join(", "))))

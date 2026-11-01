@@ -14,8 +14,17 @@ use crate::{PlanError, Result};
 /// never change these (they are the hard limits of ARCHITECTURE.md's safety model).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Target {
-    /// Side of the square galvo field. Points must lie strictly inside `±field_mm / 2`.
+    /// Width of the galvo field (and its height when `field_height_mm` is `None`). Points must lie strictly inside
+    /// `±field_mm / 2` in X (and `±height / 2` in Y).
     pub field_mm: f64,
+    /// Height of a non-square field, mm (the profile's `field_height_mm`); `None` for a square field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field_height_mm: Option<f64>,
+    /// The device's output curve tolerance in mm (the profile's `curve_tolerance_mm`): how far flattened polylines
+    /// may stray from curves. A document's own `curve_tolerance_mm` wins; `None` means
+    /// [`doc::DEFAULT_CURVE_TOLERANCE_MM`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub curve_tolerance_mm: Option<f64>,
     /// Exchange the X and Y galvo axes. Applied after negation, see [`Target::to_galvo`].
     pub swap_xy: bool,
     /// Mirror field X (in the field frame, before any swap).
@@ -59,20 +68,37 @@ impl Target {
         self.field_mm / 2.0
     }
 
-    /// True when a field-frame point can be encoded: both coordinates strictly inside `±field_mm / 2`.
+    /// The field height, mm: `field_height_mm`, else the square `field_mm`.
+    pub fn field_height(&self) -> f64 {
+        self.field_height_mm.unwrap_or(self.field_mm)
+    }
+
+    /// The curve tolerance planning flattens `doc` with: the document's own setting, else this device's, else
+    /// [`doc::DEFAULT_CURVE_TOLERANCE_MM`] (each kept within [`doc::CURVE_TOLERANCE_RANGE_MM`]).
+    pub fn curve_tolerance(&self, doc: &doc::Document) -> f64 {
+        let r = doc::CURVE_TOLERANCE_RANGE_MM;
+        doc.curve_tolerance_mm
+            .or(self.curve_tolerance_mm)
+            .filter(|t| t.is_finite())
+            .map_or(doc::DEFAULT_CURVE_TOLERANCE_MM, |t| t.clamp(*r.start(), *r.end()))
+    }
+
+    /// True when a field-frame point can be encoded: x strictly inside `±field_mm / 2` and y strictly inside
+    /// `±height / 2`.
     ///
     /// Swap and negate keep the field symmetric, so this is checked in field mm. The bound is strict because
     /// `+field/2` is not encodable and either sign can become `+` after a negate. Same bound as
     /// `lmc::units::field_to_galvo`.
     pub fn contains(&self, p: [f64; 2]) -> bool {
-        let h = self.half_field_mm();
-        p.iter().all(|v| v.is_finite() && v.abs() < h)
+        let (hx, hy) = (self.half_field_mm(), self.field_height() / 2.0);
+        p[0].is_finite() && p[1].is_finite() && p[0].abs() < hx && p[1].abs() < hy
     }
 
     /// The field size, swap, negate and lens correction as `lmc`'s shared transform.
     pub fn transform(&self) -> FieldTransform {
         FieldTransform {
             field_mm: self.field_mm,
+            field_height_mm: self.field_height_mm,
             swap_xy: self.swap_xy,
             negate_x: self.negate_x,
             negate_y: self.negate_y,
@@ -102,6 +128,16 @@ impl Target {
         if !(self.field_mm.is_finite() && self.field_mm > 0.0) {
             return Err(PlanError::Target(format!("field_mm must be positive (got {})", self.field_mm)));
         }
+        if let Some(h) = self.field_height_mm
+            && !(h.is_finite() && h > 0.0)
+        {
+            return Err(PlanError::Target(format!("field_height_mm must be positive (got {h})")));
+        }
+        if let Some(t) = self.curve_tolerance_mm
+            && !(t.is_finite() && doc::CURVE_TOLERANCE_RANGE_MM.contains(&t))
+        {
+            return Err(PlanError::Target(format!("curve_tolerance_mm must be within 0.001..=1 (got {t})")));
+        }
         if !(self.max_power_pct.is_finite() && (0.0..=100.0).contains(&self.max_power_pct)) {
             return Err(PlanError::Target(format!("max_power_pct must be within 0..=100 (got {})", self.max_power_pct)));
         }
@@ -121,6 +157,8 @@ pub(crate) mod tests {
     pub(crate) fn target() -> Target {
         Target {
             field_mm: 110.0,
+            field_height_mm: None,
+            curve_tolerance_mm: None,
             swap_xy: false,
             negate_x: false,
             negate_y: false,
@@ -193,6 +231,23 @@ pub(crate) mod tests {
         assert!(!t.contains([55.0, 0.0]));
         assert!(!t.contains([0.0, -55.0]));
         assert!(!t.contains([f64::NAN, 0.0]));
+    }
+
+    #[test]
+    fn non_square_field_and_curve_tolerance() {
+        let t = Target { field_height_mm: Some(60.0), ..target() };
+        assert!(t.contains([54.9, 29.9]));
+        assert!(!t.contains([0.0, 30.0]));
+        assert_eq!(t.to_galvo([0.0, 15.0]).unwrap().1, mm_to_galvo(15.0, 60.0).unwrap());
+        assert!(t.to_galvo([0.0, 31.0]).is_err());
+        let mut d = doc::Document::default();
+        assert_eq!(target().curve_tolerance(&d), doc::DEFAULT_CURVE_TOLERANCE_MM);
+        let dev = Target { curve_tolerance_mm: Some(0.05), ..target() };
+        assert_eq!(dev.curve_tolerance(&d), 0.05);
+        d.curve_tolerance_mm = Some(0.002);
+        assert_eq!(dev.curve_tolerance(&d), 0.002, "the document wins");
+        assert!(Target { field_height_mm: Some(0.0), ..target() }.validate().is_err());
+        assert!(Target { curve_tolerance_mm: Some(2.0), ..target() }.validate().is_err());
     }
 
     #[test]

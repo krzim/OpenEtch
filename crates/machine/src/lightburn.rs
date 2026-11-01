@@ -17,7 +17,7 @@
 //!
 //! | LightBurn | Profile field | Note |
 //! |---|---|---|
-//! | `Width` (`Height`) | `field_mm` | A difference of at most 0.05 mm from the base keeps the base: LightBurn shows the field to 0.1 mm, so 153.8 is EzCad's 153.75. Width != height is reported. |
+//! | `Width`, `Height` | `field_mm`, `field_height_mm` | A difference of at most 0.05 mm from the base keeps the base: LightBurn shows the field to 0.1 mm, so 153.8 is EzCad's 153.75. A height more than 0.05 mm from the width is a non-square field (`field_height_mm`); otherwise the field is square. |
 //! | `Galvo_1_is_X` | `swap_xy = Galvo_1_is_X` | **UNVERIFIED** on hardware, see below. |
 //! | `Galvo_1_Sign`, `Galvo_2_Sign`, `MirrorX`, `MirrorY` | `negate_x`, `negate_y` | Sign -1 of the galvo carrying the axis, XOR the mirror. **UNVERIFIED.** |
 //! | `CorrectionFile` | `cor_file` (file name only) | Missing or empty keeps the base's file. |
@@ -701,10 +701,13 @@ pub fn profile_from_lightburn(dev: &LightBurnDevice, base: &MachineProfile) -> (
 
     // Field.
     if let Some(w) = dev.width_mm {
-        let mut note = String::new();
-        if let Some(h) = dev.height_mm.filter(|h| (h - w).abs() > 1e-9) {
-            note = format!("LightBurn's field is {w} x {h} mm; OpenEtch fields are square, the width is used");
-        }
+        let note = String::new();
+        // A non-square field (LightBurn's Height differs from its Width by more than its 0.1 mm display) keeps its
+        // own height; a square one clears a base's height.
+        let height = dev.height_mm.filter(|h| h.is_finite() && *h > 0.0 && (h - w).abs() > SAME_FIELD_MM);
+        let base_h = base.field_height_mm.map_or(Value::Null, j);
+        let lb_h = height.map_or(Value::Null, j);
+        im.set("field_height_mm", base_h, lb_h, "", |p| p.field_height_mm = height);
         if (w - base.field_mm).abs() <= SAME_FIELD_MM && w != base.field_mm {
             let keep = format!(
                 "same lens: LightBurn shows the field to 0.1 mm, kept {} (e.g. EzCad's FIELDSIZE)",
@@ -936,7 +939,7 @@ pub fn to_lbdev(display_name: &str, lightburn: Option<&LightBurnDevice>, profile
     dev.insert("DisplayName".into(), json!(display_name));
     dev.insert("Type".into(), json!(if lb.kind.is_empty() { "LibUSB" } else { lb.kind.as_str() }));
     let width = profile.map(|p| p.field_mm).or(lb.width_mm);
-    let height = profile.map(|p| p.field_mm).or(lb.height_mm).or(width);
+    let height = profile.map(|p| p.field_height_mm.unwrap_or(p.field_mm)).or(lb.height_mm).or(width);
     // LightBurn shows the field to 0.1 mm and the B6 profile keeps EzCad's 153.75: keep LightBurn's own value
     // when it is the same lens.
     let same = |a: Option<f64>, b: Option<f64>| matches!((a, b), (Some(a), Some(b)) if (a - b).abs() <= SAME_FIELD_MM);
@@ -1193,6 +1196,21 @@ mod tests {
         assert_eq!(back.timing, base.timing);
         assert_eq!((back.negate_x, back.negate_y, back.swap_xy), (base.negate_x, base.negate_y, base.swap_xy));
         assert_eq!(back.start_mark_input_bit, Some(14));
+    }
+
+    #[test]
+    fn non_square_fields_import_and_export_their_height() {
+        let d = LightBurnDevice { name: "JCZFiber".into(), width_mm: Some(200.0), height_mm: Some(120.0), ..Default::default() };
+        let (p, diffs) = profile_from_lightburn(&d, &MachineProfile::generic_jcz_galvo());
+        assert_eq!((p.field_mm, p.field_height_mm), (200.0, Some(120.0)));
+        assert!(diffs.iter().any(|d| d.field == "field_height_mm"), "{diffs:?}");
+        assert_eq!(p.field_transform().height_mm(), 120.0);
+        let text = to_lbdev("Wide", None, Some(&p));
+        let back = &parse_lbdev(&text).unwrap().devices[0];
+        assert_eq!((back.width_mm, back.height_mm), (Some(200.0), Some(120.0)));
+        // A square LightBurn field (to its 0.1 mm display) stays square.
+        let sq = LightBurnDevice { name: "JCZFiber".into(), width_mm: Some(150.0), height_mm: Some(150.04), ..Default::default() };
+        assert_eq!(profile_from_lightburn(&sq, &MachineProfile::generic_jcz_galvo()).0.field_height_mm, None);
     }
 
     #[test]

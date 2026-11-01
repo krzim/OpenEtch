@@ -45,7 +45,7 @@ fn esc(s: &str) -> String {
 
 /// A layer colour if it looks like a plain CSS colour (`#hex` or a name), else a neutral grey. Keeps arbitrary
 /// document strings out of the SVG markup.
-fn safe_color(c: &str) -> String {
+pub(crate) fn safe_color(c: &str) -> String {
     let ok = (c.starts_with('#') && c.len() <= 9 && c[1..].chars().all(|ch| ch.is_ascii_hexdigit()))
         || (!c.is_empty() && c.len() <= 20 && c.chars().all(|ch| ch.is_ascii_alphabetic()));
     if ok { esc(c) } else { "#888888".into() }
