@@ -9,8 +9,8 @@ Work goes in batches. Each batch is built against a written contract, verified e
 swapped into the running server. Every finished item gets its tracker line updated in the same commit
 (`python -I docs/parity/set_status.py ID STATUS EVIDENCE [NOTE]`).
 
-Audit of 2026-11-01 (after the final pass, plus the last barcode types): 315 galvo items, **306 done, 7 partial,
-0 missing, 2 n/a** (343 items in all: 306 done, 7 partial, 6 missing, 24 n/a). Every batch below is done; what is left of each is listed under
+Audit of 2026-11-01 (after the final pass, plus the last barcode types): 315 galvo items, **306 done, 6 partial,
+0 missing, 3 n/a** (343 items in all: 306 done, 6 partial, 6 missing, 25 n/a). Every batch below is done; what is left of each is listed under
 [Remaining galvo items](#remaining-galvo-items). UX-061 (language) counts as done because every UI string is in the
 message tables and the language switches live; only English is complete (the machine-translated Spanish covers 568
 of 2807 keys), and more languages are translation content, not code.
@@ -24,7 +24,7 @@ of 2807 keys), and more languages are translation content, not code.
 | 5 | Running jobs and the machine: pause/resume, progress, counter, repeat, run continuously, start/stop inputs, cut selected; framing modes, live framing, red dot, blanking, focus light; galvo calibration and lens wizard; device editor, .lbdev, markcfg, add-galvo wizard; Z axis; rotary; preview slider, play, start here; camera | JOB-007..084, OTH-005..030 | done |
 | 6 | Cut order and per-layer options | JOB-008..018, LAY-001..066 | done |
 | 7 | Layers, libraries and workspace: Cuts/Layers window, defaults, material library, material/interval/focus tests, Laser window, numeric toolbar, docks, hotkeys, units, theme, preferences, i18n, help, logs | LAY-037..071, UX-041..074 | done |
-| 8 | Files: exports, print, autosave and backups, notes, thumbnails, several documents, system clipboard, AI/PDF/EPS/HPGL/TIFF imports, import options, legacy .lbrn, templates, art library, .ezd, Gerber, 3D models, trace, masks, 3D sliced, print and cut, pages, CAD "send to laser" | UX-002..049, DES-019..074, LAY-031, JOB-006..007, OTH-002..028 | done; UX-045, UX-068, OTH-002 left |
+| 8 | Files: exports, print, autosave and backups, notes, thumbnails, several documents, system clipboard, AI/PDF/EPS/HPGL/TIFF imports, import options, legacy .lbrn, templates, art library, .ezd, Gerber, 3D models, trace, masks, 3D sliced, print and cut, pages, CAD "send to laser" | UX-002..049, DES-019..074, LAY-031, JOB-006..007, OTH-002..028 | done; UX-045, UX-068 left; OTH-002 n/a (owner's choice) |
 
 Items that need hardware the B6 lacks (galvo camera, rotary, Z axis, focus light, foot pedal inputs) are built and
 tested on the simulator and marked "unverified on hardware" in their notes until someone runs them on a machine.
@@ -56,18 +56,18 @@ Bitmap shapes (no Polygon), every Enhance value in them is 0, and no .lbart, .lb
 | DES-055 ArUco MIP 36h11 (the other 27 LightBurn barcode types are done) | A LightBurn file or SVG export holding markers 0, 1 and 2 of type ArUco MIP 36h11 (LightBurn's docs do not name the dictionary; OpenCV has DICT_ARUCO_MIP_36h12) | Match them against the candidate tables and add the family to `crates/text/src/codes/tags.rs` |
 | DES-051 Real SHX font | A real .shx the owner may use (not a LightBurn file; the owner's LightBurn has no SHX folder set) | Point `OPENETCH_SHX_SAMPLES` at it and run `text::shx::real_shx_fonts_parse` |
 
-### Needs an external program
-
-| Item | Program | Then |
-|---|---|---|
-| OTH-002 CAD "send to laser" | Autodesk Fusion and Inkscape to run the add-in and extension against a live engine; CorelDRAW to write and test a macro | Fix what the first real runs show; add the CorelDRAW macro if CorelDRAW is available |
-
 ### Needs other hardware (n/a for the B6)
 
 | Item | Hardware |
 |---|---|
 | OTH-004 EzCad3 / BSL boards | An EzCad3 or BSL galvo board to capture and test its protocol |
 | OTH-011 CO2 / UV / SPI sources | A CO2, UV or SPI galvo source on an LMC board |
+
+## Nice to have (not parity)
+
+- **CAD "send to laser" (OTH-002, n/a).** The owner does not use CorelDRAW, so no macro is planned. The Fusion 360
+  add-in (`tools/fusion360-addin`) and the Inkscape extension (`tools/inkscape-extension`) stay as extras; they are
+  tested against a stub engine only and need one run inside each program before anyone relies on them.
 
 ## The rest: gantry and controller-specific items
 
