@@ -81,6 +81,9 @@ pub struct SimCounters {
     emitting_packets: AtomicU64,
     /// The simulated input port: word 1 of every `ReadPort` reply.
     inputs: AtomicU16,
+    /// Every byte sent to the board (singles' 12 bytes, packets' 3072) while recording ([`SimCounters::record`]):
+    /// the wire, for tests that compare it byte for byte.
+    wire: Mutex<Option<Vec<u8>>>,
 }
 
 impl SimCounters {
@@ -109,6 +112,22 @@ impl SimCounters {
 
     pub fn inputs(&self) -> u16 {
         self.inputs.load(Ordering::SeqCst)
+    }
+
+    /// Start recording the wire (dropping anything recorded before).
+    pub fn record(&self) {
+        *self.wire.lock().unwrap_or_else(PoisonError::into_inner) = Some(Vec::new());
+    }
+
+    /// Stop recording and return the bytes sent since [`SimCounters::record`] (empty when not recording).
+    pub fn take_wire(&self) -> Vec<u8> {
+        self.wire.lock().unwrap_or_else(PoisonError::into_inner).take().unwrap_or_default()
+    }
+
+    fn wire(&self, bytes: &[u8]) {
+        if let Some(w) = self.wire.lock().unwrap_or_else(PoisonError::into_inner).as_mut() {
+            w.extend_from_slice(bytes);
+        }
     }
 
     fn json(&self) -> Value {
@@ -144,6 +163,7 @@ pub fn single_can_fire(cmd: Single) -> bool {
 impl Link for CountingSimLink {
     fn send_single(&mut self, cmd: Single) -> Result<Option<Reply>, LinkError> {
         self.counters.singles.fetch_add(1, Ordering::SeqCst);
+        self.counters.wire(&cmd.to_bytes());
         // EnableLaser is part of init and does not fire on its own; count only MO/port changes.
         if cmd != Single::enable_laser() && single_can_fire(cmd) {
             self.counters.laser_singles.fetch_add(1, Ordering::SeqCst);
@@ -160,6 +180,7 @@ impl Link for CountingSimLink {
 
     fn send_packet(&mut self, packet: &Packet) -> Result<(), LinkError> {
         self.counters.packets.fetch_add(1, Ordering::SeqCst);
+        self.counters.wire(packet.as_bytes());
         if !lmc::emits_light_only(std::slice::from_ref(packet)) {
             self.counters.emitting_packets.fetch_add(1, Ordering::SeqCst);
         }

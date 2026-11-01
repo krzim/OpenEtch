@@ -72,3 +72,5 @@ mod userfiles_tests;
 mod app_tests;
 #[cfg(test)]
 mod final_tests;
+#[cfg(test)]
+mod wire_tests;
