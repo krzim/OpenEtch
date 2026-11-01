@@ -11,8 +11,11 @@ import {
   evalNumber,
   grabbedKeypoint,
   handlePoint,
+  mergesNudge,
   nudgeDelta,
+  nudgeKeyId,
   nudgeStep,
+  queueNudge,
   rotateAbout,
   rotateFromHandle,
   rotateKeyDeg,
@@ -20,6 +23,7 @@ import {
   roundMm,
   scaleAbout,
   scaleFromHandle,
+  signedScaleParams,
   snapMove,
   targetsOf,
 } from "./editing.ts";
@@ -108,8 +112,9 @@ test("scale handles: corners keep aspect, Shift frees it, edges scale one axis, 
   assert.deepEqual(s, { sx: 1.5, sy: 1, about: [0, 5] });
   s = scaleFromHandle(box, "e", [15, 0], { shift: false, ctrl: true });
   assert.deepEqual(s, { sx: 2, sy: 1, about: [5, 5] });
+  // Dragging the left edge past the right one mirrors (verify finding 3: it used to collapse to 0.001x).
   s = scaleFromHandle(box, "w", [20, 5], none);
-  assert.ok(s.sx > 0, "never flips");
+  assert.deepEqual(s, { sx: -1, sy: 1, about: [10, 5] });
 });
 
 test("rotate handle snaps to 15 degrees with Shift and 5 with Ctrl", () => {
@@ -162,4 +167,83 @@ test("rounding and typed maths", () => {
   assert.equal(evalNumber("alert(1)"), null);
   assert.equal(evalNumber("1/0"), null);
   assert.equal(evalNumber(""), null);
+});
+
+test("a handle dragged past the opposite corner mirrors, and never collapses below 0.1 mm", () => {
+  // Corner "ne" dragged to the far side of the fixed corner (0,0): both axes flip, aspect kept.
+  let s = scaleFromHandle(box, "ne", [-20, -20], none);
+  assert.deepEqual(s, { sx: -2, sy: -2, about: [0, 0] });
+  // Shift frees the aspect: only X crosses over.
+  s = scaleFromHandle(box, "ne", [-5, 20], { shift: true, ctrl: false });
+  assert.equal(s.sx, -0.5);
+  assert.equal(s.sy, 2);
+  // Onto the fixed corner: kept at 0.1 mm of a 10 mm box (1%), not 0.001x (0.01 mm).
+  s = scaleFromHandle(box, "ne", [0, 0], none);
+  assert.equal(s.sx, 0.01);
+  assert.equal(s.sy, 0.01);
+  assert.ok((box.x1 - box.x0) * Math.abs(s.sx) >= 0.1 - 1e-12);
+  // Just past it: the minimum keeps the flip's sign.
+  s = scaleFromHandle(box, "e", [-0.0001, 3], none);
+  assert.deepEqual(s, { sx: -0.01, sy: 1, about: [0, 5] });
+  // A box already thinner than the minimum may not grow by itself (factor at most 1), and a zero-width line keeps 1.
+  const thin = { x0: 0, y0: 0, x1: 0.05, y1: 10 };
+  assert.equal(scaleFromHandle(thin, "e", [0, 5], none).sx, 1);
+  assert.equal(scaleFromHandle({ x0: 0, y0: 0, x1: 0, y1: 10 }, "e", [5, 5], none).sx, 1);
+  // Aspect-locked corners keep one factor even when the two sides need different minimums.
+  const wide = { x0: 0, y0: 0, x1: 100, y1: 1 };
+  s = scaleFromHandle(wide, "ne", [0, 0], none);
+  assert.equal(s.sx, s.sy);
+  assert.equal(s.sy, 0.1, "the 1 mm side keeps 0.1 mm");
+});
+
+test("signed scale factors become positive scale plus mirror (the engine refuses factors <= 0)", () => {
+  assert.deepEqual(signedScaleParams(2, 3), { scale: [2, 3] });
+  assert.deepEqual(signedScaleParams(-1, 1), { scale: [1, 1], mirror: "x" });
+  assert.deepEqual(signedScaleParams(0.5, -2), { scale: [0.5, 2], mirror: "y" });
+  assert.deepEqual(signedScaleParams(-2, -2), { scale: [2, 2], rotate_deg: 180 });
+  // Each matches scaleAbout(sx, sy) about the origin: scale, then mirror, then rotate (engine order).
+  const apply = (p: { scale: [number, number]; mirror?: "x" | "y"; rotate_deg?: number }): [number, number] => {
+    let [x, y] = [p.scale[0], p.scale[1]];
+    if (p.mirror === "x") x = -x;
+    if (p.mirror === "y") y = -y;
+    if (p.rotate_deg === 180) [x, y] = [-x, -y];
+    return [x, y];
+  };
+  for (const [sx, sy] of [
+    [-1.5, 2],
+    [3, -0.25],
+    [-0.5, -4],
+  ] as [number, number][]) {
+    assert.deepEqual(apply(signedScaleParams(sx, sy)), [sx, sy]);
+  }
+});
+
+test("nudges merge into one undo step only for repeats of the same held key", () => {
+  type Q = { target: string; key: string; d: [number, number] };
+  const ctrlRight = nudgeKeyId("ArrowRight", { shift: false, ctrl: true });
+  const shiftUp = nudgeKeyId("ArrowUp", { shift: true, ctrl: false });
+  assert.notEqual(ctrlRight, shiftUp);
+  assert.notEqual(ctrlRight, nudgeKeyId("ArrowRight", { shift: false, ctrl: false }), "modifiers count");
+
+  // Verify finding 6: Ctrl+Right then Shift+Up while a command was in flight became one "move [1, 20]" step.
+  let q: Q[] = [];
+  queueNudge(q, { target: "obj-1", key: ctrlRight, d: [1, 0] }, false);
+  queueNudge(q, { target: "obj-1", key: shiftUp, d: [0, 20] }, false);
+  assert.deepEqual(q.map((n) => n.d), [[1, 0], [0, 20]], "two keys, two steps");
+
+  // Two separate presses of the same key are two steps too (one undo step per press).
+  q = [];
+  queueNudge(q, { target: "obj-1", key: ctrlRight, d: [1, 0] }, false);
+  queueNudge(q, { target: "obj-1", key: ctrlRight, d: [1, 0] }, false);
+  assert.equal(q.length, 2);
+
+  // Holding the key: its auto-repeats merge into the waiting nudge.
+  queueNudge(q, { target: "obj-1", key: ctrlRight, d: [1, 0] }, true);
+  queueNudge(q, { target: "obj-1", key: ctrlRight, d: [1, 0] }, true);
+  assert.deepEqual(q.map((n) => n.d), [[1, 0], [3, 0]]);
+
+  // A repeat for another selection or another key does not merge.
+  assert.equal(mergesNudge({ target: "obj-1", key: ctrlRight }, { target: "obj-2", key: ctrlRight, repeat: true }), false);
+  assert.equal(mergesNudge({ target: "obj-1", key: ctrlRight }, { target: "obj-1", key: shiftUp, repeat: true }), false);
+  assert.equal(mergesNudge(null, { target: "obj-1", key: ctrlRight, repeat: true }), false);
 });

@@ -1412,6 +1412,12 @@ textarea {
   background: var(--chrome-2);
 }
 
+/* Undone with Ctrl+Z: the next edit discards it (LightBurn), so it is drawn dashed. */
+.tl-entry.rolled-back.undone {
+  border-style: dashed;
+  text-decoration: line-through;
+}
+
 /* Failed on replay: kept, shown red. */
 .tl-entry.failed {
   background: #fdecec;

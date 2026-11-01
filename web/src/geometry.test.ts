@@ -3,7 +3,21 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { DocObject, KurboPathEl } from "./api/types.ts";
-import { apply, cmdsBounds, geometryCmds, mul, normDeg, objectBounds, parseBezPath, parseSvgPath, rotate, rotationDeg, toPathData, translate } from "./geometry.ts";
+import {
+  apply,
+  cmdsBounds,
+  geometryCmds,
+  mul,
+  normDeg,
+  objectBounds,
+  parseBezPath,
+  parseSvgPath,
+  rotate,
+  rotationDeg,
+  toPathData,
+  transformParts,
+  translate,
+} from "./geometry.ts";
 
 const near = (a: number, b: number, eps = 1e-6) => assert.ok(Math.abs(a - b) < eps, `${a} != ${b}`);
 
@@ -77,4 +91,26 @@ test("relative and H/V commands parse", () => {
 test("malformed path data yields no NaN points", () => {
   const cmds = parseSvgPath("M0,0 L5");
   assert.ok(toPathData(cmds).indexOf("NaN") === -1);
+});
+
+test("Properties shows a flip apart from the rotation", () => {
+  // Verify finding 7: a horizontally flipped object showed Rotation 180.
+  assert.deepEqual(transformParts([-1, 0, 0, 1, 5, 0]), { rotationDeg: 0, flip: "horizontal" });
+  assert.deepEqual(transformParts([1, 0, 0, -1, 0, 0]), { rotationDeg: 0, flip: "vertical" });
+  // Not mirrored: the rotation as before.
+  const r = transformParts(mul(translate(3, 4), rotate(30)));
+  assert.equal(r.flip, "none");
+  near(r.rotationDeg, 30);
+  // Flipped horizontally, then rotated 30 degrees (with a scale): flip and 30.
+  const fr = transformParts(mul(rotate(30), [-2, 0, 0, 2, 0, 0]));
+  assert.equal(fr.flip, "horizontal");
+  near(fr.rotationDeg, 30);
+  // Flipped vertically, then rotated -45 degrees.
+  const fv = transformParts(mul(rotate(-45), [1, 0, 0, -1, 0, 0]));
+  assert.equal(fv.flip, "vertical");
+  near(fv.rotationDeg, -45);
+  // Rotating a flip by the difference reaches the typed angle (the Rotation field's edit).
+  const typed = transformParts(mul(rotate(60), [-1, 0, 0, 1, 0, 0]));
+  assert.equal(typed.flip, "horizontal");
+  near(typed.rotationDeg, 60);
 });

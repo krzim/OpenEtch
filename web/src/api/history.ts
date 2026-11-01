@@ -1,6 +1,13 @@
 // The timeline model, Fusion style: every recorded step with its state, and a marker after the last applied step.
 // Newer engines answer GET /api/history with `{marker, steps}`; older ones with an append-only log of entries (no
 // rollback). Both are normalised here so the Timeline renders either. Pure, so `npm test` covers it.
+//
+// Two ways to be behind the marker, as in LightBurn and Fusion: steps undone with Undo (Ctrl+Z / Ctrl+Y, the engine's
+// undo/redo) are discarded by the next edit, so Redo can never bring back edits undone long ago; steps rolled back by
+// moving the marker (timeline click, drag, the start/back/forward/end buttons, all `history.goto`) are kept and the
+// next edit is inserted before them. The engine says which with `marker_moved_by` ("undo" | "timeline" | "edit") and
+// `undone_steps`: how many steps right after the marker the next edit discards (steps rolled back on the timeline and
+// then undone further are mixed: only the undone ones go). Engines without these fields keep every rolled-back step.
 
 import type { HistoryEntry, HistoryStep, Origin } from "./types.ts";
 
@@ -26,9 +33,14 @@ export interface TimelineModel {
   start: number;
   /** The engine supports goto/delete (newer engines). */
   editable: boolean;
+  /**
+   * Steps with `marker < index <= discardThrough` were undone with Undo and the next edit discards them (LightBurn);
+   * later rolled-back steps were rolled back on the timeline and are kept (Fusion). Equal to `marker` when none are.
+   */
+  discardThrough: number;
 }
 
-export const EMPTY_TIMELINE: TimelineModel = { steps: [], marker: -1, start: -1, editable: false };
+export const EMPTY_TIMELINE: TimelineModel = { steps: [], marker: -1, start: -1, editable: false, discardThrough: -1 };
 
 /** "object.transform, layer.update" -> "transform +1". */
 export function shortCommand(cmd: string): string {
@@ -60,10 +72,10 @@ export function normalizeHistory(raw: unknown): TimelineModel {
         error: null,
         revision: typeof h.revision === "number" ? h.revision : null,
       }));
-    return { steps, marker: steps.length - 1, start: -1, editable: false };
+    return { steps, marker: steps.length - 1, start: -1, editable: false, discardThrough: steps.length - 1 };
   }
   if (!raw || typeof raw !== "object") return EMPTY_TIMELINE;
-  const r = raw as { marker?: unknown; steps?: unknown };
+  const r = raw as { marker?: unknown; steps?: unknown; marker_moved_by?: unknown; undone_steps?: unknown };
   if (!Array.isArray(r.steps)) return EMPTY_TIMELINE;
   const steps: TimelineStep[] = (r.steps as HistoryStep[])
     .filter((s) => s && typeof s === "object" && typeof s.index === "number")
@@ -84,7 +96,24 @@ export function normalizeHistory(raw: unknown): TimelineModel {
     .sort((a, b) => a.index - b.index);
   const start = steps.length ? steps[0].index - 1 : -1;
   const marker = typeof r.marker === "number" && Number.isFinite(r.marker) ? r.marker : steps.length ? steps[steps.length - 1].index : start;
-  return { steps, marker, start, editable: true };
+  // Steps are numbered consecutively, so the undone ones are the next `undone_steps` indices after the marker.
+  const undone =
+    (r.marker_moved_by === undefined || r.marker_moved_by === "undo") && typeof r.undone_steps === "number" && Number.isFinite(r.undone_steps)
+      ? Math.max(0, Math.floor(r.undone_steps))
+      : 0;
+  return { steps, marker, start, editable: true, discardThrough: marker + undone };
+}
+
+/** Whether the next edit discards `step` (it was undone with Undo; LightBurn) rather than keeping it after the edit. */
+export function discardedByNextEdit(m: TimelineModel, step: TimelineStep): boolean {
+  return step.index > m.marker && step.index <= m.discardThrough;
+}
+
+/** Tooltip line for a step after the marker: what the next edit does to it, and how to bring it back. */
+export function afterMarkerNote(m: TimelineModel, step: TimelineStep): string {
+  return discardedByNextEdit(m, step)
+    ? "Undone: your next edit discards it (Redo, Ctrl+Y, brings it back until then)"
+    : "Rolled back (after the marker): kept, and a new edit is inserted before it";
 }
 
 /** Whether `step` is applied (left of the marker) — failed steps are skipped even then. */

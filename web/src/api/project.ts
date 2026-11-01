@@ -251,13 +251,48 @@ export function validField(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null;
 }
 
-/** Field sizes offered as one-tap choices in the LightBurn import dialog: the document's, the machine's, 110, 150. */
-export function fieldChoices(docField: number | null, machineField: number | null): number[] {
+/**
+ * Field sizes offered as one-tap choices in the LightBurn import and export dialogs: the size the LightBurn file was
+ * opened at (export only), the document's, the machine's, 110, 150.
+ */
+export function fieldChoices(docField: number | null, machineField: number | null, importedField: number | null = null): number[] {
   const out: number[] = [];
-  for (const v of [docField, machineField, 110, 150]) {
+  for (const v of [importedField, docField, machineField, 110, 150]) {
     if (v !== null && !out.some((x) => Math.abs(x - v) < 1e-9)) out.push(v);
   }
   return out;
+}
+
+/**
+ * Field size Export to LightBurn starts with: the size the LightBurn file was opened at (so an open and export round
+ * trip puts everything back where LightBurn had it), else the document's, else the machine's, else `fallback`.
+ * LightBurn files do not record their field size, and a different size shifts everything by half the difference.
+ */
+export function exportFieldDefault(importedField: number | null, docField: number | null, machineField: number | null, fallback: number): number {
+  return validField(importedField) ?? validField(docField) ?? validField(machineField) ?? fallback;
+}
+
+/** Document `extras` key where the engine remembers the field size of the last merging LightBurn import. */
+export const LBRN_IMPORT_FIELD_KEY = "lbrn2._field_mm";
+
+/**
+ * The field size the engine's `doc.export_lbrn2` uses by default for `doc`: the one the last merging LightBurn import
+ * was read with (kept in the document's extras, so it survives reloads and save/open), else null. A replacing import
+ * sets the document's own `field_mm` instead.
+ */
+export function rememberedImportField(doc: Pick<GDocument, "extras"> | null | undefined): number | null {
+  const raw = doc?.extras?.[LBRN_IMPORT_FIELD_KEY];
+  return typeof raw === "string" && raw.trim() !== "" && Number(raw) <= 2000 ? validField(Number(raw)) : null;
+}
+
+/**
+ * The LightBurn field size `doc`'s art was read at, as Export to LightBurn offers it first (the engine's own default):
+ * a merged file's (remembered in the document), else `openedAt`, the size this page opened a LightBurn file at. A
+ * replacing import sets the document's `field_mm` to that size, so `openedAt` only counts while the two still agree:
+ * once the document was replaced or changed elsewhere (another tab, an agent) the remembered size is stale.
+ */
+export function importFieldOf(doc: Pick<GDocument, "extras" | "field_mm"> | null | undefined, openedAt: number | null): number | null {
+  return rememberedImportField(doc) ?? (sameField(validField(openedAt), validField(doc?.field_mm)) ? openedAt : null);
 }
 
 /** Whether two field sizes are the same to the micrometre. */

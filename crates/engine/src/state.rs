@@ -161,7 +161,7 @@ pub enum UploadFormat {
     Lbrn2,
     /// SVG art, added to the document (`art.import_svg`).
     Svg,
-    /// DXF drawing, added to the document (`art.import_dxf`).
+    /// DXF drawing, added to the document (`art.import_dxf`: one object per entity, in one group).
     Dxf,
     /// A bitmap (PNG, JPEG, ...), added to the document (`art.import_image`).
     Image,

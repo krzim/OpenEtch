@@ -8,7 +8,7 @@ import * as C from "../api/commands.ts";
 import { frequencyRange, nearestPulseWidth, pulseWidths } from "../api/laser.ts";
 import type { CutSettings, FillMode, GDocument, Layer, MachineStatus, Vec2 } from "../api/types.ts";
 import { roundMm } from "../editing.ts";
-import { normDeg, objectBounds, rotationDeg, unionBoxes, type Box } from "../geometry.ts";
+import { normDeg, objectBounds, transformParts, unionBoxes, type Box } from "../geometry.ts";
 import { topGroup, unitsOf, type Selection } from "../selection.ts";
 import type { ArrangeAction } from "./Toolbar.tsx";
 import { CheckField, ColorField, Icon, NumberField, PairField, TextField, fmt } from "./ui.tsx";
@@ -70,7 +70,9 @@ function ObjectSection({ doc, selection, run, report, onArrange, fieldMm }: Prop
   const group = groupId ? doc.groups?.find((g) => g.id === groupId) : undefined;
   const [ax, ay] = anchorPoint(bounds, anchor);
   const [w, h] = [bounds.x1 - bounds.x0, bounds.y1 - bounds.y0];
-  const rot = single ? normDeg(rotationDeg(single.transform)) : 0;
+  // A mirrored object shows its flip apart from the rotation: a horizontal flip is "Flip: horizontal, rotation 0°".
+  const parts = single ? transformParts(single.transform) : null;
+  const rot = parts ? parts.rotationDeg : 0;
   const exec = (inv: Invocation | Invocation[]) => run(inv).catch(report);
   const layers = new Set(objs.map((o) => o.layer));
   const half = fieldMm / 2;
@@ -141,6 +143,12 @@ function ObjectSection({ doc, selection, run, report, onArrange, fieldMm }: Prop
           if (Math.abs(delta) > 1e-9) exec(C.transform(ids, { rotate_deg: round6(delta), about: [roundMm(ax), roundMm(ay)] }));
         }}
       />
+      {parts && (
+        <dl className="kv">
+          <dt>Flip</dt>
+          <dd>{parts.flip === "horizontal" ? "Horizontal" : parts.flip === "vertical" ? "Vertical" : "None"}</dd>
+        </dl>
+      )}
       <div className="btn-row compact">
         <button className="icon-btn small" title="Flip horizontal (Ctrl+Shift+H)" aria-label="Flip horizontal" onClick={() => onArrange("flipH")}>
           <Icon name="flipH" size={18} />

@@ -9,12 +9,21 @@
 //! - [`Session::goto`] moves the marker anywhere, instantly (snapshots).
 //! - [`Session::undo`] / [`Session::redo`] move the marker back or forward over one step (failed steps, which change
 //!   nothing, are skipped).
-//! - A new edit while rolled back is **inserted** right after the marker, and every later step is **replayed** from
-//!   its recorded invocations on top of it so its snapshot is current; the marker stays right after the new step,
-//!   so the later steps stay rolled back until the marker is moved past them. A later step that no longer applies
-//!   (e.g. it moved an object an inserted or deleted step removed) is kept with state `failed` and its error, and
-//!   changes nothing.
+//! - What a new edit does with the steps after the marker depends on what moved the marker there ([`MarkerMove`],
+//!   `marker_moved_by` in the history view):
+//!   - **Undo** (undo/redo, Ctrl+Z / Ctrl+Y; LightBurn-style): the steps undone that way are **discarded** and the
+//!     edit takes their place, so a later redo or "go to end" never brings old edits back.
+//!   - **Timeline** (a click or drag on the timeline, or a deleted step; Fusion-style): the edit is **inserted**
+//!     right after the marker, and every later step is **replayed** from its recorded invocations on top of it so
+//!     its snapshot is current; the marker stays right after the new step, so the later steps stay rolled back
+//!     until the marker is moved past them. A later step that no longer applies (e.g. it moved an object an
+//!     inserted or deleted step removed) is kept with state `failed` and its error, and changes nothing.
+//!
+//!   Steps rolled back on the timeline and then undone further with Ctrl+Z: only the Ctrl+Z ones are discarded.
 //! - [`Session::delete_step`] removes one step and replays the steps after it.
+//! - An edit that replaces the whole document (`doc.new`, `doc.load`, a replacing `doc.import_lbrn2`) starts a
+//!   **fresh timeline**: every earlier step is dropped and the replaced document becomes the start, so that one
+//!   step can still be undone but nothing of the old document's timeline is replayed into the new one.
 //!
 //! Ids stay stable across replays: each step remembers the document's `next_id` when it first ran and is replayed
 //! from the same value, and a newly recorded step starts above every id the timeline has ever allocated, so an
@@ -43,6 +52,19 @@ pub enum StepState {
     RolledBack,
     /// Its replay failed: kept, changes nothing, `error` says why. Shown red.
     Failed,
+}
+
+/// What last moved the marker (`marker_moved_by` in [`HistoryView`]); decides what the next edit does with the
+/// steps after the marker (see the module docs).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MarkerMove {
+    /// An edit, or nothing yet; also whenever the marker is at the end of the timeline.
+    Edit,
+    /// Undo or redo: the next edit discards the steps undone this way.
+    Undo,
+    /// The timeline (goto, a deleted step): the next edit is inserted and the later steps are replayed.
+    Timeline,
 }
 
 /// One recorded edit on the timeline.
@@ -79,6 +101,11 @@ pub type HistoryEntry = HistoryStep;
 pub struct HistoryView {
     /// Index of the last applied step; 0 when none is.
     pub marker: usize,
+    /// What last moved the marker: `undo` means the next edit discards the `undone_steps` steps right after the
+    /// marker, `timeline` that it is inserted and the later steps are replayed.
+    pub marker_moved_by: MarkerMove,
+    /// How many steps right after the marker were undone with undo/redo; the next edit discards them.
+    pub undone_steps: usize,
     pub steps: Vec<HistoryStep>,
 }
 
@@ -94,6 +121,11 @@ pub struct Session {
     doc: Document,
     /// Highest `next_id` any document on the timeline has reached.
     high_water: u64,
+    /// What last moved the marker.
+    moved_by: MarkerMove,
+    /// With `moved_by == Undo`: where the marker was when the run of undos began. Steps `marker..undo_end`
+    /// (0-based) were undone with undo/redo and are discarded by the next edit.
+    undo_end: usize,
 }
 
 /// What [`apply_all`] did.
@@ -162,6 +194,16 @@ fn duplicate_id(doc: &Document) -> Option<String> {
         .cloned()
 }
 
+/// Whether a recorded edit replaces the whole document, which starts a fresh timeline.
+fn replaces_document(inv: &Invocation) -> bool {
+    match inv.id.as_str() {
+        "doc.new" | "doc.load" => true,
+        // `mode` defaults to replace (an invalid mode fails the command, so it never gets here).
+        "doc.import_lbrn2" => matches!(inv.params.get("mode").and_then(Value::as_str), None | Some("replace")),
+        _ => false,
+    }
+}
+
 /// `v` with every string longer than [`MAX_VIEW_STRING`] replaced by a note of its size.
 fn elide(v: &Value) -> Value {
     match v {
@@ -181,6 +223,8 @@ impl Session {
             doc,
             steps: Vec::new(),
             marker: 0,
+            moved_by: MarkerMove::Edit,
+            undo_end: 0,
         }
     }
 
@@ -200,6 +244,19 @@ impl Session {
     /// Index of the last applied step; 0 when none is.
     pub fn marker(&self) -> usize {
         self.marker
+    }
+
+    /// What last moved the marker (decides what the next edit does with the steps after it).
+    pub fn marker_moved_by(&self) -> MarkerMove {
+        self.moved_by
+    }
+
+    /// How many steps right after the marker the next edit discards (the steps undone with undo/redo).
+    pub fn undone_steps(&self) -> usize {
+        match self.moved_by {
+            MarkerMove::Undo => self.undo_end.min(self.steps.len()).saturating_sub(self.marker),
+            _ => 0,
+        }
     }
 
     /// The timeline for clients: marker and steps, with file contents in parameters shortened.
@@ -224,7 +281,7 @@ impl Session {
                 next_id_before: s.next_id_before,
             })
             .collect();
-        HistoryView { marker: self.marker, steps }
+        HistoryView { marker: self.marker, marker_moved_by: self.moved_by, undone_steps: self.undone_steps(), steps }
     }
 
     /// Run one command. `Query` commands do not create a step or bump the revision.
@@ -233,7 +290,8 @@ impl Session {
     }
 
     /// Run several commands as one step. All-or-nothing: on the first error the document is unchanged. While rolled
-    /// back, the step is inserted after the marker and the later steps are replayed (see the module docs).
+    /// back, the steps undone with undo/redo are discarded and the step is inserted after the marker, with the later
+    /// steps replayed; an edit that replaces the document starts a fresh timeline (see the module docs).
     pub fn batch(&mut self, invs: Vec<Invocation>, origin: Origin) -> Result<Vec<Outcome>> {
         let mut work = self.doc.clone();
         let start_id = self.doc.next_id.max(self.high_water);
@@ -257,12 +315,23 @@ impl Session {
             after: Some(work.clone()),
             next_id_before: start_id,
         };
+        if step.invocations.iter().any(replaces_document) {
+            // A new document: its timeline starts here, with the replaced document as the start.
+            self.base = std::mem::take(&mut self.doc);
+            self.steps.clear();
+            self.marker = 0;
+        } else {
+            let discard = self.undone_steps();
+            self.steps.drain(self.marker..self.marker + discard);
+        }
         let pos = self.marker;
         self.steps.insert(pos, step);
         self.marker += 1;
         self.replay_from(pos + 1);
         self.doc = work;
         self.trim();
+        // Rolled-back steps left after the marker (from the timeline) get inserted before from now on.
+        self.moved_by = MarkerMove::Timeline;
         self.refresh();
         Ok(applied.outcomes.into_iter().map(|result| Outcome { result, revision }).collect())
     }
@@ -270,6 +339,7 @@ impl Session {
     /// Move the marker back over the last applied step that changed something; returns the new revision.
     pub fn undo(&mut self) -> Result<u64> {
         let j = (0..self.marker).rev().find(|&j| self.steps[j].error.is_none()).ok_or(CommandError::NothingTo("undo"))?;
+        self.begin_undo();
         self.marker = j;
         Ok(self.restore())
     }
@@ -279,8 +349,19 @@ impl Session {
         let j = (self.marker..self.steps.len())
             .find(|&j| self.steps[j].error.is_none())
             .ok_or(CommandError::NothingTo("redo"))?;
+        self.begin_undo();
         self.marker = j + 1;
+        // Redone past where the undos began: those steps count as undone once undo moves back over them.
+        self.undo_end = self.undo_end.max(self.marker);
         Ok(self.restore())
+    }
+
+    /// Start a run of undo/redo moves (a no-op inside one): the steps after the current marker are not undone.
+    fn begin_undo(&mut self) {
+        if self.moved_by != MarkerMove::Undo {
+            self.moved_by = MarkerMove::Undo;
+            self.undo_end = self.marker;
+        }
     }
 
     /// Roll the timeline to `marker` (0 = before the first step, `history().len()` = the end). Returns the
@@ -296,6 +377,7 @@ impl Session {
             return Ok(self.doc.revision);
         }
         self.marker = marker;
+        self.moved_by = MarkerMove::Timeline;
         Ok(self.restore())
     }
 
@@ -313,6 +395,7 @@ impl Session {
         if pos < self.marker {
             self.marker -= 1;
         }
+        self.moved_by = MarkerMove::Timeline;
         self.replay_from(pos);
         Ok(self.restore())
     }
@@ -365,14 +448,19 @@ impl Session {
                     self.base = after;
                 }
                 self.marker -= 1;
+                self.undo_end = self.undo_end.saturating_sub(1);
             } else {
                 self.steps.pop();
             }
         }
     }
 
-    /// Recompute every step's index and state from its position and the marker.
+    /// Recompute every step's index and state from its position and the marker. At the end of the timeline nothing
+    /// follows the marker, so it counts as moved by an edit.
     fn refresh(&mut self) {
+        if self.marker == self.steps.len() {
+            self.moved_by = MarkerMove::Edit;
+        }
         for (i, s) in self.steps.iter_mut().enumerate() {
             s.index = i + 1;
             s.state = if s.error.is_some() {
@@ -469,6 +557,100 @@ mod tests {
         assert_eq!(x0(&s, "obj-2"), 5.0);
         assert_eq!(s.document().layers.len(), 2);
         assert_eq!(states(&s), [Active; 4]);
+    }
+
+    fn y0(s: &Session, id: &str) -> f64 {
+        (s.document().object(id).unwrap().bounds().y0 * 1e6).round() / 1e6
+    }
+
+    #[test]
+    fn edit_after_undo_discards_the_undone_steps() {
+        // Regression: an edit after Ctrl+Z was inserted before the undone steps, and a later redo or "go to end"
+        // re-applied them.
+        let mut s = three_steps();
+        s.undo().unwrap();
+        s.undo().unwrap();
+        assert_eq!((s.marker(), s.marker_moved_by(), s.undone_steps()), (1, MarkerMove::Undo, 2));
+        let v = serde_json::to_value(s.history_view()).unwrap();
+        assert_eq!((v["marker_moved_by"].clone(), v["undone_steps"].clone()), (json!("undo"), json!(2)));
+        exec(&mut s, "layer.add", json!({"name": "Cut"}));
+        assert_eq!(s.history().iter().map(|h| h.command.as_str()).collect::<Vec<_>>(), ["shape.rect", "layer.add"]);
+        assert_eq!(states(&s), [Active, Active]);
+        assert_eq!((s.marker(), s.marker_moved_by(), s.undone_steps()), (2, MarkerMove::Edit, 0));
+        assert!(matches!(s.redo(), Err(CommandError::NothingTo("redo"))));
+        s.goto(2).unwrap();
+        assert_eq!(x0(&s, "obj-2"), -5.0, "the undone moves are gone");
+
+        // Undo, redo one back, then edit: only the step still undone is dropped.
+        let mut s = three_steps();
+        s.undo().unwrap();
+        s.undo().unwrap();
+        s.redo().unwrap();
+        assert_eq!(s.undone_steps(), 1);
+        exec(&mut s, "layer.add", json!({"name": "Cut"}));
+        assert_eq!(s.history().len(), 3);
+        assert_eq!(s.history()[2].command, "layer.add");
+        assert_eq!(x0(&s, "obj-2"), 0.0);
+    }
+
+    #[test]
+    fn undo_after_a_timeline_rollback_discards_only_the_undone_steps() {
+        let mut s = three_steps();
+        exec(&mut s, "object.transform", json!({"ids": ["obj-2"], "translate": [0, 1]}));
+        s.goto(3).unwrap();
+        assert_eq!((s.marker_moved_by(), s.undone_steps()), (MarkerMove::Timeline, 0));
+        s.undo().unwrap();
+        assert_eq!((s.marker(), s.undone_steps()), (2, 1));
+        exec(&mut s, "layer.add", json!({"name": "Cut"}));
+        // Step 3 (undone with Ctrl+Z) is gone; step 4 (rolled back on the timeline) is kept and replayed.
+        let commands: Vec<&str> = s.history().iter().map(|h| h.command.as_str()).collect();
+        assert_eq!(commands, ["shape.rect", "object.transform", "layer.add", "object.transform"]);
+        assert_eq!(states(&s), [Active, Active, Active, RolledBack]);
+        assert_eq!(s.marker_moved_by(), MarkerMove::Timeline, "the next edit is inserted before step 4");
+        s.goto(4).unwrap();
+        assert_eq!((x0(&s, "obj-2"), y0(&s, "obj-2")), (0.0, -4.0));
+    }
+
+    #[test]
+    fn edit_after_a_timeline_move_is_still_inserted() {
+        let mut s = three_steps();
+        s.goto(1).unwrap();
+        let v = serde_json::to_value(s.history_view()).unwrap();
+        assert_eq!(v["marker_moved_by"], "timeline");
+        exec(&mut s, "layer.add", json!({"name": "Cut"}));
+        exec(&mut s, "layer.add", json!({"name": "Mark"}));
+        assert_eq!(s.history().len(), 5, "nothing discarded");
+        assert_eq!(states(&s), [Active, Active, Active, RolledBack, RolledBack]);
+        s.goto(5).unwrap();
+        assert_eq!(s.marker_moved_by(), MarkerMove::Edit, "at the end of the timeline");
+    }
+
+    #[test]
+    fn replacing_the_document_starts_a_fresh_timeline() {
+        // Regression: File > New and Open kept the old document's steps, which turned red when replayed.
+        for (id, params) in [
+            ("doc.new", json!({"name": "Blank"})),
+            ("doc.load", json!({"content": doc::file::to_openetch_json(&Document::default())})),
+        ] {
+            let mut s = three_steps();
+            s.goto(2).unwrap();
+            exec(&mut s, id, params);
+            assert_eq!(s.history().len(), 1, "{id}");
+            assert_eq!((s.marker(), states(&s)), (1, vec![Active]), "{id}");
+            // The replaced document is the new start: undoable once, nothing earlier.
+            s.undo().unwrap();
+            assert_eq!(x0(&s, "obj-2"), 0.0, "{id}");
+            assert!(matches!(s.undo(), Err(CommandError::NothingTo("undo"))), "{id}");
+            s.goto(1).unwrap();
+            assert!(s.document().objects.is_empty(), "{id}");
+            // Ids keep counting up, so nothing collides with what the old timeline made.
+            let r = exec(&mut s, "shape.rect", json!({"width_mm": 1, "height_mm": 1}));
+            assert_ne!(r["created"][0], "obj-2", "{id}");
+        }
+        // A merging LightBurn import or any other edit keeps the timeline.
+        let mut s = three_steps();
+        exec(&mut s, "doc.rename", json!({"name": "x"}));
+        assert_eq!(s.history().len(), 4);
     }
 
     #[test]

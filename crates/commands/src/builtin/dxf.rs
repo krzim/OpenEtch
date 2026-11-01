@@ -41,13 +41,18 @@ pub struct ImportDxfInput {
     pub name: Option<String>,
     /// Scale uniformly so the art's total width is this many mm. Default: the file's own size.
     pub width_mm: Option<f64>,
-    /// One object per DXF entity, grouped, instead of a single combined object. Default false.
-    #[serde(default)]
+    /// One object per DXF entity, grouped (as LightBurn imports a DXF), instead of a single combined object.
+    /// Default true.
+    #[serde(default = "split_default")]
     pub split: bool,
     /// Keep the drawing's coordinates (its origin on the field centre) instead of centring the art on the field
     /// origin. Default false.
     #[serde(default)]
     pub keep_position: bool,
+}
+
+fn split_default() -> bool {
+    true
 }
 
 /// `art.import_dxf`.
@@ -330,8 +335,9 @@ impl Command for ImportDxf {
     const TITLE: &'static str = "Import DXF";
     const DESCRIPTION: &'static str = "Import vector art from DXF text (lines, polylines with arcs, circles, arcs, \
         ellipses, splines, block references) in mm from the file's $INSUNITS (no units: mm, with a warning), \
-        centred on the field origin unless keep_position. Optional width_mm rescales uniformly; split makes one \
-        object per entity, grouped. Text, hatches and dimensions are skipped. Returns {created, group, bounds, \
+        centred on the field origin unless keep_position. Optional width_mm rescales uniformly. Each entity becomes \
+        its own object, all in one group (split: false makes one combined object). Text, hatches and dimensions are \
+        skipped. Returns {created, group, bounds, \
         units, warnings}. Undoable.";
     const RISK: Risk = Risk::Edit;
 
@@ -496,8 +502,10 @@ mod tests {
     #[test]
     fn lines_and_circles_in_file_units() {
         let mut d = Document::default();
-        let (r, _) = import(&mut d, json!({"content": dxf(Some(4), &format!("{LINE}{CIRCLE}"))})).unwrap();
+        let (r, _) =
+            import(&mut d, json!({"content": dxf(Some(4), &format!("{LINE}{CIRCLE}")), "split": false})).unwrap();
         assert_eq!(r["created"], json!(["obj-2"]));
+        assert_eq!(r["group"], Value::Null);
         assert_eq!(r["units"], json!("Millimeters"));
         // Line 0..10 on y = 0, circle centre (20, 0) r 5: x 0..25, y -5..5, centred on the origin.
         assert!(close(&r["bounds"]["size"], [25.0, 10.0]), "{}", r["bounds"]);
@@ -521,6 +529,20 @@ mod tests {
         assert_eq!(d.group_members("group-2"), ["obj-3", "obj-4"]);
         assert_eq!(d.objects[0].name, "jig line 1");
         assert_eq!(d.objects[1].name, "jig circle 1");
+    }
+
+    #[test]
+    fn entities_become_grouped_objects_by_default() {
+        // Regression: a dropped DXF arrived as one combined object; LightBurn groups the separate shapes.
+        let mut d = Document::default();
+        let (r, _) = import(&mut d, json!({"content": dxf(Some(4), &format!("{LINE}{CIRCLE}"))})).unwrap();
+        assert_eq!(r["created"], json!(["obj-3", "obj-4"]));
+        assert_eq!(r["group"], json!("group-2"));
+        assert_eq!(d.group("group-2").unwrap().name, "Imported DXF");
+        assert_eq!(d.group_members("group-2"), ["obj-3", "obj-4"]);
+        // One entity needs no group.
+        let (r, _) = import(&mut d, json!({"content": dxf(Some(4), LINE)})).unwrap();
+        assert_eq!((r["created"].as_array().unwrap().len(), &r["group"]), (1, &Value::Null));
     }
 
     #[test]

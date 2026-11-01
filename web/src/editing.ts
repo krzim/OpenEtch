@@ -224,11 +224,16 @@ function oppositePoint(b: Box, h: Handle): Vec2 {
   return handlePoint(b, flip[h]);
 }
 
+/** Smallest width or height a handle drag leaves, in mm (LightBurn-like: an object never collapses to nothing). */
+export const MIN_HANDLE_SIZE_MM = 0.1;
+
 /**
  * Scale for dragging handle `h` of box `b` to field point `p`: factors and the fixed point. Corner handles keep the
- * aspect ratio unless Shift is held; Ctrl scales about the centre. Factors never drop below `min` (no flips).
+ * aspect ratio unless Shift is held; Ctrl scales about the centre. Dragging past the fixed point gives a negative
+ * factor, which mirrors the selection (as LightBurn does). Each scaled side keeps at least `minMm` (or its current
+ * size, when that is already smaller), so the selection never collapses.
  */
-export function scaleFromHandle(b: Box, h: Handle, p: Vec2, m: Mods, min = 0.001): { sx: number; sy: number; about: Vec2 } {
+export function scaleFromHandle(b: Box, h: Handle, p: Vec2, m: Mods, minMm = MIN_HANDLE_SIZE_MM): { sx: number; sy: number; about: Vec2 } {
   const about = m.ctrl ? boxCenter(b) : oppositePoint(b, h);
   const start = handlePoint(b, h);
   const fx = (v0: number, v1: number, a: number) => {
@@ -237,13 +242,72 @@ export function scaleFromHandle(b: Box, h: Handle, p: Vec2, m: Mods, min = 0.001
   };
   let sx = h === "n" || h === "s" ? 1 : fx(start[0], p[0], about[0]);
   let sy = h === "e" || h === "w" ? 1 : fx(start[1], p[1], about[1]);
+  // Smallest factor magnitude per axis: `minMm` of the current size, never more than 1 (a tiny object stays as is).
+  const minFactor = (size: number) => (size > 1e-9 ? Math.min(1, minMm / size) : 1);
+  let minX = minFactor(b.x1 - b.x0);
+  let minY = minFactor(b.y1 - b.y0);
   const corner = h.length === 2;
   if (corner && !m.shift) {
     // Keep the aspect ratio: follow whichever axis the pointer moved further.
     const s = Math.abs(sx - 1) >= Math.abs(sy - 1) ? sx : sy;
     sx = sy = s;
+    minX = minY = Math.max(minX, minY);
   }
-  return { sx: Math.max(min, sx), sy: Math.max(min, sy), about };
+  // Keep the sign (a flip), clamp the magnitude; exactly 0 counts as not flipped.
+  const clamp = (s: number, min: number) => (Math.abs(s) >= min ? s : s < 0 ? -min : min);
+  return {
+    sx: h === "n" || h === "s" ? sx : clamp(sx, minX),
+    sy: h === "e" || h === "w" ? sy : clamp(sy, minY),
+    about,
+  };
+}
+
+/**
+ * `object.transform` parameters for signed scale factors: the engine takes positive factors only, so a negative factor
+ * becomes a mirror on that axis, and both negative (a point reflection) a 180° rotation. The order the engine applies
+ * (scale, mirror, rotate, all about the pivot) gives exactly `scaleAbout(sx, sy, about)`.
+ */
+export function signedScaleParams(sx: number, sy: number): { scale: Vec2; mirror?: "x" | "y"; rotate_deg?: number } {
+  const scale: Vec2 = [Math.abs(sx), Math.abs(sy)];
+  if (sx < 0 && sy < 0) return { scale, rotate_deg: 180 };
+  if (sx < 0) return { scale, mirror: "x" };
+  if (sy < 0) return { scale, mirror: "y" };
+  return { scale };
+}
+
+/** One arrow-key press for nudging: what it moves, which key with which modifiers, and whether it is a key repeat. */
+export interface NudgeKey {
+  /** What the nudge moves: "stock" or the selected object ids, joined. */
+  target: string;
+  /** The key and modifiers, e.g. "ArrowLeft|ctrl"; see `nudgeKeyId`. */
+  key: string;
+  /** `KeyboardEvent.repeat`: the key is being held down. */
+  repeat: boolean;
+}
+
+/** Identity of an arrow key with its modifiers, so Ctrl+Right and Shift+Up never count as the same held key. */
+export function nudgeKeyId(key: string, m: Mods): string {
+  return [key, m.ctrl ? "ctrl" : "", m.shift ? "shift" : ""].filter(Boolean).join("|");
+}
+
+/**
+ * Whether nudge `next` may be merged into the nudge still waiting to be sent (`queued`), making one undo step. Only
+ * auto-repeats of the same held key on the same target merge: every separate press is its own undo step (spec), and
+ * so is a different key or modifier, even when pressed quickly while a command is in flight.
+ */
+export function mergesNudge(queued: Pick<NudgeKey, "target" | "key"> | null, next: NudgeKey): boolean {
+  return !!queued && next.repeat && queued.target === next.target && queued.key === next.key;
+}
+
+/**
+ * Add nudge `next` to the queue of nudges waiting to be sent (oldest first, one command each): merged into the last
+ * one when `mergesNudge` allows, else appended. Mutates and returns `queue`.
+ */
+export function queueNudge<T extends { target: string; key: string; d: Vec2 }>(queue: T[], next: T, repeat: boolean): T[] {
+  const last = queue.length ? queue[queue.length - 1] : null;
+  if (last && mergesNudge(last, { target: next.target, key: next.key, repeat })) last.d = [last.d[0] + next.d[0], last.d[1] + next.d[1]];
+  else queue.push(next);
+  return queue;
 }
 
 /** Rotation in degrees for a rotate-handle drag about `c` from `start` to `p`: Shift snaps to 15°, Ctrl to 5°. */

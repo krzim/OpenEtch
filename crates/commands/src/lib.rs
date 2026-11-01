@@ -4,7 +4,8 @@
 //!
 //! [`Session`] owns the document, runs commands and keeps a Fusion-style timeline (see the `session` module): every
 //! recorded step with its invocations, origin and summary, a marker that can roll back and forward, insert-and-replay
-//! when editing while rolled back, and undo/redo as moving the marker by one step.
+//! when editing after moving the marker on the timeline, and undo/redo as moving the marker by one step (an edit after
+//! undo discards the undone steps, LightBurn-style). Replacing the document starts a fresh timeline.
 
 use doc::Document;
 use schemars::JsonSchema;
@@ -15,7 +16,7 @@ use serde_json::Value;
 mod builtin;
 mod session;
 
-pub use session::{HistoryEntry, HistoryStep, HistoryView, MAX_STEPS, Session, StepState};
+pub use session::{HistoryEntry, HistoryStep, HistoryView, MAX_STEPS, MarkerMove, Session, StepState};
 
 /// What a command can affect. Machine actions (`Pointer`, `Emit`) are not document commands; they are listed here so
 /// the engine can expose one catalogue, but the engine gates them separately.

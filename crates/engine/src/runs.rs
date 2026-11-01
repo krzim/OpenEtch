@@ -209,6 +209,25 @@ pub struct PreparedJob {
     pub summary: String,
 }
 
+/// The layers' names as people see them (`"Fill", "Outline"`), each once, in first-use order; a layer the document
+/// no longer has shows its id.
+fn layer_names<'a>(doc: &Document, ids: impl Iterator<Item = &'a str>) -> String {
+    let mut seen = Vec::new();
+    for id in ids {
+        if !seen.contains(&id) {
+            seen.push(id);
+        }
+    }
+    let names: Vec<String> = seen
+        .iter()
+        .map(|id| match doc.layers.iter().find(|l| l.id == *id) {
+            Some(l) => format!("\"{}\"", l.name),
+            None => (*id).to_owned(),
+        })
+        .collect();
+    names.join(", ")
+}
+
 /// Plan, encode and check `doc` for this machine. Nothing is sent anywhere: the result is only data.
 ///
 /// Besides `plan`'s own refusals, the packets go through [`machine::check_job`] (the profile's hard limits) and a
@@ -222,16 +241,11 @@ pub fn prepare_job(doc: &Document, target: &Target, profile: &MachineProfile) ->
     if marks == 0 {
         return Err(EngineError::Plan(plan::PlanError::Empty));
     }
-    let layers: Vec<&str> = {
-        let mut v: Vec<&str> = job.passes.iter().map(|p| p.layer_id.as_str()).collect();
-        v.dedup();
-        v
-    };
     let stats = job.stats;
     let summary = format!(
         "{} polylines on {}, {:.1} mm marked, about {:.1} s",
         stats.polyline_count,
-        layers.join(", "),
+        layer_names(doc, job.passes.iter().map(|p| p.layer_id.as_str())),
         stats.mark_length_mm,
         stats.estimated_time_s
     );
@@ -245,6 +259,19 @@ mod tests {
 
     fn prepared() -> PreparedJob {
         PreparedJob { packets: vec![Packet::empty()], stats: Stats::default(), summary: "s".into() }
+    }
+
+    #[test]
+    fn summaries_name_layers_by_their_names() {
+        // Regression: the pending run read "on layer-1, layer-21" instead of the layer names.
+        let mut d = Document::default();
+        d.layers[0].name = "Fill".into();
+        let mut outline = d.layers[0].clone();
+        outline.id = "layer-21".into();
+        outline.name = "Outline".into();
+        d.layers.push(outline);
+        let ids = ["layer-1", "layer-21", "layer-1", "layer-9"];
+        assert_eq!(layer_names(&d, ids.into_iter()), "\"Fill\", \"Outline\", layer-9");
     }
 
     #[test]

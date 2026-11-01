@@ -18,6 +18,16 @@ use crate::{Command, CommandError, Result, Risk};
 const MAX_CONTENT_BYTES: usize = lbrn::MAX_BYTES;
 /// Largest galvo field accepted, in mm.
 const MAX_FIELD_MM: f64 = 2000.0;
+/// Document `extras` key: the field size in mm the last merging LightBurn import was read with, which
+/// `doc.export_lbrn2` uses by default so the art goes back where it came from. (A replacing import sets the
+/// document's `field_mm` instead.)
+const IMPORT_FIELD_KEY: &str = "lbrn2._field_mm";
+
+/// The field size a merging LightBurn import remembered in `doc`, when usable.
+fn import_field(doc: &Document) -> Option<f64> {
+    let f = doc.extras.get(IMPORT_FIELD_KEY)?.parse::<f64>().ok()?;
+    (f.is_finite() && f > 0.0 && f <= MAX_FIELD_MM).then_some(f)
+}
 
 fn content<'a>(cmd: &str, text: &'a str) -> Result<&'a str> {
     if text.len() > MAX_CONTENT_BYTES {
@@ -153,7 +163,7 @@ impl Command for DocSave {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ImportMode {
-    /// Swap the whole document (keeping field_mm).
+    /// Swap the whole document; field_mm becomes the one the file was read with.
     #[default]
     Replace,
     /// Add the file's layers and objects to the document.
@@ -165,12 +175,12 @@ pub enum ImportMode {
 pub struct ImportLbrn2Input {
     /// The LightBurn .lbrn2 file contents as text (XML), not a path.
     pub content: String,
-    /// "replace" (default) swaps the whole document except field_mm; "merge" adds layers (reusing one whose name
-    /// and settings match) and objects with fresh ids.
+    /// "replace" (default) swaps the whole document, field_mm becoming the one used here; "merge" adds layers
+    /// (reusing one whose name and settings match) and objects with fresh ids.
     #[serde(default)]
     pub mode: ImportMode,
     /// Galvo field size in mm the LightBurn project was laid out for (LightBurn files do not record it). Default:
-    /// the document's field_mm.
+    /// the document's field_mm. Remembered for doc.export_lbrn2, so exports go back to the same place.
     pub field_mm: Option<f64>,
     /// File name (without extension) used to name the group a merge creates. Default "Imported LightBurn".
     pub name: Option<String>,
@@ -193,7 +203,8 @@ impl Command for ImportLbrn2 {
     const DESCRIPTION: &'static str = "Import a LightBurn .lbrn2 project or .lbt template given as text. Cut \
         settings become layers; shapes become objects and groups in the field frame (via field_mm). Text is drawn \
         and burned as LightBurn's saved outline, bitmaps become images (not engraved yet); everything else is kept \
-        for doc.export_lbrn2. replace swaps the document; merge adds the file's objects as one group. Returns \
+        for doc.export_lbrn2, which also reuses this field_mm. replace swaps the document (taking this field_mm); \
+        merge adds the file's objects as one group. Returns \
         created object, group and layer ids, reused layer ids, warnings and bounds. Undoable.";
     const RISK: Risk = Risk::Edit;
 
@@ -209,9 +220,11 @@ impl Command for ImportLbrn2 {
         let mut created_groups = Vec::new();
         match input.mode {
             ImportMode::Replace => {
+                // The document is now laid out for the field the file was read with, so an export puts every
+                // shape back where LightBurn had it.
                 let mut fresh = Document {
                     revision: doc.revision,
-                    field_mm: doc.field_mm.or(Some(field_mm)),
+                    field_mm: Some(field_mm),
                     layers,
                     objects,
                     groups,
@@ -231,6 +244,8 @@ impl Command for ImportLbrn2 {
                     return Err(doc::IdsExhausted(doc.next_id).into());
                 }
                 doc.field_mm = doc.field_mm.or(Some(field_mm));
+                // The document keeps its own field size; export uses the merged file's by default.
+                doc.extras.insert(IMPORT_FIELD_KEY.into(), field_mm.to_string());
                 let before = doc.layers.len();
                 let mut map: HashMap<String, String> = HashMap::new();
                 for mut l in layers {
@@ -321,7 +336,8 @@ impl Command for ImportLbrn2 {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ExportLbrn2Input {
-    /// Galvo field size in mm to lay the LightBurn project out for. Default: the document's field_mm.
+    /// Galvo field size in mm to lay the LightBurn project out for. Default: the field size the last LightBurn
+    /// import was read with, else the document's field_mm.
     pub field_mm: Option<f64>,
 }
 
@@ -333,13 +349,14 @@ impl Command for ExportLbrn2 {
     const ID: &'static str = "doc.export_lbrn2";
     const TITLE: &'static str = "Export LightBurn project";
     const DESCRIPTION: &'static str = "Convert the document to a LightBurn .lbrn2 project: returns {content (XML \
-        text), warnings, field_mm}. Layers keep the LightBurn index and settings they were imported with; the stock \
-        outline goes on tool layer T1; non-output and hidden layers stay so. Read-only.";
+        text), warnings, field_mm}. field_mm defaults to the one the last LightBurn import used, so shapes go back \
+        where they were. Layers keep the LightBurn index and settings they were imported with; the stock outline \
+        goes on tool layer T1; non-output and hidden layers stay so. Read-only.";
     const RISK: Risk = Risk::Query;
 
     fn apply(doc: &mut Document, input: ExportLbrn2Input) -> Result<(Value, String)> {
         let id = Self::ID;
-        let field_mm = field(id, input.field_mm, doc)?;
+        let field_mm = field(id, input.field_mm.or_else(|| import_field(doc)), doc)?;
         let (project, warnings) = lbrn::from_document(doc, field_mm).map_err(|e| invalid(id, e.to_string()))?;
         Ok((json!({ "content": lbrn::write(&project), "warnings": warnings, "field_mm": field_mm }), String::new()))
     }
@@ -417,7 +434,9 @@ mod tests {
         assert_eq!(strip_rev(s.document()), strip_rev(&saved));
         s.undo().unwrap();
         assert_eq!(s.document().name, "Blank");
-        s.undo().unwrap();
+        // doc.load started a fresh timeline whose start is the document it replaced.
+        assert!(matches!(s.undo(), Err(CommandError::NothingTo("undo"))));
+        s.redo().unwrap();
         assert_eq!(strip_rev(s.document()), strip_rev(&saved));
     }
 
@@ -480,13 +499,86 @@ mod tests {
         s.undo().unwrap();
         assert_eq!(strip_rev(s.document()), strip_rev(&before));
 
-        // The document's own field size is kept even when another one is used to read the file.
+        // Without field_mm the document's is used; with one, the document takes it (the file is laid out for it).
         let mut s = session(Some(153.75));
-        let r = ok(&mut s, "doc.import_lbrn2", json!({"content": LBRN, "field_mm": 150}));
-        assert_eq!(r["field_mm"], json!(150.0));
-        assert_eq!(s.document().field_mm, Some(153.75));
         let r = ok(&mut s, "doc.import_lbrn2", json!({"content": LBRN}));
         assert_eq!(r["bounds"]["min"], json!([-6.875, -6.875]), "uses the document's field");
+        let r = ok(&mut s, "doc.import_lbrn2", json!({"content": LBRN, "field_mm": 150}));
+        assert_eq!(r["field_mm"], json!(150.0));
+        assert_eq!(s.document().field_mm, Some(150.0));
+    }
+
+    /// The translation of every exported shape (group members instead of their group), in LightBurn mm.
+    fn exported_positions(s: &mut Session, params: Value) -> Vec<(f64, f64)> {
+        fn walk(shapes: &[lbrn::Shape], out: &mut Vec<(f64, f64)>) {
+            for sh in shapes {
+                match &sh.kind {
+                    lbrn::ShapeKind::Group(children) => walk(children, out),
+                    _ => out.push((sh.xform.translation().x, sh.xform.translation().y)),
+                }
+            }
+        }
+        let r = ok(s, "doc.export_lbrn2", params);
+        let mut out = Vec::new();
+        walk(&lbrn::parse(r["content"].as_str().unwrap()).unwrap().shapes, &mut out);
+        out
+    }
+
+    #[test]
+    fn export_uses_the_field_size_the_import_used() {
+        // Regression: a file imported at 150 mm into a 153.75 mm document came back +1.875 mm in X and Y.
+        let source = [(80.0, 75.0), (75.0, 75.0), (75.0, 75.0)];
+        let mut s = session(Some(153.75));
+        ok(&mut s, "doc.import_lbrn2", json!({"content": LBRN, "field_mm": 150}));
+        assert_eq!(exported_positions(&mut s, json!({})), source);
+        assert_eq!(ok(&mut s, "doc.export_lbrn2", json!({}))["field_mm"], json!(150.0));
+        // field_mm still overrides.
+        assert_eq!(exported_positions(&mut s, json!({"field_mm": 153.75}))[0], (81.875, 76.875));
+        // Kept through save and load.
+        let saved = ok(&mut s, "doc.save", json!({}))["content"].as_str().unwrap().to_string();
+        ok(&mut s, "doc.new", json!({}));
+        ok(&mut s, "doc.load", json!({"content": saved}));
+        assert_eq!(exported_positions(&mut s, json!({})), source);
+
+        // A merge keeps the document's field size and remembers the file's for export.
+        let mut s = session(Some(153.75));
+        ok(&mut s, "doc.import_lbrn2", json!({"content": LBRN, "mode": "merge", "field_mm": 150}));
+        assert_eq!(s.document().field_mm, Some(153.75));
+        assert_eq!(s.document().extras.get(super::IMPORT_FIELD_KEY).map(String::as_str), Some("150"));
+        assert_eq!(exported_positions(&mut s, json!({})), source);
+        // A new document forgets it.
+        ok(&mut s, "doc.new", json!({}));
+        ok(&mut s, "shape.rect", json!({"width_mm": 2, "height_mm": 2}));
+        assert_eq!(exported_positions(&mut s, json!({})), [(76.875, 76.875)]);
+        // An unusable remembered value falls back to the document's field.
+        let mut d = Document { field_mm: Some(150.0), ..Document::default() };
+        d.extras.insert(super::IMPORT_FIELD_KEY.into(), "-3".into());
+        let mut s = Session::new(d);
+        ok(&mut s, "shape.rect", json!({"width_mm": 2, "height_mm": 2}));
+        assert_eq!(exported_positions(&mut s, json!({})), [(75.0, 75.0)]);
+    }
+
+    /// The owner's LightBurn files (read in place, never copied), imported at a field size other than the
+    /// document's, saved and opened again, then exported with no field_mm: each comes back byte for byte.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn real_lightburn_files_export_at_their_import_field_size() {
+        let Some(files) = super::super::dxf::sample_files(&["lbrn2", "lbt"]) else {
+            println!("OPENETCH_LBRN_SAMPLES is not set; skipping the real-file test");
+            return;
+        };
+        for f in &files {
+            let text = std::fs::read_to_string(f).unwrap_or_else(|e| panic!("{}: {e}", f.display()));
+            let text = text.trim_start_matches('\u{feff}');
+            let mut s = session(Some(153.75));
+            ok(&mut s, "doc.import_lbrn2", json!({"content": text, "field_mm": 150}));
+            let saved = ok(&mut s, "doc.save", json!({}))["content"].as_str().unwrap().to_string();
+            ok(&mut s, "doc.new", json!({}));
+            ok(&mut s, "doc.load", json!({"content": saved}));
+            let out = ok(&mut s, "doc.export_lbrn2", json!({}))["content"].as_str().unwrap().to_string();
+            assert!(out == text, "{} does not come back byte for byte", f.display());
+        }
+        println!("{} LightBurn file(s) came back byte for byte at their import field size", files.len());
     }
 
     #[test]
@@ -510,7 +602,8 @@ mod tests {
         let names: Vec<&str> = d.groups.iter().map(|g| g.name.as_str()).collect();
         assert_eq!(names, ["badge", "Imported LightBurn"]);
         assert_eq!(d.group_members("group-6"), ["obj-4", "obj-5"]);
-        assert!(d.extras.is_empty(), "a merge keeps the document's own file data");
+        let keys: Vec<&str> = d.extras.keys().map(String::as_str).collect();
+        assert_eq!(keys, [super::IMPORT_FIELD_KEY], "a merge keeps the document's own file data");
         s.undo().unwrap();
         assert_eq!(s.document().objects.len(), 3);
         s.undo().unwrap();

@@ -47,6 +47,25 @@ export function rotationDeg(a: Affine): number {
   return (Math.atan2(a[1], a[0]) * 180) / Math.PI;
 }
 
+/** A mirror in an object's transform, as Properties shows it: none, horizontal (X negated) or vertical (Y negated). */
+export type Flip = "none" | "horizontal" | "vertical";
+
+/**
+ * Rotation and flip of an affine, for display. A transform without a mirror is a rotation (from the image of the x
+ * axis). A mirrored one (negative determinant) is shown as a flip followed by a rotation, choosing whichever flip needs
+ * the smaller rotation, so a plain horizontal or vertical flip reads "rotation 0" instead of "180" (a horizontal flip
+ * rotated 180 degrees is the same shape as a vertical flip). Rotation is in (-180, 180].
+ */
+export function transformParts(a: Affine): { rotationDeg: number; flip: Flip } {
+  const det = a[0] * a[3] - a[1] * a[2];
+  if (!(det < 0)) return { rotationDeg: normDeg(rotationDeg(a)), flip: "none" };
+  // Rotation after a horizontal flip maps the x axis to -(a, b); after a vertical flip, to (a, b).
+  const h = normDeg((Math.atan2(-a[1], -a[0]) * 180) / Math.PI);
+  const v = normDeg((Math.atan2(a[1], a[0]) * 180) / Math.PI);
+  // `+ 0` turns -0 (atan2 of a negated zero) into 0, so the field never reads "-0".
+  return Math.abs(v) < Math.abs(h) - 1e-9 ? { rotationDeg: v + 0, flip: "vertical" } : { rotationDeg: h + 0, flip: "horizontal" };
+}
+
 /** Normalise an angle to (-180, 180]. */
 export function normDeg(d: number): number {
   let r = d % 360;

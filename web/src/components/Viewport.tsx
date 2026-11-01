@@ -32,6 +32,7 @@ import {
   roundMm,
   scaleAbout,
   scaleFromHandle,
+  signedScaleParams,
   snapMove,
   targetsOf,
   type Handle,
@@ -531,9 +532,11 @@ export function Viewport(props: ViewportProps) {
       case "scale": {
         const sc = scaleFromHandle(g.box, g.handle, handleTarget(g, f), m);
         setTransient({ m: scaleAbout(sc.sx, sc.sy, sc.about), stock: false });
-        const w = (g.box.x1 - g.box.x0) * sc.sx;
-        const h = (g.box.y1 - g.box.y0) * sc.sy;
-        setReadout(`${w.toFixed(2)} × ${h.toFixed(2)} mm (${(sc.sx * 100).toFixed(1)}%${sc.sx !== sc.sy ? ` × ${(sc.sy * 100).toFixed(1)}%` : ""})`);
+        const w = (g.box.x1 - g.box.x0) * Math.abs(sc.sx);
+        const h = (g.box.y1 - g.box.y0) * Math.abs(sc.sy);
+        const [px, py] = [Math.abs(sc.sx) * 100, Math.abs(sc.sy) * 100];
+        const flipped = sc.sx < 0 && sc.sy < 0 ? " · mirrored both ways" : sc.sx < 0 ? " · mirrored horizontally" : sc.sy < 0 ? " · mirrored vertically" : "";
+        setReadout(`${w.toFixed(2)} × ${h.toFixed(2)} mm (${px.toFixed(1)}%${px !== py ? ` × ${py.toFixed(1)}%` : ""})${flipped}`);
         break;
       }
       case "rotate": {
@@ -647,7 +650,9 @@ export function Viewport(props: ViewportProps) {
         const sc = scaleFromHandle(g.box, g.handle, handleTarget(g, f), modsOf(e));
         if (Math.abs(sc.sx - 1) < 1e-6 && Math.abs(sc.sy - 1) < 1e-6) break;
         const about: Vec2 = [roundMm(sc.about[0]), roundMm(sc.about[1])];
-        commit(C.transform(g.ids, { scale: [round6(sc.sx), round6(sc.sy)], about }), { m: scaleAbout(sc.sx, sc.sy, about), stock: false });
+        // Past the opposite side the selection mirrors (LightBurn); the engine takes that as a mirror, not a factor < 0.
+        const sp = signedScaleParams(round6(sc.sx), round6(sc.sy));
+        commit(C.transform(g.ids, { ...sp, about }), { m: scaleAbout(sc.sx, sc.sy, about), stock: false });
         break;
       }
       case "rotate": {

@@ -1,14 +1,27 @@
 // Bottom "Timeline", like Fusion's design timeline: one chip per recorded step, oldest on the left, and a marker after
 // the last applied step. Click a step (or right-click > "Roll marker here") to roll the design back to it; steps right
 // of the marker are greyed out, not deleted, and a new edit is inserted at the marker (the engine replays the later
-// steps; one that no longer applies is kept and shown red). Drag the marker to scrub. Each chip carries an origin
-// badge so it is obvious what the user, an AI agent or a script changed, and an edit announced live by an agent or
-// script (`document_changed.origin`) briefly flashes its chip. Older engines without the timeline show a read-only log.
+// steps; one that no longer applies is kept and shown red). Drag the marker to scrub. Clicks, drags and the buttons all
+// move the marker with `history.goto`; Ctrl+Z / Ctrl+Y are the engine's undo / redo, and steps undone that way are
+// discarded by the next edit (LightBurn), so they are drawn dashed and struck through and their tooltip says so (see
+// api/history.ts). Each chip carries an origin badge so it is obvious what the user, an AI agent or a script changed,
+// and an edit announced live by an agent or script (`document_changed.origin`) briefly flashes its chip. Older engines
+// without the timeline show a read-only log.
 
 import { useEffect, useRef, useState } from "react";
-import { isApplied, markerForSlot, markerSlot, nearestSlot, type TimelineModel, type TimelineStep } from "../api/history.ts";
+import {
+  afterMarkerNote,
+  discardedByNextEdit,
+  isApplied,
+  markerForSlot,
+  markerSlot,
+  nearestSlot,
+  type TimelineModel,
+  type TimelineStep,
+} from "../api/history.ts";
 import type { Origin } from "../api/types.ts";
 import type { RemoteEdit } from "../api/useEngine.ts";
+import { capturePointer } from "../pointer.ts";
 import { Icon } from "./ui.tsx";
 
 /** Display label and CSS class for an origin. */
@@ -86,7 +99,8 @@ export function Timeline({ timeline, flash, onGoto, onDelete }: TimelineProps) {
   const onMarkerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!editable || e.button !== 0) return;
     e.preventDefault();
-    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+    // Unguarded, a capture that fails ("No active pointer", e.g. on touch) threw and the drag never started.
+    capturePointer(e.currentTarget, e.pointerId);
     setDragSlot(slot);
   };
   const onMarkerMove = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -128,10 +142,13 @@ export function Timeline({ timeline, flash, onGoto, onDelete }: TimelineProps) {
     const b = originBadge(h.origin);
     const flashing = !!flash && h.revision !== null && flash.revision === h.revision;
     const applied = dragSlot !== null ? i < dragSlot : isApplied(timeline, h);
+    // While scrubbing, the drop is a goto: the steps after the marker will be kept, not discarded.
+    const undone = !applied && dragSlot === null && discardedByNextEdit(timeline, h);
     const cls = [
       "tl-entry",
       b.cls,
       applied ? "" : "rolled-back",
+      undone ? "undone" : "",
       h.state === "failed" ? "failed" : "",
       i === shownSlot - 1 ? "current" : "",
       flashing ? "flash" : "",
@@ -144,7 +161,7 @@ export function Timeline({ timeline, flash, onGoto, onDelete }: TimelineProps) {
       h.summary,
       `by ${b.label}`,
       h.state === "failed" ? `Failed on replay: ${h.error ?? "the step no longer applies"}` : "",
-      !applied ? "Rolled back (after the marker)" : "",
+      !applied ? afterMarkerNote(dragSlot === null ? timeline : { ...timeline, discardThrough: timeline.marker }, h) : "",
       editable ? "Click to roll the marker here. Right-click for more." : "",
     ]
       .filter(Boolean)

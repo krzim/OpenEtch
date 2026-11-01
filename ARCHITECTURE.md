@@ -103,7 +103,7 @@ says otherwise. `origin` is `"ui"` (default), `"script"` or `"agent:<name>"`.
 | POST | `/api/undo` | optional `{ "origin" }` → `{ "ok": true, "revision": n }`: moves the timeline marker back over one step (failed steps are skipped); nothing to undo is **200** `{ "ok": false, "error" }`, so clients must check `ok` |
 | POST | `/api/redo` | as `/api/undo`, forward |
 | GET | `/api/document` | full `Document` JSON |
-| GET | `/api/history` | `{ "marker": n, "steps": [Step] }` (see "History timeline"); string parameters over 512 bytes (file contents) are replaced by `"<n bytes omitted>"` |
+| GET | `/api/history` | `{ "marker": n, "marker_moved_by": "edit"\|"undo"\|"timeline", "undone_steps": n, "steps": [Step] }` (see "History timeline"); string parameters over 512 bytes (file contents) are replaced by `"<n bytes omitted>"` |
 | POST | `/api/history/goto` | `{ "marker": n, "origin"? }` → `{ "ok": true, "marker", "revision" }`: apply steps `1..=marker`, roll back the rest (0 = before the first step); a marker past the end is **200** `{ "ok": false, "error" }` |
 | POST | `/api/history/delete` | `{ "index": n, "origin"? }` → `{ "ok": true, "marker", "revision" }`: remove step `index` (1-based) and replay the steps after it; no such step is **200** `{ "ok": false, "error" }` |
 | GET | `/api/preview` | planned job: `{ segments: [{kind: "jump"|"mark", layer, pass, from: [x,y], to: [x,y], emits}], stats, layers: [{layer_id, name, color, mode, output, visible, passes, segments, mark_length_mm, jump_length_mm, estimated_time_s}], warnings }` in field mm. `pass` indexes the job's passes in burn order (a jump belongs to the pass it travels into); `layers` lists every document layer in order (zeros for layers with nothing to mark or output off; layer times leave out the job's start-up delay); `warnings` are things the plan left out (images). `?layers=id1,id2` keeps only those layers' segments and entries (stats stay the whole job's). An empty document is an empty preview; a planning error (out of field, power above the limit, too many passes/segments) is **422** |
@@ -124,7 +124,7 @@ says otherwise. `origin` is `"ui"` (default), `"script"` or `"agent:<name>"`.
 | WS | `/api/events` | server → client JSON events (below) |
 | * | `/mcp` | MCP Streamable HTTP endpoint |
 
-`Run` = `{ id, state, origin, revision, stale, summary, stats, packet_count, created_unix_s, error?, report? }`.
+`Run` = `{ id, state, origin, revision, stale, summary, stats, packet_count, created_unix_s, error?, report? }`; `summary` reads like `12 polylines on "Fill", "Outline", 340.2 mm marked, about 8.1 s` (layer names, each once, in burn order).
 `state` is `"pending"` → `"approved"` → (`"awaiting_confirm"` →) `"running"` → `"finished"` \| `"failed"` \|
 `"aborted"` (stopped while streaming), or `"cancelled"` (stopped before streaming, stale, or physical input not
 pressed in time). `stale` is true for a pending run whose document has changed since; it cannot be approved.
@@ -149,11 +149,22 @@ one batch) is a step `{ index, revision, command, invocations: [{id, params}], o
 `"failed"` (its replay failed; `error` says why; it changes nothing and is shown red). The **marker** is the index of
 the last applied step (0 = none); the document is always the snapshot at the marker, so moving it is instant.
 
-- `goto(m)` applies steps `1..=m` and rolls back the rest, deleting nothing. Undo/redo move the marker over one step.
-- An edit made while rolled back is **inserted** right after the marker; every later step is then **replayed** from
-  its recorded invocations so its snapshot is current, and stays rolled back until the marker moves past it (Fusion:
-  drag the marker back to the end). A later step that no longer applies (it edited an object an inserted or deleted
-  step removed) is kept as `failed` and skipped by undo/redo.
+- `goto(m)` (`/api/history/goto`: a click or drag on the timeline) applies steps `1..=m` and rolls back the rest,
+  deleting nothing. Undo/redo (`/api/undo`, `/api/redo`: Ctrl+Z, Ctrl+Y) move the marker over one step.
+- What an edit made while rolled back does depends on what moved the marker, reported as `marker_moved_by`:
+  - `"undo"` (LightBurn): the steps undone with undo/redo (`undone_steps`, right after the marker) are **discarded**
+    and the edit takes their place, so redo or "go to end" never brings them back.
+  - `"timeline"` (Fusion): the edit is **inserted** right after the marker; every later step is then **replayed**
+    from its recorded invocations so its snapshot is current, and stays rolled back until the marker moves past it
+    (drag the marker back to the end). A later step that no longer applies (it edited an object an inserted or
+    deleted step removed) is kept as `failed` and skipped by undo/redo.
+  - `"edit"`: the marker is at the end (nothing to discard or insert before).
+
+  Steps rolled back on the timeline and then undone further with Ctrl+Z: only the Ctrl+Z ones are discarded, the
+  rest are replayed. After an edit that leaves steps after the marker, the next edit is inserted (`"timeline"`).
+- An edit that replaces the document (`doc.new`, `doc.load` including project open and `.openetch` uploads, a
+  replacing `doc.import_lbrn2`) starts a **fresh timeline**: every earlier step is dropped and the replaced document
+  becomes the start, so that one step can be undone but nothing of the old document is replayed into the new one.
 - `delete(i)` removes step `i` and replays the steps after it; a marker after it moves back by one.
 - Ids stay stable across replays: each step remembers the document's `next_id` when it first ran and replays from the
   same value, and a newly recorded step starts above every id the timeline has ever allocated, so an inserted step
@@ -193,7 +204,11 @@ back to the saved state still counts as a change). Document commands from `/api/
 
 **Field size.** The engine starts with `document.field_mm` set to the machine profile's `field_mm`. `doc.new` and
 `doc.load` keep it when the new document has none and imports fill it in, so it stays set; when it is ever missing,
-`doc.import_lbrn2` and `doc.export_lbrn2` called without `field_mm` get the profile's.
+`doc.import_lbrn2` and `doc.export_lbrn2` called without `field_mm` get the profile's. A LightBurn import remembers
+the field size it was read with, so an export puts every shape back where LightBurn had it: a replacing import sets
+`document.field_mm` to it, and a merging one (which keeps the document's) stores it in the document's
+`extras["lbrn2._field_mm"]`. `doc.export_lbrn2` (and the LightBurn download and `project_export_lbrn2`) uses, in
+order: its `field_mm` parameter, `extras["lbrn2._field_mm"]`, `document.field_mm`.
 
 **Access.** Every request's `Host` must be a loopback name, an IP literal or an `--allow-host` name, and an `Origin`
 header, when present, must be loopback, allowed or same-host (DNS-rebinding and cross-site protection). On loopback
@@ -234,8 +249,8 @@ MCP tool can approve a run or touch the operator PIN, and the server instruction
   Commands: `doc.new`, `doc.load {content}`, `doc.save` (Query, returns `{content, revision}`).
 - **`.lbrn2`** (LightBurn project, `crates/lbrn`): XML; mm, y up, origin at the lower-left of LightBurn's workspace,
   so field frame = LightBurn - `field_mm / 2`. The file does not record the field size it was laid out for, so
-  import and export take `field_mm` (default the document's); a wrong value shifts everything by half the
-  difference. CutSettings become layers (power, speed, frequency Hz to kHz, QPulseWidth ns, hatch, passes,
+  import and export take `field_mm` (import default the document's; export default the field the last import used,
+  see "Field size"); a wrong value shifts everything by half the difference. CutSettings become layers (power, speed, frequency Hz to kHz, QPulseWidth ns, hatch, passes,
   sub-layers; everything else in `extras["lbrn2.*"]`), Rect/Ellipse/Path become objects, LightBurn groups become
   groups, Text becomes an object drawn and burned as its saved outline (BackupPath) that keeps its text attributes
   and is exported as LightBurn text again, bitmaps become images; anything else (unknown shape types, the
@@ -248,7 +263,9 @@ MCP tool can approve a run or touch the operator PIN, and the server instruction
   are in `crates/lbrn/src/lib.rs`.
 - **`.dxf`, images**: `art.import_dxf {content, layer?, name?, width_mm?, split?, keep_position?}` (lines,
   polylines with bulges, circles, arcs, ellipses, splines, block references; units from `$INSUNITS`, else mm with a
-  warning; native builds only) and `art.import_image {data_base64, mime, width_mm?, layer?, name?}` (PNG, JPEG, GIF,
+  warning; native builds only; `split` defaults to true: one object per entity, all in one group named `name` (default
+  "Imported DXF"), as LightBurn imports a DXF, so dropped and uploaded DXF files arrive that way; `split: false` makes one
+  combined object) and `art.import_image {data_base64, mime, width_mm?, layer?, name?}` (PNG, JPEG, GIF,
   BMP, WebP; size from the file's resolution, else 254 dpi, fitted to 80 % of the field). Groups: `group.create {ids,
   name?}`, `group.ungroup {group}` (one level), `group.rename {group, name}`.
 - **`.clb`** (LightBurn material library): read by `lbrn::parse_library` into layer settings.

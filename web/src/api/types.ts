@@ -148,6 +148,10 @@ export interface HistoryStep {
 export interface HistoryTimeline {
   marker: number;
   steps: HistoryStep[];
+  /** What last moved the marker: after "undo" the next edit discards the `undone_steps` steps after the marker. */
+  marker_moved_by?: "edit" | "undo" | "timeline";
+  /** How many steps right after the marker were undone with undo/redo; the next edit discards them. */
+  undone_steps?: number;
 }
 
 export type Risk = "query" | "edit" | "pointer" | "emit";

@@ -91,8 +91,10 @@ Use list_commands for every command's input schema; execute runs one command, ba
 
 History is a timeline like Fusion 360's: history_list shows every step (index, command, origin, summary, state \
 active|rolled_back|failed) and the marker (index of the last applied step). history_goto {marker} rolls back or \
-forward without losing steps; an edit made while rolled back is inserted after the marker and the later steps are \
-replayed (a step that no longer applies is kept as failed). undo/redo move the marker by one step.";
+forward without losing steps; an edit made after history_goto is inserted after the marker and the later steps are \
+replayed (a step that no longer applies is kept as failed). undo/redo move the marker by one step; an edit made \
+after undo discards the undone steps (marker_moved_by and undone_steps in history_list say which applies). doc.new, \
+doc.load, project_open and a replacing doc.import_lbrn2 start a fresh timeline (only that step can be undone).";
 
 /// The MCP server handler. Cheap to clone; one per MCP session.
 #[derive(Clone)]
@@ -258,7 +260,12 @@ impl GalvoMcp {
                  the planning error (e.g. out of field, power above the machine limit).",
                 true,
             ),
-            tool::<NoArgs>("undo", "Undo", "Undo the last edit (by anyone). Returns the new revision.", false),
+            tool::<NoArgs>(
+                "undo",
+                "Undo",
+                "Undo the last edit (by anyone); the next edit discards what was undone. Returns the new revision.",
+                false,
+            ),
             tool::<NoArgs>("redo", "Redo", "Redo the last undone edit. Returns the new revision.", false),
             tool::<NoArgs>(
                 "machine_status",
@@ -308,23 +315,27 @@ impl GalvoMcp {
             tool::<ProjectArgs>(
                 "project_open",
                 "Open a project",
-                "Replace the document with saved project <name> (one undo step) and make it the current project. \
-                 Unsaved changes stay reachable with undo. Returns {ok, name, result, revision}.",
+                "Replace the document with saved project <name> (one undo step, starting a fresh timeline) and make \
+                 it the current project. The replaced document stays reachable with one undo. Returns {ok, name, \
+                 result, revision}.",
                 false,
             ),
             tool::<ExportArgs>(
                 "project_export_lbrn2",
                 "Export to LightBurn",
                 "Write the document as a LightBurn project <name>.lbrn2 in the projects directory (laid out for the \
-                 document's field_mm). Replacing an existing <name>.lbrn2 needs overwrite: true. Returns {ok, path, \
-                 warnings, field_mm}. For the XML itself use execute doc.export_lbrn2.",
+                 field size the last LightBurn import used, else the document's field_mm). Replacing an existing \
+                 <name>.lbrn2 needs overwrite: true. Returns {ok, path, warnings, field_mm}. For the XML itself use \
+                 execute doc.export_lbrn2.",
                 false,
             ),
             tool::<NoArgs>(
                 "history_list",
                 "List the timeline",
-                "The edit timeline: {marker, steps: [{index, command, invocations, origin, summary, state, error?}]}. \
-                 marker is the index of the last applied step (0 = none); state is active, rolled_back (after the \
+                "The edit timeline: {marker, marker_moved_by, undone_steps, steps: [{index, command, invocations, \
+                 origin, summary, state, error?}]}. marker is the index of the last applied step (0 = none); \
+                 marker_moved_by is undo (the next edit discards the undone_steps steps after the marker), timeline \
+                 (the next edit is inserted after the marker) or edit; state is active, rolled_back (after the \
                  marker) or failed (no longer applies after an earlier step changed; shown red). File contents in \
                  parameters are shortened.",
                 true,

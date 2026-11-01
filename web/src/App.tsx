@@ -35,7 +35,7 @@ import { Timeline } from "./components/Timeline.tsx";
 import { Toolbar, type ArrangeAction } from "./components/Toolbar.tsx";
 import { TopBar, type Workspace } from "./components/TopBar.tsx";
 import { Viewport, type PreviewOptions, type SnapSettings, type Tool, type ViewStyle } from "./components/Viewport.tsx";
-import { alignMoves, distributeMoves, nudgeDelta, rotateKeyDeg, roundMm, type AlignX, type AlignY } from "./editing.ts";
+import { alignMoves, distributeMoves, nudgeDelta, nudgeKeyId, queueNudge, rotateKeyDeg, roundMm, type AlignX, type AlignY } from "./editing.ts";
 import { boxCenter, objectBounds, toPathData, geometryCmds, unionBoxes, type Box } from "./geometry.ts";
 import {
   EMPTY_SELECTION,
@@ -204,7 +204,10 @@ export function App() {
       const name = importName(imp.file.name);
       if (imp.file.size > inlineLimit(imp.kind)) {
         // Large files go up raw; the engine imports them on its own thread.
-        const res = await api.upload(imp.file, imp.kind).catch((e: unknown) => Promise.reject(fileError(e, imp.file.name)));
+        // Same layer and name as an inline import, so a big file lands on the active layer too.
+        const res = await api
+          .upload(imp.file, imp.kind, undefined, undefined, { layer, name })
+          .catch((e: unknown) => Promise.reject(fileError(e, imp.file.name)));
         const result = commandResult(res);
         await engine.refreshDoc();
         return createdIds(result);
@@ -495,13 +498,14 @@ export function App() {
     [has, run, selectIds, report, notify],
   );
 
-  // Arrow-key nudges merge while a command is in flight, so holding a key sends a few commands, not dozens.
-  const nudgeQ = useRef<{ ids: string[]; stock: boolean; d: Vec2 } | null>(null);
+  // While a command is in flight, auto-repeats of the same held arrow key merge, so holding a key sends a few commands,
+  // not dozens. Separate presses, or another key or modifier, are never merged: one undo step each (see `mergesNudge`).
+  const nudgeQ = useRef<{ ids: string[]; stock: boolean; d: Vec2; target: string; key: string }[]>([]);
   const nudgeBusy = useRef(false);
   const flushNudge = useCallback(() => {
-    const q = nudgeQ.current;
-    if (nudgeBusy.current || !q) return;
-    nudgeQ.current = null;
+    if (nudgeBusy.current) return;
+    const q = nudgeQ.current.shift();
+    if (!q) return;
     nudgeBusy.current = true;
     const d: Vec2 = [roundMm(q.d[0]), roundMm(q.d[1])];
     const inv = q.stock ? C.stockMove({ translate: d }) : C.transform(q.ids, { translate: d });
@@ -513,17 +517,12 @@ export function App() {
       });
   }, [run, report]);
   const nudge = useCallback(
-    (d: Vec2) => {
+    (d: Vec2, key: string, repeat: boolean) => {
       const stock = selection.objects.length === 0 && selection.stock;
       if (!stock && selection.objects.length === 0) return;
       if (stock && !has(C.OPT.stockMove)) return;
-      const q = nudgeQ.current;
-      const key = stock ? "stock" : selection.objects.join(",");
-      if (q && (q.stock ? "stock" : q.ids.join(",")) === key) q.d = [q.d[0] + d[0], q.d[1] + d[1]];
-      else {
-        flushNudge();
-        nudgeQ.current = { ids: selection.objects, stock, d };
-      }
+      const target = stock ? "stock" : selection.objects.join(",");
+      queueNudge(nudgeQ.current, { ids: selection.objects, stock, d, target, key }, repeat);
       flushNudge();
     },
     [selection, has, flushNudge],
@@ -704,7 +703,7 @@ export function App() {
       if (nd) {
         if (selection.objects.length || selection.stock) {
           e.preventDefault();
-          nudge(nd);
+          nudge(nd, nudgeKeyId(e.key, m), e.repeat);
         }
         return;
       }

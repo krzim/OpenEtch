@@ -233,6 +233,56 @@ test("upload sends the raw file with the bearer header to the contract route", a
   assert.equal(calls[3]?.path, "/api/document/upload?format=openetch&mode=replace");
 });
 
+test("large artwork uploads carry the active layer and the name (verify finding 5)", async () => {
+  reply = { status: 200, body: JSON.stringify({ ok: true, result: { created: ["obj-9"] }, revision: 5 }) };
+  const file = new Blob(["<svg/>"]);
+  await api.upload(file, "svg", undefined, undefined, { layer: "layer-2", name: "Logo & mark" });
+  assert.equal(calls[0]?.path, "/api/document/upload?format=svg&layer=layer-2&name=Logo%20%26%20mark");
+  await api.upload(file, "dxf", undefined, undefined, { layer: "layer 3", name: "jig" });
+  assert.equal(calls[1]?.path, "/api/document/upload?format=dxf&layer=layer%203&name=jig");
+  await api.upload(file, "image", undefined, undefined, { layer: null, name: "photo" });
+  assert.equal(calls[2]?.path, "/api/document/upload?format=image&name=photo", "no layer: the engine's default");
+  // Projects never send them (the engine refuses options that do not fit the format).
+  await api.upload(file, "lbrn2", "merge", 150, { layer: "layer-2", name: "x" });
+  assert.equal(calls[3]?.path, "/api/document/upload?format=lbrn2&mode=merge&field_mm=150");
+});
+
+test("Export to LightBurn starts at the size the file was opened at (verify finding 2)", () => {
+  // Opened at 150 mm into a 153.75 mm document: export at 150, so nothing shifts by 1.875 mm.
+  assert.equal(P.exportFieldDefault(150, 153.75, 153.75, 153.75), 150);
+  assert.equal(P.exportFieldDefault(null, 110, 153.75, 153.75), 110);
+  assert.equal(P.exportFieldDefault(null, null, 160, 153.75), 160);
+  assert.equal(P.exportFieldDefault(null, null, null, 153.75), 153.75);
+  assert.equal(P.exportFieldDefault(Number.NaN, 0, null, 153.75), 153.75);
+  // The size it was opened at is the first choice offered.
+  assert.deepEqual(P.fieldChoices(153.75, 153.75, 150), [150, 153.75, 110]);
+  assert.deepEqual(P.fieldChoices(153.75, 153.75, 153.75), [153.75, 110, 150]);
+});
+
+test("Export to LightBurn starts at the size a merged file was read at, as the engine does", () => {
+  // Merged at 150 mm into a 153.75 mm document: the engine remembers 150 in the document's extras and exports there by
+  // default, so the web's dialog must start there too instead of sending 153.75 (a 1.875 mm shift).
+  const merged = { extras: { [P.LBRN_IMPORT_FIELD_KEY]: "150", "lbrn2.version": "1" } };
+  assert.equal(P.LBRN_IMPORT_FIELD_KEY, "lbrn2._field_mm");
+  assert.equal(P.rememberedImportField(merged), 150);
+  assert.equal(P.exportFieldDefault(P.rememberedImportField(merged) ?? null, 153.75, 153.75, 153.75), 150);
+  // Nothing remembered, or nothing usable: no value, so the document's or machine's size is used.
+  for (const extras of [undefined, {}, { "lbrn2._field_mm": "" }, { "lbrn2._field_mm": "-3" }, { "lbrn2._field_mm": "abc" }, { "lbrn2._field_mm": "2001" }]) {
+    assert.equal(P.rememberedImportField({ extras }), null, JSON.stringify(extras));
+  }
+  assert.equal(P.rememberedImportField(null), null);
+  assert.equal(P.exportFieldDefault(P.rememberedImportField({}), 153.75, 110, 150), 153.75);
+
+  // importFieldOf: the merged size first, then the size this page opened a file at, while the document still has it.
+  assert.equal(P.importFieldOf({ ...merged, field_mm: 153.75 }, null), 150);
+  assert.equal(P.importFieldOf({ ...merged, field_mm: 150 }, 110), 150, "a later merge wins, as in the engine");
+  assert.equal(P.importFieldOf({ field_mm: 150 }, 150), 150);
+  // Opened at 150, then the document was replaced elsewhere (an agent, another tab) at 153.75: stale, not offered.
+  assert.equal(P.importFieldOf({ field_mm: 153.75 }, 150), null);
+  assert.equal(P.importFieldOf({ field_mm: null }, 150), null);
+  assert.equal(P.importFieldOf(null, null), null);
+});
+
 test("download fetches with the bearer header and reads the file name", async () => {
   reply = { status: 200, body: '{"format":"openetch"}', headers: { "Content-Disposition": 'attachment; filename="Tags.openetch"' } };
   const { blob, filename } = await api.download("openetch");

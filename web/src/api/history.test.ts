@@ -4,7 +4,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { GDocument } from "./types.ts";
-import { isApplied, markerForSlot, markerSlot, nearestSlot, normalizeHistory, shortCommand } from "./history.ts";
+import {
+  afterMarkerNote,
+  discardedByNextEdit,
+  isApplied,
+  markerForSlot,
+  markerSlot,
+  nearestSlot,
+  normalizeHistory,
+  shortCommand,
+} from "./history.ts";
 import {
   DEFAULT_PULSE_WIDTHS_NS,
   energyOpacity,
@@ -146,4 +155,38 @@ test("per-layer preview rows: from the engine or counted, in layer order", () =>
   assert.equal(engine.find((r) => r.id === "layer-2")?.segments, 10);
   assert.equal(engine.find((r) => r.id === "layer-2")?.estimatedTimeS, 2);
   assert.deepEqual(previewLayers(null, doc), []);
+});
+
+test("steps undone with Undo are shown as discarded by the next edit; rolled-back ones as kept", () => {
+  const step = (index: number, state: string) => ({ index, invocations: [{ id: "object.transform" }], origin: "ui", summary: "s", state });
+  const steps = [step(1, "active"), step(2, "rolled_back"), step(3, "rolled_back"), step(4, "rolled_back")];
+  // Moved with the timeline (goto): kept, a new edit goes in before them (Fusion).
+  const rolled = normalizeHistory({ marker: 1, marker_moved_by: "timeline", undone_steps: 0, steps });
+  assert.equal(rolled.discardThrough, 1);
+  assert.ok(rolled.steps.every((s) => !discardedByNextEdit(rolled, s)));
+  assert.match(afterMarkerNote(rolled, rolled.steps[1]), /kept/);
+
+  // Moved with Ctrl+Z (verify finding 1: an edit after Undo kept the undone steps, and Redo brought them back).
+  const undone = normalizeHistory({ marker: 1, marker_moved_by: "undo", undone_steps: 3, steps });
+  assert.equal(undone.discardThrough, 4);
+  assert.ok(!discardedByNextEdit(undone, undone.steps[0]), "applied steps stay");
+  assert.ok(undone.steps.slice(1).every((s) => discardedByNextEdit(undone, s)));
+  assert.match(afterMarkerNote(undone, undone.steps[1]), /next edit discards it/);
+  assert.ok(!isApplied(undone, undone.steps[1]));
+
+  // Rolled back on the timeline to 3, then Ctrl+Z twice: only the two undone steps go; step 4 is kept.
+  const mixed = normalizeHistory({ marker: 1, marker_moved_by: "undo", undone_steps: 2, steps });
+  assert.deepEqual(
+    mixed.steps.map((s) => discardedByNextEdit(mixed, s)),
+    [false, true, true, false],
+  );
+  assert.match(afterMarkerNote(mixed, mixed.steps[3]), /kept/);
+
+  // A count left over from another kind of move, a bad value, an engine without the fields, or an older engine's
+  // append-only log never claims a discard.
+  assert.equal(normalizeHistory({ marker: 1, marker_moved_by: "timeline", undone_steps: 3, steps }).discardThrough, 1);
+  assert.equal(normalizeHistory({ marker: 1, marker_moved_by: "undo", undone_steps: "3", steps }).discardThrough, 1);
+  assert.equal(normalizeHistory({ marker: 1, steps }).discardThrough, 1);
+  const log = normalizeHistory([{ revision: 1, command: "shape.rect", origin: "ui", summary: "a" }]);
+  assert.ok(log.steps.every((s) => !discardedByNextEdit(log, s)));
 });

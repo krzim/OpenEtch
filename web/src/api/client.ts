@@ -177,16 +177,27 @@ export const api = {
   /**
    * Upload a file as the raw body: `openetch` runs `doc.load`, `lbrn2` runs `doc.import_lbrn2` in `mode`, laid out
    * for `fieldMm` (default the document's field size); `svg`, `dxf` and `image` import large artwork into the
-   * document (always merged, so no mode is sent). Resolves to the engine's answer; unwrap it with `commandResult`.
+   * document (always merged, so no mode is sent) on `art.layer` (default the engine's first layer) named `art.name`.
+   * Resolves to the engine's answer; unwrap it with `commandResult`.
    */
-  upload: async (file: Blob, format: UploadFormat, mode: ImportMode = "replace", fieldMm?: number): Promise<unknown> => {
+  upload: async (
+    file: Blob,
+    format: UploadFormat,
+    mode: ImportMode = "replace",
+    fieldMm?: number,
+    art: { layer?: string | null; name?: string | null } = {},
+  ): Promise<unknown> => {
     // A bad field size is refused here, never silently dropped (the import would then use the document's size).
     if (format === "lbrn2" && fieldMm !== undefined && !(Number.isFinite(fieldMm) && fieldMm > 0)) {
       throw new ApiError(`field_mm must be a positive number (got ${fieldMm})`, 400, { detail: `field_mm must be a positive number (got ${fieldMm})` });
     }
     const project = format === "openetch" || format === "lbrn2";
     const field = format === "lbrn2" && fieldMm !== undefined ? `&field_mm=${fieldMm}` : "";
-    const path = `/api/document/upload?format=${format}${project ? `&mode=${mode}` : ""}${field}`;
+    // Layer and name only go with artwork imports; the engine refuses options that do not fit the format.
+    const extra = project
+      ? ""
+      : [art.layer ? `&layer=${encodeURIComponent(art.layer)}` : "", art.name ? `&name=${encodeURIComponent(art.name)}` : ""].join("");
+    const path = `/api/document/upload?format=${format}${project ? `&mode=${mode}` : ""}${field}${extra}`;
     const headers = authHeaders("application/json");
     headers["Content-Type"] = "application/octet-stream";
     const res = await send("POST", path, { headers, body: file });

@@ -249,6 +249,19 @@ async fn preview_and_svg() {
 }
 
 #[tokio::test]
+async fn run_summaries_name_the_layers() {
+    let st = test_state().await;
+    let app = app(&st);
+    send(&app, exec("layer.update", json!({"id": "layer-1", "name": "Engrave logo"}))).await;
+    rect(&app, 10.0, 10.0).await;
+    let (s, v) = send(&app, req("POST", "/api/runs", None)).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let summary = v["run"]["summary"].as_str().unwrap();
+    assert!(summary.contains("on \"Engrave logo\","), "{summary}");
+    assert!(!summary.contains("layer-1"), "{summary}");
+}
+
+#[tokio::test]
 async fn runs_never_start_without_approval() {
     let st = test_state().await;
     let app = app(&st);
@@ -1213,8 +1226,9 @@ async fn uploads_above_50_mb_are_refused() {
 }
 
 /// Real LightBurn projects (never in the repo): every `.lbrn2` in the directories listed in
-/// `OPENETCH_LBRN_SAMPLES` (OS path-list separator) is uploaded, saved, reopened, downloaded as LightBurn and
-/// uploaded again with the same object count.
+/// `OPENETCH_LBRN_SAMPLES` (OS path-list separator) is uploaded at a field size other than the profile's, saved,
+/// reopened, downloaded as LightBurn (byte for byte the uploaded file: the download uses the import's field size)
+/// and uploaded again with the same object count.
 #[tokio::test]
 async fn real_lightburn_files_go_through_the_routes() {
     let Some(dirs) = std::env::var_os("OPENETCH_LBRN_SAMPLES") else {
@@ -1230,7 +1244,8 @@ async fn real_lightburn_files_go_through_the_routes() {
         let st = test_state().await;
         let app = app(&st);
         let bytes = std::fs::read(&path).unwrap();
-        let (s, v) = send(&app, raw("POST", "/api/document/upload?format=lbrn2&field_mm=150", bytes)).await;
+        let source = String::from_utf8_lossy(&bytes).trim_start_matches('\u{feff}').to_owned();
+        let (s, v) = send(&app, raw("POST", "/api/document/upload?format=lbrn2&field_mm=120", bytes)).await;
         assert_eq!((s, &v["ok"]), (StatusCode::OK, &json!(true)), "{}: {v}", path.display());
         let objects = st.document().objects.len();
         let (s, v) = send(&app, req("POST", "/api/projects/save", Some(json!({"name": "sample"})))).await;
@@ -1241,6 +1256,8 @@ async fn real_lightburn_files_go_through_the_routes() {
         assert_eq!(st.document().objects.len(), objects);
         let (s, _, xml) = fetch(&app, "/api/document/download?format=lbrn2").await;
         assert_eq!(s, StatusCode::OK);
+        // Regression: imported at another field size than the document's, the export moved every shape.
+        assert!(xml == source, "{} does not come back byte for byte", path.display());
         let (_, v) = send(&app, raw("POST", "/api/document/upload?format=lbrn2", xml)).await;
         assert_eq!(v["ok"], true, "{v}");
         assert_eq!(st.document().objects.len(), objects, "{}", path.display());
@@ -1307,6 +1324,15 @@ async fn image_and_dxf_uploads_go_to_their_import_commands() {
     assert_eq!((s, &v["ok"]), (StatusCode::OK, &json!(true)), "{v}");
     assert_eq!(v["result"]["bounds"]["size"][0], json!(10.0), "{v}");
     assert_eq!(st.history().last().unwrap().command, "art.import_dxf");
+    // Several entities arrive as one object each, grouped (LightBurn-style), by upload and by execute alike.
+    let two = DXF.replace("0\nENDSEC\n0\nEOF", "0\nCIRCLE\n8\n0\n10\n20\n20\n0\n30\n0\n40\n5\n0\nENDSEC\n0\nEOF");
+    let (s, v) = send(&app, raw("POST", "/api/document/upload?format=dxf&name=Jig", two.clone())).await;
+    assert_eq!((s, &v["ok"]), (StatusCode::OK, &json!(true)), "{v}");
+    let group = v["result"]["group"].as_str().unwrap().to_owned();
+    assert_eq!(st.document().group_members(&group).len(), 2, "{v}");
+    assert_eq!(v["result"]["created"].as_array().unwrap().len(), 2, "{v}");
+    let (_, v) = send(&app, exec("art.import_dxf", json!({"content": two}))).await;
+    assert!(v["result"]["group"].is_string(), "{v}");
     let _ = std::fs::remove_dir_all(st.projects.root().parent().unwrap());
 }
 
@@ -1364,6 +1390,45 @@ async fn history_routes_roll_back_insert_and_delete() {
     assert_eq!(s, StatusCode::BAD_REQUEST);
     let (s, _) = send(&app, req("POST", "/api/history/goto", None)).await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
+    let _ = std::fs::remove_dir_all(st.projects.root().parent().unwrap());
+}
+
+/// Regression: an edit after Ctrl+Z was inserted before the undone steps, so redo or "go to end" brought them back;
+/// File > New kept the old document's steps.
+#[tokio::test]
+async fn edit_after_undo_discards_and_new_document_starts_a_fresh_timeline() {
+    let st = test_state().await;
+    let app = app(&st);
+    let id = rect(&app, 10.0, 10.0).await;
+    let mv = || exec("object.transform", json!({"ids": [id.clone()], "translate": [5, 0]}));
+    send(&app, mv()).await;
+    send(&app, mv()).await;
+    send(&app, req("POST", "/api/undo", None)).await;
+    send(&app, req("POST", "/api/undo", None)).await;
+    let (_, h) = send(&app, req("GET", "/api/history", None)).await;
+    assert_eq!((&h["marker"], &h["marker_moved_by"], &h["undone_steps"]), (&json!(1), &json!("undo"), &json!(2)));
+    send(&app, exec("object.rename", json!({"id": id, "name": "Plate"}))).await;
+    let (_, h) = send(&app, req("GET", "/api/history", None)).await;
+    let commands: Vec<&str> = h["steps"].as_array().unwrap().iter().map(|s| s["command"].as_str().unwrap()).collect();
+    assert_eq!(commands, ["shape.rect", "object.rename"]);
+    assert_eq!((&h["marker"], &h["marker_moved_by"]), (&json!(2), &json!("edit")));
+    let (_, v) = send(&app, req("POST", "/api/redo", None)).await;
+    assert_eq!(v["ok"], false, "nothing to redo: {v}");
+    assert_eq!(st.document().object(&id).unwrap().bounds().x0, -5.0);
+
+    // A timeline move keeps insert-and-replay.
+    send(&app, mv()).await;
+    send(&app, req("POST", "/api/history/goto", Some(json!({"marker": 1})))).await;
+    let (_, h) = send(&app, req("GET", "/api/history", None)).await;
+    assert_eq!(h["marker_moved_by"], "timeline");
+    send(&app, exec("layer.add", json!({"name": "Cut"}))).await;
+    assert_eq!(st.history().len(), 4);
+
+    // File > New: a fresh timeline whose start is the replaced document.
+    send(&app, exec("doc.new", json!({}))).await;
+    let (_, h) = send(&app, req("GET", "/api/history", None)).await;
+    assert_eq!((h["steps"].as_array().unwrap().len(), &h["marker"]), (1, &json!(1)), "{h}");
+    assert_eq!(h["steps"][0]["command"], "doc.new");
     let _ = std::fs::remove_dir_all(st.projects.root().parent().unwrap());
 }
 

@@ -15,6 +15,7 @@ import {
   commandResult,
   currentProjectName,
   downloadName,
+  exportFieldDefault,
   fieldChoices,
   fileError,
   fileFormat,
@@ -22,6 +23,7 @@ import {
   formatBytes,
   formatModified,
   groupWarnings,
+  importFieldOf,
   importMessage,
   importOutcome,
   isSaveConflict,
@@ -50,6 +52,7 @@ type FileModal =
   | { kind: "open" }
   | { kind: "saveAs" }
   | { kind: "import"; files: File[]; mode: ImportMode; nonce?: number }
+  | { kind: "export" }
   | { kind: "confirm"; title: string; message: string; confirmLabel: string; action: () => void; back: FileModal | null };
 
 export interface FileActions {
@@ -68,6 +71,10 @@ export interface FileActions {
   defaultFieldMm: number;
   docFieldMm: number | null;
   machineFieldMm: number | null;
+  /** Field size the document's LightBurn art was read at (opened, or the last merge the engine remembers), or null. */
+  importedFieldMm: number | null;
+  /** Field size Export to LightBurn starts with (see `exportFieldDefault`). */
+  exportFieldMm: number;
   setModal: (m: FileModal | null) => void;
   dismissWarnings: () => void;
   newDocument: () => void;
@@ -79,7 +86,8 @@ export interface FileActions {
   uploadFile: (file: File, lbrn2Mode?: ImportMode) => void;
   /** Import LightBurn files one after another (several files are always merged). */
   importLbrn2: (files: File[], mode: ImportMode, fieldMm: number) => void;
-  exportLbrn2: () => void;
+  /** Export the document as a LightBurn project laid out for `fieldMm`. */
+  exportLbrn2: (fieldMm: number) => void;
   downloadOpenetch: () => void;
 }
 
@@ -121,11 +129,17 @@ export function useFileActions(p: {
   // A file opened from this device has never been saved on the engine, which reports it as clean; it counts as
   // unsaved until it is saved (or replaced by New or a saved project).
   const [loadedUnsaved, setLoadedUnsaved] = useState(false);
+  // LightBurn files do not record their field size: remember the one a LightBurn file was opened at, so Export offers
+  // it and an open/export round trip does not shift the artwork (cleared when another document replaces it).
+  const [importedFieldMm, setImportedFieldMm] = useState<number | null>(null);
   const projectName = currentProjectName(project, detachedFrom);
   const engineDirty = projectDirty(project, doc?.revision ?? null);
   const dirty = loadedUnsaved && engineDirty !== null && projectName === null ? true : engineDirty;
   const docFieldMm = validField(doc?.field_mm);
   const defaultFieldMm = docFieldMm ?? p.machineFieldMm ?? p.fallbackFieldMm;
+  // As the engine's own default: a merged file's size (remembered in the document), else the one a file was opened at.
+  const exportFromFieldMm = importFieldOf(doc, importedFieldMm);
+  const exportFieldMm = exportFieldDefault(exportFromFieldMm, docFieldMm, p.machineFieldMm, p.fallbackFieldMm);
 
   // Once the engine reports another project (opened or saved elsewhere, or cleared), the document follows it again.
   useEffect(() => {
@@ -185,6 +199,7 @@ export function useFileActions(p: {
         await engine.run(C.docNew());
         detach("");
         setLoadedUnsaved(false);
+        setImportedFieldMm(null);
         notify("New document.");
       });
     }, null);
@@ -235,6 +250,7 @@ export function useFileActions(p: {
           setDetachedFrom(undefined);
           setSuggestedName("");
           setLoadedUnsaved(false);
+          setImportedFieldMm(null);
           notify(`Opened "${name}".`);
           await engine.refreshDoc();
         });
@@ -265,6 +281,7 @@ export function useFileActions(p: {
           const result = commandResult(await api.upload(file, "openetch").catch((e: unknown) => Promise.reject(fileError(e, file.name))));
           detach(suggestProjectName(fileStem(file.name)));
           setLoadedUnsaved(true);
+          setImportedFieldMm(null);
           notify(`Opened ${file.name}. Save it to keep it on the engine.`);
           showWarnings(`Opening ${file.name}`, warningList(result));
           await engine.refreshDoc();
@@ -306,6 +323,7 @@ export function useFileActions(p: {
           if (mode === "replace") {
             detach(suggestProjectName(fileStem(files[0].name)));
             setLoadedUnsaved(true);
+            setImportedFieldMm(fieldMm);
           }
           if (created.length) onImportedRef.current?.(created);
           if (files.length === 1 && last) notify(importMessage(last, mode));
@@ -326,20 +344,20 @@ export function useFileActions(p: {
 
   const baseName = () => live.current.projectName ?? live.current.doc?.name ?? null;
 
-  const exportLbrn2 = useCallback(() => {
+  const exportLbrn2 = useCallback((fieldMm: number) => {
+    setModal(null);
     void task(async () => {
-      // The document's field size, or the machine's when the document has none.
-      const field = validField(live.current.doc?.field_mm) === null ? (p.machineFieldMm ?? p.fallbackFieldMm) : undefined;
-      const res = await execute(C.exportLbrn2(field));
+      // Always the size the Export dialog showed, so the file is laid out exactly as the user saw it.
+      const res = await execute(C.exportLbrn2(fieldMm));
       const r = res.result as { content?: unknown } | null;
       if (!r || typeof r.content !== "string") throw new Error("the engine returned no LightBurn content");
       const name = downloadName(baseName(), "lbrn2");
       saveBlob(new Blob([r.content], { type: "application/xml" }), name);
       const w = warningList(r);
-      notify(`Exported ${name}.${w.length ? ` ${w.length} warning${w.length === 1 ? "" : "s"}.` : ""}`);
+      notify(`Exported ${name} for a ${fmt(fieldMm, 3)} mm field.${w.length ? ` ${w.length} warning${w.length === 1 ? "" : "s"}.` : ""}`);
       showWarnings(`Export of ${name}`, w);
     });
-  }, [task, notify, showWarnings, p.machineFieldMm, p.fallbackFieldMm]);
+  }, [task, notify, showWarnings]);
 
   const downloadOpenetch = useCallback(() => {
     void task(async () => {
@@ -362,6 +380,8 @@ export function useFileActions(p: {
     defaultFieldMm,
     docFieldMm,
     machineFieldMm: p.machineFieldMm,
+    importedFieldMm: exportFromFieldMm,
+    exportFieldMm,
     setModal,
     dismissWarnings: () => setWarnings(null),
     newDocument,
@@ -433,7 +453,7 @@ export function FileMenu({ file, onImport }: { file: FileActions; onImport: () =
           <div className="menu-sep" role="separator" />
           {item("Import…", onImport, shortcut("I"))}
           {item("Import LightBurn…", () => file.setModal({ kind: "import", files: [], mode: "replace" }), ".lbrn2")}
-          {item("Export to LightBurn", file.exportLbrn2, ".lbrn2")}
+          {item("Export to LightBurn…", () => file.setModal({ kind: "export" }), ".lbrn2")}
           <div className="menu-sep" role="separator" />
           {item("Download .openetch", file.downloadOpenetch)}
         </div>
@@ -467,6 +487,7 @@ export function FileDialogs({ file, docName }: { file: FileActions; docName: str
       {m?.kind === "open" && <OpenDialog file={file} onClose={close} />}
       {m?.kind === "saveAs" && <SaveAsDialog file={file} docName={docName} onClose={close} />}
       {m?.kind === "import" && <ImportDialog key={m.nonce ?? 0} file={file} initialFiles={m.files} initialMode={m.mode} onClose={close} />}
+      {m?.kind === "export" && <ExportDialog file={file} onClose={close} />}
       {m?.kind === "confirm" && (
         <Modal
           title={m.title}
@@ -753,6 +774,65 @@ function ImportDialog(p: { file: FileActions; initialFiles: File[]; initialMode:
         Open replaces this document with the project's graphics and cut settings (LightBurn's Open); Import adds its
         graphics and any layers it needs (LightBurn's Import). LightBurn files do not record the galvo field size: use
         the size the project was laid out with, since a different size shifts everything by half the difference.
+      </p>
+    </Modal>
+  );
+}
+
+/** Export to LightBurn: shows the field size the project will be laid out for, and lets it be changed. */
+function ExportDialog({ file, onClose }: { file: FileActions; onClose: () => void }) {
+  const [field, setField] = useState(fmt(file.exportFieldMm, 3));
+  const n = Number(field.trim());
+  const fieldOk = field.trim() !== "" && Number.isFinite(n) && n > 0 && n <= 2000;
+  const error = !fieldOk ? "Field size must be a number between 0 and 2000 mm." : null;
+  const choices = fieldChoices(file.docFieldMm, file.machineFieldMm, file.importedFieldMm);
+  const submit = () => {
+    if (fieldOk && !file.busy) file.exportLbrn2(n);
+  };
+  const label = (c: number) =>
+    c === file.importedFieldMm ? " (imported at)" : c === file.docFieldMm ? " (document)" : c === file.machineFieldMm ? " (machine)" : "";
+  return (
+    <Modal
+      title="Export to LightBurn"
+      onClose={onClose}
+      footer={
+        <>
+          {error && <span className="form-error">{error}</span>}
+          <button className="btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn btn-primary" disabled={!fieldOk || file.busy} onClick={submit}>
+            Export
+          </button>
+        </>
+      }
+    >
+      <label className="field">
+        <span className="field-label">Field size</span>
+        <span className="field-input">
+          <input
+            type="text"
+            inputMode="decimal"
+            autoFocus
+            value={field}
+            onChange={(e) => setField(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && submit()}
+          />
+          <span className="unit">mm</span>
+        </span>
+      </label>
+      <div className="chip-row">
+        {choices.map((c) => (
+          <button key={c} className={`chip${fieldOk && Math.abs(c - n) < 1e-9 ? " active" : ""}`} onClick={() => setField(fmt(c, 3))}>
+            {fmt(c, 3)} mm
+            {label(c)}
+          </button>
+        ))}
+      </div>
+      <p className="hint">
+        LightBurn files do not record the galvo field size. Use the size the project will be opened with in LightBurn
+        {file.importedFieldMm !== null ? ` (this one was imported at ${fmt(file.importedFieldMm, 3)} mm)` : ""}: a different
+        size shifts everything by half the difference.
       </p>
     </Modal>
   );
