@@ -59,6 +59,6 @@ listed here.
 
 ## Never copied
 
-GPL, SSPL or unlicensed sources: Balor, balor-meerk40t, BurnCraft, LaserCraft, lmcv2u-loader, jnweiger/ruida-laser
-(GPL-2.0), kkaempf/ruida (no licence). No BJJCZ firmware. No
+GPL, SSPL, unlicensed or otherwise non-permissive sources: Balor, balor-meerk40t, BurnCraft, LaserCraft, lmcv2u-loader, jnweiger/ruida-laser
+(GPL-2.0), kkaempf/ruida (Ruby licence). No BJJCZ firmware. No
 LightBurn code, assets or text.

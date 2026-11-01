@@ -4,8 +4,11 @@
 //! listens on, [`HOST_PORT`] (40200). Each datagram is a big-endian 16-bit checksum (the sum of the scrambled payload
 //! bytes, mod 65536) followed by the scrambled payload: whole commands, at most [`MAX_UDP_PAYLOAD`] bytes. The
 //! controller answers every datagram with one scrambled byte: ACK (`0xCC`, `0xC6` on the wire with key `0x88`) when it
-//! took it, or ERR (`0xCD`, wire `0x46`) / NAK (`0xCF`, wire `0x48`) when it did not (bad checksum, busy); the host then
-//! sends the same datagram again. It is stop-and-wait: one datagram in flight. Commands that ask for data (memory
+//! took it, or ERR (`0xCD`, wire `0x46`) / NAK (`0xCF`, wire `0x48`) when it did not; the host then sends the same
+//! datagram again. MeerK40t's emulator answers a bad checksum with NAK, and its client resends on NAK only (it ignores
+//! ERR); which of the two a real controller sends is unverified, so this crate resends on both. A missing ACK is not a
+//! refusal: the controller may have run the datagram, so only read-only datagrams are sent again after a timeout
+//! (see [`crate::udp`]). It is stop-and-wait: one datagram in flight. Commands that ask for data (memory
 //! reads, document names) are followed by a second datagram carrying the scrambled reply, without a checksum. The
 //! controller sends nothing unprompted; a keepalive is a lone ENQ (`0xCE`), answered with ACK. Ports 50207/40207 carry
 //! the `A5` jog-key interface (not covered here).

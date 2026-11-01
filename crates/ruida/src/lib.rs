@@ -12,9 +12,9 @@
 //!
 //! **Provenance.** Everything here comes from MeerK40t's Ruida module (MIT; meerk40t/meerk40t @ `d511944`,
 //! `meerk40t/ruida/` and `test/test_ruida.py`), re-written in Rust. GPL Ruida projects (jnweiger/ruida-laser) and
-//! projects without a licence (kkaempf/ruida) were not used. **Nothing has been run against Ruida hardware**: the
-//! simulator is OpenEtch's own reading of MeerK40t's emulator and client, and MeerK40t's own notes say its Ruida
-//! support was tested on one RDC6442S only.
+//! projects under other licences (kkaempf/ruida, Ruby licence) were not used. **Nothing has been run against Ruida
+//! hardware**: the simulator is OpenEtch's own reading of MeerK40t's emulator and client, and MeerK40t's own notes
+//! say its Ruida support was tested on one RDC6442S only.
 //!
 //! # Command reference
 //!

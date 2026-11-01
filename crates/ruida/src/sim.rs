@@ -1,12 +1,17 @@
 //! A Ruida controller simulator for tests (feature `sim`; always on for this crate's own tests).
 //!
 //! It takes UDP datagrams ([`Simulator::handle_udp`]) or serial bytes ([`Simulator::handle_serial`]), answers the
-//! way [`crate::frame`] describes (ACK or ERR per datagram, data replies for memory reads and document names), runs
-//! the commands, tracks the head position (X, Y, Z, U in µm) and records every XY segment with whether the laser
-//! would be on: a cut (`A8`..`AB`) with a non-zero laser 1 max power. It keeps stored documents (a job that starts
-//! with `E7 01 name` is stored, not run) for the controller file list.
+//! way [`crate::frame`] describes (ACK per datagram, NAK on a bad checksum as MeerK40t's emulator answers, data
+//! replies for memory reads and document names), runs the commands, tracks the head position (X, Y, Z, U in µm) and
+//! records every XY segment with whether the laser would be on: a cut (`A8`..`AB`) while any min or max power of
+//! laser 1 or 2 is non-zero (min power is what the controller uses at corners and low speed, so a zero max power
+//! alone does not keep the laser off). It keeps stored documents (a job that starts with `E7 01 name` is stored, not
+//! run) for the controller file list; a stored document that starts a stored document does not run it (no
+//! recursion).
 //!
-//! It models what MeerK40t's emulator and client agree on; nothing here was checked against a real controller.
+//! It models what MeerK40t's emulator and client agree on; nothing here was checked against a real controller. The
+//! test hooks [`Simulator::refuse_next`] (answer ERR, as a busy controller might) and [`Simulator::lose_next_acks`]
+//! (run the datagram but lose its ACK) are OpenEtch's own.
 
 // Behaviour after meerk40t/meerk40t @ d511944 `meerk40t/ruida/emulator.py` (`checksum_write`, `_process_realtime`,
 // `mem_lookup`, the `E8` document commands) (MIT License, Copyright (c) 2021 meerk40t; full notice in `swizzle.rs`).
@@ -29,7 +34,7 @@ pub struct SimSegment {
     pub cut: bool,
     pub part: u8,
     pub speed_um_s: u32,
-    /// Laser 1 max power in force.
+    /// The highest of the laser 1 and laser 2 min and max powers in force.
     pub power: Power,
 }
 
@@ -49,7 +54,9 @@ pub struct SimDocument {
 #[derive(Debug, Clone, Copy, Default)]
 struct PartSettings {
     speed: u32,
-    max1: Power,
+    /// Min and max power of lasers 1 and 2 from the header (`C6 31/41/32/42`).
+    min: [Power; 2],
+    max: [Power; 2],
 }
 
 /// The simulated controller.
@@ -77,7 +84,11 @@ pub struct Simulator {
     pub checksum_errors: usize,
     /// Refuse (ERR) this many of the next datagrams without running them, as a busy controller would.
     pub refuse_next: usize,
+    /// Run this many of the next datagrams but lose their ACK (a dropped reply datagram).
+    pub lose_next_acks: usize,
     receiving: Option<SimDocument>,
+    /// A stored document is being run (one that starts another is not followed).
+    running_document: bool,
     parts: BTreeMap<u8, PartSettings>,
 }
 
@@ -106,7 +117,9 @@ impl Simulator {
             datagrams: 0,
             checksum_errors: 0,
             refuse_next: 0,
+            lose_next_acks: 0,
             receiving: None,
+            running_document: false,
             parts: BTreeMap::new(),
         }
     }
@@ -115,17 +128,18 @@ impl Simulator {
         &self.swz
     }
 
-    /// One datagram from the host; returns the datagrams sent back (scrambled): ACK or ERR, then any data replies.
+    /// One datagram from the host; returns the datagrams sent back (scrambled): ACK (NAK on a bad checksum, ERR when
+    /// refusing), then any data replies.
     pub fn handle_udp(&mut self, datagram: &[u8]) -> Vec<Vec<u8>> {
         self.datagrams += 1;
-        let err = self.swz.scramble(&[0xCD]);
         if self.refuse_next > 0 {
             self.refuse_next -= 1;
-            return vec![err];
+            return vec![self.swz.scramble(&[0xCD])];
         }
         let Ok(plain) = unframe_udp(&self.swz, datagram) else {
             self.checksum_errors += 1;
-            return vec![err];
+            // MeerK40t's emulator answers a checksum mismatch with NAK (`CF`).
+            return vec![self.swz.scramble(&[0xCF])];
         };
         let mut out = vec![self.swz.scramble(&[0xCC])];
         for cmd in parse_lenient(&plain) {
@@ -134,6 +148,10 @@ impl Simulator {
             {
                 out.push(w);
             }
+        }
+        if self.lose_next_acks > 0 {
+            self.lose_next_acks -= 1;
+            out.remove(0);
         }
         out
     }
@@ -187,7 +205,7 @@ impl Simulator {
                 cut: cmd.is_cut(),
                 part: self.part,
                 speed_um_s: self.speed_um_s,
-                power: self.max_power[0],
+                power: self.min_power.into_iter().chain(self.max_power).max().unwrap_or(Power::ZERO),
             };
             self.laser_on = seg.laser_on();
             self.segments.push(seg);
@@ -206,7 +224,15 @@ impl Simulator {
             C::HomeU => self.pos[3] = 0,
             C::Speed { kind: SpeedKind::Laser1, um_per_s } => self.speed_um_s = *um_per_s,
             C::SpeedPart { part, um_per_s } => self.parts.entry(*part).or_default().speed = *um_per_s,
-            C::PartPower { max: true, laser: Laser::L1, part, power } => self.parts.entry(*part).or_default().max1 = *power,
+            C::PartPower { max, laser: laser @ (Laser::L1 | Laser::L2), part, power } => {
+                let p = self.parts.entry(*part).or_default();
+                let k = usize::from(*laser == Laser::L2);
+                if *max {
+                    p.max[k] = *power;
+                } else {
+                    p.min[k] = *power;
+                }
+            }
             C::Power { kind: kind @ (PowerKind::Min | PowerKind::Max), laser: laser @ (Laser::L1 | Laser::L2), power } => {
                 let k = usize::from(*laser == Laser::L2);
                 if *kind == PowerKind::Max {
@@ -219,7 +245,8 @@ impl Simulator {
                 self.part = *value;
                 if let Some(p) = self.parts.get(value) {
                     self.speed_um_s = p.speed;
-                    self.max_power[0] = p.max1;
+                    self.min_power = p.min;
+                    self.max_power = p.max;
                 }
             }
             C::StartProcess => {
@@ -252,10 +279,15 @@ impl Simulator {
                 return Some(Reply::DocumentName { index: *index, name: doc.name.clone() });
             }
             C::Document { kind: DocKind::Start, index } => {
+                if self.running_document {
+                    return None;
+                }
                 let doc = usize::from(*index).checked_sub(1).and_then(|i| self.documents.get(i))?.clone();
+                self.running_document = true;
                 for c in &doc.commands {
                     self.execute(c);
                 }
+                self.running_document = false;
             }
             C::DeleteDocument { index, .. } => {
                 if *index == 0 {
@@ -359,12 +391,13 @@ mod tests {
     }
 
     #[test]
-    fn checksum_errors_and_refusals_get_err() {
+    fn checksum_errors_get_nak_and_refusals_err() {
         let mut sim = Simulator::new(DEFAULT_MAGIC);
         let swz = Swizzle::default();
         let mut pkt = frame_udp(&swz, &Command::MoveAbs { x: 5, y: 5 }.encode().unwrap()).unwrap();
         pkt[0] ^= 0xFF;
-        assert_eq!(sim.handle_udp(&pkt), vec![vec![0x46]]);
+        // A checksum mismatch gets NAK (CF, 0x48 on the wire), as from MeerK40t's emulator.
+        assert_eq!(sim.handle_udp(&pkt), vec![vec![0x48]]);
         assert_eq!(sim.checksum_errors, 1);
         assert!(sim.segments.is_empty());
         sim.refuse_next = 1;
@@ -445,6 +478,55 @@ mod tests {
         assert!(send_all(&mut sim, &Command::Document { kind: DocKind::Name, index: 9 }.encode().unwrap()).is_empty());
         send_all(&mut sim, &Command::DeleteDocument { index: 0, other: 0 }.encode().unwrap());
         assert!(sim.documents.is_empty());
+    }
+
+    #[test]
+    fn min_power_or_laser_2_alone_fires() {
+        use crate::command::Command as C;
+        let swz = Swizzle::default();
+        let cut = crate::command::encode_all(&[C::MoveAbs { x: 0, y: 0 }, C::CutAbs { x: 1000, y: 0 }]).unwrap();
+        let five = Power::from_percent(5.0).unwrap();
+        // Max power 0 but min power 5 %: the controller can fire at min power (corners, low speed).
+        let mut sim = Simulator::new(DEFAULT_MAGIC);
+        sim.execute(&C::Power { kind: PowerKind::Min, laser: Laser::L1, power: five });
+        sim.handle_serial(&frame_serial(&swz, &cut));
+        assert!(sim.laser_fired());
+        // Laser 2 only.
+        let mut sim = Simulator::new(DEFAULT_MAGIC);
+        sim.execute(&C::Power { kind: PowerKind::Max, laser: Laser::L2, power: five });
+        sim.handle_serial(&frame_serial(&swz, &cut));
+        assert!(sim.laser_fired());
+        // A layer's header min power comes back with its layer number.
+        let mut sim = Simulator::new(DEFAULT_MAGIC);
+        sim.execute(&C::PartPower { max: false, laser: Laser::L1, part: 2, power: five });
+        sim.execute(&C::Byte { kind: ByteKind::LayerNumber, value: 2 });
+        sim.handle_serial(&frame_serial(&swz, &cut));
+        assert_eq!(sim.burns().count(), 1);
+    }
+
+    #[test]
+    fn a_document_that_starts_itself_runs_once() {
+        // Stored: "LOOP" = E8 03 1, start, a cut, D7; "OTHER" = E8 03 1. This overflowed the stack before.
+        use crate::command::Command as C;
+        let mut sim = Simulator::new(DEFAULT_MAGIC);
+        sim.execute(&C::Power { kind: PowerKind::Max, laser: Laser::L1, power: Power::FULL });
+        for c in [
+            C::SetFilename("LOOP".into()),
+            C::Document { kind: DocKind::Start, index: 1 },
+            C::StartProcess,
+            C::CutAbs { x: 5, y: 5 },
+            C::EndOfFile,
+            C::SetFilename("OTHER".into()),
+            C::Document { kind: DocKind::Start, index: 1 },
+            C::EndOfFile,
+        ] {
+            sim.execute(&c);
+        }
+        assert_eq!(sim.documents.len(), 2);
+        sim.execute(&C::Document { kind: DocKind::Start, index: 1 });
+        sim.execute(&C::Document { kind: DocKind::Start, index: 2 });
+        assert_eq!(sim.burns().count(), 1);
+        assert_eq!(sim.jobs_finished, 1);
     }
 
     #[test]

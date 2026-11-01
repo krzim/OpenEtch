@@ -27,7 +27,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::command::{
-    ByteKind, Command, Laser, LayerFlag, OffsetKind, PartPointKind, PointKind, PowerKind, RefPoint, RepeatKind,
+    Axis, ByteKind, Command, Laser, LayerFlag, OffsetKind, PartPointKind, PointKind, PowerKind, RefPoint, RepeatKind,
     SpeedKind, ValueKind, encode_all, parse_lenient, split,
 };
 use crate::num::{I14_MAX, I14_MIN, Power, U35_MAX, mm_s_to_um_s, mm_to_um};
@@ -399,7 +399,8 @@ struct LayerAcc {
 }
 
 /// Geometry and per-layer settings from a command list. Moves end a polyline; cuts extend it (starting at the
-/// current position). Settings come from the header's per-part commands and are overridden by the commands after
+/// current position). Rapid and single-axis X/Y moves (`D9`, `80 00`, `A0 00`) are moves too, so relative cuts after
+/// them start where the head is (as the simulator runs them). Settings come from the header's per-part commands and are overridden by the commands after
 /// `CA 02 part` (speed `C9 02`, power `C6 01/02/21/22`, colour `CA 05`).
 pub fn job_from_commands(cmds: &[Command]) -> (RdJob, Vec<String>) {
     use Command as C;
@@ -426,6 +427,9 @@ pub fn job_from_commands(cmds: &[Command]) -> (RdJob, Vec<String>) {
             C::MoveRel { dx, dy } | C::CutRel { dx, dy } => Some([pos[0] + i64::from(*dx), pos[1] + i64::from(*dy)]),
             C::MoveRelX { dx } | C::CutRelX { dx } => Some([pos[0] + i64::from(*dx), pos[1]]),
             C::MoveRelY { dy } | C::CutRelY { dy } => Some([pos[0], pos[1] + i64::from(*dy)]),
+            C::RapidMoveXy { x, y, .. } | C::RapidMoveXyu { x, y, .. } => Some([i64::from(*x), i64::from(*y)]),
+            C::AxisMove { axis: Axis::X, pos: v } | C::RapidMove { axis: Axis::X, pos: v, .. } => Some([i64::from(*v), pos[1]]),
+            C::AxisMove { axis: Axis::Y, pos: v } | C::RapidMove { axis: Axis::Y, pos: v, .. } => Some([pos[0], i64::from(*v)]),
             _ => None,
         };
         if let Some(t) = target {
@@ -686,6 +690,25 @@ mod tests {
         assert_eq!(job.layers[1].color, [0, 0, 255]);
         assert_eq!(job.layers[1].speed_mm_s, 5.0);
         assert_eq!(job.layers[1].max_power[0], 100.0);
+    }
+
+    #[test]
+    fn rapid_moves_move_the_head() {
+        // Before, D9 and 80/A0 moves were ignored, so the relative cut below was read from (1, 1) mm instead of
+        // (10, 20) mm, unlike the simulator running the same stream.
+        use Command as C;
+        use crate::command::RapidOption;
+        let cmds = vec![
+            C::MoveAbs { x: 1000, y: 1000 },
+            C::RapidMoveXy { option: RapidOption::None, x: 10_000, y: 5000 },
+            C::AxisMove { axis: Axis::Y, pos: 20_000 },
+            C::CutRelX { dx: 1000 },
+            C::RapidMove { axis: Axis::X, option: RapidOption::Light, pos: 0 },
+            C::CutRelY { dy: 500 },
+            C::EndOfFile,
+        ];
+        let (job, _) = job_from_commands(&cmds);
+        assert_eq!(job.layers[0].polylines, vec![vec![[10.0, 20.0], [11.0, 20.0]], vec![[0.0, 20.0], [0.0, 20.5]]]);
     }
 
     /// Real `.rd` files are never committed. Point `OPENETCH_RD_SAMPLES` at a folder of them to check the reader:

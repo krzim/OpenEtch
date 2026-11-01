@@ -1121,16 +1121,18 @@ the in-crate simulator follows MeerK40t's emulator and client.
   incremented; `.rd` files, UDP and serial all use it. The reader finds a file's key (histogram guess, then scoring).
 - **UDP**: host port 40200 ↔ controller port 50200; datagram = big-endian 16-bit sum of the scrambled payload, then the
   scrambled payload (whole commands, ≤ 1470 bytes). Stop-and-wait: ACK `0xCC` (wire `0xC6`) or ERR `0xCD` (wire
-  `0x46`) / NAK `0xCF` → resend; memory reads get a second datagram with `DA 01 addr value`. Keepalive = ENQ `0xCE`.
+  `0x46`) / NAK `0xCF` → resend; no ACK → give up (only reads are sent again: a lost ACK must not run cuts twice);
+  memory reads get a second datagram with `DA 01 addr value`, one read per datagram. Keepalive = ENQ `0xCE`.
   **USB serial** (FTDI 0403:6001): scrambled bytes only, no checksum, no ACK.
 - **Numbers**: 7 bits per byte. Absolute coordinates are 35-bit (µm), relative ones 14-bit signed (±8.191 mm), power
   14-bit (`0x3FFF` = 100 %), speeds µm/s. Encoders refuse what they cannot represent.
 - **`.rd` files**: `rd::read_rd` gives the command list and polylines per layer with speed, min/max power (lasers 1
   and 2) and colour; `rd::write_rd` writes polylines per layer in MeerK40t's layout (header with bounds and per-layer
   settings, layers, file sum, `D7`). Real `.rd` files are read only by the env-gated test `OPENETCH_RD_SAMPLES`.
-- **Simulator** (`ruida::sim`, feature `sim`): ACKs datagrams (ERR on a bad checksum), runs commands, tracks X/Y/Z/U,
-  records every segment and whether the laser would be on, answers memory reads, stores named jobs (controller file
-  list: count, names, run, delete).
+- **Simulator** (`ruida::sim`, feature `sim`): ACKs datagrams (NAK on a bad checksum, as MeerK40t's emulator),
+  runs commands, tracks X/Y/Z/U, records every segment and whether the laser would be on (a cut while any laser 1/2
+  min or max power is non-zero), answers memory reads, stores named jobs (controller file list: count, names, run,
+  delete).
 
 ## CAD integrations
 
@@ -1144,5 +1146,5 @@ selection code is tested without Fusion or Inkscape (`python -I tools/tests/test
 ## Licensing and provenance
 
 Code ported from MIT/Apache projects keeps its notice in the file header and is listed in `ATTRIBUTION.md`. Never copy
-from GPL/SSPL/unlicensed sources (Balor, balor-meerk40t, BurnCraft, LaserCraft, lmcv2u-loader, and for Ruida
-jnweiger/ruida-laser (GPL-2.0) and kkaempf/ruida (no licence)).
+from GPL/SSPL/unlicensed or other non-permissive sources (Balor, balor-meerk40t, BurnCraft, LaserCraft, lmcv2u-loader, and for Ruida
+jnweiger/ruida-laser (GPL-2.0) and kkaempf/ruida (Ruby licence, not MIT/BSD/Apache)).
