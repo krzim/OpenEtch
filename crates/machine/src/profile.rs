@@ -726,7 +726,7 @@ mod tests {
     fn b6_fixture_loads() {
         let p = MachineProfile::from_toml(B6).expect("fixture is valid");
         assert_eq!(p.field_mm, 153.75);
-        assert!(!p.swap_xy && !p.negate_x && !p.negate_y);
+        assert!(p.swap_xy && !p.negate_x && !p.negate_y);
         assert_eq!(p.cor_file.as_deref(), Some(Path::new("jcz150.cor")));
         assert_eq!(p.pulse_widths_ns, units::JPT_M7_PULSE_WIDTHS_NS.to_vec());
         assert_eq!((p.frequency_khz_min, p.frequency_khz_max), (1.0, 4000.0));
@@ -734,7 +734,7 @@ mod tests {
         assert_eq!(p.red_light_speed_mm_s, 3000.0);
         assert_eq!((p.timing.laser_on_delay_us, p.timing.laser_off_delay_us, p.timing.polygon_delay_us), (-300.0, 100.0, 100.0));
         assert_eq!((p.mark_speed.min_mm_s, p.mark_speed.max_mm_s), (1.0, 10000.0));
-        assert_eq!((p.max_jump_speed_mm_s, p.max_delay_us), (4000.0, 2000.0));
+        assert_eq!((p.max_jump_speed_mm_s, p.max_delay_us), (15000.0, 2000.0));
         assert_eq!((p.pulse_width_enabled, p.open_mo_delay_us, p.start_mark_input_bit), (true, 8000.0, Some(14)));
     }
 

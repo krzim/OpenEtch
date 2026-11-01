@@ -915,9 +915,14 @@ fn light_packets(profile: &MachineProfile, outline: &[Vec<(f64, f64)>], loops: u
             profile.max_jump_speed_mm_s
         )));
     }
+    // Steps along an outline are short, so they settle with the short jump delay; the long one is kept for the move
+    // to each shape's start. A delay after every outline point made a multi-shape frame crawl and look dotted.
+    let (long, short) = (
+        units::delay_word(profile.timing.jump_delay_max_us)?,
+        units::delay_word(profile.timing.jump_delay_min_us.min(profile.timing.jump_delay_max_us))?,
+    );
     let mut list = LightList::new();
     list.jump_speed(units::speed_to_units(speed, profile.field_transform().speed_field_mm())?)?;
-    list.jump_delay(units::delay_word(profile.timing.jump_delay_max_us)?);
     let mut lit = false;
     for _ in 0..loops {
         for poly in &polys {
@@ -926,11 +931,13 @@ fn light_packets(profile: &MachineProfile, outline: &[Vec<(f64, f64)>], loops: u
                 list.red_pointer_off();
                 lit = false;
             }
+            list.jump_delay(long);
             list.jump_to(x0, y0);
             if !lit {
                 list.pointer_on(style.pointer);
                 lit = true;
             }
+            list.jump_delay(short);
             for &(x, y) in rest {
                 list.jump_to(x, y);
             }

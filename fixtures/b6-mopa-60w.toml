@@ -32,7 +32,7 @@ max_power_pct = 100.0
 red_light_port_bit = 8
 laser_enable_port_bit = 0
 red_light_speed_mm_s = 3000.0
-max_jump_speed_mm_s = 4000.0   # LightBurn B6 library JumpSpeed=4000 (provisional)
+max_jump_speed_mm_s = 15000.0  # ComMarker's B6 rating: up to 15,000 mm/s
 max_delay_us = 2000.0          # provisional sanity cap
 pulse_width_enabled = true     # LightBurn Laser_QPulseWidthEnabled
 open_mo_delay_us = 8000.0      # LightBurn Laser_OpenMODelay (informational)

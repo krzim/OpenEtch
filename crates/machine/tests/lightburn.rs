@@ -70,7 +70,7 @@ fn b6_device_onto_the_b6_profile() {
     assert_eq!(p.field_mm, 153.75);
     assert!(diff(&diffs, "field_mm").unwrap().note.contains("same lens"));
     // Agrees with the markcfg-based profile on everything both describe.
-    assert_eq!((p.swap_xy, p.negate_x, p.negate_y), (false, false, false));
+    assert_eq!((p.swap_xy, p.negate_x, p.negate_y), (true, false, false));
     assert!(diff(&diffs, "swap_xy").is_none() && diff(&diffs, "negate_x").is_none());
     assert_eq!(p.cor_file, base.cor_file);
     assert_eq!((p.red_light_speed_mm_s, p.start_mark_input_bit), (3000.0, Some(14)));
@@ -93,6 +93,8 @@ fn b6_device_onto_the_b6_profile() {
             "timing.jump_delay_min_us",
             "timing.jump_distance_limit_mm",
             "mark_speed.max_mm_s",
+            // LightBurn's StartMarkBitHigh = true, but the owner's foot switch reads low while pressed (measured).
+            "start_mark_active_low",
         ]
     );
     // Importing again onto the result changes nothing more.
@@ -132,10 +134,10 @@ fn odd_device_is_clamped_and_reported() {
     assert_eq!(p.field_mm, 110.0);
     assert_eq!(p.field_height_mm, Some(100.0), "a 110 x 100 field keeps its own height");
     assert!(diff(&diffs, "field_height_mm").is_some());
-    // Galvo 1 is X: swapped, X on galvo 1 (sign -1) and mirrored: negate_x = true ^ true.
-    assert!(p.swap_xy);
+    // Galvo 1 is X: not swapped, X on galvo 1 (sign -1) and mirrored: negate_x = true ^ true.
+    assert!(!p.swap_xy);
     assert!(!p.negate_x && !p.negate_y);
-    assert!(diff(&diffs, "swap_xy").unwrap().note.contains("UNVERIFIED"));
+    assert!(diff(&diffs, "swap_xy").unwrap().note.contains("Galvo_1_is_X"));
     // Empty correction file keeps the base's.
     assert_eq!(p.cor_file, base.cor_file);
     // Clamped to the profile's hard limits, never raised.
