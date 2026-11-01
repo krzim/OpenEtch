@@ -20,6 +20,7 @@ import {
   type DirectImport,
 } from "./api/drop.ts";
 import { friendlyError, outsideField } from "./api/laser.ts";
+import { engineLightBurnDevice } from "./api/lightburn.ts";
 import { MAX_UPLOAD_BYTES, commandResult, fileError, warningList } from "./api/project.ts";
 import { pendingRuns, stopToast } from "./api/runs.ts";
 import type { Vec2 } from "./api/types.ts";
@@ -30,6 +31,7 @@ import { ArrayDialog, CommandPalette, PlaceDialog, StockDialog } from "./compone
 import { DropOverlay, useFileDrop } from "./components/FileDrop.tsx";
 import { FileDialogs, FileMenu, useFileActions } from "./components/FileMenu.tsx";
 import { MachineCard, PreviewPlayer, PreviewStatsCard, RunsCard } from "./components/LaserPanel.tsx";
+import { LightBurnDevices, useLightBurn } from "./components/LightBurn.tsx";
 import { LayerSection, PropertiesPanel } from "./components/PropertiesPanel.tsx";
 import { Timeline } from "./components/Timeline.tsx";
 import { Toolbar, type ArrangeAction } from "./components/Toolbar.tsx";
@@ -187,7 +189,20 @@ export function App() {
 
   const machineFieldMm = typeof machine?.field_mm === "number" && machine.field_mm > 0 ? machine.field_mm : null;
   const fieldMm = machineFieldMm ?? DEFAULT_FIELD_MM;
-  const file = useFileActions({ engine, machineFieldMm, fallbackFieldMm: DEFAULT_FIELD_MM, notify, report, onImported: selectIds });
+  const lightburn = useLightBurn(engine.link);
+  const lightburnDevices = useMemo(
+    () => ({ devices: lightburn.info?.devices ?? [], engineDevice: engineLightBurnDevice(machine, lightburn.info) }),
+    [lightburn.info, machine],
+  );
+  const file = useFileActions({
+    engine,
+    machineFieldMm,
+    fallbackFieldMm: DEFAULT_FIELD_MM,
+    notify,
+    report,
+    onImported: selectIds,
+    lightburn: lightburnDevices,
+  });
   const fileModalOpen = file.modal !== null;
   const saveFile = file.save;
   const activeLayer = selection.layer ?? doc?.layers[0]?.id ?? null;
@@ -963,7 +978,15 @@ export function App() {
               />
             ) : (
               <div className="props">
-                <MachineCard machine={machine} httpError={engine.httpError} />
+                <MachineCard machine={machine} httpError={engine.httpError}>
+                  <LightBurnDevices
+                    lightburn={lightburn}
+                    machine={machine}
+                    onChanged={() => void engine.refreshMachine()}
+                    notify={notify}
+                    report={report}
+                  />
+                </MachineCard>
                 <RunsCard
                   machine={machine}
                   docRevision={doc?.revision ?? null}

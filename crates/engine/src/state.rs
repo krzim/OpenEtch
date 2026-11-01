@@ -9,8 +9,9 @@
 //! before `document_changed` is sent. Project names that differ only in case are the same project (Windows and
 //! macOS file names ignore case), so saves refuse to replace one unless asked to and opens find it.
 //! The document's `field_mm` comes from the machine profile when the engine starts with a document that has none,
-//! and `doc.import_lbrn2` / `doc.export_lbrn2` get the profile's field size when neither the caller nor the
-//! document gives one.
+//! and `doc.new` always starts at the profile's. `doc.import_lbrn2` without `field_mm` gets the LightBurn device's
+//! field ([`crate::lightburn`]), else the document's, else the profile's; `doc.export_lbrn2` gets the profile's when
+//! neither the caller nor the document gives one.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -25,6 +26,7 @@ use tokio::sync::broadcast;
 
 use crate::frame::{self, FrameRequest};
 use crate::hw::{AbortOutcome, Machine};
+use crate::lightburn::LightBurn;
 use crate::pin::ApprovalConfig;
 use crate::projects::{self, LBRN2_EXT, PROJECT_EXT, ProjectDir, ProjectInfo, ProjectState};
 use crate::render::{self, RenderOptions};
@@ -88,6 +90,9 @@ pub struct AppState {
     pub projects: ProjectDir,
     /// The current project. Locked only while the session lock is held or with no other lock, never the reverse.
     project: Mutex<ProjectState>,
+    /// LightBurn's devices (field size of LightBurn imports, `GET /api/lightburn`). None until configured
+    /// ([`LightBurn::configure`]); never locked while the session lock is held.
+    pub lightburn: LightBurn,
 }
 
 /// How an invocation changes which project the document belongs to.
@@ -123,8 +128,9 @@ fn content_params(content: String) -> Value {
     Value::Object(params)
 }
 
-/// Commands that convert with a field size and get the profile's `field_mm` when nothing else gives one.
-const NEEDS_FIELD: [&str; 2] = ["doc.import_lbrn2", "doc.export_lbrn2"];
+/// Commands that convert with (or start at) a field size and get one filled in when the caller gives none (see
+/// [`AppState::batch_opening`]).
+const NEEDS_FIELD: [&str; 3] = ["doc.new", "doc.import_lbrn2", "doc.export_lbrn2"];
 
 /// File formats of the download and upload routes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -302,6 +308,7 @@ impl AppState {
             previews: Arc::default(),
             projects,
             project: Mutex::new(project),
+            lightburn: LightBurn::default(),
         })
     }
 
@@ -384,22 +391,50 @@ impl AppState {
     /// Run commands as one undo step, all-or-nothing. Only `Query` and `Edit` commands are accepted here: machine
     /// actions have their own endpoints and tools.
     pub fn batch(&self, invs: Vec<Invocation>, origin: Origin) -> Result<Vec<Outcome>, EngineError> {
-        self.batch_opening(invs, origin, None)
+        self.batch_opening(invs, origin, None, None)
     }
 
     /// [`AppState::batch`]; with `opened`, a successful edit makes `opened` the current project, saved at the new
-    /// revision (project open). The project state changes before `document_changed` is sent, so a client that
-    /// refetches `GET /api/project` on the event sees it.
+    /// revision (project open). A replacing edit with no project records `display` (or the `name` of a replacing
+    /// `doc.import_lbrn2`) as the name downloads get. The project state changes before `document_changed` is sent,
+    /// so a client that refetches `GET /api/project` on the event sees it.
+    ///
+    /// Field sizes: `doc.new` without `field_mm` gets the machine profile's; `doc.import_lbrn2` without one gets the
+    /// LightBurn device's ([`LightBurn::field_for_import`]), else the document's, else the machine profile's, and
+    /// its result's `field_source` says which.
     fn batch_opening(
         &self,
         mut invs: Vec<Invocation>,
         origin: Origin,
         opened: Option<String>,
+        display: Option<String>,
     ) -> Result<Vec<Outcome>, EngineError> {
         if invs.is_empty() {
             return Err(EngineError::BadRequest("batch has no commands".into()));
         }
-        let (outcomes, before, after, hist) = {
+        let profile_field = self.machine.profile().field_mm;
+        // Filled in before the session lock: the LightBurn lookup may read prefs.ini.
+        let mut field_sources: Vec<(usize, String)> = Vec::new();
+        for (i, inv) in invs.iter_mut().enumerate() {
+            match inv.id.as_str() {
+                "doc.new" => fill_field_mm(inv, profile_field),
+                "doc.import_lbrn2" if lacks_field(inv) => {
+                    let content = inv.params.get("content").and_then(Value::as_str);
+                    if let Some((f, source)) = content.and_then(|c| self.lightburn.field_for_import(c)) {
+                        fill_field_mm(inv, f);
+                        field_sources.push((i, source));
+                    }
+                }
+                _ => {}
+            }
+        }
+        let display = display.or_else(|| {
+            invs.iter()
+                .rev()
+                .find(|i| i.id == "doc.import_lbrn2" && replaces(i) == Replaces::Unsaved)
+                .and_then(|i| i.params.get("name").and_then(Value::as_str).and_then(projects::display_name))
+        });
+        let (mut outcomes, before, after, hist) = {
             let mut s = lock(&self.session);
             let mut last_edit = Replaces::No;
             for inv in &invs {
@@ -416,9 +451,11 @@ impl AppState {
                 }
             }
             if s.document().field_mm.is_none() {
-                let field = self.machine.profile().field_mm;
-                for inv in &mut invs {
-                    fill_field_mm(inv, field);
+                for (i, inv) in invs.iter_mut().enumerate() {
+                    if inv.id == "doc.import_lbrn2" && lacks_field(inv) {
+                        field_sources.push((i, "machine".into()));
+                    }
+                    fill_field_mm(inv, profile_field);
                 }
             }
             let replaced = invs.iter().any(|i| replaces(i) != Replaces::No);
@@ -432,7 +469,12 @@ impl AppState {
                 } else if replaced {
                     // Clean only after doc.new / doc.load with nothing edited after it in the same batch.
                     let clean = last_edit == Replaces::Clean;
-                    *p = ProjectState { name: None, saved_revision: None, clean_revision: clean.then_some(after) };
+                    *p = ProjectState {
+                        name: None,
+                        saved_revision: None,
+                        clean_revision: clean.then_some(after),
+                        display_name: if clean { None } else { display },
+                    };
                 }
             }
             if s.document().field_mm.is_none() {
@@ -442,19 +484,26 @@ impl AppState {
             }
             (outcomes, before, after, (s.marker(), s.history().len()))
         };
+        for (i, source) in field_sources {
+            if let Some(Value::Object(r)) = outcomes.get_mut(i).map(|o| &mut o.result) {
+                r.insert("field_source".into(), Value::String(source));
+            }
+        }
         if after != before {
             self.announce(before, after, origin, hist);
         }
         Ok(outcomes)
     }
 
-    /// `GET /api/project`: `{name, saved_revision, revision, dirty}`.
+    /// `GET /api/project`: `{name, display_name, saved_revision, revision, dirty}`; `display_name` is the opened
+    /// file's name while no project holds the document (else null).
     pub fn project_status(&self) -> Value {
         let s = lock(&self.session);
         let revision = s.document().revision;
         let p = lock(&self.project);
         json!({
             "name": p.name,
+            "display_name": p.display_name,
             "saved_revision": p.saved_revision,
             "revision": revision,
             "dirty": p.dirty(revision),
@@ -517,7 +566,7 @@ impl AppState {
             .blocking(move |st| {
                 let (name, content) = st.projects.read(&owned)?;
                 let inv = Invocation { id: "doc.load".into(), params: content_params(content) };
-                let o = st.batch_opening(vec![inv], origin, Some(name.clone()))?.remove(0);
+                let o = st.batch_opening(vec![inv], origin, Some(name.clone()), None)?.remove(0);
                 Ok((name, o))
             })
             .await?;
@@ -570,14 +619,19 @@ impl AppState {
                 (content, warnings, lock(&self.session).document().name.clone())
             }
         };
-        let stem = self.project_name().unwrap_or(name);
+        let stem = {
+            let p = lock(&self.project);
+            p.name.clone().or_else(|| p.display_name.clone()).unwrap_or(name)
+        };
         Ok(DownloadFile { stem, format, content, warnings })
     }
 
     /// Run an uploaded file (the raw bytes): `.openetch` through `doc.load` (replace only), `.lbrn2` through
     /// `doc.import_lbrn2` (`replace` or `merge`, optional `field_mm`), SVG through `art.import_svg`, DXF through
     /// `art.import_dxf` and bitmaps through `art.import_image` (merge only, optional `layer`, `name`, `width_mm`;
-    /// images also `mime`, else sniffed). Options that do not apply to the format are refused (400).
+    /// images also `mime`, else sniffed). Options that do not apply to the format are refused (400). `name` on an
+    /// `.openetch` or replacing `.lbrn2` upload is the file's name, used for later downloads until the document is
+    /// saved as a project (a merging `.lbrn2` names its group after it).
     pub fn upload(
         &self,
         format: UploadFormat,
@@ -589,12 +643,13 @@ impl AppState {
             Err(EngineError::BadRequest(format!("{what} is only for {only} uploads, not {}", format.name())))
         };
         let art = matches!(format, UploadFormat::Svg | UploadFormat::Dxf | UploadFormat::Image);
+        let display = match format {
+            UploadFormat::OpenEtch | UploadFormat::Lbrn2 => opts.name.as_deref().and_then(projects::display_name),
+            _ => None,
+        };
         if !art {
             if opts.layer.is_some() {
                 return refuse("layer", "svg, dxf and image");
-            }
-            if opts.name.is_some() {
-                return refuse("name", "svg, dxf and image");
             }
             if opts.width_mm.is_some() {
                 return refuse("width_mm", "svg, dxf and image");
@@ -621,6 +676,9 @@ impl AppState {
                 params["mode"] = json!(if opts.merge == Some(true) { "merge" } else { "replace" });
                 if let Some(f) = opts.field_mm {
                     params["field_mm"] = json!(f);
+                }
+                if let Some(n) = &opts.name {
+                    params["name"] = json!(n);
                 }
                 Invocation { id: "doc.import_lbrn2".into(), params }
             }
@@ -673,7 +731,7 @@ impl AppState {
                 Invocation { id: id.into(), params: Value::Object(params) }
             }
         };
-        self.execute(inv, origin)
+        self.batch_opening(vec![inv], origin, None, display).map(|mut v| v.remove(0))
     }
 
     /// Undo: move the timeline marker back over the last applied edit (by anyone); returns the new revision.
@@ -775,6 +833,7 @@ impl AppState {
         let rev = self.revision();
         let mut v = self.machine.status_json();
         v["approval"] = self.approval.status_json();
+        v["lightburn"] = self.lightburn.machine_json(self.machine.profile());
         let store = self.runs();
         v["pending_runs"] = json!(store.pending(rev));
         v["runs"] = json!(store.views(rev));
@@ -851,7 +910,12 @@ fn refuse_clobber(dir: &ProjectDir, name: &str, ext: &str, current: Option<&str>
     }
 }
 
-/// Give a `doc.import_lbrn2` / `doc.export_lbrn2` invocation `field_mm` when it has none.
+/// Whether an invocation's params have no (or a null) `field_mm`.
+fn lacks_field(inv: &Invocation) -> bool {
+    inv.params.get("field_mm").is_none_or(Value::is_null)
+}
+
+/// Give a `doc.new` / `doc.import_lbrn2` / `doc.export_lbrn2` invocation `field_mm` when it has none.
 fn fill_field_mm(inv: &mut Invocation, field_mm: f64) {
     if !NEEDS_FIELD.contains(&inv.id.as_str()) {
         return;
@@ -884,6 +948,9 @@ mod tests {
         let mut inv = Invocation { id: "shape.rect".into(), params: json!({}) };
         fill_field_mm(&mut inv, 150.0);
         assert_eq!(inv.params, json!({}));
+        let mut inv = Invocation { id: "doc.new".into(), params: json!({"name": "x"}) };
+        fill_field_mm(&mut inv, 153.75);
+        assert_eq!(inv.params, json!({"name": "x", "field_mm": 153.75}));
         assert_eq!(FileFormat::parse("lbrn2").unwrap().extension(), "lbrn2");
         assert!(FileFormat::parse("svg").is_err(), "downloads are openetch or lbrn2");
         assert_eq!(UploadFormat::parse("svg").unwrap(), UploadFormat::Svg);

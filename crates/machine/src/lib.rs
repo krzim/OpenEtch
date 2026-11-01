@@ -2,7 +2,8 @@
 //! [`Controller`] (init, .cor upload, light framing, run, abort).
 //!
 //! - [`MachineProfile`]: one laser's fixed facts and hard limits (field, axis swap/negate, laser source, port bits,
-//!   default timing). TOML on disk; importable from an EzCad `markcfg7` ([`MachineProfile::from_markcfg`]).
+//!   default timing). TOML on disk; importable from an EzCad `markcfg7` ([`MachineProfile::from_markcfg`]) and from
+//!   a LightBurn device ([`lightburn`]: the device list of LightBurn's `prefs.ini`, [`profile_from_lightburn`]).
 //! - [`Link`]: sends 12-byte single commands and 3072-byte list packets. [`SimLink`] records traffic and fakes a
 //!   board for tests and the engine's simulator mode; `UsbLink` is the real board and is only compiled with the
 //!   `usb` feature.
@@ -19,6 +20,7 @@ mod check;
 mod controller;
 mod geometry;
 mod init;
+pub mod lightburn;
 mod link;
 mod markcfg;
 mod profile;
@@ -32,8 +34,15 @@ pub use controller::{AbortHandle, BoardInfo, Controller, ControllerError, Contro
 pub use geometry::{FieldError, field_to_galvo};
 pub use init::InitSettings;
 pub use link::{Link, LinkError, Reply};
+pub use lightburn::{
+    LightBurnDevice, LightBurnError, LightBurnPrefs, LightBurnSettings, ProfileDiff, find_device, parse_devices,
+    profile_from_lightburn,
+};
 pub use markcfg::MarkcfgImport;
-pub use profile::{DEFAULT_MAX_DELAY_US, DEFAULT_MAX_JUMP_SPEED_MM_S, MachineProfile, MarkSpeedLimits, ProfileError, Timing};
+pub use profile::{
+    DEFAULT_MAX_DELAY_US, DEFAULT_MAX_JUMP_SPEED_MM_S, DEFAULT_OPEN_MO_DELAY_US, MachineProfile, MarkSpeedLimits,
+    ProfileError, Timing,
+};
 pub use sim::{SimBoard, SimLink, Traffic};
 #[cfg(feature = "usb")]
 pub use usb::{CLONE_PID, DEFAULT_TIMEOUT, DetectedBoard, LMC_PID, LMC_VID, UsbLink, UsbOptions, detect};

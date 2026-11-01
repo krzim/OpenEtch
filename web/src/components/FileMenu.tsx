@@ -4,19 +4,35 @@
 // the dialogs and the dismissible warnings panel. Files dropped on the window or picked with Import are routed in
 // App.tsx (api/drop.ts); LightBurn files land in the import dialog here, which offers Open (replace) or Import (merge). Downloads are fetched with the Authorization header and saved from
 // a blob link, so they work with token auth. Replacing a document with unsaved changes asks first.
+//
+// LightBurn field size: the dialog reads each file's DeviceName and shows the size the engine's rule picks (the file's
+// LightBurn device, else the engine's LightBurn device, else the design's, else the machine's; api/lightburn.ts). It
+// sends no `field_mm` unless the user edits the size, so the engine applies the same rule and reports `field_source`.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, execute } from "../api/client.ts";
 import { createdIds } from "../api/drop.ts";
+import {
+  fieldSourceText,
+  labelledFieldChoices,
+  lbrnImportField,
+  readLbrnDeviceName,
+  sharedField,
+  type FieldChoice,
+  type ImportFieldDefault,
+  type LightBurnDevice,
+} from "../api/lightburn.ts";
 import * as C from "../api/commands.ts";
 import {
   MAX_UPLOAD_BYTES,
   commandResult,
   currentProjectName,
   downloadName,
+  exportBaseName,
   exportFieldDefault,
-  fieldChoices,
+  exportFieldOrigin,
+  exportFieldOriginText,
   fileError,
   fileFormat,
   fileStem,
@@ -31,7 +47,6 @@ import {
   projectClash,
   projectDirty,
   projectList,
-  sameField,
   suggestProjectName,
   validField,
   validateProjectName,
@@ -67,8 +82,12 @@ export interface FileActions {
   warnings: { title: string; items: string[] } | null;
   /** Name offered by Save as. */
   suggestedName: string;
-  /** Field size the LightBurn import defaults to. */
+  /** Field size the LightBurn import defaults to before the LightBurn device rule (the design's, else the machine's). */
   defaultFieldMm: number;
+  /** LightBurn devices the engine knows (for the field-size rule and chips). */
+  lightburnDevices: LightBurnDevice[];
+  /** The engine's own LightBurn device (`--lightburn-device`, else LightBurn's default), or null. */
+  lightburnDevice: string | null;
   docFieldMm: number | null;
   machineFieldMm: number | null;
   /** Field size the document's LightBurn art was read at (opened, or the last merge the engine remembers), or null. */
@@ -84,8 +103,11 @@ export interface FileActions {
   openProject: (name: string) => void;
   /** Open a .openetch (replace), or put a .lbrn2 in the import dialog with `lbrn2Mode` preselected. */
   uploadFile: (file: File, lbrn2Mode?: ImportMode) => void;
-  /** Import LightBurn files one after another (several files are always merged). */
-  importLbrn2: (files: File[], mode: ImportMode, fieldMm: number) => void;
+  /**
+   * Import LightBurn files one after another (several files are always merged). `fieldMm` undefined lets the engine
+   * pick each file's field size (see `lbrnImportField`); a number is the size the user typed, used for every file.
+   */
+  importLbrn2: (files: File[], mode: ImportMode, fieldMm?: number) => void;
   /** Export the document as a LightBurn project laid out for `fieldMm`. */
   exportLbrn2: (fieldMm: number) => void;
   downloadOpenetch: () => void;
@@ -113,6 +135,8 @@ export function useFileActions(p: {
   report: (e: unknown) => void;
   /** Called with the ids of objects an import created, so they can be selected (LightBurn "Select imported shapes"). */
   onImported?: (ids: string[]) => void;
+  /** The engine's LightBurn devices and its own device (absent on engines without LightBurn support). */
+  lightburn?: { devices: LightBurnDevice[]; engineDevice: string | null };
 }): FileActions {
   const { engine, notify, report } = p;
   const onImportedRef = useRef(p.onImported);
@@ -132,6 +156,8 @@ export function useFileActions(p: {
   // LightBurn files do not record their field size: remember the one a LightBurn file was opened at, so Export offers
   // it and an open/export round trip does not shift the artwork (cleared when another document replaces it).
   const [importedFieldMm, setImportedFieldMm] = useState<number | null>(null);
+  // Name of the file the design was opened from (Open replaces it), for exports while there is no saved project.
+  const [openedName, setOpenedName] = useState<string | null>(null);
   const projectName = currentProjectName(project, detachedFrom);
   const engineDirty = projectDirty(project, doc?.revision ?? null);
   const dirty = loadedUnsaved && engineDirty !== null && projectName === null ? true : engineDirty;
@@ -147,8 +173,8 @@ export function useFileActions(p: {
   }, [project?.name, detachedFrom]);
 
   // Latest values for callbacks that run after a confirmation.
-  const live = useRef({ project, doc, dirty, projectName });
-  live.current = { project, doc, dirty, projectName };
+  const live = useRef({ project, doc, dirty, projectName, openedName });
+  live.current = { project, doc, dirty, projectName, openedName };
 
   const task = useCallback(
     async (fn: () => Promise<void>) => {
@@ -200,6 +226,7 @@ export function useFileActions(p: {
         detach("");
         setLoadedUnsaved(false);
         setImportedFieldMm(null);
+        setOpenedName(null);
         notify("New document.");
       });
     }, null);
@@ -221,6 +248,7 @@ export function useFileActions(p: {
         setDetachedFrom(undefined);
         setSuggestedName("");
         setLoadedUnsaved(false);
+        setOpenedName(null);
         notify(`Saved "${name}".`);
         return "saved";
       } catch (e) {
@@ -251,6 +279,7 @@ export function useFileActions(p: {
           setSuggestedName("");
           setLoadedUnsaved(false);
           setImportedFieldMm(null);
+          setOpenedName(null);
           notify(`Opened "${name}".`);
           await engine.refreshDoc();
         });
@@ -278,10 +307,11 @@ export function useFileActions(p: {
       guard(`Opening ${file.name}`, "Discard and open", () => {
         setModal(null);
         void task(async () => {
-          const result = commandResult(await api.upload(file, "openetch").catch((e: unknown) => Promise.reject(fileError(e, file.name))));
+          const result = commandResult(await api.upload(file, "openetch", "replace", undefined, { name: file.name }).catch((e: unknown) => Promise.reject(fileError(e, file.name))));
           detach(suggestProjectName(fileStem(file.name)));
           setLoadedUnsaved(true);
           setImportedFieldMm(null);
+          setOpenedName(fileStem(file.name));
           notify(`Opened ${file.name}. Save it to keep it on the engine.`);
           showWarnings(`Opening ${file.name}`, warningList(result));
           await engine.refreshDoc();
@@ -292,7 +322,7 @@ export function useFileActions(p: {
   );
 
   const importLbrn2 = useCallback(
-    (files: File[], requested: ImportMode, fieldMm: number) => {
+    (files: File[], requested: ImportMode, fieldMm?: number) => {
       // Several files at once are always merged: replacing with each in turn would keep only the last.
       const mode: ImportMode = files.length > 1 ? "merge" : requested;
       const go = () => {
@@ -307,8 +337,8 @@ export function useFileActions(p: {
             try {
               // The upload route takes the raw file (up to 50 MB) and the field size it was laid out for.
               if (file.size > MAX_UPLOAD_BYTES) throw new Error(`${file.name} is larger than ${formatBytes(MAX_UPLOAD_BYTES)}.`);
-              const field = sameField(fieldMm, validField(live.current.doc?.field_mm)) ? undefined : fieldMm;
-              const result = commandResult(await api.upload(file, "lbrn2", mode, field).catch((e: unknown) => Promise.reject(fileError(e, file.name))));
+              // No size: the engine picks it (the file's LightBurn device first) and reports it with `field_source`.
+              const result = commandResult(await api.upload(file, "lbrn2", mode, fieldMm, { name: fileStem(file.name) }).catch((e: unknown) => Promise.reject(fileError(e, file.name))));
               const outcome = importOutcome(result);
               last = outcome;
               objects += outcome.objects;
@@ -323,7 +353,8 @@ export function useFileActions(p: {
           if (mode === "replace") {
             detach(suggestProjectName(fileStem(files[0].name)));
             setLoadedUnsaved(true);
-            setImportedFieldMm(fieldMm);
+            setImportedFieldMm(last?.fieldMm ?? fieldMm ?? validField(live.current.doc?.field_mm));
+            setOpenedName(fileStem(files[0].name));
           }
           if (created.length) onImportedRef.current?.(created);
           if (files.length === 1 && last) notify(importMessage(last, mode));
@@ -342,7 +373,7 @@ export function useFileActions(p: {
     [guard, task, engine, detach, notify, showWarnings],
   );
 
-  const baseName = () => live.current.projectName ?? live.current.doc?.name ?? null;
+  const baseName = () => exportBaseName(live.current.projectName, live.current.openedName, live.current.doc?.name);
 
   const exportLbrn2 = useCallback((fieldMm: number) => {
     setModal(null);
@@ -378,6 +409,8 @@ export function useFileActions(p: {
     warnings,
     suggestedName,
     defaultFieldMm,
+    lightburnDevices: p.lightburn?.devices ?? [],
+    lightburnDevice: p.lightburn?.engineDevice ?? null,
     docFieldMm,
     machineFieldMm: p.machineFieldMm,
     importedFieldMm: exportFromFieldMm,
@@ -677,21 +710,112 @@ function SaveAsDialog({ file, docName, onClose }: { file: FileActions; docName: 
   );
 }
 
+/** The typed field size, or null when it is not a usable size. */
+function parseField(text: string): number | null {
+  const n = Number(text.trim());
+  return text.trim() !== "" && Number.isFinite(n) && n > 0 && n <= 2000 ? n : null;
+}
+
+/** Field size text box plus one-tap sizes, shown once the user chooses to edit the size. */
+function FieldEditor(p: { value: string; onChange: (v: string) => void; onEnter: () => void; choices: FieldChoice[]; autoFocus?: boolean }) {
+  const n = parseField(p.value);
+  return (
+    <>
+      <label className="field">
+        <span className="field-label">Field size</span>
+        <span className="field-input">
+          <input
+            type="text"
+            inputMode="decimal"
+            autoFocus={p.autoFocus}
+            value={p.value}
+            onChange={(e) => p.onChange(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && p.onEnter()}
+          />
+          <span className="unit">mm</span>
+        </span>
+      </label>
+      <div className="chip-row">
+        {p.choices.map((c) => (
+          <button key={c.mm} className={`chip${n !== null && Math.abs(c.mm - n) < 1e-3 ? " active" : ""}`} onClick={() => p.onChange(fmt(c.mm, 3))}>
+            {fmt(c.mm, 3)} mm
+            {c.label ? ` (${c.label})` : ""}
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}
+
+/** "Field size 153.8 mm — from your LightBurn device JCZFiber  Edit". */
+function FieldSummary(p: { mm: number; source: string; onEdit: () => void }) {
+  return (
+    <p className="field-summary">
+      <span>
+        Field size <strong>{fmt(p.mm, 3)} mm</strong> — {p.source}
+      </span>
+      <button className="link-btn" onClick={p.onEdit}>
+        Edit
+      </button>
+    </p>
+  );
+}
+
+/** One-tap sizes: every LightBurn device's, the design's, the machine's, 110 and 150. */
+function fieldChoiceList(file: FileActions, first: { mm: number | null; label: string | null }[] = []): FieldChoice[] {
+  return labelledFieldChoices([
+    ...first,
+    ...file.lightburnDevices.map((d) => ({ mm: d.field_mm, label: d.name })),
+    { mm: file.docFieldMm, label: "current design" },
+    { mm: file.machineFieldMm, label: "this laser" },
+    { mm: 110, label: null },
+    { mm: 150, label: null },
+  ]);
+}
+
+/** Each picked file's DeviceName (null when it has none), or null while they are being read. */
+function useDeviceNames(files: File[]): (string | null)[] | null {
+  const [names, setNames] = useState<{ files: File[]; names: (string | null)[] } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void Promise.all(files.map((f) => readLbrnDeviceName(f))).then((n) => alive && setNames({ files, names: n }));
+    return () => {
+      alive = false;
+    };
+  }, [files]);
+  return names && names.files === files ? names.names : null;
+}
+
 function ImportDialog(p: { file: FileActions; initialFiles: File[]; initialMode: ImportMode; onClose: () => void }) {
   const { file } = p;
   const [picked, setPicked] = useState<File[]>(p.initialFiles);
   const [mode, setMode] = useState<ImportMode>(p.initialMode);
-  const [field, setField] = useState(fmt(file.defaultFieldMm, 3));
+  // null: the engine picks the size (shown below); text: the size the user is typing.
+  const [field, setField] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
-  const n = Number(field.trim());
-  const fieldOk = field.trim() !== "" && Number.isFinite(n) && n > 0 && n <= 2000;
-  const error = !fieldOk ? "Field size must be a number between 0 and 2000 mm." : null;
-  const choices = fieldChoices(file.docFieldMm, file.machineFieldMm);
+  const names = useDeviceNames(picked);
   const several = picked.length > 1;
   const effective: ImportMode = several ? "merge" : mode;
+  const defaults: ImportFieldDefault[] = (picked.length ? picked : [null]).map((_, i) =>
+    lbrnImportField({
+      fileDevice: names?.[i] ?? null,
+      devices: file.lightburnDevices,
+      engineDevice: file.lightburnDevice,
+      docField: file.docFieldMm,
+      machineField: file.machineFieldMm,
+      fallback: file.defaultFieldMm,
+    }),
+  );
+  const shared = sharedField(defaults);
+  const unknown = [...new Set(defaults.map((d) => d.unknownFileDevice).filter((d): d is string => d !== null))];
+  const typed = field === null ? null : parseField(field);
+  const reading = picked.length > 0 && names === null;
+  const error = field !== null && typed === null ? "Field size must be a number between 0 and 2000 mm." : null;
+  const ready = picked.length > 0 && !reading && error === null && !file.busy;
   const submit = () => {
-    if (picked.length > 0 && fieldOk && !file.busy) file.importLbrn2(picked, effective, n);
+    if (ready) file.importLbrn2(picked, effective, typed ?? undefined);
   };
+  const edit = () => setField(fmt((shared ?? defaults[0]).fieldMm, 3));
   return (
     <Modal
       title="Open or import LightBurn project"
@@ -702,7 +826,7 @@ function ImportDialog(p: { file: FileActions; initialFiles: File[]; initialMode:
           <button className="btn" onClick={p.onClose}>
             Cancel
           </button>
-          <button className="btn btn-primary" disabled={picked.length === 0 || !fieldOk || file.busy} onClick={submit}>
+          <button className="btn btn-primary" disabled={!ready} onClick={submit}>
             {effective === "replace" ? "Open" : "Import"}
           </button>
         </>
@@ -740,7 +864,7 @@ function ImportDialog(p: { file: FileActions; initialFiles: File[]; initialMode:
           aria-checked={effective === "replace"}
           className={effective === "replace" ? "active" : ""}
           disabled={several}
-          title={several ? "Several files are always imported into the document" : "Replace the document with the project's graphics and layers"}
+          title={several ? "Several files are always imported into your design" : "Replace your current design with this file"}
           onClick={() => setMode("replace")}
         >
           Open (replace)
@@ -749,48 +873,79 @@ function ImportDialog(p: { file: FileActions; initialFiles: File[]; initialMode:
           role="radio"
           aria-checked={effective === "merge"}
           className={effective === "merge" ? "active" : ""}
-          title="Add the project's graphics (and any new layers) to this document"
+          title="Add this file's shapes and layers to your current design"
           onClick={() => setMode("merge")}
         >
           Import (merge)
         </button>
       </div>
-      <label className="field">
-        <span className="field-label">Field size</span>
-        <span className="field-input">
-          <input type="text" inputMode="decimal" value={field} onChange={(e) => setField(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
-          <span className="unit">mm</span>
-        </span>
-      </label>
-      <div className="chip-row">
-        {choices.map((c) => (
-          <button key={c} className={`chip${fieldOk && Math.abs(c - n) < 1e-9 ? " active" : ""}`} onClick={() => setField(fmt(c, 3))}>
-            {fmt(c, 3)} mm
-            {c === file.docFieldMm ? " (document)" : c === file.machineFieldMm ? " (machine)" : ""}
-          </button>
-        ))}
-      </div>
       <p className="hint">
-        Open replaces this document with the project's graphics and cut settings (LightBurn's Open); Import adds its
-        graphics and any layers it needs (LightBurn's Import). LightBurn files do not record the galvo field size: use
-        the size the project was laid out with, since a different size shifts everything by half the difference.
+        Open replaces your current design. Import adds this file's shapes and layers to it.
+        {several ? " Several files are always imported." : ""}
       </p>
+      {field === null ? (
+        reading ? (
+          <p className="field-summary muted">Reading the file…</p>
+        ) : shared ? (
+          <FieldSummary mm={shared.fieldMm} source={fieldSourceText(shared)} onEdit={edit} />
+        ) : (
+          <>
+            <p className="field-summary">
+              <span>Field size: each file uses its own</span>
+              <button className="link-btn" onClick={edit}>
+                Edit
+              </button>
+            </p>
+            <ul className="field-per-file">
+              {picked.map((f, i) => (
+                <li key={`${f.name}-${i}`}>
+                  {f.name}: {fmt(defaults[i].fieldMm, 3)} mm, {fieldSourceText(defaults[i])}
+                </li>
+              ))}
+            </ul>
+          </>
+        )
+      ) : (
+        <>
+          <FieldEditor
+            value={field}
+            onChange={setField}
+            onEnter={submit}
+            autoFocus
+            choices={fieldChoiceList(file, defaults.map((d) => ({ mm: d.fieldMm, label: d.device })))}
+          />
+          <p className="hint">
+            LightBurn files don't store the field size. Use the Field Size from LightBurn's Device Settings when this file
+            was made.
+          </p>
+          <button className="link-btn" onClick={() => setField(null)}>
+            Use the automatic size
+          </button>
+        </>
+      )}
+      {field === null && !reading && unknown.length > 0 && (
+        <p className="hint">
+          {unknown.length === 1 ? `This file was made for the LightBurn device "${unknown[0]}"` : `These files were made for LightBurn devices ${unknown.map((u) => `"${u}"`).join(", ")}`}
+          , which the engine doesn't know. To use that device's field size, load your LightBurn settings in the Laser
+          workspace (Machine card).
+        </p>
+      )}
     </Modal>
   );
 }
 
 /** Export to LightBurn: shows the field size the project will be laid out for, and lets it be changed. */
 function ExportDialog({ file, onClose }: { file: FileActions; onClose: () => void }) {
-  const [field, setField] = useState(fmt(file.exportFieldMm, 3));
-  const n = Number(field.trim());
-  const fieldOk = field.trim() !== "" && Number.isFinite(n) && n > 0 && n <= 2000;
-  const error = !fieldOk ? "Field size must be a number between 0 and 2000 mm." : null;
-  const choices = fieldChoices(file.docFieldMm, file.machineFieldMm, file.importedFieldMm);
+  const [field, setField] = useState<string | null>(null);
+  const typed = field === null ? null : parseField(field);
+  const error = field !== null && typed === null ? "Field size must be a number between 0 and 2000 mm." : null;
+  const fieldMm = field === null ? file.exportFieldMm : typed;
+  const origin = exportFieldOrigin(file.importedFieldMm, file.docFieldMm, file.machineFieldMm);
+  const device = file.lightburnDevices.find((d) => d.name === file.lightburnDevice) ?? (file.lightburnDevices.length === 1 ? file.lightburnDevices[0] : null);
+  const deviceDiffers = device !== null && device.field_mm !== null && Math.abs(device.field_mm - file.exportFieldMm) >= 1e-3;
   const submit = () => {
-    if (fieldOk && !file.busy) file.exportLbrn2(n);
+    if (fieldMm !== null && !file.busy) file.exportLbrn2(fieldMm);
   };
-  const label = (c: number) =>
-    c === file.importedFieldMm ? " (imported at)" : c === file.docFieldMm ? " (document)" : c === file.machineFieldMm ? " (machine)" : "";
   return (
     <Modal
       title="Export to LightBurn"
@@ -801,39 +956,40 @@ function ExportDialog({ file, onClose }: { file: FileActions; onClose: () => voi
           <button className="btn" onClick={onClose}>
             Cancel
           </button>
-          <button className="btn btn-primary" disabled={!fieldOk || file.busy} onClick={submit}>
+          <button className="btn btn-primary" autoFocus={field === null} disabled={fieldMm === null || file.busy} onClick={submit}>
             Export
           </button>
         </>
       }
     >
-      <label className="field">
-        <span className="field-label">Field size</span>
-        <span className="field-input">
-          <input
-            type="text"
-            inputMode="decimal"
-            autoFocus
+      {field === null ? (
+        <>
+          <FieldSummary mm={file.exportFieldMm} source={exportFieldOriginText(origin)} onEdit={() => setField(fmt(file.exportFieldMm, 3))} />
+          {deviceDiffers && device && (
+            <p className="hint">
+              Your LightBurn device {device.name} uses {fmt(device.field_mm, 3)} mm. If the file will be opened with that device, edit the
+              size.
+            </p>
+          )}
+        </>
+      ) : (
+        <>
+          <FieldEditor
             value={field}
-            onChange={(e) => setField(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && submit()}
+            onChange={setField}
+            onEnter={submit}
+            autoFocus
+            choices={fieldChoiceList(file, [{ mm: file.importedFieldMm, label: "opened with" }])}
           />
-          <span className="unit">mm</span>
-        </span>
-      </label>
-      <div className="chip-row">
-        {choices.map((c) => (
-          <button key={c} className={`chip${fieldOk && Math.abs(c - n) < 1e-9 ? " active" : ""}`} onClick={() => setField(fmt(c, 3))}>
-            {fmt(c, 3)} mm
-            {label(c)}
+          <p className="hint">
+            LightBurn files don't store the field size. Use the Field Size from LightBurn's Device Settings on the computer
+            that will open this file.
+          </p>
+          <button className="link-btn" onClick={() => setField(null)}>
+            Use the automatic size
           </button>
-        ))}
-      </div>
-      <p className="hint">
-        LightBurn files do not record the galvo field size. Use the size the project will be opened with in LightBurn
-        {file.importedFieldMm !== null ? ` (this one was imported at ${fmt(file.importedFieldMm, 3)} mm)` : ""}: a different
-        size shifts everything by half the difference.
-      </p>
+        </>
+      )}
     </Modal>
   );
 }

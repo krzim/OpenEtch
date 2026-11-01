@@ -22,6 +22,7 @@ pub mod error;
 pub mod events;
 pub mod frame;
 pub mod hw;
+pub mod lightburn;
 pub mod mcp;
 pub mod pin;
 pub mod projects;

@@ -15,6 +15,7 @@ pub const USAGE: &str = "openetch: laser design and control engine
 
 USAGE: openetch [OPTIONS]
        openetch set-pin [--reset] [--config-dir <path>]
+       openetch profile from-lightburn [--prefs <path>] [--device <name>] [--base <profile>] --out <file> [--force]
 
 COMMANDS:
   set-pin               Set the operator PIN (6-12 digits) that approving a run needs. Interactive: run it yourself
@@ -23,6 +24,12 @@ COMMANDS:
                         approvals once the file changes: restart it to use the new PIN.
   set-pin --reset       Delete the operator PIN (forgotten PIN) after typing a confirmation phrase. Approvals stay
                         disabled until a new PIN is set and the engine is restarted.
+  profile from-lightburn
+                        Write a machine profile TOML (--out) for a LightBurn device: LightBurn's device settings
+                        (field, timing, speeds, frequency range, ...) applied onto --base (default the B6 profile),
+                        hard limits never raised. Prints every difference. Reads only the device list of LightBurn's
+                        prefs.ini (--prefs, default the OS location); --device picks one by name or display name
+                        (default LightBurn's default device). Refuses to replace --out without --force.
 
 OPTIONS:
   --listen <addr>       Address to serve on (default 127.0.0.1:7878). Off loopback a token is required.
@@ -39,6 +46,14 @@ OPTIONS:
   --confirm-input <bit> Also require a physical input (0-15, ReadPort) after PIN approval: the run waits up to 30 s
                         for the input to be released and then pressed. The B6's markcfg suggests a foot pedal on 14
                         (unverified).
+  --lightburn-prefs <path>
+                        LightBurn's prefs.ini, for LightBurn's device list (only that is read; the file is never
+                        written). Default: the OS location (%LOCALAPPDATA%\\LightBurn\\prefs.ini,
+                        ~/Library/Preferences/LightBurn/prefs.ini, ~/.local/share/LightBurn or ~/.config/LightBurn);
+                        a missing file is fine. LightBurn imports without a field size use the device's field.
+  --lightburn-device <name>
+                        The LightBurn device (name or display name) used when a LightBurn file names none. Default:
+                        LightBurn's default device.
   -h, --help            Show this help.";
 
 /// Parsed options.
@@ -58,6 +73,10 @@ pub struct Config {
     pub confirm_input: Option<u8>,
     /// Where named projects are saved.
     pub projects_dir: PathBuf,
+    /// `--lightburn-prefs`: LightBurn's `prefs.ini` (`None`: the OS locations).
+    pub lightburn_prefs: Option<PathBuf>,
+    /// `--lightburn-device`: the LightBurn device used when a file names none.
+    pub lightburn_device: Option<String>,
 }
 
 /// What the command line asked for.
@@ -70,6 +89,8 @@ pub enum Parsed {
         /// `--reset`: delete the PIN instead of setting one.
         reset: bool,
     },
+    /// `openetch profile from-lightburn ...`.
+    ProfileFromLightBurn(crate::lightburn::ProfileFromLightBurn),
     Help,
 }
 
@@ -105,6 +126,10 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Parsed, String> 
         args.next();
         return parse_set_pin(args);
     }
+    if args.peek().is_some_and(|a| a == "profile") {
+        args.next();
+        return parse_profile(args);
+    }
     let mut listen: Option<String> = None;
     let mut config: Option<PathBuf> = None;
     let mut projects_dir: Option<PathBuf> = None;
@@ -114,6 +139,8 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Parsed, String> 
     let mut usb = false;
     let mut token = None;
     let mut allow_hosts = Vec::new();
+    let mut lightburn_prefs = None;
+    let mut lightburn_device = None;
     let mut it = args;
     while let Some(arg) = it.next() {
         let (flag, inline) = match arg.split_once('=') {
@@ -146,8 +173,16 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Parsed, String> 
                     _ => return Err(format!("--confirm-input must be an input bit 0-15 (got '{v}')")),
                 }
             }
-            "set-pin" => {
-                return Err("set-pin is a command of its own: openetch set-pin [--reset] [--config-dir <path>]".into());
+            "--lightburn-prefs" => lightburn_prefs = Some(PathBuf::from(value("--lightburn-prefs")?)),
+            "--lightburn-device" => {
+                let v = value("--lightburn-device")?;
+                if v.trim().is_empty() {
+                    return Err("--lightburn-device needs a device name".into());
+                }
+                lightburn_device = Some(v);
+            }
+            "set-pin" | "profile" => {
+                return Err(format!("{flag} is a command of its own and comes first (see --help)"));
             }
             other => return Err(format!("unknown option '{other}' (see --help)")),
         }
@@ -168,7 +203,41 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Parsed, String> 
         projects_dir: projects_dir
             .or_else(crate::projects::default_projects_dir)
             .ok_or("cannot find the OS data directory; pass --projects-dir <path>")?,
+        lightburn_prefs,
+        lightburn_device,
     }))
+}
+
+/// `openetch profile from-lightburn [--prefs P] [--device NAME] [--base PROFILE] --out FILE [--force]`.
+fn parse_profile(mut it: impl Iterator<Item = String>) -> Result<Parsed, String> {
+    const USE: &str = "usage: openetch profile from-lightburn [--prefs <path>] [--device <name>] [--base <profile>] \
+                       --out <file> [--force]";
+    match it.next().as_deref() {
+        Some("from-lightburn") => {}
+        Some("-h" | "--help") => return Ok(Parsed::Help),
+        _ => return Err(USE.into()),
+    }
+    let (mut prefs, mut device, mut base, mut out, mut force) = (None, None, None, None, false);
+    while let Some(arg) = it.next() {
+        let (flag, inline) = match arg.split_once('=') {
+            Some((f, v)) if f.starts_with("--") => (f.to_owned(), Some(v.to_owned())),
+            _ => (arg.clone(), None),
+        };
+        let mut value = |name: &str| -> Result<String, String> {
+            inline.clone().or_else(|| it.next()).ok_or_else(|| format!("{name} needs a value"))
+        };
+        match flag.as_str() {
+            "--prefs" => prefs = Some(PathBuf::from(value("--prefs")?)),
+            "--device" => device = Some(value("--device")?),
+            "--base" => base = Some(PathBuf::from(value("--base")?)),
+            "--out" => out = Some(PathBuf::from(value("--out")?)),
+            "--force" => force = true,
+            "-h" | "--help" => return Ok(Parsed::Help),
+            other => return Err(format!("profile from-lightburn: unknown option '{other}' ({USE})")),
+        }
+    }
+    let out = out.ok_or_else(|| format!("profile from-lightburn needs --out <file> ({USE})"))?;
+    Ok(Parsed::ProfileFromLightBurn(crate::lightburn::ProfileFromLightBurn { prefs, device, base, out, force }))
 }
 
 fn parse_set_pin(mut it: impl Iterator<Item = String>) -> Result<Parsed, String> {
@@ -232,6 +301,34 @@ mod tests {
         assert_eq!(p(&["set-pin", "--reset", "--config-dir", "z"]).unwrap(), set("z", true));
         assert!(p(&["set-pin", "--usb"]).is_err());
         assert!(p(&["--usb", "set-pin"]).is_err());
+    }
+
+    #[test]
+    fn lightburn_options_and_profile_command() {
+        let c = run(&["--lightburn-prefs", "p.ini", "--lightburn-device=JCZFiber"]);
+        assert_eq!((c.lightburn_prefs, c.lightburn_device), (Some(PathBuf::from("p.ini")), Some("JCZFiber".into())));
+        let c = run(&[]);
+        assert_eq!((c.lightburn_prefs, c.lightburn_device), (None, None));
+        assert!(parse(["--lightburn-device".to_string(), " ".to_string()]).is_err());
+        let p = |a: &[&str]| parse(a.iter().map(|s| s.to_string()));
+        let cmd = p(&["profile", "from-lightburn", "--prefs", "a.ini", "--device=JCZ", "--base", "b.toml", "--out", "o.toml", "--force"]);
+        assert_eq!(
+            cmd.unwrap(),
+            Parsed::ProfileFromLightBurn(crate::lightburn::ProfileFromLightBurn {
+                prefs: Some("a.ini".into()),
+                device: Some("JCZ".into()),
+                base: Some("b.toml".into()),
+                out: "o.toml".into(),
+                force: true,
+            })
+        );
+        let minimal = p(&["profile", "from-lightburn", "--out", "o.toml"]).unwrap();
+        assert!(matches!(minimal, Parsed::ProfileFromLightBurn(o) if o.prefs.is_none() && !o.force));
+        assert!(p(&["profile", "from-lightburn"]).unwrap_err().contains("--out"));
+        assert!(p(&["profile", "to-lightburn", "--out", "x"]).is_err());
+        assert!(p(&["profile"]).is_err());
+        assert!(p(&["profile", "from-lightburn", "--out", "x", "--usb"]).is_err());
+        assert!(p(&["--usb", "profile"]).is_err());
     }
 
     #[test]

@@ -897,7 +897,7 @@ async fn projects_save_open_and_list() {
     let (_, doc) = send(&app, req("GET", "/api/document", None)).await;
     assert_eq!(doc["field_mm"], json!(st.machine.profile().field_mm), "set from the profile at startup");
     let (s, v) = send(&app, req("GET", "/api/project", None)).await;
-    assert_eq!((s, v), (StatusCode::OK, json!({"name": null, "saved_revision": null, "revision": 0, "dirty": false})));
+    assert_eq!((s, v), (StatusCode::OK, json!({"name": null, "display_name": null, "saved_revision": null, "revision": 0, "dirty": false})));
     let (s, v) = send(&app, req("GET", "/api/projects", None)).await;
     assert_eq!((s, v), (StatusCode::OK, json!([])), "a missing projects dir lists nothing");
 
@@ -913,7 +913,7 @@ async fn projects_save_open_and_list() {
     assert!(path.ends_with("Coaster (v2).openetch") && path.is_file(), "{path:?}");
     assert_eq!(events.recv().await.unwrap(), crate::Event::ProjectSaved { name: "Coaster (v2)".into(), revision: 1 });
     let (_, v) = send(&app, req("GET", "/api/project", None)).await;
-    assert_eq!(v, json!({"name": "Coaster (v2)", "saved_revision": 1, "revision": 1, "dirty": false}));
+    assert_eq!(v, json!({"name": "Coaster (v2)", "display_name": null, "saved_revision": 1, "revision": 1, "dirty": false}));
     let saved_doc = st.document();
 
     let (_, list) = send(&app, req("GET", "/api/projects", None)).await;
@@ -926,7 +926,7 @@ async fn projects_save_open_and_list() {
     let (_, v) = send(&app, exec("doc.new", json!({}))).await;
     assert_eq!(v["ok"], true, "{v}");
     let (_, v) = send(&app, req("GET", "/api/project", None)).await;
-    assert_eq!(v, json!({"name": null, "saved_revision": null, "revision": 2, "dirty": false}));
+    assert_eq!(v, json!({"name": null, "display_name": null, "saved_revision": null, "revision": 2, "dirty": false}));
 
     let (s, v) = send(&app, req("POST", "/api/projects/open", Some(json!({"name": "Coaster (v2)"})))).await;
     assert_eq!(s, StatusCode::OK, "{v}");
@@ -935,7 +935,7 @@ async fn projects_save_open_and_list() {
     let doc = st.document();
     assert_eq!(doc::Document { revision: 0, ..doc }, doc::Document { revision: 0, ..saved_doc });
     let (_, v) = send(&app, req("GET", "/api/project", None)).await;
-    assert_eq!(v, json!({"name": "Coaster (v2)", "saved_revision": 3, "revision": 3, "dirty": false}));
+    assert_eq!(v, json!({"name": "Coaster (v2)", "display_name": null, "saved_revision": 3, "revision": 3, "dirty": false}));
     // Opening is one undo step like any edit.
     assert_eq!(st.history().last().unwrap().command, "doc.load");
 
@@ -1104,7 +1104,6 @@ async fn upload_replaces_and_merges() {
         ("/api/document/upload?format=lbrn2&field_mm=inf", LBRN2.as_bytes().to_vec(), StatusCode::BAD_REQUEST),
         ("/api/document/upload?format=lbrn2&field_mm=-infinity", LBRN2.as_bytes().to_vec(), StatusCode::BAD_REQUEST),
         ("/api/document/upload?format=lbrn2&field_mm=1e999", LBRN2.as_bytes().to_vec(), StatusCode::BAD_REQUEST),
-        ("/api/document/upload?format=lbrn2&name=x", LBRN2.as_bytes().to_vec(), StatusCode::BAD_REQUEST),
         ("/api/document/upload?format=openetch&mode=merge", b"{}".to_vec(), StatusCode::BAD_REQUEST),
         ("/api/document/upload?format=lbrn2", vec![0xff, 0xfe, 0x3c], StatusCode::BAD_REQUEST),
         ("/api/document/upload?format=lbrn2", Vec::new(), StatusCode::BAD_REQUEST),
@@ -1466,5 +1465,183 @@ async fn preview_has_layers_and_filters_and_fill_regions_are_served() {
     assert_eq!(layers[0]["layer_id"], json!(fill));
     assert_eq!(layers[0]["object_ids"], json!(["obj-4"]));
     assert!(layers[0]["paths"][0].as_str().unwrap().starts_with('M'));
+    let _ = std::fs::remove_dir_all(st.projects.root().parent().unwrap());
+}
+
+/// The synthetic LightBurn prefs (devices "JCZFiber" 153.8 mm, the default, and "Bench110" 110 x 100 mm) plus
+/// unrelated secrets that must never come out.
+const LB_PREFS: &str = include_str!("../../machine/tests/fixtures/lightburn-prefs.json");
+
+/// `LBRN2` as LightBurn 2.x writes it, naming its device.
+fn lbrn2_for(device: &str) -> String {
+    LBRN2.replacen("<LightBurnProject ", &format!("<LightBurnProject DeviceName=\"{device}\" "), 1)
+}
+
+/// A state whose LightBurn prefs.ini is the synthetic fixture (in a temp dir, with a temp config dir).
+async fn lightburn_state() -> (Arc<AppState>, std::path::PathBuf) {
+    let st = test_state().await;
+    let dir = pin::temp_dir("lightburn-routes");
+    std::fs::create_dir_all(&dir).unwrap();
+    let prefs = dir.join("prefs.ini");
+    std::fs::write(&prefs, LB_PREFS).unwrap();
+    st.lightburn.configure(crate::lightburn::LightBurnConfig {
+        prefs_paths: vec![prefs],
+        device: None,
+        store_dir: Some(dir.join("config")),
+    });
+    (st, dir)
+}
+
+#[tokio::test]
+async fn lightburn_routes_list_upload_and_delete_devices() {
+    // Nothing known: available false.
+    let st = test_state().await;
+    let (s, v) = send(&app(&st), req("GET", "/api/lightburn", None)).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(v, json!({"available": false, "source": null, "default_device": null, "devices": []}));
+    let (_, m) = send(&app(&st), req("GET", "/api/machine", None)).await;
+    assert_eq!(m["lightburn"], json!(null));
+
+    let (st, dir) = lightburn_state().await;
+    let app = app(&st);
+    let (s, v) = send(&app, req("GET", "/api/lightburn", None)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!((&v["available"], &v["source"], &v["default_device"]), (&json!(true), &json!("file"), &json!("JCZFiber")));
+    assert_eq!(
+        v["devices"],
+        json!([
+            {"name": "JCZFiber", "display_name": "JCZFiber (Unknown)", "field_mm": 153.8, "width_mm": 153.8, "height_mm": 153.8},
+            {"name": "Bench110", "display_name": "Bench 110 lens", "field_mm": 110.0, "width_mm": 110.0, "height_mm": 100.0},
+        ])
+    );
+    let text = v.to_string();
+    assert!(!text.contains("secret") && !text.contains("cor"), "{text}");
+
+    // GET /api/machine compares the active (generic) profile with the matched device.
+    let (_, m) = send(&app, req("GET", "/api/machine", None)).await;
+    assert_eq!((&m["lightburn"]["device"], &m["lightburn"]["field_mm"]), (&json!("JCZFiber"), &json!(153.8)), "{m}");
+    let diffs = m["lightburn"]["diffs"].as_array().unwrap();
+    let field = diffs.iter().find(|d| d["field"] == "field_mm").unwrap();
+    assert_eq!((&field["base_value"], &field["lightburn_value"]), (&json!(150.0), &json!(153.8)));
+    assert!(diffs.iter().all(|d| d.get("note").is_some()));
+
+    // Upload (a Pi without LightBurn): only the parsed devices are kept, and they win over the file.
+    let mut events = st.subscribe();
+    let pi = r#"{"RestPendantSecret": "pi-secret", "DefaultDevice": 0,
+        "DeviceList": [{"Name": "PiFiber", "DisplayName": "PiFiber (USB)", "Width": 110, "Height": 110}]}"#;
+    let (s, v) = send(&app, raw("POST", "/api/lightburn/prefs", pi)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!((&v["source"], &v["default_device"]), (&json!("uploaded"), &json!("PiFiber")));
+    assert_eq!(events.recv().await.unwrap(), crate::Event::machine("lightburn", None));
+    let stored = std::fs::read_to_string(dir.join("config").join(crate::lightburn::STORE_FILE)).unwrap();
+    assert!(stored.contains("PiFiber") && !stored.contains("pi-secret"), "{stored}");
+    // Refusals change nothing.
+    let too_big = vec![b' '; crate::lightburn::MAX_PREFS_UPLOAD_BYTES + 1];
+    for (body, status) in [
+        (too_big, StatusCode::PAYLOAD_TOO_LARGE),
+        (Vec::new(), StatusCode::BAD_REQUEST),
+        (b"{\"DeviceList\": []}".to_vec(), StatusCode::BAD_REQUEST),
+        (b"<xml/>".to_vec(), StatusCode::BAD_REQUEST),
+    ] {
+        let (s, v) = send(&app, raw("POST", "/api/lightburn/prefs", body)).await;
+        assert_eq!((s, &v["ok"]), (status, &json!(false)), "{v}");
+    }
+    assert_eq!(send(&app, req("GET", "/api/lightburn", None)).await.1["default_device"], json!("PiFiber"));
+    // Delete: back to the local file.
+    let (s, v) = send(&app, req("DELETE", "/api/lightburn/prefs", None)).await;
+    assert_eq!((s, &v["source"]), (StatusCode::OK, &json!("file")), "{v}");
+    assert_eq!(std::fs::read_to_string(dir.join("prefs.ini")).unwrap(), LB_PREFS, "prefs.ini is never written");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn lightburn_imports_take_the_device_field() {
+    let (st, dir) = lightburn_state().await;
+    let app = app(&st);
+    // The file names its device: that device's field.
+    let (_, v) = send(&app, raw("POST", "/api/document/upload?format=lbrn2", lbrn2_for("Bench 110 lens"))).await;
+    assert_eq!(v["ok"], true, "{v}");
+    assert_eq!((&v["result"]["field_mm"], &v["result"]["field_source"]), (&json!(110.0), &json!("file device Bench110")));
+    assert_eq!(st.document().field_mm, Some(110.0));
+    // The recorded step carries the field, so replays do not depend on prefs.ini.
+    assert_eq!(st.history().last().unwrap().invocations[0].params["field_mm"], json!(110.0));
+    // A device LightBurn does not know, or none (LightBurn 1.x): the default device.
+    for content in [lbrn2_for("Someone else (Unknown)"), LBRN2.to_owned()] {
+        let (_, v) = send(&app, exec("doc.import_lbrn2", json!({"content": content}))).await;
+        assert_eq!(v["ok"], true, "{v}");
+        assert_eq!(
+            (&v["result"]["field_mm"], &v["result"]["field_source"]),
+            (&json!(153.8), &json!("LightBurn default device JCZFiber"))
+        );
+    }
+    // The caller's field wins.
+    let (_, v) = send(&app, raw("POST", "/api/document/upload?format=lbrn2&field_mm=120", lbrn2_for("JCZFiber"))).await;
+    assert_eq!((&v["result"]["field_mm"], &v["result"]["field_source"]), (&json!(120.0), &json!("caller")));
+    // A merge too (the document keeps its own field; the export default is the remembered one).
+    let (_, v) = send(&app, raw("POST", "/api/document/upload?format=lbrn2&mode=merge", lbrn2_for("JCZFiber (Unknown)"))).await;
+    assert_eq!((&v["result"]["field_mm"], &v["result"]["field_source"]), (&json!(153.8), &json!("file device JCZFiber")));
+    assert_eq!(st.document().field_mm, Some(120.0));
+    let (_, v) = send(&app, exec("doc.export_lbrn2", json!({}))).await;
+    assert_eq!(v["result"]["field_mm"], json!(153.8));
+
+    // Without LightBurn devices: the document's field.
+    st.lightburn.configure(crate::lightburn::LightBurnConfig::default());
+    let (_, v) = send(&app, raw("POST", "/api/document/upload?format=lbrn2", lbrn2_for("JCZFiber"))).await;
+    assert_eq!((&v["result"]["field_mm"], &v["result"]["field_source"]), (&json!(120.0), &json!("document")));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn new_starts_at_the_machine_field() {
+    let st = test_state().await;
+    let app = app(&st);
+    let (_, v) = send(&app, raw("POST", "/api/document/upload?format=lbrn2&field_mm=110", LBRN2)).await;
+    assert_eq!(v["ok"], true, "{v}");
+    assert_eq!(st.document().field_mm, Some(110.0));
+    let (_, v) = send(&app, exec("doc.new", json!({}))).await;
+    assert_eq!((&v["ok"], &v["result"]["field_mm"]), (&json!(true), &json!(150.0)), "{v}");
+    assert_eq!(st.document().field_mm, Some(st.machine.profile().field_mm));
+    // An explicit field size still wins.
+    send(&app, exec("doc.new", json!({"field_mm": 120}))).await;
+    assert_eq!(st.document().field_mm, Some(120.0));
+}
+
+#[tokio::test]
+async fn downloads_after_open_use_the_opened_file_name() {
+    let st = test_state().await;
+    let app = app(&st);
+    let disposition = |stem: &str, ext: &str| format!("attachment; filename=\"{stem}.{ext}\"; filename*=UTF-8''{stem}.{ext}");
+    let (_, v) = send(&app, raw("POST", "/api/document/upload?format=lbrn2&name=Coaster.lbrn2", LBRN2)).await;
+    assert_eq!(v["ok"], true, "{v}");
+    let (_, p) = send(&app, req("GET", "/api/project", None)).await;
+    assert_eq!((&p["name"], &p["display_name"]), (&json!(null), &json!("Coaster")), "{p}");
+    for (format, ext) in [("lbrn2", "lbrn2"), ("openetch", "openetch")] {
+        let (_, h, _) = fetch(&app, &format!("/api/document/download?format={format}")).await;
+        assert_eq!(h["content-disposition"], disposition("Coaster", ext));
+    }
+    // Edits keep it; a merge keeps it (and names its group after the file).
+    rect(&app, 2.0, 2.0).await;
+    let (_, v) = send(&app, raw("POST", "/api/document/upload?format=lbrn2&mode=merge&name=Badge", LBRN2)).await;
+    assert_eq!(v["ok"], true, "{v}");
+    let group = v["result"]["created_groups"][0].as_str().unwrap().to_owned();
+    assert_eq!(st.document().groups.iter().find(|g| g.id == group).unwrap().name, "Badge");
+    assert_eq!(fetch(&app, "/api/document/download?format=lbrn2").await.1["content-disposition"], disposition("Coaster", "lbrn2"));
+    // An .openetch upload with a name; through execute, a replacing import's name.
+    let saved = doc::file::to_openetch_json(&doc::Document { name: "Inside".into(), ..doc::Document::default() });
+    send(&app, raw("POST", "/api/document/upload?format=openetch&name=Tag.openetch", saved)).await;
+    assert_eq!(fetch(&app, "/api/document/download").await.1["content-disposition"], disposition("Tag", "openetch"));
+    send(&app, exec("doc.import_lbrn2", json!({"content": LBRN2, "name": "Plate"}))).await;
+    assert_eq!(fetch(&app, "/api/document/download").await.1["content-disposition"], disposition("Plate", "openetch"));
+    // A saved project's name wins; New forgets the file name.
+    send(&app, req("POST", "/api/projects/save", Some(json!({"name": "Saved"})))).await;
+    assert_eq!(fetch(&app, "/api/document/download").await.1["content-disposition"], disposition("Saved", "openetch"));
+    send(&app, exec("doc.new", json!({}))).await;
+    assert_eq!(fetch(&app, "/api/document/download").await.1["content-disposition"], disposition("Untitled", "openetch"));
+    let (_, p) = send(&app, req("GET", "/api/project", None)).await;
+    assert_eq!(p["display_name"], json!(null));
+    // A replacing upload without a name falls back to the document name.
+    send(&app, raw("POST", "/api/document/upload?format=lbrn2&name=Coaster", LBRN2)).await;
+    send(&app, raw("POST", "/api/document/upload?format=lbrn2", LBRN2)).await;
+    assert_eq!(fetch(&app, "/api/document/download").await.1["content-disposition"], disposition("Untitled", "openetch"));
     let _ = std::fs::remove_dir_all(st.projects.root().parent().unwrap());
 }

@@ -1,6 +1,7 @@
 // Pure logic for the File menu: project names, file formats and names, the engine's import/export answers and their
 // warnings, the project list, and whether the project has unsaved changes. No React, no fetch, so `npm test` covers it.
 
+import { fieldSourceText, parseFieldSource, type FieldSource } from "./lightburn.ts";
 import type { GDocument, ProjectEntry, ProjectInfo } from "./types.ts";
 
 /** File formats the engine reads and writes: the native project and LightBurn's. */
@@ -143,6 +144,8 @@ export interface ImportOutcome {
   reusedLayers: number;
   warnings: string[];
   fieldMm: number | null;
+  /** Where the engine took the field size from (`field_source`), when it says. */
+  fieldSource: FieldSource | null;
 }
 
 export function importOutcome(result: unknown): ImportOutcome {
@@ -154,6 +157,7 @@ export function importOutcome(result: unknown): ImportOutcome {
     reusedLayers: count(r.reused_layers),
     warnings: warningList(r),
     fieldMm: typeof r.field_mm === "number" && Number.isFinite(r.field_mm) ? r.field_mm : null,
+    fieldSource: parseFieldSource(r.field_source),
   };
 }
 
@@ -164,7 +168,9 @@ function plural(n: number, word: string): string {
 /** One-line toast for a finished LightBurn import. */
 export function importMessage(o: ImportOutcome, mode: ImportMode): string {
   const layers = o.reusedLayers > 0 ? `${plural(o.createdLayers, "new layer")}, ${o.reusedLayers} reused` : plural(o.createdLayers, "layer");
-  const field = o.fieldMm !== null ? ` (field ${Number(o.fieldMm.toFixed(3))} mm)` : "";
+  // The source only when it says something the user may not expect (a LightBurn device); "the size you entered" is noise.
+  const src = o.fieldSource && (o.fieldSource.kind === "file-device" || o.fieldSource.kind === "default-device") ? ` ${fieldSourceText(o.fieldSource)}` : "";
+  const field = o.fieldMm !== null ? ` (field ${Number(o.fieldMm.toFixed(3))} mm${src})` : "";
   const what = mode === "merge" ? "Merged" : "Imported";
   const warn = o.warnings.length ? ` ${plural(o.warnings.length, "warning")}.` : "";
   return `${what} ${plural(o.objects, "object")} on ${layers}${field}.${warn}`;
@@ -270,6 +276,38 @@ export function fieldChoices(docField: number | null, machineField: number | nul
  */
 export function exportFieldDefault(importedField: number | null, docField: number | null, machineField: number | null, fallback: number): number {
   return validField(importedField) ?? validField(docField) ?? validField(machineField) ?? fallback;
+}
+
+/** Where Export to LightBurn's starting field size comes from (same order as `exportFieldDefault`). */
+export type ExportFieldOrigin = "opened" | "document" | "machine" | "default";
+
+export function exportFieldOrigin(importedField: number | null, docField: number | null, machineField: number | null): ExportFieldOrigin {
+  if (validField(importedField) !== null) return "opened";
+  if (validField(docField) !== null) return "document";
+  if (validField(machineField) !== null) return "machine";
+  return "default";
+}
+
+/** Plain words for an `ExportFieldOrigin`, to follow "Field size 153.8 mm — ". */
+export function exportFieldOriginText(o: ExportFieldOrigin): string {
+  switch (o) {
+    case "opened":
+      return "the size this LightBurn file was opened with";
+    case "document":
+      return "the field size of your current design";
+    case "machine":
+      return "the field size of this laser";
+    case "default":
+      return "the usual field size";
+  }
+}
+
+/**
+ * The name exports and downloads are given: the saved project's, else the name of the file this page opened (Open
+ * replaces the design, so "Export to LightBurn" after opening "Tags.lbrn2" gives "Tags.lbrn2"), else the document's.
+ */
+export function exportBaseName(projectName: string | null, openedName: string | null, docName: string | null | undefined): string | null {
+  return projectName ?? (openedName && openedName.trim() ? openedName : null) ?? docName ?? null;
 }
 
 /** Document `extras` key where the engine remembers the field size of the last merging LightBurn import. */

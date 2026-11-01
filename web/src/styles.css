@@ -2063,3 +2063,127 @@ kbd {
     padding: 0 10px;
   }
 }
+
+/* ---- LightBurn field size and devices ---------------------------------------------------------------------- */
+
+.field-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin: 10px 0 4px;
+}
+
+.link-btn {
+  min-height: 32px;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.link-btn:hover {
+  color: #0582bb;
+}
+
+.field-per-file {
+  margin: 0 0 6px;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.lb-devices {
+  border-top: 1px solid var(--border-soft);
+  margin-top: 8px;
+  padding-top: 8px;
+}
+
+.lb-devices h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-2);
+}
+
+.lb-device-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.lb-device-list li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 2px 8px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+}
+
+.lb-device-list li.matched {
+  border-color: var(--accent);
+}
+
+.lb-device-name {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.lb-device-meta {
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.lb-diffs summary {
+  cursor: pointer;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  color: #8a4f00;
+}
+
+.lb-diff-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  table-layout: fixed;
+}
+
+.lb-diff-table th,
+.lb-diff-table td {
+  text-align: left;
+  padding: 3px 4px;
+  border-bottom: 1px solid var(--border-soft);
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.lb-diff-table th {
+  color: var(--text-2);
+  font-weight: 500;
+}
+
+.lb-diff-table th:first-child {
+  width: 46%;
+}
+
+.lb-diff-note {
+  color: var(--muted);
+}
+
+.lb-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}

@@ -4,7 +4,7 @@
 // a changed PIN file and a PIN lockout. The PIN lives only in this component's state while the confirm step is open and
 // goes only into the approve request body.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api, ApiError } from "../api/client.ts";
 import { MACHINE_SHOWN_KEYS, formatDuration, previewLayers, segLen, statRows } from "../api/laser.ts";
 import {
@@ -26,7 +26,8 @@ import type { PreviewOptions } from "./Viewport.tsx";
 import { Icon } from "./ui.tsx";
 import { originBadge } from "./Timeline.tsx";
 
-export function MachineCard({ machine, httpError }: { machine: MachineStatus | null; httpError: string | null }) {
+/** Machine status; `children` (the LightBurn devices section) render at the bottom of the card. */
+export function MachineCard({ machine, httpError, children }: { machine: MachineStatus | null; httpError: string | null; children?: ReactNode }) {
   const extra = machine
     ? Object.entries(machine).filter(([k, v]) => !MACHINE_SHOWN_KEYS.has(k) && v !== null && v !== undefined && typeof v !== "object")
     : [];
@@ -77,6 +78,7 @@ export function MachineCard({ machine, httpError }: { machine: MachineStatus | n
           ))}
         </dl>
       )}
+      {machine && children}
     </section>
   );
 }

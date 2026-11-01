@@ -87,3 +87,24 @@ test("approve sends only the PIN and surfaces the error code", async () => {
   // The PIN is never kept anywhere the client can read back.
   assert.deepEqual([...store.keys()], ["openetch.token"]);
 });
+
+test("LightBurn routes: GET devices, POST the device list as JSON, DELETE the upload", async () => {
+  reply = { status: 200, body: { available: true, source: null, default_device: null, devices: [] } };
+  await api.lightburn();
+  reply = { status: 200, body: { ok: true } };
+  const body = JSON.stringify({ DefaultDevice: 0, DeviceList: [{ Name: "JCZFiber" }] });
+  await api.lightburnUpload(body);
+  await api.lightburnForget();
+  assert.deepEqual(
+    calls.map((c) => `${c.method} ${c.path}`),
+    ["GET /api/lightburn", "POST /api/lightburn/prefs", "DELETE /api/lightburn/prefs"],
+  );
+  assert.equal(calls[1]?.headers["Content-Type"], "application/json");
+  assert.equal(calls[1]?.headers.Authorization, "Bearer tok-123");
+  assert.deepEqual(calls[1]?.body, { DefaultDevice: 0, DeviceList: [{ Name: "JCZFiber" }] });
+
+  reply = { status: 200, body: { ok: false, error: "no devices in DeviceList" } };
+  await assert.rejects(api.lightburnUpload(body), /no devices in DeviceList/);
+  reply = { status: 413, body: { error: "body larger than 2 MB" } };
+  await assert.rejects(api.lightburnUpload(body), (e: unknown) => e instanceof ApiError && e.status === 413 && e.detail === "body larger than 2 MB");
+});

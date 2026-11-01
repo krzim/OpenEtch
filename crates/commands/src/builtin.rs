@@ -23,6 +23,8 @@ mod util;
 #[cfg(test)]
 mod tests;
 
+pub use file::lbrn2_device_name;
+
 use crate::Registry;
 
 pub(crate) fn register_all(r: &mut Registry) {

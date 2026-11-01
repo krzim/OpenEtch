@@ -14,6 +14,9 @@
 # - max_jump_speed_mm_s: LightBurn's B6 library entry (JumpSpeed=4000). PROVISIONAL, not measured on this machine.
 # - max_delay_us: PROVISIONAL sanity cap on |laser on/off/polygon/jump delay|, well above every value used here.
 # - polygon_delay_us is sent as one 10 us word (meerk40t's encoding; galvoplotter disagrees). UNVERIFIED on hardware.
+# - pulse_width_enabled, open_mo_delay_us: the owner's LightBurn device JCZFiber (Laser_QPulseWidthEnabled,
+#   Laser_OpenMODelay). Informational. start_mark_input_bit: markcfg STARTMARKPORT=14 and LightBurn
+#   StartMarkPortBit=14 (unverified what is wired to it).
 
 name = "ComMarker B6 MOPA 60W"
 laser_source = "JPT M7 MOPA 60W"
@@ -31,6 +34,9 @@ laser_enable_port_bit = 0
 red_light_speed_mm_s = 3000.0
 max_jump_speed_mm_s = 4000.0   # LightBurn B6 library JumpSpeed=4000 (provisional)
 max_delay_us = 2000.0          # provisional sanity cap
+pulse_width_enabled = true     # LightBurn Laser_QPulseWidthEnabled
+open_mo_delay_us = 8000.0      # LightBurn Laser_OpenMODelay (informational)
+start_mark_input_bit = 14      # markcfg STARTMARKPORT / LightBurn StartMarkPortBit (unverified)
 notes = [
     "field, swap/negate, cor_file, red light speed, frequency range and mark speed limits from markcfg7.ini",
     "GALVOX / GALVONEGATE0/1 meaning unverified",

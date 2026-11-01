@@ -23,7 +23,7 @@ use crate::security::{self, has_mcp_marker};
 use crate::state::{FileFormat, UploadFormat, UploadOptions, parse_origin};
 use crate::{AppState, EngineError, approve, events, mcp};
 
-/// Largest request body (SVG imports can be large; the commands crate refuses imports over 20 MB).
+/// Largest request body. Large files go through `POST /api/document/upload` (50 MB, the commands' SVG limit too).
 pub const MAX_BODY_BYTES: usize = 32 * 1024 * 1024;
 /// Largest file `POST /api/document/upload` accepts.
 pub const MAX_UPLOAD_BYTES: usize = crate::projects::MAX_FILE_BYTES;
@@ -57,6 +57,13 @@ pub fn router(state: Arc<AppState>, web_dir: Option<&Path>) -> Router {
         .route("/project", get(project_status))
         .route("/document/download", get(download))
         .route("/document/upload", post(upload).layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES)))
+        .route("/lightburn", get(lightburn))
+        .route(
+            "/lightburn/prefs",
+            post(lightburn_upload)
+                .delete(lightburn_delete)
+                .layer(DefaultBodyLimit::max(crate::lightburn::MAX_PREFS_UPLOAD_BYTES)),
+        )
         .fallback(api_not_found)
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES));
     let mut app = Router::new().nest("/api", api).nest_service("/mcp", mcp::service(state.clone()));
@@ -425,6 +432,40 @@ async fn upload(
         Err(EngineError::Command(e)) => Ok(command_failure(e)),
         Err(e) => Err(e),
     }
+}
+
+/// `GET /api/lightburn`: LightBurn's devices (`{available, source, default_device, devices}`).
+async fn lightburn(State(st): State<Arc<AppState>>) -> Result<Json<Value>, EngineError> {
+    // Blocking thread: it may read prefs.ini.
+    st.blocking(|st| Ok(Json(st.lightburn.view()))).await
+}
+
+/// `POST /api/lightburn/prefs` with LightBurn's `prefs.ini` as the raw body (at most 2 MB): keeps only its device
+/// list (see the `lightburn` module). Answers like `GET /api/lightburn`.
+async fn lightburn_upload(
+    State(st): State<Arc<AppState>>,
+    body: Result<Bytes, BytesRejection>,
+) -> Result<Json<Value>, EngineError> {
+    let body = body.map_err(|e| match e.status() {
+        StatusCode::PAYLOAD_TOO_LARGE => EngineError::TooLarge(format!(
+            "prefs.ini is larger than {} MB",
+            crate::lightburn::MAX_PREFS_UPLOAD_BYTES / (1024 * 1024)
+        )),
+        _ => EngineError::BadRequest(format!("cannot read the upload: {e}")),
+    })?;
+    if body.is_empty() {
+        return Err(EngineError::BadRequest("the upload is empty".into()));
+    }
+    let value = st.blocking(move |st| st.lightburn.upload(&body)).await?;
+    st.emit(crate::Event::machine("lightburn", None));
+    Ok(Json(value))
+}
+
+/// `DELETE /api/lightburn/prefs`: forget the uploaded device list.
+async fn lightburn_delete(State(st): State<Arc<AppState>>) -> Result<Json<Value>, EngineError> {
+    let value = st.blocking(|st| st.lightburn.delete_upload()).await?;
+    st.emit(crate::Event::machine("lightburn", None));
+    Ok(Json(value))
 }
 
 /// Body of `POST /api/runs/{id}/approve`.

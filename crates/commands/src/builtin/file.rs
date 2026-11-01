@@ -72,6 +72,9 @@ fn object_ids(doc: &Document) -> Vec<ObjectId> {
 pub struct NewInput {
     /// Name of the new document. Default "Untitled".
     pub name: Option<String>,
+    /// Galvo field size in mm the new document is laid out for. Default: the current document's (the OpenEtch
+    /// engine passes the machine profile's, so New always starts at the machine's field).
+    pub field_mm: Option<f64>,
 }
 
 /// `doc.new`.
@@ -82,18 +85,23 @@ impl Command for DocNew {
     const ID: &'static str = "doc.new";
     const TITLE: &'static str = "New document";
     const DESCRIPTION: &'static str = "Replace the document with an empty one: one default layer, no stock, no \
-        objects. Keeps field_mm. Undoable.";
+        objects. field_mm: the given one, else the engine's machine profile field (else the current one). Undoable.";
     const RISK: Risk = Risk::Edit;
 
     fn apply(doc: &mut Document, input: NewInput) -> Result<(Value, String)> {
         let name = input.name.as_deref().map(|n| util::name(Self::ID, "name", n)).transpose()?;
-        let mut fresh = Document { revision: doc.revision, field_mm: doc.field_mm, ..Document::default() };
+        let field_mm = match input.field_mm {
+            Some(f) => Some(field(Self::ID, Some(f), doc)?),
+            None => doc.field_mm,
+        };
+        let mut fresh = Document { revision: doc.revision, field_mm, ..Document::default() };
         if let Some(n) = name {
             fresh.name = n;
         }
         let summary = format!("new document \"{}\"", fresh.name);
         *doc = fresh;
-        Ok((json!({ "created": [], "affected": [], "name": doc.name, "bounds": Value::Null }), summary))
+        let r = json!({ "created": [], "affected": [], "name": doc.name, "bounds": Value::Null, "field_mm": doc.field_mm });
+        Ok((r, summary))
     }
 }
 
@@ -179,11 +187,81 @@ pub struct ImportLbrn2Input {
     /// (reusing one whose name and settings match) and objects with fresh ids.
     #[serde(default)]
     pub mode: ImportMode,
-    /// Galvo field size in mm the LightBurn project was laid out for (LightBurn files do not record it). Default:
-    /// the document's field_mm. Remembered for doc.export_lbrn2, so exports go back to the same place.
+    /// Galvo field size in mm the LightBurn project was laid out for (LightBurn files do not record it). Leave it
+    /// out and the OpenEtch engine picks it (see the command description); without the engine, the document's
+    /// field_mm. Remembered for doc.export_lbrn2, so exports go back to the same place.
     pub field_mm: Option<f64>,
-    /// File name (without extension) used to name the group a merge creates. Default "Imported LightBurn".
+    /// File name (without extension). A merge names the group it creates after it (default "Imported LightBurn");
+    /// the engine names later downloads after it when a replacing import is not saved as a project.
     pub name: Option<String>,
+}
+
+/// The `DeviceName` attribute of a LightBurn project's root element (LightBurn 2.x writes the device's display name,
+/// e.g. `JCZFiber (Unknown)`), without parsing the whole file: only the root start tag near the top is read.
+pub fn lbrn2_device_name(content: &str) -> Option<String> {
+    // The root start tag follows the XML declaration (and possibly comments) within the first few hundred bytes.
+    let mut cut = content.len().min(64 * 1024);
+    while !content.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    let head = &content[..cut];
+    let start = head.find("<LightBurnProject")? + "<LightBurnProject".len();
+    let mut rest = &head[start..];
+    loop {
+        rest = rest.trim_start();
+        if rest.is_empty() || rest.starts_with('>') || rest.starts_with('/') {
+            return None;
+        }
+        let eq = rest.find('=')?;
+        let attr = rest[..eq].trim();
+        rest = rest[eq + 1..].trim_start();
+        let quote = rest.chars().next().filter(|c| *c == '"' || *c == '\'')?;
+        let end = rest[1..].find(quote)? + 1;
+        let value = &rest[1..end];
+        rest = &rest[end + 1..];
+        if attr == "DeviceName" {
+            let v = unescape_xml(value);
+            let v = v.trim();
+            return (!v.is_empty()).then(|| v.to_owned());
+        }
+    }
+}
+
+/// The five predefined XML entities and numeric character references (anything else is kept as written).
+fn unescape_xml(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find('&') {
+        out.push_str(&rest[..i]);
+        rest = &rest[i..];
+        let Some(end) = rest.find(';') else { break };
+        let entity = &rest[1..end];
+        let c = match entity {
+            "amp" => Some('&'),
+            "lt" => Some('<'),
+            "gt" => Some('>'),
+            "quot" => Some('"'),
+            "apos" => Some('\''),
+            _ => entity
+                .strip_prefix("#x")
+                .map(|h| u32::from_str_radix(h, 16).ok())
+                .or_else(|| entity.strip_prefix('#').map(|d| d.parse().ok()))
+                .flatten()
+                .and_then(char::from_u32),
+        };
+        match c {
+            Some(c) => {
+                out.push(c);
+                rest = &rest[end + 1..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// The name of the group holding a merged file's objects.
@@ -201,11 +279,12 @@ impl Command for ImportLbrn2 {
     const ID: &'static str = "doc.import_lbrn2";
     const TITLE: &'static str = "Import LightBurn project";
     const DESCRIPTION: &'static str = "Import a LightBurn .lbrn2 project or .lbt template given as text. Cut \
-        settings become layers; shapes become objects and groups in the field frame (via field_mm). Text is drawn \
-        and burned as LightBurn's saved outline, bitmaps become images (not engraved yet); everything else is kept \
-        for doc.export_lbrn2, which also reuses this field_mm. replace swaps the document (taking this field_mm); \
-        merge adds the file's objects as one group. Returns \
-        created object, group and layer ids, reused layer ids, warnings and bounds. Undoable.";
+        settings become layers, shapes objects and groups in the field frame; text burns as its saved outline, \
+        bitmaps become images; the rest is kept for doc.export_lbrn2. replace swaps the document; merge adds the \
+        file's objects as one group. Files do not record the field size; without field_mm the engine uses the \
+        LightBurn device the file names (DeviceName), else the configured or LightBurn default device, else the \
+        document's field_mm, else the machine's. Returns field_mm, field_source, created/reused ids, warnings, \
+        bounds. Undoable.";
     const RISK: Risk = Risk::Edit;
 
     fn apply(doc: &mut Document, input: ImportLbrn2Input) -> Result<(Value, String)> {
@@ -329,6 +408,8 @@ impl Command for ImportLbrn2 {
         r["warnings"] = json!(warnings);
         r["mode"] = json!(mode);
         r["field_mm"] = json!(field_mm);
+        // The engine replaces this when it chose field_mm itself.
+        r["field_source"] = json!(if input.field_mm.is_some() { "caller" } else { "document" });
         Ok((r, summary))
     }
 }
@@ -570,6 +651,13 @@ mod tests {
         for f in &files {
             let text = std::fs::read_to_string(f).unwrap_or_else(|e| panic!("{}: {e}", f.display()));
             let text = text.trim_start_matches('\u{feff}');
+            // The quick DeviceName scan agrees with the full parser.
+            let parsed = lbrn::parse(text).unwrap();
+            let full = parsed.attributes.iter().find(|(k, _)| k == "DeviceName").map(|(_, v)| v.trim().to_owned());
+            assert_eq!(super::lbrn2_device_name(text), full.filter(|v| !v.is_empty()), "{}", f.display());
+            if let Some(d) = super::lbrn2_device_name(text) {
+                println!("{}: DeviceName \"{d}\"", f.display());
+            }
             let mut s = session(Some(153.75));
             ok(&mut s, "doc.import_lbrn2", json!({"content": text, "field_mm": 150}));
             let saved = ok(&mut s, "doc.save", json!({}))["content"].as_str().unwrap().to_string();
@@ -780,5 +868,40 @@ mod tests {
         assert_eq!(p.cut_settings[0].index, 1);
         assert_eq!(p.cut_settings[0].params.q_pulse_width, Some(200.0));
         assert_eq!(p.shapes.len(), 3, "the unusable bitmap is kept for LightBurn");
+    }
+
+    #[test]
+    fn new_takes_a_field_size() {
+        let mut s = session(Some(150.0));
+        let r = ok(&mut s, "doc.new", json!({"field_mm": 153.75}));
+        assert_eq!((r["field_mm"].clone(), s.document().field_mm), (json!(153.75), Some(153.75)));
+        ok(&mut s, "doc.new", json!({}));
+        assert_eq!(s.document().field_mm, Some(153.75), "kept without field_mm");
+        assert!(run(&mut s, "doc.new", json!({"field_mm": -1})).is_err());
+        assert!(run(&mut s, "doc.new", json!({"field_mm": 5000})).is_err());
+    }
+
+    #[test]
+    fn import_reports_the_field_source() {
+        let mut s = session(Some(150.0));
+        assert_eq!(ok(&mut s, "doc.import_lbrn2", json!({"content": LBRN}))["field_source"], json!("document"));
+        assert_eq!(ok(&mut s, "doc.import_lbrn2", json!({"content": LBRN, "field_mm": 110}))["field_source"], json!("caller"));
+    }
+
+    #[test]
+    fn device_name_is_read_from_the_root_tag() {
+        use super::lbrn2_device_name as dn;
+        let v2 = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<LightBurnProject AppVersion=\"2.1.02\" \
+                  DeviceName=\"JCZFiber (Unknown)\" FormatVersion=\"1\">\n<Shape/></LightBurnProject>";
+        assert_eq!(dn(v2).as_deref(), Some("JCZFiber (Unknown)"));
+        assert_eq!(dn(LBRN), None, "1.x files have none");
+        assert_eq!(dn("<LightBurnProject a='x>y' DeviceName='A &amp; B &#x41;'>").as_deref(), Some("A & B A"));
+        assert_eq!(dn("<LightBurnProject DeviceName=\"  \">"), None);
+        assert_eq!(dn("<LightBurnProject><Shape DeviceName=\"no\"/>"), None, "only the root's attributes");
+        assert_eq!(dn("<LightBurnLibrary DeviceName=\"x\">"), None);
+        assert_eq!(dn("<LightBurnProject DeviceName=\"unterminated"), None);
+        assert_eq!(dn(""), None);
+        let long = format!("{}<LightBurnProject DeviceName=\"é\">", "é".repeat(40_000));
+        assert_eq!(dn(&long), None, "past the head; never panics on a char boundary");
     }
 }

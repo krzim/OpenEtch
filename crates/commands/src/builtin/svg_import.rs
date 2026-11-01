@@ -19,8 +19,8 @@ use crate::{Command, CommandError, Result, Risk};
 /// CSS reference resolution.
 const DPI: f64 = 96.0;
 const MM_PER_PX: f64 = 25.4 / DPI;
-/// Refuse absurd inputs before parsing.
-const MAX_SVG_BYTES: usize = 20 * 1024 * 1024;
+/// Refuse absurd inputs before parsing. The same as the engine's upload limit (50 MB).
+const MAX_SVG_BYTES: usize = 50 * 1024 * 1024;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]

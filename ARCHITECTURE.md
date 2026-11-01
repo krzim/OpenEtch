@@ -21,7 +21,7 @@ Mac, PC, phone) and Claude are clients of the same live document. The engine is 
 | `lbrn` | LightBurn `.lbrn2` projects and `.clb` material libraries: parse, write, convert to and from `doc` (see "File formats"). **Pure.** | doc, kurbo, roxmltree | no |
 | `commands` | Command registry: every change to a document goes through a registered command with a JSON Schema. Session with a Fusion-style timeline (see "History timeline"). | doc | no |
 | `plan` | Document → job: flatten paths, hatch fills, order travel, encode to LMC list packets for a `MachineProfile`. Also simulation (decode packets to a preview). | doc, lmc | no |
-| `machine` | Machine profile (TOML, importable from EzCad `markcfg7`), the `Link` transport trait, `SimLink`, `UsbLink` (nusb, feature `usb`), `Controller` (init, .cor upload, light framing, run, abort). | lmc, corfile | `usb` feature only |
+| `machine` | Machine profile (TOML, importable from EzCad `markcfg7` and from a LightBurn device, see "LightBurn devices"), the `Link` transport trait, `SimLink`, `UsbLink` (nusb, feature `usb`), `Controller` (init, .cor upload, light framing, run, abort). | lmc, corfile | `usb` feature only |
 | `engine` | Binary. axum HTTP + WebSocket API for the web UI, MCP server (rmcp), run approval, serves `web/dist`. | all | yes |
 | `web/` | Fusion-style UI: React + TypeScript + Vite. Talks to the engine over HTTP + WebSocket. | – | – |
 
@@ -109,7 +109,10 @@ says otherwise. `origin` is `"ui"` (default), `"script"` or `"agent:<name>"`.
 | GET | `/api/preview` | planned job: `{ segments: [{kind: "jump"|"mark", layer, pass, from: [x,y], to: [x,y], emits}], stats, layers: [{layer_id, name, color, mode, output, visible, passes, segments, mark_length_mm, jump_length_mm, estimated_time_s}], warnings }` in field mm. `pass` indexes the job's passes in burn order (a jump belongs to the pass it travels into); `layers` lists every document layer in order (zeros for layers with nothing to mark or output off; layer times leave out the job's start-up delay); `warnings` are things the plan left out (images). `?layers=id1,id2` keeps only those layers' segments and entries (stats stay the whole job's). An empty document is an empty preview; a planning error (out of field, power above the limit, too many passes/segments) is **422** |
 | GET | `/api/fill_regions` | `{ layers: [{layer_id, name, color, mode, visible, output, paths: [d], object_ids: [id]}] }`: for every layer whose mode is `fill` or `fill_then_line`, one SVG path per object (its closed subpaths, field mm, +Y up, flattened at 0.05 mm) to draw with `fill-rule: evenodd`, which is exactly the area the hatch covers. Display only |
 | GET | `/api/preview.svg` | rendered preview (stock, objects, toolpath; `?jumps=false` hides travel); still renders the document on a planning error |
-| GET | `/api/machine` | `connected`, `simulated`, `busy`, `state`, `running`, `framing`, `field_mm`, `profile`, `max_power_pct`, `last_error`, `sim_counters`, `approval: { pin_set, pin_changed, locked_until_unix_s: null \| n, physical_confirm: null \| { input_bit, timeout_s } }`, `pending_runs: [Run]`, `runs: [Run]` |
+| GET | `/api/machine` | `connected`, `simulated`, `busy`, `state`, `running`, `framing`, `field_mm`, `profile`, `max_power_pct`, `last_error`, `sim_counters`, `approval: { pin_set, pin_changed, locked_until_unix_s: null \| n, physical_confirm: null \| { input_bit, timeout_s } }`, `lightburn: null \| { device, field_mm, diffs: [{field, base_value, lightburn_value, note}] }` (the active profile compared with the matched LightBurn device, see "LightBurn devices"), `pending_runs: [Run]`, `runs: [Run]` |
+| GET | `/api/lightburn` | `{ available, source: "file" \| "uploaded" \| null, default_device: name \| null, devices: [{name, display_name, field_mm, width_mm, height_mm}] }` (only these fields); `default_device` is the device used when a LightBurn file names none |
+| POST | `/api/lightburn/prefs` | LightBurn's `prefs.ini` as the raw body (at most 2 MB, else **413**): parses `DeviceList` in memory and stores only the parsed devices (`<config-dir>/lightburn-devices.json`), for an engine on a Pi without LightBurn; answers like `GET /api/lightburn`; no devices, not JSON or not UTF-8 is 400. Emits `machine` event `lightburn` |
+| DELETE | `/api/lightburn/prefs` | forgets the uploaded devices (the local `prefs.ini` is used again, if any); answers like `GET /api/lightburn`; emits `machine` event `lightburn` |
 | POST | `/api/runs` | optional `{ "origin" }` → **201** `{ "ok": true, "id", "run": Run, "message" }`; plans, encodes and checks the document; sends nothing to the board; at most 8 pending |
 | POST | `/api/runs/{id}/approve` | `{ "pin": "<operator PIN>" }` → `{ "ok": true, "id", "state": "approved" \| "awaiting_confirm" }`; the run then starts in the background. PIN refusals are **403** `{ "ok": false, "error", "code": "pin_not_set" \| "pin_changed" \| "pin_required" \| "pin_invalid" \| "pin_locked" }`; MCP headers or a non-`ui` origin 403; unknown run 404; not pending, stale revision or another run active 409 |
 | POST | `/api/machine/frame` | `{ "ids"?: [...], "mode"?: "bounds" \| "outline" }` → red-pointer framing (light only) until frame stop, stop, a run, or 120 s |
@@ -118,9 +121,9 @@ says otherwise. `origin` is `"ui"` (default), `"script"` or `"agent:<name>"`.
 | GET | `/api/projects` | `[{ name, modified_unix_s, size }]`: the saved projects, sorted by name; a missing projects directory lists nothing |
 | POST | `/api/projects/save` | `{ "name", "overwrite"?: bool (default true) }` → `{ "ok": true, "name", "path", "revision" }`; writes `<projects-dir>/<name>.openetch` and makes it the current project; emits `project_saved`. With `overwrite: false` an existing project other than the current one is **409**, also one whose name differs only in case |
 | POST | `/api/projects/open` | `{ "name", "origin"? }` → `{ "ok": true, "name", "result", "revision" }`; replaces the document (`doc.load`, one undo step) and makes it the current project; a name differing only in case opens the one matching project (`name` in the answer is its name on disk; several matches are 409); unknown project 404, unusable file 400 |
-| GET | `/api/project` | `{ "name": string \| null, "saved_revision": n \| null, "revision": n, "dirty": bool }`; refetch on `document_changed` and `project_saved` |
-| GET | `/api/document/download` | `?format=openetch` (default) \| `lbrn2` → the document as a file with `Content-Disposition: attachment` (named after the project, else the document; ASCII `filename` plus UTF-8 `filename*`), `Cache-Control: no-store` and `X-OpenEtch-Warnings: <count>` (LightBurn conversion warnings; the texts come from `doc.export_lbrn2`). LightBurn files are laid out for the document's `field_mm` |
-| POST | `/api/document/upload` | `?format=openetch\|lbrn2\|svg\|dxf\|image` with the raw file as the body (at most 50 MB, else **413**) → runs on a blocking thread with origin `ui`, answered like `/api/execute` (a refused file is **200** `{ "ok": false, "error" }`; the result's `created` ids let the UI select what was imported). `openetch`: `doc.load` (replace only). `lbrn2`: `doc.import_lbrn2`, `mode=replace\|merge` (default replace), `field_mm=<mm>` (finite; default the document's). `svg`: `art.import_svg`; `dxf`: `art.import_dxf`; `image`: `art.import_image` with the file base64-encoded and `mime` from the query or sniffed from the first bytes (PNG, JPEG, GIF, BMP, WebP, TIFF; else 400). These three always add to the document (`mode` must be `merge` or absent) and take optional `layer=<id>`, `name=<text>` and `width_mm=<mm>`. Text formats must be UTF-8 (a BOM is dropped). Unknown query parameters, formats or modes, and options that do not apply to the format, are 400 |
+| GET | `/api/project` | `{ "name": string \| null, "display_name": string \| null, "saved_revision": n \| null, "revision": n, "dirty": bool }`; `display_name` is the name of the file a replacing upload or LightBurn import came from, while no project holds the document; refetch on `document_changed` and `project_saved` |
+| GET | `/api/document/download` | `?format=openetch` (default) \| `lbrn2` → the document as a file with `Content-Disposition: attachment` (named after the project, else the opened file (`display_name`), else the document; ASCII `filename` plus UTF-8 `filename*`), `Cache-Control: no-store` and `X-OpenEtch-Warnings: <count>` (LightBurn conversion warnings; the texts come from `doc.export_lbrn2`). LightBurn files are laid out for the document's `field_mm` |
+| POST | `/api/document/upload` | `?format=openetch\|lbrn2\|svg\|dxf\|image` with the raw file as the body (at most 50 MB, else **413**) → runs on a blocking thread with origin `ui`, answered like `/api/execute` (a refused file is **200** `{ "ok": false, "error" }`; the result's `created` ids let the UI select what was imported). `openetch`: `doc.load` (replace only). `lbrn2`: `doc.import_lbrn2`, `mode=replace\|merge` (default replace), `field_mm=<mm>` (finite; default: see "Field size"). Both take `name=<file name>`: after a replacing upload downloads are named after it until the document is saved as a project (a merging LightBurn upload names its group after it). `svg`: `art.import_svg`; `dxf`: `art.import_dxf`; `image`: `art.import_image` with the file base64-encoded and `mime` from the query or sniffed from the first bytes (PNG, JPEG, GIF, BMP, WebP, TIFF; else 400). These three always add to the document (`mode` must be `merge` or absent) and take optional `layer=<id>`, `name=<text>` and `width_mm=<mm>`. Text formats must be UTF-8 (a BOM is dropped). Unknown query parameters, formats or modes, and options that do not apply to the format, are 400 |
 | WS | `/api/events` | server → client JSON events (below) |
 | * | `/mcp` | MCP Streamable HTTP endpoint |
 
@@ -134,7 +137,8 @@ Events on `/api/events`:
 - `{ "type": "document_changed", "revision": n, "origin": Origin }` (after an edit, undo or redo; a client that fell
   behind gets `revision: -1, origin: null` and should refetch everything)
 - `{ "type": "machine", "event": "framing" | "frame_stopped" | "run_approved" | "awaiting_confirm" |
-  "run_started" | "run_finished" | "stopped" | "error" | "lagged", "detail"?: "..." }` (refetch `GET /api/machine`)
+  "run_started" | "run_finished" | "stopped" | "error" | "lagged" | "lightburn", "detail"?: "..." }` (refetch
+  `GET /api/machine`; after `lightburn` also `GET /api/lightburn`)
 - `{ "type": "run_pending", "run_id", "origin", "summary" }`
 - `{ "type": "run_finished", "id", "ok": bool, "state", "error": string | null }`
 - `{ "type": "approval_locked", "until_unix_s": n }` (too many wrong PINs; approvals locked until then)
@@ -202,9 +206,16 @@ a clean document. The document is dirty whenever its revision differs from the l
 back to the saved state still counts as a change). Document commands from `/api/execute`, `/api/batch`, uploads and the MCP
 `execute` / `batch` tools run on a blocking thread, so a large import does not stall the server.
 
-**Field size.** The engine starts with `document.field_mm` set to the machine profile's `field_mm`. `doc.new` and
-`doc.load` keep it when the new document has none and imports fill it in, so it stays set; when it is ever missing,
-`doc.import_lbrn2` and `doc.export_lbrn2` called without `field_mm` get the profile's. A LightBurn import remembers
+**Field size.** The engine starts with `document.field_mm` set to the machine profile's `field_mm`, and `doc.new`
+without `field_mm` starts at the profile's again (the engine fills it in; so New never keeps an imported 150 mm).
+`doc.load` keeps it when the new document has none and imports fill it in, so it stays set; when it is ever missing,
+`doc.export_lbrn2` called without `field_mm` gets the profile's. `doc.import_lbrn2` without `field_mm` (uploads,
+`/api/execute`, MCP) gets, in order: the field (`Width`) of the LightBurn device the file's root `DeviceName` names
+(LightBurn 2.x writes the device's display name, e.g. `JCZFiber (Unknown)`), else the `--lightburn-device` /
+LightBurn default device, else `document.field_mm`, else the profile's; its result reports `field_mm` and
+`field_source`: `"file device JCZFiber"`, `"LightBurn default device JCZFiber"`, `"document"`, `"machine"` or
+`"caller"`. The engine writes the chosen `field_mm` into the recorded invocation, so replays never depend on
+LightBurn's prefs. A LightBurn import remembers
 the field size it was read with, so an export puts every shape back where LightBurn had it: a replacing import sets
 `document.field_mm` to it, and a merging one (which keeps the document's) stores it in the document's
 `extras["lbrn2._field_mm"]`. `doc.export_lbrn2` (and the LightBurn download and `project_export_lbrn2`) uses, in
@@ -218,8 +229,11 @@ no token is needed. Off loopback (`--listen 0.0.0.0:7878` on the Pi) a bearer to
 `POST /api/machine/stop` need no token.
 
 Default listen address `127.0.0.1:7878`. Other options: `--profile`, `--web-dir`, `--usb`, `--token`,
-`--allow-host`, `--config-dir`, `--confirm-input`, `--projects-dir`; `openetch set-pin [--reset] [--config-dir <path>]` sets, changes
-or deletes the operator PIN (restart the engine afterwards).
+`--allow-host`, `--config-dir`, `--confirm-input`, `--projects-dir`, `--lightburn-prefs <path>` (default the OS
+location, a missing file is fine), `--lightburn-device <name>`; `openetch set-pin [--reset] [--config-dir <path>]` sets, changes
+or deletes the operator PIN (restart the engine afterwards); `openetch profile from-lightburn [--prefs P] [--device
+NAME] [--base PROFILE] --out FILE [--force]` prints the diff table and writes a profile TOML for a LightBurn device
+(base default `fixtures/b6-mopa-60w.toml`, else the generic profile; refuses to replace `--out` without `--force`).
 
 ## MCP tools
 
@@ -228,7 +242,9 @@ or deletes the operator PIN (restart the engine afterwards).
 `frame_start`, `frame_stop`, `job_request_run`, `machine_stop`, and project tools: `project_list` (`{projects, current}`), `project_save {name, overwrite?}` (replacing an existing project other than
 the current one needs `overwrite: true`, default false), `project_open {name}` and
 `project_export_lbrn2 {name, overwrite?}` (writes `<projects-dir>/<name>.lbrn2`; replacing an existing one, also one
-whose name differs only in case, needs `overwrite: true`, default false; returns `{path, warnings, field_mm}`).
+whose name differs only in case, needs `overwrite: true`, default false; returns `{path, warnings, field_mm}`), and
+`lightburn_devices` (`GET /api/lightburn` plus `machine`: the `lightburn` part of `GET /api/machine`). The
+`doc.import_lbrn2` description and the server instructions state the field-size rule.
 Project tools take names, never paths.
 File contents go through `execute` with `doc.save`, `doc.load`, `doc.import_lbrn2` and `doc.export_lbrn2`. The MCP
 surface is generated from the same command registry the UI uses; machine tools are separate so clients can approve
@@ -249,7 +265,7 @@ MCP tool can approve a run or touch the operator PIN, and the server instruction
   Commands: `doc.new`, `doc.load {content}`, `doc.save` (Query, returns `{content, revision}`).
 - **`.lbrn2`** (LightBurn project, `crates/lbrn`): XML; mm, y up, origin at the lower-left of LightBurn's workspace,
   so field frame = LightBurn - `field_mm / 2`. The file does not record the field size it was laid out for, so
-  import and export take `field_mm` (import default the document's; export default the field the last import used,
+  import and export take `field_mm` (import default: a LightBurn device's field, else the document's; export default the field the last import used,
   see "Field size"); a wrong value shifts everything by half the difference. CutSettings become layers (power, speed, frequency Hz to kHz, QPulseWidth ns, hatch, passes,
   sub-layers; everything else in `extras["lbrn2.*"]`), Rect/Ellipse/Path become objects, LightBurn groups become
   groups, Text becomes an object drawn and burned as its saved outline (BackupPath) that keeps its text attributes
@@ -269,6 +285,45 @@ MCP tool can approve a run or touch the operator PIN, and the server instruction
   BMP, WebP; size from the file's resolution, else 254 dpi, fitted to 80 % of the field). Groups: `group.create {ids,
   name?}`, `group.ungroup {group}` (one level), `group.rename {group, name}`.
 - **`.clb`** (LightBurn material library): read by `lbrn::parse_library` into layer settings.
+
+## LightBurn devices
+
+LightBurn keeps its devices in `prefs.ini`, one JSON object with all of LightBurn's settings: Windows
+`%LOCALAPPDATA%\LightBurn\prefs.ini`, macOS `~/Library/Preferences/LightBurn/prefs.ini` (then `~/Library/Application
+Support/LightBurn`, unverified), Linux `~/.local/share/LightBurn/prefs.ini` then `~/.config/LightBurn/prefs.ini`
+(**unverified**: LightBurn's documentation does not say; a LightBurn forum answer names `~/.local/share/LightBurn`,
+which is also Qt's app-data location; File > Open Prefs Folder in LightBurn shows the real one).
+
+- **Privacy.** The file also holds unrelated settings and secrets (e.g. `RestPendantSecret`). `machine::parse_devices`
+  (pure) reads only `DeviceList` and `DefaultDevice`, and inside each device only typed keys (name, display name,
+  type, width/height, mirror, and a fixed subset of `Settings`); every other key is skipped by the deserializer, the
+  correction file is cut to its file name, and errors give a line and column, never content. The engine reads the
+  file into memory only to parse it (again when its size or mtime changes), never writes it, stores only the parsed
+  devices (an upload, `lightburn-devices.json`), returns only `{name, display_name, field_mm, width_mm, height_mm}`
+  and the profile diffs, and logs only the path and device count. An uploaded list wins over the local file until
+  it is deleted. Tests use the synthetic `crates/machine/tests/fixtures/lightburn-prefs.json`; real files are read in
+  place by the env-gated `crates/machine/tests/lightburn.rs` (`OPENETCH_LIGHTBURN_PREFS`, `;`-separated).
+- **Lookup.** `find_device` matches `Name` or `DisplayName`, ignoring case; `.lbrn2` files carry the display name.
+  The device used when a file names none is `--lightburn-device`, else LightBurn's `DefaultDevice` (else the only
+  device).
+- **Profile from a device** (`machine::profile_from_lightburn(device, base) -> (profile, diffs)`; table in
+  `crates/machine/src/lightburn.rs`): field (`Width`; within 0.05 mm of the base keeps the base, since LightBurn shows
+  the field to 0.1 mm: the B6's 153.8 is EzCad's `FIELDSIZE=153.75`; width != height is reported), `swap_xy`,
+  `negate_x/y`, `cor_file` (file name), laser on/off/polygon/end delays, jump speed and delays, jump distance limit,
+  `mark_speed.max_mm_s` (`MaxSpeed`, 7000 on the B6: only lowers it), frequency range (only narrowed),
+  `pulse_width_enabled` (`Laser_QPulseWidthEnabled`), `open_mo_delay_us` (`Laser_OpenMODelay`, default 8000),
+  `start_mark_input_bit` (`StartMarkPortBit`, 14 on the B6, also read from markcfg `STARTMARKPORT`),
+  `red_light_speed_mm_s` (`FrameSpeed`). The last four profile fields are new and informational (the run prelude
+  does not wait for the MO delay yet; `plan` sends pulse widths regardless; `--confirm-input` is what waits for an
+  input). Hard limits are never raised; every change is validated one at a time, and clamps, refusals and settings
+  OpenEtch does not model (`FieldAngle`, `FieldOffset`, galvo scale/skew/trapezoid/bulge, a red-light bit other than
+  8, ...) are reported as diffs. The result always passes `MachineProfile::validate`.
+- **Axis swap (UNVERIFIED on hardware).** The owner's B6 works from LightBurn with `Galvo_1_is_X = false` and from
+  EzCad with markcfg `GALVOX = 1`. `from_markcfg` maps `GALVOX = 1` to no swap, so the LightBurn import maps
+  `swap_xy = Galvo_1_is_X` (false = no swap) and both agree on this machine: the two programs label the galvo
+  channels the opposite way round. Then LightBurn's galvo 2 carries field X when not swapped, so `negate_x` comes
+  from `Galvo_2_Sign` (galvo 1 when swapped), XOR `MirrorX` (likewise Y). If a frame comes out mirrored across the
+  diagonal, both mappings are wrong together; the signs are 1 on the B6, so their assignment is untested.
 
 ## Licensing and provenance
 

@@ -22,6 +22,18 @@ fn main() -> ExitCode {
             return ExitCode::SUCCESS;
         }
         Ok(Parsed::SetPin { config_dir, reset }) => return set_pin(&config_dir, reset),
+        Ok(Parsed::ProfileFromLightBurn(opts)) => {
+            return match engine::lightburn::profile_from_lightburn_command(&opts) {
+                Ok(report) => {
+                    print!("{report}");
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("openetch profile from-lightburn: {e}");
+                    ExitCode::FAILURE
+                }
+            };
+        }
         Err(e) => {
             eprintln!("openetch: {e}");
             return ExitCode::from(2);
@@ -161,6 +173,24 @@ async fn run(config: Config) -> Result<(), String> {
     let projects = ProjectDir::new(&config.projects_dir);
     tracing::info!(path = %config.projects_dir.display(), "projects directory");
     let state = AppState::new(Session::new(document), machine.clone(), security, approval, projects);
+    let lightburn = engine::lightburn::LightBurnConfig {
+        prefs_paths: match &config.lightburn_prefs {
+            Some(p) => vec![p.clone()],
+            None => engine::lightburn::default_prefs_paths(),
+        },
+        device: config.lightburn_device.clone(),
+        store_dir: Some(config.config_dir.clone()),
+    };
+    if let Some(p) = config.lightburn_prefs.as_ref().filter(|p| !p.is_file()) {
+        tracing::warn!(path = %p.display(), "--lightburn-prefs: no such file; LightBurn devices are unavailable until it exists");
+    }
+    let summary = state.lightburn.configure(lightburn);
+    println!("openetch: {summary}");
+    if let Some(name) = &config.lightburn_device
+        && state.lightburn.matched().is_none()
+    {
+        tracing::warn!(device = %name, "--lightburn-device: no such LightBurn device");
+    }
 
     let web_dir = config.web_dir.is_dir().then_some(config.web_dir.as_path());
     if web_dir.is_none() {

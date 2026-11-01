@@ -41,7 +41,11 @@ anywhere else.
   drag empty space to pan, wheel or pinch to zoom, two fingers to pan, tap to select (shift adds), drag a selection to
   move it (one `object.transform` translate on release). Rectangle/Ellipse tools: drag to draw, tap for 20 mm.
 - **Laser workspace**: toolpath overlay from `GET /api/preview` (marks coloured by layer, jumps dashed grey), machine
-  status, runs under way, pending runs, and recent runs (finished, failed, aborted while streaming, or cancelled before
+  status (with a "LightBurn devices" section: the devices from `GET /api/lightburn`, the one the engine matched, the
+  profile differences from `GET /api/machine` `lightburn.diffs`, and "Load LightBurn settings…", which cuts the device
+  list out of a picked prefs.ini in the browser and sends only that to `POST /api/lightburn/prefs`; the rest of the
+  file, including LightBurn's secrets, never leaves the browser; "Forget" is `DELETE /api/lightburn/prefs`), runs
+  under way, pending runs, and recent runs (finished, failed, aborted while streaming, or cancelled before
   it). **Frame** traces the job with the red pointer and **Stop frame**
   (`POST /api/machine/frame/stop`) ends it without touching pending runs. **STOP** (`POST /api/machine/stop`) is the
   emergency stop: it sits in the top bar in every workspace, is never gated, aborts any run or frame and cancels
@@ -70,8 +74,15 @@ anywhere else.
   LightBurn project was laid out for, since `.lbrn2` files do not store it), Export to LightBurn and Download
   .openetch. **Ctrl/Cmd+S** saves (anywhere, even in a field). New, Open and a replacing import ask first when the
   project has unsaved changes (all of them stay undoable).
-  - Uploads go to `POST /api/document/upload?format=...&mode=...` with the raw file as the body (50 MB at most). A
-    LightBurn import with a field size other than the document's adds `&field_mm=<mm>`.
+  - Uploads go to `POST /api/document/upload?format=...&mode=...` with the raw file as the body (50 MB at most).
+  - LightBurn field size: the Open/Import dialog (also for dropped files) reads each file's root `DeviceName` in the
+    browser (LightBurn 2.x writes the device's DisplayName, e.g. "JCZFiber (Unknown)") and shows the size the engine
+    will use: the device named by the file, else the engine's LightBurn device (`--lightburn-device`, else LightBurn's
+    default device), else the design's `field_mm`, else the machine's ("Field size 153.8 mm — from your LightBurn
+    device JCZFiber", with an Edit link). Only an edited size is sent as `&field_mm=<mm>`; otherwise the engine applies
+    the same rule and reports `field_source`, which the toast names. Export to LightBurn shows its default the same way
+    (the size the LightBurn file was opened with, else the design's, else the machine's) and always sends the size
+    shown. Exports and downloads after Open are named after the opened file until the design is saved as a project.
   - Downloads are fetched with the Authorization header and saved through a blob link, so they work with token auth:
     `.openetch` from `GET /api/document/download?format=openetch` (named by its Content-Disposition), `.lbrn2` from
     `doc.export_lbrn2` so its warnings can be shown.
@@ -93,8 +104,9 @@ src/
   api/commands.ts     every command id + parameter builder the UI uses
   api/runs.ts         run lists, approval gate and error texts, stats rows, toasts (pure; tested)
   api/project.ts      project names, file names, import/export answers and warnings, dirty state (pure; tested)
+  api/lightburn.ts    LightBurn devices, .lbrn2 DeviceName, the import field-size rule, prefs.ini device list (pure; tested)
   api/useEngine.ts    React hook: fetching, WebSocket events, refetch coalescing
   geometry.ts         affine maths, geometry -> SVG path, bounds (pure; tested)
   selection.ts        UI-only selection state (pure; tested)
-  components/         TopBar, FileMenu, Toolbar, BrowserPanel, Viewport, PropertiesPanel, LaserPanel, Timeline, Dialogs, ui
+  components/         TopBar, FileMenu, Toolbar, BrowserPanel, Viewport, PropertiesPanel, LaserPanel, LightBurn, Timeline, Dialogs, ui
 ```

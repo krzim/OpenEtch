@@ -68,6 +68,21 @@ fn default_max_delay() -> f64 {
     DEFAULT_MAX_DELAY_US
 }
 
+/// Default [`MachineProfile::open_mo_delay_us`]: 8000 µs, LightBurn's value for the B6 (`Laser_OpenMODelay`).
+/// Provisional.
+pub const DEFAULT_OPEN_MO_DELAY_US: f64 = 8000.0;
+
+/// Largest [`MachineProfile::open_mo_delay_us`] accepted: 1 s.
+const MAX_OPEN_MO_DELAY_US: f64 = 1_000_000.0;
+
+fn default_open_mo_delay() -> f64 {
+    DEFAULT_OPEN_MO_DELAY_US
+}
+
+fn default_true() -> bool {
+    true
+}
+
 /// One laser's fixed facts and hard limits. See the module docs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -110,6 +125,20 @@ pub struct MachineProfile {
     /// older profile files: defaults to [`DEFAULT_MAX_DELAY_US`].
     #[serde(default = "default_max_delay")]
     pub max_delay_us: f64,
+    /// The source takes a MOPA pulse width (LightBurn `Laser_QPulseWidthEnabled`). Informational for now: `plan`
+    /// sends each layer's pulse width either way. Missing in older profile files: true.
+    #[serde(default = "default_true")]
+    pub pulse_width_enabled: bool,
+    /// How long the source needs after the master oscillator opens, µs (LightBurn `Laser_OpenMODelay`, EzCad's "open
+    /// MO delay"). Informational for now: the run prelude does not wait. Missing in older profile files:
+    /// [`DEFAULT_OPEN_MO_DELAY_US`].
+    #[serde(default = "default_open_mo_delay")]
+    pub open_mo_delay_us: f64,
+    /// Input bit of the start-mark signal (a foot pedal or button; LightBurn `StartMarkPortBit`, markcfg
+    /// `STARTMARKPORT`), 0..=15; `None` when there is none. Informational: `--confirm-input` is what makes the engine
+    /// wait for an input. 14 on the B6 (unverified that anything is wired to it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_mark_input_bit: Option<u8>,
     pub timing: Timing,
     pub mark_speed: MarkSpeedLimits,
     /// Where values came from and what is unverified. Informational.
@@ -138,6 +167,9 @@ impl MachineProfile {
             red_light_speed_mm_s: 2000.0,
             max_jump_speed_mm_s: DEFAULT_MAX_JUMP_SPEED_MM_S,
             max_delay_us: DEFAULT_MAX_DELAY_US,
+            pulse_width_enabled: true,
+            open_mo_delay_us: DEFAULT_OPEN_MO_DELAY_US,
+            start_mark_input_bit: None,
             timing: Timing {
                 laser_on_delay_us: 100.0,
                 laser_off_delay_us: 100.0,
@@ -238,6 +270,12 @@ impl MachineProfile {
             }
         }
         positive("max_delay_us", self.max_delay_us)?;
+        if !(self.open_mo_delay_us.is_finite() && (0.0..=MAX_OPEN_MO_DELAY_US).contains(&self.open_mo_delay_us)) {
+            return invalid("open_mo_delay_us", format!("{} must be 0..={MAX_OPEN_MO_DELAY_US} µs", self.open_mo_delay_us));
+        }
+        if let Some(bit) = self.start_mark_input_bit.filter(|b| *b > 15) {
+            return invalid("start_mark_input_bit", format!("{bit} is not an input bit 0-15"));
+        }
         // The minimum is a UI bound: it may encode to 0 (1 mm/s on a 153.75 mm field); jobs refuse a 0 word.
         positive("mark_speed.min_mm_s", self.mark_speed.min_mm_s)?;
         self.speed("mark_speed.max_mm_s", self.mark_speed.max_mm_s)?;
@@ -309,14 +347,17 @@ mod tests {
         assert_eq!((p.timing.laser_on_delay_us, p.timing.laser_off_delay_us, p.timing.polygon_delay_us), (-300.0, 100.0, 100.0));
         assert_eq!((p.mark_speed.min_mm_s, p.mark_speed.max_mm_s), (1.0, 10000.0));
         assert_eq!((p.max_jump_speed_mm_s, p.max_delay_us), (4000.0, 2000.0));
+        assert_eq!((p.pulse_width_enabled, p.open_mo_delay_us, p.start_mark_input_bit), (true, 8000.0, Some(14)));
     }
 
     #[test]
     fn missing_limits_default() {
-        let text: String = B6.lines().filter(|l| !l.starts_with("max_jump_speed_mm_s") && !l.starts_with("max_delay_us")).collect::<Vec<_>>().join("
+        let added = ["max_jump_speed_mm_s", "max_delay_us", "pulse_width_enabled", "open_mo_delay_us", "start_mark_input_bit"];
+        let text: String = B6.lines().filter(|l| !added.iter().any(|k| l.starts_with(k))).collect::<Vec<_>>().join("
 ");
         let p = MachineProfile::from_toml(&text).unwrap();
         assert_eq!((p.max_jump_speed_mm_s, p.max_delay_us), (DEFAULT_MAX_JUMP_SPEED_MM_S, DEFAULT_MAX_DELAY_US));
+        assert_eq!((p.pulse_width_enabled, p.open_mo_delay_us, p.start_mark_input_bit), (true, DEFAULT_OPEN_MO_DELAY_US, None));
     }
 
     #[test]
@@ -329,6 +370,7 @@ mod tests {
         assert_eq!(imported.red_light_speed_mm_s, fixture.red_light_speed_mm_s);
         assert_eq!(imported.mark_speed, fixture.mark_speed);
         assert_eq!((imported.frequency_khz_min, imported.frequency_khz_max), (fixture.frequency_khz_min, fixture.frequency_khz_max));
+        assert_eq!(imported.start_mark_input_bit, fixture.start_mark_input_bit);
     }
 
     #[test]
@@ -370,6 +412,10 @@ mod tests {
         refused(|p| p.timing.laser_on_delay_us = -2500.0);
         refused(|p| p.timing.polygon_delay_us = 2500.0);
         refused(|p| p.timing.polygon_delay_us = 700_000.0);
+        refused(|p| p.open_mo_delay_us = -1.0);
+        refused(|p| p.open_mo_delay_us = f64::NAN);
+        refused(|p| p.open_mo_delay_us = 2_000_000.0);
+        refused(|p| p.start_mark_input_bit = Some(16));
     }
 
     #[test]

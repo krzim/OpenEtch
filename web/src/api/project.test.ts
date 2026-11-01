@@ -127,7 +127,7 @@ test("import outcome, message and grouped warnings", () => {
     field_mm: 150,
   };
   const o = P.importOutcome(r);
-  assert.deepEqual(o, { objects: 3, createdLayers: 2, reusedLayers: 0, warnings: [r.warnings[0], text, text], fieldMm: 150 });
+  assert.deepEqual(o, { objects: 3, createdLayers: 2, reusedLayers: 0, warnings: [r.warnings[0], text, text], fieldMm: 150, fieldSource: null });
   assert.equal(P.importMessage(o, "replace"), "Imported 3 objects on 2 layers (field 150 mm). 3 warnings.");
   const merged = P.importOutcome({ created: ["obj-9"], created_layers: [], reused_layers: ["layer-1"], warnings: [] });
   assert.equal(P.importMessage(merged, "merge"), "Merged 1 object on 0 new layers, 1 reused.");
@@ -135,7 +135,13 @@ test("import outcome, message and grouped warnings", () => {
     { text: r.warnings[0], count: 1 },
     { text, count: 2 },
   ]);
-  assert.deepEqual(P.importOutcome(null), { objects: 0, createdLayers: 0, reusedLayers: 0, warnings: [], fieldMm: null });
+  assert.deepEqual(P.importOutcome(null), { objects: 0, createdLayers: 0, reusedLayers: 0, warnings: [], fieldMm: null, fieldSource: null });
+  // The engine says where the field size came from; a LightBurn device is named in the toast.
+  const fromDevice = P.importOutcome({ created: ["obj-1"], created_layers: ["layer-1"], field_mm: 153.8000030517578, field_source: "file device JCZFiber" });
+  assert.deepEqual(fromDevice.fieldSource, { kind: "file-device", device: "JCZFiber" });
+  assert.equal(P.importMessage(fromDevice, "replace"), "Imported 1 object on 1 layer (field 153.8 mm from your LightBurn device JCZFiber).");
+  const typed = P.importOutcome({ created: [], field_mm: 110, field_source: "caller" });
+  assert.equal(P.importMessage(typed, "merge"), "Merged 0 objects on 0 layers (field 110 mm).");
   // doc.load reports its layers as `layers`.
   assert.equal(P.importOutcome({ created: [], layers: ["layer-1"] }).createdLayers, 1);
 });
@@ -242,9 +248,14 @@ test("large artwork uploads carry the active layer and the name (verify finding 
   assert.equal(calls[1]?.path, "/api/document/upload?format=dxf&layer=layer%203&name=jig");
   await api.upload(file, "image", undefined, undefined, { layer: null, name: "photo" });
   assert.equal(calls[2]?.path, "/api/document/upload?format=image&name=photo", "no layer: the engine's default");
-  // Projects never send them (the engine refuses options that do not fit the format).
+  // Projects never send a layer (the engine refuses options that do not fit the format), but do send the file
+  // name: the engine names downloads after a replacing Open with it, and a merged LightBurn file's group.
   await api.upload(file, "lbrn2", "merge", 150, { layer: "layer-2", name: "x" });
-  assert.equal(calls[3]?.path, "/api/document/upload?format=lbrn2&mode=merge&field_mm=150");
+  assert.equal(calls[3]?.path, "/api/document/upload?format=lbrn2&mode=merge&field_mm=150&name=x");
+  await api.upload(file, "openetch", "replace", undefined, { name: "Badge.openetch" });
+  assert.equal(calls[4]?.path, "/api/document/upload?format=openetch&mode=replace&name=Badge.openetch");
+  await api.upload(file, "lbrn2");
+  assert.equal(calls[5]?.path, "/api/document/upload?format=lbrn2&mode=replace", "no name: none sent");
 });
 
 test("Export to LightBurn starts at the size the file was opened at (verify finding 2)", () => {
@@ -358,4 +369,20 @@ test("upload refuses a bad field size instead of dropping it, and shows the engi
   const plain = new Error("engine unreachable");
   assert.equal(P.fileError(plain, "x"), plain);
   assert.equal(P.fileError("boom", "x"), "boom");
+});
+
+test("export field origin follows exportFieldDefault's order", () => {
+  assert.equal(P.exportFieldOrigin(153.8, 150, 153.75), "opened");
+  assert.equal(P.exportFieldOrigin(null, 150, 153.75), "document");
+  assert.equal(P.exportFieldOrigin(null, null, 153.75), "machine");
+  assert.equal(P.exportFieldOrigin(null, 0, null), "default");
+  assert.equal(P.exportFieldOriginText("opened"), "the size this LightBurn file was opened with");
+});
+
+test("export names: project, else the opened file, else the document", () => {
+  assert.equal(P.exportBaseName("Tags", "Old file", "Doc"), "Tags");
+  assert.equal(P.exportBaseName(null, "Brass tags (v2)", "Untitled"), "Brass tags (v2)");
+  assert.equal(P.exportBaseName(null, "  ", "Untitled"), "Untitled");
+  assert.equal(P.exportBaseName(null, null, null), null);
+  assert.equal(P.downloadName(P.exportBaseName(null, "Brass tags (v2)", "Untitled"), "lbrn2"), "Brass tags (v2).lbrn2");
 });

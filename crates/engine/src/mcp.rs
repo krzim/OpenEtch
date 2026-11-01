@@ -31,7 +31,7 @@ use crate::{AppState, EngineError};
 pub const MCP_AGENT: &str = "mcp";
 
 /// Every tool, in listing order.
-pub const TOOL_NAMES: [&str; 18] = [
+pub const TOOL_NAMES: [&str; 19] = [
     "list_commands",
     "execute",
     "batch",
@@ -50,6 +50,7 @@ pub const TOOL_NAMES: [&str; 18] = [
     "project_export_lbrn2",
     "history_list",
     "history_goto",
+    "lightburn_devices",
 ];
 
 /// Server instructions shown to the model.
@@ -83,8 +84,12 @@ for it), project_export_lbrn2 {name, overwrite?} (writes <name>.lbrn2 for LightB
 overwrite: true, same rule). File contents go through execute: doc.save \
 returns the .openetch JSON, doc.load replaces the document with one, doc.export_lbrn2 returns LightBurn XML, and \
 doc.import_lbrn2 {content, mode: replace|merge, field_mm} imports LightBurn XML. LightBurn files do not record the \
-galvo field size they were laid out for, and a wrong field_mm shifts everything by half the difference: when the \
-person has not said (e.g. a 150 mm or 110 mm LightBurn workspace), ask, or check the import warnings and bounds.
+galvo field size they were laid out for, and a wrong field_mm shifts everything by half the difference. Leave \
+field_mm out and the engine picks it: the field (Width) of the LightBurn device the file names (DeviceName, written \
+by LightBurn 2.x), else the configured or LightBurn default device, else the document's field_mm, else the \
+machine's; the result's field_source says which. lightburn_devices lists the known LightBurn devices. When none is \
+known and the person has not said (e.g. a 150 mm or 110 mm LightBurn workspace), ask, or check the import warnings \
+and bounds.
 
 Use list_commands for every command's input schema; execute runs one command, batch runs several as one undo step \
 (all-or-nothing). Edits you make are tagged as agent edits in the history and can be undone.
@@ -347,6 +352,16 @@ impl GalvoMcp {
                  An edit made while rolled back is inserted after the marker. Returns {ok, marker, revision}.",
                 false,
             ),
+            tool::<NoArgs>(
+                "lightburn_devices",
+                "LightBurn devices",
+                "LightBurn's devices as the engine knows them (from LightBurn's prefs.ini on the engine's computer, or a \
+                 copy a person uploaded; only the device list is read): {available, source, default_device, devices: \
+                 [{name, display_name, field_mm, width_mm, height_mm}], machine: {device, field_mm, diffs} | null}. \
+                 field_mm is the field size LightBurn lays files out for; doc.import_lbrn2 uses it when no field_mm is \
+                 given. machine.diffs compare the machine profile with the LightBurn device.",
+                true,
+            ),
         ]
     }
 
@@ -449,6 +464,12 @@ impl GalvoMcp {
             "history_goto" => {
                 let x: GotoArgs = args(name, a)?;
                 Ok(ok_json(st.blocking(move |st| st.history_goto(x.marker, Self::origin())).await?))
+            }
+            "lightburn_devices" => {
+                args::<NoArgs>(name, a)?;
+                let mut v = st.blocking(|st| Ok(st.lightburn.view())).await?;
+                v["machine"] = st.lightburn.machine_json(st.machine.profile());
+                Ok(ok_json(v))
             }
             other => Err(EngineError::NotFound(format!("unknown tool '{other}' (tools: {})", TOOL_NAMES.join(", ")))),
         }
@@ -612,6 +633,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn lightburn_devices_lists_devices_and_the_import_rule_is_documented() {
+        let st = test_state().await;
+        let mcp = GalvoMcp::new(st.clone());
+        let r = mcp.call("lightburn_devices", JsonObject::new()).await;
+        assert_eq!(r.is_error, Some(false), "{}", text_of(&r));
+        let v: Value = serde_json::from_str(&text_of(&r)).unwrap();
+        assert_eq!((&v["available"], &v["machine"]), (&json!(false), &json!(null)), "{v}");
+        let dir = crate::pin::temp_dir("mcp-lightburn");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("prefs.ini"), include_str!("../../machine/tests/fixtures/lightburn-prefs.json")).unwrap();
+        st.lightburn.configure(crate::lightburn::LightBurnConfig {
+            prefs_paths: vec![dir.join("prefs.ini")],
+            ..Default::default()
+        });
+        let v: Value = serde_json::from_str(&text_of(&mcp.call("lightburn_devices", JsonObject::new()).await)).unwrap();
+        assert_eq!((&v["default_device"], &v["devices"][0]["field_mm"]), (&json!("JCZFiber"), &json!(153.8)), "{v}");
+        assert_eq!(v["machine"]["device"], json!("JCZFiber"));
+        assert!(!v.to_string().contains("secret"));
+        assert!(mcp.call("lightburn_devices", obj(json!({"x": 1}))).await.is_error == Some(true));
+        assert!(INSTRUCTIONS.contains("DeviceName") && INSTRUCTIONS.contains("field_source"));
+        let spec = st.specs().into_iter().find(|c| c.id == "doc.import_lbrn2").unwrap();
+        assert!(spec.description.contains("DeviceName") && spec.description.contains("field_source"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
     async fn edits_are_tagged_as_agent_and_errors_are_tool_errors() {
         let st = test_state().await;
         let mcp = GalvoMcp::new(st.clone());
@@ -653,7 +700,7 @@ mod tests {
         let (err, v) = call("project_list", json!({})).await;
         assert!(!err);
         assert_eq!(v["projects"][0]["name"], "Agent job");
-        assert_eq!(v["current"], json!({"name": "Agent job", "saved_revision": 1, "revision": 1, "dirty": false}));
+        assert_eq!(v["current"], json!({"name": "Agent job", "display_name": null, "saved_revision": 1, "revision": 1, "dirty": false}));
 
         // Agents cannot silently replace another project.
         call("execute", json!({"id": "doc.new", "params": {}})).await;

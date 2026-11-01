@@ -307,22 +307,41 @@ pub struct ProjectState {
     pub saved_revision: Option<u64>,
     /// The revision with nothing unsaved; `None` after an edit no file holds.
     pub clean_revision: Option<u64>,
+    /// The name of the file a replacing upload or LightBurn import came from (`name` of the upload or of
+    /// `doc.import_lbrn2`), used for download file names while no project holds the document.
+    pub display_name: Option<String>,
 }
 
 impl ProjectState {
     /// No project, document clean at `revision` (startup).
     pub fn clean_at(revision: u64) -> Self {
-        ProjectState { name: None, saved_revision: None, clean_revision: Some(revision) }
+        ProjectState { name: None, saved_revision: None, clean_revision: Some(revision), display_name: None }
     }
 
     /// Saved as or opened from `name` at `revision`.
     pub fn saved(name: String, revision: u64) -> Self {
-        ProjectState { name: Some(name), saved_revision: Some(revision), clean_revision: Some(revision) }
+        ProjectState { name: Some(name), saved_revision: Some(revision), clean_revision: Some(revision), display_name: None }
     }
 
     pub fn dirty(&self, revision: u64) -> bool {
         self.clean_revision != Some(revision)
     }
+}
+
+/// A file name as a display name: control characters dropped, a known extension (`.lbrn2`, `.lbrn`, `.lbt`,
+/// `.openetch`) removed, trimmed, at most 200 characters; `None` when nothing is left.
+pub fn display_name(raw: &str) -> Option<String> {
+    let clean: String = raw.chars().filter(|c| !c.is_control() && !matches!(c, '/' | '\\')).collect();
+    let mut name = clean.trim();
+    for ext in [".lbrn2", ".lbrn", ".lbt", ".openetch"] {
+        let cut = name.len().checked_sub(ext.len()).filter(|&i| name.is_char_boundary(i));
+        if let Some(i) = cut.filter(|&i| name[i..].eq_ignore_ascii_case(ext)) {
+            name = name[..i].trim_end();
+            break;
+        }
+    }
+    let name: String = name.chars().take(200).collect();
+    (!name.is_empty()).then_some(name)
 }
 
 #[cfg(test)]
@@ -517,5 +536,18 @@ mod tests {
         let s = ProjectState::saved("x".into(), 4);
         assert!(!s.dirty(4) && s.dirty(5));
         assert!(ProjectState { clean_revision: None, ..s }.dirty(4));
+    }
+
+    #[test]
+    fn display_names() {
+        assert_eq!(display_name("Coaster.lbrn2").as_deref(), Some("Coaster"));
+        assert_eq!(display_name(" Mug wrap.LBRN2 ").as_deref(), Some("Mug wrap"));
+        assert_eq!(display_name("tag.openetch").as_deref(), Some("tag"));
+        assert_eq!(display_name("plain").as_deref(), Some("plain"));
+        assert_eq!(display_name("a/b\\c\n.lbt").as_deref(), Some("abc"));
+        assert_eq!(display_name(".lbrn2"), None);
+        assert_eq!(display_name("  "), None);
+        assert_eq!(display_name("Namensschild Müller.lbrn2").as_deref(), Some("Namensschild Müller"));
+        assert_eq!(display_name(&"x".repeat(300)).unwrap().len(), 200);
     }
 }

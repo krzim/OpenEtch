@@ -11,6 +11,7 @@
 //! | `REDLIGHTSPEED` | `red_light_speed_mm_s` | |
 //! | `MINSPEED` / `MAXSPEED` | `mark_speed.min_mm_s` / `max_mm_s` | |
 //! | `MINPWMFREQ` / `MAXPWMFREQ` | `frequency_khz_min` / `max` | Hz in the file. |
+//! | `STARTMARKPORT` | `start_mark_input_bit` (0..=15, else none) | **Unverified** what is wired to it (14 on the B6). |
 //!
 //! No meerk40t or galvoplotter markcfg importer was found to check these against; the key list was chosen from the
 //! B6's own file. Written from scratch.
@@ -123,6 +124,12 @@ pub(crate) fn import(text: &str, base: MachineProfile) -> Result<MarkcfgImport, 
                 p.frequency_khz_max = number(key, raw)? / 1000.0;
                 true
             }
+            "STARTMARKPORT" => {
+                let bit = number(key, raw)?;
+                p.start_mark_input_bit = (bit.fract() == 0.0 && (0.0..=15.0).contains(&bit)).then_some(bit as u8);
+                unverified.push(key.clone());
+                true
+            }
             _ => false,
         };
         if used {
@@ -174,7 +181,8 @@ mod tests {
         assert_eq!(p.red_light_speed_mm_s, 3000.0);
         assert_eq!((p.mark_speed.min_mm_s, p.mark_speed.max_mm_s), (1.0, 10000.0));
         assert_eq!((p.frequency_khz_min, p.frequency_khz_max), (1.0, 4000.0));
-        assert_eq!(i.unverified, ["GALVONEGATE0", "GALVONEGATE1", "GALVOX"]);
+        assert_eq!(p.start_mark_input_bit, Some(14));
+        assert_eq!(i.unverified, ["GALVONEGATE0", "GALVONEGATE1", "GALVOX", "STARTMARKPORT"]);
         assert!(i.ignored.contains(&"FPK".to_owned()));
         assert!(i.applied.contains(&"CORFILE".to_owned()));
     }
@@ -186,6 +194,11 @@ mod tests {
         assert_eq!(p.field_mm, 110.0);
         assert!(p.swap_xy && p.negate_x && !p.negate_y);
         assert_eq!(p.cor_file, None);
+        assert_eq!(p.start_mark_input_bit, None);
+        let p = MachineProfile::from_markcfg("[LMC_CFG]
+STARTMARKPORT=-1
+").unwrap();
+        assert_eq!(p.start_mark_input_bit, None);
     }
 
     #[test]

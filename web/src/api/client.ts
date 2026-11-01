@@ -193,10 +193,11 @@ export const api = {
     }
     const project = format === "openetch" || format === "lbrn2";
     const field = format === "lbrn2" && fieldMm !== undefined ? `&field_mm=${fieldMm}` : "";
-    // Layer and name only go with artwork imports; the engine refuses options that do not fit the format.
-    const extra = project
-      ? ""
-      : [art.layer ? `&layer=${encodeURIComponent(art.layer)}` : "", art.name ? `&name=${encodeURIComponent(art.name)}` : ""].join("");
+    // Layer only goes with artwork imports; the engine refuses options that do not fit the format. `name` goes with
+    // every format: for a project it is the opened file's name, which the engine keeps as the document's display name
+    // (download names after a replacing Open) and gives a merged LightBurn file's group.
+    const nameParam = art.name ? `&name=${encodeURIComponent(art.name)}` : "";
+    const extra = project ? nameParam : [art.layer ? `&layer=${encodeURIComponent(art.layer)}` : "", nameParam].join("");
     const path = `/api/document/upload?format=${format}${project ? `&mode=${mode}` : ""}${field}${extra}`;
     const headers = authHeaders("application/json");
     headers["Content-Type"] = "application/octet-stream";
@@ -205,6 +206,27 @@ export const api = {
     if (!res.ok) throw httpError("POST", path, res, text);
     return parseBody(text);
   },
+  /** LightBurn devices the engine knows (`{available, source, default_device, devices}`); normalize with `lightburnInfo`. */
+  lightburn: () => request<unknown>("GET", "/api/lightburn"),
+  /**
+   * Give the engine LightBurn's device list, for engines on a computer without LightBurn. `body` is prefs.ini-shaped
+   * JSON built by `devicePrefsBody` (the device list only, never the whole file). The engine stores only the parsed
+   * devices.
+   */
+  lightburnUpload: async (body: string): Promise<unknown> => {
+    const path = "/api/lightburn/prefs";
+    const headers = authHeaders("application/json");
+    headers["Content-Type"] = "application/json";
+    const res = await send("POST", path, { headers, body });
+    const text = await res.text();
+    if (!res.ok) throw httpError("POST", path, res, text);
+    const data = parseBody(text);
+    const err = okError(data, "the engine refused LightBurn's settings");
+    if (err !== null) throw new ApiError(err);
+    return data;
+  },
+  /** Forget an uploaded LightBurn device list (the engine's own LightBurn settings, if any, apply again). */
+  lightburnForget: () => request<unknown>("DELETE", "/api/lightburn/prefs"),
   /** Download the document as a file, with the name from Content-Disposition when the engine sends one. */
   download: async (format: FileFormat): Promise<{ blob: Blob; filename: string | null }> => {
     const path = `/api/document/download?format=${format}`;
