@@ -1133,7 +1133,9 @@ mod tests {
         assert_eq!((report.run_id.as_str(), report.packets), ("run-1", packets.len()));
         let link = c.link();
         assert_eq!(link.packets(), packets);
-        let singles = link.singles_without_polls();
+        // The B6 profile has a door interlock: its input reads (before and during the run) are covered by
+        // `door_protect_refuses_and_aborts_runs`, not here.
+        let singles: Vec<Single> = link.singles_without_polls().into_iter().filter(|s| *s != Single::read_port()).collect();
         assert_eq!(
             singles,
             [
