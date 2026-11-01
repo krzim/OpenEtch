@@ -14,6 +14,7 @@
 //! | POST | `/api/machine/pointer` | `{x, y, pointer?, max_seconds?}`: hold the red dot there (light only) |
 //! | POST | `/api/machine/axis` | `{z_mm}` or `{steps}`: move the board's extension axis (UI only; no emission) |
 //! | GET | `/api/machine/info` | the board's serial and version words (GetSerialNo / GetVersion) |
+//! | GET | `/api/machine/inputs` | `{bits, set, door_protect, door_open}`: the board's input port (`ReadPort` word 1; read only, sends nothing that can emit), to find which input a switch such as a door interlock is wired to. 409 while a run holds the board |
 //! | GET | `/api/preview.png` | the preview image (`?width=` px, `?jumps=false`) |
 //! | POST | `/api/calibration/pattern` | `{size_mm, layer?}`: add the lens test pattern to the document |
 //! | POST | `/api/calibration/solve` | `{size_mm, measurements, apply?}`: new lens corrections (apply: UI only) |
@@ -60,6 +61,7 @@ pub(crate) fn routes() -> Router<Arc<AppState>> {
         .route("/machine/pointer", post(machine_pointer))
         .route("/machine/axis", post(machine_axis))
         .route("/machine/info", get(machine_info))
+        .route("/machine/inputs", get(machine_inputs))
         .route("/preview.png", get(preview_png))
         .route("/calibration/pattern", post(calibration_pattern))
         .route("/calibration/solve", post(calibration_solve))
@@ -254,6 +256,26 @@ async fn machine_info(State(st): State<Arc<AppState>>) -> Result<Json<Value>, En
         v["serial_hex"] = json!(format!("0x{hex}"));
     }
     Ok(Json(v))
+}
+
+async fn machine_inputs(State(st): State<Arc<AppState>>) -> Result<Json<Value>, EngineError> {
+    if st.machine.is_running() {
+        return Err(EngineError::Conflict("a run holds the board; read the inputs when it is idle".into()));
+    }
+    let bits = st
+        .machine
+        .blocking(|m, ctl| {
+            m.ensure_ready(ctl)?;
+            m.read_inputs(ctl)
+        })
+        .await??;
+    let door = st.machine.profile().io.door_protect;
+    Ok(Json(json!({
+        "bits": bits,
+        "set": (0..16).filter(|b| bits & (1u16 << b) != 0).collect::<Vec<u16>>(),
+        "door_protect": door,
+        "door_open": door.map(|d| d.active(bits)),
+    })))
 }
 
 #[derive(Debug, Default, Deserialize)]

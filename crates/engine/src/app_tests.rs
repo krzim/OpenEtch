@@ -515,6 +515,19 @@ async fn job_state(app: &Router) -> String {
 }
 
 #[tokio::test]
+async fn machine_inputs_reads_the_board_and_the_door() {
+    let mut profile = MachineProfile::generic_lmc_fiber();
+    profile.io.door_protect = Some(machine::InputPort { bit: 5, active_low: false });
+    let st = state_with(profile, test_projects()).await;
+    let app = api::router(st, None);
+    let (s, v) = send(&app, req("GET", "/api/machine/inputs", None)).await;
+    assert_eq!((s, v["bits"].as_u64(), v["door_open"].as_bool()), (StatusCode::OK, Some(0), Some(false)), "{v}");
+    set_inputs(&app, 0x4020).await;
+    let (_, v) = send(&app, req("GET", "/api/machine/inputs", None)).await;
+    assert_eq!((v["bits"].as_u64(), v["set"].clone(), v["door_open"].as_bool()), (Some(0x4020), json!([5, 14]), Some(true)), "{v}");
+}
+
+#[tokio::test]
 async fn sim_inputs_only_on_the_simulator() {
     let st = state().await;
     let app = api::router(st.clone(), None);
