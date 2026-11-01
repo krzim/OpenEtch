@@ -3,8 +3,9 @@
 //!
 //! rxing (a ZXing port, Apache-2.0) encodes QR Code, Data Matrix, Aztec, PDF417 (also compact), Code 128, Code 39,
 //! Code 93, CodaBar, EAN-8, EAN-13, UPC-A, UPC-E, ITF (2 of 5 interleaved) and Telepen; ISBN goes through EAN-13 and
-//! VIN through Code 39 after their checks. OpenEtch's own encoders (`crate::codes`) add Micro QR, rMQR, 2 of 5
-//! Industrial, 2 of 5 IATA, Plessey and AprilTag 16h5 / 25h9 / 36h11.
+//! VIN through Code 39 after their checks. OpenEtch's own encoders (`crate::codes`) add Micro QR, rMQR, PDF417 Micro,
+//! Chinese Sensible Code (Han Xin), Grid Matrix, 2 of 5 Industrial, 2 of 5 IATA, Plessey, AprilTag 16h5 / 25h9 /
+//! 36h10 / 36h11 and ArUco 7 x 7 (OpenCV's DICT_7X7_1000; ids 0-49, 0-99 and 0-249 are DICT_7X7_50, _100 and _250).
 
 use kurbo::{BezPath, Rect, Shape};
 
@@ -39,10 +40,15 @@ pub enum Kind {
     AprilTag16h5,
     AprilTag25h9,
     AprilTag36h11,
+    MicroPdf417,
+    HanXin,
+    GridMatrix,
+    AprilTag36h10,
+    Aruco7x7,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 25] = [
+    pub const ALL: [Kind; 30] = [
         Kind::Qr,
         Kind::DataMatrix,
         Kind::Aztec,
@@ -68,6 +74,11 @@ impl Kind {
         Kind::AprilTag16h5,
         Kind::AprilTag25h9,
         Kind::AprilTag36h11,
+        Kind::MicroPdf417,
+        Kind::HanXin,
+        Kind::GridMatrix,
+        Kind::AprilTag36h10,
+        Kind::Aruco7x7,
     ];
 
     /// The name used in commands (`qr`, `data_matrix`, `code128`, ...).
@@ -98,6 +109,11 @@ impl Kind {
             Kind::AprilTag16h5 => "apriltag_16h5",
             Kind::AprilTag25h9 => "apriltag_25h9",
             Kind::AprilTag36h11 => "apriltag_36h11",
+            Kind::MicroPdf417 => "micro_pdf417",
+            Kind::HanXin => "han_xin",
+            Kind::GridMatrix => "grid_matrix",
+            Kind::AprilTag36h10 => "apriltag_36h10",
+            Kind::Aruco7x7 => "aruco_7x7",
         }
     }
 
@@ -115,6 +131,9 @@ impl Kind {
             "2of5iata" => Some(Kind::Iata2of5),
             "pdf417truncated" | "truncatedpdf417" => Some(Kind::Pdf417Compact),
             "ukplessey" => Some(Kind::Plessey),
+            "pdf417micro" | "micropdf" => Some(Kind::MicroPdf417),
+            "chinesesensiblecode" | "chinesesensible" | "csc" => Some(Kind::HanXin),
+            "arucoopencv7x7" | "dict7x71000" | "dict7x750" | "dict7x7100" | "dict7x7250" => Some(Kind::Aruco7x7),
             _ => None,
         })
     }
@@ -133,12 +152,20 @@ impl Kind {
                 | Kind::AprilTag16h5
                 | Kind::AprilTag25h9
                 | Kind::AprilTag36h11
+                | Kind::MicroPdf417
+                | Kind::HanXin
+                | Kind::GridMatrix
+                | Kind::AprilTag36h10
+                | Kind::Aruco7x7
         )
     }
 
     /// A fiducial tag (the data is the tag id).
     pub fn is_tag(self) -> bool {
-        matches!(self, Kind::AprilTag16h5 | Kind::AprilTag25h9 | Kind::AprilTag36h11)
+        matches!(
+            self,
+            Kind::AprilTag16h5 | Kind::AprilTag25h9 | Kind::AprilTag36h10 | Kind::AprilTag36h11 | Kind::Aruco7x7
+        )
     }
 
     fn format(self) -> BarcodeFormat {
@@ -178,8 +205,8 @@ pub struct Options {
     /// Mark the light parts instead of the dark ones (for materials that turn light when marked): the quiet zone
     /// and the light modules become the outline.
     pub invert: bool,
-    /// Error correction: QR `L`, `M`, `Q`, `H`; Aztec the % of error words; PDF417 0-8. `None` is the encoder's
-    /// default.
+    /// Error correction: QR `L`, `M`, `Q`, `H`; Aztec the % of error words; PDF417 0-8; Chinese Sensible Code 1-4;
+    /// Grid Matrix 1-5. `None` is the encoder's default.
     pub error_correction: Option<String>,
     /// Data Matrix: keep the symbol square (LightBurn's Force Square, on by default).
     pub force_square: bool,
@@ -216,6 +243,11 @@ pub fn encode(kind: Kind, data: &str, o: &Options) -> Result<Vec<Vec<bool>>, Str
         Kind::AprilTag16h5 => return codes::tags::TAG16H5.grid(data),
         Kind::AprilTag25h9 => return codes::tags::TAG25H9.grid(data),
         Kind::AprilTag36h11 => return codes::tags::TAG36H11.grid(data),
+        Kind::AprilTag36h10 => return codes::tags::TAG36H10.grid(data),
+        Kind::Aruco7x7 => return codes::tags::ARUCO_7X7.grid(data),
+        Kind::MicroPdf417 => return codes::micro_pdf417::micro_pdf417(data),
+        Kind::HanXin => return codes::hanxin::han_xin(data, ec),
+        Kind::GridMatrix => return codes::grid_matrix::grid_matrix(data, ec),
         _ => {}
     }
     let checked = match kind {
@@ -376,5 +408,75 @@ mod tests {
         assert_eq!(Kind::from_name("QR Micro"), Some(Kind::MicroQr));
         assert_eq!(Kind::from_name("2 of 5 IATA"), Some(Kind::Iata2of5));
         assert_eq!(Kind::from_name("AprilTag 36h11"), Some(Kind::AprilTag36h11));
+    }
+
+    /// Every type in LightBurn's Bar Code list (its docs, 2026) by LightBurn's name, except ArUco MIP 36h11 (the docs
+    /// do not say which dictionary that is).
+    #[test]
+    fn lightburn_types_resolve_and_draw() {
+        let names = [
+            "2 of 5", "2 of 5 IATA", "2 of 5 Industrial", "AprilTag 16h5", "AprilTag 25h9", "AprilTag 36h10",
+            "AprilTag 36h11", "ArUco OpenCV 7x7", "Aztec", "Chinese Sensible Code", "CodaBar", "Code 128", "Code 93",
+            "Data Matrix", "EAN", "Grid Matrix", "ISBN", "PDF417", "PDF417 Compact", "PDF417 Micro", "Plessey",
+            "QR Code", "QR Micro", "QR Micro Rectangular", "UPC A", "UPC E", "VIN",
+        ];
+        let o = Options::default();
+        for n in names {
+            let k = Kind::from_name(n).unwrap_or_else(|| panic!("{n}"));
+            let data = match k {
+                Kind::Itf => "12345678",
+                Kind::Ean13 => "590123412345",
+                Kind::UpcA => "03600029145",
+                Kind::UpcE => "0123456",
+                Kind::Codabar => "A123B",
+                Kind::Industrial2of5 | Kind::Iata2of5 => "123456",
+                Kind::Isbn => "978-0-306-40615-7",
+                Kind::Vin => "1M8GDM9AXKP042788",
+                Kind::Plessey => "12AB",
+                k if k.is_tag() => "7",
+                _ => "OpenEtch 12",
+            };
+            assert!(draw(k, data, &o).is_ok(), "{n}");
+        }
+        assert_eq!(Kind::from_name("ArUco MIP 36h11"), None);
+    }
+
+    #[test]
+    fn micro_pdf417_han_xin_and_grid_matrix() {
+        let o = Options::default();
+        // PDF417 Micro: 1 to 4 columns of 17 modules between 10-module row address patterns, rows two modules tall.
+        let g = encode(Kind::MicroPdf417, "12345678", &o).unwrap();
+        assert_eq!((g.len(), g[0].len()), (22, 38), "1 column x 11 rows");
+        assert!(g.chunks(2).all(|p| p[0] == p[1]));
+        let g = encode(Kind::MicroPdf417, &"OpenEtch ".repeat(12), &o).unwrap();
+        assert!([55, 82, 99].contains(&g[0].len()));
+        assert!(encode(Kind::MicroPdf417, &"x".repeat(400), &o).is_err());
+        // Chinese Sensible Code: 23 x 23 up (version 1), finder patterns in the corners; Chinese characters go in GB
+        // 18030 modes; the level is 1-4.
+        let g = encode(Kind::HanXin, "OpenEtch", &o).unwrap();
+        assert_eq!(g.len(), 23);
+        assert_eq!(g[0][..7], [true; 7]);
+        assert_eq!(encode(Kind::HanXin, "汉信码标准", &o).unwrap().len(), 23);
+        let digits = "0123456789".repeat(40);
+        assert_eq!(encode(Kind::HanXin, &digits, &o).unwrap().len(), 2 * 13 + 21, "170 codewords: version 13");
+        let level = |l: &str| Options { error_correction: Some(l.into()), ..o.clone() };
+        assert!(encode(Kind::HanXin, "x", &level("5")).is_err());
+        assert!(encode(Kind::HanXin, &digits, &level("4")).unwrap().len() > 2 * 13 + 21, "level 4 needs more room");
+        // Grid Matrix: 6 + 12 x version modules; GB 2312 text, else an ECI.
+        assert_eq!(encode(Kind::GridMatrix, "1234", &o).unwrap().len(), 18);
+        assert_eq!(encode(Kind::GridMatrix, "电池充电器", &o).unwrap().len(), 30, "12 codewords: version 2");
+        let (gb, eci) = codes::grid_matrix::units("电池充电器 Ω");
+        assert_eq!((gb.iter().filter(|u| **u > 0xFF).count(), eci), (6, 0));
+        assert_eq!(codes::grid_matrix::units("Größe ÿ").1, 3, "Latin-1 after ECI 3");
+        assert_eq!(codes::grid_matrix::units("Ωmega €").1, 26, "the euro sign is not in GB 2312: UTF-8");
+        assert!(encode(Kind::GridMatrix, "Ωmega €", &o).is_ok());
+        assert!(encode(Kind::GridMatrix, "x", &level("6")).is_err());
+        assert!(encode(Kind::GridMatrix, &"Z".repeat(3000), &o).is_err());
+        // The new tags: AprilTag 36h10 and ArUco 7 x 7 (bordered 8 x 8 and 9 x 9).
+        assert_eq!(encode(Kind::AprilTag36h10, "2319", &o).unwrap().len(), 8);
+        assert_eq!(encode(Kind::Aruco7x7, "999", &o).unwrap().len(), 9);
+        assert!(encode(Kind::Aruco7x7, "1000", &o).is_err());
+        assert_eq!(Kind::from_name("DICT_7X7_250"), Some(Kind::Aruco7x7));
+        assert_eq!(Kind::from_name("han_xin"), Some(Kind::HanXin));
     }
 }

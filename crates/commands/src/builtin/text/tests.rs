@@ -218,6 +218,17 @@ fn barcodes_are_paths_that_can_be_redrawn() {
     assert_eq!(r["affected"][0], json!(id));
     assert!(fails(&mut s, "shape.barcode", json!({ "kind": "nope", "data": "x" })).contains("unknown barcode kind"));
     assert!(fails(&mut s, "shape.barcode", json!({ "kind": "ean13", "data": "12" })).contains("ean13"));
+    // The newer 2D types, by id or LightBurn's name, with their own error correction levels.
+    let r = exec(&mut s, "shape.barcode", json!({ "kind": "Chinese Sensible Code", "data": "OpenEtch" }));
+    assert_eq!(r["modules"], json!([23, 23]));
+    let r = exec(&mut s, "shape.barcode", json!({ "kind": "grid_matrix", "data": "1234", "error_correction": "5" }));
+    assert_eq!(r["modules"], json!([18, 18]));
+    let bad_level = json!({ "kind": "han_xin", "data": "x", "error_correction": "9" });
+    assert!(fails(&mut s, "shape.barcode", bad_level).contains("1 to 4"));
+    let r = exec(&mut s, "shape.barcode", json!({ "kind": "PDF417 Micro", "data": "12345678" }));
+    assert_eq!(r["modules"], json!([38, 22]));
+    let r = exec(&mut s, "shape.barcode", json!({ "kind": "ArUco OpenCV 7x7", "data": "42" }));
+    assert_eq!(r["modules"], json!([9, 9]));
     // Variable barcodes follow the serial number.
     let r = exec(
         &mut s,

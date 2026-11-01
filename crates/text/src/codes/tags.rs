@@ -1,9 +1,11 @@
-//! Fiducial tags: AprilTag 16h5, 25h9, 36h10 and 36h11 (codes from the AprilTag 3 library, BSD-2-Clause). The data is
-//! the tag id. The symbol is the tag's black-bordered square (LightBurn's quiet zone adds the white border around
-//! it): a dark border ring and the code's bits inside, a 0 bit dark (AprilTag draws 1 bits white).
+//! Fiducial tags: AprilTag 16h5, 25h9, 36h10 and 36h11 (codes from the AprilTag 3 library, BSD-2-Clause) and ArUco
+//! 7 x 7 (OpenCV's DICT_7X7_1000, Apache-2.0, whose first 50, 100 and 250 markers are DICT_7X7_50, _100 and _250).
+//! The data is the tag id. The symbol is the tag's black-bordered square (LightBurn's quiet zone adds the white border
+//! around it): a dark border ring and the code's bits inside, a 0 bit dark (both libraries draw 1 bits white).
 
 use super::Grid;
 use super::apriltag_tables as t;
+use super::aruco_tables;
 
 /// A tag family: its codes, bit positions inside the bordered square and that square's width.
 pub struct Family {
@@ -21,8 +23,33 @@ pub const TAG16H5: Family =
     Family { name: "AprilTag 16h5", codes: &t::TAG16H5, bit_x: &t::TAG16H5_BIT_X, bit_y: &t::TAG16H5_BIT_Y, width: 6, min_distance: 5 };
 pub const TAG25H9: Family =
     Family { name: "AprilTag 25h9", codes: &t::TAG25H9, bit_x: &t::TAG25H9_BIT_X, bit_y: &t::TAG25H9_BIT_Y, width: 7, min_distance: 9 };
+pub const TAG36H10: Family =
+    Family { name: "AprilTag 36h10", codes: &t::TAG36H10, bit_x: &t::TAG36_BIT_X, bit_y: &t::TAG36_BIT_Y, width: 8, min_distance: 10 };
 pub const TAG36H11: Family =
     Family { name: "AprilTag 36h11", codes: &t::TAG36H11, bit_x: &t::TAG36_BIT_X, bit_y: &t::TAG36_BIT_Y, width: 8, min_distance: 11 };
+/// ArUco 7 x 7 (OpenCV DICT_7X7_1000): a one-module border round 7 x 7 bits laid out row by row.
+pub const ARUCO_7X7: Family = Family {
+    name: "ArUco 7x7",
+    codes: &aruco_tables::ARUCO_7X7,
+    bit_x: &ARUCO_7X7_BITS.0,
+    bit_y: &ARUCO_7X7_BITS.1,
+    width: 9,
+    min_distance: 14,
+};
+
+/// The (x, y) positions of an n x n bit square inside a one-module border, row by row from the top-left.
+const fn row_major<const N: usize>(n: u8) -> ([u8; N], [u8; N]) {
+    let (mut xs, mut ys) = ([0; N], [0; N]);
+    let mut i = 0;
+    while i < N {
+        xs[i] = 1 + (i as u8) % n;
+        ys[i] = 1 + (i as u8) / n;
+        i += 1;
+    }
+    (xs, ys)
+}
+
+const ARUCO_7X7_BITS: ([u8; 49], [u8; 49]) = row_major(7);
 
 impl Family {
     /// The tag with id `data` (a whole number 0..codes).
@@ -74,7 +101,7 @@ mod tests {
     /// `min_distance` bits (a mistyped code would almost surely break it).
     #[test]
     fn families_keep_their_hamming_distance() {
-        for f in [TAG16H5, TAG25H9, TAG36H11] {
+        for f in [TAG16H5, TAG25H9, TAG36H10, TAG36H11, ARUCO_7X7] {
             let rotations: Vec<[u64; 4]> = f
                 .codes
                 .iter()
@@ -102,6 +129,49 @@ mod tests {
         }
     }
 
+    /// The minimum distance among the first `n` codes in any rotation (OpenCV's smaller 7 x 7 dictionaries are the
+    /// first 50, 100 and 250 markers of DICT_7X7_1000, with a larger distance).
+    fn min_distance(f: &Family, n: usize) -> u32 {
+        let rot: Vec<[u64; 4]> = f.codes[..n]
+            .iter()
+            .map(|c| {
+                let g0 = f.code_grid(*c);
+                let g1 = rotate(&g0);
+                let g2 = rotate(&g1);
+                [f.read(&g0), f.read(&g1), f.read(&g2), f.read(&rotate(&g2))]
+            })
+            .collect();
+        let mut min = u32::MAX;
+        for (i, a) in rot.iter().enumerate() {
+            for r in 1..4 {
+                min = min.min((a[0] ^ a[r]).count_ones());
+            }
+            for b in &rot[i + 1..] {
+                min = min.min(b.iter().map(|rb| (a[0] ^ rb).count_ones()).min().unwrap());
+            }
+        }
+        min
+    }
+
+    #[test]
+    fn aruco_7x7_dictionaries() {
+        // OpenCV's DICT_7X7_50 / _100 / _250 / _1000 are built with distances 19, 18, 17 and 14.
+        for (n, d) in [(50, 19), (100, 18), (250, 17)] {
+            let min = min_distance(&ARUCO_7X7, n);
+            assert!(min >= d, "DICT_7X7_{n}: minimum distance {min}");
+        }
+        // Marker 0 of DICT_7X7_50 (OpenCV bytes 221, 92, 108, 165, 202, 10, 1): its top bit row is 1101110 (1 white,
+        // so light, light, dark, light, light, light, dark inside the dark border).
+        let g = ARUCO_7X7.grid("0").unwrap();
+        assert_eq!(g.len(), 9);
+        assert!(g[0].iter().all(|d| *d) && g[8].iter().all(|d| *d) && g.iter().all(|r| r[0] && r[8]));
+        assert_eq!(g[1], [true, false, false, true, false, false, false, true, true]);
+        // The last bit (bottom-right) is the low bit of OpenCV's 7th byte.
+        assert!(!g[7][7]);
+        assert_eq!(ARUCO_7X7.grid("999").unwrap().len(), 9);
+        assert!(ARUCO_7X7.grid("1000").is_err());
+    }
+
     #[test]
     fn tag_grids() {
         let g = TAG36H11.grid("0").unwrap();
@@ -110,5 +180,10 @@ mod tests {
         assert_eq!(TAG36H11.read(&g), 0xd7e00984b);
         assert!(TAG36H11.grid("587").is_err() && TAG16H5.grid("x").is_err());
         assert_eq!(TAG16H5.grid("29").unwrap().len(), 6);
+        // tag36h10 id 0 is 0x1a42f9469 (tag36h10.c), its last id 2319.
+        let g = TAG36H10.grid("0").unwrap();
+        assert_eq!(g.len(), 8);
+        assert_eq!(TAG36H10.read(&g), 0x1a42f9469);
+        assert!(TAG36H10.grid("2319").is_ok() && TAG36H10.grid("2320").is_err());
     }
 }

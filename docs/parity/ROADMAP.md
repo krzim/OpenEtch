@@ -9,8 +9,8 @@ Work goes in batches. Each batch is built against a written contract, verified e
 swapped into the running server. Every finished item gets its tracker line updated in the same commit
 (`python -I docs/parity/set_status.py ID STATUS EVIDENCE [NOTE]`).
 
-Audit of 2026-11-01 (after the final pass): 315 galvo items, **306 done, 7 partial, 0 missing, 2 n/a** (343 items
-in all: 306 done, 7 partial, 6 missing, 24 n/a). Every batch below is done; what is left of each is listed under
+Audit of 2026-11-01 (after the final pass, plus the last barcode types): 315 galvo items, **306 done, 7 partial,
+0 missing, 2 n/a** (343 items in all: 306 done, 7 partial, 6 missing, 24 n/a). Every batch below is done; what is left of each is listed under
 [Remaining galvo items](#remaining-galvo-items). UX-061 (language) counts as done because every UI string is in the
 message tables and the language switches live; only English is complete (the machine-translated Spanish covers 568
 of 2807 keys), and more languages are translation content, not code.
@@ -20,7 +20,7 @@ of 2807 keys), and more languages are translation content, not code.
 | 1 | Sub-layers and cleanup passes, gantry origins, LightBurn device registry | LAY-067, LAY-032, device items | done |
 | 2 | Fusion-style snapping and circle tool; image engraving (all dither modes, DPI, negative, angle, grayscale, adjust image) | DES-049, LAY-023..030, OTH-022, UX-028 | done; OTH-022 left (sample files) |
 | 3 | Geometry engine and editing: booleans and weld, offsets, Offset Fill, kerf, break apart, auto-join, close path, delete duplicates, convert to path, fillet, trim, node editing, pen/line/polygon/star tools, draw modifiers, arrange and draw order, lock, transforms, arrays, measure, rulers, guides, nesting | DES-005..079, LAY-046, LAY-050 | done; DES-045 left |
-| 4 | Text: system fonts, single-line/stroke fonts, formatting, welded text, bend text, text on path, variable text, barcodes/QR/DataMatrix | DES-050..058, JOB-001..003, OTH-032..033 | done; DES-051, DES-055 left |
+| 4 | Text: system fonts, single-line/stroke fonts, formatting, welded text, bend text, text on path, variable text, barcodes/QR/DataMatrix | DES-050..058, JOB-001..003, OTH-032..033 | done; DES-051 left (ArUco MIP 36h11 of DES-055 waits on a sample) |
 | 5 | Running jobs and the machine: pause/resume, progress, counter, repeat, run continuously, start/stop inputs, cut selected; framing modes, live framing, red dot, blanking, focus light; galvo calibration and lens wizard; device editor, .lbdev, markcfg, add-galvo wizard; Z axis; rotary; preview slider, play, start here; camera | JOB-007..084, OTH-005..030 | done |
 | 6 | Cut order and per-layer options | JOB-008..018, LAY-001..066 | done |
 | 7 | Layers, libraries and workspace: Cuts/Layers window, defaults, material library, material/interval/focus tests, Laser window, numeric toolbar, docks, hotkeys, units, theme, preferences, i18n, help, logs | LAY-037..071, UX-041..074 | done |
@@ -40,9 +40,7 @@ in more detail.
 
 ### Remaining software work (no external blocker)
 
-| Item | What is missing | Next step |
-|---|---|---|
-| DES-055 Barcode types | Engine only (the Create Bar Code dialog lists whatever kinds `shape.barcode` offers; 25 types today, 22 of LightBurn's 28): PDF417 Micro, Chinese Sensible Code, Grid Matrix, AprilTag 36h10, ArUco MIP 36h11, ArUco OpenCV 7x7 (none started, audit 2026-11-01) | Encoders in `crates/text/src/codes/` from permissive references (Zint BSD-3 for MicroPDF417, Han Xin, Grid Matrix; the AprilTag BSD-2 36h10 table; OpenCV Apache-2 DICT_7X7_1000). ArUco MIP 36h11 alone needs a sample from the owner: LightBurn's docs do not name the dictionary (OpenCV has DICT_ARUCO_MIP_36h12), so a LightBurn file or SVG export holding markers 0, 1 and 2 of that type settles it |
+None: DES-055 (barcode types) was the last one; its one open type, ArUco MIP 36h11, waits on a sample (below).
 
 ### Needs a sample file from the owner
 
@@ -55,6 +53,7 @@ Bitmap shapes (no Polygon), every Enhance value in them is 0, and no .lbart, .lb
 | UX-045 .lbart | Two or three .lbart libraries saved by LightBurn with known content (a 20 mm square; then plus a circle and a text) | Decode the binary layout; reader in `crates/fileio` used by the Art Library's Load |
 | UX-068 .lbzip | One bundle from File > Bundles > Export Bundle with every component ticked | Unpack it and route its parts to the .lbprefs, device, .clb, preset and art imports |
 | OTH-022 Enhance scale and presets | A .lbrn2 with non-zero Enhance Radius / Amount / Denoise plus the same image exported as LightBurn's processed bitmap; an Adjust Image preset exported from LightBurn | Fit the file scale and Enhance formula; read the preset file |
+| DES-055 ArUco MIP 36h11 (the other 27 LightBurn barcode types are done) | A LightBurn file or SVG export holding markers 0, 1 and 2 of type ArUco MIP 36h11 (LightBurn's docs do not name the dictionary; OpenCV has DICT_ARUCO_MIP_36h12) | Match them against the candidate tables and add the family to `crates/text/src/codes/tags.rs` |
 | DES-051 Real SHX font | A real .shx the owner may use (not a LightBurn file; the owner's LightBurn has no SHX folder set) | Point `OPENETCH_SHX_SAMPLES` at it and run `text::shx::real_shx_fonts_parse` |
 
 ### Needs an external program

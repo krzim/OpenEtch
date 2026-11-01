@@ -928,9 +928,11 @@ pub struct BarcodeInput {
     /// Redraw this existing barcode object with these settings (LightBurn's Edit Bar Code) instead of adding one.
     #[serde(default, skip_serializing)]
     pub id: Option<ObjectId>,
-    /// qr, data_matrix, aztec, pdf417, pdf417_compact, micro_qr, rmqr, code128, code39, code93, codabar, ean8, ean13,
-    /// upc_a, upc_e, itf, industrial_2of5, iata_2of5, isbn, vin, plessey, telepen, apriltag_16h5, apriltag_25h9,
-    /// apriltag_36h11. A tag's data is its id.
+    /// qr, data_matrix, aztec, pdf417, pdf417_compact, micro_pdf417, micro_qr, rmqr, han_xin, grid_matrix, code128,
+    /// code39, code93, codabar, ean8, ean13, upc_a, upc_e, itf, industrial_2of5, iata_2of5, isbn, vin, plessey,
+    /// telepen, apriltag_16h5, apriltag_25h9, apriltag_36h10, apriltag_36h11, aruco_7x7. A tag's data is its id
+    /// (aruco_7x7 is OpenCV's DICT_7X7_1000, whose ids 0-49, 0-99 and 0-249 are DICT_7X7_50, _100 and _250); han_xin
+    /// is LightBurn's Chinese Sensible Code.
     pub kind: String,
     /// The content (with `variable`, a variable-text format).
     pub data: String,
@@ -943,7 +945,8 @@ pub struct BarcodeInput {
     /// Mark the light modules and the quiet zone instead of the dark ones.
     #[serde(default)]
     pub invert: bool,
-    /// QR: L, M, Q, H; Micro QR: L, M, Q; rMQR: M, H; Aztec: % of error words; PDF417: 0-8.
+    /// QR: L, M, Q, H; Micro QR: L, M, Q; rMQR: M, H; Aztec: % of error words; PDF417: 0-8; han_xin: 1-4;
+    /// grid_matrix: 1-5.
     pub error_correction: Option<String>,
     /// Data Matrix: square symbols only (LightBurn's Force Square). Default true.
     pub force_square: Option<bool>,
@@ -1027,7 +1030,8 @@ impl Command for ShapeBarcode {
     const TITLE: &'static str = "Barcode";
     const DESCRIPTION: &'static str = "Add a barcode (LightBurn's Create Bar Code) as a path of its dark modules \
         (welded into one outline per island: put it on a fill layer); `kind` lists the types (QR, Micro QR, rMQR, \
-        Data Matrix, Aztec, PDF417, 1D codes, AprilTag ids). Sizes in mm: module_mm (default 0.5), \
+        Data Matrix, Aztec, PDF417, PDF417 Micro, Chinese Sensible Code, Grid Matrix, 1D codes, AprilTag and ArUco \
+        ids). Sizes in mm: module_mm (default 0.5), \
         height_mm for 1D codes (default 15). invert marks the light modules and a quiet zone instead. `variable` \
         makes `data` a variable-text format (serial numbers, CSV, date). With `id` it redraws that barcode in place. \
         Returns the id, bounds, size and module count.";
