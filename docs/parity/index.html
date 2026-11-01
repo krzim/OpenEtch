@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LightBurn Parity</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --panel: #ffffff; --text: #1d2330; --muted: #5d6677; --line: #dde1e8;
+    --done: #2f8f4e; --partial: #c58a12; --missing: #c4453c; --na: #8a93a3; --accent: #2563c9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #15181e; --panel: #1d2129; --text: #e6e9ef; --muted: #9aa3b2; --line: #2e3440;
+      --done: #4cb36d; --partial: #e0a83a; --missing: #e06a60; --na: #7b8494; --accent: #6ea0ff; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { padding: 20px 16px 8px; max-width: 1200px; margin: 0 auto; }
+  h1 { margin: 0 0 4px; font-size: 22px; }
+  .sub { color: var(--muted); margin: 0 0 14px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+  .card h3 { margin: 0 0 6px; font-size: 13px; color: var(--muted); font-weight: 600; }
+  .card .big { font-size: 20px; font-weight: 650; }
+  .bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--line); margin-top: 6px; }
+  .bar span { display: block; height: 100%; }
+  .b-done { background: var(--done); } .b-partial { background: var(--partial); } .b-missing { background: var(--missing); } .b-na { background: var(--na); }
+  .filters { position: sticky; top: 0; z-index: 2; background: var(--bg); padding: 10px 16px; border-bottom: 1px solid var(--line); }
+  .filters .inner { max-width: 1200px; margin: 0 auto; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  input[type=search], select { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font: inherit; min-height: 34px; }
+  input[type=search] { flex: 1 1 220px; }
+  label.chk { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); }
+  main { max-width: 1200px; margin: 0 auto; padding: 8px 16px 40px; }
+  h2 { font-size: 16px; margin: 22px 0 6px; }
+  h2 small { color: var(--muted); font-weight: 400; }
+  h4 { margin: 12px 0 4px; font-size: 13px; color: var(--muted); }
+  details.item { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; margin: 4px 0; }
+  details.item summary { list-style: none; cursor: pointer; display: grid; grid-template-columns: 70px 1fr auto; gap: 10px; align-items: center; padding: 7px 10px; }
+  details.item summary::-webkit-details-marker { display: none; }
+  .id { color: var(--muted); font: 12px ui-monospace, Consolas, monospace; }
+  .tags { display: flex; gap: 5px; flex-wrap: wrap; justify-content: flex-end; }
+  .tag { font-size: 11px; padding: 1px 7px; border-radius: 10px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+  .st { color: #fff; border: 0; }
+  .st-done { background: var(--done); } .st-partial { background: var(--partial); } .st-missing { background: var(--missing); } .st-na { background: var(--na); }
+  .p0 { border-color: var(--missing); color: var(--missing); font-weight: 600; } .p1 { border-color: var(--partial); color: var(--partial); }
+  .body { padding: 2px 12px 10px 90px; display: grid; gap: 6px; }
+  .body p { margin: 0; } .body b { color: var(--muted); font-weight: 600; }
+  a { color: var(--accent); }
+  .empty { color: var(--muted); padding: 20px 0; }
+  @media (max-width: 640px) {
+    details.item summary { grid-template-columns: 1fr; gap: 4px; }
+    .tags { justify-content: flex-start; }
+    .body { padding-left: 12px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>OpenEtch ↔ LightBurn parity</h1>
+  <p class="sub" id="sub"></p>
+  <div class="cards" id="cards"></div>
+</header>
+<div class="filters"><div class="inner">
+  <input type="search" id="q" placeholder="Search features, notes, code paths…">
+  <select id="area"><option value="">All areas</option></select>
+  <select id="status"><option value="">Any status</option><option>done</option><option>partial</option><option>missing</option><option>na</option></select>
+  <select id="prio"><option value="">Any priority</option><option>P0</option><option>P1</option><option>P2</option><option>P3</option></select>
+  <label class="chk"><input type="checkbox" id="galvo" checked> Galvo-relevant only</label>
+  <label class="chk"><input type="checkbox" id="hideDone"> Hide done</label>
+</div></div>
+<main id="list"></main>
+<script src="parity-data.js"></script>
+<script>
+  const D = window.PARITY, items = D.items;
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  const ST = ["done", "partial", "missing", "na"];
+  const areas = [...new Set(items.map((i) => i.area))];
+  for (const a of areas) $("area").insertAdjacentHTML("beforeend", `<option>${esc(a)}</option>`);
+
+  function bar(list) {
+    const n = list.length || 1;
+    return `<div class="bar">${ST.map((s) => `<span class="b-${s}" style="width:${(100 * list.filter((i) => i.status === s).length) / n}%"></span>`).join("")}</div>`;
+  }
+  function score(list) {
+    const rel = list.filter((i) => i.status !== "na");
+    const pts = rel.reduce((t, i) => t + (i.status === "done" ? 1 : i.status === "partial" ? 0.5 : 0), 0);
+    return rel.length ? Math.round((100 * pts) / rel.length) : 100;
+  }
+  function card(title, list) {
+    const c = Object.fromEntries(ST.map((s) => [s, list.filter((i) => i.status === s).length]));
+    return `<div class="card"><h3>${esc(title)}</h3><div class="big">${score(list)}%</div>
+      <div class="sub" style="margin:0">${c.done} done · ${c.partial} partial · ${c.missing} missing${c.na ? ` · ${c.na} n/a` : ""}</div>${bar(list)}</div>`;
+  }
+  const galvo = items.filter((i) => i.galvo);
+  $("sub").textContent = `${items.length} LightBurn features audited against the OpenEtch code · updated ${D.updated} · score counts partial as half, excludes n/a`;
+  $("cards").innerHTML =
+    card("Galvo-relevant overall", galvo) +
+    card("P0 + P1 (galvo)", galvo.filter((i) => i.priority === "P0" || i.priority === "P1")) +
+    areas.map((a) => card(a, galvo.filter((i) => i.area === a))).join("");
+
+  function render() {
+    const q = $("q").value.trim().toLowerCase();
+    const f = items.filter((i) =>
+      (!$("galvo").checked || i.galvo) &&
+      (!$("hideDone").checked || i.status !== "done") &&
+      (!$("area").value || i.area === $("area").value) &&
+      (!$("status").value || i.status === $("status").value) &&
+      (!$("prio").value || i.priority === $("prio").value) &&
+      (!q || [i.id, i.feature, i.category, i.lightburn, i.openetch, i.notes].join(" ").toLowerCase().includes(q)));
+    if (!f.length) { $("list").innerHTML = `<p class="empty">No features match these filters.</p>`; return; }
+    let html = "";
+    for (const a of areas) {
+      const inA = f.filter((i) => i.area === a);
+      if (!inA.length) continue;
+      html += `<h2>${esc(a)} <small>${inA.length} shown · ${score(inA)}%</small></h2>`;
+      for (const cat of [...new Set(inA.map((i) => i.category))]) {
+        html += `<h4>${esc(cat || "General")}</h4>`;
+        for (const i of inA.filter((x) => x.category === cat)) {
+          html += `<details class="item"><summary><span class="id">${esc(i.id)}</span><span>${esc(i.feature)}</span>
+            <span class="tags"><span class="tag st st-${i.status}">${i.status}</span><span class="tag ${i.priority.toLowerCase()}">${i.priority}</span>
+            <span class="tag">effort ${i.effort}</span>${i.galvo ? "" : `<span class="tag">not galvo</span>`}</span></summary>
+            <div class="body"><p><b>LightBurn:</b> ${esc(i.lightburn)}${i.doc ? ` <a href="${esc(i.doc)}" target="_blank" rel="noopener">docs</a>` : ""}</p>
+            <p><b>OpenEtch:</b> ${esc(i.openetch)}</p>${i.notes ? `<p><b>Notes:</b> ${esc(i.notes)}</p>` : ""}</div></details>`;
+        }
+      }
+    }
+    $("list").innerHTML = html;
+  }
+  for (const id of ["q", "area", "status", "prio", "galvo", "hideDone"]) $(id).addEventListener("input", render);
+  render();
+</script>
+</body>
+</html>
