@@ -5,7 +5,8 @@
 // `layer.update` / `layer.sub_update` with a partial `settings.options` (a merge patch), `settings.timing`,
 // `settings.hatch.lines_per_inch` or `global_passes`.
 //
-// `ShapeCutProperties` is LightBurn's Shape Properties for the selection: Power Scale and cut order priority
+// `ShapeCutProperties` ("Shape cut settings", named apart from the geometry panel "Shape properties" of design/) is
+// LightBurn's Shape Properties for the selection: Power Scale and cut order priority
 // (`object.set_cut_properties`).
 
 import { useEffect, useState } from "react";

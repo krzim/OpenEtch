@@ -60,7 +60,7 @@ export function useLibsUi(p: LibsUiProps) {
   const sp = startPointTool.use();
   const ov = cameraOverlay.use();
   const { prefs } = useDevicePrefs();
-  const hotkeys = usePrefs().hotkeys;
+  const { hotkeys, beginnerMode } = usePrefs();
   const P = useRef(p);
   P.current = p;
   setLibsToast(p.notify);
@@ -227,7 +227,8 @@ export function useLibsUi(p: LibsUiProps) {
     { label: t("ltest.intervalTitle"), hint: hk("laser.intervalTest"), action: open("intervalTest") },
     { label: t("ltest.focusTitle"), hint: hk("laser.focusTest"), action: open("focusTest") },
     { sep: true },
-    { label: sp ? t("sp.stop") : t("sp.tool"), hint: hk("tool.startPoint"), action: toggleStartPoint },
+    // Beginner Mode hides Set Start Point, as LightBurn's does (a running tool can still be stopped).
+    ...(beginnerMode && !sp ? [] : [{ label: sp ? t("sp.stop") : t("sp.tool"), hint: hk("tool.startPoint"), action: toggleStartPoint } as DropItem]),
     { label: t("pc.title"), hint: hk("laser.printCut"), action: open("printCut") },
     ...(cam ? [{ label: t("cam.title"), hint: hk("window.camera"), action: open("camera") } as DropItem] : []),
     { sep: true },
@@ -240,7 +241,8 @@ export function useLibsUi(p: LibsUiProps) {
   );
 
   const menuItems: MenuItem[] = [
-    { label: sp ? t("sp.stop") : t("sp.tool"), action: toggleStartPoint },
+    // Hidden in Beginner Mode like the Laser Tools entry (a running tool can still be stopped).
+    ...(beginnerMode && !sp ? [] : [{ label: sp ? t("sp.stop") : t("sp.tool"), action: toggleStartPoint } as MenuItem]),
     {
       label: t("sp.clear"),
       disabled: !p.selection.some((id) => marks.some((m) => m.id === id)),
@@ -317,7 +319,7 @@ export function useLibsUi(p: LibsUiProps) {
     "laser.printCut": () => openLibsWindow("printCut"),
     "laser.jobLog": () => openLibsWindow("jobLog"),
     "window.camera": () => (cam ? openLibsWindow("camera") : false),
-    "tool.startPoint": () => (p.design ? toggleStartPoint() : false),
+    "tool.startPoint": () => (p.design && (sp || !beginnerMode) ? toggleStartPoint() : false),
   };
 
   // ---- dialogs ----

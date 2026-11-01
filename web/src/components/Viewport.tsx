@@ -1233,10 +1233,8 @@ export function Viewport(props: ViewportProps) {
       {props.canvasTool?.overlay(renderCtx)}
       {isDrawTool(tool) && (
         <div className="vp-overlay vp-top-left hint">
-          {tool === "circle"
-            ? "Press at the centre and drag the radius"
-            : `Drag to draw ${tool === "rect" ? "a rectangle (Shift: square" : "an ellipse (Shift: circle"}, Ctrl: from the centre)`}{" "}
-          · tap for {formatLength(20, lu)} · {tool === "circle" ? "Ctrl: no snap · " : ""}Alt: guides only · Esc to cancel
+          {tool === "circle" ? t("rest.drawCircle") : tool === "rect" ? t("rest.drawRect") : t("rest.drawEllipse")} ·{" "}
+          {t(tool === "circle" ? "rest.drawTailCircle" : "rest.drawTail", { size: formatLength(20, lu) })}
         </div>
       )}
     </div>

@@ -231,3 +231,20 @@ test("text draws its outline; text and barcodes are named in Properties", () => 
   assert.equal(shapeKindName(obj("b", { kind: "path", path: [] }, { [BARCODE_KEY]: "{}" })), "Barcode");
   assert.equal(shapeKindName(obj("p", { kind: "path", path: [] })), "Path");
 });
+
+test("barcode kinds follow the engine's shape.barcode schema", async () => {
+  const m = await import("./textModel.ts");
+  const today = { properties: { kind: { type: "string", description: "qr, data_matrix, aztec, pdf417, code128, code39, code93, codabar, ean8, ean13, upc_a, upc_e, itf, telepen." } } };
+  assert.deepEqual(m.barcodeKindsFrom(today).map((k) => k.id), m.BARCODE_KINDS.map((k) => k.id));
+  const later = { properties: { kind: { type: "string", description: "qr, micro_qr, data_matrix, code128, plessey, apriltag_36h11, zz_new: see the docs" } } };
+  const k = m.barcodeKindsFrom(later);
+  assert.deepEqual(k.map((x) => x.id), ["qr", "data_matrix", "code128", "micro_qr", "plessey", "apriltag_36h11", "zz_new"]);
+  assert.deepEqual(k.find((x) => x.id === "micro_qr"), { id: "micro_qr", label: "QR Micro", twoD: true });
+  assert.equal(k.find((x) => x.id === "plessey")?.twoD, false);
+  assert.equal(k.find((x) => x.id === "zz_new")?.label, "zz_new");
+  assert.deepEqual(m.barcodeKindsFrom({ properties: { kind: { enum: ["qr", "vin"] } } }).map((x) => x.label), ["QR Code", "VIN"]);
+  assert.equal(m.barcodeKindsFrom(null), m.BARCODE_KINDS, "no schema: the built-in list");
+  m.setEngineBarcodeKinds(k);
+  assert.equal(m.barcodeKind("plessey")?.label, "Plessey");
+  m.setEngineBarcodeKinds(null);
+});

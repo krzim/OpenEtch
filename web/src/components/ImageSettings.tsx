@@ -12,6 +12,7 @@ import {
   DEFAULT_ADJUST,
   DITHER_MODES,
   IMAGE_ADJUST_CMD,
+  adjustFromPreset,
   adjustImage,
   adjustOf,
   changedAdjust,
@@ -19,6 +20,8 @@ import {
   grayFromRgba,
   grayToRgba,
   imageAdjust,
+  imagePresetBody,
+  imagePresetList,
   imageSettingsOf,
   imageUpdate,
   imageView,
@@ -27,6 +30,7 @@ import {
   processImage,
   type ImageAdjust,
   type ImagePatch,
+  type ImagePreset,
   type ImageSettings as ImageSettingsT,
 } from "../api/image.ts";
 import type { DocObject, GDocument, Geometry, Layer } from "../api/types.ts";
@@ -34,6 +38,8 @@ import { CheckField, Modal, NumberField, fmt } from "./ui.tsx";
 import { Slice3dSettings } from "../files/Slice3d.tsx";
 import { useT } from "../workspace/usePrefs.ts";
 import type { MsgKey } from "../workspace/i18n.ts";
+import { libsApi } from "../libs/api.ts";
+import { ConfirmDialog, FilePick, NameDialog, errText, saveDownload } from "../libs/ui.tsx";
 
 type Run = (inv: Invocation | Invocation[]) => Promise<unknown>;
 /** An image's geometry as the engine sends it (`adjust` only when it changes something). */
@@ -168,7 +174,7 @@ export function ImageSettings({
         <button className="btn" title={t("img.gammaContrastBrightnessAndEnhanceOf")} onClick={() => setAdjusting(true)}>
           {t("img.adjustImage")}
         </button>
-        {adjusted > 0 && <span className="hint">{adjusted === images.length ? (adjusted === 1 ? "Adjusted" : t("img.allAdjusted")) : `${adjusted} of ${images.length} adjusted`}</span>}
+        {adjusted > 0 && <span className="hint">{adjusted === images.length ? (adjusted === 1 ? t("rest.adjusted") : t("img.allAdjusted")) : t("rest.adjustedOf", { n: adjusted, total: images.length })}</span>}
       </div>
       <ImageViewToggle />
       <p className="hint">{t("img.theDitheredViewIsAPreview")}</p>
@@ -203,7 +209,7 @@ export function ImageViewToggle() {
           title={v === "original" ? t("img.showImagesOnTheCanvasAs") : t("img.showImagesOnTheCanvasAs2")}
           onClick={() => imageView.setView(v)}
         >
-          {v === "original" ? "Original" : "Dithered"}
+          {v === "original" ? t("rest.original") : t("rest.dithered")}
         </button>
       ))}
     </div>
@@ -217,7 +223,7 @@ export function DitheredImagesOption({ doc }: { doc: GDocument | null }) {
   if (!doc?.objects.some((o) => o.geometry.kind === "image")) return null;
   return (
     <label title={t("img.showImagesOnTheCanvasAs")}>
-      <input type="checkbox" checked={view === "dithered"} onChange={(e) => imageView.setView(e.target.checked ? "dithered" : "original")} /> Dithered images
+      <input type="checkbox" checked={view === "dithered"} onChange={(e) => imageView.setView(e.target.checked ? "dithered" : "original")} /> {t("rest.ditheredImages")}
     </label>
   );
 }
@@ -248,9 +254,11 @@ export function AdjustImageDialog({
   images: DocObject[];
   canApply: boolean;
   onClose: () => void;
-  onApply: (ids: string[], a: ImageAdjust) => void;
+  /** `image`: the layer's image settings of a picked preset that holds them (applied with the adjustments). */
+  onApply: (ids: string[], a: ImageAdjust, image?: Partial<ImageSettingsT>) => void;
 }) {
   const t = useT();
+  const [presetImage, setPresetImage] = useState<Partial<ImageSettingsT> | null>(null);
   const [pick, setPick] = useState(images[0]?.id ?? "");
   const obj = images.find((o) => o.id === pick) ?? images[0];
   const geom = obj?.geometry.kind === "image" ? (obj.geometry as ImageGeometry) : null;
@@ -271,7 +279,7 @@ export function AdjustImageDialog({
 
   const settings = imageSettingsOf(layer.settings);
   const preview = usePreview(geom, settings, draft, layer.settings.power_pct, DIALOG_MAX_PX, true, 80);
-  const changed = all || (Object.keys(DEFAULT_ADJUST) as (keyof ImageAdjust)[]).some((k) => draft[k] !== current[k]);
+  const changed = all || !!presetImage || (Object.keys(DEFAULT_ADJUST) as (keyof ImageAdjust)[]).some((k) => draft[k] !== current[k]);
   const set = (k: keyof ImageAdjust, v: number) => setDraft({ ...draft, [k]: v });
   return (
     <Modal
@@ -290,7 +298,7 @@ export function AdjustImageDialog({
             className="btn btn-primary"
             disabled={!changed || !canApply || targets.length === 0}
             title={canApply ? undefined : t("img.thisEngineCannotStoreImageAdjustments")}
-            onClick={() => onApply(targets, draft)}
+            onClick={() => onApply(targets, draft, presetImage ?? undefined)}
           >
             {t("img.apply")}
           </button>
@@ -321,6 +329,15 @@ export function AdjustImageDialog({
           <CheckField label={t("img.applyToAllV1Images", { v1: images.length })} checked={all} onChange={setAll} />
         </>
       )}
+      <AdjustPresets
+        draft={draft}
+        layerImage={settings}
+        pendingImage={!!presetImage}
+        onPick={(pr) => {
+          setDraft(adjustFromPreset(pr, draft));
+          setPresetImage(pr.image ?? null);
+        }}
+      />
       <div className="img-adjust">
         <div className="img-adjust-fields">
           {ADJUST_FIELDS.map((f) => (
@@ -337,27 +354,168 @@ export function AdjustImageDialog({
               />
             </div>
           ))}
-          <p className="hint">
-            Applied before dithering: enhance (sharpens edges; denoise skips differences below that many grey levels), then contrast,
-            brightness and gamma (above 1 darkens the mid-tones).
-          </p>
+          <p className="hint">{t("rest.adjustHint")}</p>
           {!canApply && <p className="warn-text">{t("img.thisEngineCannotStoreImageAdjustments")}</p>}
         </div>
         <div className="img-adjust-previews">
           <figure>
             {preview?.gray ? <img src={preview.gray} alt={t("img.adjustedGreyscale")} /> : <div className="img-placeholder">{t("img.rendering")}</div>}
-            <figcaption>Adjusted{settings.negative ? " (negative)" : ""}</figcaption>
+            <figcaption>{settings.negative ? t("rest.adjustedNegative") : t("rest.adjusted")}</figcaption>
           </figure>
           <figure>
             {preview?.url ? <img src={preview.url} alt={t("img.ditheredPreview")} className="pixelated" /> : <div className="img-placeholder">{t("img.rendering")}</div>}
             <figcaption>
-              {settings.pass_through ? "Pass-through" : (DITHER_MODES.find((m) => m.value === settings.dither)?.label ?? settings.dither)}
-              {preview ? ` · ${preview.width}×${preview.height} px${preview.capped ? " (reduced)" : ""}` : ""}
+              {settings.pass_through ? t("rest.passThrough") : (DITHER_MODES.find((m) => m.value === settings.dither)?.label ?? settings.dither)}
+              {preview ? ` · ${preview.width}×${preview.height} px${preview.capped ? ` ${t("rest.reduced")}` : ""}` : ""}
             </figcaption>
           </figure>
         </div>
       </div>
     </Modal>
+  );
+}
+
+/**
+ * LightBurn's Adjust Image presets: pick one to load its adjustments (and, when it holds them, the layer's image
+ * settings, applied with Apply), Save the current values (optionally with the layer's image settings), Delete, and
+ * Import / Export the engine's preset JSON (LightBurn's own preset file is undocumented and not read).
+ */
+function AdjustPresets(p: { draft: ImageAdjust; layerImage: ImageSettingsT; pendingImage: boolean; onPick: (pr: ImagePreset) => void }) {
+  const t = useT();
+  const [list, setList] = useState<ImagePreset[] | null>(null);
+  const [unsupported, setUnsupported] = useState(false);
+  const [picked, setPicked] = useState("");
+  const [withLayer, setWithLayer] = useState(false);
+  const [dlg, setDlg] = useState<"save" | "delete" | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ text: string; error?: boolean } | null>(null);
+  const reload = () =>
+    libsApi
+      .imagePresets()
+      .then((r) => setList(imagePresetList(r)))
+      .catch(() => setUnsupported(true));
+  useEffect(() => {
+    void reload();
+  }, []);
+  if (unsupported) return null;
+  const act = async (fn: () => Promise<string>) => {
+    setBusy(true);
+    try {
+      setMsg({ text: await fn() });
+    } catch (e) {
+      setMsg({ text: errText(e), error: true });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="img-presets">
+      <label className="field">
+        <span className="field-label">{t("img.preset")}</span>
+        <span className="field-input">
+          <select
+            value={picked}
+            disabled={list === null}
+            onChange={(e) => {
+              setPicked(e.target.value);
+              const pr = list?.find((x) => x.name === e.target.value);
+              if (pr) p.onPick(pr);
+            }}
+          >
+            <option value="">{list === null ? t("common.loading") : list.length ? t("img.presetPick") : t("img.presetNone")}</option>
+            {(list ?? []).map((x) => (
+              <option key={x.name} value={x.name}>
+                {x.image ? t("img.presetWithLayer", { name: x.name }) : x.name}
+              </option>
+            ))}
+          </select>
+        </span>
+      </label>
+      <div className="img-preset-actions">
+        <button className="btn small" disabled={busy || list === null} onClick={() => setDlg("save")}>
+          {t("img.presetSave")}
+        </button>
+        <button className="btn small" disabled={busy || !picked} onClick={() => setDlg("delete")}>
+          {t("img.presetDelete")}
+        </button>
+        <FilePick
+          className="btn small"
+          label={t("img.presetImport")}
+          accept=".json,application/json"
+          disabled={busy}
+          onFile={(f) =>
+            void act(async () => {
+              let body: unknown;
+              try {
+                body = JSON.parse(await f.text());
+              } catch {
+                throw new Error(t("img.presetNotJson"));
+              }
+              const r = (await libsApi.imagePresetImport(body)) as { imported?: unknown };
+              await reload();
+              const names = Array.isArray(r?.imported) ? r.imported.map(String) : [];
+              return t("img.presetImported", { n: names.length, names: names.slice(0, 5).join(", ") });
+            })
+          }
+        />
+        <button
+          className="btn small"
+          disabled={busy || !list?.length}
+          onClick={() =>
+            void act(async () => {
+              const blob = new Blob([JSON.stringify({ presets: list ?? [] }, null, 2)], { type: "application/json" });
+              const name = await saveDownload(Promise.resolve({ blob, filename: null }), "openetch-image-presets.json");
+              return t("img.presetExported", { name });
+            })
+          }
+        >
+          {t("img.presetExport")}
+        </button>
+      </div>
+      <CheckField label={t("img.presetIncludeLayer")} checked={withLayer} onChange={setWithLayer} />
+      {p.pendingImage && <p className="hint">{t("img.presetLayerPending")}</p>}
+      {msg && <p className={msg.error ? "form-error" : "hint"}>{msg.text}</p>}
+      {dlg === "save" && (
+        <NameDialog
+          title={t("img.presetSaveTitle")}
+          label={t("img.presetName")}
+          initial={picked}
+          ok={t("img.presetSave")}
+          note={t("img.presetSaveNote")}
+          problem={(n) => (!n.trim() ? t("img.presetNameEmpty") : [...n.trim()].length > 100 ? t("img.presetNameLong") : null)}
+          onClose={() => setDlg(null)}
+          onOk={(name) => {
+            setDlg(null);
+            void act(async () => {
+              await libsApi.imagePresetSave(name, imagePresetBody(p.draft, withLayer ? p.layerImage : null));
+              await reload();
+              setPicked(name);
+              return t("img.presetSaved", { name });
+            });
+          }}
+        />
+      )}
+      {dlg === "delete" && (
+        <ConfirmDialog
+          title={t("img.presetDelete")}
+          ok={t("img.presetDelete")}
+          danger
+          onClose={() => setDlg(null)}
+          onOk={() => {
+            setDlg(null);
+            const name = picked;
+            void act(async () => {
+              await libsApi.imagePresetDelete(name);
+              setPicked("");
+              await reload();
+              return t("img.presetDeleted", { name });
+            });
+          }}
+        >
+          <p>{t("img.presetDeleteAsk", { name: picked })}</p>
+        </ConfirmDialog>
+      )}
+    </div>
   );
 }
 

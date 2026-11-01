@@ -188,6 +188,17 @@ export interface GDocument {
   guides?: DocGuide[];
   /** Output curve tolerance in mm (`doc.set_curve_tolerance`); absent or null: the device's, else 0.01 mm. */
   curve_tolerance_mm?: number | null;
+  /** LightBurn's virtual arrays (`art.array` with virtual): linked clones laid out again after every edit; absent while none. */
+  virtual_arrays?: VirtualArray[];
+}
+
+/** A virtual array (doc::VirtualArray): the originals, their clones cell by cell, and the grid settings. */
+export interface VirtualArray {
+  id: string;
+  sources: string[];
+  clones: string[];
+  /** The `art.array` grid settings (rows, cols, pitch_x_mm, ..., counts resolved). */
+  settings: Record<string, unknown>;
 }
 
 /** A manual guide in the document: "x" is a vertical line at x = position_mm, "y" a horizontal one. */

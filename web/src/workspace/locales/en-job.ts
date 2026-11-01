@@ -104,7 +104,7 @@ export const EN_JOB = {
   "opt.up": "Move up",
   "opt.down": "Move down",
   "opt.remove": "Remove",
-  "opt.orderHint": "Applied top to bottom. Layers always burn in the Cuts / Layers order; priority is set per shape in Shape properties.",
+  "opt.orderHint": "Applied top to bottom. Layers always burn in the Cuts / Layers order; priority is set per shape in Shape cut settings.",
   "opt.planner": "Cut planner",
   "opt.innerFirst": "Cut inner shapes first",
   "opt.direction": "Cut in direction order",
@@ -306,7 +306,7 @@ export const EN_JOB = {
   "jog.zMoved": "Z moved to {z} mm.",
   "jog.hint": "Neither fires the laser: the red dot is light only and the Z lift is motion only.",
 
-  "shape.title": "Shape properties",
+  "shape.title": "Shape cut settings",
   "shape.powerScale": "Power scale",
   "shape.priority": "Cut priority",
   "shape.mixed": "mixed",

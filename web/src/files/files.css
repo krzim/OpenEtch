@@ -272,3 +272,116 @@
   padding-top: 4px;
   border-top: 1px solid var(--border-soft);
 }
+
+/* Folder tree of the Save / Open dialogs and the Project locations setting (ProjectFolders.tsx). */
+.folder-browser {
+  display: grid;
+  grid-template-columns: minmax(150px, 34%) 1fr;
+  gap: 10px;
+  min-height: 0;
+}
+
+@media (max-width: 560px) {
+  .folder-browser {
+    grid-template-columns: 1fr;
+  }
+}
+
+.folder-tree-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.folder-tree {
+  max-height: 40vh;
+  overflow: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 4px 0;
+}
+
+.folder-row {
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+}
+
+.folder-twisty {
+  width: 20px;
+  flex: none;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  padding: 0;
+  cursor: pointer;
+}
+
+.folder-name {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  border: 0;
+  background: none;
+  padding: 4px 6px;
+  border-radius: var(--radius);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  color: inherit;
+}
+
+.folder-name:hover:not(:disabled) {
+  background: var(--chrome-2);
+}
+
+.folder-name.active {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.folder-name.unreachable {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.folder-new {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.folder-new input {
+  flex: 1;
+  min-width: 100px;
+}
+
+.loc-row {
+  display: grid;
+  grid-template-columns: minmax(80px, 1fr) 2fr auto;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.loc-row > :nth-child(4) {
+  grid-column: 3;
+}
+
+.loc-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.prefs-section.prefs-wide {
+  grid-column: 1 / -1;
+}
+
+.folder-projects {
+  min-width: 0;
+}

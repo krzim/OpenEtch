@@ -110,6 +110,11 @@ export const ACTIONS: HotkeyAction[] = [
   app("arrange.alignVCenter", "arrange", "Align centres vertically", ["Alt+PgDn"]),
   app("arrange.centerField", "arrange", "Move selection to field centre", ["P"]),
   ws("arrange.alignCenters", "arrange", "Align centres", ["Alt+Home"]),
+  // LightBurn's Distribute tools have no default keys.
+  ws("arrange.distHSpaced", "arrange", "Distribute H-Spaced (equal gaps)", []),
+  ws("arrange.distHCentered", "arrange", "Distribute H-Centered (equal centre spacing)", []),
+  ws("arrange.distVSpaced", "arrange", "Distribute V-Spaced (equal gaps)", []),
+  ws("arrange.distVCentered", "arrange", "Distribute V-Centered (equal centre spacing)", []),
   ws("arrange.moveHTogether", "arrange", "Move horizontally together", ["Alt+Shift+H"]),
   ws("arrange.moveVTogether", "arrange", "Move vertically together", ["Alt+Shift+V"]),
   ws("arrange.dockLeft", "arrange", "Dock left", []),

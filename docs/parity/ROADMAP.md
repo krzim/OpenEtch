@@ -9,19 +9,22 @@ Work goes in batches. Each batch is built against a written contract, verified e
 swapped into the running server. Every finished item gets its tracker line updated in the same commit
 (`python -I docs/parity/set_status.py ID STATUS EVIDENCE [NOTE]`).
 
-Audit of 2026-11-01: 315 galvo items, **295 done, 17 partial, 1 missing, 2 n/a**. Every batch below is done; what
-is left of each is listed under [Remaining galvo items](#remaining-galvo-items).
+Audit of 2026-11-01 (after the final pass): 315 galvo items, **306 done, 7 partial, 0 missing, 2 n/a** (343 items
+in all: 306 done, 7 partial, 6 missing, 24 n/a). Every batch below is done; what is left of each is listed under
+[Remaining galvo items](#remaining-galvo-items). UX-061 (language) counts as done because every UI string is in the
+message tables and the language switches live; only English is complete (the machine-translated Spanish covers 568
+of 2807 keys), and more languages are translation content, not code.
 
 | Batch | Scope | Main tracker items | State |
 |---|---|---|---|
 | 1 | Sub-layers and cleanup passes, gantry origins, LightBurn device registry | LAY-067, LAY-032, device items | done |
-| 2 | Fusion-style snapping and circle tool; image engraving (all dither modes, DPI, negative, angle, grayscale, adjust image) | DES-049, LAY-023..030, OTH-022, UX-028 | done; OTH-022 left |
-| 3 | Geometry engine and editing: booleans and weld, offsets, Offset Fill, kerf, break apart, auto-join, close path, delete duplicates, convert to path, fillet, trim, node editing, pen/line/polygon/star tools, draw modifiers, arrange and draw order, lock, transforms, arrays, measure, rulers, guides, nesting | DES-005..079, LAY-046, LAY-050 | done; DES-004, DES-010, DES-011, DES-034, DES-045 left |
+| 2 | Fusion-style snapping and circle tool; image engraving (all dither modes, DPI, negative, angle, grayscale, adjust image) | DES-049, LAY-023..030, OTH-022, UX-028 | done; OTH-022 left (sample files) |
+| 3 | Geometry engine and editing: booleans and weld, offsets, Offset Fill, kerf, break apart, auto-join, close path, delete duplicates, convert to path, fillet, trim, node editing, pen/line/polygon/star tools, draw modifiers, arrange and draw order, lock, transforms, arrays, measure, rulers, guides, nesting | DES-005..079, LAY-046, LAY-050 | done; DES-045 left |
 | 4 | Text: system fonts, single-line/stroke fonts, formatting, welded text, bend text, text on path, variable text, barcodes/QR/DataMatrix | DES-050..058, JOB-001..003, OTH-032..033 | done; DES-051, DES-055 left |
-| 5 | Running jobs and the machine: pause/resume, progress, counter, repeat, run continuously, start/stop inputs, cut selected; framing modes, live framing, red dot, blanking, focus light; galvo calibration and lens wizard; device editor, .lbdev, markcfg, add-galvo wizard; Z axis; rotary; preview slider, play, start here; camera | JOB-007..084, OTH-005..030 | done; JOB-007 left |
+| 5 | Running jobs and the machine: pause/resume, progress, counter, repeat, run continuously, start/stop inputs, cut selected; framing modes, live framing, red dot, blanking, focus light; galvo calibration and lens wizard; device editor, .lbdev, markcfg, add-galvo wizard; Z axis; rotary; preview slider, play, start here; camera | JOB-007..084, OTH-005..030 | done |
 | 6 | Cut order and per-layer options | JOB-008..018, LAY-001..066 | done |
-| 7 | Layers, libraries and workspace: Cuts/Layers window, defaults, material library, material/interval/focus tests, Laser window, numeric toolbar, docks, hotkeys, units, theme, preferences, i18n, help, logs | LAY-037..071, UX-041..074 | done; LAY-070, UX-061, UX-069 left |
-| 8 | Files: exports, print, autosave and backups, notes, thumbnails, several documents, system clipboard, AI/PDF/EPS/HPGL/TIFF imports, import options, legacy .lbrn, templates, art library, .ezd, Gerber, 3D models, trace, masks, 3D sliced, print and cut, pages, CAD "send to laser" | UX-002..049, DES-019..074, LAY-031, JOB-006..007, OTH-002..028 | done; UX-013, UX-040, UX-045, UX-067, UX-068, OTH-002 left |
+| 7 | Layers, libraries and workspace: Cuts/Layers window, defaults, material library, material/interval/focus tests, Laser window, numeric toolbar, docks, hotkeys, units, theme, preferences, i18n, help, logs | LAY-037..071, UX-041..074 | done |
+| 8 | Files: exports, print, autosave and backups, notes, thumbnails, several documents, system clipboard, AI/PDF/EPS/HPGL/TIFF imports, import options, legacy .lbrn, templates, art library, .ezd, Gerber, 3D models, trace, masks, 3D sliced, print and cut, pages, CAD "send to laser" | UX-002..049, DES-019..074, LAY-031, JOB-006..007, OTH-002..028 | done; UX-045, UX-068, OTH-002 left |
 
 Items that need hardware the B6 lacks (galvo camera, rotary, Z axis, focus light, foot pedal inputs) are built and
 tested on the simulator and marked "unverified on hardware" in their notes until someone runs them on a machine.
@@ -35,25 +38,16 @@ pedal or non-square field where named) is the only check left for them.
 Every galvo item that is not done, with what blocks it and the next step. The tracker note of each item says the same
 in more detail.
 
-### Remaining software work (nothing external needed)
+### Remaining software work (no external blocker)
 
 | Item | What is missing | Next step |
 |---|---|---|
-| LAY-070 Material test presets | Web only: the engine has `/api/material-test/presets` and .lbmt import/export | Preset dropdown (Save / Delete / Import / Export) in the Material Test dialog; raise the dialog's Count limit from 20 to 30 |
-| JOB-007 Galvo camera | Web only: marker generation and marker alignment exist in the engine | Camera window buttons for `generate.camera_markers` and `POST /api/camera/align_markers`; then a hardware check |
-| UX-013 Save/open in folders | Web only: folders and project locations exist in the engine | Folder tree in Save / Open (`/api/projects/folders`) and a Project locations setting (`/api/projects/locations`) |
-| UX-040 3D model depth map | Web only: `image.edit_model` exists | Edit 3D Model entry that reopens the import dialog with the kept options |
-| DES-004 Distribute centres | Web only: App.tsx handles it but nothing sends it | Distribute H / V centres buttons, Arrange menu items, hotkey entries |
-| UX-061 Localisation | Web only: `web/src/design/` bypasses the message tables (stays English in Spanish) | Move those strings into a locale table read through `useT`; add the Spanish keys |
-| UX-069 Beginner Mode | Web only: not built (re-opened from n/a) | A Beginner Mode preference hiding the options LightBurn's hides |
-| OTH-022 Adjust Image presets | Web part: the engine has `/api/image-adjust/presets` | Preset dropdown in Adjust Image (the sample part is below) |
-| DES-034 Radius / fillet | Engine and web: un-rounding a corner by clicking it | `path.unfillet` (replace the arc by the sides' intersection) and a click in the Fillet tool |
-| DES-010 Nesting | Engine and web: multi-sheet nesting (LightBurn's NestMultisheet) | Check LightBurn 2.2's behaviour once, then overflow onto further sheets/pages in `art.nest` and the Nest dialog |
-| DES-011 Grid array | Engine and web: random orientation (seed), auto-increment variable text, virtual array (linked clones and its menu), total width/height, group / select results | `art.array` parameters plus GridArrayDialog fields; a linked-clone object in `doc` for the virtual array |
-| DES-055 Barcode types | Engine and web: 17 of LightBurn's 28 types missing (2 of 5 IATA / Industrial, ISBN, VIN, Plessey, PDF417 Compact / Micro, QR Micro, rMQR, Chinese Sensible, Grid Matrix, AprilTag x4, ArUco x2) | Encoders in `crates/text/src/barcode.rs` from permissive references (Zint BSD-3, AprilTag BSD-2, OpenCV Apache-2) and the types in the dialog |
-| UX-067 .lbprefs | Engine and web. No longer blocked on a sample: a .lbprefs is the same JSON as prefs.ini (233 keys; the owner's automatic backups are in `%LOCALAPPDATA%\LightBurn\backup\prefs`) | Accept .lbprefs / prefs.ini in Preferences import and map the keys OpenEtch has (import options, autosave, optimisation, framing, grid/snap, tolerance, language, devices); env-gated test on the owner's backups |
+| DES-055 Barcode types | Engine only (the Create Bar Code dialog lists whatever kinds `shape.barcode` offers; 25 types today, 22 of LightBurn's 28): PDF417 Micro, Chinese Sensible Code, Grid Matrix, AprilTag 36h10, ArUco MIP 36h11, ArUco OpenCV 7x7 (none started, audit 2026-11-01) | Encoders in `crates/text/src/codes/` from permissive references (Zint BSD-3 for MicroPDF417, Han Xin, Grid Matrix; the AprilTag BSD-2 36h10 table; OpenCV Apache-2 DICT_7X7_1000). ArUco MIP 36h11 alone needs a sample from the owner: LightBurn's docs do not name the dictionary (OpenCV has DICT_ARUCO_MIP_36h12), so a LightBurn file or SVG export holding markers 0, 1 and 2 of that type settles it |
 
 ### Needs a sample file from the owner
+
+Rechecked 2026-11-01: the 26 sample projects in the sample folders hold only Path, Rect, Ellipse, Text, Group and
+Bitmap shapes (no Polygon), every Enhance value in them is 0, and no .lbart, .lbzip or .shx file is on the computer.
 
 | Item | File needed | Then |
 |---|---|---|

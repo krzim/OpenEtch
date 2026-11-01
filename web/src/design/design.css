@@ -210,3 +210,9 @@
     height: 180px;
   }
 }
+
+.dz-seed {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+}

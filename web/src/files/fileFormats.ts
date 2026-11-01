@@ -826,3 +826,58 @@ export function sliceDepth(slices: number, depthPerPassMm: number): number {
 export function firstImage(doc: GDocument | null | undefined, ids: readonly string[]): DocObject | null {
   return selectedImages(doc, ids)[0] ?? null;
 }
+
+// ---- Edit 3D Model (LightBurn 2.2): a depth map made from a model keeps its options and the model ----
+
+/** Object `extras` keys the engine sets on a depth map made by art.import_model (crates/commands builtin/files.rs). */
+export const MODEL_OPTIONS_KEY = "model3d.options";
+export const MODEL_SOURCE_KEY = "model3d.source";
+
+/**
+ * The import options an image was rendered with, from its `extras` (a JSON string of the engine's ModelOptions), or
+ * null when the image was not made from a 3D model or its model was not kept (too large), so it cannot be edited.
+ */
+export function modelOptionsOf(extras: Record<string, string> | undefined): ModelOptions | null {
+  if (!extras || !(MODEL_SOURCE_KEY in extras)) return null;
+  let o: Record<string, unknown>;
+  try {
+    const raw: unknown = JSON.parse(extras[MODEL_OPTIONS_KEY] ?? "");
+    if (!raw || typeof raw !== "object") return null;
+    o = raw as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  const flag = (v: unknown) => v === true;
+  const rot = Array.isArray(o.rotation_deg) && o.rotation_deg.length === 3 ? o.rotation_deg.map((v) => num(v) ?? 0) : [0, 0, 0];
+  return {
+    rotation: [rot[0]!, rot[1]!, rot[2]!],
+    widthMm: num(o.width_mm),
+    dpi: num(o.dpi) ?? DEFAULT_MODEL_OPTIONS.dpi,
+    sixteenBit: flag(o.sixteen_bit),
+    invert: flag(o.invert),
+    transparentBackground: flag(o.transparent_background),
+    depthCutoffMm: num(o.depth_cutoff_mm),
+    equalize: flag(o.equalize),
+    outline: flag(o.outline),
+  };
+}
+
+/** The `image.edit_model` invocation rendering image `id` again with `o` (every option sent). */
+export function editModelInvocation(id: string, o: ModelOptions): { id: string; params: Record<string, unknown> } {
+  return {
+    id: "image.edit_model",
+    params: {
+      id,
+      rotation_deg: o.rotation,
+      width_mm: o.widthMm,
+      dpi: o.dpi,
+      sixteen_bit: o.sixteenBit,
+      invert: o.invert,
+      transparent_background: o.transparentBackground,
+      depth_cutoff_mm: o.depthCutoffMm,
+      equalize: o.equalize,
+      outline: o.outline,
+    },
+  };
+}

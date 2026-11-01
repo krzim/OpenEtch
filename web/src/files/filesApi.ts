@@ -85,6 +85,12 @@ export const filesApi = {
   /** POST /api/document/import with the raw file (`query` from `importQuery`): `{ok, result, revision}` or `{ok:false,error}`. */
   importFile: (query: string, file: Blob) => upload<unknown>(`/api/document/import?${query}`, file),
   /** The saved project rendered as PNG. */
+  /** Project folders (UX-013): the tree and the mounted locations. */
+  projectFolders: () => json<unknown>("GET", "/api/projects/folders"),
+  createProjectFolder: (name: string) => json<unknown>("POST", "/api/projects/folders", { name, origin: UI_ORIGIN }),
+  projectLocations: () => json<unknown>("GET", "/api/projects/locations"),
+  /** UI only: replace the saved locations (the command line's stay). */
+  setProjectLocations: (locations: { label: string; path: string }[]) => json<unknown>("PUT", "/api/projects/locations", { locations, origin: UI_ORIGIN }),
   thumbnail: (name: string, width = 128) => download(`/api/projects/${encodeURIComponent(name)}/thumbnail.png?width=${width}`),
   backups: (project?: string | null) => json<unknown>("GET", `/api/backups${project ? `?project=${encodeURIComponent(project)}` : ""}`),
   restoreBackup: (kind: "autosave" | "backup", file: string) => json<unknown>("POST", "/api/backups/restore", { kind, file, origin: UI_ORIGIN }),
@@ -95,6 +101,9 @@ export const filesApi = {
   uploadTemplate: (name: string, file: Blob) => upload<unknown>(`/api/templates/upload?name=${encodeURIComponent(name)}`, file, "application/xml"),
   openTemplate: (name: string) => json<unknown>("POST", "/api/templates/open", { name, origin: UI_ORIGIN }),
   exportPrefs: () => download("/api/prefs/export"),
+  /** A LightBurn .lbprefs / prefs.ini: `preview` maps it without applying (else UI only: applied, engine part only). */
+  importLightBurnPrefs: (file: Blob, preview: boolean) =>
+    upload<unknown>(`/api/prefs/import_lightburn?${preview ? "preview=1" : `origin=${UI_ORIGIN}`}`, file, "application/json"),
   importPrefs: (file: Blob) => upload<unknown>(`/api/prefs/import?origin=${UI_ORIGIN}`, file, "application/json"),
   prefsBackups: () => json<unknown>("GET", "/api/prefs/backups"),
   restorePrefs: (file: string) => json<unknown>("POST", "/api/prefs/backups/restore", { file, origin: UI_ORIGIN }),

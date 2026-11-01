@@ -1,10 +1,14 @@
-//! Barcodes as outlines (LightBurn's Create Bar Code), encoded with rxing (a ZXing port, Apache-2.0). The modules
-//! (2D) or bars (1D) become one welded outline per island, so a fill layer burns every dark module once and a line
-//! layer traces their edges. Of LightBurn's 28 types, those ZXing can encode are offered: QR Code, Data Matrix,
-//! Aztec, PDF417, Code 128, Code 39, Code 93, CodaBar, EAN-8, EAN-13, UPC-A, UPC-E, ITF (2 of 5 interleaved) and
-//! Telepen. Micro QR, AprilTag/ArUco, Grid Matrix, Han Xin, Plessey and the other 2 of 5 variants are not.
+//! Barcodes as outlines (LightBurn's Create Bar Code). The modules (2D) or bars (1D) become one welded outline per
+//! island, so a fill layer burns every dark module once and a line layer traces their edges.
+//!
+//! rxing (a ZXing port, Apache-2.0) encodes QR Code, Data Matrix, Aztec, PDF417 (also compact), Code 128, Code 39,
+//! Code 93, CodaBar, EAN-8, EAN-13, UPC-A, UPC-E, ITF (2 of 5 interleaved) and Telepen; ISBN goes through EAN-13 and
+//! VIN through Code 39 after their checks. OpenEtch's own encoders (`crate::codes`) add Micro QR, rMQR, 2 of 5
+//! Industrial, 2 of 5 IATA, Plessey and AprilTag 16h5 / 25h9 / 36h11.
 
 use kurbo::{BezPath, Rect, Shape};
+
+use crate::codes;
 use rxing::{BarcodeFormat, EncodeHints, MultiFormatWriter, Writer};
 
 /// A barcode type.
@@ -24,10 +28,21 @@ pub enum Kind {
     UpcE,
     Itf,
     Telepen,
+    Pdf417Compact,
+    MicroQr,
+    Rmqr,
+    Industrial2of5,
+    Iata2of5,
+    Isbn,
+    Vin,
+    Plessey,
+    AprilTag16h5,
+    AprilTag25h9,
+    AprilTag36h11,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 14] = [
+    pub const ALL: [Kind; 25] = [
         Kind::Qr,
         Kind::DataMatrix,
         Kind::Aztec,
@@ -42,6 +57,17 @@ impl Kind {
         Kind::UpcE,
         Kind::Itf,
         Kind::Telepen,
+        Kind::Pdf417Compact,
+        Kind::MicroQr,
+        Kind::Rmqr,
+        Kind::Industrial2of5,
+        Kind::Iata2of5,
+        Kind::Isbn,
+        Kind::Vin,
+        Kind::Plessey,
+        Kind::AprilTag16h5,
+        Kind::AprilTag25h9,
+        Kind::AprilTag36h11,
     ];
 
     /// The name used in commands (`qr`, `data_matrix`, `code128`, ...).
@@ -61,6 +87,17 @@ impl Kind {
             Kind::UpcE => "upc_e",
             Kind::Itf => "itf",
             Kind::Telepen => "telepen",
+            Kind::Pdf417Compact => "pdf417_compact",
+            Kind::MicroQr => "micro_qr",
+            Kind::Rmqr => "rmqr",
+            Kind::Industrial2of5 => "industrial_2of5",
+            Kind::Iata2of5 => "iata_2of5",
+            Kind::Isbn => "isbn",
+            Kind::Vin => "vin",
+            Kind::Plessey => "plessey",
+            Kind::AprilTag16h5 => "apriltag_16h5",
+            Kind::AprilTag25h9 => "apriltag_25h9",
+            Kind::AprilTag36h11 => "apriltag_36h11",
         }
     }
 
@@ -72,13 +109,36 @@ impl Kind {
             "ean" => Some(Kind::Ean13),
             "upc" => Some(Kind::UpcA),
             "2of5" | "interleaved2of5" => Some(Kind::Itf),
+            "microqr" | "qrmicro" | "mqr" => Some(Kind::MicroQr),
+            "qrmicrorectangular" | "rectangularmicroqr" => Some(Kind::Rmqr),
+            "2of5industrial" | "standard2of5" => Some(Kind::Industrial2of5),
+            "2of5iata" => Some(Kind::Iata2of5),
+            "pdf417truncated" | "truncatedpdf417" => Some(Kind::Pdf417Compact),
+            "ukplessey" => Some(Kind::Plessey),
             _ => None,
         })
     }
 
     /// A 2D symbol (square modules) rather than a row of bars.
     pub fn is_2d(self) -> bool {
-        matches!(self, Kind::Qr | Kind::DataMatrix | Kind::Aztec | Kind::Pdf417)
+        matches!(
+            self,
+            Kind::Qr
+                | Kind::DataMatrix
+                | Kind::Aztec
+                | Kind::Pdf417
+                | Kind::Pdf417Compact
+                | Kind::MicroQr
+                | Kind::Rmqr
+                | Kind::AprilTag16h5
+                | Kind::AprilTag25h9
+                | Kind::AprilTag36h11
+        )
+    }
+
+    /// A fiducial tag (the data is the tag id).
+    pub fn is_tag(self) -> bool {
+        matches!(self, Kind::AprilTag16h5 | Kind::AprilTag25h9 | Kind::AprilTag36h11)
     }
 
     fn format(self) -> BarcodeFormat {
@@ -97,6 +157,11 @@ impl Kind {
             Kind::UpcE => BarcodeFormat::UPC_E,
             Kind::Itf => BarcodeFormat::ITF,
             Kind::Telepen => BarcodeFormat::TELEPEN,
+            Kind::Pdf417Compact => BarcodeFormat::PDF_417,
+            Kind::Isbn => BarcodeFormat::EAN_13,
+            Kind::Vin => BarcodeFormat::CODE_39,
+            // Encoded by `crate::codes`, never through rxing.
+            _ => BarcodeFormat::UNSUPORTED_FORMAT,
         }
     }
 }
@@ -140,6 +205,25 @@ pub fn encode(kind: Kind, data: &str, o: &Options) -> Result<Vec<Vec<bool>>, Str
     if data.is_empty() {
         return Err("the barcode data is empty".into());
     }
+    let ec = o.error_correction.as_deref();
+    let one_row = |m: Vec<bool>| vec![m];
+    match kind {
+        Kind::MicroQr => return codes::qr_micro::micro_qr(data, ec),
+        Kind::Rmqr => return codes::qr_micro::rmqr(data, ec),
+        Kind::Industrial2of5 => return codes::linear::two_of_five_industrial(data).map(one_row),
+        Kind::Iata2of5 => return codes::linear::two_of_five_iata(data).map(one_row),
+        Kind::Plessey => return codes::linear::plessey(data).map(one_row),
+        Kind::AprilTag16h5 => return codes::tags::TAG16H5.grid(data),
+        Kind::AprilTag25h9 => return codes::tags::TAG25H9.grid(data),
+        Kind::AprilTag36h11 => return codes::tags::TAG36H11.grid(data),
+        _ => {}
+    }
+    let checked = match kind {
+        Kind::Isbn => Some(codes::linear::isbn_to_ean13(data)?),
+        Kind::Vin => Some(codes::linear::vin(data)?),
+        _ => None,
+    };
+    let data = checked.as_deref().unwrap_or(data);
     let mut hints = EncodeHints { Margin: Some("0".into()), ..EncodeHints::default() };
     if let Some(ec) = &o.error_correction {
         hints.ErrorCorrection = Some(ec.clone());
@@ -151,7 +235,10 @@ pub fn encode(kind: Kind, data: &str, o: &Options) -> Result<Vec<Vec<bool>>, Str
             rxing::datamatrix::encoder::SymbolShapeHint::FORCE_NONE
         });
     }
-    if !data.is_ascii() && matches!(kind, Kind::Qr | Kind::Aztec | Kind::Pdf417 | Kind::DataMatrix) {
+    if kind == Kind::Pdf417Compact {
+        hints.Pdf417Compact = Some("true".into());
+    }
+    if !data.is_ascii() && matches!(kind, Kind::Qr | Kind::Aztec | Kind::Pdf417 | Kind::Pdf417Compact | Kind::DataMatrix) {
         hints.CharacterSet = Some("UTF-8".into());
     }
     let m = std::panic::catch_unwind(|| MultiFormatWriter.encode_with_hints(data, &kind.format(), 0, 0, &hints))
@@ -242,6 +329,11 @@ mod tests {
                 Kind::UpcE => "0123456",
                 Kind::Itf => "12345678",
                 Kind::Codabar => "A123B",
+                Kind::Industrial2of5 | Kind::Iata2of5 => "123456",
+                Kind::Isbn => "978-0-306-40615-7",
+                Kind::Vin => "1M8GDM9AXKP042788",
+                Kind::Plessey => "12AB",
+                k if k.is_tag() => "3",
                 _ => "OPENETCH1",
             };
             assert!(draw(k, data, &Options::default()).is_ok(), "{k:?}");
@@ -258,5 +350,31 @@ mod tests {
         assert!((b.width() - 25.0).abs() < 1e-6);
         assert!(draw(Kind::Qr, "", &Options::default()).is_err());
         assert!(draw(Kind::Qr, "x", &Options { module_mm: f64::NAN, ..Options::default() }).is_err());
+    }
+
+    #[test]
+    fn new_types_encode() {
+        let o = Options::default();
+        // Truncated PDF417: no right row indicator, a one-module stop bar.
+        let full = encode(Kind::Pdf417, "OpenEtch compact PDF417", &o).unwrap();
+        let compact = encode(Kind::Pdf417Compact, "OpenEtch compact PDF417", &o).unwrap();
+        assert!(compact[0].len() < full[0].len());
+        assert!(compact.iter().all(|r| *r.last().unwrap()) && compact.iter().all(|r| !r[r.len() - 2]));
+        // ISBN is EAN-13 of 978 + the ISBN-10 digits; VIN is Code 39 with the check.
+        assert_eq!(encode(Kind::Isbn, "0-306-40615-2", &o).unwrap(), encode(Kind::Ean13, "9780306406157", &o).unwrap());
+        assert!(encode(Kind::Isbn, "0-306-40615-3", &o).unwrap_err().contains("check digit"));
+        assert_eq!(encode(Kind::Vin, "1M8GDM9AXKP042788", &o).unwrap(), encode(Kind::Code39, "1M8GDM9AXKP042788", &o).unwrap());
+        assert!(encode(Kind::Vin, "1M8GDM9A1KP042788", &o).is_err());
+        // Micro QR, rMQR and tags are 2D grids of their own sizes.
+        assert_eq!(encode(Kind::MicroQr, "123", &o).unwrap().len(), 11);
+        let r = encode(Kind::Rmqr, "123", &o).unwrap();
+        assert_eq!((r.len(), r[0].len()), (11, 27), "the smallest area: R11x27");
+        let d = draw(Kind::AprilTag36h11, "0", &Options { module_mm: 1.0, ..o.clone() }).unwrap();
+        assert_eq!(d.modules, (8, 8));
+        assert!((d.width_mm - 8.0).abs() < 1e-9);
+        assert!(encode(Kind::AprilTag16h5, "30", &o).is_err());
+        assert_eq!(Kind::from_name("QR Micro"), Some(Kind::MicroQr));
+        assert_eq!(Kind::from_name("2 of 5 IATA"), Some(Kind::Iata2of5));
+        assert_eq!(Kind::from_name("AprilTag 36h11"), Some(Kind::AprilTag36h11));
     }
 }

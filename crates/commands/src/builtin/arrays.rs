@@ -246,6 +246,13 @@ pub struct NestInput {
     /// For "shapes": the smallest grid cell in mm (default: the region's longer side / 512). Coarser is faster
     /// and packs a little looser; spacing is kept either way.
     pub resolution_mm: Option<f64>,
+    /// LightBurn 2.2's Multipage (default false): parts that do not fit go onto new pages, each nested into the same
+    /// region, with a copy of the container when the region is an object; repeats until everything is placed, a
+    /// page takes nothing (parts too big for the region) or max_pages pages were added.
+    #[serde(default)]
+    pub multipage: bool,
+    /// With multipage: most pages to add (1..=100, default 100).
+    pub max_pages: Option<usize>,
 }
 
 /// How `art.nest` packs.
@@ -267,18 +274,39 @@ impl Command for Nest {
     const ID: &'static str = "art.nest";
     const TITLE: &'static str = "Nest";
     const DESCRIPTION: &'static str = "Pack parts into a region. mode \"boxes\" (default, LightBurn's Quick Nest): \
-        bounding boxes on shelves from the lower left, tallest first; a round stock uses its inscribed square. mode \
-        \"shapes\" (true shape, like TrueNest): real outlines interlock and fill holes, inside the region's real \
-        outline (round or rotated stock, an object's shape), largest first, each at its lowest place over its \
-        rotations, on a raster (resolution_mm) that always keeps spacing_mm and edge_mm; work is bounded. Parts that \
-        do not fit stay put and are listed in `unplaced`. Returns affected ids, `placed` ({id, rotation_deg}), \
-        `mode`, bounds, and for shapes `cell_mm` and `budget_exhausted`.";
+        bounding boxes on shelves from the lower left; a round stock uses its inscribed square. mode \"shapes\" \
+        (True Nest): real outlines interlock and fill holes inside the region's real outline, largest first, on a \
+        raster (resolution_mm) keeping spacing_mm and edge_mm; work is bounded. multipage (LightBurn 2.2): parts \
+        left over go onto new pages. Parts that do not fit stay put, listed in `unplaced`. Returns `placed` ({id, \
+        rotation_deg, page}), `pages` added, `mode`, bounds; for shapes `cell_mm`, `budget_exhausted`.";
     const RISK: Risk = Risk::Edit;
 
     fn apply(doc: &mut Document, i: NestInput) -> Result<(Value, String)> {
         transact(doc, |doc| nest(doc, i))
     }
 }
+
+/// Most extra pages one multipage nest may add.
+const MAX_SHEETS: usize = 100;
+
+/// The container parts are packed into.
+enum Container {
+    /// Quick Nest: a rectangle (already shrunk by the edge gap).
+    Box(Rect),
+    /// True shape: closed outlines.
+    Shape(Vec<geom::flatten::Polyline>),
+}
+
+/// One packing pass: for each unit, the rotation index it was placed with (`None`: did not fit). Moves the placed
+/// units.
+struct Pass {
+    placed: Vec<Option<usize>>,
+    cell_mm: f64,
+    budget_exhausted: bool,
+}
+
+/// Flattening tolerance for true-shape nesting, mm; added to the spacing and edge gap so curves stay clear.
+const NEST_FLATTEN_MM: f64 = 0.02;
 
 fn nest(doc: &mut Document, i: NestInput) -> Result<(Value, String)> {
     let cmd = Nest::ID;
@@ -291,19 +319,142 @@ fn nest(doc: &mut Document, i: NestInput) -> Result<(Value, String)> {
     for r in &rotations {
         util::finite(cmd, "rotations", *r)?;
     }
-    if i.mode == NestMode::Shapes {
-        return nest_shapes(doc, &i, spacing, edge, &rotations);
-    }
-    if i.resolution_mm.is_some() {
+    let shapes = i.mode == NestMode::Shapes;
+    if !shapes && i.resolution_mm.is_some() {
         return Err(invalid(cmd, "resolution_mm is only for mode \"shapes\""));
     }
-    let (region, exclude): (Rect, Option<ObjectId>) = match &i.region {
-        NestRegion::Named(NamedRegion::Field) => {
-            let [w, h] = doc.workspace().ok_or_else(|| CommandError::Failed(format!("{cmd}: the document has no field size")))?;
-            (Rect::from_center_size((0.0, 0.0), (w, h)), None)
+    if i.max_pages.is_some() && !i.multipage {
+        return Err(invalid(cmd, "max_pages is only for multipage"));
+    }
+    let max_pages = i.max_pages.unwrap_or(MAX_SHEETS);
+    if max_pages == 0 || max_pages > MAX_SHEETS {
+        return Err(invalid(cmd, format!("max_pages must be 1 to {MAX_SHEETS}")));
+    }
+    let (container, exclude) = container(doc, &i.region, shapes, edge)?;
+    let min_cell = match i.resolution_mm {
+        Some(r) => util::positive(cmd, "resolution_mm", r)?,
+        None => 0.0,
+    };
+    let units: Vec<util::Unit> = util::units(cmd, doc, &i.ids)?
+        .into_iter()
+        .filter(|u| exclude.as_ref().is_none_or(|x| !u.members.contains(x)))
+        .collect();
+    if units.is_empty() {
+        return Err(invalid(cmd, "nothing to nest"));
+    }
+    let all: Vec<ObjectId> = units.iter().flat_map(|u| u.members.iter().cloned()).collect();
+    util::check_unlocked(cmd, doc, &all)?;
+
+    let first = pack(doc, &container, &units, spacing, edge, &rotations, min_cell)?;
+    let (mut cell_mm, mut budget_exhausted) = (first.cell_mm, first.budget_exhausted);
+    let mut affected = Vec::new();
+    let mut report = Vec::new();
+    let mut left: Vec<usize> = Vec::new();
+    for (k, (u, p)) in units.iter().zip(&first.placed).enumerate() {
+        match p {
+            Some(o) => {
+                affected.extend(u.members.iter().cloned());
+                report.push(json!({ "id": u.id, "rotation_deg": rotations[*o], "page": Value::Null }));
+            }
+            None => left.push(k),
         }
+    }
+    if affected.is_empty() {
+        return Err(CommandError::Failed(format!("{cmd}: no part fits in the region")));
+    }
+    // LightBurn 2.2's Multipage: parts left over go to new pages, each with a copy of the container, nested into the
+    // same place.
+    let mut sheets = Vec::new();
+    let mut created = Vec::new();
+    while i.multipage && !left.is_empty() && sheets.len() < max_pages {
+        let rest: Vec<util::Unit> = left.iter().map(|&k| units[k].clone()).collect();
+        let pass = pack(doc, &container, &rest, spacing, edge, &rotations, min_cell)?;
+        cell_mm = cell_mm.max(pass.cell_mm);
+        budget_exhausted |= pass.budget_exhausted;
+        if pass.placed.iter().all(Option::is_none) {
+            break;
+        }
+        let mut moved: Vec<ObjectId> = Vec::new();
+        let mut still = Vec::new();
+        let mut on_sheet = Vec::new();
+        for (&k, p) in left.iter().zip(&pass.placed) {
+            match p {
+                Some(o) => {
+                    moved.extend(units[k].members.iter().cloned());
+                    on_sheet.push((units[k].id.clone(), rotations[*o]));
+                }
+                None => still.push(k),
+            }
+        }
+        // The container's copy (an object region; the stock and the field are the same on every page).
+        let mut copy = Vec::new();
+        if let Some(c) = &exclude {
+            let ids = util::object_ids(cmd, doc, std::slice::from_ref(c))?;
+            copy = copy_objects(doc, &ids, Vec2::ZERO, "")?;
+            moved.extend(copy.iter().cloned());
+            created.extend(copy.iter().cloned());
+        }
+        let (page_id, page_name) = super::pages::nest_sheet(doc, &moved)?;
+        for (id, rot) in on_sheet {
+            report.push(json!({ "id": id, "rotation_deg": rot, "page": page_id }));
+        }
+        affected.retain(|a| !moved.contains(a));
+        sheets.push(json!({ "page": page_id, "name": page_name, "container": copy, "parts": moved.len() - copy.len() }));
+        left = still;
+    }
+    let unplaced: Vec<&String> = left.iter().map(|&k| &units[k].id).collect();
+    let mut r = util::edit_result(doc, &[], &affected);
+    r["created"] = json!(created);
+    r["placed"] = json!(report);
+    r["unplaced"] = json!(unplaced);
+    r["mode"] = json!(if shapes { "shapes" } else { "boxes" });
+    r["pages"] = json!(sheets);
+    if shapes {
+        r["cell_mm"] = json!(util::r4(cell_mm));
+        r["budget_exhausted"] = json!(budget_exhausted);
+    }
+    let by = if shapes { " by shape" } else { "" };
+    let on = if sheets.is_empty() { String::new() } else { format!(" on {} more page(s)", sheets.len()) };
+    Ok((r, format!("nested {} parts{by}{on} ({} did not fit)", report.len(), unplaced.len())))
+}
+
+/// The region `art.nest` packs into, with the object it came from (that object is never nested itself).
+fn container(doc: &Document, region: &NestRegion, shapes: bool, edge: f64) -> Result<(Container, Option<ObjectId>)> {
+    let cmd = Nest::ID;
+    let flat = |p: &kurbo::BezPath| geom::flatten(p, NEST_FLATTEN_MM).map_err(geom_err(cmd));
+    let field = || {
+        doc.workspace()
+            .map(|[w, h]| Rect::from_center_size((0.0, 0.0), (w, h)))
+            .ok_or_else(|| CommandError::Failed(format!("{cmd}: the document has no field size")))
+    };
+    let stock = || doc.stock.as_ref().ok_or_else(|| CommandError::Failed(format!("{cmd}: no stock is defined; run stock.define first")));
+    let rect = |min: [f64; 2], max: [f64; 2]| -> Result<Rect> {
+        let [x0, y0] = util::finite2(cmd, "region.min", min)?;
+        let [x1, y1] = util::finite2(cmd, "region.max", max)?;
+        if x1 <= x0 || y1 <= y0 {
+            return Err(invalid(cmd, "region max must be above and right of min"));
+        }
+        Ok(Rect::new(x0, y0, x1, y1))
+    };
+    if shapes {
+        return Ok(match region {
+            NestRegion::Named(NamedRegion::Field) => (Container::Shape(flat(&field()?.to_path(0.01))?), None),
+            NestRegion::Named(NamedRegion::Stock) => (Container::Shape(flat(&stock()?.outline())?), None),
+            NestRegion::Rect { min, max } => (Container::Shape(flat(&rect(*min, *max)?.to_path(0.01))?), None),
+            NestRegion::Object { object } => {
+                let o = util::object(doc, object)?;
+                let rings: Vec<_> = flat(&o.field_path())?.into_iter().filter(|l| l.closed).collect();
+                if rings.is_empty() {
+                    return Err(invalid(cmd, format!("{} has no closed outline to nest into", o.id)));
+                }
+                (Container::Shape(rings), Some(o.id.clone()))
+            }
+        });
+    }
+    let (r, exclude) = match region {
+        NestRegion::Named(NamedRegion::Field) => (field()?, None),
         NestRegion::Named(NamedRegion::Stock) => {
-            let s = doc.stock.as_ref().ok_or_else(|| CommandError::Failed(format!("{cmd}: no stock is defined; run stock.define first")))?;
+            let s = stock()?;
             let r = match s.shape {
                 StockShape::Circle { diameter_mm } => {
                     let side = diameter_mm / 2f64.sqrt();
@@ -319,161 +470,89 @@ fn nest(doc: &mut Document, i: NestInput) -> Result<(Value, String)> {
             };
             (r, None)
         }
-        NestRegion::Rect { min, max } => {
-            let [x0, y0] = util::finite2(cmd, "region.min", *min)?;
-            let [x1, y1] = util::finite2(cmd, "region.max", *max)?;
-            if x1 <= x0 || y1 <= y0 {
-                return Err(invalid(cmd, "region max must be above and right of min"));
-            }
-            (Rect::new(x0, y0, x1, y1), None)
-        }
+        NestRegion::Rect { min, max } => (rect(*min, *max)?, None),
         NestRegion::Object { object } => {
             let o = util::object(doc, object)?;
             (o.bounds(), Some(o.id.clone()))
         }
     };
-    let region = region.inset(-edge);
-    if region.width() <= 0.0 || region.height() <= 0.0 {
+    let r = r.inset(-edge);
+    if r.width() <= 0.0 || r.height() <= 0.0 {
         return Err(invalid(cmd, "the region is smaller than its edge gap"));
     }
-    let units: Vec<util::Unit> = util::units(cmd, doc, &i.ids)?
-        .into_iter()
-        .filter(|u| exclude.as_ref().is_none_or(|x| !u.members.contains(x)))
-        .collect();
-    if units.is_empty() {
-        return Err(invalid(cmd, "nothing to nest"));
-    }
-    let all: Vec<ObjectId> = units.iter().flat_map(|u| u.members.iter().cloned()).collect();
-    util::check_unlocked(cmd, doc, &all)?;
-    // Per unit and rotation: the rotated box.
-    let mut boxes: Vec<Vec<Rect>> = Vec::new();
-    for u in &units {
-        let mut per = Vec::new();
-        for r in &rotations {
-            let rot = Affine::rotate(r.to_radians());
-            let b = u
-                .members
-                .iter()
-                .filter_map(|m| doc.object(m))
-                .map(|o| (rot * o.field_path()).bounding_box())
-                .reduce(|a, b| a.union(b))
-                .unwrap_or_default();
-            per.push(b);
-        }
-        boxes.push(per);
-    }
-    let parts: Vec<Part> = boxes.iter().map(|bs| Part { sizes: bs.iter().map(|b| (b.width(), b.height())).collect() }).collect();
-    let placed = shelf_pack(&parts, region, spacing);
-    let mut affected = Vec::new();
-    let mut report = Vec::new();
-    let mut unplaced = Vec::new();
-    for ((u, p), bs) in units.iter().zip(&placed).zip(&boxes) {
-        match p {
-            Some(p) => {
-                let b = bs[p.orientation];
-                let t = Affine::translate(p.min - b.origin()) * Affine::rotate(rotations[p.orientation].to_radians());
-                apply_affine(doc, &u.members, t);
-                affected.extend(u.members.iter().cloned());
-                report.push(json!({ "id": u.id, "rotation_deg": rotations[p.orientation] }));
-            }
-            None => unplaced.push(u.id.clone()),
-        }
-    }
-    if affected.is_empty() {
-        return Err(CommandError::Failed(format!("{cmd}: no part fits in the region")));
-    }
-    let mut r = util::edit_result(doc, &[], &affected);
-    r["placed"] = json!(report);
-    r["unplaced"] = json!(unplaced);
-    r["mode"] = json!("boxes");
-    Ok((r, format!("nested {} parts ({} did not fit)", report.len(), unplaced.len())))
+    Ok((Container::Box(r), exclude))
 }
 
-/// Flattening tolerance for true-shape nesting, mm; added to the spacing and edge gap so curves stay clear.
-const NEST_FLATTEN_MM: f64 = 0.02;
-
-/// `art.nest` with mode "shapes" (see [`geom::nest::shapes`]).
-fn nest_shapes(doc: &mut Document, i: &NestInput, spacing: f64, edge: f64, rotations: &[f64]) -> Result<(Value, String)> {
-    use geom::flatten::Polyline;
-    use geom::nest::shapes::{ShapePart, nest as shape_nest};
+/// Pack `units` into the container once and move the ones that fit.
+fn pack(
+    doc: &mut Document,
+    container: &Container,
+    units: &[util::Unit],
+    spacing: f64,
+    edge: f64,
+    rotations: &[f64],
+    min_cell: f64,
+) -> Result<Pass> {
     let cmd = Nest::ID;
-    let flat = |p: &kurbo::BezPath| geom::flatten(p, NEST_FLATTEN_MM).map_err(geom_err(cmd));
-    let (region, exclude): (Vec<Polyline>, Option<ObjectId>) = match &i.region {
-        NestRegion::Named(NamedRegion::Field) => {
-            let [w, h] =
-                doc.workspace().ok_or_else(|| CommandError::Failed(format!("{cmd}: the document has no field size")))?;
-            (flat(&Rect::from_center_size((0.0, 0.0), (w, h)).to_path(0.01))?, None)
-        }
-        NestRegion::Named(NamedRegion::Stock) => {
-            let s = doc.stock.as_ref().ok_or_else(|| CommandError::Failed(format!("{cmd}: no stock is defined; run stock.define first")))?;
-            (flat(&s.outline())?, None)
-        }
-        NestRegion::Rect { min, max } => {
-            let [x0, y0] = util::finite2(cmd, "region.min", *min)?;
-            let [x1, y1] = util::finite2(cmd, "region.max", *max)?;
-            if x1 <= x0 || y1 <= y0 {
-                return Err(invalid(cmd, "region max must be above and right of min"));
+    match container {
+        Container::Box(region) => {
+            // Per unit and rotation: the rotated box.
+            let mut boxes: Vec<Vec<Rect>> = Vec::new();
+            for u in units {
+                let mut per = Vec::new();
+                for r in rotations {
+                    let rot = Affine::rotate(r.to_radians());
+                    let b = u
+                        .members
+                        .iter()
+                        .filter_map(|m| doc.object(m))
+                        .map(|o| (rot * o.field_path()).bounding_box())
+                        .reduce(|a, b| a.union(b))
+                        .unwrap_or_default();
+                    per.push(b);
+                }
+                boxes.push(per);
             }
-            (flat(&Rect::new(x0, y0, x1, y1).to_path(0.01))?, None)
-        }
-        NestRegion::Object { object } => {
-            let o = util::object(doc, object)?;
-            let rings: Vec<Polyline> = flat(&o.field_path())?.into_iter().filter(|l| l.closed).collect();
-            if rings.is_empty() {
-                return Err(invalid(cmd, format!("{} has no closed outline to nest into", o.id)));
+            let parts: Vec<Part> =
+                boxes.iter().map(|bs| Part { sizes: bs.iter().map(|b| (b.width(), b.height())).collect() }).collect();
+            let placed = shelf_pack(&parts, *region, spacing);
+            let mut out = Vec::with_capacity(units.len());
+            for ((u, p), bs) in units.iter().zip(&placed).zip(&boxes) {
+                if let Some(p) = p {
+                    let b = bs[p.orientation];
+                    let t = Affine::translate(p.min - b.origin()) * Affine::rotate(rotations[p.orientation].to_radians());
+                    apply_affine(doc, &u.members, t);
+                }
+                out.push(p.as_ref().map(|p| p.orientation));
             }
-            (rings, Some(o.id.clone()))
+            Ok(Pass { placed: out, cell_mm: 0.0, budget_exhausted: false })
         }
-    };
-    let min_cell = match i.resolution_mm {
-        Some(r) => util::positive(cmd, "resolution_mm", r)?,
-        None => 0.0,
-    };
-    let units: Vec<util::Unit> = util::units(cmd, doc, &i.ids)?
-        .into_iter()
-        .filter(|u| exclude.as_ref().is_none_or(|x| !u.members.contains(x)))
-        .collect();
-    if units.is_empty() {
-        return Err(invalid(cmd, "nothing to nest"));
-    }
-    let all: Vec<ObjectId> = units.iter().flat_map(|u| u.members.iter().cloned()).collect();
-    util::check_unlocked(cmd, doc, &all)?;
-    let mut parts = Vec::with_capacity(units.len());
-    for u in &units {
-        let mut orientations = Vec::with_capacity(rotations.len());
-        for r in rotations {
-            let rot = Affine::rotate(r.to_radians());
-            let mut lines = Vec::new();
-            for o in u.members.iter().filter_map(|m| doc.object(m)) {
-                lines.extend(flat(&(rot * o.field_path()))?);
+        Container::Shape(region) => {
+            use geom::nest::shapes::{ShapePart, nest as shape_nest};
+            let flat = |p: &kurbo::BezPath| geom::flatten(p, NEST_FLATTEN_MM).map_err(geom_err(cmd));
+            let mut parts = Vec::with_capacity(units.len());
+            for u in units {
+                let mut orientations = Vec::with_capacity(rotations.len());
+                for r in rotations {
+                    let rot = Affine::rotate(r.to_radians());
+                    let mut lines = Vec::new();
+                    for o in u.members.iter().filter_map(|m| doc.object(m)) {
+                        lines.extend(flat(&(rot * o.field_path()))?);
+                    }
+                    orientations.push(lines);
+                }
+                parts.push(ShapePart { orientations });
             }
-            orientations.push(lines);
-        }
-        parts.push(ShapePart { orientations });
-    }
-    let n = shape_nest(&parts, &region, edge + NEST_FLATTEN_MM, spacing + 2.0 * NEST_FLATTEN_MM, min_cell);
-    let mut affected = Vec::new();
-    let mut report = Vec::new();
-    let mut unplaced = Vec::new();
-    for (u, p) in units.iter().zip(&n.placements) {
-        match p {
-            Some(p) => {
-                let t = Affine::translate(p.offset) * Affine::rotate(rotations[p.orientation].to_radians());
-                apply_affine(doc, &u.members, t);
-                affected.extend(u.members.iter().cloned());
-                report.push(json!({ "id": u.id, "rotation_deg": rotations[p.orientation] }));
+            let n = shape_nest(&parts, region, edge + NEST_FLATTEN_MM, spacing + 2.0 * NEST_FLATTEN_MM, min_cell);
+            let mut out = Vec::with_capacity(units.len());
+            for (u, p) in units.iter().zip(&n.placements) {
+                if let Some(p) = p {
+                    let t = Affine::translate(p.offset) * Affine::rotate(rotations[p.orientation].to_radians());
+                    apply_affine(doc, &u.members, t);
+                }
+                out.push(p.as_ref().map(|p| p.orientation));
             }
-            None => unplaced.push(u.id.clone()),
+            Ok(Pass { placed: out, cell_mm: n.cell_mm, budget_exhausted: n.budget_exhausted })
         }
     }
-    if affected.is_empty() {
-        return Err(CommandError::Failed(format!("{cmd}: no part fits in the region")));
-    }
-    let mut r = util::edit_result(doc, &[], &affected);
-    r["placed"] = json!(report);
-    r["unplaced"] = json!(unplaced);
-    r["mode"] = json!("shapes");
-    r["cell_mm"] = json!(util::r4(n.cell_mm));
-    r["budget_exhausted"] = json!(n.budget_exhausted);
-    Ok((r, format!("nested {} parts by shape ({} did not fit)", report.len(), unplaced.len())))
 }

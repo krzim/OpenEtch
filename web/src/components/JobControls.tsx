@@ -27,7 +27,9 @@ import {
 import { jobApi } from "../api/jobApi.ts";
 import { formatDuration } from "../api/laser.ts";
 import type { LinkState } from "../api/useEngine.ts";
-import { useT } from "../workspace/usePrefs.ts";
+import { usePrefs, useT } from "../workspace/usePrefs.ts";
+import { getPrefs } from "../workspace/prefs.ts";
+import { tr } from "../workspace/tr.ts";
 import { getRunOptions, setRunOptions, useRunOptions } from "./jobStore.ts";
 import { Icon } from "./ui.tsx";
 import "./job.css";
@@ -89,10 +91,11 @@ export function useJobStatus(link: LinkState): JobState {
 
 /** Request a run with the Laser window's options (and the selection for Cut Selected Graphics). */
 export async function requestRunWithOptions(selection: readonly string[], fromSegment: number | null = null): Promise<string> {
+  // Beginner Mode hides Cut Selected Graphics and ignores it (LightBurn ignores hidden optional settings).
   const o = getRunOptions();
-  const body = runRequestBody(fromSegment === null ? o : { ...o, cutSelected: false }, { selection, fromSegment });
+  const body = runRequestBody(fromSegment === null && !getPrefs().beginnerMode ? o : { ...o, cutSelected: false }, { selection, fromSegment });
   await jobApi.requestRun(body);
-  return fromSegment === null ? "Run requested. Approve it in the Runs card." : `Run from segment ${fromSegment} requested. Approve it in the Runs card.`;
+  return fromSegment === null ? tr("rest.runRequested") : tr("rest.runFromRequested", { n: fromSegment });
 }
 
 /** Pause a running job, or resume a paused one (the Pause / resume hotkey). Resolves to the toast text. */
@@ -189,6 +192,7 @@ export function JobProgress(p: { state: JobState; notify: Notify; report: (e: un
 /** Repeat, Run continuously, Start Marking input (+ Require Full Pulse) and Cut Selected Graphics. */
 export function RunOptionsPanel(p: { selected: number; hasStartInput: boolean | null }) {
   const t = useT();
+  const beginnerMode = usePrefs().beginnerMode;
   const o = useRunOptions();
   const [repeatText, setRepeatText] = useState(String(o.repeat));
   useEffect(() => setRepeatText(String(o.repeat)), [o.repeat]);
@@ -228,12 +232,14 @@ export function RunOptionsPanel(p: { selected: number; hasStartInput: boolean | 
           {t("job.fullPulse")}
         </label>
       )}
-      <label className="laser-check" title={t("job.cutSelectedTitle")}>
-        <input type="checkbox" checked={o.cutSelected} onChange={(e) => setRunOptions({ cutSelected: e.target.checked })} />
-        {t("job.cutSelected")}
-        {o.cutSelected && <span className="pill">{p.selected}</span>}
-      </label>
-      <p className="hint job-summary">{t("job.nextRun", { summary: runOptionsSummary(o, p.selected) })}</p>
+      {!beginnerMode && (
+        <label className="laser-check" title={t("job.cutSelectedTitle")}>
+          <input type="checkbox" checked={o.cutSelected} onChange={(e) => setRunOptions({ cutSelected: e.target.checked })} />
+          {t("job.cutSelected")}
+          {o.cutSelected && <span className="pill">{p.selected}</span>}
+        </label>
+      )}
+      <p className="hint job-summary">{t("job.nextRun", { summary: runOptionsSummary(beginnerMode ? { ...o, cutSelected: false } : o, p.selected) })}</p>
     </div>
   );
 }

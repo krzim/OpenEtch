@@ -194,3 +194,21 @@ test("canvas view store notifies on changes only", () => {
   I.imageView.setView(start);
   assert.equal(n, 3);
 });
+
+test("Adjust Image presets: list, picking one and the saved body", () => {
+  const list = I.imagePresetList({
+    presets: [
+      { name: "z", adjust: { gamma: 1.5 } },
+      { name: "a", image: { dither: "stucki" } },
+      { name: "empty" },
+      { adjust: { gamma: 2 } },
+    ],
+  });
+  assert.deepEqual(list.map((p) => p.name), ["a", "z"]);
+  const cur = { ...I.DEFAULT_ADJUST, contrast: 20 };
+  assert.deepEqual(I.adjustFromPreset(list[1]!, cur), { ...I.DEFAULT_ADJUST, gamma: 1.5 }, "a preset's adjustments replace all six");
+  assert.equal(I.adjustFromPreset(list[0]!, cur), cur, "a layer-only preset keeps the adjustments");
+  assert.deepEqual(I.imagePresetBody(cur, null), { adjust: cur });
+  assert.deepEqual(Object.keys(I.imagePresetBody(cur, I.DEFAULT_IMAGE_SETTINGS)), ["adjust", "image"]);
+  assert.deepEqual(I.imagePresetList(null), []);
+});

@@ -6,14 +6,27 @@ import { useMemo, useState } from "react";
 import type { Invocation } from "../api/client.ts";
 import { isSquare, workspaceText } from "../api/devices.ts";
 import * as G from "../api/geomCommands.ts";
-import type { GDocument, Vec2 } from "../api/types.ts";
+import type { GDocument, Vec2, VirtualArray } from "../api/types.ts";
 import { evalNumber } from "../editing.ts";
 import { geometryCmds, objectBounds, toPathData, unionBoxes, type Box } from "../geometry.ts";
 import { Modal, UnitTextField } from "../components/ui.tsx";
-import { usePrefs } from "../workspace/usePrefs.ts";
+import { usePrefs, useT } from "../workspace/usePrefs.ts";
+import type { MsgKey } from "../workspace/i18n.ts";
 import { formatLength } from "../workspace/units.ts";
+import { dBool, dNum, dStr } from "../workspace/dialogDefaults.ts";
 import { DCMD, curveTolerance, distributeSpacing, pagePosition } from "./designApi.ts";
-import { PAGE_ANCHORS, arrayCells, arrayParams, arrayProblem, cellsOutside, type ArrayOptions, type PageAnchor } from "./model.ts";
+import {
+  PAGE_ANCHORS,
+  arrayCells,
+  arrayOptionsOf,
+  arrayParams,
+  arrayProblem,
+  cellsOutside,
+  editArrayParams,
+  resolveCounts,
+  type ArrayOptions,
+  type PageAnchor,
+} from "./model.ts";
 
 type Run = (inv: Invocation | Invocation[]) => Promise<unknown>;
 const Num = UnitTextField;
@@ -44,145 +57,136 @@ function useBusy(run: Run, onDone?: (r: unknown) => void) {
   return { busy, error, go };
 }
 
-const ANCHOR_LABEL: Record<PageAnchor, string> = {
-  top_left: "Top left",
-  top: "Top centre",
-  top_right: "Top right",
-  left: "Middle left",
-  center: "Centre",
-  right: "Middle right",
-  bottom_left: "Bottom left",
-  bottom: "Bottom centre",
-  bottom_right: "Bottom right",
-};
+/** Message key of a page position's name (locales/en-design.ts). */
+const anchorKey = (a: PageAnchor) => `dz.anchor.${a}` as MsgKey;
 
 /** LightBurn's Move Selected Objects window: one click sends the selection to a corner, an edge centre or the centre. */
 export function MovePositionDialog(p: { doc: GDocument; ids: string[]; run: Run; onClose: () => void }) {
+  const t = useT();
   const [margin, setMargin] = useState("0");
   const [ref, setRef] = useState<"workspace" | "stock">("workspace");
   const { busy, error, go } = useBusy(p.run);
   const lu = usePrefs().units;
   const move = (a: PageAnchor) => {
     const m = num(margin);
-    if (m === null || m < 0) return void go(`The margin must be ${formatLength(0, lu)} or more.`);
-    if (!p.ids.length) return void go("Select something to move.");
+    if (m === null || m < 0) return void go(t("dz.marginMin", { min: formatLength(0, lu) }));
+    if (!p.ids.length) return void go(t("dz.selectToMove"));
     void go(pagePosition(p.ids, a, m, ref));
   };
   return (
     <Modal
-      title="Move selected objects"
+      title={t("dz.moveTitle")}
       onClose={p.onClose}
       footer={
         <>
           {error && <span className="form-error">{error}</span>}
           <button className="btn btn-primary" onClick={p.onClose}>
-            Done
+            {t("dz.done")}
           </button>
         </>
       }
     >
-      <div className="dz-move-grid" role="group" aria-label="Page position">
+      <div className="dz-move-grid" role="group" aria-label={t("dz.pagePosition")}>
         {PAGE_ANCHORS.map((a) => (
-          <button key={a} className="btn" disabled={busy || !p.ids.length} title={`Move the selection to the ${ANCHOR_LABEL[a].toLowerCase()} of the ${ref === "stock" ? "stock" : "workspace"}`} onClick={() => move(a)}>
+          <button key={a} className="btn" disabled={busy || !p.ids.length} title={t(ref === "stock" ? "dz.moveToStock" : "dz.moveToWorkspace", { anchor: t(anchorKey(a)).toLowerCase() })} onClick={() => move(a)}>
             <span className={`dz-anchor dz-anchor-${a}`} aria-hidden="true" />
-            <span className="sr-only">{ANCHOR_LABEL[a]}</span>
+            <span className="sr-only">{t(anchorKey(a))}</span>
           </button>
         ))}
       </div>
       <label className="field">
-        <span className="field-label">Relative to</span>
+        <span className="field-label">{t("dz.relativeTo")}</span>
         <span className="field-input">
           <select value={ref} onChange={(e) => setRef(e.target.value as "workspace" | "stock")}>
-            <option value="workspace">The workspace (galvo field)</option>
+            <option value="workspace">{t("dz.relWorkspace")}</option>
             <option value="stock" disabled={!p.doc.stock}>
-              The stock{p.doc.stock ? "" : " (none defined)"}
+              {p.doc.stock ? t("dz.relStock") : t("dz.relStockNone")}
             </option>
           </select>
         </span>
       </label>
-      <Num label="Margin" unit="mm" value={margin} onChange={setMargin} title="Keep this far in from the edges" />
-      <p className="hint">The selection keeps its size and rotation; each click is one undo step.</p>
+      <Num label={t("dz.margin")} unit="mm" value={margin} onChange={setMargin} title={t("dz.marginTitle")} />
+      <p className="hint">{t("dz.moveHint")}</p>
     </Modal>
   );
 }
 
 /** Move Horizontally / Vertically Together: the selection packed side by side with a fixed gap. */
 export function MoveTogetherDialog(p: { ids: string[]; axis: "x" | "y"; run: Run; onClose: () => void }) {
+  const t = useT();
   const [gap, setGap] = useState("1");
   const [axis, setAxis] = useState<"x" | "y">(p.axis);
   const { busy, error, go } = useBusy(p.run);
   const ok = async () => {
     const g = num(gap);
-    if (g === null || !Number.isFinite(g)) return void go("The spacing must be a number.");
-    if (p.ids.length < 2) return void go("Select at least two objects.");
+    if (g === null || !Number.isFinite(g)) return void go(t("dz.spacingNumber"));
+    if (p.ids.length < 2) return void go(t("dz.selectTwo"));
     if (await go(distributeSpacing(p.ids, axis, g))) p.onClose();
   };
   return (
     <Modal
-      title={axis === "x" ? "Move horizontally together" : "Move vertically together"}
+      title={axis === "x" ? t("dz.moveHTogether") : t("dz.moveVTogether")}
       onClose={p.onClose}
       onSubmit={() => void ok()}
       footer={
         <>
           {error && <span className="form-error">{error}</span>}
           <button className="btn" onClick={p.onClose}>
-            Cancel
+            {t("dz.cancel")}
           </button>
           <button className="btn btn-primary" disabled={busy} onClick={() => void ok()}>
-            Move
+            {t("dz.move")}
           </button>
         </>
       }
     >
       <label className="field">
-        <span className="field-label">Direction</span>
+        <span className="field-label">{t("dz.direction")}</span>
         <span className="field-input">
           <select value={axis} onChange={(e) => setAxis(e.target.value as "x" | "y")}>
-            <option value="x">Horizontally (left to right)</option>
-            <option value="y">Vertically (bottom to top)</option>
+            <option value="x">{t("dz.dirX")}</option>
+            <option value="y">{t("dz.dirY")}</option>
           </select>
         </span>
       </label>
-      <Num label="Spacing" unit="mm" value={gap} onChange={setGap} title="Gap between neighbouring objects' bounding boxes (negative overlaps)" />
-      <p className="hint">The first object stays; the others line up after it, this far apart. A group moves as one object.</p>
+      <Num label={t("dz.spacing")} unit="mm" value={gap} onChange={setGap} title={t("dz.spacingTitle")} />
+      <p className="hint">{t("dz.togetherHint")}</p>
     </Modal>
   );
 }
 
 /** The document's output curve tolerance (LightBurn's Curve Tolerance), saved with the project. */
 export function CurveToleranceDialog(p: { doc: GDocument; run: Run; onClose: () => void }) {
+  const tr = useT();
   const cur = typeof p.doc.curve_tolerance_mm === "number" ? p.doc.curve_tolerance_mm : null;
   const [v, setV] = useState(cur === null ? "" : String(cur));
   const { busy, error, go } = useBusy(p.run);
   const lu = usePrefs().units;
   const ok = async () => {
     const t = v.trim() === "" ? null : num(v);
-    if (v.trim() !== "" && (t === null || !(t >= 0.001 && t <= 1))) return void go(`Enter ${formatLength(0.001, lu, 3)} to ${formatLength(1, lu, 3)}, or leave it empty for the device's setting.`);
+    if (v.trim() !== "" && (t === null || !(t >= 0.001 && t <= 1))) return void go(tr("dz.tolRange", { min: formatLength(0.001, lu, 3), max: formatLength(1, lu, 3) }));
     if (t === cur) return p.onClose();
     if (await go(curveTolerance(t))) p.onClose();
   };
   return (
     <Modal
-      title="Curve tolerance"
+      title={tr("dz.curveTolerance")}
       onClose={p.onClose}
       onSubmit={() => void ok()}
       footer={
         <>
           {error && <span className="form-error">{error}</span>}
           <button className="btn" onClick={p.onClose}>
-            Cancel
+            {tr("dz.cancel")}
           </button>
           <button className="btn btn-primary" disabled={busy} onClick={() => void ok()}>
-            Save
+            {tr("dz.save")}
           </button>
         </>
       }
     >
-      <Num label="Curve tolerance" unit="mm" value={v} onChange={setV} title="Largest distance between a curve and the straight pieces a job marks for it" />
-      <p className="hint">
-        How finely jobs turn curves into straight marks. Coarser marks faster with fewer points; finer follows curves more closely. Saved with this
-        project; empty uses the device's setting ({formatLength(0.01, lu, 3)} unless the device says otherwise).
-      </p>
+      <Num label={tr("dz.curveTolerance")} unit="mm" value={v} onChange={setV} title={tr("dz.tolTitle")} />
+      <p className="hint">{tr("dz.tolHint", { dflt: formatLength(0.01, lu, 3) })}</p>
     </Modal>
   );
 }
@@ -194,17 +198,18 @@ export function GuideDialog(p: {
   onOk: (axis: "x" | "y", v: number) => void;
   onDelete?: () => void;
 }) {
+  const t = useT();
   const [axis, setAxis] = useState<"x" | "y">(p.guide?.axis ?? "x");
   const [v, setV] = useState(String(p.guide?.v ?? 0));
   const [err, setErr] = useState<string | null>(null);
   const ok = () => {
     const x = num(v);
-    if (x === null || Math.abs(x) > 1e6) return setErr("Enter a position in mm.");
+    if (x === null || Math.abs(x) > 1e6) return setErr(t("dz.guidePosition"));
     p.onOk(axis, Math.round(x * 1e4) / 1e4);
   };
   return (
     <Modal
-      title={p.guide ? "Guide" : "Add guide"}
+      title={p.guide ? t("dz.guide") : t("dz.addGuide")}
       onClose={p.onClose}
       onSubmit={ok}
       footer={
@@ -212,29 +217,29 @@ export function GuideDialog(p: {
           {err && <span className="form-error">{err}</span>}
           {p.onDelete && (
             <button className="btn btn-danger" onClick={p.onDelete}>
-              Delete
+              {t("dz.delete")}
             </button>
           )}
           <button className="btn" onClick={p.onClose}>
-            Cancel
+            {t("dz.cancel")}
           </button>
           <button className="btn btn-primary" onClick={ok}>
-            OK
+            {t("dz.ok")}
           </button>
         </>
       }
     >
       <label className="field">
-        <span className="field-label">Guide</span>
+        <span className="field-label">{t("dz.guide")}</span>
         <span className="field-input">
           <select value={axis} onChange={(e) => setAxis(e.target.value as "x" | "y")}>
-            <option value="x">Vertical (at X)</option>
-            <option value="y">Horizontal (at Y)</option>
+            <option value="x">{t("dz.guideV")}</option>
+            <option value="y">{t("dz.guideH")}</option>
           </select>
         </span>
       </label>
       <Num label={axis === "x" ? "X" : "Y"} unit="mm" value={v} onChange={setV} />
-      <p className="hint">Guides are saved with the project. Drag one with the Select tool to move it, or onto a ruler to remove it.</p>
+      <p className="hint">{t("dz.guideHint")}</p>
     </Modal>
   );
 }
@@ -243,7 +248,11 @@ export function GuideDialog(p: {
 
 const MAX_PREVIEW_CELLS = 400;
 
-/** LightBurn's Grid Array: columns, rows, spacing (centre to centre or gap), direction, alternate shifts and mirrors. */
+/**
+ * LightBurn's Grid Array: columns, rows (or Total Width / Height), spacing (centre to centre or gap), direction,
+ * alternate shifts and mirrors, Random Orientation, Auto-Increment Variable Text, Group / Select Results and Create
+ * Virtual Array; with `editArray`, LightBurn's Edit Array for that virtual array (its settings, laid out again).
+ */
 export function GridArrayDialog(p: {
   doc: GDocument;
   ids: string[];
@@ -252,28 +261,42 @@ export function GridArrayDialog(p: {
   run: Run;
   onClose: () => void;
   onCreated?: (ids: string[]) => void;
+  editArray?: VirtualArray | null;
 }) {
+  const t = useT();
+  const init = useMemo(() => (p.editArray ? arrayOptionsOf(p.editArray.settings) : null), [p.editArray]);
+  const ids = p.editArray ? p.editArray.sources : p.ids;
   const objs = useMemo(() => {
-    const want = new Set(p.ids);
+    const want = new Set(ids);
     return p.doc.objects.filter((o) => want.has(o.id) || (o.group && want.has(o.group)));
-  }, [p.doc, p.ids]);
+  }, [p.doc, ids]);
   const box = useMemo(() => unionBoxes(objs.map(objectBounds)), [objs]);
   const [bw, bh] = box ? [box.x1 - box.x0, box.y1 - box.y0] : [10, 10];
-  const [cols, setCols] = useState("3");
-  const [rows, setRows] = useState("2");
-  const [gapMode, setGapMode] = useState(true);
-  const [dx, setDx] = useState("2");
-  const [dy, setDy] = useState("2");
-  const [revX, setRevX] = useState(false);
-  const [revY, setRevY] = useState(false);
-  const [rowShift, setRowShift] = useState("");
-  const [rowHalf, setRowHalf] = useState(false);
-  const [colShift, setColShift] = useState("");
-  const [colHalf, setColHalf] = useState(false);
-  const [mirrorCols, setMirrorCols] = useState<"" | "x" | "y">("");
-  const [mirrorRows, setMirrorRows] = useState<"" | "x" | "y">("");
+  const [cols, setCols] = useState(String(init?.cols ?? 3));
+  const [rows, setRows] = useState(String(init?.rows ?? 2));
+  // A new array starts from the last LightBurn settings imported (GridArray_* keys, workspace/dialogDefaults.ts).
+  const [gapMode, setGapMode] = useState(init ? init.gapX : dStr("grid_array", "spacing_x", "gap") === "gap");
+  const [dx, setDx] = useState(String(init?.pitchX ?? dNum("grid_array", "pitch_x_mm", 2)));
+  const [dy, setDy] = useState(String(init?.pitchY ?? dNum("grid_array", "pitch_y_mm", 2)));
+  const [revX, setRevX] = useState(init?.reverseX ?? dBool("grid_array", "reverse_x", false));
+  const [revY, setRevY] = useState(init?.reverseY ?? dBool("grid_array", "reverse_y", false));
+  const [rowShift, setRowShift] = useState(typeof init?.rowShift === "number" ? String(init.rowShift) : "");
+  const [rowHalf, setRowHalf] = useState(init ? init.rowShift === "half" : dStr("grid_array", "row_shift", "") === "half");
+  const [colShift, setColShift] = useState(typeof init?.colShift === "number" ? String(init.colShift) : "");
+  const [colHalf, setColHalf] = useState(init ? init.colShift === "half" : dStr("grid_array", "col_shift", "") === "half");
+  const [mirrorCols, setMirrorCols] = useState<"" | "x" | "y">(init?.mirrorCols ?? "");
+  const [mirrorRows, setMirrorRows] = useState<"" | "x" | "y">(init?.mirrorRows ?? "");
+  const [totalW, setTotalW] = useState("");
+  const [totalH, setTotalH] = useState("");
+  const [random, setRandom] = useState(init ? init.seed != null : dBool("grid_array", "random_orientation", false));
+  const [seed, setSeed] = useState(String(init?.seed ?? dNum("grid_array", "random_seed", Math.floor(Math.random() * 1e6))));
+  const [autoInc, setAutoInc] = useState(String(init?.autoIncrement ?? 0));
+  const [groupResults, setGroupResults] = useState(dBool("grid_array", "group_results", false));
+  const [selectResults, setSelectResults] = useState(dBool("grid_array", "select_results", true));
+  const [virtualArr, setVirtualArr] = useState(!!p.editArray || dBool("grid_array", "virtual", false));
+  const editing = !!p.editArray;
   const newOptions = p.has(DCMD.array);
-  const { busy, error, go } = useBusy(p.run, (r) => p.onCreated?.(G.resultIds(r).filter((id) => !p.ids.includes(id))));
+  const { busy, error, go } = useBusy(p.run, (r) => p.onCreated?.(selectResults ? G.resultIds(r).filter((id) => !ids.includes(id)) : []));
   const lu = usePrefs().units;
   const shift = (txt: string, half: boolean): number | "half" | null => (half ? "half" : txt.trim() === "" ? null : num(txt));
   const opts: ArrayOptions | null = (() => {
@@ -285,7 +308,18 @@ export function GridArrayDialog(p: {
     const rs = shift(rowShift, rowHalf);
     const cs = shift(colShift, colHalf);
     if ((rowShift.trim() && rs === null) || (colShift.trim() && cs === null)) return null;
+    const tw = totalW.trim() === "" ? null : num(totalW);
+    const th = totalH.trim() === "" ? null : num(totalH);
+    const sd = random ? num(seed) : null;
+    const inc = num(autoInc);
+    if ((totalW.trim() && tw === null) || (totalH.trim() && th === null) || (random && sd === null) || inc === null) return null;
     return {
+      totalWidth: tw,
+      totalHeight: th,
+      seed: sd === null ? null : Math.max(0, Math.round(sd)),
+      autoIncrement: Math.round(inc),
+      groupResults: !virtualArr && groupResults,
+      virtual: virtualArr,
       cols: c,
       rows: r,
       pitchX: x,
@@ -300,11 +334,14 @@ export function GridArrayDialog(p: {
       mirrorRows: mirrorRows || null,
     };
   })();
-  const problem = opts ? arrayProblem(opts, box) : "Enter numbers for the counts and spacing.";
-  const outside = opts && box && !problem ? cellsOutside(opts, box, p.workspaceMm) : 0;
+  // Total Width / Height resolve the counts the way the engine does, for the checks and the preview.
+  const counted = opts && box ? resolveCounts(opts, box) : opts;
+  const problem = !opts ? t("dz.enterCounts") : !counted ? t("dz.totalTooSmall") : arrayProblem(counted, box);
+  const outside = counted && box && !problem ? cellsOutside(counted, box, p.workspaceMm) : 0;
   const create = async () => {
-    if (!opts || problem || !box) return void go(problem ?? "Enter numbers.");
-    if (await go({ id: DCMD.array, params: arrayParams(p.ids, opts) })) p.onClose();
+    if (!opts || problem || !box) return void go(problem ?? t("dz.enterNumbers"));
+    const params = p.editArray ? editArrayParams(p.editArray.id, opts) : arrayParams(p.ids, opts);
+    if (await go({ id: DCMD.array, params })) p.onClose();
   };
   const check = (label: string, v: boolean, set: (v: boolean) => void, title?: string) => (
     <label className="field field-check" title={title}>
@@ -317,16 +354,16 @@ export function GridArrayDialog(p: {
       <span className="field-label">{label}</span>
       <span className="field-input">
         <select value={v} onChange={(e) => set(e.target.value as "" | "x" | "y")}>
-          <option value="">No</option>
-          <option value="x">Left-right</option>
-          <option value="y">Top-bottom</option>
+          <option value="">{t("dz.mirrorNo")}</option>
+          <option value="x">{t("dz.mirrorLR")}</option>
+          <option value="y">{t("dz.mirrorTB")}</option>
         </select>
       </span>
     </label>
   );
   return (
     <Modal
-      title="Grid array"
+      title={editing ? t("dz.editArray") : t("dz.gridArray")}
       wide
       onClose={p.onClose}
       onSubmit={() => void create()}
@@ -334,10 +371,10 @@ export function GridArrayDialog(p: {
         <>
           {(error ?? (opts ? null : problem)) && <span className="form-error">{error ?? problem}</span>}
           <button className="btn" onClick={p.onClose}>
-            Cancel
+            {t("dz.cancel")}
           </button>
           <button className="btn btn-primary" disabled={busy || !!problem || !newOptions} onClick={() => void create()}>
-            Create
+            {editing ? t("dz.apply2") : t("dz.create")}
           </button>
         </>
       }
@@ -345,11 +382,15 @@ export function GridArrayDialog(p: {
       <div className="dz-array">
         <div className="dz-array-form">
           <div className="field-grid">
-            <Num label="Columns" value={cols} onChange={setCols} />
-            <Num label="Rows" value={rows} onChange={setRows} />
+            <Num label={t("dz.columns")} value={totalW.trim() && counted ? String(counted.cols) : cols} onChange={setCols} />
+            <Num label={t("dz.rows")} value={totalH.trim() && counted ? String(counted.rows) : rows} onChange={setRows} />
+          </div>
+          <div className="field-grid">
+            <Num label={t("dz.totalWidth")} unit="mm" value={totalW} onChange={setTotalW} title={t("dz.totalWidthTitle")} />
+            <Num label={t("dz.totalHeight")} unit="mm" value={totalH} onChange={setTotalH} title={t("dz.totalHeightTitle")} />
           </div>
           <label className="field">
-            <span className="field-label">Spacing</span>
+            <span className="field-label">{t("dz.spacing")}</span>
             <span className="field-input">
               <select
                 value={gapMode ? "gap" : "center"}
@@ -363,49 +404,70 @@ export function GridArrayDialog(p: {
                   setGapMode(g);
                 }}
               >
-                <option value="gap">Padding between edges</option>
-                <option value="center">Centre to centre</option>
+                <option value="gap">{t("dz.spacingGap")}</option>
+                <option value="center">{t("dz.spacingCentre")}</option>
               </select>
             </span>
           </label>
           <div className="field-grid">
-            <Num label={gapMode ? "Gap X" : "Pitch X"} unit="mm" value={dx} onChange={setDx} />
-            <Num label={gapMode ? "Gap Y" : "Pitch Y"} unit="mm" value={dy} onChange={setDy} />
+            <Num label={gapMode ? t("dz.gapX") : t("dz.pitchX")} unit="mm" value={dx} onChange={setDx} />
+            <Num label={gapMode ? t("dz.gapY") : t("dz.pitchY")} unit="mm" value={dy} onChange={setDy} />
           </div>
           <div className="field-grid">
-            {check("Reverse X", revX, setRevX, "Build the columns toward -X (left)")}
-            {check("Reverse Y", revY, setRevY, "Build the rows toward -Y (toward the operator)")}
+            {check(t("dz.reverseX"), revX, setRevX, t("dz.reverseXTitle"))}
+            {check(t("dz.reverseY"), revY, setRevY, t("dz.reverseYTitle"))}
           </div>
-          <h4 className="et-dlg-h">Alternate rows and columns</h4>
+          <h4 className="et-dlg-h">{t("dz.alternate")}</h4>
           <div className="field-grid">
-            <Num label="Row shift" unit="mm" value={rowHalf ? "" : rowShift} onChange={setRowShift} title="Shift every other row along X (brick or honeycomb layouts)" />
-            {check("Half width", rowHalf, setRowHalf, "Shift every other row by half the selection's width")}
-            <Num label="Column shift" unit="mm" value={colHalf ? "" : colShift} onChange={setColShift} title="Shift every other column along Y" />
-            {check("Half height", colHalf, setColHalf, "Shift every other column by half the selection's height")}
+            <Num label={t("dz.rowShift")} unit="mm" value={rowHalf ? "" : rowShift} onChange={setRowShift} title={t("dz.rowShiftTitle")} />
+            {check(t("dz.halfWidth"), rowHalf, setRowHalf, t("dz.halfWidthTitle"))}
+            <Num label={t("dz.colShift")} unit="mm" value={colHalf ? "" : colShift} onChange={setColShift} title={t("dz.colShiftTitle")} />
+            {check(t("dz.halfHeight"), colHalf, setColHalf, t("dz.halfHeightTitle"))}
           </div>
           <div className="field-grid">
-            {mirrorSel("Mirror columns", mirrorCols, setMirrorCols)}
-            {mirrorSel("Mirror rows", mirrorRows, setMirrorRows)}
+            {mirrorSel(t("dz.mirrorCols"), mirrorCols, setMirrorCols)}
+            {mirrorSel(t("dz.mirrorRows"), mirrorRows, setMirrorRows)}
           </div>
+          <h4 className="et-dlg-h">{t("dz.results")}</h4>
+          <div className="field-grid">
+            {check(t("dz.randomOrientation"), random, setRandom, t("dz.randomOrientationTitle"))}
+            {random && (
+              <span className="dz-seed">
+                <Num label={t("dz.seed")} value={seed} onChange={setSeed} />
+                <button className="btn btn-small" onClick={() => setSeed(String(Math.floor(Math.random() * 1e6)))}>
+                  {t("dz.newSeed")}
+                </button>
+              </span>
+            )}
+          </div>
+          <Num label={t("dz.autoIncrement")} value={autoInc} onChange={setAutoInc} title={t("dz.autoIncrementTitle")} />
+          {!editing && (
+            <div className="field-grid">
+              {check(t("dz.virtualArray"), virtualArr, setVirtualArr, t("dz.virtualArrayTitle"))}
+              {!virtualArr && check(t("dz.groupResults"), groupResults, setGroupResults, t("dz.groupResultsTitle"))}
+              {check(t("dz.selectResults"), selectResults, setSelectResults, t("dz.selectResultsTitle"))}
+            </div>
+          )}
+          {(virtualArr || editing) && <p className="hint">{t("dz.virtualHint")}</p>}
         </div>
-        <ArrayPreview objs={objs} box={box} opts={problem ? null : opts} workspaceMm={p.workspaceMm} />
+        <ArrayPreview objs={objs} box={box} opts={problem ? null : counted} workspaceMm={p.workspaceMm} />
       </div>
       {outside > 0 && opts && (
         <p className="warn-text" role="status">
-          {outside} of the {opts.cols * opts.rows} cells would be outside the {workspaceText(p.workspaceMm)} {isSquare(p.workspaceMm) ? "galvo field" : "workspace"}.
+          {t(isSquare(p.workspaceMm) ? "dz.cellsOutsideField" : "dz.cellsOutsideWorkspace", { n: outside, total: (counted ?? opts).cols * (counted ?? opts).rows, size: workspaceText(p.workspaceMm) })}
         </p>
       )}
-      {!newOptions && <p className="warn-text">This engine has no grid array command.</p>}
-      <p className="hint">
-        Counts include the original (row 1, column 1). Selection {formatLength(bw, lu)} × {formatLength(bh, lu)}.
-      </p>
+      {!newOptions && <p className="warn-text">{t("dz.noArray")}</p>}
+      {random && <p className="hint">{t("dz.randomPreview")}</p>}
+      <p className="hint">{t("dz.arrayHint", { w: formatLength(bw, lu), h: formatLength(bh, lu) })}</p>
     </Modal>
   );
 }
 
 function ArrayPreview(p: { objs: GDocument["objects"]; box: Box | null; opts: ArrayOptions | null; workspaceMm: Vec2 }) {
+  const tr = useT();
   const shape = useMemo(() => p.objs.map((o) => toPathData(geometryCmds(o.geometry), o.transform)).join(" "), [p.objs]);
-  if (!p.box || !p.opts) return <div className="dz-array-preview empty">No preview</div>;
+  if (!p.box || !p.opts) return <div className="dz-array-preview empty">{tr("dz.noPreview")}</div>;
   const b = p.box;
   const cells = arrayCells(p.opts, b);
   const shown = cells.slice(0, MAX_PREVIEW_CELLS);
@@ -418,7 +480,7 @@ function ArrayPreview(p: { objs: GDocument["objects"]; box: Box | null; opts: Ar
   const [cx, cy] = [(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2];
   return (
     <div className="dz-array-preview">
-      <svg viewBox={vb} preserveAspectRatio="xMidYMid meet" role="img" aria-label="Array preview">
+      <svg viewBox={vb} preserveAspectRatio="xMidYMid meet" role="img" aria-label={tr("dz.arrayPreview")}>
         <g transform="scale(1 -1)">
           <rect className="dz-ap-field" x={-p.workspaceMm[0] / 2} y={-p.workspaceMm[1] / 2} width={p.workspaceMm[0]} height={p.workspaceMm[1]} vectorEffect="non-scaling-stroke" />
           {shown.map((c) => {
@@ -427,7 +489,7 @@ function ArrayPreview(p: { objs: GDocument["objects"]; box: Box | null; opts: Ar
           })}
         </g>
       </svg>
-      {cells.length > shown.length && <span className="hint">First {MAX_PREVIEW_CELLS} of {cells.length} cells shown</span>}
+      {cells.length > shown.length && <span className="hint">{tr("dz.previewCap", { shown: MAX_PREVIEW_CELLS, total: cells.length })}</span>}
     </div>
   );
 }

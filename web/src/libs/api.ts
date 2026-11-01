@@ -132,6 +132,24 @@ export const libsApi = {
     call("POST", "/api/camera/lens", { width, height, views, origin: UI_ORIGIN }),
   cameraAlign: (image: [number, number][], field: [number, number][]) => call("POST", "/api/camera/align", { image, field, origin: UI_ORIGIN }),
   cameraForget: () => call("DELETE", `/api/camera/calibration?origin=${UI_ORIGIN}`),
+  /** Markers of `generate.camera_markers` found in the frame. */
+  cameraMarkers: () => call("POST", "/api/camera/markers", {}),
+  /** Align from the markers found in the frame, matched by id to the document's marker objects (UI only). */
+  cameraAlignMarkers: () => call("POST", "/api/camera/align_markers", { origin: UI_ORIGIN }),
+
+  // ---- material test presets (LightBurn's Material Test Preset list; .lbmt import / export) ----
+  testPresets: () => call("GET", "/api/material-test/presets"),
+  testPresetSave: (name: string, params: Record<string, unknown>) => call("PUT", `/api/material-test/presets/${enc(name)}`, { params }),
+  testPresetDelete: (name: string) => call("DELETE", `/api/material-test/presets/${enc(name)}`),
+  testPresetImport: (file: Blob, replace: boolean) =>
+    call("POST", `/api/material-test/presets/import${replace ? "?replace=true" : ""}`, undefined, { body: file, type: "application/json" }),
+  testPresetExport: (names?: string[]) => download(`/api/material-test/presets/export${names?.length ? `?names=${names.map(enc).join(",")}` : ""}`),
+
+  // ---- Adjust Image presets ----
+  imagePresets: () => call("GET", "/api/image-adjust/presets"),
+  imagePresetSave: (name: string, body: { adjust?: object; image?: object }) => call("PUT", `/api/image-adjust/presets/${enc(name)}`, body),
+  imagePresetDelete: (name: string) => call("DELETE", `/api/image-adjust/presets/${enc(name)}`),
+  imagePresetImport: (body: unknown) => call("POST", "/api/image-adjust/presets/import", body),
 
   // ---- machine bits used by the wizards (light only) ----
   pointer: (x: number, y: number) => call("POST", "/api/machine/pointer", { x, y }),

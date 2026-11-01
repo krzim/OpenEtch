@@ -7,10 +7,13 @@
 // placeholders as they are) and register the table in i18n.ts.
 
 import type { Messages } from "../i18n.ts";
+import { ES_DESIGN } from "./es-design.ts";
 
 export const ES_MACHINE_TRANSLATED = true;
 
 export const ES: Messages = {
+  // The design-engine UI and later additions (es-design.ts).
+  ...ES_DESIGN,
   "common.cancel": "Cancelar",
   "common.close": "Cerrar",
   "common.loading": "Cargando…",

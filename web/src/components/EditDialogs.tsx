@@ -13,8 +13,10 @@ import { Modal, UnitTextField } from "./ui.tsx";
 import { usePrefs } from "../workspace/usePrefs.ts";
 import { fixedLength, fixedNumber, formatLength } from "../workspace/units.ts";
 import { useT } from "../workspace/usePrefs.ts";
+import { tr } from "../workspace/tr.ts";
+import { dBool, dNum } from "../workspace/dialogDefaults.ts";
 
-export type PickKind = "circularCenter" | "mirror" | "mirrorCopy" | "rotate2" | "scale2" | "scale2rot";
+export type PickKind = "circularCenter" | "mirror" | "mirrorCopy" | "rotate2" | "scale2" | "scale2rot" | "unfillet";
 
 export interface CircularValues {
   count: string;
@@ -130,7 +132,8 @@ function Frame(props: { title: string; p: Props; busy: boolean; error: string | 
 }
 
 const num = (v: string) => evalNumber(v);
-const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
+/** "1 shape" / "3 shapes" (or parts), translated. */
+const plural = (n: number, w: "shape" | "part") => tr(n === 1 ? (w === "shape" ? "rest.shape1" : "rest.part1") : w === "shape" ? "rest.shapesN" : "rest.partsN", { n });
 
 export function EditDialogs(p: Props) {
   switch (p.dialog.kind) {
@@ -156,10 +159,11 @@ export function EditDialogs(p: Props) {
 
 function OffsetDialog({ p }: { p: Props }) {
   const t = useT();
-  const [d, setD] = useState("1");
-  const [direction, setDirection] = useState<G.OffsetDirection>("outward");
+  // Starting values from an imported LightBurn preferences file (OffsetDistance, OffsetDeleteOriginals).
+  const [d, setD] = useState(String(Math.abs(dNum("offset", "distance_mm", 1))));
+  const [direction, setDirection] = useState<G.OffsetDirection>(dNum("offset", "distance_mm", 1) < 0 ? "inward" : "outward");
   const [join, setJoin] = useState<G.OffsetJoin>("round");
-  const [del, setDel] = useState(false);
+  const [del, setDel] = useState(!dBool("offset", "keep_original", true));
   const [combine, setCombine] = useState(false);
   const { busy, error, submit } = useSubmit(p);
   const lu = usePrefs().units;
@@ -169,7 +173,7 @@ function OffsetDialog({ p }: { p: Props }) {
     void submit(G.offset(p.ids, { distance_mm: v, direction, join, keep_original: !del, combine }));
   };
   return (
-    <Frame title={`Offset ${plural(p.ids.length, "shape")}`} p={p} busy={busy} error={error} ok="Offset" onOk={ok}>
+    <Frame title={t("rest.offsetTitle", { what: plural(p.ids.length, "shape") })} p={p} busy={busy} error={error} ok={t("rest.offset")} onOk={ok}>
       <Num label={t("ed.distance")} unit="mm" value={d} onChange={setD} />
       <Select label={t("ed.direction")} value={direction} onChange={setDirection} options={[["outward", "Outward"], ["inward", "Inward"], ["both", "Both"]]} />
       <Select label={t("ed.corners")} value={join} onChange={setJoin} options={[["round", "Rounded"], ["miter", "Sharp"], ["bevel", "Bevelled"]]} />
@@ -184,28 +188,48 @@ function FilletDialog({ p, nodeId, corners }: { p: Props; nodeId: string | null;
   const t = useT();
   const [r, setR] = useState("1");
   const [which, setWhich] = useState<"all" | "nodes">(nodeId && corners.length ? "nodes" : "all");
+  // LightBurn's Radius tool also makes a rounded corner sharp again (path.unfillet): every one, or one clicked.
+  const canSharp = p.has(G.GEO.unfillet);
+  const [action, setAction] = useState<"round" | "sharpAll" | "sharpClick">("round");
   const { busy, error, submit } = useSubmit(p);
   const lu = usePrefs().units;
   const ok = () => {
+    if (action === "sharpAll") return void submit(G.unfillet(p.ids));
+    if (action === "sharpClick") {
+      if (p.ids.length !== 1) return submit(t("ed.unfilletOneShape"));
+      return p.onPick("unfillet");
+    }
     const v = num(r);
     if (v === null || v === 0 || Math.abs(v) > 1000) return submit(t("ed.radiusMustBeANonZero", { v1: formatLength(1000, lu) }));
     void submit(which === "nodes" && nodeId ? G.fillet([nodeId], v, corners) : G.fillet(p.ids, v));
   };
   return (
-    <Frame title={t("ed.filletCorners")} p={p} busy={busy} error={error} ok="Fillet" onOk={ok}>
-      <Num label={t("ed.radius")} unit="mm" value={r} onChange={setR} title={t("ed.negativeCutsAConcaveBiteInstead")} />
-      {nodeId && corners.length > 0 && (
+    <Frame title={t("ed.filletCorners")} p={p} busy={busy} error={error} ok={action === "round" ? t("ed.filletOk") : action === "sharpAll" ? t("ed.unfilletOk") : t("ed.unfilletPickOk")} onOk={ok}>
+      {canSharp && (
+        <Select
+          label={t("ed.filletAction")}
+          value={action}
+          onChange={setAction}
+          options={[
+            ["round", t("ed.filletRound")],
+            ["sharpAll", t("ed.unfilletAll")],
+            ["sharpClick", t("ed.unfilletClick")],
+          ]}
+        />
+      )}
+      {action === "round" && <Num label={t("ed.radius")} unit="mm" value={r} onChange={setR} title={t("ed.negativeCutsAConcaveBiteInstead")} />}
+      {action === "round" && nodeId && corners.length > 0 && (
         <Select
           label={t("ed.corners")}
           value={which}
           onChange={setWhich}
           options={[
             ["nodes", t("ed.selectedNodesV1", { v1: corners.length })],
-            ["all", `All corners of ${plural(p.ids.length, "shape")}`],
+            ["all", t("rest.allCornersOf", { what: plural(p.ids.length, "shape") })],
           ]}
         />
       )}
-      <p className="hint">{t("ed.roundsCornersBetweenLinesAndCurves")}</p>
+      <p className="hint">{action === "round" ? t("ed.roundsCornersBetweenLinesAndCurves") : t("ed.unfilletHint")}</p>
     </Frame>
   );
 }
@@ -223,7 +247,7 @@ function TransformDialog({ p }: { p: Props }) {
     const a = num(sx);
     const b = lock ? a : num(sy);
     if (a === null || b === null || a <= 0 || b <= 0) return submit(t("ed.scaleMustBeAPercentageAbove"));
-    if (a === 100 && b === 100) return submit("100 % changes nothing.");
+    if (a === 100 && b === 100) return submit(t("rest.scaleNothing"));
     void submit(G.transformEx(p.ids, { scale: lock ? a / 100 : [a / 100, b / 100], about: "center" }), false);
   };
   const shear = () => {
@@ -235,7 +259,7 @@ function TransformDialog({ p }: { p: Props }) {
   };
   return (
     <Modal
-      title={`Transform ${plural(p.ids.length, "shape")}`}
+      title={t("rest.transformTitle", { what: plural(p.ids.length, "shape") })}
       onClose={p.onClose}
       footer={
         <>
@@ -248,7 +272,7 @@ function TransformDialog({ p }: { p: Props }) {
     >
       <h4 className="et-dlg-h">{t("ed.scaleAboutTheCentre")}</h4>
       <div className="field-grid">
-        <Num label={lock ? "Scale" : "Width"} unit="%" value={sx} onChange={setSx} />
+        <Num label={lock ? t("rest.scale") : t("rest.width")} unit="%" value={sx} onChange={setSx} />
         {!lock && <Num label={t("ed.height")} unit="%" value={sy} onChange={setSy} />}
       </div>
       <Check label={t("ed.keepProportions")} checked={lock} onChange={setLock} />
@@ -294,7 +318,9 @@ function defaultCentre(doc: GDocument): Vec2 {
 function CircularDialog({ p, init }: { p: Props; init: CircularValues | null }) {
   const t = useT();
   const c0 = defaultCentre(p.doc);
-  const [v, setV] = useState<CircularValues>(init ?? { count: "6", angle: "360", rotate: true, cx: String(c0[0]), cy: String(c0[1]) });
+  const [v, setV] = useState<CircularValues>(
+    init ?? { count: String(dNum("circular_array", "count", 6)), angle: "360", rotate: dBool("circular_array", "rotate_copies", true), cx: String(c0[0]), cy: String(c0[1]) },
+  );
   const set = (patch: Partial<CircularValues>) => setV((x) => ({ ...x, ...patch }));
   const { busy, error, submit } = useSubmit(p);
   const lu = usePrefs().units;
@@ -365,7 +391,7 @@ function AlongDialog({ p }: { p: Props }) {
   return (
     <Frame title={t("ed.copyAlongPath")} p={p} busy={busy} error={error} ok="Create" onOk={ok}>
       <p className="hint">
-        Copies {plural(p.ids.length - 1, "shape")} along <b>{pathObj?.name ?? path}</b> (the shape selected last).
+        {t("rest.copiesAlong", { what: plural(p.ids.length - 1, "shape") })} <b>{pathObj?.name ?? path}</b> {t("rest.selectedLast")}
       </p>
       <Select label={t("ed.spreadBy")} value={mode} onChange={setMode} options={[["count", t("ed.numberOfCopies")], ["spacing", t("ed.distanceBetweenCopies")]]} />
       {mode === "count" ? <Num label={t("ed.count")} value={count} onChange={setCount} title={t("ed.itemsIncludingTheOriginal")} /> : <Num label={t("ed.spacing")} unit="mm" value={spacing} onChange={setSpacing} />}
@@ -382,8 +408,11 @@ function NestDialog({ p }: { p: Props }) {
   const [mode, setMode] = useState<"boxes" | "shapes">("shapes");
   const [spacing, setSpacing] = useState("1");
   const [edge, setEdge] = useState("0");
-  const [rot, setRot] = useState<"0" | "90" | "all" | "45">("90");
+  const [rot, setRot] = useState<"0" | "90" | "all" | "45">(dBool("nest", "lock_rotation", false) ? "0" : "90");
   const [res, setRes] = useState("");
+  // LightBurn 2.2's Multipage: what does not fit goes onto new pages (OTH-028 pages), up to a page limit.
+  const [multipage, setMultipage] = useState(dBool("nest", "multipage", false));
+  const [maxPages, setMaxPages] = useState("10");
   const [report, setReport] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -400,20 +429,26 @@ function NestDialog({ p }: { p: Props }) {
     const parts = region === "object" ? p.ids.slice(0, -1) : p.ids;
     if (region === "object" && (!targetObj || parts.length < 1)) return setError(t("ed.selectThePartsThenTheMaterial"));
     const where: G.NestRegion = region === "object" ? { object: target } : region;
+    const mp = multipage ? Math.round(num(maxPages) ?? NaN) : 0;
+    if (multipage && !(mp >= 1 && mp <= 100)) return setError(t("ed.nestMaxPagesRange"));
     setBusy(true);
     setError(null);
     try {
-      const out = (await p.run(G.nest(parts, where, { spacing_mm: s, edge_mm: e, rotations, ...(mode === "shapes" ? { mode, resolution_mm: r } : {}) }))) as {
+      const out = (await p.run(
+        G.nest(parts, where, { spacing_mm: s, edge_mm: e, rotations, ...(mode === "shapes" ? { mode, resolution_mm: r } : {}), ...(multipage ? { multipage, max_pages: mp } : {}) }),
+      )) as {
         placed?: unknown[];
         unplaced?: unknown[];
         budget_exhausted?: boolean;
+        pages?: unknown[];
       } | null;
+      const pages = Array.isArray(out?.pages) ? out.pages.length : 0;
       const placed = Array.isArray(out?.placed) ? out.placed.length : 0;
       const unplaced = Array.isArray(out?.unplaced) ? out.unplaced.length : 0;
       p.onDone(G.resultIds(out));
       if (unplaced || out?.budget_exhausted) {
         setReport(
-          `Placed ${plural(placed, "part")}; ${plural(unplaced, "part")} did not fit${out?.budget_exhausted ? " (the search stopped at its work limit: try a coarser grid cell)" : ""}. They stay where they were.`,
+          t(out?.budget_exhausted ? "rest.nestReportBudget" : "rest.nestReport", { placed: plural(placed, "part"), pages: pages ? t("ed.nestOnPages", { n: pages }) : "", unplaced: plural(unplaced, "part") }),
         );
       } else p.onClose();
     } catch (err) {
@@ -423,7 +458,7 @@ function NestDialog({ p }: { p: Props }) {
     }
   };
   return (
-    <Frame title={`Nest ${plural(region === "object" ? p.ids.length - 1 : p.ids.length, "part")}`} p={p} busy={busy} error={error} ok="Nest" onOk={() => void ok()}>
+    <Frame title={t("rest.nestTitle", { what: plural(region === "object" ? p.ids.length - 1 : p.ids.length, "part") })} p={p} busy={busy} error={error} ok={t("rest.nest")} onOk={() => void ok()}>
       <Select
         label={t("ed.method")}
         value={mode}
@@ -447,13 +482,22 @@ function NestDialog({ p }: { p: Props }) {
         value={rot}
         onChange={setRot}
         options={[
-          ["0", "None"],
-          ["90", "0° and 90°"],
+          ["0", t("rest.rotNone")],
+          ["90", t("rest.rot90")],
           ["all", "0°, 90°, 180°, 270°"],
-          ["45", "Every 45°"],
+          ["45", t("rest.rot45")],
         ]}
       />
       {mode === "shapes" && <Num label={t("ed.gridCell")} unit="mm" value={res} onChange={setRes} title={t("ed.smallestCellOfTheSearchGrid")} />}
+      <Check label={t("ed.nestMultipage")} checked={multipage} onChange={setMultipage} title={t("ed.nestMultipageTitle")} />
+      {multipage && (
+        <label className="field">
+          <span className="field-label">{t("ed.nestMaxPages")}</span>
+          <span className="field-input">
+            <input type="number" min={1} max={100} step={1} value={maxPages} onChange={(e) => setMaxPages(e.target.value)} />
+          </span>
+        </label>
+      )}
       {report && <p className="warn-text">{report}</p>}
       <p className="hint">
         {mode === "shapes"
@@ -492,7 +536,7 @@ function OptimizeDialog({ p }: { p: Props }) {
     void submit(G.optimize(p.ids, vals));
   };
   return (
-    <Frame title={`Optimize ${plural(p.ids.length, "shape")}`} p={p} busy={busy} error={error} ok="Optimize" onOk={ok}>
+    <Frame title={t("rest.optimizeTitle", { what: plural(p.ids.length, "shape") })} p={p} busy={busy} error={error} ok={t("rest.optimize")} onOk={ok}>
       <Check label={t("ed.fitShapesToLines")} checked={lines} onChange={setLines} title={t("ed.removeRedundantNodesAndZeroLength")} />
       {lines && <Num label={t("ed.lineTolerance")} unit="mm" value={tol} onChange={setTol} title={t("ed.howFarTheResultMayStray")} />}
       <Check label={t("ed.fitShapesToArcs")} checked={arcs} onChange={setArcs} title={t("ed.runsOf4OrMoreShort")} />
@@ -517,9 +561,9 @@ function ToleranceDialog({ p, kind }: { p: Props; kind: "close" | "autojoin" }) 
     if (kind === "autojoin") return void submit(G.autoJoin(p.ids, tolMm));
     void submit(G.closePaths(p.ids, { tolerance_mm: tolMm, mode }));
   };
-  const title = kind === "autojoin" ? "Auto-join" : t("ed.closePathsWithTolerance");
+  const title = kind === "autojoin" ? t("rest.autoJoin") : t("ed.closePathsWithTolerance");
   return (
-    <Frame title={title} p={p} busy={busy} error={error} ok={kind === "autojoin" ? "Join" : "Close"} onOk={ok}>
+    <Frame title={title} p={p} busy={busy} error={error} ok={kind === "autojoin" ? t("rest.join") : t("rest.close")} onOk={ok}>
       <Num
         label={t("ed.tolerance")}
         unit="mm"

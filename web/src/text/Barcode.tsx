@@ -2,17 +2,42 @@
 // Properties section of a selected barcode. Every setting goes to the engine as `shape.barcode` (with `id` to redraw
 // an existing code in place: its layer, name and placement stay).
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { api } from "../api/client.ts";
 import { Modal, NumberField, CheckField } from "../components/ui.tsx";
 import { useT } from "../workspace/usePrefs.ts";
-import { BARCODE_KINDS, TEXT_MODES, barcodeKind, type BarcodeParams, type TextMode } from "./textModel.ts";
+import { TEXT_MODES, barcodeKind, barcodeKinds, barcodeKindsFrom, setEngineBarcodeKinds, type BarcodeKind, type BarcodeParams, type TextMode } from "./textModel.ts";
 import { VarHelp } from "./VarHelp.tsx";
 
 export const NEW_BARCODE: BarcodeParams = { kind: "qr", data: "https://example.com", module_mm: 0.5, quiet_zone: 2, invert: false, show_text: false };
 
+/** The barcode kinds the engine offers (read once from GET /api/commands; new types appear as the engine adds them). */
+let kindsLoad: Promise<BarcodeKind[]> | null = null;
+function useBarcodeKinds(): BarcodeKind[] {
+  const [kinds, setKinds] = useState(barcodeKinds);
+  useEffect(() => {
+    let live = true;
+    kindsLoad ??= api
+      .commands()
+      .then((list) => {
+        const spec = list.find((c) => c.id === "shape.barcode");
+        const k = spec ? barcodeKindsFrom(spec.input_schema) : null;
+        setEngineBarcodeKinds(k);
+        return barcodeKinds();
+      })
+      .catch(() => barcodeKinds());
+    void kindsLoad.then((k) => live && setKinds(k));
+    return () => {
+      live = false;
+    };
+  }, []);
+  return kinds;
+}
+
 /** The fields; `onChange` gets the changed parameters (the Properties section sends each change at once). */
 export function BarcodeForm(p: { value: BarcodeParams; onChange: (v: BarcodeParams) => void; live?: boolean }) {
   const t = useT();
+  const kinds = useBarcodeKinds();
   const v = p.value;
   const kind = barcodeKind(v.kind);
   const set = (c: Partial<BarcodeParams>) => p.onChange({ ...v, ...c });
@@ -31,14 +56,14 @@ export function BarcodeForm(p: { value: BarcodeParams; onChange: (v: BarcodePara
           <select value={v.kind} onChange={(e) => set({ kind: e.target.value, error_correction: null })}>
             {!kind && <option value={v.kind}>{v.kind}</option>}
             <optgroup label={t("barcode.twoD")}>
-              {BARCODE_KINDS.filter((k) => k.twoD).map((k) => (
+              {kinds.filter((k) => k.twoD).map((k) => (
                 <option key={k.id} value={k.id}>
                   {k.label}
                 </option>
               ))}
             </optgroup>
             <optgroup label={t("barcode.oneD")}>
-              {BARCODE_KINDS.filter((k) => !k.twoD).map((k) => (
+              {kinds.filter((k) => !k.twoD).map((k) => (
                 <option key={k.id} value={k.id}>
                   {k.label}
                 </option>

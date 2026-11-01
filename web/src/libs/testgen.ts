@@ -15,7 +15,7 @@ export const PARAMS: { value: TestParam; label: string; unit: string }[] = [
 ];
 
 /** Engine limits. */
-export const MAX_COUNT = 20;
+export const MAX_COUNT = 30;
 export const MAX_STEPS = 50;
 export const MAX_PASSES = 1000;
 
@@ -53,6 +53,11 @@ export interface MaterialTest {
   border_power_pct: number;
   border_speed_mm_s: number;
   title: string;
+  /**
+   * Hatch settings of the base this dialog does not show (angle, increment, cross-hatch, bidirectional), kept from a
+   * preset (a LightBurn .lbmt carries them) and sent back unchanged.
+   */
+  hatch_extra?: Record<string, unknown>;
 }
 
 /** LightBurn's defaults: 10 x 10 boxes, speed down the rows, power across. */
@@ -147,14 +152,14 @@ export function materialTestProblem(t: MaterialTest, pulseWidths: readonly numbe
   return null;
 }
 
-function basePatch(b: BaseSettings): Record<string, unknown> {
+function basePatch(b: BaseSettings, extra?: Record<string, unknown>): Record<string, unknown> {
   const s: Record<string, unknown> = {
     mode: b.mode,
     power_pct: b.power_pct,
     speed_mm_s: b.speed_mm_s,
     frequency_khz: b.frequency_khz,
     passes: Math.max(1, Math.round(b.passes)),
-    hatch: { interval_mm: b.interval_mm },
+    hatch: { ...(extra ?? {}), interval_mm: b.interval_mm },
   };
   if (b.pulse_width_ns !== null) s.pulse_width_ns = b.pulse_width_ns;
   return s;
@@ -171,7 +176,7 @@ export function materialTestParams(t: MaterialTest): Record<string, unknown> {
     cell_height_mm: t.cell_height_mm,
     spacing_mm: t.spacing_mm,
     center: t.center,
-    base: basePatch(t.base),
+    base: basePatch(t.base, t.hatch_extra),
     labels: t.labels,
     label_height_mm: t.label_height_mm,
     label_settings: lineSettings(t.label_power_pct, t.label_speed_mm_s),
@@ -180,6 +185,80 @@ export function materialTestParams(t: MaterialTest): Record<string, unknown> {
   if (t.border) p.border_settings = lineSettings(t.border_power_pct, t.border_speed_mm_s);
   if (t.title.trim()) p.title = t.title.trim();
   return p;
+}
+
+const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+const obj = (v: unknown): Record<string, unknown> => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
+
+function axisFrom(v: unknown, d: Axis): Axis {
+  const o = obj(v);
+  const param = PARAMS.some((x) => x.value === o.param) ? (o.param as TestParam) : d.param;
+  return { param, min: num(o.min) ?? d.min, max: num(o.max) ?? d.max, count: Math.round(num(o.count) ?? d.count) };
+}
+
+/**
+ * The dialog values of a saved preset (`params`, a `generate.material_test` input as GET /api/material-test/presets
+ * returns it, also for presets imported from LightBurn's .lbmt): what the preset lacks keeps `d`. The inverse of
+ * `materialTestParams` for everything the dialog shows; hatch settings it does not show go to `hatch_extra`.
+ */
+export function materialTestFromParams(params: unknown, d: MaterialTest = DEFAULT_MATERIAL_TEST): MaterialTest {
+  const p = obj(params);
+  const b = obj(p.base);
+  const hatch = obj(b.hatch);
+  const { interval_mm, ...hatchRest } = hatch;
+  const modes: BaseSettings["mode"][] = ["fill", "line", "fill_then_line", "offset_fill"];
+  const base: BaseSettings = {
+    mode: modes.includes(b.mode as BaseSettings["mode"]) ? (b.mode as BaseSettings["mode"]) : d.base.mode,
+    power_pct: num(b.power_pct) ?? d.base.power_pct,
+    speed_mm_s: num(b.speed_mm_s) ?? d.base.speed_mm_s,
+    frequency_khz: num(b.frequency_khz) ?? d.base.frequency_khz,
+    pulse_width_ns: "pulse_width_ns" in b ? num(b.pulse_width_ns) : d.base.pulse_width_ns,
+    passes: Math.round(num(b.passes) ?? d.base.passes),
+    interval_mm: num(interval_mm) ?? d.base.interval_mm,
+  };
+  const label = obj(p.label_settings);
+  const border = obj(p.border_settings);
+  const center = Array.isArray(p.center) && p.center.length === 2 && p.center.every((v) => num(v) !== null) ? ([p.center[0], p.center[1]] as [number, number]) : d.center;
+  return {
+    rows: axisFrom(p.rows, d.rows),
+    columns: axisFrom(p.columns, d.columns),
+    cell_width_mm: num(p.cell_width_mm) ?? d.cell_width_mm,
+    cell_height_mm: num(p.cell_height_mm) ?? d.cell_height_mm,
+    spacing_mm: num(p.spacing_mm) ?? d.spacing_mm,
+    center,
+    base,
+    labels: typeof p.labels === "boolean" ? p.labels : d.labels,
+    label_height_mm: num(p.label_height_mm) ?? d.label_height_mm,
+    label_power_pct: num(label.power_pct) ?? d.label_power_pct,
+    label_speed_mm_s: num(label.speed_mm_s) ?? d.label_speed_mm_s,
+    border: typeof p.border === "boolean" ? p.border : d.border,
+    border_power_pct: num(border.power_pct) ?? d.border_power_pct,
+    border_speed_mm_s: num(border.speed_mm_s) ?? d.border_speed_mm_s,
+    title: typeof p.title === "string" ? p.title : "",
+    hatch_extra: Object.keys(hatchRest).length ? hatchRest : undefined,
+  };
+}
+
+/** Material test presets as GET /api/material-test/presets lists them (bad rows dropped), sorted by name. */
+export interface TestPresetRow {
+  name: string;
+  params: Record<string, unknown>;
+}
+export function testPresetList(raw: unknown): TestPresetRow[] {
+  const list = obj(raw).presets;
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((x): x is TestPresetRow => !!x && typeof x === "object" && typeof (x as TestPresetRow).name === "string" && !!(x as TestPresetRow).params && typeof (x as TestPresetRow).params === "object")
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Why `name` cannot name a preset (the engine's rule: 1 to 100 characters, no control characters), or null. */
+export function testPresetNameProblem(name: string): string | null {
+  const n = name.trim();
+  if (!n) return "Give the preset a name.";
+  if ([...n].length > 100) return "A preset name is at most 100 characters.";
+  if ([...n].some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127)) return "A preset name cannot hold control characters.";
+  return null;
 }
 
 export interface PreviewBox {

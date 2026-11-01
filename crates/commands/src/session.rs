@@ -168,6 +168,10 @@ fn apply_all(registry: &Registry, doc: &mut Document, invs: Vec<Invocation>, sta
         applied.outcomes.push(result);
     }
     if !applied.edits.is_empty() {
+        // Virtual arrays (linked clones) follow every edit of their originals, in the same step.
+        if !doc.virtual_arrays.is_empty() {
+            crate::builtin::sync_virtual_arrays(doc)?;
+        }
         // Backstop for every command: JSON cannot store NaN or infinity and planning cannot use them, so a
         // document holding one (e.g. from transforms that overflow) is never committed.
         if let Some(problem) = doc.numeric_problem() {

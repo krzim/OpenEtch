@@ -255,6 +255,7 @@ const SHAPE_WORD: Record<string, string> = { rect: "rectangle", ellipse: "ellips
 
 export function useEditTools(p: EditToolsProps): EditTools {
   const t = useT();
+  const beginnerMode = usePrefs().beginnerMode;
   // The verb in "Select a shape to {what}" / "This engine cannot {what} yet", translated (keys "et.do.<english>").
   const td = useTD();
   const doWhat = (what: string) => td(`et.do.${what}`, what);
@@ -1021,6 +1022,28 @@ export function useEditTools(p: EditToolsProps): EditTools {
       notify(t("et.selectTheShapesFirst"), "error");
       return;
     }
+    if (kind === "unfillet") {
+      // LightBurn's Radius tool on a rounded corner: click corners of the one selected shape until Esc.
+      if (!cmd(G.GEO.unfillet, "make corners sharp")) return;
+      if (ids.length !== 1) return void notify(t("et.unfilletOneShape"), "error");
+      const again = () =>
+        startPick({
+          title: t("et.unfilletTitle"),
+          labels: [t("et.unfilletPick")],
+          preview: "point",
+          done: (pts) =>
+            void P.current
+              .run(G.unfillet(ids, rp(pts[0]), 2))
+              .then(() => again())
+              .catch((e: unknown) => {
+                P.current.report(e);
+                again();
+              }),
+          cancel: () => {},
+        });
+      again();
+      return;
+    }
     if (kind === "mirror" || kind === "mirrorCopy") {
       if (!cmd(G.GEO.transform, "mirror")) return;
       const keep = kind === "mirrorCopy";
@@ -1283,8 +1306,13 @@ export function useEditTools(p: EditToolsProps): EditTools {
     { label: t("et.transform"), disabled: n < 1 || !has(G.GEO.transform), action: () => act.dialog({ kind: "transform" }, 1, "transform", G.GEO.transform) },
     { label: t("et.twoPointRotate"), hint: "Ctrl+2", disabled: n < 1 || !has(G.GEO.rotateTo), action: () => act.pick("rotate2") },
     { label: t("et.twoPointScale"), disabled: n < 1 || !has(G.GEO.scaleTo), action: () => act.pick("scale2") },
-    { label: t("et.mirrorAcrossLine"), disabled: n < 1 || !has(G.GEO.transform), action: () => act.pick("mirror") },
-    { label: t("et.mirrorAcrossLineKeepOriginal"), disabled: n < 1 || !has(G.GEO.transform), action: () => act.pick("mirrorCopy") },
+    // Beginner Mode hides Mirror Across Line, as LightBurn's does.
+    ...(beginnerMode
+      ? []
+      : [
+          { label: t("et.mirrorAcrossLine"), disabled: n < 1 || !has(G.GEO.transform), action: () => act.pick("mirror") },
+          { label: t("et.mirrorAcrossLineKeepOriginal"), disabled: n < 1 || !has(G.GEO.transform), action: () => act.pick("mirrorCopy") },
+        ]),
     { sep: true },
     { label: t("et.gridArray"), disabled: n < 1, action: p.onGridArray },
     {

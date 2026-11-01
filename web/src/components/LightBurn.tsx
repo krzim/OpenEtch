@@ -93,7 +93,7 @@ export function LightBurnDevices(p: {
       // Only the device list goes to the engine (see devicePrefsBody); the file's other settings stay here.
       const { body, devices: n } = devicePrefsBody(await f.text());
       await api.lightburnUpload(body);
-      p.notify(`Loaded ${n} LightBurn device${n === 1 ? "" : "s"}.`);
+      p.notify(n === 1 ? t("rest.lbDevice1") : t("rest.lbDevicesN", { n }));
       await p.lightburn.refresh();
       p.onChanged();
     } catch (e) {

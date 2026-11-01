@@ -14,6 +14,7 @@
 //! Everything but font discovery and the clock is pure and builds for wasm32.
 
 pub mod barcode;
+pub mod codes;
 pub mod hershey;
 pub mod jsf;
 mod layout;

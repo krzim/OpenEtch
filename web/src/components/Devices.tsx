@@ -288,7 +288,7 @@ export function DevicesWindow(p: {
   const removeIt = (d: DeviceSummary) =>
     task(async () => {
       await api.deviceRemove(d.id);
-      p.notify(`Removed ${d.display_name}.`);
+      p.notify(t("rest.devRemoved", { name: d.display_name }));
       setAsk(null);
       await p.devices.refresh();
     });
@@ -296,7 +296,7 @@ export function DevicesWindow(p: {
   const duplicate = (d: DeviceSummary) =>
     task(async () => {
       const r = (await jobApi.deviceDuplicate(d.id)) as { device?: { id?: string } };
-      p.notify(`Duplicated ${d.display_name}.`);
+      p.notify(t("rest.devDuplicated", { name: d.display_name }));
       await p.devices.refresh();
       if (r?.device?.id) setSelected(r.device.id);
     });
@@ -305,7 +305,7 @@ export function DevicesWindow(p: {
     task(async () => {
       if (f.size > MAX_DEVICE_FILE_BYTES) throw new Error(t("dv.v1IsTooLargeForAn", { v1: f.name }));
       const r = (await jobApi.importMarkcfg(f, f.name.replace(/\.[^.]*$/, ""))) as { device?: { id?: string; display_name?: string } };
-      p.notify(`Added ${r?.device?.display_name ?? t("dv.aDevice")} from ${f.name}.`);
+      p.notify(t("rest.devAdded", { name: r?.device?.display_name ?? t("dv.aDevice"), file: f.name }));
       await p.devices.refresh();
       if (r?.device?.id) setSelected(r.device.id);
     });
@@ -537,14 +537,14 @@ function DeviceSettings(p: { device: DeviceSummary; details: { d: DeviceDetails 
         <dd>{device.lightburn_type ?? "–"}</dd>
         <dt>{t("dv.kind")}</dt>
         <dd>{kindLabel(device.kind)}</dd>
-        <dt>{isGalvo(device.kind) ? "Field" : "Workspace"}</dt>
+        <dt>{isGalvo(device.kind) ? t("rest.field") : t("rest.workspace")}</dt>
         <dd>{deviceSizeText(device)}</dd>
         <dt>{t("dv.origin")}</dt>
         <dd>{originLabel(device.origin)}</dd>
         <dt>{t("dv.source")}</dt>
         <dd>{sourceLabel(device.source)}</dd>
         <dt>{t("dv.runsJobs")}</dt>
-        <dd>{device.controllable ? "Yes" : t("dv.noDesignOnly")}</dd>
+        <dd>{device.controllable ? t("rest.yes") : t("dv.noDesignOnly")}</dd>
         {d?.base && (
           <>
             <dt>{t("dv.profileBase")}</dt>

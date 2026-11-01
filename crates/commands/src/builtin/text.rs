@@ -106,6 +106,68 @@ pub fn prepare_output(doc: &Document) -> std::result::Result<Document, String> {
     Ok(out)
 }
 
+/// Object extras key on a copy made by a grid array with Auto-Increment: the data its barcode was drawn with, so a
+/// virtual array's relayout can tell whether it must draw it again.
+const BARCODE_SHOWN_KEY: &str = "openetch.barcode_shown";
+
+/// Raise the variable-text Offset of `o` (a copy not yet in the document: a serial-number or CSV text or barcode) by
+/// `delta` and draw it again: LightBurn's Grid Array "Auto-Increment Variable Text". `prev` is what the copy was
+/// before (a virtual array's clone laid out again): when it already shows exactly this, its drawing is reused and no
+/// font is loaded. Other objects, and texts on a path (their outline follows the path object, not the copy), are
+/// left alone. Returns whether `o` changed.
+pub(crate) fn bump_copy(cmd: &str, doc: &Document, o: &mut doc::Object, delta: i64, prev: Option<&doc::Object>) -> Result<bool> {
+    if delta == 0 {
+        return Ok(false);
+    }
+    let counts = |m: VarMode| matches!(m, VarMode::Serial | VarMode::Csv);
+    let laser = laser_name(doc);
+    if let Geometry::Text(t) = &o.geometry {
+        if t.path.is_some() || !t.variable.as_ref().is_some_and(|v| counts(v.mode)) {
+            return Ok(false);
+        }
+        let mut nt = (**t).clone();
+        if let Some(v) = &mut nt.variable {
+            v.offset = v.offset.saturating_add(delta);
+        }
+        let shown = text::shown_text(doc, o, &nt, None, &laser);
+        let bare = |t: &Text| Text { outline: kurbo::BezPath::new(), shown: None, ..t.clone() };
+        let reuse = prev.and_then(|p| match &p.geometry {
+            Geometry::Text(pt) if bare(pt) == bare(&nt) && pt.shown.as_deref().unwrap_or(&pt.text) == shown => {
+                Some((pt.outline.clone(), pt.shown.clone()))
+            }
+            _ => None,
+        });
+        match reuse {
+            Some((outline, s)) => {
+                nt.outline = outline;
+                nt.shown = s;
+            }
+            None => {
+                let r = text::render_text(&nt, &shown, None).map_err(|e| CommandError::Failed(format!("{cmd}: {}: {e}", o.id)))?;
+                nt.shown = (shown != nt.text).then_some(shown);
+                nt.outline = r.outline;
+            }
+        }
+        o.geometry = Geometry::Text(Box::new(nt));
+        return Ok(true);
+    }
+    let Some(mut b) = barcode_params(o) else { return Ok(false) };
+    let Some(v) = b.variable.as_mut().filter(|v| var_of(v).is_some_and(|v| counts(v.mode))) else { return Ok(false) };
+    v.offset = v.offset.saturating_add(delta);
+    let params = serde_json::to_string(&b).map_err(|e| CommandError::Failed(format!("{cmd}: {}: {e}", o.id)))?;
+    let data = barcode_data(doc, &o.layer, &b, None);
+    let same = prev.filter(|p| {
+        p.extras.get(BARCODE_KEY) == Some(&params) && p.extras.get(BARCODE_SHOWN_KEY) == Some(&data)
+    });
+    o.geometry = match same {
+        Some(p) => p.geometry.clone(),
+        None => Geometry::Path { path: draw_barcode(cmd, &b, &data)?.path },
+    };
+    o.extras.insert(BARCODE_KEY.into(), params);
+    o.extras.insert(BARCODE_SHOWN_KEY.into(), data);
+    Ok(true)
+}
+
 /// Whether a finished run should advance the serial number / CSV row (`var.advance {auto: true}`): auto-advance is on
 /// and some text or barcode uses it.
 pub fn auto_advance_due(doc: &Document) -> bool {
@@ -866,7 +928,9 @@ pub struct BarcodeInput {
     /// Redraw this existing barcode object with these settings (LightBurn's Edit Bar Code) instead of adding one.
     #[serde(default, skip_serializing)]
     pub id: Option<ObjectId>,
-    /// qr, data_matrix, aztec, pdf417, code128, code39, code93, codabar, ean8, ean13, upc_a, upc_e, itf, telepen.
+    /// qr, data_matrix, aztec, pdf417, pdf417_compact, micro_qr, rmqr, code128, code39, code93, codabar, ean8, ean13,
+    /// upc_a, upc_e, itf, industrial_2of5, iata_2of5, isbn, vin, plessey, telepen, apriltag_16h5, apriltag_25h9,
+    /// apriltag_36h11. A tag's data is its id.
     pub kind: String,
     /// The content (with `variable`, a variable-text format).
     pub data: String,
@@ -879,7 +943,7 @@ pub struct BarcodeInput {
     /// Mark the light modules and the quiet zone instead of the dark ones.
     #[serde(default)]
     pub invert: bool,
-    /// QR: L, M, Q, H; Aztec: % of error words; PDF417: 0-8.
+    /// QR: L, M, Q, H; Micro QR: L, M, Q; rMQR: M, H; Aztec: % of error words; PDF417: 0-8.
     pub error_correction: Option<String>,
     /// Data Matrix: square symbols only (LightBurn's Force Square). Default true.
     pub force_square: Option<bool>,
@@ -962,8 +1026,8 @@ impl Command for ShapeBarcode {
     const ID: &'static str = "shape.barcode";
     const TITLE: &'static str = "Barcode";
     const DESCRIPTION: &'static str = "Add a barcode (LightBurn's Create Bar Code) as a path of its dark modules \
-        (welded into one outline per island: put it on a fill layer): qr, data_matrix, aztec, pdf417, code128, \
-        code39, code93, codabar, ean8, ean13, upc_a, upc_e, itf, telepen. Sizes in mm: module_mm (default 0.5), \
+        (welded into one outline per island: put it on a fill layer); `kind` lists the types (QR, Micro QR, rMQR, \
+        Data Matrix, Aztec, PDF417, 1D codes, AprilTag ids). Sizes in mm: module_mm (default 0.5), \
         height_mm for 1D codes (default 15). invert marks the light modules and a quiet zone instead. `variable` \
         makes `data` a variable-text format (serial numbers, CSV, date). With `id` it redraws that barcode in place. \
         Returns the id, bounds, size and module count.";

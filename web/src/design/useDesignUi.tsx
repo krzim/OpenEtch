@@ -24,7 +24,7 @@ import { execute, type Invocation } from "../api/client.ts";
 import * as C from "../api/commands.ts";
 import { bytesToBase64 } from "../api/drop.ts";
 import * as G from "../api/geomCommands.ts";
-import type { GDocument, Vec2 } from "../api/types.ts";
+import type { GDocument, Vec2, VirtualArray } from "../api/types.ts";
 import type { CanvasCtx, CanvasTool, RenderCtx } from "../canvasTool.ts";
 import type { MenuItem } from "../components/ContextMenu.tsx";
 import { Dropdown } from "../components/EditMenus.tsx";
@@ -33,6 +33,9 @@ import { circleOf } from "../snapping.ts";
 import { unitsOf, type Selection } from "../selection.ts";
 import { loadTextDefaults, shapeText } from "../text/textModel.ts";
 import type { KeyHandler } from "../workspace/useKeymap.ts";
+import type { MsgKey } from "../workspace/i18n.ts";
+import { tr } from "../workspace/tr.ts";
+import { useT } from "../workspace/usePrefs.ts";
 import { ART_DRAG_TYPE, ArtLibraryDock, openArtDock } from "./ArtLibrary.tsx";
 import { DCMD, artApi, rubberBand, selectQuery, tangentCandidates, tangentCircle, toolpathToPath, warp } from "./designApi.ts";
 import { CurveToleranceDialog, GridArrayDialog, MovePositionDialog, MoveTogetherDialog } from "./DesignDialogs.tsx";
@@ -50,6 +53,7 @@ import {
   selectionSvg,
   svgIn,
   warpParams,
+  virtualArrayOf,
   warpPreview,
   type ArtFragment,
   type ClipContent,
@@ -57,6 +61,7 @@ import {
   type WarpKind,
 } from "./model.ts";
 import { ShapeProperties } from "./ShapeProperties.tsx";
+import { SYSTEM_CLIPBOARD_EVENT } from "../files/LightBurnPrefsImport.tsx";
 import "./design.css";
 
 type Run = (inv: Invocation | Invocation[]) => Promise<unknown>;
@@ -82,7 +87,7 @@ export interface DesignUiProps {
   refreshDoc: () => void;
 }
 
-type Dlg = { kind: "movePosition" } | { kind: "moveTogether"; axis: "x" | "y" } | { kind: "curveTolerance" } | { kind: "array" };
+type Dlg = { kind: "movePosition" } | { kind: "moveTogether"; axis: "x" | "y" } | { kind: "curveTolerance" } | { kind: "array"; edit?: VirtualArray };
 
 interface WarpSession {
   kind: "warp";
@@ -188,6 +193,7 @@ export interface DesignUi {
 }
 
 export function useDesignUi(p: DesignUiProps): DesignUi {
+  const t = useT();
   const P = useRef(p);
   P.current = p;
   const [dlg, setDlg] = useState<Dlg | null>(null);
@@ -207,6 +213,15 @@ export function useDesignUi(p: DesignUiProps): DesignUi {
       // Storage unavailable: the choice lasts for this visit.
     }
   };
+  // The LightBurn preferences import sets "Use system clipboard" (UseSystemClipboard).
+  useEffect(() => {
+    const on = (e: Event) => {
+      const v = (e as CustomEvent<unknown>).detail;
+      if (typeof v === "boolean") setSysClip(v);
+    };
+    window.addEventListener(SYSTEM_CLIPBOARD_EVENT, on);
+    return () => window.removeEventListener(SYSTEM_CLIPBOARD_EVENT, on);
+  }, []);
   const notify: Notify = (m, k) => P.current.notify(m, k);
   const units = (): string[] => (P.current.doc ? unitsOf(P.current.doc, P.current.selection.objects) : []);
   const layer = (): string | null => P.current.activeLayer ?? P.current.doc?.layers[0]?.id ?? null;
@@ -219,9 +234,10 @@ export function useDesignUi(p: DesignUiProps): DesignUi {
       .run(inv)
       .then((r) => after?.(r))
       .catch(P.current.report);
-  const need = (cmd: string, what: string) => {
+  /** Whether the engine has `cmd`; else says so (`missing`: the "This engine cannot ... yet." message). */
+  const need = (cmd: string, missing: MsgKey) => {
     if (P.current.has(cmd)) return true;
-    notify(`This engine cannot ${what} yet.`, "error");
+    notify(tr(missing), "error");
     return false;
   };
 
@@ -238,7 +254,7 @@ export function useDesignUi(p: DesignUiProps): DesignUi {
     setClipTick((t) => t + 1);
     const n = fragment.objects.length;
     if (cut) void exec(C.remove(ids));
-    notify(`${cut ? "Cut" : "Copied"} ${n} object${n === 1 ? "" : "s"}.`);
+    notify(n === 1 ? tr(cut ? "dz.cut1" : "dz.copied1") : tr(cut ? "dz.cutN" : "dz.copiedN", { n }));
     return marker;
   };
 
@@ -296,7 +312,7 @@ export function useDesignUi(p: DesignUiProps): DesignUi {
       void exec(C.duplicate(c.ids, off), selectResult);
       return;
     }
-    notify("The copied objects no longer exist, and this engine cannot paste them back.", "error");
+    notify(tr("dz.copiedGone"), "error");
   };
 
   /** Import pasted content from another program, centred on the pointer (or where it lands, pasting in place). */
@@ -314,20 +330,20 @@ export function useDesignUi(p: DesignUiProps): DesignUi {
     };
     try {
       if (c.kind === "svg") {
-        const r = await pp.run(C.importSvg(c.svg, "Pasted art", layer()));
+        const r = await pp.run(C.importSvg(c.svg, tr("dz.pastedArt"), layer()));
         await move(r);
       } else if (c.kind === "image" && file) {
         if (file.type === "image/svg+xml") {
-          const r = await pp.run(C.importSvg(await file.text(), "Pasted art", layer()));
+          const r = await pp.run(C.importSvg(await file.text(), tr("dz.pastedArt"), layer()));
           await move(r);
           return;
         }
-        if (file.size > 50 * 1024 * 1024) return notify("The pasted image is larger than 50 MB.", "error");
+        if (file.size > 50 * 1024 * 1024) return notify(tr("dz.pasteTooLarge"), "error");
         const b64 = bytesToBase64(new Uint8Array(await file.arrayBuffer()));
-        const r = await pp.run(C.importImage(b64, file.type || "image/png", "Pasted image", layer()));
+        const r = await pp.run(C.importImage(b64, file.type || "image/png", tr("dz.pastedImage"), layer()));
         await move(r);
       } else if (c.kind === "text") {
-        if (!pp.has("shape.text")) return notify("This engine cannot add text.", "error");
+        if (!pp.has("shape.text")) return notify(tr("dz.noText"), "error");
         const r = await pp.run(shapeText(c.text, pos ?? [0, 0], loadTextDefaults(), layer()));
         const ids = G.resultIds(r);
         if (ids.length) pp.selectIds(ids);
@@ -464,17 +480,17 @@ export function useDesignUi(p: DesignUiProps): DesignUi {
 
   // ---- selection queries ----------------------------------------------------------------------------------------
 
-  const selectBy = (cmd: typeof DCMD.selectOpen | typeof DCMD.selectOpenOnFill | typeof DCMD.selectContained, what: string) => {
-    if (!need(cmd, what)) return;
+  const selectBy = (cmd: typeof DCMD.selectOpen | typeof DCMD.selectOpenOnFill | typeof DCMD.selectContained) => {
+    if (!need(cmd, cmd === DCMD.selectContained ? "dz.cannot.selectContained" : "dz.cannot.selectOpen")) return;
     const ids = cmd === DCMD.selectContained ? P.current.selection.objects : null;
-    if (cmd === DCMD.selectContained && !ids?.length) return notify("Select the shapes whose contents to add.", "error");
+    if (cmd === DCMD.selectContained && !ids?.length) return notify(tr("dz.selectContainers"), "error");
     execute(selectQuery(cmd, ids))
       .then((r) => {
         const found = (r.result as { ids?: unknown } | null)?.ids;
         const list = Array.isArray(found) ? found.filter((x): x is string => typeof x === "string") : [];
-        if (!list.length) return notify(cmd === DCMD.selectContained ? "No other shape lies inside the selection." : "No open shapes found.");
+        if (!list.length) return notify(tr(cmd === DCMD.selectContained ? "dz.noneInside" : "dz.noOpen"));
         P.current.selectIds(list);
-        notify(`Selected ${list.length} shape${list.length === 1 ? "" : "s"}.`);
+        notify(list.length === 1 ? tr("dz.selected1") : tr("dz.selectedN", { n: list.length }));
       })
       .catch(P.current.report);
   };
@@ -484,12 +500,12 @@ export function useDesignUi(p: DesignUiProps): DesignUi {
   const startWarp = (mode: WarpKind) => {
     const d = P.current.doc;
     const ids = P.current.selection.objects;
-    if (!d || !ids.length) return notify("Select the shapes to warp first.", "error");
-    if (!need(DCMD.warp, "warp shapes")) return;
+    if (!d || !ids.length) return notify(tr("dz.selectToWarp"), "error");
+    if (!need(DCMD.warp, "dz.cannot.warp")) return;
     const objs = d.objects.filter((o) => ids.includes(o.id));
-    if (objs.some((o) => o.geometry.kind === "image")) return notify("Images cannot be warped; select vector shapes only.", "error");
+    if (objs.some((o) => o.geometry.kind === "image")) return notify(tr("dz.noWarpImages"), "error");
     const box = unionBoxes(objs.map(objectBounds));
-    if (!box || box.x1 - box.x0 <= 1e-6 || box.y1 - box.y0 <= 1e-6) return notify("The selection needs a width and a height to warp.", "error");
+    if (!box || box.x1 - box.x0 <= 1e-6 || box.y1 - box.y0 <= 1e-6) return notify(tr("dz.warpNeedsSize"), "error");
     sess.set({ kind: "warp", mode, ids, box, handles: identityHandles(box, mode), drag: null, hover: null });
   };
 
@@ -513,17 +529,17 @@ export function useDesignUi(p: DesignUiProps): DesignUi {
   const startTangent = () => {
     const d = P.current.doc;
     if (!d) return;
-    if (!need(DCMD.tangentCandidates, "make tangent circles")) return;
+    if (!need(DCMD.tangentCandidates, "dz.cannot.tangent")) return;
     const ids = units();
     const circles = ids.filter((id) => {
       const o = d.objects.find((x) => x.id === id);
       return !!o && !!circleOf(o);
     });
-    if (circles.length !== 3 || ids.length !== 3) return notify("Select exactly three circles.", "error");
+    if (circles.length !== 3 || ids.length !== 3) return notify(tr("dz.threeCircles"), "error");
     execute(tangentCandidates(circles))
       .then((r) => {
         const cands = parseCandidates(r.result);
-        if (!cands.length) return notify("No circle touches all three.", "error");
+        if (!cands.length) return notify(tr("dz.noTangent"), "error");
         sess.set({ kind: "tangent", ids: circles, cands, hover: null });
       })
       .catch(P.current.report);
@@ -589,7 +605,7 @@ export function useDesignUi(p: DesignUiProps): DesignUi {
       if (s.kind === "tangent") {
         const c = nearestCandidate(s.cands, f, 10 / ctx.scale);
         if (c) createTangent([c.index]);
-        else notify("Click one of the red circles, or Create all.", "error");
+        else notify(tr("dz.clickCircle"), "error");
         return true;
       }
       const i = handleAt(s, f, ctx.scale);
@@ -618,7 +634,7 @@ export function useDesignUi(p: DesignUiProps): DesignUi {
         to = sp.p;
       } else ctx.showSnap(null);
       sess.set({ ...s, handles: moveHandle(s.handles, s.drag.base, s.mode, s.drag.index, to, { h: m.shift, v: !!m.alt }) });
-      ctx.readout(`Handle ${s.drag.index + 1}: ${to[0].toFixed(2)}, ${to[1].toFixed(2)} mm`);
+      ctx.readout(tr("dz.handleReadout", { n: s.drag.index + 1, x: to[0].toFixed(2), y: to[1].toFixed(2) }));
     },
     up: (f, m, ctx) => {
       if (owner.current !== "design") {
@@ -701,56 +717,74 @@ export function useDesignUi(p: DesignUiProps): DesignUi {
   const has = p.has;
   const nSel = p.selection.objects.length;
   const nUnits = p.doc ? unitsOf(p.doc, p.selection.objects).length : 0;
+  // LightBurn's virtual array context menu (Edit / Duplicate / Flatten / Remove from / Add to Array).
+  const varr = virtualArrayOf(p.doc, p.selection.objects);
+  const inArray = new Set((p.doc?.virtual_arrays ?? []).flatMap((a) => [...a.sources, ...a.clones]));
+  const freeSel = p.selection.objects.filter((id) => !inArray.has(id));
+  const varrOriginals = varr ? p.selection.objects.filter((id) => varr.sources.includes(id)) : [];
+  const arrayItems: MenuItem[] =
+    varr && has("array.flatten")
+      ? [
+          { sep: true },
+          { label: t("dz.va.edit"), action: () => setDlg({ kind: "array", edit: varr }) },
+          { label: t("dz.va.duplicate"), action: () => void exec({ id: "array.duplicate", params: { array: varr.id } }, (r) => (selectResult(r), notify(tr("dz.va.duplicated")))) },
+          { label: t("dz.va.flatten"), action: () => void exec({ id: "array.flatten", params: { arrays: [varr.id] } }, () => notify(tr("dz.va.flattened"))) },
+          { label: t("dz.va.removeFrom"), disabled: !varrOriginals.length, action: () => void exec({ id: "array.remove", params: { ids: varrOriginals } }) },
+          { label: t("dz.va.addTo"), disabled: !freeSel.length, action: () => void exec({ id: "array.add", params: { array: varr.id, ids: freeSel } }) },
+        ]
+      : [];
   void clipTick;
   const canPaste = !!clip.current || sysClip;
   const editItems: MenuItem[] = [
-    { label: "Cut", hint: "Ctrl+X", disabled: !nSel, action: () => copy(true) },
-    { label: "Copy", hint: "Ctrl+C", disabled: !nSel, action: () => copy(false) },
-    { label: "Paste", hint: "Ctrl+V", disabled: !canPaste, action: () => paste(false) },
-    { label: "Paste in place", hint: "Alt+V", disabled: !canPaste, action: () => paste(true) },
-    { label: sysClip ? "Use system clipboard: on" : "Use system clipboard: off", action: () => setSysClip(!sysClip) },
+    { label: t("dz.menu.cut"), hint: "Ctrl+X", disabled: !nSel, action: () => copy(true) },
+    { label: t("dz.menu.copy"), hint: "Ctrl+C", disabled: !nSel, action: () => copy(false) },
+    { label: t("dz.menu.paste"), hint: "Ctrl+V", disabled: !canPaste, action: () => paste(false) },
+    { label: t("dz.menu.pasteInPlace"), hint: "Alt+V", disabled: !canPaste, action: () => paste(true) },
+    { label: sysClip ? t("dz.menu.sysClipOn") : t("dz.menu.sysClipOff"), action: () => setSysClip(!sysClip) },
     { sep: true },
-    { label: "Select open shapes", disabled: !has(DCMD.selectOpen), action: () => selectBy(DCMD.selectOpen, "select open shapes") },
-    { label: "Select open shapes set to fill", disabled: !has(DCMD.selectOpenOnFill), action: () => selectBy(DCMD.selectOpenOnFill, "select open shapes") },
-    { label: "Select contained shapes", disabled: !nSel || !has(DCMD.selectContained), action: () => selectBy(DCMD.selectContained, "select contained shapes") },
+    { label: t("dz.menu.selectOpen"), disabled: !has(DCMD.selectOpen), action: () => selectBy(DCMD.selectOpen) },
+    { label: t("dz.menu.selectOpenFill"), disabled: !has(DCMD.selectOpenOnFill), action: () => selectBy(DCMD.selectOpenOnFill) },
+    { label: t("dz.menu.selectContained"), disabled: !nSel || !has(DCMD.selectContained), action: () => selectBy(DCMD.selectContained) },
     { sep: true },
-    { label: "Curve tolerance…", disabled: !p.doc || !has(DCMD.curveTolerance), action: () => setDlg({ kind: "curveTolerance" }) },
+    { label: t("dz.menu.curveTolerance"), disabled: !p.doc || !has(DCMD.curveTolerance), action: () => setDlg({ kind: "curveTolerance" }) },
   ];
   const toolsItems: MenuItem[] = [
-    { label: "Warp selection", disabled: !nSel || !has(DCMD.warp), action: () => startWarp("perspective") },
-    { label: "Deform selection", disabled: !nSel || !has(DCMD.warp), action: () => startWarp("grid") },
+    { label: t("dz.menu.warp"), disabled: !nSel || !has(DCMD.warp), action: () => startWarp("perspective") },
+    { label: t("dz.menu.deform"), disabled: !nSel || !has(DCMD.warp), action: () => startWarp("grid") },
     { sep: true },
-    { label: "Generate tangent circle", disabled: nUnits !== 3 || !has(DCMD.tangentCandidates), action: startTangent },
+    { label: t("dz.menu.tangent"), disabled: nUnits !== 3 || !has(DCMD.tangentCandidates), action: startTangent },
     {
-      label: "Rubber-band outline",
+      label: t("dz.menu.rubberBand"),
       disabled: !nSel || !has(DCMD.rubberBand),
-      action: () => need(DCMD.rubberBand, "make outlines") && void exec(rubberBand(units(), p.activeLayer), selectResult),
+      action: () => need(DCMD.rubberBand, "dz.cannot.rubberBand") && void exec(rubberBand(units(), p.activeLayer), selectResult),
     },
     {
-      label: nSel ? "Convert toolpath to path (selection)" : "Convert toolpath to path",
+      label: nSel ? t("dz.menu.toolpathSel") : t("dz.menu.toolpath"),
       disabled: !p.doc?.objects.length || !has(DCMD.toolpathToPath),
-      action: () => need(DCMD.toolpathToPath, "turn toolpaths into paths") && void exec(toolpathToPath(nSel ? units() : null), selectResult),
+      action: () => need(DCMD.toolpathToPath, "dz.cannot.toolpath") && void exec(toolpathToPath(nSel ? units() : null), selectResult),
     },
     { sep: true },
-    { label: "Art Library", action: openArtDock },
+    { label: t("dz.menu.artLibrary"), action: openArtDock },
   ];
   const arrangeItems: MenuItem[] = [
     { sep: true },
-    { label: "Move selected objects…", disabled: !nSel || !has(DCMD.pagePosition), action: () => setDlg({ kind: "movePosition" }) },
-    { label: "Move horizontally together…", disabled: nUnits < 2, action: () => setDlg({ kind: "moveTogether", axis: "x" }) },
-    { label: "Move vertically together…", disabled: nUnits < 2, action: () => setDlg({ kind: "moveTogether", axis: "y" }) },
+    { label: t("dz.menu.movePosition"), disabled: !nSel || !has(DCMD.pagePosition), action: () => setDlg({ kind: "movePosition" }) },
+    { label: t("dz.menu.moveH"), disabled: nUnits < 2, action: () => setDlg({ kind: "moveTogether", axis: "x" }) },
+    { label: t("dz.menu.moveV"), disabled: nUnits < 2, action: () => setDlg({ kind: "moveTogether", axis: "y" }) },
+    ...arrayItems,
   ];
   const menuItems: MenuItem[] = [
-    { label: "Paste in place", hint: "Alt+V", disabled: !canPaste, action: () => paste(true) },
-    { label: "Warp selection", disabled: !nSel || !has(DCMD.warp), action: () => startWarp("perspective") },
-    { label: "Deform selection", disabled: !nSel || !has(DCMD.warp), action: () => startWarp("grid") },
-    { label: "Add to Art Library…", disabled: !nSel, action: openArtDock },
+    { label: t("dz.menu.pasteInPlace"), hint: "Alt+V", disabled: !canPaste, action: () => paste(true) },
+    { label: t("dz.menu.warp"), disabled: !nSel || !has(DCMD.warp), action: () => startWarp("perspective") },
+    { label: t("dz.menu.deform"), disabled: !nSel || !has(DCMD.warp), action: () => startWarp("grid") },
+    { label: t("dz.menu.addArt"), disabled: !nSel, action: openArtDock },
+    ...arrayItems,
   ];
 
   const toolbar = p.design ? (
-    <div className="tool-group" role="group" aria-label="Edit and tools">
-      <Dropdown icon="edit" label="Edit" title="Clipboard, selection tools, curve tolerance" items={editItems} />
-      <Dropdown icon="tools" label="Tools" title="Warp and deform, tangent circle, rubber band, toolpath to path, Art Library" items={toolsItems} />
+    <div className="tool-group" role="group" aria-label={t("dz.editAndTools")}>
+      <Dropdown icon="edit" label={t("dz.edit")} title={t("dz.editTitle")} items={editItems} />
+      <Dropdown icon="tools" label={t("dz.tools")} title={t("dz.toolsTitle")} items={toolsItems} />
     </div>
   ) : null;
 
@@ -772,6 +806,7 @@ export function useDesignUi(p: DesignUiProps): DesignUi {
           has={p.has}
           run={p.run}
           onClose={close}
+          editArray={dlg.edit ?? null}
           onCreated={(created) => P.current.selectIds([...P.current.selection.objects, ...created])}
         />
       )
@@ -784,7 +819,7 @@ export function useDesignUi(p: DesignUiProps): DesignUi {
     "tools.warp": () => (p.design ? startWarp("perspective") : false),
     "tools.deform": () => (p.design ? startWarp("grid") : false),
     "tools.tangentCircle": () => (p.design ? startTangent() : false),
-    "edit.selectOpen": () => (p.design ? selectBy(DCMD.selectOpen, "select open shapes") : false),
+    "edit.selectOpen": () => (p.design ? selectBy(DCMD.selectOpen) : false),
     "window.artLibrary": () => openArtDock(),
     "arrange.movePosition": () => (p.design && nSel ? setDlg({ kind: "movePosition" }) : false),
   };
@@ -864,46 +899,47 @@ function SessionBar(p: {
   onMode: (m: WarpKind) => void;
   onCreateAll: () => void;
 }) {
+  const t = useT();
   const s = useSyncExternalStore(p.sess.sub, p.sess.get);
   if (!s) return null;
   if (s.kind === "tangent")
     return (
-      <div className="vp-overlay et-bar" role="toolbar" aria-label="Tangent circle">
+      <div className="vp-overlay et-bar" role="toolbar" aria-label={t("dz.tangentCircle")}>
         <span>
-          <b>Tangent circle</b>: click one of the {s.cands.length} red circles to create it · Esc: cancel
+          <b>{t("dz.tangentCircle")}</b>: {t("dz.tangentBar", { n: s.cands.length })}
         </span>
         <button className="btn btn-small" onClick={p.onCreateAll}>
-          Create all
+          {t("dz.createAll")}
         </button>
         <button className="btn btn-small" onClick={p.onCancel}>
-          Cancel
+          {t("dz.cancel")}
         </button>
       </div>
     );
   const bad = s.mode === "perspective" ? perspectiveProblem(s.handles) : null;
   return (
-    <div className="vp-overlay et-bar" role="toolbar" aria-label={s.mode === "grid" ? "Deform" : "Warp"}>
-      <b>{s.mode === "grid" ? "Deform" : "Warp"}</b>
+    <div className="vp-overlay et-bar" role="toolbar" aria-label={s.mode === "grid" ? t("dz.deform") : t("dz.warp")}>
+      <b>{s.mode === "grid" ? t("dz.deform") : t("dz.warp")}</b>
       {s.mode !== "grid" && (
         <label className="et-opt">
-          <select value={s.mode} onChange={(e) => p.onMode(e.target.value as WarpKind)} aria-label="Warp kind">
-            <option value="perspective">Perspective</option>
-            <option value="envelope">Envelope</option>
+          <select value={s.mode} onChange={(e) => p.onMode(e.target.value as WarpKind)} aria-label={t("dz.warpKind")}>
+            <option value="perspective">{t("dz.perspective")}</option>
+            <option value="envelope">{t("dz.envelope")}</option>
           </select>
         </label>
       )}
       <span className="et-hint">
-        Drag the {s.handles.length} handles · Shift: horizontal symmetry · Alt: vertical symmetry · double-click a handle resets it · Enter applies · Esc cancels
+        {t("dz.warpHint", { n: s.handles.length })}
       </span>
       {bad && <span className="form-error">{bad}</span>}
       <button className="btn btn-small" onClick={p.onReset}>
-        Reset
+        {t("dz.reset")}
       </button>
       <button className="btn btn-small" onClick={p.onCancel}>
-        Cancel
+        {t("dz.cancel")}
       </button>
       <button className="btn btn-small btn-primary" onClick={p.onApply} disabled={!!bad}>
-        Apply
+        {t("dz.apply")}
       </button>
     </div>
   );

@@ -315,3 +315,86 @@ test("3D Sliced state: slices are passes, the cleanup sub-layer and clean whole 
   const plain = { ...layer, settings: { passes: 3 }, sub_layers: [] } as unknown as Layer;
   assert.deepEqual(slice3dState(plain), { slices: 3, cleanup: null, everyN: 3, cleanWholeImage: false });
 });
+
+test("project folders: tree rows, expansion, projects in a folder, new folders and locations", async () => {
+  const f = await import("./folders.ts");
+  const locs = f.parseLocations({ locations: [{ label: "NAS", path: "/mnt/nas", source: "cli", reachable: false }, { bad: 1 }] });
+  assert.deepEqual(locs, [{ label: "NAS", path: "/mnt/nas", source: "cli", reachable: false }]);
+  assert.deepEqual(f.parseFolders({ folders: ["Clients", 3, "", "Clients/Acme"] }), ["Clients", "Clients/Acme"]);
+  const rows = f.folderRows(["clients", "Clients/Acme"], ["Clients/Zed/badge", "top", "b/c"], locs);
+  // Folders differing only in case are one folder (Windows and macOS), listed with the first spelling seen.
+  assert.deepEqual(
+    rows.map((r) => [r.path, r.depth]),
+    [["", 0], ["b", 1], ["clients", 1], ["clients/Acme", 2], ["clients/Zed", 2], ["NAS", 1]],
+  );
+  const simple = f.folderRows(["A", "A/B", "A/B/C"], [], locs);
+  assert.deepEqual(simple.map((r) => r.path), ["", "A", "A/B", "A/B/C", "NAS"]);
+  assert.equal(simple.find((r) => r.path === "NAS")?.unreachable, true);
+  assert.deepEqual(f.visibleRows(simple, new Set()).map((r) => r.path), ["", "A", "NAS"]);
+  assert.deepEqual(f.visibleRows(simple, new Set(["A"])).map((r) => r.path), ["", "A", "A/B", "NAS"]);
+  assert.equal(f.hasChildren(simple, simple[1]!), true);
+  assert.equal(f.hasChildren(simple, simple[3]!), false);
+  const list = [{ name: "a" }, { name: "A/x" }, { name: "A/B/y" }];
+  assert.deepEqual(f.projectsIn(list, "").map((p) => p.name), ["a"]);
+  assert.deepEqual(f.projectsIn(list, "a").map((p) => p.name), ["A/x"]);
+  assert.equal(f.folderOf("A/B/y"), "A/B");
+  assert.equal(f.baseNameOf("A/B/y"), "y");
+  assert.equal(f.joinProject("", "y"), "y");
+  assert.equal(f.newFolderProblem("A", "New"), null);
+  assert.match(f.newFolderProblem("", "a/b") ?? "", /One folder/);
+  assert.ok(f.newFolderProblem("A/B/C/D", "E"), "five folders deep is refused");
+  assert.equal(f.locationsProblem([{ label: "Shop", path: "D:/Jobs" }]), null);
+  assert.equal(f.locationsProblem([{ label: "Shop2", path: String.raw`D:\Jobs` }]), null);
+  assert.match(f.locationsProblem([{ label: "Shop", path: "Jobs" }]) ?? "", /full path/);
+  assert.match(f.locationsProblem([{ label: "NAS", path: "/x" }], locs) ?? "", /Two locations/);
+  assert.match(f.locationsProblem([{ label: "templates", path: "/x" }]) ?? "", /own files/);
+});
+
+test("Edit 3D Model: the kept options back into the dialog and the image.edit_model call", async () => {
+  const f = await import("./fileFormats.ts");
+  assert.equal(f.modelOptionsOf(undefined), null);
+  const opts = JSON.stringify({ format: "stl", rotation_deg: [90, 0, 45], width_mm: 40, dpi: 300, sixteen_bit: true, invert: false, transparent_background: true, depth_cutoff_mm: null, equalize: true, outline: false });
+  assert.equal(f.modelOptionsOf({ "model3d.options": opts }), null, "no kept model: not editable");
+  const o = f.modelOptionsOf({ "model3d.options": opts, "model3d.source": "UEsDB..." });
+  assert.deepEqual(o, { rotation: [90, 0, 45], widthMm: 40, dpi: 300, sixteenBit: true, invert: false, transparentBackground: true, depthCutoffMm: null, equalize: true, outline: false });
+  assert.equal(f.modelOptionsOf({ "model3d.options": "{bad", "model3d.source": "x" }), null);
+  const inv = f.editModelInvocation("obj-3", { ...o!, widthMm: null, outline: true });
+  assert.equal(inv.id, "image.edit_model");
+  assert.deepEqual(inv.params, { id: "obj-3", rotation_deg: [90, 0, 45], width_mm: null, dpi: 300, sixteen_bit: true, invert: false, transparent_background: true, depth_cutoff_mm: null, equalize: true, outline: true });
+});
+
+test("LightBurn preferences import: the engine's browser part is checked field by field", async () => {
+  const lb = await import("./lightburnPrefs.ts");
+  // The shape crates/engine/src/lbprefs.rs answers (synthetic values).
+  const browser = {
+    prefs: { units: "in", gridMm: 5, snapTolPx: 99, nudge: { normal: 2, ctrl: 0.5 }, invertWheel: true, crosshair: "yes", language: "es" },
+    view: { snap: { objects: true, grid: false, gridMm: 0.5 }, viewStyle: "wireframe" },
+    files: { importPrefs: { group: false, select: true, center: 1 } },
+    laser: { frame: { style: "hull", individually: true, bogus: 1 } },
+    dialogs: { grid_array: { pitch_x_mm: 3, virtual: true }, nest: { multipage: true }, unknown: { a: 1 } },
+    system_clipboard: false,
+  };
+  const p = lb.planLightBurnPrefs(browser);
+  assert.deepEqual(p.prefs, { units: "in", gridMm: 5, invertWheel: true, language: "es", nudge: { normal: 2, ctrl: 0.5 } }, "out-of-range and wrong types dropped");
+  assert.deepEqual(p.view, { snap: { objects: true, grid: false, gridMm: 0.5 }, viewStyle: "wireframe" });
+  assert.deepEqual(p.importPrefs, { group: false, select: true });
+  assert.deepEqual(p.frame, { style: "hull", individually: true });
+  assert.equal(p.systemClipboard, false);
+  assert.deepEqual(Object.keys(p.dialogs), ["grid_array", "nest"]);
+  assert.equal(lb.planSize(p), 4 + 2 + 3 + 1 + 2 + 2 + 1 + 3);
+  const empty = lb.planLightBurnPrefs({});
+  assert.equal(lb.planSize(empty), 0);
+  const r = lb.parseLightBurnPrefsResult({ ok: true, preview: true, used: ["units", 3], rejected: [], other_keys: 180, engine: { autosave_minutes: 5, optimization: { enabled: true } }, browser });
+  assert.deepEqual([r.preview, r.used, r.otherKeys, r.autosaveMinutes, r.optimization], [true, ["units"], 180, 5, true]);
+});
+
+test("dialog defaults: stored per dialog, merged, read typed", async () => {
+  const d = await import("../workspace/dialogDefaults.ts");
+  assert.deepEqual(d.sanitizeDialogDefaults({ nest: { multipage: true }, other: {}, offset: 3 }), { nest: { multipage: true } });
+  d.setDialogDefaults({ grid_array: { pitch_x_mm: 4, virtual: true } });
+  d.setDialogDefaults({ grid_array: { reverse_x: true } });
+  assert.equal(d.dNum("grid_array", "pitch_x_mm", 2), 4);
+  assert.equal(d.dBool("grid_array", "reverse_x", false), true);
+  assert.equal(d.dBool("grid_array", "pitch_x_mm", false), false, "wrong type: the default");
+  assert.equal(d.dStr("nest", "x", "dflt"), "dflt");
+});

@@ -10,6 +10,7 @@ import { onEngineEvent } from "../api/events.ts";
 import type { Vec2 } from "../api/types.ts";
 import { ContextMenu, type MenuItem } from "../components/ContextMenu.tsx";
 import { Modal } from "../components/ui.tsx";
+import { useT } from "../workspace/usePrefs.ts";
 import { setVisible, updateLayout } from "../workspace/layout.ts";
 import { updatePrefs } from "../workspace/prefs.ts";
 import { Dock } from "../workspace/Dock.tsx";
@@ -38,6 +39,7 @@ export function ArtLibraryDock(p: {
   onInsert: (library: string, id: string, center: Vec2 | null) => void;
 }) {
   const { notify } = p;
+  const t = useT();
   const [libs, setLibs] = useState<ArtLibraryRow[] | null>(null);
   const [unsupported, setUnsupported] = useState(false);
   const [lbartNote, setLbartNote] = useState<string | null>(null);
@@ -135,13 +137,13 @@ export function ArtLibraryDock(p: {
 
   const loadFile = (file: File) => {
     if (/\.lbart$/i.test(file.name)) {
-      notify(lbartNote ?? "LightBurn's .lbart format cannot be read.", "error");
+      notify(lbartNote ?? t("art.noLbart"), "error");
       return;
     }
     void task(async () => {
       const r = await artApi.load(file);
       if (r.name) setSelected(r.name);
-    }, `Loaded ${file.name}.`);
+    }, t("art.loaded", { name: file.name }));
   };
   const importFile = (file: File) => {
     if (!current) return;
@@ -150,7 +152,7 @@ export function ArtLibraryDock(p: {
       notify(f.error, "error");
       return;
     }
-    void task(() => artApi.importFile(current, file, f.format), `Added ${file.name} to ${current}.`);
+    void task(() => artApi.importFile(current, file, f.format), t("art.addedFile", { name: file.name, library: current }));
   };
   const download = () => {
     if (!current) return;
@@ -168,57 +170,57 @@ export function ArtLibraryDock(p: {
   if (unsupported) return null;
   const names = (libs ?? []).map((l) => l.name);
   const itemMenu = (it: ArtItem): MenuItem[] => [
-    { label: "Add to project", action: () => current && p.onInsert(current, it.id, null) },
+    { label: t("art.addToProject"), action: () => current && p.onInsert(current, it.id, null) },
     { sep: true },
-    { label: "Rename…", action: () => setDlg({ kind: "renameItem", item: it }) },
-    { label: "Copy to library…", disabled: names.length < 2, action: () => setDlg({ kind: "copy", item: it, move: false }) },
-    { label: "Move to library…", disabled: names.length < 2, action: () => setDlg({ kind: "copy", item: it, move: true }) },
+    { label: t("art.renameItem"), action: () => setDlg({ kind: "renameItem", item: it }) },
+    { label: t("art.copyTo"), disabled: names.length < 2, action: () => setDlg({ kind: "copy", item: it, move: false }) },
+    { label: t("art.moveTo"), disabled: names.length < 2, action: () => setDlg({ kind: "copy", item: it, move: true }) },
     { sep: true },
-    { label: "Delete", action: () => setDlg({ kind: "deleteItem", item: it }) },
+    { label: t("art.delete"), action: () => setDlg({ kind: "deleteItem", item: it }) },
   ];
 
   return (
-    <Dock id={ART_DOCK_ID} title="Art Library" defaultCollapsed>
+    <Dock id={ART_DOCK_ID} title={t("art.title")} defaultCollapsed>
       <div className="dz-art">
         <div className="dz-art-row">
-          <select aria-label="Library" value={current ?? ""} onChange={(e) => setSelected(e.target.value || null)} disabled={!libs?.length}>
-            {!libs?.length && <option value="">No library</option>}
+          <select aria-label={t("art.library")} value={current ?? ""} onChange={(e) => setSelected(e.target.value || null)} disabled={!libs?.length}>
+            {!libs?.length && <option value="">{t("art.noLibrary")}</option>}
             {(libs ?? []).map((l) => (
               <option key={l.name} value={l.name}>
                 {l.name} ({l.items})
               </option>
             ))}
           </select>
-          <button className="btn btn-small" onClick={() => setDlg({ kind: "new" })} disabled={busy} title="Create a new, empty library">
-            New
+          <button className="btn btn-small" onClick={() => setDlg({ kind: "new" })} disabled={busy} title={t("art.newTitle")}>
+            {t("art.new")}
           </button>
-          <button className="btn btn-small" onClick={() => loadRef.current?.click()} disabled={busy} title="Load a library file (.oeart)">
-            Load
+          <button className="btn btn-small" onClick={() => loadRef.current?.click()} disabled={busy} title={t("art.loadTitle")}>
+            {t("art.load")}
           </button>
         </div>
         {current && (
           <div className="dz-art-row">
-            <button className="btn btn-small" onClick={() => setDlg({ kind: "add" })} disabled={busy || !p.selection.length || !p.design} title="Add the selected shapes as one item (artwork only, no cut settings)">
-              Add selection
+            <button className="btn btn-small" onClick={() => setDlg({ kind: "add" })} disabled={busy || !p.selection.length || !p.design} title={t("art.addSelectionTitle")}>
+              {t("art.addSelection")}
             </button>
-            <button className="btn btn-small" onClick={() => importRef.current?.click()} disabled={busy} title="Import a file (SVG, DXF, PDF, AI, an image, LightBurn .lbrn2, ...) as an item">
-              Import…
+            <button className="btn btn-small" onClick={() => importRef.current?.click()} disabled={busy} title={t("art.importTitle")}>
+              {t("art.import")}
             </button>
-            <button className="btn btn-small" onClick={download} disabled={busy} title="Download the library file">
-              Download
+            <button className="btn btn-small" onClick={download} disabled={busy} title={t("art.downloadTitle")}>
+              {t("art.download")}
             </button>
             <button className="btn btn-small" onClick={() => setDlg({ kind: "rename" })} disabled={busy}>
-              Rename
+              {t("art.rename")}
             </button>
-            <button className="btn btn-small" onClick={() => setDlg({ kind: "delete" })} disabled={busy} title="Delete the library file from the engine's projects folder">
-              Delete
+            <button className="btn btn-small" onClick={() => setDlg({ kind: "delete" })} disabled={busy} title={t("art.deleteTitle")}>
+              {t("art.delete")}
             </button>
           </div>
         )}
-        {current && items.length > 6 && <input type="search" className="dz-art-search" placeholder="Search items" value={query} onChange={(e) => setQuery(e.target.value)} />}
-        {libs && !libs.length && <p className="hint">No libraries yet. Create one with New, or Load an .oeart file.</p>}
-        {current && !items.length && <p className="hint">This library is empty. Select shapes and press Add selection, or Import a file.</p>}
-        <div className="dz-art-grid" role="listbox" aria-label="Art items">
+        {current && items.length > 6 && <input type="search" className="dz-art-search" placeholder={t("art.search")} value={query} onChange={(e) => setQuery(e.target.value)} />}
+        {libs && !libs.length && <p className="hint">{t("art.noLibraries")}</p>}
+        {current && !items.length && <p className="hint">{t("art.empty")}</p>}
+        <div className="dz-art-grid" role="listbox" aria-label={t("art.items")}>
           {current &&
             shown.map((it) => (
               <ArtThumb
@@ -235,7 +237,7 @@ export function ArtLibraryDock(p: {
               />
             ))}
         </div>
-        {current && items.length > 0 && <p className="hint">Drag an item onto the canvas, or double-click it to add it at the field centre. Right-click for more.</p>}
+        {current && items.length > 0 && <p className="hint">{t("art.hint")}</p>}
         <input
           ref={loadRef}
           type="file"
@@ -261,11 +263,11 @@ export function ArtLibraryDock(p: {
       {menu && <ContextMenu x={menu.x} y={menu.y} items={itemMenu(menu.item)} onClose={() => setMenu(null)} />}
       {dlg && (dlg.kind === "new" || dlg.kind === "rename" || dlg.kind === "add" || dlg.kind === "renameItem") && (
         <NameDialog
-          title={dlg.kind === "new" ? "New art library" : dlg.kind === "rename" ? `Rename library ${current ?? ""}` : dlg.kind === "add" ? "Add selection to library" : "Rename item"}
+          title={dlg.kind === "new" ? t("art.newLibrary") : dlg.kind === "rename" ? t("art.renameLibrary", { name: current ?? "" }) : dlg.kind === "add" ? t("art.addToLibrary") : t("art.renameItemTitle")}
           initial={dlg.kind === "rename" ? (current ?? "") : dlg.kind === "renameItem" ? (dlg.item?.name ?? "") : ""}
-          placeholder={dlg.kind === "add" ? "Item name (optional)" : undefined}
+          placeholder={dlg.kind === "add" ? t("art.itemName") : undefined}
           optional={dlg.kind === "add"}
-          problem={(n) => (dlg.kind === "new" ? libraryNameProblem(n, names) : dlg.kind === "rename" ? libraryNameProblem(n, names, current ?? undefined) : n.trim().length > 200 ? "That name is too long." : null)}
+          problem={(n) => (dlg.kind === "new" ? libraryNameProblem(n, names) : dlg.kind === "rename" ? libraryNameProblem(n, names, current ?? undefined) : n.trim().length > 200 ? t("art.nameTooLong") : null)}
           onClose={() => setDlg(null)}
           onOk={(n) => {
             setDlg(null);
@@ -274,53 +276,53 @@ export function ArtLibraryDock(p: {
               void task(async () => {
                 await artApi.create(name);
                 setSelected(name);
-              }, `Created library ${name}.`);
+              }, t("art.created", { name }));
             else if (dlg.kind === "rename" && current)
               void task(async () => {
                 await artApi.rename(current, name);
                 setSelected(name);
-              }, `Renamed to ${name}.`);
-            else if (dlg.kind === "add" && current) void task(() => artApi.addSelection(current, p.selection, name || undefined), `Added to ${current}.`);
+              }, t("art.renamed", { name }));
+            else if (dlg.kind === "add" && current) void task(() => artApi.addSelection(current, p.selection, name || undefined), t("art.added", { library: current }));
             else if (dlg.kind === "renameItem" && current && dlg.item) void task(() => artApi.renameItem(current, dlg.item!.id, name));
           }}
         />
       )}
       {dlg?.kind === "copy" && current && (
         <PickLibraryDialog
-          title={`${dlg.move ? "Move" : "Copy"} "${dlg.item.name}" to`}
+          title={t(dlg.move ? "art.moveItemTo" : "art.copyItemTo", { name: dlg.item.name })}
           options={names.filter((n) => n !== current)}
           onClose={() => setDlg(null)}
           onOk={(to) => {
             const d = dlg;
             setDlg(null);
-            void task(() => artApi.copyItem(current, d.item.id, to, d.move), `${d.move ? "Moved" : "Copied"} to ${to}.`);
+            void task(() => artApi.copyItem(current, d.item.id, to, d.move), t(d.move ? "art.moved" : "art.copied", { library: to }));
           }}
         />
       )}
       {(dlg?.kind === "delete" || dlg?.kind === "deleteItem") && current && (
         <Modal
-          title={dlg.kind === "delete" ? `Delete library ${current}?` : `Delete "${dlg.item.name}"?`}
+          title={dlg.kind === "delete" ? t("art.deleteLibraryAsk", { name: current }) : t("art.deleteItemAsk", { name: dlg.item.name })}
           onClose={() => setDlg(null)}
           footer={
             <>
               <button className="btn" onClick={() => setDlg(null)}>
-                Cancel
+                {t("art.cancel")}
               </button>
               <button
                 className="btn btn-danger"
                 onClick={() => {
                   const d = dlg;
                   setDlg(null);
-                  if (d.kind === "delete") void task(() => artApi.remove(current), `Deleted library ${current}.`);
+                  if (d.kind === "delete") void task(() => artApi.remove(current), t("art.deleted", { name: current }));
                   else void task(() => artApi.deleteItem(current, d.item.id));
                 }}
               >
-                Delete
+                {t("art.delete")}
               </button>
             </>
           }
         >
-          <p>{dlg.kind === "delete" ? "The library file is deleted from the engine's projects folder for every client. Download it first to keep a copy." : "The item is removed from the library."}</p>
+          <p>{dlg.kind === "delete" ? t("art.deleteLibraryNote") : t("art.deleteItemNote")}</p>
         </Modal>
       )}
     </Dock>
@@ -328,6 +330,7 @@ export function ArtLibraryDock(p: {
 }
 
 function ArtThumb(p: { library: string; item: ArtItem; active: boolean; onSelect: () => void; onInsert: () => void; onMenu: (x: number, y: number) => void }) {
+  const t = useT();
   const [src, setSrc] = useState<string | null>(null);
   const url = p.item.thumbnail;
   useEffect(() => {
@@ -354,7 +357,7 @@ function ArtThumb(p: { library: string; item: ArtItem; active: boolean; onSelect
       role="option"
       aria-selected={p.active}
       draggable
-      title={`${p.item.name}${size ? ` · ${size}` : ""}${p.item.objects ? ` · ${p.item.objects} object${p.item.objects === 1 ? "" : "s"}` : ""}`}
+      title={`${p.item.name}${size ? ` · ${size}` : ""}${p.item.objects ? ` · ${p.item.objects === 1 ? t("art.objects1") : t("art.objectsN", { n: p.item.objects })}` : ""}`}
       onClick={p.onSelect}
       onDoubleClick={p.onInsert}
       onContextMenu={(e) => {
@@ -373,6 +376,7 @@ function ArtThumb(p: { library: string; item: ArtItem; active: boolean; onSelect
 }
 
 function NameDialog(p: { title: string; initial: string; placeholder?: string; optional?: boolean; problem: (n: string) => string | null; onClose: () => void; onOk: (n: string) => void }) {
+  const t = useT();
   const [v, setV] = useState(p.initial);
   const problem = p.optional && !v.trim() ? null : p.problem(v);
   const ok = () => !problem && p.onOk(v);
@@ -385,16 +389,16 @@ function NameDialog(p: { title: string; initial: string; placeholder?: string; o
         <>
           {problem && v && <span className="form-error">{problem}</span>}
           <button className="btn" onClick={p.onClose}>
-            Cancel
+            {t("art.cancel")}
           </button>
           <button className="btn btn-primary" disabled={!!problem} onClick={ok}>
-            OK
+            {t("art.ok")}
           </button>
         </>
       }
     >
       <label className="field">
-        <span className="field-label">Name</span>
+        <span className="field-label">{t("art.name")}</span>
         <span className="field-input">
           <input autoFocus type="text" value={v} placeholder={p.placeholder} onChange={(e) => setV(e.target.value)} />
         </span>
@@ -404,6 +408,7 @@ function NameDialog(p: { title: string; initial: string; placeholder?: string; o
 }
 
 function PickLibraryDialog(p: { title: string; options: string[]; onClose: () => void; onOk: (n: string) => void }) {
+  const t = useT();
   const [v, setV] = useState(p.options[0] ?? "");
   return (
     <Modal
@@ -412,16 +417,16 @@ function PickLibraryDialog(p: { title: string; options: string[]; onClose: () =>
       footer={
         <>
           <button className="btn" onClick={p.onClose}>
-            Cancel
+            {t("art.cancel")}
           </button>
           <button className="btn btn-primary" disabled={!v} onClick={() => p.onOk(v)}>
-            OK
+            {t("art.ok")}
           </button>
         </>
       }
     >
       <label className="field">
-        <span className="field-label">Library</span>
+        <span className="field-label">{t("art.library")}</span>
         <span className="field-input">
           <select value={v} onChange={(e) => setV(e.target.value)}>
             {p.options.map((n) => (

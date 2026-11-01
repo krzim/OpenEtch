@@ -263,3 +263,31 @@ test("Shape Properties parameters and the engine's limits", () => {
   assert.ok(shapePatchProblem(pg, { star_ratio: 1 }));
   assert.equal(shapeParams({ kind: "path", path: "M0 0L1 1" }), null);
 });
+
+test("grid array extras: total size counts, seed, auto-increment, results, virtual arrays and Edit Array", async () => {
+  const m = await import("./model.ts");
+  const rect = { x0: 0, y0: 0, x1: 10, y1: 4 };
+  const o: ArrayOptions = { cols: 1, rows: 1, pitchX: 2, pitchY: 1, gapX: true, gapY: true, reverseX: false, reverseY: false, rowShift: null, colShift: null, mirrorCols: null, mirrorRows: null };
+  // 50 mm wide: 10 + n * 12 <= 50 -> 4 columns; 20 mm high: 4 + n * 5 <= 20 -> 4 rows.
+  const r = m.resolveCounts({ ...o, totalWidth: 50, totalHeight: 20 }, rect)!;
+  assert.deepEqual([r.cols, r.rows], [4, 4]);
+  // A half-row shift (5 mm) counts once there are two rows.
+  assert.deepEqual(m.resolveCounts({ ...o, rows: 2, rowShift: "half", totalWidth: 50 }, rect)!.cols, 3);
+  assert.equal(m.resolveCounts({ ...o, totalWidth: 5 }, rect), null, "smaller than the selection");
+  assert.equal(m.resolveCounts(o, rect), o, "no totals: unchanged");
+  assert.equal(m.fitCount(30, 10, 0, 0), 1);
+  const p = m.arrayParams(["a"], { ...o, cols: 2, totalWidth: 50, seed: 7, autoIncrement: 1, groupResults: true });
+  assert.deepEqual(p, { ids: ["a"], cols: 2, rows: 1, pitch_x_mm: 2, pitch_y_mm: 1, spacing_x: "gap", spacing_y: "gap", total_width_mm: 50, random_orientation_seed: 7, auto_increment: 1, group_results: true });
+  assert.equal(m.arrayParams(["a"], { ...o, cols: 2, virtual: true, groupResults: true }).group_results, undefined, "never both");
+  assert.equal(m.arrayParams(["a"], { ...o, cols: 2, virtual: true }).virtual, true);
+  const e = m.editArrayParams("array-4", { ...o, cols: 3, virtual: true, groupResults: true });
+  assert.deepEqual(e, { ids: [], edit_array: "array-4", cols: 3, rows: 1, pitch_x_mm: 2, pitch_y_mm: 1, spacing_x: "gap", spacing_y: "gap" });
+  const doc = {
+    objects: [{ id: "o1" }, { id: "o2", group: "g1" }, { id: "c1" }],
+    virtual_arrays: [{ id: "array-4", sources: ["o1"], clones: ["c1"], settings: { rows: 2, cols: 3, pitch_x_mm: 5, pitch_y_mm: 5, spacing_x: "center", spacing_y: "gap", reverse_x: false, reverse_y: true, row_shift: "half", col_shift: 1.5, mirror_alternate_cols: "x", mirror_alternate_rows: null, random_orientation_seed: 3, auto_increment: 2 } }],
+  } as unknown as GDocument;
+  assert.equal(m.virtualArrayOf(doc, ["c1"])?.id, "array-4");
+  assert.equal(m.virtualArrayOf(doc, ["o2"]), null);
+  const back = m.arrayOptionsOf(doc.virtual_arrays![0]!.settings);
+  assert.deepEqual([back.cols, back.rows, back.gapX, back.gapY, back.reverseY, back.rowShift, back.colShift, back.mirrorCols, back.seed, back.autoIncrement], [3, 2, false, true, true, "half", 1.5, "x", 3, 2]);
+});

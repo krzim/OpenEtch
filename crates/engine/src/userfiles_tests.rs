@@ -286,3 +286,46 @@ async fn images_download_and_processed_bitmap() {
     assert!(h["content-disposition"].to_str().unwrap().contains("processed.png"));
     assert!(body.starts_with(b"\x89PNG"));
 }
+
+/// LightBurn's .lbprefs / prefs.ini: a preview changes nothing; an import sets autosave and the active device's
+/// Optimization defaults (backing the old preferences up) and returns the browser-side settings; MCP cannot import.
+#[tokio::test]
+async fn lightburn_prefs_import() {
+    let st = test_state().await;
+    let dir = crate::pin::temp_dir("lbprefs");
+    st.libs.open(&dir);
+    st.files.open(&dir);
+    let app = app(&st);
+    let file = json!({
+        "AutoSaveSeconds": 600, "Optimize_ByLayer": 1, "Optimize_ByPriority": 0, "Optimize_ByGroup": -1,
+        "Optimize_InnerToOuter": true, "GridSpacing": 5, "NormalMoveIncrement": 2, "NestMultisheet": true,
+        "LicenseKey": "SECRET-1", "DeviceList": [{"name": "SECRET-2"}]
+    })
+    .to_string();
+    let (s, _, b) = raw(&app, req("POST", "/api/prefs/import_lightburn?preview=1", Body::from(file.clone()), false)).await;
+    let v: Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!((v["preview"].as_bool(), v["other_keys"].as_u64()), (Some(true), Some(2)));
+    assert_eq!(v["engine"]["autosave_minutes"], 10);
+    assert_eq!(v["engine"]["optimization"]["order_by"], json!(["priority", "layer"]));
+    assert_eq!(v["browser"]["prefs"], json!({"gridMm": 5.0, "nudge": {"normal": 2.0}}));
+    assert_eq!(v["browser"]["dialogs"]["nest"]["multipage"], true);
+    assert!(!String::from_utf8_lossy(&b).contains("SECRET"));
+    assert_ne!(st.files.settings().autosave_minutes, 10, "a preview changes nothing");
+    let device = st.active_device().id;
+    let (s, _, b) = raw(&app, req("POST", "/api/prefs/import_lightburn", Body::from(file.clone()), false)).await;
+    assert_eq!(s, StatusCode::OK, "{}", String::from_utf8_lossy(&b));
+    assert_eq!(st.files.settings().autosave_minutes, 10);
+    let o = crate::libs::lock(&st.libs.prefs).device(&device).optimization_defaults.unwrap();
+    assert!(o.inner_first);
+    assert_eq!(o.order_by, vec![doc::OrderBy::Priority, doc::OrderBy::Layer]);
+    let saved = std::fs::read_to_string(dir.join(crate::prefs::PREFS_FILE)).unwrap_or_default();
+    assert!(!saved.contains("SECRET"));
+    let (_, v) = json(&app, "GET", "/api/prefs/backups", None).await;
+    assert!(!v.as_array().unwrap().is_empty(), "{v}");
+    let r = Request::builder().method("POST").uri("/api/prefs/import_lightburn").header("host", "localhost:7878").header("mcp-session-id", "x").body(Body::from(file)).unwrap();
+    let (s, _, _) = raw(&app, r).await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    let (s, _, _) = raw(&app, req("POST", "/api/prefs/import_lightburn?preview=1", Body::from("[1]"), false)).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+}

@@ -1835,6 +1835,10 @@ textarea {
   gap: 1px;
 }
 
+.mini-grid.eight {
+  grid-template-columns: repeat(8, 26px);
+}
+
 .mini-grid.two {
   grid-template-columns: repeat(2, 26px) 62px;
 }
@@ -2811,4 +2815,9 @@ image.pixelated {
   .img-adjust-previews {
     grid-template-columns: 1fr;
   }
+}
+
+.beginner-badge {
+  margin-left: 8px;
+  white-space: nowrap;
 }

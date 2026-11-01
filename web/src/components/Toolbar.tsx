@@ -99,7 +99,7 @@ function Mini(props: { icon: string; title: string; onClick: () => void; disable
 
 export function Toolbar(p: ToolbarProps) {
   const t = useT();
-  const lengthUnit = usePrefs().units;
+  const { units: lengthUnit, beginnerMode } = usePrefs();
   const two = p.units >= 2;
   const three = p.units >= 3;
   const a = (x: ArrangeAction) => () => p.onArrange(x);
@@ -127,24 +127,26 @@ export function Toolbar(p: ToolbarProps) {
             <Btn icon="array" label={t("tb.array")} onClick={p.onArray} disabled={!p.hasSelection} />
             <Btn icon="delete" label={t("tb.delete")} onClick={p.onDelete} disabled={!p.hasSelection} title={t("tb.deleteTitle")} />
           </div>
-          <div className="tool-group arrange" role="group" aria-label="Arrange">
-            <div className="mini-grid">
+          <div className="tool-group arrange" role="group" aria-label={t("tb.arrange")}>
+            <div className={`mini-grid${beginnerMode ? "" : " eight"}`}>
               <Mini icon="alignLeft" title={t("tb.alignLeft")} onClick={a("left")} disabled={!two} />
               <Mini icon="alignHCenter" title={t("tb.alignHCenter")} onClick={a("hcenter")} disabled={!two} />
               <Mini icon="alignRight" title={t("tb.alignRight")} onClick={a("right")} disabled={!two} />
-              <Mini icon="distH" title={t("tb.distH")} onClick={a("distH")} disabled={!three} />
+              {!beginnerMode && <Mini icon="distH" title={t("tb.distH")} onClick={a("distH")} disabled={!three} />}
+              {!beginnerMode && <Mini icon="distHc" title={t("tb.distHc")} onClick={a("distHc")} disabled={!three} />}
               <Mini icon="centerStock" title={t("tb.centreStock")} onClick={a("stock")} disabled={!p.hasSelection || !p.hasStock} />
               <Mini icon="group" title={t("tb.group")} onClick={a("group")} disabled={!two || !p.canGroup} />
               <Mini icon="flipH" title={t("tb.flipH")} onClick={a("flipH")} disabled={!p.hasSelection} />
               <Mini icon="alignTop" title={t("tb.alignTop")} onClick={a("top")} disabled={!two} />
               <Mini icon="alignVCenter" title={t("tb.alignVCenter")} onClick={a("vcenter")} disabled={!two} />
               <Mini icon="alignBottom" title={t("tb.alignBottom")} onClick={a("bottom")} disabled={!two} />
-              <Mini icon="distV" title={t("tb.distV")} onClick={a("distV")} disabled={!three} />
+              {!beginnerMode && <Mini icon="distV" title={t("tb.distV")} onClick={a("distV")} disabled={!three} />}
+              {!beginnerMode && <Mini icon="distVc" title={t("tb.distVc")} onClick={a("distVc")} disabled={!three} />}
               <Mini icon="centerField" title={t("tb.centreField")} onClick={a("field")} disabled={!p.hasSelection} />
               <Mini icon="ungroup" title={t("tb.ungroup")} onClick={a("ungroup")} disabled={!p.grouped || !p.canGroup} />
               <Mini icon="flipV" title={t("tb.flipV")} onClick={a("flipV")} disabled={!p.hasSelection} />
             </div>
-            <span className="mini-label">Arrange</span>
+            <span className="mini-label">{t("tb.arrange")}</span>
           </div>
           <div className="tool-group arrange" role="group" aria-label={t("tb.snapAndView")}>
             <div className="mini-grid two">

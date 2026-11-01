@@ -405,8 +405,80 @@ export const BARCODE_KINDS: BarcodeKind[] = [
   { id: "telepen", label: "Telepen", twoD: false },
 ];
 
+/**
+ * LightBurn's names of the barcode types the engine may add later (DES-055: the 2 of 5 variants, ISBN, VIN, Plessey,
+ * PDF417 Compact / Micro, Micro QR, rMQR, Chinese Sensible, Grid Matrix, AprilTag, ArUco). A kind the engine offers
+ * that is in neither list is shown under its id.
+ */
+const MORE_KIND_LABELS: Record<string, { label: string; twoD: boolean }> = {
+  iata_2of5: { label: "2 of 5 IATA", twoD: false },
+  code2of5_iata: { label: "2 of 5 IATA", twoD: false },
+  industrial_2of5: { label: "2 of 5 Industrial", twoD: false },
+  code2of5_industrial: { label: "2 of 5 Industrial", twoD: false },
+  isbn: { label: "ISBN", twoD: false },
+  vin: { label: "VIN", twoD: false },
+  plessey: { label: "Plessey", twoD: false },
+  pdf417_compact: { label: "PDF417 Compact", twoD: true },
+  micro_pdf417: { label: "PDF417 Micro", twoD: true },
+  pdf417_micro: { label: "PDF417 Micro", twoD: true },
+  micro_qr: { label: "QR Micro", twoD: true },
+  qr_micro: { label: "QR Micro", twoD: true },
+  rmqr: { label: "QR Micro Rectangular", twoD: true },
+  chinese_sensible: { label: "Chinese Sensible Code", twoD: true },
+  han_xin: { label: "Chinese Sensible Code", twoD: true },
+  grid_matrix: { label: "Grid Matrix", twoD: true },
+  apriltag_16h5: { label: "AprilTag 16h5", twoD: true },
+  apriltag_25h9: { label: "AprilTag 25h9", twoD: true },
+  apriltag_36h10: { label: "AprilTag 36h10", twoD: true },
+  apriltag_36h11: { label: "AprilTag 36h11", twoD: true },
+  aruco_mip_36h12: { label: "ArUco MIP 36h12", twoD: true },
+  aruco_mip_36h11: { label: "ArUco MIP 36h11", twoD: true },
+  aruco_7x7: { label: "ArUco OpenCV 7x7", twoD: true },
+  aruco_opencv_7x7: { label: "ArUco OpenCV 7x7", twoD: true },
+};
+
+/**
+ * The kinds the engine's `shape.barcode` takes, read from its input schema: the `kind` property's enum when it has
+ * one, else the names its description lists ("qr, data_matrix, ..."). Known kinds keep this file's order and labels;
+ * more (types the engine added) follow, labelled by LightBurn's name when known. Falls back to BARCODE_KINDS.
+ */
+export function barcodeKindsFrom(inputSchema: unknown): BarcodeKind[] {
+  const props = (inputSchema && typeof inputSchema === "object" ? (inputSchema as { properties?: Record<string, unknown> }).properties : undefined) ?? {};
+  const k = (props.kind && typeof props.kind === "object" ? props.kind : {}) as { enum?: unknown; description?: unknown };
+  let ids: string[] = [];
+  if (Array.isArray(k.enum)) ids = k.enum.filter((x): x is string => typeof x === "string");
+  else if (typeof k.description === "string") {
+    const list = k.description.split(/[.:;]/)[0] ?? "";
+    ids = list
+      .split(",")
+      .map((x) => x.trim())
+      .filter((x) => /^[a-z][a-z0-9_]*$/.test(x));
+  }
+  if (ids.length < 2) return BARCODE_KINDS;
+  const known = BARCODE_KINDS.filter((b) => ids.includes(b.id));
+  const more = ids
+    .filter((id) => !BARCODE_KINDS.some((b) => b.id === id))
+    .map((id): BarcodeKind => {
+      const m = MORE_KIND_LABELS[id];
+      return { id, label: m?.label ?? id, twoD: m?.twoD ?? /qr|matrix|aztec|pdf417|tag|aruco|sensible|maxi|dot/.test(id) };
+    });
+  return [...known, ...more];
+}
+
+let engineKinds: BarcodeKind[] | null = null;
+
+/** Remember the engine's kinds (from GET /api/commands), for `barcodeKind` and the dialog. */
+export function setEngineBarcodeKinds(kinds: BarcodeKind[] | null): void {
+  engineKinds = kinds;
+}
+
+/** The kinds to offer: the engine's when known, else the built-in list. */
+export function barcodeKinds(): BarcodeKind[] {
+  return engineKinds ?? BARCODE_KINDS;
+}
+
 export function barcodeKind(id: string): BarcodeKind | undefined {
-  return BARCODE_KINDS.find((k) => k.id === id);
+  return barcodeKinds().find((k) => k.id === id) ?? BARCODE_KINDS.find((k) => k.id === id);
 }
 
 /** A barcode object's kept parameters (`extras["openetch.barcode"]`), or null for other objects. */

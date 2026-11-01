@@ -15,7 +15,7 @@ import { OptimizationDialog } from "../components/OptimizationDialog.tsx";
 import { RotaryDialog } from "../components/RotaryDialog.tsx";
 import { Icon } from "../components/ui.tsx";
 import { Dock } from "./Dock.tsx";
-import { useT } from "./usePrefs.ts";
+import { usePrefs, useT } from "./usePrefs.ts";
 
 export interface LaserDockProps {
   machine: MachineStatus | null;
@@ -95,8 +95,10 @@ export function LaserDock(p: LaserDockProps) {
         p.onChanged();
       });
   };
-  const canOpt = p.has("job.set_optimization");
-  const canRotary = p.has("job.set_rotary");
+  // Beginner Mode hides Optimization Settings and the rotary controls, as LightBurn's does.
+  const beginnerMode = usePrefs().beginnerMode;
+  const canOpt = p.has("job.set_optimization") && !beginnerMode;
+  const canRotary = p.has("job.set_rotary") && !beginnerMode;
   return (
     <Dock id="laser" title={t("laser.title")}>
       {p.device && <div className="laser-device">{p.device}</div>}

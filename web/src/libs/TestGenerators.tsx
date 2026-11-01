@@ -4,7 +4,7 @@
 // in field mm with LightBurn's safe burn order numbered, then Create (the test is added and selected) or Create and
 // request run (a pending run of just the test: it still needs the operator PIN in the Runs card).
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { Invocation } from "../api/client.ts";
 import { createdIds } from "../api/drop.ts";
 import { frequencyRange, pulseWidths } from "../api/laser.ts";
@@ -17,6 +17,7 @@ import {
   DEFAULT_FOCUS_TEST,
   DEFAULT_INTERVAL_TEST,
   DEFAULT_MATERIAL_TEST,
+  MAX_COUNT,
   PARAMS,
   PARAM_DEFAULT_RANGE,
   focusTestParams,
@@ -25,21 +26,25 @@ import {
   intervalTestParams,
   intervalTestPreview,
   intervalTestProblem,
+  materialTestFromParams,
   materialTestParams,
   materialTestPreview,
   materialTestProblem,
   previewViewBox,
   show,
+  testPresetList,
+  testPresetNameProblem,
   type Axis,
   type BaseSettings,
   type FocusTest,
   type IntervalTest,
   type MaterialTest,
   type TestParam,
+  type TestPresetRow,
   type TestPreview,
 } from "./testgen.ts";
 import { useActiveDevice } from "./store.ts";
-import { errText } from "./ui.tsx";
+import { ConfirmDialog, FilePick, NameDialog, errText, saveDownload } from "./ui.tsx";
 import type { T } from "../workspace/i18n.ts";
 import "./libs.css";
 
@@ -265,7 +270,7 @@ function AxisFields(p: { title: string; axis: Axis; other: TestParam; onChange: 
           </select>
         </span>
       </label>
-      <NumberField label={t("ltest.count")} value={a.count} min={1} max={20} digits={0} onCommit={(v) => v !== null && p.onChange({ ...a, count: Math.round(v) })} />
+      <NumberField label={t("ltest.count")} value={a.count} min={1} max={MAX_COUNT} digits={0} onCommit={(v) => v !== null && p.onChange({ ...a, count: Math.round(v) })} />
       <NumberField label={t("ltest.min")} unit={unit} value={a.min} digits={digits} onCommit={(v) => v !== null && p.onChange({ ...a, min: v })} />
       <NumberField label={t("ltest.max")} unit={unit} value={a.max} digits={digits} onCommit={(v) => v !== null && p.onChange({ ...a, max: v })} />
     </fieldset>
@@ -327,6 +332,7 @@ export function MaterialTestDialog(p: GenProps) {
       onReset={() => upd(DEFAULT_MATERIAL_TEST)}
       onCreate={(req) => create(p, t, "generate.material_test", materialTestParams(m), req, t("ltest.materialWhat", { boxes }))}
     >
+      <MaterialTestPresets test={m} onLoad={(x) => upd(x)} notify={p.notify} report={p.report} />
       <AxisFields title={t("ltest.rows")} axis={m.rows} other={m.columns.param} onChange={(rows) => upd({ rows })} />
       <AxisFields title={t("ltest.columns")} axis={m.columns} other={m.rows.param} onChange={(columns) => upd({ columns })} />
       <fieldset className="job-fieldset">
@@ -362,6 +368,133 @@ export function MaterialTestDialog(p: GenProps) {
       </fieldset>
       <p className="hint">{t("ltest.materialHint")}</p>
     </GenDialog>
+  );
+}
+
+/**
+ * LightBurn's Preset list of the Material Test window: pick a saved preset to load its values, Save (as a new name or
+ * over the selected one), Delete, and Import / Export LightBurn's material_test_presets.lbmt. Presets live in the
+ * engine (`/api/material-test/presets`), shared by every client.
+ */
+function MaterialTestPresets(p: { test: MaterialTest; onLoad: (m: MaterialTest) => void; notify: Notify; report: (e: unknown) => void }) {
+  const t = useT();
+  const [list, setList] = useState<TestPresetRow[] | null>(null);
+  const [picked, setPicked] = useState("");
+  const [dlg, setDlg] = useState<"save" | "delete" | null>(null);
+  const [busy, setBusy] = useState(false);
+  const reload = () =>
+    libsApi
+      .testPresets()
+      .then((r) => setList(testPresetList(r)))
+      .catch(() => setList([]));
+  useEffect(() => {
+    void reload();
+  }, []);
+  const act = async (fn: () => Promise<void>) => {
+    setBusy(true);
+    try {
+      await fn();
+    } catch (e) {
+      p.report(new Error(errText(e)));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const pick = (name: string) => {
+    setPicked(name);
+    const row = list?.find((x) => x.name === name);
+    if (row) p.onLoad(materialTestFromParams(row.params, DEFAULT_MATERIAL_TEST));
+  };
+  return (
+    <fieldset className="job-fieldset lx-presets">
+      <legend>{t("ltest.preset")}</legend>
+      <label className="field">
+        <span className="field-label">{t("ltest.preset")}</span>
+        <span className="field-input">
+          <select value={picked} disabled={list === null} onChange={(e) => pick(e.target.value)}>
+            <option value="">{list === null ? t("common.loading") : list.length ? t("ltest.presetPick") : t("ltest.presetNone")}</option>
+            {(list ?? []).map((x) => (
+              <option key={x.name} value={x.name}>
+                {x.name}
+              </option>
+            ))}
+          </select>
+        </span>
+      </label>
+      <div className="lx-row">
+        <button className="btn small" disabled={busy || list === null} onClick={() => setDlg("save")} title={t("ltest.presetSaveTitle")}>
+          {t("ltest.presetSave")}
+        </button>
+        <button className="btn small" disabled={busy || !picked} onClick={() => setDlg("delete")}>
+          {t("ltest.presetDelete")}
+        </button>
+        <FilePick
+          className="btn small"
+          label={t("ltest.presetImport")}
+          title={t("ltest.presetImportTitle")}
+          accept=".lbmt,application/json"
+          disabled={busy}
+          onFile={(f) =>
+            void act(async () => {
+              const r = (await libsApi.testPresetImport(f, false)) as { imported?: unknown; warnings?: unknown };
+              const names = Array.isArray(r?.imported) ? r.imported.map(String) : [];
+              const warns = Array.isArray(r?.warnings) ? r.warnings.map(String) : [];
+              await reload();
+              p.notify(t("ltest.presetImported", { n: names.length, names: names.slice(0, 5).join(", ") }));
+              if (warns.length) p.notify(t("ltest.presetWarnings", { n: warns.length, first: warns[0] }), "error");
+            })
+          }
+        />
+        <button
+          className="btn small"
+          disabled={busy || !list?.length}
+          title={t("ltest.presetExportTitle")}
+          onClick={() => void act(async () => p.notify(t("ltest.presetExported", { name: await saveDownload(libsApi.testPresetExport(), "material_test_presets.lbmt") })))}
+        >
+          {t("ltest.presetExport")}
+        </button>
+      </div>
+      {dlg === "save" && (
+        <NameDialog
+          title={t("ltest.presetSaveTitle")}
+          label={t("ltest.presetName")}
+          initial={picked}
+          ok={t("ltest.presetSave")}
+          note={t("ltest.presetSaveNote")}
+          problem={(n) => testPresetNameProblem(n)}
+          onClose={() => setDlg(null)}
+          onOk={(name) => {
+            setDlg(null);
+            void act(async () => {
+              const r = (await libsApi.testPresetSave(name, materialTestParams(p.test))) as { replaced?: unknown };
+              await reload();
+              setPicked(name);
+              p.notify(t(r?.replaced ? "ltest.presetReplaced" : "ltest.presetSaved", { name }));
+            });
+          }}
+        />
+      )}
+      {dlg === "delete" && (
+        <ConfirmDialog
+          title={t("ltest.presetDelete")}
+          ok={t("ltest.presetDelete")}
+          danger
+          onClose={() => setDlg(null)}
+          onOk={() => {
+            setDlg(null);
+            const name = picked;
+            void act(async () => {
+              await libsApi.testPresetDelete(name);
+              setPicked("");
+              await reload();
+              p.notify(t("ltest.presetDeleted", { name }));
+            });
+          }}
+        >
+          <p>{t("ltest.presetDeleteAsk", { name: picked })}</p>
+        </ConfirmDialog>
+      )}
+    </fieldset>
   );
 }
 

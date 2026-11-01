@@ -1,7 +1,8 @@
 // LightBurn's Camera Control for a galvo (unverified on hardware): a frame from the engine's UVC camera (builds with
 // the `camera` feature), from this browser's camera or from an image file; Calibrate Camera Lens (checkerboard views,
 // detected by the engine, then a two-term radial fit); Align Camera (marks added to the design and burned, then their
-// image positions clicked, at least four); and the camera image drawn under the design on the canvas with an opacity
+// image positions clicked, at least four; or camera markers from generate.camera_markers, burned, found in the frame
+// and aligned in one step with POST /api/camera/align_markers); and the camera image drawn under the design on the canvas with an opacity
 // slider (GET /api/camera/overlay.png, the frame resampled into the field square). Shown only when the engine has the
 // camera routes. Calibrations are per device and only from the UI.
 
@@ -76,6 +77,9 @@ export function CameraWindow(p: { doc: GDocument | null; machine: MachineStatus 
   const [views, setViews] = useState<{ cols: number; rows: number; corners: [number, number][] }[]>([]);
   const [corners, setCorners] = useState<[number, number][] | null>(null);
   const [points, setPoints] = useState<{ img: [number, number]; field: [number, number] }[]>([]);
+  const [markerSize, setMarkerSize] = useState(8);
+  const [found, setFound] = useState<{ id: number; center: [number, number]; errors: number }[] | null>(null);
+  const placedMarkers = (p.doc?.objects ?? []).filter((o) => o.extras && "camera.marker" in o.extras).length;
   const ov = cameraOverlay.use();
   const field = typeof p.doc?.field_mm === "number" && p.doc.field_mm > 0 ? p.doc.field_mm : typeof p.machine?.field_mm === "number" ? p.machine.field_mm : 110;
   const markAt = Number((field / 3).toFixed(1));
@@ -111,6 +115,7 @@ export function CameraWindow(p: { doc: GDocument | null; machine: MachineStatus 
   };
   const afterFrame = async () => {
     setCorners(null);
+    setFound(null);
     await refresh();
   };
 
@@ -213,6 +218,56 @@ export function CameraWindow(p: { doc: GDocument | null; machine: MachineStatus 
 
       {tab === "align" && (
         <div>
+          <fieldset className="job-fieldset">
+            <legend>{t("cam.markers")}</legend>
+            <p className="hint">{t("cam.markersIntro")}</p>
+            <div className="lx-row">
+              <NumberField label={t("cam.markerSize")} unit="mm" value={markerSize} min={1} max={100} digits={1} onCommit={(v) => v !== null && setMarkerSize(v)} />
+              <button
+                className="btn"
+                disabled={busy}
+                title={t("cam.addMarkersTitle")}
+                onClick={() => void act(() => p.run({ id: "generate.camera_markers", params: { size_mm: markerSize } }), t("cam.markersAdded"))}
+              >
+                {t("cam.addMarkers")}
+              </button>
+            </div>
+            <div className="lx-row">
+              <button
+                className="btn"
+                disabled={busy || !info?.frame}
+                onClick={() =>
+                  void act(async () => {
+                    const r = (await libsApi.cameraMarkers()) as { markers?: { id?: unknown; center?: unknown; errors?: unknown }[] };
+                    const list = (Array.isArray(r?.markers) ? r.markers : [])
+                      .filter((m) => typeof m.id === "number" && Array.isArray(m.center))
+                      .map((m) => ({ id: m.id as number, center: m.center as [number, number], errors: typeof m.errors === "number" ? m.errors : 0 }));
+                    setFound(list);
+                    p.notify(t("cam.markersFound", { n: list.length, ids: list.map((m) => m.id).join(", ") || "-" }));
+                  })
+                }
+              >
+                {t("cam.findMarkers")}
+              </button>
+              <button
+                className="btn btn-primary"
+                disabled={busy || !info?.frame || placedMarkers < 4}
+                title={placedMarkers < 4 ? t("cam.alignMarkersNeed") : undefined}
+                onClick={() =>
+                  void act(async () => {
+                    const r = (await libsApi.cameraAlignMarkers()) as { used?: unknown[]; missing?: unknown[]; unknown?: unknown[] };
+                    await refresh();
+                    const ids = (v: unknown[] | undefined) => (Array.isArray(v) && v.length ? v.join(", ") : "-");
+                    p.notify(t("cam.alignedMarkers", { used: ids(r?.used), missing: ids(r?.missing), unknown: ids(r?.unknown) }));
+                  })
+                }
+              >
+                {t("cam.alignMarkers")}
+              </button>
+            </div>
+            <p className="hint">{t("cam.markersInDoc", { n: placedMarkers })}</p>
+            {found && <FrameView url={frameUrl} frame={info?.frame ?? null} marks={found.map((m) => m.center)} />}
+          </fieldset>
           <p className="hint">{t("cam.alignIntro", { at: markAt })}</p>
           <div className="lx-row">
             <button

@@ -319,6 +319,49 @@ fn convert_optimize_fillet() {
 }
 
 #[test]
+fn unfillet_by_click_and_all() {
+    let mut s = session();
+    // A filleted triangle: click one rounded corner, then undo the rest.
+    let tri = path(&mut s, "M0 0 L20 0 L0 20 Z");
+    let before = area(&s, &tri);
+    ok(&mut s, "path.fillet", json!({"ids": [tri], "radius_mm": 1}));
+    let rounded = area(&s, &tri);
+    assert!(rounded < before);
+    // The corner at (0, 0) is rounded: its arc passes about (0.29, 0.29).
+    let r = ok(&mut s, "path.unfillet", json!({"ids": [tri], "at": [0.3, 0.3], "pick_mm": 0.5}));
+    let c = &r["corners"][&tri]["unrounded"][0];
+    assert!(c["corner"][0].as_f64().unwrap().abs() < 1e-6 && c["corner"][1].as_f64().unwrap().abs() < 1e-6, "{c}");
+    assert!((c["radius_mm"].as_f64().unwrap() - 1.0).abs() < 1e-3);
+    assert!(area(&s, &tri) > rounded);
+    // Clicking a straight side is refused; far away too.
+    assert!(err(&mut s, "path.unfillet", json!({"ids": [tri], "at": [10, 0]})).contains("no rounded corner"));
+    assert!(err(&mut s, "path.unfillet", json!({"ids": [tri], "at": [100, 100]})).contains("within"));
+    let r = ok(&mut s, "path.unfillet", json!({"ids": [tri]}));
+    assert_eq!(r["corners"][&tri]["unrounded"].as_array().unwrap().len(), 2);
+    assert!((area(&s, &tri) - before).abs() < 1e-6);
+    assert!(err(&mut s, "path.unfillet", json!({"ids": [tri]})).contains("no corner was made sharp"));
+    // One undo step each.
+    s.undo().unwrap();
+    assert!(area(&s, &tri) < before);
+    // A rounded rectangle stays a rectangle; a single corner click turns it into a path.
+    let r0 = rect(&mut s, 10.0, 6.0, [30.0, 0.0]);
+    ok(&mut s, "path.fillet", json!({"ids": [r0], "radius_mm": 2}));
+    ok(&mut s, "path.unfillet", json!({"ids": [r0]}));
+    assert!(matches!(s.document().object(&r0).unwrap().geometry, Geometry::Rect { corner_radius_mm, .. } if corner_radius_mm == 0.0));
+    ok(&mut s, "path.fillet", json!({"ids": [r0], "radius_mm": 2}));
+    let r = ok(&mut s, "path.unfillet", json!({"ids": [r0], "at": [35, 3]}));
+    assert_eq!(r["corners"][&r0]["unrounded"][0]["corner"], json!([35.0, 3.0]));
+    assert!(matches!(s.document().object(&r0).unwrap().geometry, Geometry::Path { .. }));
+    let want = 60.0 - 3.0 * 4.0 * (1.0 - std::f64::consts::PI / 4.0);
+    assert!((area(&s, &r0) - want).abs() < 0.1, "{} {want}", area(&s, &r0));
+    // Bad input.
+    assert!(err(&mut s, "path.unfillet", json!({"ids": [tri, r0], "at": [0, 0]})).contains("exactly one"));
+    assert!(run(&mut s, "path.unfillet", json!({"ids": [tri], "at": [0, 0], "pick_mm": -1})).is_err());
+    let e = ok(&mut s, "shape.ellipse", json!({"rx_mm": 5, "ry_mm": 2}))["created"][0].as_str().unwrap().to_string();
+    assert!(err(&mut s, "path.unfillet", json!({"ids": [e]})).contains("no corner"));
+}
+
+#[test]
 fn trim_between_crossings() {
     let mut s = session();
     let h = path(&mut s, "M0 0 L30 0");
@@ -466,6 +509,57 @@ fn nest_into_a_region() {
     assert!(err(&mut s, "art.nest", json!({"ids": [a], "region": "stock"})).contains("stock"));
     ok(&mut s, "stock.define", json!({"shape": {"kind": "circle", "diameter_mm": 50}, "thickness_mm": 1}));
     ok(&mut s, "art.nest", json!({"ids": [a], "region": "stock"}));
+}
+
+#[test]
+fn nest_multipage_overflows_onto_new_pages() {
+    for mode in ["boxes", "shapes"] {
+        let mut s = session();
+        // A 30 x 30 container takes four 13 x 13 squares (spacing 1); ten squares need three sheets.
+        let sheet = rect(&mut s, 30.0, 30.0, [0.0, 0.0]);
+        let parts: Vec<String> = (0..10).map(|k| rect(&mut s, 13.0, 13.0, [60.0 + k as f64 * 20.0, 60.0])).collect();
+        let huge = rect(&mut s, 40.0, 40.0, [-60.0, -60.0]);
+        let mut ids = parts.clone();
+        ids.push(huge.clone());
+        let params = json!({"ids": ids, "region": {"object": sheet}, "spacing_mm": 1, "mode": mode, "multipage": true, "resolution_mm": if mode == "shapes" { json!(0.25) } else { Value::Null }});
+        let mut params = params;
+        if mode == "boxes" {
+            params.as_object_mut().unwrap().remove("resolution_mm");
+        }
+        let r = ok(&mut s, "art.nest", params);
+        assert_eq!(r["unplaced"], json!([huge]), "{mode}: {r}");
+        let pages = r["pages"].as_array().unwrap();
+        assert_eq!(pages.len(), 2, "{mode}: {r}");
+        assert_eq!(pages.iter().map(|p| p["parts"].as_u64().unwrap()).sum::<u64>(), 6);
+        // Every page has a copy of the container; the original page keeps four parts, the container and the huge one.
+        let d = s.document();
+        assert_eq!(d.objects.len(), 6);
+        assert_eq!(d.pages.len(), 3);
+        for (k, p) in pages.iter().enumerate() {
+            let page = d.pages.iter().find(|x| x.id == p["page"].as_str().unwrap()).unwrap();
+            assert_eq!(page.name, format!("Page {}", k + 2));
+            let copy = p["container"][0].as_str().unwrap();
+            let c = page.objects.iter().find(|o| o.id == copy).unwrap().bounds();
+            assert!((c.x0 + 15.0).abs() < 1e-9 && (c.y1 - 15.0).abs() < 1e-9);
+            for o in page.objects.iter().filter(|o| o.id != copy) {
+                let b = o.bounds();
+                assert!(b.x0 >= c.x0 - 1e-6 && b.y0 >= c.y0 - 1e-6 && b.x1 <= c.x1 + 1e-6 && b.y1 <= c.y1 + 1e-6, "{mode} {b:?}");
+            }
+        }
+        // One undo step takes it all back.
+        s.undo().unwrap();
+        assert_eq!(s.document().objects.len(), 12);
+        assert!(s.document().pages.is_empty());
+        // Without multipage the rest stays; max_pages caps the pages.
+        let r = ok(&mut s, "art.nest", json!({"ids": parts, "region": {"object": sheet}, "spacing_mm": 1}));
+        assert_eq!(r["unplaced"].as_array().unwrap().len(), 6);
+        assert!(r["pages"].as_array().unwrap().is_empty());
+        s.undo().unwrap();
+        let r = ok(&mut s, "art.nest", json!({"ids": parts, "region": {"object": sheet}, "spacing_mm": 1, "multipage": true, "max_pages": 1}));
+        assert_eq!(r["unplaced"].as_array().unwrap().len(), 2);
+        assert!(err(&mut s, "art.nest", json!({"ids": parts, "region": "field", "max_pages": 2})).contains("only for multipage"));
+        assert!(err(&mut s, "art.nest", json!({"ids": parts, "region": "field", "multipage": true, "max_pages": 0})).contains("max_pages"));
+    }
 }
 
 #[test]

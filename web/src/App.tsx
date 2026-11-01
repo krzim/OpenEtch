@@ -62,6 +62,8 @@ import { LaserDock, machineState } from "./workspace/LaserDock.tsx";
 import { NumericBar } from "./workspace/NumericBar.tsx";
 import { PaletteBar } from "./workspace/PaletteBar.tsx";
 import { getPrefs } from "./workspace/prefs.ts";
+import { hintFor } from "./workspace/hotkeys.ts";
+import { VIEW_PREFS_EVENT } from "./files/LightBurnPrefsImport.tsx";
 import { RecentProjects } from "./workspace/RecentProjects.tsx";
 import { StatusBar } from "./workspace/StatusBar.tsx";
 import { sendViewCommand } from "./workspace/viewStatus.ts";
@@ -75,7 +77,7 @@ import { togglePositionLaser, usePositionLaser, withPositionLaser } from "./work
 import { requestRotarySetup } from "./workspace/LaserDock.tsx";
 import { MoveTogetherDialog } from "./design/DesignDialogs.tsx";
 import { jobApi } from "./api/jobApi.ts";
-import { useT } from "./workspace/usePrefs.ts";
+import { usePrefs, useT } from "./workspace/usePrefs.ts";
 import { alignMoves, distributeMoves, nudgeDelta, nudgeKeyId, queueNudge, rotateKeyDeg, roundMm, type AlignX, type AlignY } from "./editing.ts";
 import { boxCenter, objectBounds, unionBoxes, type Box } from "./geometry.ts";
 import {
@@ -170,6 +172,15 @@ export function App() {
   const importing = useRef(false);
   const openOtherRef = useRef<(f: File) => void>(() => undefined);
 
+  // The LightBurn preferences import (files/LightBurnPrefsImport.tsx) sets the canvas snapping and view style.
+  useEffect(() => {
+    const on = (e: Event) => {
+      const v = (e as CustomEvent<{ snap?: Partial<SnapSettings>; viewStyle?: ViewStyle }>).detail;
+      setPrefs((p) => ({ snap: { ...p.snap, ...(v?.snap ?? {}) }, viewStyle: v?.viewStyle ?? p.viewStyle }));
+    };
+    window.addEventListener(VIEW_PREFS_EVENT, on);
+    return () => window.removeEventListener(VIEW_PREFS_EVENT, on);
+  }, []);
   useEffect(() => {
     try {
       localStorage.setItem(VIEW_KEY, JSON.stringify(prefs));
@@ -314,6 +325,21 @@ export function App() {
   const positioning = usePositionLaser();
   const rightHasWindows = useAreaHasWindows("right");
 
+  // LightBurn's Arrange > Distribute (H-Spaced / H-Centered / V-Spaced / V-Centered), hidden in Beginner Mode like
+  // LightBurn's. The arrange handler is defined further down; the menu reaches it through a ref.
+  const { beginnerMode, hotkeys: prefHotkeys } = usePrefs();
+  const arrangeRef = useRef<(a: ArrangeAction) => void>(() => {});
+  const nUnits = doc ? unitsOf(doc, selection.objects).length : 0;
+  const distributeItems: MenuItem[] = beginnerMode
+    ? []
+    : [
+        { sep: true },
+        { label: t("app.distHSpaced"), hint: hintFor("arrange.distHSpaced", prefHotkeys), disabled: nUnits < 3, action: () => arrangeRef.current("distH") },
+        { label: t("app.distHCentered"), hint: hintFor("arrange.distHCentered", prefHotkeys), disabled: nUnits < 3, action: () => arrangeRef.current("distHc") },
+        { label: t("app.distVSpaced"), hint: hintFor("arrange.distVSpaced", prefHotkeys), disabled: nUnits < 3, action: () => arrangeRef.current("distV") },
+        { label: t("app.distVCentered"), hint: hintFor("arrange.distVCentered", prefHotkeys), disabled: nUnits < 3, action: () => arrangeRef.current("distVc") },
+      ];
+
   // Node editing, line/pen/polygon, measure, trim, rulers and guides, the Modify and Arrange menus (EditTools.tsx).
   const edit = useEditTools({
     doc,
@@ -331,7 +357,7 @@ export function App() {
     notify,
     report,
     onGridArray: designUi.openArray,
-    arrangeExtra: designUi.arrangeItems,
+    arrangeExtra: [...distributeItems, ...designUi.arrangeItems],
     // Guides belong to the project (not the document's name, which projects can share); wait until both are known.
     guideScope: doc && engine.projectKnown ? guideScope(file.projectName, file.openedName) : null,
   });
@@ -381,7 +407,7 @@ export function App() {
       }
       // While another dialog is open or a file task runs, a drop is still kept from the browser but not imported.
       const blocked =
-        importing.current || file.busy ? "An import is still running." : dialog || filesUi.modalOpen || (m && m.kind !== "open") ? "Finish the open dialog first." : null;
+        importing.current || file.busy ? t("rest.importRunning") : dialog || filesUi.modalOpen || (m && m.kind !== "open") ? t("rest.finishDialog") : null;
       if (blocked) {
         notify(blocked, "error");
         return;
@@ -681,6 +707,7 @@ export function App() {
     },
     [alignTo, distribute, centreOn, group, ungroup, flip],
   );
+  arrangeRef.current = arrange;
 
   // ---- keyboard ----------------------------------------------------------------------------------------------------
   useEffect(() => {
@@ -995,6 +1022,10 @@ export function App() {
       "tool.trim": () => (workspace === "design" && has("path.trim") ? setTool("trim") : false),
       "tool.measure": () => (workspace === "design" ? setTool("measure") : false),
       "arrange.alignCenters": () => (workspace === "design" && units >= 2 ? alignTo("center", "center") : false),
+      "arrange.distHSpaced": () => (workspace === "design" && units >= 3 && !beginnerMode ? arrange("distH") : false),
+      "arrange.distHCentered": () => (workspace === "design" && units >= 3 && !beginnerMode ? arrange("distHc") : false),
+      "arrange.distVSpaced": () => (workspace === "design" && units >= 3 && !beginnerMode ? arrange("distV") : false),
+      "arrange.distVCentered": () => (workspace === "design" && units >= 3 && !beginnerMode ? arrange("distVc") : false),
       "arrange.moveHTogether": () => (workspace === "design" && units >= 2 ? setMoveTogether("x") : false),
       "arrange.moveVTogether": () => (workspace === "design" && units >= 2 ? setMoveTogether("y") : false),
       "arrange.dockLeft": () => (workspace === "design" && hasSel ? docking.dock("left") : false),

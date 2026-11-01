@@ -7,6 +7,7 @@ mod arrange;
 // Art Library items (the engine keeps the libraries).
 mod art_library;
 mod array;
+pub(crate) use array::sync_virtual_arrays;
 mod document;
 #[cfg(not(target_arch = "wasm32"))]
 mod dxf;
@@ -95,6 +96,10 @@ pub(crate) fn register_all(r: &mut Registry) {
     r.register::<object::Duplicate>();
     r.register::<place::Place>();
     r.register::<array::Array>();
+    r.register::<array::ArrayFlatten>();
+    r.register::<array::ArrayAdd>();
+    r.register::<array::ArrayRemove>();
+    r.register::<array::ArrayDuplicate>();
     r.register::<stock::StockMove>();
     r.register::<arrange::Move>();
     r.register::<arrange::Align>();
@@ -175,6 +180,7 @@ fn register_geometry(r: &mut Registry) {
     r.register::<path_tools::ConvertToPath>();
     r.register::<path_tools::Optimize>();
     r.register::<path_tools::Fillet>();
+    r.register::<path_tools::Unfillet>();
     r.register::<path_tools::Trim>();
     r.register::<path_tools::Reverse>();
     r.register::<node::NodeList>();

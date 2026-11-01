@@ -5,11 +5,12 @@
 // older version kept in this browser), Art Library file formats, tangent-circle picking and Shape Properties
 // parameters. No DOM; tested in design.test.ts.
 
-import type { DocGuide, DocObject, GDocument, Geometry, Group, Vec2 } from "../api/types.ts";
+import type { DocGuide, DocObject, GDocument, Geometry, Group, Vec2, VirtualArray } from "../api/types.ts";
 import { flattenCmds, geometryCmds, objectBounds, toPathData, unionBoxes, type Box, type Polyline } from "../geometry.ts";
 import { engineFormatOf, extOf } from "../files/fileFormats.ts";
 import { topGroup } from "../selection.ts";
 import type { Guide } from "../guides.ts";
+import { tr } from "../workspace/tr.ts";
 
 // ---- Warp and Deform ----------------------------------------------------------------------------------------------
 
@@ -61,7 +62,7 @@ export function perspectiveProblem(q: readonly Vec2[]): string | null {
     return (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]);
   };
   const s = [0, 1, 2, 3].map(cross);
-  return s.every((v) => v > 1e-12) || s.every((v) => v < -1e-12) ? null : "The four corners must form a convex shape for a perspective warp.";
+  return s.every((v) => v > 1e-12) || s.every((v) => v < -1e-12) ? null : tr("dz.m.convex");
 }
 
 /** A point mapper for `kind` through `handles` fitted to `box` (the engine's `Mapper::map`), or null when unusable. */
@@ -234,9 +235,56 @@ export interface ArrayOptions {
   colShift: number | "half" | null;
   mirrorCols: "x" | "y" | null;
   mirrorRows: "x" | "y" | null;
+  /** LightBurn's Total Width / Height: the counts as many as fit in this many mm (override cols / rows). */
+  totalWidth?: number | null;
+  totalHeight?: number | null;
+  /** LightBurn's Random Orientation: copies turned by random angles from this seed (null: off). */
+  seed?: number | null;
+  /** LightBurn's Auto-Increment Variable Text: each copy's serial/CSV Offset raised by n times this (0: off). */
+  autoIncrement?: number;
+  /** LightBurn's Group Results (not with a virtual array). */
+  groupResults?: boolean;
+  /** LightBurn's Create Virtual Array: linked clones. */
+  virtual?: boolean;
 }
 
 export const MAX_ARRAY_CELLS = 10000;
+
+/** As many cells as fit in `total` mm (the engine's fit_count): the selection, the steps and a shift counted. */
+export function fitCount(total: number, size: number, step: number, shift: number): number | null {
+  const room = total - size - Math.abs(shift);
+  if (!(total > 0) || room < -1e-9) return null;
+  if (Math.abs(step) < 1e-9) return 1;
+  return Math.min(MAX_ARRAY_CELLS, Math.floor(Math.max(0, room) / Math.abs(step) + 1e-9) + 1);
+}
+
+/**
+ * The options with Total Width / Height turned into counts as the engine does (two rounds, since a shift widens the
+ * grid only when there is a second row or column), or null when a total is smaller than the selection.
+ */
+export function resolveCounts(o: ArrayOptions, box: Box): ArrayOptions | null {
+  if (o.totalWidth == null && o.totalHeight == null) return o;
+  const w = box.x1 - box.x0;
+  const h = box.y1 - box.y0;
+  const sx = o.gapX ? w + o.pitchX : o.pitchX;
+  const sy = o.gapY ? h + o.pitchY : o.pitchY;
+  const rs = o.rowShift === "half" ? w / 2 : (o.rowShift ?? 0);
+  const cs = o.colShift === "half" ? h / 2 : (o.colShift ?? 0);
+  let { cols, rows } = o;
+  for (let k = 0; k < 2; k++) {
+    if (o.totalWidth != null) {
+      const n = fitCount(o.totalWidth, w, sx, rows > 1 ? rs : 0);
+      if (n === null) return null;
+      cols = n;
+    }
+    if (o.totalHeight != null) {
+      const n = fitCount(o.totalHeight, h, sy, cols > 1 ? cs : 0);
+      if (n === null) return null;
+      rows = n;
+    }
+  }
+  return { ...o, cols, rows };
+}
 
 /** Each cell's offset and flips, the engine's art.array layout (row 0, column 0 is the original). */
 export function arrayCells(o: ArrayOptions, box: Box): { row: number; col: number; d: Vec2; flipX: boolean; flipY: boolean }[] {
@@ -260,14 +308,14 @@ export function arrayCells(o: ArrayOptions, box: Box): { row: number; col: numbe
 
 /** Why the options cannot make an array, or null. */
 export function arrayProblem(o: ArrayOptions, box: Box | null): string | null {
-  if (!box) return "Select something to copy.";
-  if (!(Number.isInteger(o.cols) && Number.isInteger(o.rows) && o.cols >= 1 && o.rows >= 1)) return "Columns and rows must be whole numbers of at least 1.";
-  if (o.cols * o.rows > MAX_ARRAY_CELLS) return `That is more than ${MAX_ARRAY_CELLS} copies.`;
-  if (o.cols * o.rows === 1) return "One column and one row is just the original.";
-  if (![o.pitchX, o.pitchY].every(Number.isFinite)) return "Spacing must be numbers.";
+  if (!box) return tr("dz.m.selectToCopy");
+  if (!(Number.isInteger(o.cols) && Number.isInteger(o.rows) && o.cols >= 1 && o.rows >= 1)) return tr("dz.m.wholeCounts");
+  if (o.cols * o.rows > MAX_ARRAY_CELLS) return tr("dz.m.tooMany", { max: MAX_ARRAY_CELLS });
+  if (o.cols * o.rows === 1) return tr("dz.m.justOriginal");
+  if (![o.pitchX, o.pitchY].every(Number.isFinite)) return tr("dz.m.spacingNumbers");
   const sx = o.gapX ? box.x1 - box.x0 + o.pitchX : o.pitchX;
   const sy = o.gapY ? box.y1 - box.y0 + o.pitchY : o.pitchY;
-  if ((o.cols > 1 && Math.abs(sx) < 1e-9) || (o.rows > 1 && Math.abs(sy) < 1e-9)) return "A zero step would stack the copies on top of each other.";
+  if ((o.cols > 1 && Math.abs(sx) < 1e-9) || (o.rows > 1 && Math.abs(sy) < 1e-9)) return tr("dz.m.zeroStep");
   return null;
 }
 
@@ -282,7 +330,53 @@ export function arrayParams(ids: string[], o: ArrayOptions): Record<string, unkn
   if (o.colShift !== null && o.colShift !== 0) p.col_shift = o.colShift;
   if (o.mirrorCols) p.mirror_alternate_cols = o.mirrorCols;
   if (o.mirrorRows) p.mirror_alternate_rows = o.mirrorRows;
+  if (o.totalWidth != null) p.total_width_mm = o.totalWidth;
+  if (o.totalHeight != null) p.total_height_mm = o.totalHeight;
+  if (o.seed != null) p.random_orientation_seed = o.seed;
+  if (o.autoIncrement) p.auto_increment = o.autoIncrement;
+  if (o.virtual) p.virtual = true;
+  else if (o.groupResults) p.group_results = true;
   return p;
+}
+
+/** `art.array` laying out the existing virtual array `array` again with `o` (LightBurn's Edit Array). */
+export function editArrayParams(array: string, o: ArrayOptions): Record<string, unknown> {
+  const { ids: _ids, virtual: _v, group_results: _g, ...rest } = arrayParams([], { ...o, virtual: false, groupResults: false });
+  return { ids: [], edit_array: array, ...rest };
+}
+
+/** The virtual array an object belongs to (as an original or a clone), or null. */
+export function virtualArrayOf(doc: GDocument | null, ids: readonly string[]): VirtualArray | null {
+  const want = new Set(ids);
+  for (const id of ids) {
+    const g = doc?.objects.find((o) => o.id === id)?.group;
+    if (g) want.add(g);
+  }
+  return doc?.virtual_arrays?.find((a) => a.sources.some((s) => want.has(s)) || a.clones.some((c) => want.has(c))) ?? null;
+}
+
+/** The dialog options of a virtual array's kept settings (the engine's Grid), for Edit Array. */
+export function arrayOptionsOf(settings: Record<string, unknown>): ArrayOptions {
+  const n = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) ? v : d);
+  const shift = (v: unknown): number | "half" | null => (v === "half" ? "half" : typeof v === "number" ? v : null);
+  const mirror = (v: unknown): "x" | "y" | null => (v === "x" || v === "y" ? v : null);
+  return {
+    cols: n(settings.cols, 1),
+    rows: n(settings.rows, 1),
+    pitchX: n(settings.pitch_x_mm, 0),
+    pitchY: n(settings.pitch_y_mm, 0),
+    gapX: settings.spacing_x === "gap",
+    gapY: settings.spacing_y === "gap",
+    reverseX: settings.reverse_x === true,
+    reverseY: settings.reverse_y === true,
+    rowShift: shift(settings.row_shift),
+    colShift: shift(settings.col_shift),
+    mirrorCols: mirror(settings.mirror_alternate_cols),
+    mirrorRows: mirror(settings.mirror_alternate_rows),
+    seed: typeof settings.random_orientation_seed === "number" ? settings.random_orientation_seed : null,
+    autoIncrement: n(settings.auto_increment, 0),
+    virtual: true,
+  };
 }
 
 /** How many cells end up partly outside the centred workspace `ws` (W x H). */
@@ -490,22 +584,22 @@ export function guidesToMigrate(browser: readonly Guide[], inDoc: readonly Guide
 /** The `format=` an Art Library import takes for a file, or a reason it cannot. */
 export function artImportFormat(name: string): { format: string } | { error: string } {
   const ext = extOf(name);
-  if (ext === "lbart") return { error: "LightBurn's .lbart is a binary format without a public description, so it cannot be read. Add the art to a LightBurn project, save it as .lbrn2 and import that." };
+  if (ext === "lbart") return { error: tr("dz.m.lbart") };
   if (ext === "lbrn2") return { format: "lbrn2" };
   if (ext === "openetch") return { format: "openetch" };
   const f = engineFormatOf(name);
-  if (!f) return { error: `${name}: not a file the Art Library can import.` };
+  if (!f) return { error: tr("dz.m.notArt", { name }) };
   return { format: f };
 }
 
 /** A library name problem (the engine follows the project-name rules), or null. */
 export function libraryNameProblem(name: string, existing: readonly string[], current?: string): string | null {
   const n = name.trim();
-  if (!n) return "Enter a name.";
-  if (n.length > 100) return "That name is too long.";
-  if (/[\\/:*?"<>|]/.test(n) || /[\u0000-\u001f]/.test(n)) return 'A name cannot contain \\ / : * ? " < > |.';
-  if (n.startsWith(".") || n.endsWith(".")) return "A name cannot start or end with a dot.";
-  if (existing.some((e) => e.toLowerCase() === n.toLowerCase() && e.toLowerCase() !== current?.toLowerCase())) return "A library with that name exists.";
+  if (!n) return tr("dz.m.enterName");
+  if (n.length > 100) return tr("dz.m.nameTooLong");
+  if (/[\\/:*?"<>|]/.test(n) || /[\u0000-\u001f]/.test(n)) return tr("dz.m.nameChars");
+  if (n.startsWith(".") || n.endsWith(".")) return tr("dz.m.nameDot");
+  if (existing.some((e) => e.toLowerCase() === n.toLowerCase() && e.toLowerCase() !== current?.toLowerCase())) return tr("dz.m.nameTaken");
   return null;
 }
 
@@ -562,19 +656,19 @@ export function shapePatchProblem(p: ShapeParams, patch: Record<string, number |
   const v = (k: string): number | null | undefined => patch[k];
   for (const k of ["width_mm", "height_mm", "rx_mm", "ry_mm", "radius_mm"]) {
     const x = v(k);
-    if (x !== undefined && !(x !== null && x > 0 && x <= 1e6)) return "Sizes must be above 0.";
+    if (x !== undefined && !(x !== null && x > 0 && x <= 1e6)) return tr("dz.m.sizesPositive");
   }
   const cr = v("corner_radius_mm");
-  if (cr !== undefined && !(cr !== null && cr >= 0)) return "The corner radius cannot be negative.";
+  if (cr !== undefined && !(cr !== null && cr >= 0)) return tr("dz.m.radiusNegative");
   if (p.kind === "rect" && cr !== undefined && cr !== null) {
     const w = v("width_mm") ?? p.width_mm;
     const h = v("height_mm") ?? p.height_mm;
-    if (cr > Math.min(w ?? 0, h ?? 0) / 2 + 1e-9) return "The corner radius can be at most half the shorter side.";
+    if (cr > Math.min(w ?? 0, h ?? 0) / 2 + 1e-9) return tr("dz.m.radiusHalf");
   }
   const s = v("sides");
-  if (s !== undefined && !(s !== null && Number.isInteger(s) && s >= 3 && s <= 1000)) return "Sides must be a whole number from 3 to 1000.";
+  if (s !== undefined && !(s !== null && Number.isInteger(s) && s >= 3 && s <= 1000)) return tr("dz.m.sides");
   const sr = v("star_ratio");
-  if (sr !== undefined && sr !== null && !(sr > 0 && sr < 1)) return "The star's inner ratio must be between 0 and 1.";
+  if (sr !== undefined && sr !== null && !(sr > 0 && sr < 1)) return tr("dz.m.starRatio");
   return null;
 }
 

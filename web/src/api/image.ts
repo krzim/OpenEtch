@@ -476,3 +476,44 @@ export const imageView = {
     emit({ ...state, drafts });
   },
 };
+
+// ---- Adjust Image presets (LightBurn's Adjust Image preset list; engine /api/image-adjust/presets) ----
+
+/** A saved preset: the image adjustments and/or the layer's image mode settings (as LightBurn's Save Preset keeps). */
+export interface ImagePreset {
+  name: string;
+  adjust?: Partial<ImageAdjust>;
+  image?: Partial<ImageSettings>;
+}
+
+/** The presets of GET /api/image-adjust/presets (rows without a name or without either part dropped), by name. */
+export function imagePresetList(raw: unknown): ImagePreset[] {
+  const list = raw && typeof raw === "object" ? (raw as { presets?: unknown }).presets : null;
+  if (!Array.isArray(list)) return [];
+  const part = (v: unknown) => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined);
+  const out: ImagePreset[] = [];
+  for (const r of list) {
+    if (!r || typeof r !== "object" || typeof (r as { name?: unknown }).name !== "string") continue;
+    const adjust = part((r as { adjust?: unknown }).adjust) as Partial<ImageAdjust> | undefined;
+    const image = part((r as { image?: unknown }).image) as Partial<ImageSettings> | undefined;
+    if (!adjust && !image) continue;
+    out.push({ name: (r as { name: string }).name, ...(adjust ? { adjust } : {}), ...(image ? { image } : {}) });
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** The dialog values after picking `p`: its adjustments over the defaults, or `current` when it holds none. */
+export function adjustFromPreset(p: ImagePreset, current: ImageAdjust): ImageAdjust {
+  if (!p.adjust) return current;
+  const out: ImageAdjust = { ...DEFAULT_ADJUST };
+  for (const k of Object.keys(DEFAULT_ADJUST) as (keyof ImageAdjust)[]) {
+    const v = p.adjust[k];
+    if (typeof v === "number" && Number.isFinite(v)) out[k] = v;
+  }
+  return out;
+}
+
+/** The body of PUT /api/image-adjust/presets/{name}: the adjustments, plus the layer's image settings when asked. */
+export function imagePresetBody(a: ImageAdjust, image: ImageSettings | null): { adjust: ImageAdjust; image?: Partial<ImageSettings> } {
+  return image ? { adjust: a, image } : { adjust: a };
+}

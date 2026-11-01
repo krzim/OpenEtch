@@ -121,6 +121,28 @@ pub struct Document {
     /// a curve. `None` uses the device's setting, else [`DEFAULT_CURVE_TOLERANCE_MM`]. Left out of JSON while `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub curve_tolerance_mm: Option<f64>,
+    /// LightBurn's virtual arrays (Grid Array > Create Virtual Array): linked clones of their source objects that
+    /// follow every edit of the sources. The clones are ordinary objects (so jobs, previews and exports need nothing
+    /// new) marked with [`VIRTUAL_ARRAY_KEY`]; the `commands` crate lays them out again after every edit. Left out of
+    /// JSON while empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub virtual_arrays: Vec<VirtualArray>,
+}
+
+/// Object extras key marking a virtual array's clone; the value is the array's id.
+pub const VIRTUAL_ARRAY_KEY: &str = "openetch.virtual_array";
+
+/// One virtual array (see [`Document::virtual_arrays`]).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VirtualArray {
+    /// Stable id ("array-4").
+    pub id: String,
+    /// The original objects, in order (LightBurn: the array's originals; they stay editable).
+    pub sources: Vec<ObjectId>,
+    /// The clone objects, cell by cell (row-major, the originals' cell left out), each cell one clone per source.
+    pub clones: Vec<ObjectId>,
+    /// The grid settings (the `commands` crate's `art.array` settings, as JSON).
+    pub settings: serde_json::Value,
 }
 
 /// Most guides a document keeps (`guide.add` refuses more; a loaded file with more is refused).
@@ -213,6 +235,7 @@ impl Default for Document {
             image_masks: BTreeMap::new(),
             guides: Vec::new(),
             curve_tolerance_mm: None,
+            virtual_arrays: Vec::new(),
         };
         let id = doc.alloc_id("layer").expect("a new document has ids to spare");
         doc.layers.push(Layer::new(id, "Layer 1", "#1f77b4"));

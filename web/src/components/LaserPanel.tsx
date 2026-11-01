@@ -43,7 +43,7 @@ export function MachineCard({ machine, httpError, children }: { machine: Machine
     : [];
   const sim = !!(machine?.simulated ?? machine?.sim);
   const state = typeof machine?.state === "string" ? machine.state : machine?.busy ? "busy" : "idle";
-  const stateText = machine?.framing ? t("lp.framingRedPointer") : machine?.running ? "Running" : state.charAt(0).toUpperCase() + state.slice(1);
+  const stateText = machine?.framing ? t("lp.framingRedPointer") : machine?.running ? t("rest.running") : state.charAt(0).toUpperCase() + state.slice(1);
   const lastError = typeof machine?.last_error === "string" && machine.last_error ? machine.last_error : null;
   return (
     <section className="card">
@@ -369,7 +369,7 @@ function PendingRunRow(props: {
               {t("lp.cancel")}
             </button>
             <button className="btn btn-danger" onClick={() => void approve()} disabled={!canFire}>
-              {step === "sending" ? "Approving…" : t("lp.confirmAndFire")}
+              {step === "sending" ? t("rest.approving") : t("lp.confirmAndFire")}
             </button>
           </div>
         </div>
@@ -470,7 +470,7 @@ export function PreviewStatsCard(p: {
                     <span className="pv-name">{l.name}</span>
                   </label>
                   <span className="pv-meta">
-                    {l.mode === "fill" ? "Fill" : l.mode === "fill_then_line" ? "Fill+Line" : "Line"} · {lengthText(l.markLengthMm, lu, 0)}
+                    {l.mode === "fill" ? t("rest.modeFill") : l.mode === "fill_then_line" ? t("rest.modeFillLine") : t("rest.modeLine")} · {lengthText(l.markLengthMm, lu, 0)}
                     {l.estimatedTimeS !== null ? ` · ${formatDuration(l.estimatedTimeS)}` : ""}
                   </span>
                   <button className="chip" title={t("lp.showOnlyThisLayer")} onClick={() => solo(l.id)}>

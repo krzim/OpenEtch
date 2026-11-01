@@ -20,6 +20,7 @@
 //! | POST | `/api/templates/open` | `{name, origin?}`: a new untitled document from the template (it is never overwritten) |
 //! | GET | `/api/prefs/export` | the engine's preferences and these settings as `openetch-prefs.oeprefs` (JSON) |
 //! | POST | `/api/prefs/import` | an exported file as the body (UI only; the current preferences are backed up first) |
+//! | POST | `/api/prefs/import_lightburn` | a LightBurn `.lbprefs` / `prefs.ini` as the body (UI only unless `?preview=1`): the keys OpenEtch has (`crate::lbprefs`); autosave and the active device's Optimization defaults are applied (current preferences backed up first), the browser-side ones returned as `browser` for the UI to apply; `{ok, preview, device, engine, browser, used, rejected, other_keys}` |
 //! | GET | `/api/prefs/backups` | `[{file, saved_unix_s, size}]` newest first (at most 50 kept; made at start and before every import) |
 //! | POST | `/api/prefs/backups/restore` | `{file, origin?}` (UI only) |
 //! | GET | `/api/bundle/export` | `?parts=prefs,devices,libraries` (default all): a user bundle `.oebundle` (zip) |
@@ -349,6 +350,7 @@ pub(crate) fn routes() -> Router<Arc<AppState>> {
         .route("/templates/open", post(template_open))
         .route("/prefs/export", get(prefs_export))
         .route("/prefs/import", post(prefs_import))
+        .route("/prefs/import_lightburn", post(prefs_import_lightburn))
         .route("/prefs/backups", get(prefs_backups))
         .route("/prefs/backups/restore", post(prefs_restore))
         .route("/bundle/export", get(bundle_export))
@@ -909,6 +911,37 @@ async fn prefs_import(State(st): State<Arc<AppState>>, headers: HeaderMap, q: Q,
     }
     st.blocking(move |st| set_prefs(st, f.preferences, f.files)).await?;
     Ok(Json(json!({ "ok": true })))
+}
+
+async fn prefs_import_lightburn(State(st): State<Arc<AppState>>, headers: HeaderMap, q: Q, body: Bytes) -> Result<Json<Value>, EngineError> {
+    let q = query(q, &["origin", "preview"])?;
+    let preview = matches!(q.get("preview").map(String::as_str), Some("1" | "true"));
+    if !preview {
+        ui_only(&headers, q.get("origin").map(|o| json!(o)).as_ref(), "LightBurn preferences can be imported")?;
+    }
+    let device = st.active_device().id;
+    let base = crate::libs::lock(&st.libs.prefs).device(&device).optimization_defaults.unwrap_or_default();
+    let m = crate::lbprefs::map(&body, &base).map_err(EngineError::BadRequest)?;
+    if !preview && (m.optimization.is_some() || m.autosave_minutes.is_some()) {
+        let mut prefs = crate::libs::lock(&st.libs.prefs).prefs.clone();
+        if let Some(o) = &m.optimization {
+            prefs.devices.entry(device.clone()).or_default().optimization_defaults = Some(o.clone());
+        }
+        let files = m.autosave_minutes.map(|minutes| FileSettings { autosave_minutes: minutes, ..st.files.settings() });
+        let v = serde_json::to_value(&prefs).map_err(|e| EngineError::Internal(e.to_string()))?;
+        st.blocking(move |st| set_prefs(st, v, files)).await?;
+    }
+    let engine = json!({ "autosave_minutes": m.autosave_minutes, "optimization": m.optimization });
+    Ok(Json(json!({
+        "ok": true,
+        "preview": preview,
+        "device": device,
+        "engine": engine,
+        "browser": m.browser,
+        "used": m.used,
+        "rejected": m.rejected,
+        "other_keys": m.other_keys,
+    })))
 }
 
 async fn prefs_backups(State(st): State<Arc<AppState>>) -> Result<Json<Value>, EngineError> {

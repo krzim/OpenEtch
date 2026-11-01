@@ -27,3 +27,5 @@ fontdb = { version = "0.24", optional = true }
 
 [dev-dependencies]
 lbrn = { workspace = true }
+# The tests read the Micro QR, rMQR and PDF417 symbols back with rxing's decoders.
+rxing = { version = "0.9.3", default-features = false, features = ["encoders", "decoders", "encoding_rs", "qrcode", "datamatrix", "aztec", "pdf417", "oned"] }

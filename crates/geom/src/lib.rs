@@ -28,6 +28,7 @@ pub mod ops;
 pub mod region;
 pub mod shapes;
 pub mod subpath;
+pub mod unfillet;
 pub mod warp;
 
 pub use flatten::{Polyline, flatten, polylines_to_path};

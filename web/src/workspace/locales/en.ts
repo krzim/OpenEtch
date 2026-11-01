@@ -1,9 +1,11 @@
 // English UI strings (the source of truth for message keys; see ../i18n.ts). `{name}` marks a placeholder.
 // Hotkey action labels live in ../hotkeys.ts; a translation can override one with a "hk.<action id>" key.
 
+import { EN_DESIGN } from "./en-design.ts";
 import { EN_FILES } from "./en-files.ts";
 import { EN_JOB } from "./en-job.ts";
 import { EN_LIBS } from "./en-libs.ts";
+import { EN_REST } from "./en-rest.ts";
 import { EN_TEXT } from "./en-text.ts";
 import { EN_UI } from "./en-ui.ts";
 import { EN_WS } from "./en-ws.ts";
@@ -15,12 +17,16 @@ export const EN = {
   ...EN_JOB,
   // Files, project and image tools (src/files/).
   ...EN_FILES,
+  // The design-engine UI: Shape Properties, Edit / Tools menus, Art Library, Move / Grid array dialogs (src/design/).
+  ...EN_DESIGN,
   // Material library, defaults, test generators, approval gates, laser tools, camera, Help additions (src/libs/).
   ...EN_LIBS,
   // Document tabs, dockable windows and the Window menu, docking, UI scale (src/workspace/).
   ...EN_WS,
   // The older components' strings: Properties, File menu, Toolbar, Edit tools, top bar, dialogs.
   ...EN_UI,
+  // Strings that were still inline in older components (App, Devices, Edit dialogs, Image settings, Viewport hints).
+  ...EN_REST,
   "common.cancel": "Cancel",
   "common.close": "Close",
   "common.loading": "Loading…",
@@ -110,6 +116,10 @@ export const EN = {
   "prefs.nudgeReset": "Default moves (5, 20, 1, 0.1 mm)",
   "prefs.invertWheel": "Invert mouse wheel zoom",
   "prefs.editHotkeys": "Edit hotkeys…",
+  "prefs.beginnerMode": "Beginner Mode",
+  "prefs.beginnerModeHint": "Hides advanced options as LightBurn's Beginner Mode does: Distribute and Mirror Across Line, Optimization Settings, Rotary Setup and Cut Selected Graphics (then ignored), the advanced cut settings and tabs, and Set Start Point.",
+  "prefs.beginnerBadge": "Beginner Mode",
+  "prefs.beginnerBadgeTitle": "Advanced options are hidden. Turn Beginner Mode off in Preferences.",
 
   "snap.endpoint": "Vertices and endpoints",
   "snap.intersection": "Intersections",

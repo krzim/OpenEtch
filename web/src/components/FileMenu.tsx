@@ -14,7 +14,7 @@
 // The dialog preselects Open (replace) when the design has no objects, Import (merge) otherwise (`defaultImportMode`).
 // The top bar and download names use the opened file's name, which the engine keeps as `display_name` across reloads.
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { api, execute } from "../api/client.ts";
 import { createdIds } from "../api/drop.ts";
@@ -66,6 +66,8 @@ import type { Engine } from "../api/useEngine.ts";
 import { carryGuides, clearGuides, guideScope, UNSAVED_SCOPE } from "../guides.ts";
 import { ENGINE_ACCEPT } from "../files/fileFormats.ts";
 import { ProjectThumb } from "../files/ProjectDialogs.tsx";
+import { FolderTree, useProjectFolders } from "../files/ProjectFolders.tsx";
+import { baseNameOf, folderOf, joinProject, projectsIn } from "../files/folders.ts";
 import { Icon, Modal, fmt } from "./ui.tsx";
 import { useT } from "../workspace/usePrefs.ts";
 import type { T } from "../workspace/i18n.ts";
@@ -696,10 +698,45 @@ function useProjectList(): { list: ProjectEntry[] | null; error: string | null }
 function OpenDialog({ file, onClose }: { file: FileActions; onClose: () => void }) {
   const t = useT();
   const { list, error } = useProjectList();
+  const tree = useProjectFolders();
+  const [folder, setFolder] = useState(() => folderOf(file.projectName ?? ""));
+  const names = useMemo(() => (list ?? []).map((p) => p.name), [list]);
+  // Engines without folders (or with none yet) show the flat list as before.
+  const useTree = tree.folders !== null && (tree.folders.length > 0 || tree.locations.length > 0 || names.some((n) => n.includes("/")));
+  const shown = list === null ? null : useTree ? projectsIn(list, folder) : list;
   const input = useRef<HTMLInputElement>(null);
+  const projects = (
+    <div className="folder-projects">
+      {shown === null && <p className="muted">{t("common.loading")}</p>}
+      {error && <p className="form-error">{error}</p>}
+      {shown !== null && !error && shown.length === 0 && <p className="muted">{useTree && list?.length ? t("fold.emptyFolder") : t("fm.noProjects")}</p>}
+      {shown !== null && shown.length > 0 && (
+        <div className="project-list">
+          {shown.map((pr) => (
+            <button
+              key={pr.name}
+              className={`project-row with-thumb${pr.name === file.projectName ? " current" : ""}`}
+              disabled={file.busy}
+              title={pr.name}
+              onClick={() => file.openProject(pr.name)}
+            >
+              <ProjectThumb name={pr.name} modified={pr.modified_unix_s} />
+              <span className="project-row-text">
+                <span className="project-row-name">{useTree ? baseNameOf(pr.name) : pr.name}</span>
+                <span className="project-row-meta">
+                  {[formatModified(pr.modified_unix_s), formatBytes(pr.size)].filter(Boolean).join(" · ")}
+                </span>
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
   return (
     <Modal
       title={t("fm.openTitle")}
+      wide={useTree}
       onClose={onClose}
       footer={
         <>
@@ -725,28 +762,21 @@ function OpenDialog({ file, onClose }: { file: FileActions; onClose: () => void 
         }}
       />
       <div className="section-label">{t("fm.projectsOnEngine")}</div>
-      {list === null && <p className="muted">{t("common.loading")}</p>}
-      {error && <p className="form-error">{error}</p>}
-      {list !== null && !error && list.length === 0 && <p className="muted">{t("fm.noProjects")}</p>}
-      {list !== null && list.length > 0 && (
-        <div className="project-list">
-          {list.map((pr) => (
-            <button
-              key={pr.name}
-              className={`project-row with-thumb${pr.name === file.projectName ? " current" : ""}`}
-              disabled={file.busy}
-              onClick={() => file.openProject(pr.name)}
-            >
-              <ProjectThumb name={pr.name} modified={pr.modified_unix_s} />
-              <span className="project-row-text">
-                <span className="project-row-name">{pr.name}</span>
-                <span className="project-row-meta">
-                  {[formatModified(pr.modified_unix_s), formatBytes(pr.size)].filter(Boolean).join(" · ")}
-                </span>
-              </span>
-            </button>
-          ))}
+      {useTree && tree.folders ? (
+        <div className="folder-browser">
+          <FolderTree
+            folders={tree.folders}
+            locations={tree.locations}
+            projectNames={names}
+            selected={folder}
+            disabled={file.busy}
+            onSelect={setFolder}
+            onCreated={(f) => (tree.reload(), setFolder(f))}
+          />
+          {projects}
         </div>
+      ) : (
+        projects
       )}
       <p className="hint">{t("fm.uploadHint")}</p>
     </Modal>
@@ -756,13 +786,17 @@ function OpenDialog({ file, onClose }: { file: FileActions; onClose: () => void 
 function SaveAsDialog({ file, docName, onClose }: { file: FileActions; docName: string | null; onClose: () => void }) {
   const t = useT();
   const initial = file.suggestedName || file.projectName || (docName && docName !== "Untitled" ? suggestProjectName(docName) : "");
-  const [name, setName] = useState(initial);
+  // The folder is picked in the tree; a name typed with "/" still works (it adds folders under the picked one).
+  const [folder, setFolder] = useState(() => folderOf(initial));
+  const [name, setName] = useState(() => baseNameOf(initial));
+  const tree = useProjectFolders();
   const [confirmReplace, setConfirmReplace] = useState(false);
   // The engine refused the save because a project of that name exists that the list did not show (case-only clash,
   // or saved meanwhile from elsewhere).
   const [refused, setRefused] = useState<string | null>(null);
   const { list } = useProjectList();
-  const trimmed = name.trim();
+  const names = useMemo(() => (list ?? []).map((p) => p.name), [list]);
+  const trimmed = name.trim() ? joinProject(folder, name.trim()) : "";
   const problem = trimmed ? validateProjectName(trimmed) : null;
   // Case-insensitive: Windows and macOS would replace "ok name" when saving "OK NAME".
   const existing = projectClash(list, trimmed, file.projectName) ?? (refused === trimmed ? trimmed : null);
@@ -783,6 +817,7 @@ function SaveAsDialog({ file, docName, onClose }: { file: FileActions; docName: 
   return (
     <Modal
       title={t("fm.saveAsTitle")}
+      wide={tree.folders !== null}
       onClose={onClose}
       footer={
         <>
@@ -813,6 +848,20 @@ function SaveAsDialog({ file, docName, onClose }: { file: FileActions; docName: 
           />
         </span>
       </label>
+      {tree.folders !== null && (
+        <>
+          <div className="section-label">{t("fold.saveIn", { folder: folder || t("fold.root") })}</div>
+          <FolderTree
+            folders={tree.folders}
+            locations={tree.locations}
+            projectNames={names}
+            selected={folder}
+            disabled={file.busy}
+            onSelect={(f) => (setFolder(f), setConfirmReplace(false))}
+            onCreated={(f) => (tree.reload(), setFolder(f), setConfirmReplace(false))}
+          />
+        </>
+      )}
       {existing !== null && <p className="hint warn-text">{t("fm.exists", { name: existing })}</p>}
       <p className="hint">{t("fm.savedAs", { file: trimmed && !problem ? `"${trimmed}.openetch"` : t("fm.nameFile") })}</p>
     </Modal>

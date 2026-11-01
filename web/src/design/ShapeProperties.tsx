@@ -6,6 +6,7 @@ import { useState } from "react";
 import type { Invocation } from "../api/client.ts";
 import type { GDocument } from "../api/types.ts";
 import { CheckField, NumberField } from "../components/ui.tsx";
+import { useT } from "../workspace/usePrefs.ts";
 import type { Selection } from "../selection.ts";
 import { DCMD, shapeUpdate } from "./designApi.ts";
 import { shapeParams, shapePatchProblem, type ShapeParams } from "./model.ts";
@@ -17,6 +18,7 @@ export function ShapeProperties(p: {
   run: (inv: Invocation | Invocation[]) => Promise<unknown>;
   report: (e: unknown) => void;
 }) {
+  const t = useT();
   const [err, setErr] = useState<string | null>(null);
   const [lastRatio, setLastRatio] = useState(0.5);
   if (!p.doc || p.selection.objects.length !== 1 || !p.has(DCMD.shapeUpdate)) return null;
@@ -38,15 +40,15 @@ export function ShapeProperties(p: {
   const n = (v: number | null, f: (x: number) => void) => v !== null && f(v);
   return (
     <section className="prop-section dz-shape-props">
-      <h3>Shape properties</h3>
+      <h3>{t("dz.shapeProps")}</h3>
       {sp.kind === "rect" && (
         <>
           <div className="field-grid">
-            <NumberField label="Width" unit="mm" value={sp.width_mm} min={0.001} onCommit={(v) => n(v, (x) => send({ width_mm: x }))} />
-            <NumberField label="Height" unit="mm" value={sp.height_mm} min={0.001} onCommit={(v) => n(v, (x) => send({ height_mm: x }))} />
+            <NumberField label={t("dz.width")} unit="mm" value={sp.width_mm} min={0.001} onCommit={(v) => n(v, (x) => send({ width_mm: x }))} />
+            <NumberField label={t("dz.height")} unit="mm" value={sp.height_mm} min={0.001} onCommit={(v) => n(v, (x) => send({ height_mm: x }))} />
           </div>
           <NumberField
-            label="Corner radius"
+            label={t("dz.cornerRadius")}
             unit="mm"
             value={sp.corner_radius_mm}
             min={0}
@@ -57,18 +59,18 @@ export function ShapeProperties(p: {
       )}
       {sp.kind === "ellipse" && (
         <div className="field-grid">
-          <NumberField label="Radius X" unit="mm" value={sp.rx_mm} min={0.001} onCommit={(v) => n(v, (x) => send({ rx_mm: x }))} />
-          <NumberField label="Radius Y" unit="mm" value={sp.ry_mm} min={0.001} onCommit={(v) => n(v, (x) => send({ ry_mm: x }))} />
+          <NumberField label={t("dz.radiusX")} unit="mm" value={sp.rx_mm} min={0.001} onCommit={(v) => n(v, (x) => send({ rx_mm: x }))} />
+          <NumberField label={t("dz.radiusY")} unit="mm" value={sp.ry_mm} min={0.001} onCommit={(v) => n(v, (x) => send({ ry_mm: x }))} />
         </div>
       )}
       {sp.kind === "polygon" && (
         <>
           <div className="field-grid">
-            <NumberField label={sp.star_ratio ? "Points" : "Sides"} value={sp.sides} min={3} max={1000} digits={0} onCommit={(v) => n(v, (x) => send({ sides: Math.round(x) }))} />
-            <NumberField label="Radius" unit="mm" value={sp.radius_mm} min={0.001} onCommit={(v) => n(v, (x) => send({ radius_mm: x }))} />
+            <NumberField label={sp.star_ratio ? t("dz.points") : t("dz.sides")} value={sp.sides} min={3} max={1000} digits={0} onCommit={(v) => n(v, (x) => send({ sides: Math.round(x) }))} />
+            <NumberField label={t("dz.radius")} unit="mm" value={sp.radius_mm} min={0.001} onCommit={(v) => n(v, (x) => send({ radius_mm: x }))} />
           </div>
           <CheckField
-            label="Star"
+            label={t("dz.star")}
             checked={sp.star_ratio !== null}
             onChange={(on) => {
               if (!on && sp.star_ratio !== null) setLastRatio(sp.star_ratio);
@@ -77,7 +79,7 @@ export function ShapeProperties(p: {
           />
           {sp.star_ratio !== null && (
             <NumberField
-              label="Inner radius"
+              label={t("dz.innerRadius")}
               unit="%"
               value={Math.round(sp.star_ratio * 1000) / 10}
               min={1}
@@ -86,11 +88,11 @@ export function ShapeProperties(p: {
               onCommit={(v) => n(v, (x) => send({ star_ratio: Math.round(x * 10) / 1000 }))}
             />
           )}
-          <NumberField label="Corner radius" unit="mm" value={sp.corner_radius_mm} min={0} onCommit={(v) => n(v, (x) => send({ corner_radius_mm: x }))} />
+          <NumberField label={t("dz.cornerRadius")} unit="mm" value={sp.corner_radius_mm} min={0} onCommit={(v) => n(v, (x) => send({ corner_radius_mm: x }))} />
         </>
       )}
       {err && <p className="form-error">{err}</p>}
-      <p className="hint">Edits the {sp.kind === "rect" ? "rectangle" : sp.kind === "ellipse" ? "ellipse" : sp.star_ratio ? "star" : "polygon"} itself; its centre, rotation and layer stay. Convert to path to edit nodes.</p>
+      <p className="hint">{t(sp.kind === "rect" ? "dz.shapeHint.rect" : sp.kind === "ellipse" ? "dz.shapeHint.ellipse" : sp.star_ratio ? "dz.shapeHint.star" : "dz.shapeHint.polygon")}</p>
     </section>
   );
 }

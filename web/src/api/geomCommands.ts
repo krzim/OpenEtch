@@ -19,6 +19,7 @@ export const GEO = {
   convert: "path.convert",
   optimize: "path.optimize",
   fillet: "path.fillet",
+  unfillet: "path.unfillet",
   trim: "path.trim",
   reverse: "path.reverse",
   nodeList: "node.list",
@@ -109,6 +110,14 @@ export function optimize(ids: string[], p: number | { tolerance_mm?: number; arc
 }
 
 /** Round corners: all of them, or node indices from node.list (one object only). Negative radius: concave bite. */
+/**
+ * Make rounded corners sharp again (LightBurn's Radius tool clicked on a rounded corner): with `at` (field mm) the
+ * arc nearest it within `pick_mm` on the one object; without it every rounded corner of the shapes.
+ */
+export function unfillet(ids: string[], at?: Vec2, pick_mm?: number): Invocation {
+  return { id: GEO.unfillet, params: at ? { ids, at, ...(pick_mm ? { pick_mm } : {}) } : { ids } };
+}
+
 export function fillet(ids: string[], radius_mm: number, corners?: number[]): Invocation {
   return { id: GEO.fillet, params: corners && corners.length ? { ids, radius_mm, corners } : { ids, radius_mm } };
 }
@@ -217,7 +226,16 @@ export type NestRegion = "stock" | "field" | { min: Vec2; max: Vec2 } | { object
 export function nest(
   ids: string[],
   region: NestRegion,
-  p: { spacing_mm?: number; edge_mm?: number; rotations?: number[]; mode?: "boxes" | "shapes"; resolution_mm?: number } = {},
+  p: {
+    spacing_mm?: number;
+    edge_mm?: number;
+    rotations?: number[];
+    mode?: "boxes" | "shapes";
+    resolution_mm?: number;
+    /** LightBurn 2.2's Multipage: parts left over go onto new pages (only sent when on; older engines lack it). */
+    multipage?: boolean;
+    max_pages?: number;
+  } = {},
 ): Invocation {
   return { id: GEO.nest, params: { ids, region, ...defined(p) } };
 }

@@ -325,3 +325,15 @@
 .viewport .vp-bottom-left {
   left: 28px;
 }
+
+/* Adjust Image presets (ImageSettings.tsx AdjustPresets). */
+.img-presets {
+  margin-bottom: 8px;
+}
+
+.img-preset-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0;
+}

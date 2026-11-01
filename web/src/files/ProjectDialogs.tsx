@@ -21,6 +21,7 @@ import {
 } from "./fileFormats.ts";
 import { filesApi, saveBlob } from "./filesApi.ts";
 import { FilePick, NumBox, Segmented, parseBox } from "./FilesUiParts.tsx";
+import { LightBurnPrefsImport } from "./LightBurnPrefsImport.tsx";
 
 type Notify = (msg: string, kind?: "info" | "error") => void;
 
@@ -325,6 +326,7 @@ export function PrefsBundlesDialog(p: { onClose: () => void; notify: Notify; rep
         <button className="btn" onClick={() => prefsPick.current?.click()}>
           {t("files.importPrefs")}
         </button>
+        <LightBurnPrefsImport notify={p.notify} onImported={backups.reload} />
       </div>
       <p className="hint">{t("files.prefsHint")}</p>
       <details className="files-details">

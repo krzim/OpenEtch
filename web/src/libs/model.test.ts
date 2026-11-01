@@ -47,11 +47,14 @@ import {
   intervalTestParams,
   intervalTestProblem,
   intervalValues,
+  materialTestFromParams,
   materialTestParams,
   materialTestPreview,
   materialTestProblem,
   previewViewBox,
   show,
+  testPresetList,
+  testPresetNameProblem,
 } from "./testgen.ts";
 
 const VIEW = {
@@ -281,7 +284,8 @@ test("material test: values, checks, params and the preview's burn order", () =>
   const t = { ...DEFAULT_MATERIAL_TEST, rows: { param: "speed" as const, min: 500, max: 1500, count: 3 }, columns: { param: "power" as const, min: 10, max: 30, count: 3 } };
   assert.equal(materialTestProblem(t), null);
   assert.match(materialTestProblem({ ...t, columns: { ...t.columns, param: "speed" } }) ?? "", /different/);
-  assert.match(materialTestProblem({ ...t, columns: { ...t.columns, count: 21 } }) ?? "", /1 to 20/);
+  assert.equal(materialTestProblem({ ...t, columns: { ...t.columns, count: 30 } }), null, "30 per axis, as LightBurn's presets use");
+  assert.match(materialTestProblem({ ...t, columns: { ...t.columns, count: 31 } }) ?? "", /1 to 30/);
   assert.match(materialTestProblem({ ...t, columns: { param: "passes", min: 0, max: 3, count: 4 } }) ?? "", /passes are 1/);
   const pw = { ...t, columns: { param: "pulse_width" as const, min: 2, max: 200, count: 3 } };
   assert.equal(materialTestProblem(pw, [2, 101, 200]), null, "values on the table pass");
@@ -302,6 +306,39 @@ test("material test: values, checks, params and the preview's burn order", () =>
   assert.ok(last.shade > first.shade, "slow and strong burns darker");
   assert.deepEqual(new Set(pv.boxes.map((b) => b.order)).size, 9);
   assert.match(previewViewBox(pv), /^-?[\d.]+ -?[\d.]+ [\d.]+ [\d.]+$/);
+});
+
+test("material test presets: params back to the dialog, .lbmt extras kept, list and names", () => {
+  const m = { ...DEFAULT_MATERIAL_TEST, rows: { param: "frequency" as const, min: 20, max: 200, count: 30 }, title: "Steel", border: true, border_power_pct: 12 };
+  const back = materialTestFromParams(materialTestParams(m));
+  assert.deepEqual({ ...back, hatch_extra: undefined }, { ...m, hatch_extra: undefined });
+  // A preset imported from LightBurn's .lbmt: the engine's settings patch with hatch fields the dialog does not show.
+  const lbmt = {
+    columns: { param: "pulse_width", min: 2, max: 200, count: 6 },
+    rows: { param: "interval", min: 0.005, max: 0.05, count: 10 },
+    cell_width_mm: 4,
+    cell_height_mm: 4,
+    center: [-10, 5],
+    base: { mode: "fill", power_pct: 50, speed_mm_s: 2000, frequency_khz: 60, pulse_width_ns: null, passes: 1, hatch: { interval_mm: 0.02, angle_deg: 45, cross_hatch: true, bidirectional: true } },
+    label_settings: { mode: "line", power_pct: 20, speed_mm_s: 1500 },
+    labels: true,
+  };
+  const f = materialTestFromParams(lbmt);
+  assert.equal(f.columns.param, "pulse_width");
+  assert.deepEqual(f.center, [-10, 5]);
+  assert.equal(f.base.pulse_width_ns, null);
+  assert.equal(f.base.interval_mm, 0.02);
+  assert.equal(f.label_power_pct, 20);
+  assert.equal(f.spacing_mm, DEFAULT_MATERIAL_TEST.spacing_mm, "not in the file: the default");
+  assert.deepEqual((materialTestParams(f).base as { hatch: unknown }).hatch, { interval_mm: 0.02, angle_deg: 45, cross_hatch: true, bidirectional: true });
+  assert.deepEqual(materialTestFromParams({ rows: { param: "bogus" } }).rows, DEFAULT_MATERIAL_TEST.rows);
+  assert.deepEqual(
+    testPresetList({ presets: [{ name: "b", params: {} }, { name: 3 }, { name: "a", params: {} }] }).map((p) => p.name),
+    ["a", "b"],
+  );
+  assert.equal(testPresetNameProblem("MOPA steel"), null);
+  assert.match(testPresetNameProblem("  ") ?? "", /name/);
+  assert.match(testPresetNameProblem("x".repeat(101)) ?? "", /100/);
 });
 
 test("interval and focus tests", () => {

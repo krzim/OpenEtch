@@ -43,6 +43,8 @@ pub mod joblog;
 pub mod libs;
 pub mod library;
 pub mod prefs;
+// LightBurn .lbprefs / prefs.ini import (typed whitelist of keys).
+pub mod lbprefs;
 pub mod updates;
 pub mod userfiles;
 // Several open documents (File > New Window) and the Art Library.

@@ -17,7 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import type { Invocation } from "../api/client.ts";
 import * as C from "../api/commands.ts";
 import { bytesToBase64, createdIds } from "../api/drop.ts";
-import { IMAGE_ADJUST_CMD, imageAdjust } from "../api/image.ts";
+import { IMAGE_ADJUST_CMD, imageAdjust, imageUpdate } from "../api/image.ts";
 import { commandResult, formatBytes, needsConfirm, warningList } from "../api/project.ts";
 import type { Engine } from "../api/useEngine.ts";
 import type { MenuItem } from "../components/ContextMenu.tsx";
@@ -46,12 +46,15 @@ import {
   notesOf,
   openedRevision,
   resultGroup,
+  editModelInvocation,
+  modelOptionsOf,
   selectedImages,
   selectedVectors,
   showNotesOnLoad,
   templateList,
   ungroupAfter,
   type EngineFormat,
+  type ModelOptions,
   type Notes,
   type TemplateEntry,
 } from "./fileFormats.ts";
@@ -59,7 +62,7 @@ import { filesApi, saveBlob } from "./filesApi.ts";
 import { filesState, rememberTemplate, useFilesStore } from "./filesStore.ts";
 import { FilePick } from "./FilesUiParts.tsx";
 import { ConvertBitmapDialog, IMAGE_CMD, TraceDialog } from "./ImageTools.tsx";
-import { ImportFilesDialog, ImportOptionsDialog, type ImportChoice } from "./ImportDialogs.tsx";
+import { EditModelDialog, ImportFilesDialog, ImportOptionsDialog, type ImportChoice } from "./ImportDialogs.tsx";
 import { PagesDock, sendToPageItems } from "./PagesDock.tsx";
 import { BackupsDialog, NotesWindow, PrefsBundlesDialog, SaveTemplateDialog, TemplatesDialog } from "./ProjectDialogs.tsx";
 import "./files.css";
@@ -79,6 +82,7 @@ type FilesModal =
   | { kind: "trace"; id: string }
   | { kind: "toBitmap"; ids: string[] }
   | { kind: "adjust"; layer: string; ids: string[] }
+  | { kind: "editModel"; id: string; name: string; options: ModelOptions }
   | { kind: "confirm"; message: string; label: string; action: () => void };
 
 export const NOTES_CMD = "doc.set_notes";
@@ -131,6 +135,7 @@ export function useFilesUi(p: {
     imageExport: has(IMAGE_CMD.exportImage),
     notes: has(NOTES_CMD),
     adjust: has(IMAGE_ADJUST_CMD),
+    editModel: has("image.edit_model"),
   };
 
   // ---- notes shown on open (LightBurn "Show notes when the file opens") ----------------------------------------
@@ -362,6 +367,9 @@ export function useFilesUi(p: {
     if (image) {
       if (can.trace) items.push({ label: t("files.traceImage"), hint: hintFor("image.trace", hotkeys), action: trace });
       if (can.adjust) items.push({ label: t("files.adjustImage"), hint: hintFor("image.adjust", hotkeys), action: adjust });
+      // LightBurn 2.2's Edit 3D Model, for a depth map whose model the engine kept.
+      const model = can.editModel && images.length === 1 ? modelOptionsOf(image.extras) : null;
+      if (model) items.push({ label: t("files.editModel"), action: () => setModal({ kind: "editModel", id: image.id, name: image.name || image.id, options: model }) });
       if (can.replace) {
         items.push({ label: t("files.replaceImage"), action: () => replaceImage("file_size") });
         items.push({ label: t("files.replaceImageFit"), action: () => replaceImage("fit") });
@@ -506,9 +514,28 @@ export function useFilesUi(p: {
           images={doc.objects.filter((o) => m.ids.includes(o.id))}
           canApply={can.adjust}
           onClose={close}
-          onApply={(ids, a) => {
+          onApply={(ids, a, image) => {
             close();
-            run(imageAdjust(ids, a)).catch(report);
+            // A preset that holds the layer's image settings applies them too (one undo step).
+            run(image ? [imageAdjust(ids, a), imageUpdate(m.layer, image)] : imageAdjust(ids, a)).catch(report);
+          }}
+        />
+      )}
+      {m?.kind === "editModel" && (
+        <EditModelDialog
+          name={m.name}
+          initial={m.options}
+          busy={busy}
+          onClose={close}
+          onApply={(o) => {
+            setBusy(true);
+            run(editModelInvocation(m.id, o))
+              .then(() => {
+                close();
+                notify(t("files.modelEdited", { name: m.name }));
+              })
+              .catch(report)
+              .finally(() => setBusy(false));
           }}
         />
       )}

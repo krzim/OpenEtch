@@ -1,8 +1,13 @@
 // Preferences (LightBurn's File > Settings, the display side): theme, language, UI scale, units, grid, snapping,
 // nudge steps, mouse wheel and the crosshair cursor. Changes apply at once and are kept in this browser; the engine
-// and the document are never touched (and stay in mm).
+// and the document are never touched (and stay in mm). Plus Beginner Mode (LightBurn's Editor Settings) and the
+// engine's Project locations (files/ProjectFolders.tsx, saved by the engine).
+
 
 import { NumberField } from "../components/ui.tsx";
+import { ProjectLocationsSection } from "../files/ProjectFolders.tsx";
+import { LightBurnPrefsImport } from "../files/LightBurnPrefsImport.tsx";
+import { libsToast } from "../libs/store.ts";
 import { languages, type MsgKey } from "./i18n.ts";
 import { DEFAULT_NUDGE, SNAP_TOGGLES, resetPrefs, updatePrefs, type LengthUnit, type SpeedUnit, type ThemePref } from "./prefs.ts";
 import { usePrefs, useT } from "./usePrefs.ts";
@@ -36,6 +41,7 @@ export function PreferencesDialog(p: { onClose: () => void; onHotkeys: () => voi
           <button className="btn" onClick={() => resetPrefs(["hotkeys", "docks"])} title={t("prefs.resetTitle")}>
             {t("prefs.reset")}
           </button>
+          <LightBurnPrefsImport notify={libsToast} />
           <span className="tool-spacer" />
           <button className="btn btn-primary" autoFocus onClick={p.onClose}>
             {t("common.close")}
@@ -191,7 +197,11 @@ export function PreferencesDialog(p: { onClose: () => void; onHotkeys: () => voi
           <button className="btn" onClick={p.onHotkeys}>
             {t("prefs.editHotkeys")}
           </button>
+          {check(t("prefs.beginnerMode"), prefs.beginnerMode, (beginnerMode) => updatePrefs({ beginnerMode }), t("prefs.beginnerModeHint"))}
+          <p className="hint">{t("prefs.beginnerModeHint")}</p>
         </section>
+
+        <ProjectLocationsSection />
       </div>
     </WsModal>
   );

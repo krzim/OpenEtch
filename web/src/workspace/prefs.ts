@@ -51,6 +51,12 @@ export interface Prefs {
   hotkeys: Record<string, string[]>;
   /** Cuts/Layers and Laser docks collapsed. */
   docks: Record<string, boolean>;
+  /**
+   * LightBurn's Beginner Mode (Settings > Editor Settings): hides the advanced options it hides (Distribute and Mirror
+   * Across Line in Arrange, Optimization Settings, Rotary Setup and Cut Selected Graphics in the Laser window, the
+   * advanced cut settings and tabs, Set Start Point); Cut Selected Graphics is then ignored.
+   */
+  beginnerMode: boolean;
 }
 
 export const DEFAULT_NUDGE: NudgeSteps = { normal: 5, shift: 20, ctrl: 1, ctrlShift: 0.1 };
@@ -72,6 +78,7 @@ export const DEFAULT_PREFS: Prefs = {
   language: "en",
   hotkeys: {},
   docks: {},
+  beginnerMode: false,
 };
 
 export const PREFS_KEY = "openetch.prefs";
@@ -119,6 +126,7 @@ export function sanitizePrefs(raw: unknown): Prefs {
     language: typeof r.language === "string" && /^[a-z]{2}(-[A-Z]{2})?$/.test(r.language) ? r.language : d.language,
     hotkeys: hk,
     docks,
+    beginnerMode: bool(r.beginnerMode, d.beginnerMode),
   };
 }
 

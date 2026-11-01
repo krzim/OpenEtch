@@ -7,7 +7,7 @@ import type { LinkState } from "../api/useEngine.ts";
 import type { MachineStatus } from "../api/types.ts";
 import { ProjectIndicator } from "./FileMenu.tsx";
 import { Icon } from "./ui.tsx";
-import { useT } from "../workspace/usePrefs.ts";
+import { usePrefs, useT } from "../workspace/usePrefs.ts";
 
 export type Workspace = "design" | "laser";
 
@@ -37,6 +37,7 @@ export function TopBar(p: TopBarProps) {
   const t = useT();
   const engineOk = p.link === "open" && !p.httpError;
   const linkText = p.link === "open" ? (p.httpError ? t("top.engineError") : t("top.live")) : p.link === "connecting" ? t("top.connecting") : t("top.offline");
+  const beginnerMode = usePrefs().beginnerMode;
   const machineText = !p.machine ? "" : p.machine.connected ? (p.machine.sim ? t("top.simulator") : t("top.laserConnected")) : t("top.noLaser");
   const title = [
     t("top.events", { state: p.link }),
@@ -52,6 +53,11 @@ export function TopBar(p: TopBarProps) {
         <span className="brand-mark" aria-hidden="true" />
         <span className="brand-name">OpenEtch</span>
         <ProjectIndicator name={p.projectName} docName={p.docName} dirty={p.dirty} />
+        {beginnerMode && (
+          <span className="pill beginner-badge" title={t("prefs.beginnerBadgeTitle")}>
+            {t("prefs.beginnerBadge")}
+          </span>
+        )}
       </div>
       <nav className="workspaces" role="tablist" aria-label={t("top.workspace")}>
         {(["design", "laser"] as const).map((w) => (

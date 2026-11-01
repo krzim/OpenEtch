@@ -391,45 +391,70 @@ impl Command for PageSendObjects {
             if k == active_index(doc) {
                 return Err(invalid(cmd, "the objects are already on that page"));
             }
-            let (moved, kept): (Vec<Object>, Vec<Object>) = std::mem::take(&mut doc.objects).into_iter().partition(|o| ids.contains(&o.id));
-            doc.objects = kept;
-            // The groups the moved objects belong to (with their parents) go along.
-            let mut needed: Vec<String> = Vec::new();
-            for o in &moved {
-                if let Some(g) = &o.group {
-                    for c in doc.group_chain(g) {
-                        if !needed.contains(&c.id) {
-                            needed.push(c.id.clone());
-                        }
-                    }
-                }
-            }
-            let groups: Vec<Group> = doc.groups.iter().filter(|g| needed.contains(&g.id)).cloned().collect();
-            let page = &mut doc.pages[k];
-            for g in groups {
-                if !page.groups.iter().any(|x| x.id == g.id) {
-                    page.groups.push(g);
-                }
-            }
-            for o in &moved {
-                if let Some(v) = doc.object_options.remove(&o.id) {
-                    page.object_options.insert(o.id.clone(), v);
-                }
-                if doc.locked.remove(&o.id) {
-                    page.locked.insert(o.id.clone());
-                }
-                if let Some(m) = doc.image_masks.remove(&o.id) {
-                    page.image_masks.insert(o.id.clone(), m);
-                }
-            }
-            page.objects.extend(moved);
-            doc.prune_groups();
+            send_to(doc, &ids, k);
             let mut r = pages_json(doc);
             r["created"] = json!([]);
             r["affected"] = json!(ids);
             Ok((r, format!("moved {} object(s) to page {}", ids.len(), i.page)))
         })
     }
+}
+
+/// A new page for `art.nest`'s Multipage: added after the last page (named "Page <n>", not activated) with the
+/// active page's objects `ids` moved onto it. Returns its id and name.
+pub(super) fn nest_sheet(doc: &mut Document, ids: &[ObjectId]) -> Result<(String, String)> {
+    ensure_pages(doc)?;
+    let id = doc.alloc_id("page")?;
+    let name = format!("Page {}", doc.pages.len() + 1);
+    doc.pages.push(Page {
+        id: id.clone(),
+        name: name.clone(),
+        objects: vec![],
+        groups: vec![],
+        locked: Default::default(),
+        object_options: Default::default(),
+        image_masks: Default::default(),
+    });
+    send_to(doc, ids, doc.pages.len() - 1);
+    Ok((id, name))
+}
+
+/// Move the active page's objects `ids` (with their groups, lock, cut properties and masks) onto page `k` (not the
+/// active one).
+fn send_to(doc: &mut Document, ids: &[ObjectId], k: usize) {
+    let (moved, kept): (Vec<Object>, Vec<Object>) = std::mem::take(&mut doc.objects).into_iter().partition(|o| ids.contains(&o.id));
+    doc.objects = kept;
+    // The groups the moved objects belong to (with their parents) go along.
+    let mut needed: Vec<String> = Vec::new();
+    for o in &moved {
+        if let Some(g) = &o.group {
+            for c in doc.group_chain(g) {
+                if !needed.contains(&c.id) {
+                    needed.push(c.id.clone());
+                }
+            }
+        }
+    }
+    let groups: Vec<Group> = doc.groups.iter().filter(|g| needed.contains(&g.id)).cloned().collect();
+    let page = &mut doc.pages[k];
+    for g in groups {
+        if !page.groups.iter().any(|x| x.id == g.id) {
+            page.groups.push(g);
+        }
+    }
+    for o in &moved {
+        if let Some(v) = doc.object_options.remove(&o.id) {
+            page.object_options.insert(o.id.clone(), v);
+        }
+        if doc.locked.remove(&o.id) {
+            page.locked.insert(o.id.clone());
+        }
+        if let Some(m) = doc.image_masks.remove(&o.id) {
+            page.image_masks.insert(o.id.clone(), m);
+        }
+    }
+    page.objects.extend(moved);
+    doc.prune_groups();
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

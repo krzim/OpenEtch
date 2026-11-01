@@ -31,7 +31,7 @@ impl Scale {
 }
 
 /// Which axis to mirror.
-#[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, Deserialize, serde::Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Mirror {
     /// Negate X: flip left-right across a vertical line through the pivot.

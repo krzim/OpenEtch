@@ -353,7 +353,7 @@ function PassEditor({
   const t = useT();
   // The open pass, per layer: selecting another layer opens its Main tab.
   const [open, setOpen] = useState<{ layer: string; pass: number }>({ layer: layer.id, pass: 0 });
-  const speedUnit = usePrefs().speedUnit;
+  const { speedUnit, beginnerMode } = usePrefs();
   const pass = clampPass(layer, open.layer === layer.id ? open.pass : 0);
   const select = (p: number) => setOpen({ layer: layer.id, pass: p });
   const entries = passEntries(layer);
@@ -504,7 +504,8 @@ function PassEditor({
       {canEdit ? (
         <>
           <CutSettingsForm key={`${layer.id}#${pass}`} settings={entry.settings} machine={machine} onPatch={patch} />
-          <CutOptionsSection key={`opts-${layer.id}#${pass}`} layer={layer} sub={sub} settings={entry.settings} run={run} report={report} has={has} />
+          {/* Beginner Mode hides the advanced cut settings (tabs included), as LightBurn's Cut Settings Editor does. */}
+          {!beginnerMode && <CutOptionsSection key={`opts-${layer.id}#${pass}`} layer={layer} sub={sub} settings={entry.settings} run={run} report={report} has={has} />}
         </>
       ) : (
         <dl className="kv">

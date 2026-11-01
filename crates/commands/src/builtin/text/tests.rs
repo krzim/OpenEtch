@@ -390,3 +390,18 @@ fn text_and_barcode_updates_refuse_no_ops_and_follow_auto_names() {
     exec(&mut s, "shape.barcode", json!({ "id": bc, "kind": "aztec", "data": "B" }));
     assert_eq!(name(&s, &bc), "Label");
 }
+
+/// The `kind` field's description starts with every barcode kind, comma separated up to the first full stop: the web
+/// UI builds its type list from it (web/src/text/textModel.ts barcodeKindsFrom).
+#[test]
+fn barcode_kind_list_names_every_kind() {
+    let s = session();
+    let spec = s.registry().specs().find(|c| c.id == "shape.barcode").unwrap();
+    let d = spec.input_schema["properties"]["kind"]["description"].as_str().unwrap();
+    let first = d.split(['.', ':', ';']).next().unwrap();
+    let listed: Vec<&str> = first.split(',').map(str::trim).collect();
+    for k in text::barcode::Kind::ALL {
+        assert!(listed.contains(&k.name()), "{} missing from {first:?}", k.name());
+    }
+    assert_eq!(listed.len(), text::barcode::Kind::ALL.len());
+}

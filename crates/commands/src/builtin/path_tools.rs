@@ -687,6 +687,133 @@ fn default_pick() -> f64 {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct UnfilletInput {
+    /// Exact object or group ids (a group stands for all its members); with `at`, exactly one object.
+    pub ids: Vec<ObjectId>,
+    /// The clicked point [x, y] in field mm on or near the rounded corner (LightBurn: click the corner with the
+    /// Radius tool). Without it, every rounded corner of the shapes is made sharp.
+    pub at: Option<[f64; 2]>,
+    /// How far from `at` the corner's arc may be, in mm (default 1).
+    #[serde(default = "default_pick")]
+    pub pick_mm: f64,
+}
+
+/// `path.unfillet`.
+pub struct Unfillet;
+
+impl Command for Unfillet {
+    type Input = UnfilletInput;
+    const ID: &'static str = "path.unfillet";
+    const TITLE: &'static str = "Remove corner radius";
+    const DESCRIPTION: &'static str = "Make rounded corners sharp again (LightBurn's Radius tool clicked on a \
+        rounded corner): a true circular arc between two sides is removed and the sides are extended until they \
+        meet (lines lengthen, curves extend along themselves; a concave bite is undone too). With `at` (field mm), \
+        the arc nearest that point within pick_mm; else every rounded corner. Free-form curves are not arcs \
+        (path.optimize can rebuild arcs). A rectangle with all corners undone stays a rectangle; else a path. Fails \
+        when nothing changed. Returns affected ids, `corners` per object and bounds.";
+    const RISK: Risk = Risk::Edit;
+
+    fn apply(doc: &mut Document, i: UnfilletInput) -> Result<(Value, String)> {
+        transact(doc, |doc| {
+            let cmd = Self::ID;
+            let ids = util::object_ids(cmd, doc, &i.ids)?;
+            let at = match i.at {
+                Some(at) => {
+                    if ids.len() != 1 {
+                        return Err(invalid(cmd, "`at` needs exactly one object"));
+                    }
+                    let [x, y] = util::finite2(cmd, "at", at)?;
+                    Some((Point::new(x, y), util::positive(cmd, "pick_mm", i.pick_mm)?))
+                }
+                None => None,
+            };
+            util::check_unlocked(cmd, doc, &ids)?;
+            let mut affected = Vec::new();
+            let mut report = serde_json::Map::new();
+            let mut first_reason = None;
+            for id in &ids {
+                let o = util::object(doc, id)?.clone();
+                // A rectangle with every corner undone stays a rectangle.
+                if let (Geometry::Rect { width_mm, height_mm, corner_radius_mm }, None) = (&o.geometry, at)
+                    && *corner_radius_mm > 0.0
+                {
+                    let (w, h, r) = (*width_mm, *height_mm, *corner_radius_mm);
+                    doc.object_mut(id).expect("exists").geometry =
+                        Geometry::Rect { width_mm: w, height_mm: h, corner_radius_mm: 0.0 };
+                    affected.push(id.clone());
+                    let corners: Vec<Value> = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
+                        .into_iter()
+                        .map(|(sx, sy)| util::pt_json(o.transform * Point::new(sx * w / 2.0, sy * h / 2.0)))
+                        .map(|p| json!({ "corner": p, "radius_mm": r }))
+                        .collect();
+                    report.insert(id.clone(), json!({ "unrounded": corners, "skipped": [] }));
+                    continue;
+                }
+                let path = pathutil::vector_path(cmd, &o)?;
+                let mut subs = split(&path);
+                let (mut done, mut skipped) = (Vec::new(), Vec::new());
+                let mut changed = false;
+                match at {
+                    Some((p, pick)) => {
+                        let mut best: Option<(usize, usize, f64)> = None;
+                        for (si, s) in subs.iter().enumerate() {
+                            for (k, seg) in s.segs.iter().enumerate() {
+                                let d = kurbo::ParamCurveNearest::nearest(seg, p, 1e-6).distance_sq.sqrt();
+                                if best.is_none_or(|b| d < b.2) {
+                                    best = Some((si, k, d));
+                                }
+                            }
+                        }
+                        let Some((si, k, _)) = best.filter(|b| b.2 <= pick) else {
+                            return Err(invalid(cmd, format!("no part of {id} within {pick} mm of [{}, {}]", p.x, p.y)));
+                        };
+                        let Some(run) = geom::unfillet::arc_at(&subs[si], k) else {
+                            return Err(CommandError::Failed(format!(
+                                "{cmd}: there is no rounded corner (true circular arc) at [{}, {}]; path.optimize \
+                                 can rebuild arcs in imported shapes",
+                                p.x, p.y
+                            )));
+                        };
+                        let (f, d, kept) = geom::unfillet::unfillet(&subs[si], &[run]);
+                        if let Some(k) = kept.first() {
+                            return Err(CommandError::Failed(format!("{cmd}: this rounded corner cannot be made sharp ({})", k.reason)));
+                        }
+                        changed |= !d.is_empty();
+                        done.extend(d.iter().map(|u| json!({ "corner": util::pt_json(u.corner), "radius_mm": u.arc.radius })));
+                        subs[si] = f;
+                    }
+                    None => {
+                        for s in subs.iter_mut() {
+                            let (f, d, kept) = geom::unfillet::unfillet_all(s);
+                            changed |= !d.is_empty();
+                            done.extend(d.iter().map(|u| json!({ "corner": util::pt_json(u.corner), "radius_mm": u.arc.radius })));
+                            for k in kept {
+                                first_reason.get_or_insert_with(|| k.reason.clone());
+                                skipped.push(json!({ "radius_mm": k.arc.radius, "reason": k.reason }));
+                            }
+                            *s = f;
+                        }
+                    }
+                }
+                if changed {
+                    pathutil::set_field_path(doc, id, &join(&subs))?;
+                    affected.push(id.clone());
+                }
+                report.insert(id.clone(), json!({ "unrounded": done, "skipped": skipped }));
+            }
+            if affected.is_empty() {
+                let why = first_reason.unwrap_or_else(|| "no rounded corners (true circular arcs between two sides)".into());
+                return Err(CommandError::Failed(format!("{cmd}: no corner was made sharp ({why})")));
+            }
+            let mut res = util::edit_result(doc, &[], &affected);
+            res["corners"] = Value::Object(report);
+            Ok((res, format!("made the rounded corners of {} sharp", affected.join(", "))))
+        })
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TrimInput {
     /// Exact id of the object to trim (not a group).
     pub id: ObjectId,
