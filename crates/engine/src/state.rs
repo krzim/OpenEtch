@@ -1197,6 +1197,7 @@ impl AppState {
     /// the frame follows document edits.
     pub async fn frame_start(self: &Arc<Self>, req: FrameRequest) -> Result<Value, EngineError> {
         self.require_controllable()?;
+        let generation = self.machine.generation();
         let doc = self.document();
         let outline = frame::outline_for(&doc, &req)?;
         let live: Option<(u64, frame::LiveSource)> = req.live.then(|| {
@@ -1213,9 +1214,12 @@ impl AppState {
             (doc.revision, source)
         });
         let run = self.frame_run(&req, live)?;
-        let started = frame::start(&self.machine, &self.events, outline, run).await?;
+        let mut started = frame::start(&self.machine, &self.events, outline, run).await?;
         // Require Framing Before Start: this revision has been framed.
-        self.libs.framed(self.machine.generation(), doc.revision, &req);
+        self.libs.framed(generation, doc.revision, &req);
+        // What this frame shows (the foot switch cycle burns exactly this, module `cycle`).
+        started["revision"] = json!(doc.revision);
+        started["generation"] = json!(generation);
         Ok(started)
     }
 

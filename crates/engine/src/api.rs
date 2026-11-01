@@ -625,9 +625,10 @@ async fn approve_run(
 }
 
 /// One-click Start (`--approval click` only), LightBurn's Start: plans the current document with the run options in
-/// the body (as `POST /api/runs`, plus `checklist`: the Job Checklist ticks) and approves it at once
-/// (`approve::start_now`). Guarded like a no-PIN approval: MCP client headers or a non-`ui` origin 403, and the request
-/// must come from the app in a browser (`Sec-Fetch-Site: same-origin` and an accepted `Origin`, else 403 with code
+/// the body (as `POST /api/runs`, plus `checklist`: the Job Checklist ticks, and `revision`: the document revision the
+/// app showed; another revision now is a 409 and nothing starts) and approves it at once (`approve::start_now`).
+/// Guarded like a no-PIN approval: MCP client headers or a non-`ui` origin 403, and the request must come from the
+/// app in a browser (`Sec-Fetch-Site: same-origin` and an accepted `Origin`, else 403 with code
 /// `browser_required`). In the `pin` mode 403 with code `approval_mode` (request the run, then approve it with the PIN).
 async fn start_job(State(st): State<Arc<AppState>>, headers: HeaderMap, body: Bytes) -> Result<Json<Value>, EngineError> {
     if has_mcp_marker(&headers) {
@@ -642,6 +643,10 @@ async fn start_job(State(st): State<Arc<AppState>>, headers: HeaderMap, body: By
         None | Some(Value::Null) => None,
         Some(v) => Some(serde_json::from_value(v).map_err(|e| EngineError::BadRequest(format!("bad checklist: {e}")))?),
     };
+    let revision: Option<u64> = match b.remove("revision") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(serde_json::from_value(v).map_err(|e| EngineError::BadRequest(format!("bad revision: {e}")))?),
+    };
     if st.approval_mode() == ApprovalMode::Click
         && let Err(message) = security::same_origin_browser_request(&headers, &st.security)
     {
@@ -650,5 +655,5 @@ async fn start_job(State(st): State<Arc<AppState>>, headers: HeaderMap, body: By
     }
     let options: crate::runs::RunOptions =
         serde_json::from_value(Value::Object(b)).map_err(|e| EngineError::BadRequest(format!("bad run options: {e}")))?;
-    Ok(Json(approve::start_now(&st, options, checklist.as_deref()).await?))
+    Ok(Json(approve::start_now(&st, options, checklist.as_deref(), revision).await?))
 }

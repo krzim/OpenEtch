@@ -358,6 +358,65 @@ async fn one_click_start_keeps_every_gate() {
     assert_eq!(run_count(&st), 1);
 }
 
+/// Start burns only the document revision the app showed: an edit that came in just before the click (an agent's,
+/// over MCP or HTTP) refuses the Start, and nothing is planned, left waiting or fired.
+#[tokio::test]
+async fn one_click_start_burns_only_the_revision_the_app_showed() {
+    let st = state(pedal_profile(), ApprovalMode::Click).await;
+    let app = api::router(st.clone(), None);
+    let counters = st.machine.sim_counters().unwrap().clone();
+    rect(&app).await;
+    let shown = st.revision();
+    // An agent's edit lands between the person looking at the job and clicking Start.
+    let body = json!({"id": "shape.rect", "params": {"width_mm": 30, "height_mm": 30}, "origin": "agent:test"});
+    let (s, v) = send(&app, req("POST", "/api/execute", Some(body))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_ne!(st.revision(), shown);
+    let (s, v) = send(&app, browser(start(Some(json!({"revision": shown}))))).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+    assert!(v["error"].as_str().unwrap().contains("changed since Start was clicked"), "{v}");
+    assert_eq!(run_count(&st), 0, "nothing planned or left waiting");
+    assert_eq!(counters.emitting_packets(), 0, "nothing fired");
+    assert_eq!(send(&app, browser(start(Some(json!({"revision": "x"}))))).await.0, StatusCode::BAD_REQUEST);
+    // The revision the app shows now: started.
+    let (s, v) = send(&app, browser(start(Some(json!({"revision": st.revision()}))))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let run = wait_final(&st, v["id"].as_str().unwrap()).await;
+    assert_eq!((run.state, run.revision), (RunState::Finished, st.revision()), "{:?}", run.error);
+}
+
+/// A Stop that comes in while Start still checks its gates (here: held at the device preferences, before the door is
+/// read) cancels that Start: nothing fires after a Stop.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_stop_while_start_checks_the_door_cancels_the_start() {
+    let st = state(door_profile(), ApprovalMode::Click).await;
+    let app = api::router(st.clone(), None);
+    let counters = st.machine.sim_counters().unwrap().clone();
+    rect(&app).await;
+    let (locked_tx, locked_rx) = std::sync::mpsc::channel::<()>();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let held = st.clone();
+    let holder = std::thread::spawn(move || {
+        let _prefs = crate::libs::lock(&held.libs.prefs);
+        locked_tx.send(()).unwrap();
+        release_rx.recv().unwrap();
+    });
+    locked_rx.recv().unwrap();
+    let app2 = app.clone();
+    let click = tokio::spawn(async move { send(&app2, browser(start(None))).await });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    st.stop().await.expect("stop");
+    release_tx.send(()).unwrap();
+    holder.join().unwrap();
+    let (s, v) = click.await.unwrap();
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+    assert!(v["error"].as_str().unwrap().contains("stopped"), "{v}");
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(counters.emitting_packets(), 0, "nothing fired after the Stop");
+    assert!(!st.machine.is_running());
+    assert_eq!(run_count(&st), 0, "nothing left waiting");
+}
+
 #[test]
 fn mcp_has_no_way_to_approve() {
     for name in crate::mcp::TOOL_NAMES {

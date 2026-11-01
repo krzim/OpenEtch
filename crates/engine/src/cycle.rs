@@ -14,7 +14,10 @@
 //! Safety rules:
 //! - Only the framed revision burns. When the document (its revision) or the device changed since the frame started,
 //!   the press frames the new revision instead and says so (`foot_cycle_notice`); a run planned from another
-//!   revision (an edit during planning) is discarded and the job re-framed.
+//!   revision (an edit during planning) is discarded and the job re-framed. The cycle records the revision, device
+//!   and frame loop of its own frame (as `AppState::frame_start` returns them), never those of a frame or edit that
+//!   came in at the same moment, and a press burns only while that frame still runs. An edit during a burn is framed
+//!   when framing resumes, and that frame is announced.
 //! - Every burn goes through `approve::approve`: the door interlock, Require Framing, Stop At and the stop epoch apply
 //!   to each one, and the door is read before planning too. A refused burn (door open, ...) keeps the cycle framing
 //!   and says why. A foot cannot tick the Job Checklist, so with the checklist on every burn is refused (Start in the
@@ -207,9 +210,11 @@ async fn frame(st: &Arc<AppState>, cycle: Option<u64>) -> Result<u64, EngineErro
     let previous = lock(&st.libs.last_frame).clone();
     let started = st.frame_start(job_frame(previous.clone())).await;
     *lock(&st.libs.last_frame) = previous;
-    started?;
-    let frame_gen = st.machine.frame_gen();
-    let (generation, revision) = st.libs.framed_at().unwrap_or((st.machine.generation(), st.revision()));
+    // This frame's own loop, revision and device (never whatever frame or edit came in since it started: a press
+    // burns only what this frame showed, and only while this frame still runs).
+    let started = started?;
+    let field = |k: &str| started[k].as_u64().ok_or_else(|| EngineError::Internal(format!("frame start: no {k}")));
+    let (frame_gen, revision, generation) = (field("frame_gen")?, field("revision")?, field("generation")?);
     let id = {
         let mut c = lock(&st.libs.foot_cycle);
         let current = cycle.is_none_or(|id| id == c.id);
@@ -268,6 +273,8 @@ async fn burn(st: &Arc<AppState>, id: u64, framed: u64, generation: u64) {
         discard(st);
         return reframe(st, id).await;
     }
+    // The revision after the burn when nothing else edits the document (a serial number advances once per burn).
+    let expected = framed + u64::from(commands::auto_advance_due(&st.document()));
     match approve::approve(st, &view.id, Approver::FootSwitch, None).await {
         Ok(_) => {
             {
@@ -278,7 +285,7 @@ async fn burn(st: &Arc<AppState>, id: u64, framed: u64, generation: u64) {
             }
             tracing::warn!(run_id = %view.id, revision = framed, "foot switch: burning the framed job");
             st.emit(Event::machine("foot_cycle", Some("burning".into())));
-            tokio::spawn(after_burn(st.clone(), id, view.id.clone(), events));
+            tokio::spawn(after_burn(st.clone(), id, view.id.clone(), expected, events));
         }
         Err(e) => {
             discard(st);
@@ -307,8 +314,10 @@ fn refused(st: &AppState, id: u64, e: &EngineError) {
     }
 }
 
-/// Wait for the burn to end; framing starts again after a finished one, anything else ends the cycle.
-async fn after_burn(st: Arc<AppState>, id: u64, run_id: String, mut events: broadcast::Receiver<Event>) {
+/// Wait for the burn to end; framing starts again after a finished one, anything else ends the cycle. `expected`: the
+/// document revision after the burn when nothing else changed it (the burned one, plus one when the burn advances a
+/// serial number); another one means an edit came in during the burn, and the new frame says so.
+async fn after_burn(st: Arc<AppState>, id: u64, run_id: String, expected: u64, mut events: broadcast::Receiver<Event>) {
     let state = wait_finished(&st, &run_id, &mut events).await;
     drop(events);
     let burning = {
@@ -323,8 +332,16 @@ async fn after_burn(st: Arc<AppState>, id: u64, run_id: String, mut events: broa
         let why = format!("Foot switch: run {run_id} did not finish ({name}); the foot switch cycle ended.");
         return end(&st, Some(id), Some(&why));
     }
-    if let Err(e) = frame(&st, Some(id)).await {
-        end(&st, Some(id), Some(&format!("Foot switch: could not frame the job again ({e}); the foot switch cycle ended.")));
+    let changed = st.revision() != expected;
+    match frame(&st, Some(id)).await {
+        Ok(_) if changed => notice(
+            &st,
+            "Foot switch: the job was edited during the burn. Framing the new version: check it before you press again.",
+        ),
+        Ok(_) => {}
+        Err(e) => {
+            end(&st, Some(id), Some(&format!("Foot switch: could not frame the job again ({e}); the foot switch cycle ended.")));
+        }
     }
 }
 

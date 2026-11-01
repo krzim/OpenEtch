@@ -208,11 +208,17 @@ pub(crate) async fn approve(
 /// current document into a run with `options` and approve it at once, as LightBurn's Start does. The gates are those
 /// of [`approve`] (Require Framing, the Job Checklist `checklist`, the door, Stop At, another run, the stop epoch) and
 /// the cheap ones are checked before planning, so an open door or a busy board answers at once. A run that is not
-/// approved is discarded (nothing is left waiting), and a Stop pressed while the job was planned wins.
+/// approved is discarded (nothing is left waiting), and a Stop pressed at any moment after the request arrived (while
+/// the door is read or the job is planned) wins.
+///
+/// `revision`: the document revision the app showed when Start was clicked (the app always sends it). When the
+/// document is at another revision (an agent's or a script's edit came in just before the click), nothing is started:
+/// Start burns only the version the person was looking at.
 pub(crate) async fn start_now(
     state: &Arc<AppState>,
     options: RunOptions,
     checklist: Option<&[bool]>,
+    revision: Option<u64>,
 ) -> Result<Value, EngineError> {
     if state.approval_mode() != ApprovalMode::Click {
         return Err(EngineError::Approval {
@@ -220,16 +226,37 @@ pub(crate) async fn start_now(
             message: "this engine approves runs with the operator PIN: request the run, then approve it with the PIN".into(),
         });
     }
+    // Captured first, so a Stop during the door read below cancels this Start too.
+    let epoch = state.machine.stop_epoch();
+    let changed = |shown: u64, now: u64| {
+        EngineError::Conflict(format!(
+            "the document changed since Start was clicked (revision {shown} -> {now}); nothing was started: check the \
+             job and press Start again"
+        ))
+    };
+    if let Some(shown) = revision
+        && state.revision() != shown
+    {
+        return Err(changed(shown, state.revision()));
+    }
     if state.machine.is_running() {
         return Err(EngineError::Conflict("another run is in progress".into()));
     }
-    crate::libs::check_before_approve(state, state.revision(), checklist).await?;
-    let epoch = state.machine.stop_epoch();
+    crate::libs::check_before_approve(state, revision.unwrap_or_else(|| state.revision()), checklist).await?;
     let view = state.request_run_with(commands::Origin::Ui, options).await?;
-    if state.machine.stop_epoch() != epoch {
+    let discard = || {
         state.runs().discard(&view.id);
         state.emit(Event::machine("run_discarded", Some(view.id.clone())));
+    };
+    if state.machine.stop_epoch() != epoch {
+        discard();
         return Err(EngineError::Conflict("stopped while the job was being planned; nothing was started".into()));
+    }
+    if let Some(shown) = revision
+        && view.revision != shown
+    {
+        discard();
+        return Err(changed(shown, view.revision));
     }
     match approve(state, &view.id, Approver::Click, checklist).await {
         Ok(mut v) => {
@@ -237,8 +264,7 @@ pub(crate) async fn start_now(
             Ok(v)
         }
         Err(e) => {
-            state.runs().discard(&view.id);
-            state.emit(Event::machine("run_discarded", Some(view.id.clone())));
+            discard();
             Err(e)
         }
     }

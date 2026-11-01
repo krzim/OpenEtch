@@ -263,3 +263,71 @@ async fn a_press_with_an_empty_job_says_why() {
     assert_eq!(cycle_status(&app).await["phase"], "off");
     watch.abort();
 }
+
+/// A frame started by someone else while the cycle frames (an agent's `frame_start` of a selection, the Frame button)
+/// replaces the cycle's frame: the next press frames the job again, it never burns what the other frame showed.
+#[tokio::test]
+async fn another_frame_during_the_cycle_is_never_burned_by_the_next_press() {
+    let (st, app, watch) = setup(pedal_profile(), None).await;
+    let counters = st.machine.sim_counters().unwrap().clone();
+    let mut ev = st.subscribe();
+    press(&app, 0).await;
+    assert_eq!(phase(&mut ev).await, "framing");
+    let id = st.document().objects[0].id.clone();
+    let (s, v) = send(&app, req("POST", "/api/machine/frame", Some(json!({"ids": [id]})))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(phase(&mut ev).await, "off", "the cycle's frame is gone, so is the cycle");
+    press(&app, 0).await;
+    assert_eq!(phase(&mut ev).await, "framing", "the press frames the job again");
+    assert_eq!((run_count(&st), counters.emitting_packets()), (0, 0), "nothing burned");
+    send(&app, req("POST", "/api/machine/stop", None)).await;
+    watch.abort();
+}
+
+/// An edit during a burn (an agent's) is framed when framing resumes, and the cycle says so: the next press burns
+/// that version only because it is the one being framed.
+#[tokio::test]
+async fn an_edit_during_a_burn_is_framed_and_announced() {
+    let (st, app, watch) = setup(pedal_profile(), Some(3)).await;
+    let mut ev = st.subscribe();
+    press(&app, 0).await;
+    assert_eq!(phase(&mut ev).await, "framing");
+    press(&app, 0).await;
+    assert_eq!(phase(&mut ev).await, "burning");
+    let burned = st.revision();
+    let body = json!({"id": "shape.rect", "params": {"width_mm": 30, "height_mm": 30}, "origin": "agent:test"});
+    let (s, v) = send(&app, req("POST", "/api/execute", Some(body))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    // The physical confirmation lets the burn finish.
+    set_inputs(&app, 0).await;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    set_inputs(&app, 1 << 3).await;
+    assert_eq!(phase(&mut ev).await, "framing");
+    let why = machine_event(&mut ev, "foot_cycle_notice").await.unwrap_or_default();
+    assert!(why.contains("edited during the burn"), "{why}");
+    let c = cycle_status(&app).await;
+    assert_eq!(c["revision"], json!(st.revision()), "{c}");
+    assert_ne!(st.revision(), burned);
+    let runs = st.runs().views(st.revision());
+    assert_eq!((runs.len(), runs[0].revision), (1, burned), "the burn was of the framed revision");
+    send(&app, req("POST", "/api/machine/stop", None)).await;
+    watch.abort();
+}
+
+/// A burn that advances nothing (no serial number) and sees no edit frames again without a notice.
+#[tokio::test]
+async fn a_burn_without_edits_frames_again_quietly() {
+    let (st, app, watch) = setup(pedal_profile(), None).await;
+    let mut ev = st.subscribe();
+    press(&app, 0).await;
+    assert_eq!(phase(&mut ev).await, "framing");
+    let mut quiet = st.subscribe();
+    press(&app, 0).await;
+    assert_eq!(phase(&mut ev).await, "burning");
+    assert_eq!(phase(&mut ev).await, "framing");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let events = foot_events(&mut quiet);
+    assert!(!events.iter().any(|e| e == "foot_cycle_notice"), "{events:?}");
+    send(&app, req("POST", "/api/machine/stop", None)).await;
+    watch.abort();
+}
