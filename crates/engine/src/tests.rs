@@ -550,7 +550,7 @@ async fn stop_between_approval_and_lock_never_runs() {
             let _ = release_rx.recv();
             // Exactly what `Machine::abort` does once it holds the lock: the abort request is cleared here.
             m.request_stop();
-            ctl.abort()
+            machine::MachineDriver::abort(ctl)
         })
         .await
     });

@@ -1,32 +1,38 @@
-//! The engine's side of the laser: [`Machine`] owns the `machine::Controller` behind its own mutex and drives it
-//! from blocking tasks, so a slow USB transfer never stalls the async runtime. Also the links the engine can use
-//! ([`CountingSimLink`], [`OfflineLink`]) and the profile -> `plan::Target` mapping.
+//! The engine's side of the laser: [`Machine`] owns the machine driver (`machine::Driver`: the galvo's LMC
+//! `Controller`, or a GRBL gantry's `GrblController`) behind its own mutex and drives it from blocking tasks, so a
+//! slow USB or serial transfer never stalls the async runtime. Also the links the engine can use
+//! ([`CountingSimLink`], [`OfflineLink`], the GRBL simulator) and the profile -> `plan::Target` mapping.
 //!
-//! The engine holds no link of its own: the controller owns it, and the engine reaches the board only through
-//! `Controller` methods. Swapping in a freshly opened USB link uses `Controller::replace_link`
-//! ([`Machine::ensure_ready`]) and the physical run confirmation reads inputs with `Controller::read_port`
-//! ([`Machine::read_inputs`]).
+//! The engine holds no link of its own: the driver owns it, and the engine reaches the board only through the
+//! driver interface (`machine::MachineDriver`) and the driver's own methods. Swapping in a freshly opened USB link
+//! uses `Controller::replace_link` ([`Machine::ensure_ready`]) and the physical run confirmation reads inputs with
+//! `Driver::read_port` ([`Machine::read_inputs`]).
 //!
-//! The profile, correction table and planning target form one [`MachineConfig`] that a device change swaps as a whole
-//! ([`Machine::swap_config`], under the controller lock, re-initialising the board); its `generation` tells runs
-//! planned for an earlier device apart.
+//! The profile, correction table, GRBL profile and planning target form one [`MachineConfig`] that a device change
+//! swaps as a whole ([`Machine::swap_config`] for a galvo, [`Machine::swap_grbl`] for a GRBL gantry, under the
+//! controller lock, re-initialising the board and changing the driver when the kind changes); its `generation`
+//! tells runs planned for an earlier device apart. The link kind (simulator or real hardware) never changes: a GRBL
+//! device on the simulator runs on `machine::grbl::SimGrbl`, on real hardware on the profile's serial port.
 
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock, TryLockError};
 
 use corfile::CorTable;
 use lmc::{LASER_ENABLE_BIT, Packet, Single};
-use machine::{
-    AbortHandle, AxisRole, BoardInfo, Controller, ControllerError, ControllerState, FiberKind, InitSettings, Link, LinkError,
-    MachineProfile, PollConfig, Reply, RunControl, RunProgress, SimLink,
+use machine::grbl::{
+    GrblController, GrblPoll, GrblProfile, GrblSnapshot, OfflineSerial, SerialLink, SimGrbl, SimGrblConfig, SimGrblHandle, SimGrblReport,
 };
-use plan::Target;
+use machine::{
+    AbortHandle, AxisRole, BoardInfo, Controller, ControllerError, ControllerState, Driver, DriverKind, FiberKind, InitSettings, Link,
+    LinkError, MachineDriver, MachineProfile, PollConfig, Reply, RunControl, RunProgress, SimLink,
+};
+use plan::{GcodeSettings, Target};
 use serde_json::{Value, json};
 
 use crate::EngineError;
 
-/// The controller type the engine drives: any link, boxed.
-pub type Ctl = Controller<Box<dyn Link>>;
+/// The driver the engine drives: the galvo's controller or a GRBL controller, on any link, boxed.
+pub type Ctl = Driver;
 
 
 /// Which board the engine talks to.
@@ -67,7 +73,27 @@ pub fn target_from_profile(p: &MachineProfile) -> Target {
         z_axis: p.axis.as_ref().is_some_and(|a| a.role == AxisRole::Z),
         rotary_axis: p.axis.as_ref().is_some_and(|a| a.role == AxisRole::Rotary),
         port_outputs: p.io.run_outputs(),
+        gantry: false,
     }
+}
+
+/// G-code output settings for a GRBL profile.
+pub fn gcode_settings(g: &GrblProfile) -> GcodeSettings {
+    let (mirror_x, mirror_y) = g.mirror();
+    GcodeSettings {
+        work_area_mm: g.work_area_mm,
+        mirror_x,
+        mirror_y,
+        s_max: g.s_max,
+        max_power_pct: g.max_power_pct,
+        max_feed_mm_min: g.max_feed_mm_min,
+        dynamic_power: g.dynamic_power,
+    }
+}
+
+/// The planning target for a GRBL profile: the bed, its power limit, no galvo transform.
+pub fn target_from_grbl(g: &GrblProfile) -> Target {
+    gcode_settings(g).target()
 }
 
 /// What the simulated board has been sent, for the status page and for tests that prove nothing fired.
@@ -84,6 +110,8 @@ pub struct SimCounters {
     /// Every byte sent to the board (singles' 12 bytes, packets' 3072) while recording ([`SimCounters::record`]):
     /// the wire, for tests that compare it byte for byte.
     wire: Mutex<Option<Vec<u8>>>,
+    /// The simulated GRBL board of the current GRBL device (none while a galvo is active).
+    grbl: Mutex<Option<SimGrblHandle>>,
 }
 
 impl SimCounters {
@@ -130,13 +158,34 @@ impl SimCounters {
         }
     }
 
+    /// The simulated GRBL board: what it received and whether the laser would have been on.
+    pub fn grbl_report(&self) -> Option<SimGrblReport> {
+        self.grbl.lock().unwrap_or_else(PoisonError::into_inner).as_ref().map(SimGrblHandle::report)
+    }
+
+    /// The simulated GRBL board, to open its door or change its settings in tests.
+    pub fn grbl_handle(&self) -> Option<SimGrblHandle> {
+        self.grbl.lock().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
     fn json(&self) -> Value {
-        json!({
+        let mut v = json!({
             "singles": self.singles(),
             "packets": self.packets(),
             "laser_singles": self.laser_singles(),
             "emitting_packets": self.emitting_packets(),
-        })
+        });
+        if let Some(r) = self.grbl_report() {
+            v["grbl"] = json!({
+                "lines": r.lines_received,
+                "fires": r.fires.len(),
+                "blocks_executed": r.blocks_executed,
+                "max_rx_bytes": r.max_rx_bytes,
+                "overflowed": r.overflowed,
+                "state": r.state,
+            });
+        }
+        v
     }
 }
 
@@ -223,6 +272,9 @@ pub struct MachineConfig {
     pub target: Target,
     /// Bumped by every swap; a run planned with another generation is never approved.
     pub generation: u64,
+    /// The GRBL profile when a GRBL gantry is active (the driver is then GRBL and `target` is its bed); `None` for a
+    /// galvo. `profile` and `cor` keep the last galvo's, unused while a GRBL device is active.
+    pub grbl: Option<GrblProfile>,
 }
 
 /// The laser as the engine sees it. See the module docs.
@@ -235,6 +287,9 @@ pub struct Machine {
     config: RwLock<Arc<MachineConfig>>,
     kind: LinkKind,
     sim: Option<Arc<SimCounters>>,
+    /// The galvo controller's and the GRBL controller's polling (kept for driver changes).
+    poll: PollConfig,
+    grbl_poll: GrblPoll,
     /// An approved run holds this from approval until it ends.
     running: AtomicBool,
     /// Bumped by every stop. A run captures it when it claims the machine and never starts streaming once it has
@@ -242,6 +297,8 @@ pub struct Machine {
     stop_epoch: AtomicU64,
     /// Bumped to end the current frame loop; the loop owns the value it started with.
     frame_gen: AtomicU64,
+    /// Set with every frame-generation bump: ends a GRBL frame still being streamed without waiting for the driver.
+    frame_cancel: AbortHandle,
     /// The generation of the frame loop that is tracing, or 0. Framing is on while it equals `frame_gen`.
     framing_gen: AtomicU64,
     last_error: Mutex<Option<String>>,
@@ -270,16 +327,20 @@ impl Machine {
         poll: PollConfig,
     ) -> Self {
         let ctl = Controller::with_settings(link, InitSettings::default(), poll);
+        let grbl_poll = if poll.interval.is_zero() { GrblPoll::immediate() } else { GrblPoll::default() };
         Machine {
             abort: ctl.abort_handle(),
             control: ctl.run_control(),
-            ctl: Arc::new(Mutex::new(ctl)),
-            config: RwLock::new(Arc::new(MachineConfig { target: target_from_profile(&profile), profile, cor, generation: 0 })),
+            ctl: Arc::new(Mutex::new(Driver::Lmc(ctl))),
+            config: RwLock::new(Arc::new(MachineConfig { target: target_from_profile(&profile), profile, cor, generation: 0, grbl: None })),
             kind,
             sim,
+            poll,
+            grbl_poll,
             running: AtomicBool::new(false),
             stop_epoch: AtomicU64::new(0),
             frame_gen: AtomicU64::new(0),
+            frame_cancel: AbortHandle::default(),
             framing_gen: AtomicU64::new(0),
             last_error: Mutex::new(None),
         }
@@ -305,24 +366,98 @@ impl Machine {
         self.config().generation
     }
 
-    /// Swap in another profile and correction table (a device change) and re-initialise the board: the simulator
-    /// gets a fresh `SimLink` (the counters carry on), a USB board is closed and opened again. Call with the
-    /// controller lock held and no run or frame active (the caller has claimed the machine). The swap happens even
-    /// when the board then fails to initialise; that error is returned (and the next frame or run retries).
+    /// Swap in another galvo profile and correction table (a device change) and re-initialise the board: the
+    /// simulator gets a fresh `SimLink` (the counters carry on), a USB board is closed and opened again; a GRBL driver
+    /// is replaced by the galvo's controller (sharing the stop and pause handles). Call with the controller lock held
+    /// and no run or frame active (the caller has claimed the machine). The swap happens even when the board then
+    /// fails to initialise; that error is returned (and the next frame or run retries).
     pub fn swap_config(&self, ctl: &mut Ctl, profile: MachineProfile, cor: Option<CorTable>) -> Result<u64, ControllerError> {
         profile.validate()?;
         let generation = {
             let mut c = self.config.write().unwrap_or_else(PoisonError::into_inner);
             let generation = c.generation + 1;
-            *c = Arc::new(MachineConfig { target: target_from_profile(&profile), profile, cor, generation });
+            *c = Arc::new(MachineConfig { target: target_from_profile(&profile), profile, cor, generation, grbl: None });
             generation
         };
         let link: Box<dyn Link> = match (&self.sim, self.kind) {
             (Some(counters), LinkKind::Simulated) => Box::new(CountingSimLink::new(counters.clone())),
             _ => Box::new(OfflineLink),
         };
-        ctl.replace_link(link);
+        match ctl {
+            Driver::Lmc(c) => c.replace_link(link),
+            Driver::Grbl(_) => {
+                if let Some(counters) = &self.sim {
+                    *counters.grbl.lock().unwrap_or_else(PoisonError::into_inner) = None;
+                }
+                *ctl = Driver::Lmc(Controller::with_handles(link, InitSettings::default(), self.poll, self.abort.clone(), self.control.clone()));
+            }
+        }
         self.ensure_ready(ctl).map(|()| generation)
+    }
+
+    /// Make a GRBL gantry the machine (a device change): the driver becomes a `GrblController` (sharing the stop and
+    /// pause handles) on a fresh simulated GRBL board, or on real hardware on the profile's serial port (opened by
+    /// [`Machine::ensure_ready`]). The galvo profile stays in the config, unused. Same rules as
+    /// [`Machine::swap_config`].
+    pub fn swap_grbl(&self, ctl: &mut Ctl, grbl: GrblProfile) -> Result<u64, ControllerError> {
+        grbl.validate()?;
+        let generation = {
+            let mut c = self.config.write().unwrap_or_else(PoisonError::into_inner);
+            let generation = c.generation + 1;
+            *c = Arc::new(MachineConfig {
+                target: target_from_grbl(&grbl),
+                profile: c.profile.clone(),
+                cor: c.cor.clone(),
+                generation,
+                grbl: Some(grbl.clone()),
+            });
+            generation
+        };
+        let port: Box<dyn SerialLink> = match (&self.sim, self.kind) {
+            (Some(counters), LinkKind::Simulated) => {
+                let sim =
+                    SimGrbl::with_config(&SimGrblConfig { s_max: grbl.s_max, s_min: grbl.s_min, homing: grbl.homing, ..SimGrblConfig::default() });
+                *counters.grbl.lock().unwrap_or_else(PoisonError::into_inner) = Some(sim.handle());
+                Box::new(sim)
+            }
+            _ => Box::new(OfflineSerial),
+        };
+        let mut g = GrblController::with_handles(port, self.grbl_poll, self.abort.clone(), self.control.clone());
+        g.set_frame_cancel(self.frame_cancel.clone());
+        *ctl = Driver::Grbl(g);
+        self.ensure_ready(ctl).map(|()| generation)
+    }
+
+    /// Whether the active machine is a GRBL gantry.
+    pub fn is_grbl(&self) -> bool {
+        self.config().grbl.is_some()
+    }
+
+    /// The GRBL profile of the active machine.
+    pub fn grbl_profile(&self) -> Option<GrblProfile> {
+        self.config().grbl.clone()
+    }
+
+    /// The default frame (pointer or head) speed, mm/s: the galvo's red-light speed, or the GRBL frame feed.
+    pub fn frame_speed_mm_s(&self) -> f64 {
+        let c = self.config();
+        c.grbl.as_ref().map_or(c.profile.red_light_speed_mm_s, |g| g.frame_feed_mm_min / 60.0)
+    }
+
+    /// The fastest frame speed allowed, mm/s.
+    pub fn max_frame_speed_mm_s(&self) -> f64 {
+        let c = self.config();
+        c.grbl.as_ref().map_or(c.profile.max_jump_speed_mm_s, |g| g.max_feed_mm_min / 60.0)
+    }
+
+    /// The GRBL board as last seen, without waiting for the driver (`None` while a run or frame holds it, or for a
+    /// galvo).
+    pub fn grbl_snapshot(&self) -> Option<GrblSnapshot> {
+        match self.ctl.try_lock() {
+            Ok(ctl) => ctl.grbl().map(GrblController::snapshot),
+            Err(TryLockError::Poisoned(p)) => p.into_inner().grbl().map(GrblController::snapshot),
+            Err(TryLockError::WouldBlock) => None,
+        }
     }
 
     pub fn kind(&self) -> LinkKind {
@@ -420,6 +555,7 @@ impl Machine {
 
     /// End any frame loop; returns the new generation (which a new loop then owns).
     pub(crate) fn bump_frame_gen(&self) -> u64 {
+        self.frame_cancel.request();
         self.frame_gen.fetch_add(1, Ordering::SeqCst) + 1
     }
 
@@ -446,15 +582,39 @@ impl Machine {
         .await?)
     }
 
-    /// Initialise the board if it is not initialised yet (opening the USB link first). Call with the lock held.
+    /// Initialise the board if it is not initialised yet (opening the USB link, or a GRBL board's serial port,
+    /// first). Call with the lock held.
     pub fn ensure_ready(&self, ctl: &mut Ctl) -> Result<(), ControllerError> {
         if ctl.state() != ControllerState::Uninitialized {
             return Ok(());
         }
+        let config = self.config();
+        let ctl = match ctl {
+            Driver::Lmc(c) => c,
+            Driver::Grbl(g) => {
+                let grbl = config.grbl.clone().ok_or_else(|| ControllerError::Refused("a GRBL driver without a GRBL profile".into()))?;
+                if self.kind == LinkKind::Usb {
+                    g.replace_port(open_serial(&grbl)?);
+                }
+                return match g.init(&grbl) {
+                    Ok(info) => {
+                        tracing::info!(version = %info.version, laser_mode = info.laser_mode, state = ?info.state, "GRBL board initialised");
+                        self.set_error(None);
+                        Ok(())
+                    }
+                    Err(e) => {
+                        if self.kind == LinkKind::Usb {
+                            g.replace_port(Box::new(OfflineSerial));
+                        }
+                        self.set_error(Some(e.to_string()));
+                        Err(e)
+                    }
+                };
+            }
+        };
         if self.kind == LinkKind::Usb {
             ctl.replace_link(open_usb()?);
         }
-        let config = self.config();
         match ctl.init(&config.profile, config.cor.as_ref()) {
             Ok(info) => {
                 tracing::info!(serial = ?info.serial, version = ?info.version, "board initialised");
@@ -478,7 +638,8 @@ impl Machine {
     }
 
     /// Read the board's input port (`ReadPort`, reply word 1, as galvoplotter's `wait_for_input` reads it). Takes
-    /// the locked controller so it can never interleave with a list being streamed. Sends nothing that can emit.
+    /// the locked controller so it can never interleave with a list being streamed. Sends nothing that can emit. A
+    /// GRBL board has no input port (refused).
     pub fn read_inputs(&self, ctl: &mut Ctl) -> Result<u16, ControllerError> {
         ctl.read_port()
     }
@@ -517,11 +678,18 @@ impl Machine {
         let framing = self.is_framing();
         let simulated = self.kind == LinkKind::Simulated;
         let config = self.config();
-        json!({
+        let driver = if config.grbl.is_some() { DriverKind::Grbl } else { DriverKind::Lmc };
+        let link = match (simulated, driver) {
+            (true, _) => "sim",
+            (false, DriverKind::Lmc) => "usb",
+            (false, DriverKind::Grbl) => "serial",
+        };
+        let mut v = json!({
             "connected": initialised,
             "simulated": simulated,
             "sim": simulated,
-            "link": if simulated { "sim" } else { "usb" },
+            "driver": driver.name(),
+            "link": link,
             "busy": running || framing || state == "busy" || state == "running" || state == "framing",
             "state": state,
             "running": running,
@@ -533,7 +701,15 @@ impl Machine {
             "max_power_pct": config.profile.max_power_pct,
             "last_error": self.last_error(),
             "sim_counters": self.sim.as_ref().map(|c| c.json()),
-        })
+        });
+        if let Some(g) = &config.grbl {
+            v["work_area_mm"] = json!(g.work_area_mm);
+            v["field_mm"] = json!(g.work_area_mm[0]);
+            v["field_height_mm"] = json!(g.work_area_mm[1]);
+            v["max_power_pct"] = json!(g.max_power_pct);
+            v["grbl"] = json!({ "profile": g, "board": self.grbl_snapshot() });
+        }
+        v
     }
 }
 
@@ -555,6 +731,28 @@ fn open_usb() -> Result<Box<dyn Link>, ControllerError> {
 #[cfg(not(feature = "usb"))]
 fn open_usb() -> Result<Box<dyn Link>, ControllerError> {
     Err(LinkError::Unsupported("this build has no USB support (build with --features usb)".into()).into())
+}
+
+#[cfg(feature = "serial")]
+fn open_serial(g: &GrblProfile) -> Result<Box<dyn SerialLink>, ControllerError> {
+    Ok(Box::new(machine::grbl::SerialPortLink::open(&g.port, g.baud)?))
+}
+
+#[cfg(not(feature = "serial"))]
+fn open_serial(_g: &GrblProfile) -> Result<Box<dyn SerialLink>, ControllerError> {
+    Err(LinkError::Unsupported("this build has no serial port support (build with --features serial)".into()).into())
+}
+
+/// The serial ports of this computer (empty without the `serial` feature).
+pub fn serial_ports() -> Vec<String> {
+    #[cfg(feature = "serial")]
+    {
+        machine::grbl::available_ports()
+    }
+    #[cfg(not(feature = "serial"))]
+    {
+        Vec::new()
+    }
 }
 
 #[cfg(test)]

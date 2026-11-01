@@ -130,6 +130,27 @@ pub(crate) async fn check_before_approve(st: &Arc<AppState>, run_revision: u64, 
             )));
         }
     }
+    if st.machine.is_grbl() {
+        // GRBL's safety door: a status report (the run checks it again before streaming and aborts if it opens).
+        if st.machine.is_running() {
+            return Err(EngineError::Conflict("another run is in progress".into()));
+        }
+        let open = st
+            .machine
+            .blocking(|m, ctl| {
+                if m.is_running() {
+                    return None;
+                }
+                Some(m.ensure_ready(ctl).and_then(|()| ctl.door_open().unwrap_or(Ok(false))))
+            })
+            .await?;
+        return match open {
+            None => Err(EngineError::Conflict("another run is in progress".into())),
+            Some(Ok(true)) => Err(EngineError::Conflict("the safety door is open; close the enclosure".into())),
+            Some(Ok(false)) => Ok(()),
+            Some(Err(e)) => Err(EngineError::Machine(e)),
+        };
+    }
     let door = st.machine.profile().io.door_protect;
     if let Some(d) = door {
         // Reading the input waits for the controller, which a running job holds until it ends: the approval would
@@ -279,7 +300,8 @@ pub fn spawn_io_watch(st: Arc<AppState>) -> tokio::task::JoinHandle<()> {
         loop {
             let poll = if crate::approve::foot_switch_port(&st).is_some() { crate::pin::CONFIRM_POLL } else { IO_POLL };
             tokio::time::sleep(poll).await;
-            let frame_port = st.machine.profile().io.start_framing;
+            // A GRBL gantry has no input port: nothing to watch.
+            let frame_port = if st.machine.is_grbl() { None } else { st.machine.profile().io.start_framing };
             let foot_port = crate::approve::foot_switch_port(&st);
             if frame_port.is_none() {
                 framing.reset();
@@ -294,7 +316,7 @@ pub fn spawn_io_watch(st: Arc<AppState>) -> tokio::task::JoinHandle<()> {
                 .machine
                 .blocking(|m, ctl| {
                     // Checked again with the controller held: an approval may have claimed the machine meanwhile.
-                    (!m.is_running() && ctl.state() != machine::ControllerState::Uninitialized)
+                    (!m.is_running() && machine::MachineDriver::state(ctl) != machine::ControllerState::Uninitialized)
                         .then(|| ctl.read_port().ok())
                         .flatten()
                 })

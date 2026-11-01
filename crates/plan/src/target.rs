@@ -56,6 +56,10 @@ pub struct Target {
     /// `WritePort` carries them. Never the laser-enable bit. 0 by default.
     #[serde(default)]
     pub port_outputs: u16,
+    /// A gantry (G-code) target ([`crate::GcodeSettings::target`]): the field is a bed and layer settings are not
+    /// checked against LMC list words (speeds, delays and frequencies a galvo board can encode). False for galvos.
+    #[serde(default)]
+    pub gantry: bool,
 }
 
 fn yes() -> bool {
@@ -180,6 +184,7 @@ pub(crate) mod tests {
             z_axis: false,
             rotary_axis: false,
             port_outputs: 0,
+            gantry: false,
         }
     }
 

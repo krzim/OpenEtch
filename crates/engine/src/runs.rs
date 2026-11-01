@@ -10,7 +10,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use commands::Origin;
 use doc::Document;
-use machine::{AxisRole, MachineProfile, RunPart, RunReport};
+use machine::grbl::{GcodeProgram, GrblProfile};
+use machine::{AxisRole, DriverJob, MachineProfile, RunPart, RunReport};
 use plan::{JobOptions, Stats, Target};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -173,8 +174,11 @@ pub struct Run {
     pub document_id: String,
     pub summary: String,
     pub stats: Stats,
-    /// The job as lists, each after an optional extension-axis move (one part for a plain job).
+    /// The job as lists, each after an optional extension-axis move (one part for a plain job). Empty for a GRBL
+    /// job.
     pub parts: Arc<Vec<RunPart>>,
+    /// The job as G-code, for a GRBL gantry (`parts` is then empty).
+    pub gcode: Option<Arc<GcodeProgram>>,
     pub created_unix_s: u64,
     pub error: Option<String>,
     pub report: Option<RunReport>,
@@ -187,9 +191,23 @@ pub struct Run {
 }
 
 impl Run {
-    /// List packets over all parts.
+    /// List packets over all parts (G-code lines for a GRBL job).
     pub fn packet_count(&self) -> usize {
-        self.parts.iter().map(|p| p.packets.len()).sum()
+        self.parts.iter().map(|p| p.packets.len()).sum::<usize>() + self.gcode.as_ref().map_or(0, |g| g.len())
+    }
+
+    /// What the driver runs: the G-code of a GRBL job, else the LMC parts.
+    pub fn driver_job(&self) -> DriverJob {
+        match &self.gcode {
+            Some(g) => DriverJob::Grbl(g.clone()),
+            None => DriverJob::Lmc(self.parts.clone()),
+        }
+    }
+
+    /// Drop the job's data (the run ended or was cancelled).
+    fn drop_job(&mut self) {
+        self.parts = Arc::new(Vec::new());
+        self.gcode = None;
     }
 }
 
@@ -206,7 +224,10 @@ pub struct RunView {
     pub stale: bool,
     pub summary: String,
     pub stats: Stats,
+    /// LMC list packets, or G-code lines for a GRBL job.
     pub packet_count: usize,
+    /// `lmc` or `grbl`: the driver the run was planned for.
+    pub driver: &'static str,
     pub created_unix_s: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -231,6 +252,7 @@ impl Run {
             summary: self.summary.clone(),
             stats: self.stats,
             packet_count: self.packet_count(),
+            driver: if self.gcode.is_some() { "grbl" } else { "lmc" },
             created_unix_s: self.created_unix_s,
             error: self.error.clone(),
             report: self.report.clone(),
@@ -268,6 +290,7 @@ impl RunStore {
             summary: prepared.summary,
             stats: prepared.stats,
             parts: Arc::new(prepared.parts),
+            gcode: prepared.gcode.map(Arc::new),
             created_unix_s,
             error: None,
             report: None,
@@ -305,7 +328,7 @@ impl RunStore {
         for r in self.runs.iter_mut().filter(waiting) {
             r.state = RunState::Cancelled;
             r.error = Some(reason.to_owned());
-            r.parts = Arc::new(Vec::new());
+            r.drop_job();
             n += 1;
         }
         n
@@ -317,7 +340,7 @@ impl RunStore {
         for r in self.runs.iter_mut().filter(|r| r.state == RunState::Pending) {
             r.state = RunState::Cancelled;
             r.error = Some(reason.to_owned());
-            r.parts = Arc::new(Vec::new());
+            r.drop_job();
             n += 1;
         }
         n
@@ -362,7 +385,7 @@ impl RunStore {
             r.state = state;
             r.report = report;
             r.error = error;
-            r.parts = Arc::new(Vec::new());
+            r.drop_job();
         }
         self.prune();
     }
@@ -372,6 +395,8 @@ impl RunStore {
 #[derive(Debug, Clone)]
 pub struct PreparedJob {
     pub parts: Vec<RunPart>,
+    /// The G-code of a GRBL job (`parts` is then empty).
+    pub gcode: Option<GcodeProgram>,
     pub stats: Stats,
     pub summary: String,
     /// The machine configuration generation it was planned for (set by the caller; 0 from [`prepare_job`]).
@@ -491,7 +516,59 @@ pub fn prepare_job_with(
     if let Some(n) = options.from_segment {
         summary.push_str(&format!(" (from segment {n})"));
     }
-    Ok(PreparedJob { parts, stats, summary, generation: 0, options: options.clone() })
+    Ok(PreparedJob { parts, gcode: None, stats, summary, generation: 0, options: options.clone() })
+}
+
+/// Plan `doc` for a GRBL gantry: the same planning as [`prepare_job_with`] on the bed's target, then G-code
+/// (`plan::gcode_lines`) checked against the GRBL profile (`machine::grbl::check_program`, the GRBL counterpart of
+/// `check_job`). Nothing is sent anywhere. Refused here: the start input, Repeat Marking tables and queues (galvo
+/// features not built for GRBL yet), dot mode, rotary and Z jobs, feeds or powers above the profile's limits.
+pub fn prepare_gcode_job(
+    doc: &Document,
+    target: &Target,
+    grbl: &GrblProfile,
+    options: &RunOptions,
+    run_index: u64,
+) -> Result<PreparedJob, EngineError> {
+    options.check()?;
+    for (set, what) in [
+        (options.start_input, "start_input (a foot pedal input)"),
+        (options.table.is_some(), "table (Repeat Marking)"),
+        (options.queue.is_some(), "queue (batch of projects)"),
+    ] {
+        if set {
+            return Err(EngineError::BadRequest(format!("{what} is not available on a GRBL machine yet")));
+        }
+    }
+    let job_options = JobOptions { selection: options.selection.clone(), run_index, preview: false };
+    let mut job = plan::plan_job_with(doc, target, &job_options)?;
+    if let Some(n) = options.from_segment {
+        job = plan::start_at(&job, n, target)?;
+    }
+    let lines = plan::gcode_lines(&job, &crate::hw::gcode_settings(grbl))?;
+    let program = GcodeProgram::new(lines);
+    machine::grbl::check_program(grbl, &program).map_err(|e| EngineError::BadRequest(e.to_string()))?;
+    let stats = job.stats;
+    let mut summary = format!(
+        "{} polylines on {}, {:.1} mm marked, about {:.1} s, {} G-code lines",
+        stats.polyline_count,
+        layer_names(doc, job.passes.iter().map(|p| p.layer_id.as_str())),
+        stats.mark_length_mm,
+        stats.estimated_time_s,
+        program.len()
+    );
+    match options.iterations() {
+        None => summary.push_str(", continuously"),
+        Some(n) if n > 1 => summary.push_str(&format!(", {n} times")),
+        _ => {}
+    }
+    if options.selection.is_some() {
+        summary.push_str(" (selected graphics)");
+    }
+    if let Some(n) = options.from_segment {
+        summary.push_str(&format!(" (from segment {n})"));
+    }
+    Ok(PreparedJob { parts: Vec::new(), gcode: Some(program), stats, summary, generation: 0, options: options.clone() })
 }
 
 /// Batch / run multiple files: plan every `(name, document)` on its own (as [`prepare_job_with`] does, without
@@ -536,7 +613,7 @@ pub fn prepare_queue(
         Some(n) if n > 1 => summary.push_str(&format!(", {n} times")),
         _ => {}
     }
-    Ok(PreparedJob { parts, stats, summary, generation: 0, options: options.clone() })
+    Ok(PreparedJob { parts, gcode: None, stats, summary, generation: 0, options: options.clone() })
 }
 
 #[cfg(test)]
@@ -547,6 +624,7 @@ mod tests {
     fn prepared() -> PreparedJob {
         PreparedJob {
             parts: vec![RunPart::list(vec![lmc::Packet::empty()])],
+            gcode: None,
             stats: Stats::default(),
             summary: "s".into(),
             generation: 0,

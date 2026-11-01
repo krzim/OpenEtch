@@ -42,6 +42,8 @@ type Result<T, E = ControllerError> = std::result::Result<T, E>;
 
 /// Most lines one frame call may send.
 pub const MAX_FRAME_LINES: usize = 20_000;
+/// A frame ended by its cancel flag (internal).
+const FRAME_CANCELLED: &str = "frame cancelled";
 /// Board messages kept for the status view.
 const KEEP_MESSAGES: usize = 50;
 
@@ -145,6 +147,9 @@ pub struct GrblController<P: SerialLink> {
     state: ControllerState,
     abort: AbortHandle,
     control: RunControl,
+    /// Ends a frame being streamed (set by the engine when framing stops or is replaced, without the driver lock);
+    /// cleared when a frame starts.
+    frame_cancel: AbortHandle,
     /// Bytes (with the newline) of each line GRBL has not answered yet, oldest first.
     inflight: VecDeque<usize>,
     /// A line still arriving.
@@ -175,6 +180,7 @@ impl<P: SerialLink> GrblController<P> {
             state: ControllerState::Uninitialized,
             abort,
             control,
+            frame_cancel: AbortHandle::default(),
             inflight: VecDeque::new(),
             rx: Vec::new(),
             wco: None,
@@ -212,6 +218,12 @@ impl<P: SerialLink> GrblController<P> {
 
     pub fn run_control(&self) -> RunControl {
         self.control.clone()
+    }
+
+    /// Share a frame-cancel flag: requesting it ends the frame being streamed (then jog cancel), without waiting for
+    /// the driver. Each frame clears it when it starts.
+    pub fn set_frame_cancel(&mut self, cancel: AbortHandle) {
+        self.frame_cancel = cancel;
     }
 
     /// The board as last seen.
@@ -553,9 +565,14 @@ impl<P: SerialLink> GrblController<P> {
             return Err(ControllerError::Aborted);
         }
         self.ready_to_move(false)?;
+        self.frame_cancel.clear();
         self.state = ControllerState::Framing;
         match self.stream_simple(&lines) {
             Ok(()) => Ok(lines.len()),
+            Err(ControllerError::Refused(why)) if why == FRAME_CANCELLED => {
+                self.stop_frame()?;
+                Ok(0)
+            }
             Err(ControllerError::Aborted) => {
                 self.abort_after(&ControllerError::Aborted);
                 Err(ControllerError::Aborted)
@@ -574,6 +591,9 @@ impl<P: SerialLink> GrblController<P> {
         let mut last_answer = Instant::now();
         while next < lines.len() {
             self.check_abort()?;
+            if self.frame_cancel.is_requested() {
+                return Err(ControllerError::Refused(FRAME_CANCELLED.into()));
+            }
             let len = lines[next].len() + 1;
             if self.inflight_bytes() + len <= RX_BUFFER {
                 self.write_line(&lines[next])?;

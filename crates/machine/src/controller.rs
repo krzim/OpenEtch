@@ -320,7 +320,8 @@ impl AbortHandle {
         self.0.load(Ordering::SeqCst)
     }
 
-    pub(crate) fn clear(&self) {
+    /// Drop a pending request.
+    pub fn clear(&self) {
         self.0.store(false, Ordering::SeqCst);
     }
 }

@@ -36,6 +36,7 @@ fn target() -> Target {
         z_axis: false,
         rotary_axis: false,
         port_outputs: 0,
+        gantry: false,
     }
 }
 

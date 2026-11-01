@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use doc::Document;
 use kurbo::PathEl;
-use machine::{ControllerError, ControllerState, LinkError};
+use machine::{ControllerError, ControllerState, LinkError, MachineDriver};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -348,6 +348,16 @@ fn loops_per_call(outline: &[Vec<(f64, f64)>], speed_mm_s: f64) -> (u32, Duratio
     (loops, Duration::from_secs_f64(t_loop * f64::from(loops)))
 }
 
+/// Loops per frame call and how long to wait before polling for idle. A galvo board takes a whole list at once, so a
+/// call holds about [`TARGET_CALL_SECS`] of tracing; a GRBL board takes lines only as fast as it moves, so its call
+/// returns when the last line is in the board's buffer (one trace per call, no wait).
+fn frame_timing(machine: &Machine, outline: &[Vec<(f64, f64)>], speed: f64, continuous: bool) -> (u32, Duration) {
+    if machine.is_grbl() {
+        return (1, Duration::ZERO);
+    }
+    if continuous { loops_per_call(outline, speed) } else { (1, single_time(outline, speed)) }
+}
+
 /// Start tracing `outline`, replacing any frame already running. Returns once the first trace has been sent (so
 /// out-of-field outlines are reported to the caller); the loop continues in the background.
 pub async fn start(
@@ -360,8 +370,8 @@ pub async fn start(
         return Err(EngineError::Conflict("a run is in progress; framing is not available".into()));
     }
     let generation = machine.bump_frame_gen();
-    let speed = run.style.speed_mm_s.unwrap_or(machine.profile().red_light_speed_mm_s);
-    let (loops, call_time) = if run.continuous { loops_per_call(&outline, speed) } else { (1, single_time(&outline, speed)) };
+    let speed = run.style.speed_mm_s.unwrap_or(machine.frame_speed_mm_s());
+    let (loops, call_time) = frame_timing(machine, &outline, speed, run.continuous);
     let outline = Arc::new(outline);
     let points: usize = outline.iter().map(Vec::len).sum();
     let first = frame_once(machine, generation, outline.clone(), loops, run.style).await;
@@ -423,7 +433,7 @@ async fn frame_loop(
     let deadline = Instant::now() + Duration::from_secs(run.max_secs);
     let current = |m: &Machine| m.frame_gen() == generation;
     let mut live = run.live.clone();
-    let speed = run.style.speed_mm_s.unwrap_or(machine.profile().red_light_speed_mm_s);
+    let speed = run.style.speed_mm_s.unwrap_or(machine.frame_speed_mm_s());
     'outer: loop {
         // Wait for the trace just sent to finish: its expected time, then poll until the board is idle.
         let waited = Instant::now();
@@ -438,7 +448,7 @@ async fn frame_loop(
             if !current(&machine) {
                 break 'outer;
             }
-            let idle = machine.blocking(|_, ctl| ctl.status().map(|s| s.idle())).await;
+            let idle = machine.blocking(|_, ctl| ctl.poll_idle()).await;
             match idle {
                 Ok(Ok(true)) => break,
                 Ok(Ok(false)) if Instant::now() < poll_until => tokio::time::sleep(Duration::from_millis(50)).await,
@@ -460,7 +470,7 @@ async fn frame_loop(
             && let Some((new_revision, new_outline)) = source(*revision)
         {
             *revision = new_revision;
-            (loops, call_time) = loops_per_call(&new_outline, speed);
+            (loops, call_time) = frame_timing(&machine, &new_outline, speed, true);
             outline = Arc::new(new_outline);
             let _ = events.send(Event::machine("frame_updated", None));
         }

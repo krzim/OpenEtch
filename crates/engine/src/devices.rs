@@ -389,6 +389,7 @@ impl DeviceRegistry {
         v["active"] = json!(self.active().id == d.id);
         v["settings"] = d.settings_view();
         v["profile"] = d.profile.as_ref().map(profile_summary).unwrap_or(Value::Null);
+        v["grbl"] = json!(d.grbl);
         v["base"] = match (d.base, &d.profile) {
             (Some(ProfileBase::Builtin), _) => json!(self.bases.builtin.name),
             (Some(ProfileBase::GenericJczGalvo), _) => json!(self.bases.generic.name),
@@ -424,7 +425,17 @@ impl DeviceRegistry {
         }
         let d = self.get(id).cloned().ok_or_else(|| EngineError::NotFound(format!("no device with id '{id}'")))?;
         let mut next = d.clone();
-        if let Some(patch) = patch {
+        if let (Some(patch), Some(grbl)) = (patch, &d.grbl) {
+            // A GRBL device: the patch applies to its GRBL profile (made and edited by a person; validated).
+            let mut v = serde_json::to_value(grbl).map_err(|e| EngineError::Internal(e.to_string()))?;
+            machine::merge_patch(&mut v, patch);
+            let g: machine::grbl::GrblProfile =
+                serde_json::from_value(v).map_err(|e| EngineError::BadRequest(format!("GRBL profile: {e}")))?;
+            g.validate().map_err(|e| EngineError::BadRequest(e.to_string()))?;
+            next.workspace_mm = g.work_area_mm;
+            next.origin = g.origin;
+            next.grbl = Some(g);
+        } else if let Some(patch) = patch {
             let (Some(profile), Some(limits)) = (&d.profile, self.limits_for(&d)) else {
                 return Err(EngineError::BadRequest("this device has no machine profile to edit (design-only)".into()));
             };
@@ -466,6 +477,12 @@ impl DeviceRegistry {
             return Err(EngineError::Internal(e));
         }
         Ok(d)
+    }
+
+    /// `POST /api/devices/grbl`: a GRBL gantry made in OpenEtch from a GRBL profile (validated).
+    pub fn add_grbl(&mut self, display_name: &str, profile: machine::grbl::GrblProfile) -> Result<Device, EngineError> {
+        let d = Device::grbl_device(display_name, profile).map_err(EngineError::BadRequest)?;
+        self.add_manual(d)
     }
 
     /// `POST /api/devices/{id}/duplicate`: an editable copy ("<name> copy", source `manual`). The copy keeps the

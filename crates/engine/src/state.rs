@@ -372,6 +372,12 @@ impl AppState {
         }
     }
 
+    /// Refused (409) unless the active machine is a GRBL gantry.
+    pub(crate) fn require_grbl(&self) -> Result<(), EngineError> {
+        self.require_controllable()?;
+        if self.machine.is_grbl() { Ok(()) } else { Err(EngineError::Conflict("the active machine is not a GRBL gantry".into())) }
+    }
+
     /// `GET /api/devices`.
     pub fn devices_view(&self) -> Value {
         self.devices().view()
@@ -453,13 +459,26 @@ impl AppState {
             })
             .await?;
         warnings.extend(cor_warning);
-        if let Some(profile) = device.profile.clone().filter(|_| device.controllable) {
+        /// What the machine becomes: a galvo profile (with its correction) or a GRBL gantry.
+        enum Swap {
+            Galvo(Box<machine::MachineProfile>, Option<corfile::CorTable>),
+            Grbl(machine::grbl::GrblProfile),
+        }
+        let swap = match (device.profile.clone(), device.grbl.clone()) {
+            (_, Some(grbl)) if device.controllable => Some(Swap::Grbl(grbl)),
+            (Some(profile), _) if device.controllable => Some(Swap::Galvo(Box::new(profile), cor)),
+            _ => None,
+        };
+        if let Some(swap) = swap {
             let before = self.machine.generation();
             let result = self
                 .machine
                 .blocking(move |m, ctl| {
                     m.bump_frame_gen();
-                    m.swap_config(ctl, profile, cor)
+                    match swap {
+                        Swap::Galvo(profile, cor) => m.swap_config(ctl, *profile, cor),
+                        Swap::Grbl(grbl) => m.swap_grbl(ctl, grbl),
+                    }
                 })
                 .await;
             match result {
@@ -1117,6 +1136,13 @@ impl AppState {
             None => None,
         };
         let mut prepared = tokio::task::spawn_blocking(move || {
+            if let Some(grbl) = &config.grbl {
+                if queue.is_some() {
+                    return Err(EngineError::BadRequest("queue (batch of projects) is not available on a GRBL machine yet".into()));
+                }
+                let doc = commands::prepare_output(&doc).map_err(|e| EngineError::BadRequest(format!("text: {e}")))?;
+                return runs::prepare_gcode_job(&doc, &config.target, grbl, &options, run_index);
+            }
             if let Some(docs) = queue {
                 return runs::prepare_queue(&docs, &config.target, &config.profile, &options, run_index);
             }
@@ -1220,23 +1246,27 @@ impl AppState {
     /// How a frame request runs: pointer outputs, blanking, speed, once or looping, time limit.
     fn frame_run(&self, req: &FrameRequest, live: Option<(u64, frame::LiveSource)>) -> Result<FrameRun, EngineError> {
         let profile = self.machine.profile();
+        let grbl = self.machine.is_grbl();
         let focus = || {
             profile
                 .focus_light_port_bit
                 .and_then(|b| lmc::PointerBits::bit(b).ok())
                 .ok_or_else(|| EngineError::BadRequest("the machine profile has no focus light port (focus_light_port_bit)".into()))
         };
+        // A GRBL gantry frames by moving the head with the laser off: there is no pointer to choose.
         let pointer = match req.pointer {
+            _ if grbl => lmc::PointerBits::RED,
             Pointer::Red => lmc::PointerBits::RED,
             Pointer::Focus => focus()?,
             Pointer::Both => lmc::PointerBits::RED.with(focus()?),
         };
+        let max_speed = self.machine.max_frame_speed_mm_s();
         if let Some(v) = req.speed_mm_s
-            && !(v.is_finite() && v > 0.0 && v <= profile.max_jump_speed_mm_s)
+            && !(v.is_finite() && v > 0.0 && v <= max_speed)
         {
             return Err(EngineError::BadRequest(format!(
-                "speed_mm_s must be within 0..={} mm/s (the profile's jump speed limit)",
-                profile.max_jump_speed_mm_s
+                "speed_mm_s must be within 0..={max_speed} mm/s (the profile's {} limit)",
+                if grbl { "feed" } else { "jump speed" }
             )));
         }
         let max_secs = req.max_seconds.unwrap_or(frame::FRAME_MAX_SECS);

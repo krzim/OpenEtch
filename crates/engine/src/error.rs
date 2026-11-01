@@ -59,9 +59,16 @@ impl EngineError {
                 StatusCode::UNPROCESSABLE_ENTITY
             }
             EngineError::Machine(ControllerError::Busy(_)) | EngineError::Conflict(_) => StatusCode::CONFLICT,
-            EngineError::Machine(ControllerError::Refused(_) | ControllerError::Field(_)) => {
-                StatusCode::UNPROCESSABLE_ENTITY
-            }
+            EngineError::Machine(ControllerError::Grbl(
+                machine::grbl::GrblError::Locked(_) | machine::grbl::GrblError::DoorOpen | machine::grbl::GrblError::NotIdle(_),
+            )) => StatusCode::CONFLICT,
+            EngineError::Machine(
+                ControllerError::Refused(_)
+                | ControllerError::Field(_)
+                | ControllerError::Grbl(
+                    machine::grbl::GrblError::Console(_) | machine::grbl::GrblError::Program(_) | machine::grbl::GrblError::Settings(_),
+                ),
+            ) => StatusCode::UNPROCESSABLE_ENTITY,
             EngineError::Machine(_) => StatusCode::BAD_GATEWAY,
             EngineError::Forbidden(_) | EngineError::Approval { .. } => StatusCode::FORBIDDEN,
             EngineError::TooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,

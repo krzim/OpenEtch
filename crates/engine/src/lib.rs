@@ -74,3 +74,5 @@ mod app_tests;
 mod final_tests;
 #[cfg(test)]
 mod wire_tests;
+#[cfg(test)]
+mod grbl_tests;

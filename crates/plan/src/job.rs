@@ -584,8 +584,9 @@ fn resolve(layer: &str, cut: &CutSettings, target: &Target) -> Result<PassSettin
         hatch_angle_deg: cut.hatch.angle_deg,
     };
     // Everything the encoder will need must convert now, so a plan that exists can be encoded.
-    crate::encode::PassWords::new(&settings, target)
-        .map_err(|e| PlanError::Encode { layer: layer.into(), source: e })?;
+    if !target.gantry {
+        crate::encode::PassWords::new(&settings, target).map_err(|e| PlanError::Encode { layer: layer.into(), source: e })?;
+    }
     Ok(settings)
 }
 

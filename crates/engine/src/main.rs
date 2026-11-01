@@ -185,6 +185,14 @@ async fn run(config: Config) -> Result<(), String> {
         Machine::simulated(profile, cor, PollConfig::default())
     };
     let machine = Arc::new(machine);
+    // A GRBL gantry as the active device: its driver replaces the galvo's before connecting.
+    if let Some(grbl) = active.grbl.clone().filter(|_| active.controllable) {
+        match machine.blocking(move |m, ctl| m.swap_grbl(ctl, grbl)).await {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => tracing::warn!(error = %e, "GRBL board not ready; framing and runs will retry the connection"),
+            Err(e) => return Err(e.to_string()),
+        }
+    }
     // Again against the machine actually built: never a simulator PIN on a USB link.
     check_sim_pin(&config, machine.kind() == engine::hw::LinkKind::Simulated)?;
     match machine.connect().await {

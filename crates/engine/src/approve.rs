@@ -32,7 +32,8 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use machine::{Armed, ControllerError, RunPart, RunReport};
+use machine::grbl::GrblError;
+use machine::{Armed, ControllerError, DriverJob, MachineDriver, RunReport};
 use serde_json::{Value, json};
 
 use crate::hw::Machine;
@@ -155,7 +156,7 @@ pub(crate) async fn approve(
         // Captured after claiming the machine, still under the runs lock (see the module docs).
         let epoch = state.machine.stop_epoch();
         run.state = if confirm.is_some() || run.options.start_input { RunState::AwaitingConfirm } else { RunState::Approved };
-        (run.parts.clone(), epoch, run.state, run.options.clone(), run.stats.estimated_time_s)
+        (run.driver_job(), epoch, run.state, run.options.clone(), run.stats.estimated_time_s)
     };
     // End any frame loop; `Controller::run_parts` stops a frame still on the board itself.
     state.machine.bump_frame_gen();
@@ -209,7 +210,7 @@ pub(crate) async fn approve(
 /// The foot switch that approves runs: the profile's Start Marking input (`start_mark_input_bit`, at the level of
 /// `start_mark_active_low`) while the engine runs in the `click` approval mode; `None` otherwise.
 pub(crate) fn foot_switch_port(st: &AppState) -> Option<machine::InputPort> {
-    if st.approval_mode() != ApprovalMode::Click {
+    if st.approval_mode() != ApprovalMode::Click || st.machine.is_grbl() {
         return None;
     }
     let profile = st.machine.profile();
@@ -270,7 +271,7 @@ type Outcome = (RunState, Option<RunReport>, Option<String>);
 struct Job<'a> {
     id: &'a str,
     device: &'a str,
-    parts: Arc<Vec<RunPart>>,
+    parts: DriverJob,
     epoch: u64,
     confirm: Option<PhysicalConfirm>,
     options: RunOptions,
@@ -392,7 +393,7 @@ enum Once {
 }
 
 /// One iteration: arm, claim the controller, run every part.
-async fn run_once(st: &Arc<AppState>, id: &str, parts: &Arc<Vec<RunPart>>, epoch: u64, iteration: u32) -> Once {
+async fn run_once(st: &Arc<AppState>, id: &str, parts: &DriverJob, epoch: u64, iteration: u32) -> Once {
     let armed = Armed::approved_in_ui(id.to_owned());
     let (task_state, run_id, parts) = (st.clone(), id.to_owned(), parts.clone());
     let result = st
@@ -410,16 +411,18 @@ async fn run_once(st: &Arc<AppState>, id: &str, parts: &Arc<Vec<RunPart>>, epoch
             }
             task_state.job.started(iteration);
             task_state.emit(Event::machine("run_started", Some(run_id)));
-            Some(m.ensure_ready(ctl).and_then(|()| ctl.run_parts(&parts, armed)))
+            Some(m.ensure_ready(ctl).and_then(|()| ctl.run_job(&parts, armed)))
         })
         .await;
     match result {
         Ok(None) => Once::NotStarted,
         Ok(Some(Ok(report))) => Once::Done(report),
         Ok(Some(Err(ControllerError::Aborted))) => Once::Ended((RunState::Aborted, None, Some("aborted by stop".into()))),
-        Ok(Some(Err(e @ (ControllerError::StopInput(_) | ControllerError::DoorOpen(_))))) => {
-            Once::Ended((RunState::Aborted, None, Some(e.to_string())))
-        }
+        Ok(Some(Err(
+            e @ (ControllerError::StopInput(_)
+            | ControllerError::DoorOpen(_)
+            | ControllerError::Grbl(GrblError::DoorOpen | GrblError::Alarm(_))),
+        ))) => Once::Ended((RunState::Aborted, None, Some(e.to_string()))),
         Ok(Some(Err(e))) => Once::Ended((RunState::Failed, None, Some(e.to_string()))),
         // The blocking task panicked: the controller may have left the MO open or the laser-enable bit set.
         Err(e) => Once::Ended(panicked(st, e.to_string()).await),

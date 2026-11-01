@@ -24,6 +24,14 @@
 //! | PUT | `/api/devices/{id}/cor` | `?name=<file>.cor`, the file as the body: load a lens correction file (UI only) |
 //! | DELETE | `/api/devices/{id}/cor` | clear it (UI only) |
 //! | POST | `/api/devices/import/markcfg` | `?name=`, an EzCad `markcfg7` as the body: a new device (UI only) |
+//! | GET | `/api/machine/grbl` | a GRBL gantry's profile and board (version, last status report, alarm, laser mode, `$30`/`$31`, unsafe start-up blocks, messages); `board` null while a run or frame holds it |
+//! | POST | `/api/machine/home` | GRBL homing cycle `$H` (UI only; moves, never fires) |
+//! | POST | `/api/machine/unlock` | GRBL `$X` after an alarm (UI only) |
+//! | POST | `/api/machine/jog` | `{dx, dy}` mm or `{x, y}` (field frame), `feed?` mm/min: a GRBL jog `$J=` with the laser off (UI only) |
+//! | POST | `/api/machine/jog/cancel` | GRBL jog cancel (0x85); not gated |
+//! | POST | `/api/machine/console` | `{line}` → `{line, lines, ok, error}`: one console line to a GRBL board (UI only). Lines that could turn the laser on (`M3`/`M4`, `S` > 0, unsafe start-up blocks, realtime characters, `$RST`) are refused (422) before anything is sent; see `machine::grbl::check_console_line` |
+//! | GET | `/api/machine/ports` | the serial ports of the engine's computer (needs the `serial` build feature) |
+//! | POST | `/api/devices/grbl` | `{display_name, profile}`: a new GRBL device from a GRBL profile (UI only) |
 //! | GET | `/api/sim/inputs` | `{simulated, bits}`: the simulated board's input port (`bits` null on USB) |
 //! | POST | `/api/sim/inputs` | `{bits: 0..=65535}` → `{ok, bits}`: set the simulated input port (word 1 of `ReadPort`) so the foot pedal (Start Marking), Stop Marking, Door Protect and Start Framing inputs can be exercised end to end. Only while the machine link is the simulator (403 on USB); refuses MCP client headers (403), as a switch press stands for a person |
 
@@ -72,7 +80,158 @@ pub(crate) fn routes() -> Router<Arc<AppState>> {
             put(device_cor_load).delete(device_cor_clear).layer(DefaultBodyLimit::max(MAX_MACHINE_FILE)),
         )
         .route("/devices/import/markcfg", post(device_import_markcfg).layer(DefaultBodyLimit::max(MAX_MACHINE_FILE)))
+        .route("/devices/grbl", post(device_add_grbl))
+        .route("/machine/grbl", get(grbl_status))
+        .route("/machine/home", post(grbl_home))
+        .route("/machine/unlock", post(grbl_unlock))
+        .route("/machine/jog", post(grbl_jog))
+        .route("/machine/jog/cancel", post(grbl_jog_cancel))
+        .route("/machine/console", post(grbl_console))
+        .route("/machine/ports", get(serial_ports))
         .route("/sim/inputs", get(sim_inputs).post(sim_set_inputs))
+}
+
+async fn serial_ports() -> Json<Value> {
+    Json(json!({ "ports": crate::hw::serial_ports(), "serial_support": cfg!(feature = "serial") }))
+}
+
+async fn grbl_status(State(st): State<Arc<AppState>>) -> Result<Json<Value>, EngineError> {
+    let profile = st.machine.grbl_profile().ok_or_else(|| EngineError::Conflict("the active machine is not a GRBL gantry".into()))?;
+    Ok(Json(json!({ "profile": profile, "board": st.machine.grbl_snapshot(), "running": st.machine.is_running(), "framing": st.machine.is_framing() })))
+}
+
+/// Run `f` on the GRBL driver: refused unless a GRBL gantry is active and no run or frame holds the machine (a
+/// request never waits behind a run for the driver).
+async fn with_grbl<R, F>(st: &Arc<AppState>, f: F) -> Result<R, EngineError>
+where
+    R: Send + 'static,
+    F: FnOnce(&mut machine::GrblDriver) -> Result<R, machine::ControllerError> + Send + 'static,
+{
+    st.require_grbl()?;
+    if st.machine.is_running() {
+        return Err(EngineError::Conflict("a run is in progress".into()));
+    }
+    if st.machine.is_framing() {
+        return Err(EngineError::Conflict("framing is on; stop framing first".into()));
+    }
+    let r = st
+        .machine
+        .blocking(move |m, ctl| {
+            if m.is_running() {
+                return Err(machine::ControllerError::Busy(machine::ControllerState::Running));
+            }
+            m.ensure_ready(ctl)?;
+            match ctl.grbl_mut() {
+                Some(g) => f(g),
+                None => Err(machine::ControllerError::Refused("the active machine is not a GRBL gantry".into())),
+            }
+        })
+        .await??;
+    Ok(r)
+}
+
+/// Homing (`$H`): motion, never emission; UI only like the galvo's axis moves.
+async fn grbl_home(State(st): State<Arc<AppState>>, headers: HeaderMap, body: Bytes) -> Result<Json<Value>, EngineError> {
+    let b: OriginOnly = body_or_default(&body)?;
+    ui_only(&headers, b.origin.as_ref(), "the machine can be homed")?;
+    with_grbl(&st, |g| g.home()).await?;
+    st.emit(Event::machine("homed", None));
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn grbl_unlock(State(st): State<Arc<AppState>>, headers: HeaderMap, body: Bytes) -> Result<Json<Value>, EngineError> {
+    let b: OriginOnly = body_or_default(&body)?;
+    ui_only(&headers, b.origin.as_ref(), "the machine can be unlocked")?;
+    with_grbl(&st, |g| g.unlock()).await?;
+    st.emit(Event::machine("unlocked", None));
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct JogBody {
+    #[serde(default)]
+    dx: Option<f64>,
+    #[serde(default)]
+    dy: Option<f64>,
+    #[serde(default)]
+    x: Option<f64>,
+    #[serde(default)]
+    y: Option<f64>,
+    /// mm/min (default the profile's frame feed).
+    #[serde(default)]
+    feed: Option<f64>,
+    #[serde(default)]
+    origin: Option<Value>,
+}
+
+/// Jog (`$J=`) with the laser off: by `{dx, dy}` mm, or to `{x, y}` in the field frame. UI only.
+async fn grbl_jog(State(st): State<Arc<AppState>>, headers: HeaderMap, body: Bytes) -> Result<Json<Value>, EngineError> {
+    let b: JogBody = body_or_default(&body)?;
+    ui_only(&headers, b.origin.as_ref(), "the head can be jogged")?;
+    let feed = b.feed;
+    match (b.dx.or(b.dy), b.x, b.y) {
+        (Some(_), None, None) => {
+            let (dx, dy) = (b.dx.unwrap_or(0.0), b.dy.unwrap_or(0.0));
+            with_grbl(&st, move |g| g.jog(dx, dy, feed)).await?;
+        }
+        (None, Some(x), Some(y)) => with_grbl(&st, move |g| g.jog_to(x, y, feed)).await?,
+        _ => return Err(EngineError::BadRequest("give dx/dy (a step) or x and y (a position)".into())),
+    }
+    Ok(Json(json!({ "ok": true })))
+}
+
+/// Jog cancel (0x85): stops motion only, so it is not gated (like pause and stop).
+async fn grbl_jog_cancel(State(st): State<Arc<AppState>>) -> Result<Json<Value>, EngineError> {
+    st.require_grbl()?;
+    if st.machine.is_running() || st.machine.is_framing() {
+        return Ok(Json(json!({ "ok": true, "sent": false })));
+    }
+    st.machine
+        .blocking(|_, ctl| match ctl.grbl_mut() {
+            Some(g) => g.jog_cancel(),
+            None => Ok(()),
+        })
+        .await??;
+    Ok(Json(json!({ "ok": true, "sent": true })))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConsoleBody {
+    line: String,
+    #[serde(default)]
+    origin: Option<Value>,
+}
+
+/// One console line to the GRBL board. UI only; the console policy refuses anything that could fire.
+async fn grbl_console(State(st): State<Arc<AppState>>, headers: HeaderMap, body: Bytes) -> Result<Json<Value>, EngineError> {
+    let b: ConsoleBody = serde_json::from_slice(&body).map_err(|e| EngineError::BadRequest(format!("bad JSON body (expected {{\"line\": ...}}): {e}")))?;
+    ui_only(&headers, b.origin.as_ref(), "console lines can be sent")?;
+    // Checked before waiting for the driver, so a refused line never even queues.
+    machine::grbl::check_console_line(&b.line).map_err(|e| EngineError::Machine(machine::grbl::GrblError::Console(e).into()))?;
+    let line = b.line.clone();
+    let reply = with_grbl(&st, move |g| g.console(&line)).await?;
+    tracing::info!(line = %reply.line, ok = reply.ok, "GRBL console");
+    Ok(Json(json!(reply)))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GrblDeviceBody {
+    #[serde(default)]
+    display_name: String,
+    profile: machine::grbl::GrblProfile,
+    #[serde(default)]
+    origin: Option<Value>,
+}
+
+async fn device_add_grbl(State(st): State<Arc<AppState>>, headers: HeaderMap, body: Bytes) -> Result<Response, EngineError> {
+    let b: GrblDeviceBody = serde_json::from_slice(&body).map_err(|e| EngineError::BadRequest(format!("bad JSON body: {e}")))?;
+    ui_only(&headers, b.origin.as_ref(), "devices can be added")?;
+    let d = st.blocking(move |st| st.devices().add_grbl(&b.display_name, b.profile)).await?;
+    st.emit(Event::DevicesChanged);
+    Ok((StatusCode::CREATED, Json(json!({ "ok": true, "device": d.summary() }))).into_response())
 }
 
 async fn sim_inputs(State(st): State<Arc<AppState>>) -> Json<Value> {

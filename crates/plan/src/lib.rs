@@ -6,6 +6,7 @@
 //! - [`simulate`]: packets -> [`Preview`] (what the board would run); [`preview_plan`]: plan -> [`Preview`]
 //!   without encoding, for the live UI; [`preview_document`] adds per-layer totals.
 //! - [`fill_regions`]: the even-odd fill areas of fill layers, for display.
+//! - [`gcode_lines`] / [`gcode_file`]: [`JobPlan`] -> G-code for a GRBL laser ([`GcodeSettings`], module `gcode`).
 //!
 //! Everything public is in mm, mm/s, kHz, %, µs and degrees in the field frame (ARCHITECTURE.md). Galvo words,
 //! axis swap and negate appear only inside [`Target::to_galvo`] / [`Target::from_galvo`].
@@ -13,6 +14,7 @@
 
 mod cutopts;
 mod encode;
+mod gcode;
 mod geom;
 mod hatch;
 mod image;
@@ -26,6 +28,7 @@ mod rotary;
 mod target;
 
 pub use encode::{EncodedPart, encode, encode_parts, jump_delay_us};
+pub use gcode::{GcodeSettings, gcode_file, gcode_lines, gcode_number};
 pub use geom::{FLATTEN_TOLERANCE_MM, Point};
 pub use hatch::MAX_SCANLINES;
 pub use image::{MAX_IMAGE_DOTS, MAX_PROCESSED_DOTS, MAX_SOURCE_PIXELS, ProcessedBitmap, processed_bitmap, processed_png, tone_factors};
@@ -87,6 +90,9 @@ pub enum PlanError {
     Encode { layer: LayerId, source: LmcError },
     #[error("invalid machine target: {0}")]
     Target(String),
+    /// Something G-code output for a GRBL laser cannot express (module `gcode`).
+    #[error("G-code: {0}")]
+    Gcode(String),
     #[error("the job has nothing to mark")]
     Empty,
     /// A selection that names no object or group of the document.
