@@ -252,13 +252,14 @@ export function SaveTemplateDialog(p: { initial: string; onSaved: (name: string)
 
 // --- preferences and bundles --------------------------------------------------------------------------------------
 
-/** Bundle parts; material test presets and art libraries travel in LightBurn bundles (.lbzip) only. */
-const PARTS = ["prefs", "devices", "libraries", "presets", "art"] as const;
+/** Bundle parts; material test presets, image presets and art libraries travel in LightBurn bundles (.lbzip) only. */
+const PARTS = ["prefs", "devices", "libraries", "presets", "images", "art"] as const;
 const PART_LABELS = {
   prefs: "files.partPrefs",
   devices: "files.partDevices",
   libraries: "files.partLibraries",
   presets: "files.partPresets",
+  images: "files.partImages",
   art: "files.partArt",
 } as const;
 
@@ -267,7 +268,7 @@ export function PrefsBundlesDialog(p: { onClose: () => void; notify: Notify; rep
   const backups = useLoad(() => filesApi.prefsBackups(), prefsBackupList);
   const prefsPick = useRef<HTMLInputElement>(null);
   const bundlePick = useRef<HTMLInputElement>(null);
-  const [parts, setParts] = useState<Record<(typeof PARTS)[number], boolean>>({ prefs: true, devices: true, libraries: true, presets: true, art: true });
+  const [parts, setParts] = useState<Record<(typeof PARTS)[number], boolean>>({ prefs: true, devices: true, libraries: true, presets: true, images: true, art: true });
   const [result, setResult] = useState<ReturnType<typeof bundleResult> | null>(null);
   const [confirm, setConfirm] = useState<{ what: string; go: () => void } | null>(null);
   const chosen = PARTS.filter((k) => parts[k]);
@@ -380,7 +381,7 @@ export function PrefsBundlesDialog(p: { onClose: () => void; notify: Notify; rep
         </button>
         <button
           className="btn"
-          disabled={!chosen.some((k) => k === "devices" || k === "presets" || k === "art")}
+          disabled={!chosen.some((k) => k !== "prefs")}
           title={t("files.exportLbzipTitle")}
           onClick={() => dl(filesApi.exportBundle(chosen, "lbzip"), "openetch-bundle.lbzip")}
         >
@@ -394,8 +395,10 @@ export function PrefsBundlesDialog(p: { onClose: () => void; notify: Notify; rep
       {result && (
         <div className="files-result" role="status">
           <div>{t("files.bundleResult", { prefs: result.prefs ? t("files.yes") : t("files.no"), devices: result.devices.length, libraries: result.libraries.length })}</div>
-          {(result.presets.length > 0 || result.art.length > 0) && (
-            <div>{t("files.bundleResultLb", { presets: result.presets.length, art: result.art.join(", ") || "0" })}</div>
+          {(result.presets.length > 0 || result.images.length > 0 || result.art.length > 0) && (
+            <div>
+              {t("files.bundleResultLb", { presets: result.presets.length, images: result.images.length, art: result.art.join(", ") || "0" })}
+            </div>
           )}
           {result.skipped.length > 0 && (
             <ul className="warn-list">

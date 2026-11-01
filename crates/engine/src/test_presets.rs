@@ -36,6 +36,9 @@
 //! | DELETE | `/api/image-adjust/presets/{name}` | → `{ok}` |
 //! | POST | `/api/image-adjust/presets/import` | `{presets: [...]}` as GET gives them, or LightBurn's `.lbimg` → `{ok, imported: [name], warnings}` (names taken get " (2)") |
 //! | GET | `/api/image-adjust/presets/export` | `?format=lbimg`: every preset as LightBurn's `.lbimg` (a download) |
+//!
+//! LightBurn `.lbzip` bundles carry the same `.lbimg` as `image_presets.lbimg` (`import_lbimg`, `export_lbimg`;
+//! `crate::lbzip`).
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -345,23 +348,54 @@ async fn image_import(State(st): State<Arc<AppState>>, body: Bytes) -> Result<Js
         check_name(&p.name)?;
         check_image_preset(p)?;
     }
-    st.blocking(move |st| {
-        let _w = WRITE.lock().unwrap_or_else(PoisonError::into_inner);
-        let mut all = image_load(st)?;
-        let mut imported = Vec::new();
-        for mut p in b.presets {
-            p.name = p.name.trim().to_owned();
-            if all.iter().any(|o| o.name == p.name) {
-                let base = p.name.clone();
-                p.name = (2..).map(|n| format!("{base} ({n})")).find(|c| !all.iter().any(|o| &o.name == c)).unwrap_or(base);
-            }
-            imported.push(p.name.clone());
-            all.push(p);
+    st.blocking(move |st| image_add(st, b.presets, warnings).map(Json)).await
+}
+
+/// Add checked image presets (a name taken gets " (2)", ...). Returns `{ok, imported: [name], warnings}`.
+fn image_add(st: &AppState, presets: Vec<ImagePreset>, warnings: Vec<String>) -> Result<Value, EngineError> {
+    let _w = WRITE.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut all = image_load(st)?;
+    let mut imported = Vec::new();
+    for mut p in presets {
+        p.name = p.name.trim().to_owned();
+        if all.iter().any(|o| o.name == p.name) {
+            let base = p.name.clone();
+            p.name = (2..).map(|n| numbered(&base, n)).find(|c| !all.iter().any(|o| &o.name == c)).unwrap_or(base);
         }
-        image_store(st, all)?;
-        Ok(Json(json!({ "ok": true, "imported": imported, "warnings": warnings })))
-    })
-    .await
+        imported.push(p.name.clone());
+        all.push(p);
+    }
+    image_store(st, all)?;
+    Ok(json!({ "ok": true, "imported": imported, "warnings": warnings }))
+}
+
+/// Largest `.lbimg` read from a `.lbzip` bundle (the HTTP import takes axum's default 2 MB body).
+pub const MAX_LBIMG_BYTES: usize = 2 * 1024 * 1024;
+
+/// A LightBurn `.lbimg` file (`image_presets.lbimg` of a `.lbzip` bundle) added to the image presets, as
+/// `POST /api/image-adjust/presets/import` adds one. Returns `{ok, imported: [name], warnings}`.
+pub fn import_lbimg(st: &AppState, bytes: &[u8]) -> Result<Value, EngineError> {
+    if bytes.len() > MAX_LBIMG_BYTES {
+        return Err(EngineError::TooLarge(format!("an image preset file may be at most {} MB", MAX_LBIMG_BYTES / (1024 * 1024))));
+    }
+    let v: Value = serde_json::from_slice(bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes))
+        .map_err(|e| EngineError::BadRequest(format!("not a LightBurn .lbimg preset file (not JSON): {e}")))?;
+    let (presets, warnings) = lbimg_to_presets(&v)?;
+    image_add(st, presets, warnings)
+}
+
+/// Every image preset as LightBurn's `.lbimg` text, `None` when there are none.
+pub fn export_lbimg(st: &AppState) -> Result<Option<String>, EngineError> {
+    let all = image_load(st)?;
+    Ok((!all.is_empty()).then(|| presets_to_lbimg(&all)))
+}
+
+/// "<base> (n)" for a preset name that is taken, the base shortened so the result keeps to [`MAX_NAME_CHARS`] (a longer
+/// name could not be saved, renamed or read back from an export).
+fn numbered(base: &str, n: usize) -> String {
+    let suffix = format!(" ({n})");
+    let keep = MAX_NAME_CHARS.saturating_sub(suffix.chars().count());
+    format!("{}{suffix}", base.chars().take(keep).collect::<String>().trim_end())
 }
 
 fn check_name(name: &str) -> Result<String, EngineError> {
@@ -489,7 +523,7 @@ pub fn import_lbmt(st: &AppState, text: &str, replace: bool) -> Result<Value, En
             all.retain(|o| o.name != p.name);
         } else if all.iter().any(|o| o.name == p.name) {
             let base = p.name.clone();
-            p.name = (2..).map(|n| format!("{base} ({n})")).find(|c| !all.iter().any(|o| &o.name == c)).unwrap_or(base);
+            p.name = (2..).map(|n| numbered(&base, n)).find(|c| !all.iter().any(|o| &o.name == c)).unwrap_or(base);
         }
         imported.push(p.name.clone());
         all.push(p);

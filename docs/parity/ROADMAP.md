@@ -49,7 +49,7 @@ Bitmap shapes (no Polygon), every Enhance value in them is 0, and no .lbart, .lb
 
 | Item | File needed | Then |
 |---|---|---|
-| UX-068 .lbzip (import and export done with the owner's LightBurn 2.2 bundle) | A bundle exported with a material library loaded (and hotkeys / image presets ticked), and the owner importing OpenEtch's own `.lbzip` in LightBurn | Map the remaining manifest actions in `crates/engine/src/lbzip.rs` |
+| UX-068 .lbzip (import and export done with the owner's LightBurn 2.2 bundle; material libraries and image presets mapped from fields inferred from LightBurn.exe's strings) | A bundle exported with a material library loaded (and hotkeys / image presets ticked), and the owner importing OpenEtch's own `.lbzip` in LightBurn | Check the inferred `import-cutlib` / `import-imagepresets` items in `crates/engine/src/lbzip.rs` against it; map `import-hotkeys` once a `hotkeys.json` shows its layout |
 
 ### Needs other hardware (n/a for the B6)
 

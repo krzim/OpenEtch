@@ -107,7 +107,7 @@ export const filesApi = {
   importPrefs: (file: Blob) => upload<unknown>(`/api/prefs/import?origin=${UI_ORIGIN}`, file, "application/json"),
   prefsBackups: () => json<unknown>("GET", "/api/prefs/backups"),
   restorePrefs: (file: string) => json<unknown>("POST", "/api/prefs/backups/restore", { file, origin: UI_ORIGIN }),
-  /** OpenEtch's `.oebundle`, or a LightBurn `.lbzip` (devices, material test presets, art libraries). */
+  /** OpenEtch's `.oebundle`, or a LightBurn `.lbzip` (devices, material libraries, material test and image presets, art libraries). */
   exportBundle: (parts: string[], format: "oebundle" | "lbzip" = "oebundle") =>
     download(`/api/bundle/export?parts=${encodeURIComponent(parts.join(","))}${format === "lbzip" ? "&format=lbzip" : ""}`),
   importBundle: (parts: string[], file: Blob) => upload<unknown>(`/api/bundle/import?parts=${encodeURIComponent(parts.join(","))}&origin=${UI_ORIGIN}`, file, "application/zip"),

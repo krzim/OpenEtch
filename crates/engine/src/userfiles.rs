@@ -23,8 +23,8 @@
 //! | POST | `/api/prefs/import_lightburn` | a LightBurn `.lbprefs` / `prefs.ini` as the body (UI only unless `?preview=1`): the keys OpenEtch has (`crate::lbprefs`); autosave and the active device's Optimization defaults are applied (current preferences backed up first), the browser-side ones returned as `browser` for the UI to apply; `{ok, preview, device, engine, browser, used, rejected, other_keys}` |
 //! | GET | `/api/prefs/backups` | `[{file, saved_unix_s, size}]` newest first (at most 50 kept; made at start and before every import) |
 //! | POST | `/api/prefs/backups/restore` | `{file, origin?}` (UI only) |
-//! | GET | `/api/bundle/export` | `?parts=prefs,devices,libraries` (default all): a user bundle `.oebundle` (zip); `format=lbzip` (parts `devices,presets,art`): a LightBurn bundle (`crate::lbzip`) |
-//! | POST | `/api/bundle/import` | `?parts=` + a bundle (UI only) → `{ok, imported: {prefs, devices: [id], libraries: [name]}, skipped: [text]}`; devices are always added as new devices (an identical one is skipped), a library whose name exists with other content is loaded as "<name> (bundle)", as LightBurn keeps what is there. A LightBurn `.lbzip` (`crate::lbzip`; parts `prefs,devices,presets,art`) → `{ok, lightburn: true, imported: {prefs, devices, libraries, presets, art}, browser, skipped}` (`browser`: the LightBurn settings for the web UI to apply) |
+//! | GET | `/api/bundle/export` | `?parts=prefs,devices,libraries` (default all): a user bundle `.oebundle` (zip); `format=lbzip` (parts `devices,libraries,presets,images,art`): a LightBurn bundle (`crate::lbzip`) |
+//! | POST | `/api/bundle/import` | `?parts=` + a bundle (UI only) → `{ok, imported: {prefs, devices: [id], libraries: [name]}, skipped: [text]}`; devices are always added as new devices (an identical one is skipped), a library whose name exists with other content is loaded as "<name> (bundle)", as LightBurn keeps what is there. A LightBurn `.lbzip` (`crate::lbzip`; parts `prefs,devices,libraries,presets,images,art`) → `{ok, lightburn: true, imported: {prefs, devices, libraries, presets, images, art}, browser, skipped}` (`browser`: the LightBurn settings for the web UI to apply) |
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -976,15 +976,15 @@ async fn prefs_restore(State(st): State<Arc<AppState>>, headers: HeaderMap, body
     Ok(Json(json!({ "ok": true })))
 }
 
-/// Bundle parts. `presets` (material test presets) and `art` (Art Libraries) are read from and written to LightBurn
-/// `.lbzip` bundles only.
-const PARTS: [&str; 5] = ["prefs", "devices", "libraries", "presets", "art"];
+/// Bundle parts. `presets` (material test presets), `images` (Adjust Image presets) and `art` (Art Libraries) are
+/// read from and written to LightBurn `.lbzip` bundles only.
+const PARTS: [&str; 6] = ["prefs", "devices", "libraries", "presets", "images", "art"];
 
 fn parts(q: &HashMap<String, String>) -> Result<Vec<String>, EngineError> {
     let Some(p) = q.get("parts") else { return Ok(PARTS.iter().map(|s| s.to_string()).collect()) };
     let list: Vec<String> = p.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
     if let Some(bad) = list.iter().find(|s| !PARTS.contains(&s.as_str())) {
-        return Err(EngineError::BadRequest(format!("unknown part '{bad}' (prefs, devices, libraries, presets, art)")));
+        return Err(EngineError::BadRequest(format!("unknown part '{bad}' (prefs, devices, libraries, presets, images, art)")));
     }
     Ok(list)
 }
@@ -1057,6 +1057,38 @@ pub(crate) fn bundle_file_name(name: &str) -> bool {
         && !name.contains(['/', '\\', ':', '<', '>', '"', '|', '?', '*'])
         && !name.chars().any(char::is_control)
         && !device
+}
+
+/// Why a bundle's material libraries past [`crate::library::MAX_LOADED`] are skipped: no more can be loaded, and
+/// each one tried is compared with the loaded library of its name (a hostile bundle repeating a name thousands of
+/// times would otherwise hold the library lock for minutes).
+pub(crate) fn too_many_libraries() -> String {
+    format!("a bundle may hold at most {} material libraries (as many as can be loaded)", crate::library::MAX_LOADED)
+}
+
+/// Load a bundle's material library (`.clb` bytes) as `name`: one with the same content is skipped ("already here");
+/// a name taken, by a loaded library or by a file in the libraries folder that is not loaded (`load` would overwrite
+/// it), loads as "<name> (bundle)", as LightBurn keeps what is there. Returns the name it loaded as, or why not.
+pub(crate) fn import_library(st: &AppState, name: &str, data: &[u8]) -> Result<String, String> {
+    crate::projects::validate_name(name).map_err(|e| e.to_string())?;
+    let mut lib = crate::libs::lock(&st.libs.library);
+    if lib.text(name).ok().map(|(_, t)| t.into_bytes()).as_deref() == Some(data) {
+        return Err("already here".into());
+    }
+    let lib_dir = st.files.config_dir().ok().map(|d| d.join(crate::library::LIBRARIES_DIR));
+    let taken = |n: &str| lib.find(n).is_some() || lib_dir.as_ref().is_some_and(|d| d.join(format!("{n}.clb")).exists());
+    let target = if taken(name) {
+        // Shortened so the name stays valid: a library named at the length limit gets " (bundle)" too.
+        let keep = crate::projects::MAX_NAME_CHARS - " (bundle)".len();
+        format!("{} (bundle)", name.chars().take(keep).collect::<String>().trim_end())
+    } else {
+        name.to_owned()
+    };
+    if taken(&target) {
+        return Err(format!("\"{target}\" exists too"));
+    }
+    lib.load(&target, data).map_err(|e| e.to_string())?;
+    Ok(target)
 }
 
 /// Import `parts` of a bundle. Returns `{prefs, devices, libraries}` and what was skipped.
@@ -1154,25 +1186,15 @@ pub fn unbundle(st: &AppState, bytes: &[u8], parts: &[String]) -> Result<Value, 
     }
     let mut libraries = Vec::new();
     if parts.iter().any(|p| p == "libraries") {
-        let mut lib = crate::libs::lock(&st.libs.library);
-        for e in entries.iter().filter(|e| e.name.starts_with("libraries/") && e.name.ends_with(".clb")) {
-            let name = e.name["libraries/".len()..e.name.len() - 4].to_string();
-            let same = lib.text(&name).ok().map(|(_, t)| t.into_bytes()) == Some(e.data.clone());
-            if same {
-                skipped.push(format!("library \"{name}\": already here"));
+        for (i, e) in entries.iter().filter(|e| e.name.starts_with("libraries/") && e.name.ends_with(".clb")).enumerate() {
+            let name = &e.name["libraries/".len()..e.name.len() - 4];
+            if i >= crate::library::MAX_LOADED {
+                skipped.push(format!("library \"{name}\": {}", too_many_libraries()));
                 continue;
             }
-            // A library file on disk that is not loaded (unloaded earlier) is kept too: `load` would overwrite it.
-            let lib_dir = st.files.config_dir().ok().map(|d| d.join(crate::library::LIBRARIES_DIR));
-            let taken = |n: &str| lib.find(n).is_some() || lib_dir.as_ref().is_some_and(|d| d.join(format!("{n}.clb")).exists());
-            let target = if taken(&name) { format!("{name} (bundle)") } else { name.clone() };
-            if taken(&target) {
-                skipped.push(format!("library \"{name}\": \"{target}\" exists too"));
-                continue;
-            }
-            match lib.load(&target, &e.data) {
-                Ok(()) => libraries.push(target),
-                Err(err) => skipped.push(format!("library \"{name}\": {err}")),
+            match import_library(st, name, &e.data) {
+                Ok(target) => libraries.push(target),
+                Err(why) => skipped.push(format!("library \"{name}\": {why}")),
             }
         }
     }

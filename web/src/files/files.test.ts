@@ -188,13 +188,20 @@ test("engine lists: backups, prefs backups, templates, settings, bundles", () =>
     devices: ["dev-2"],
     libraries: [],
     presets: [],
+    images: [],
     art: [],
     skipped: ["x"],
     browser: null,
   });
-  // A LightBurn .lbzip: presets, art libraries and the settings' browser part.
-  const lb = bundleResult({ ok: true, lightburn: true, imported: { prefs: true, devices: [], libraries: [], presets: ["Steel"], art: ["clips"] }, browser: { units: "mm" }, skipped: [] });
-  assert.deepEqual([lb.presets, lb.art, lb.browser], [["Steel"], ["clips"], { units: "mm" }]);
+  // A LightBurn .lbzip: material libraries, presets, image presets, art libraries and the settings' browser part.
+  const lb = bundleResult({
+    ok: true,
+    lightburn: true,
+    imported: { prefs: true, devices: [], libraries: ["Fiber"], presets: ["Steel"], images: ["Slate"], art: ["clips"] },
+    browser: { units: "mm" },
+    skipped: [],
+  });
+  assert.deepEqual([lb.libraries, lb.presets, lb.images, lb.art, lb.browser], [["Fiber"], ["Steel"], ["Slate"], ["clips"], { units: "mm" }]);
 });
 
 test("recent templates: most recent first, case-insensitive, only existing ones", () => {

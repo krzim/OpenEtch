@@ -526,7 +526,7 @@ export function templateNameOf(fileName: string): string {
 }
 
 /**
- * POST /api/bundle/import's answer, for the result list. A LightBurn `.lbzip` adds `presets` and `art` (names) and
+ * POST /api/bundle/import's answer, for the result list. A LightBurn `.lbzip` adds `presets`, `images` and `art` (names) and
  * `browser`: its settings' browser part, for applyLightBurnPrefs (null when none).
  */
 export function bundleResult(res: unknown): {
@@ -534,6 +534,7 @@ export function bundleResult(res: unknown): {
   devices: string[];
   libraries: string[];
   presets: string[];
+  images: string[];
   art: string[];
   skipped: string[];
   browser: unknown;
@@ -547,6 +548,7 @@ export function bundleResult(res: unknown): {
     devices: strs(imp.devices),
     libraries: strs(imp.libraries),
     presets: strs(imp.presets),
+    images: strs(imp.images),
     art: strs(imp.art),
     skipped: strs(o.skipped),
     browser,

@@ -22,6 +22,26 @@
 //!
 //! (The sample's device `size` was smaller than its file, so `size` is informational; OpenEtch reads the file.)
 //!
+//! **Inferred, not seen in a bundle** (the owner's bundle had no material library loaded and no hotkeys or image
+//! presets): three more items. LightBurn 2.2's executable holds, next to the actions above and in this order, the
+//! strings `import-settings`, `Hotkeys`, `import-hotkeys`, `/presets/image_presets.lbimg`, `Image Presets`,
+//! `import-imagepresets`, `/presets/material_test_presets.lbmt`, `Material Test Presets`,
+//! `import-materialtestpresets`, `Material Libraries`, `import-cutlib`, `Art Libraries`, `import-artlib`, `Devices`,
+//! `.lbdev`, `import-device`, plus `hotkeys.json`, `image_presets.lbimg` and the icons `filetype:hotkeys`,
+//! `filetype:image-presets` and `filetype:material-library`. Following the pattern of the items seen (only the
+//! names, actions and the image presets path are in the bundle strings themselves; `hotkeys.json` and the icons are
+//! elsewhere in the executable, and `<library>.clb` is not in it at all: it follows the art libraries'
+//! `<library>.lbart`):
+//!
+//! | Part | group | name | action | filename | icon |
+//! |---|---|---|---|---|---|
+//! | Hotkeys | Application | Hotkeys | `import-hotkeys` | `hotkeys.json` | `filetype:hotkeys` |
+//! | Image presets | Application | Image Presets | `import-imagepresets` | `image_presets.lbimg` | `filetype:image-presets` |
+//! | Material libraries | Material Libraries | the library's name | `import-cutlib` | `<library>.clb` | `filetype:material-library` |
+//!
+//! `import-toollib` (`filetype:tool-library`) and the operation libraries (`filetype:operation-library`) are
+//! LightBurn's gantry/CNC tool and operation libraries: nothing on a galvo uses them, so they are skipped.
+//!
 //! # Import
 //!
 //! Each manifest item whose `filename` is a plain file name present in the archive maps onto OpenEtch's own
@@ -29,16 +49,26 @@
 //! known keys are read, never logged; the browser-side values are returned as `browser` for the UI to apply),
 //! `import-device` → `devices` (as `POST /api/devices/import`: a device matching an imported one is updated),
 //! `import-materialtestpresets` → `presets` (renamed "<name> (2)" when taken), `import-artlib` → `art` (a new Art
-//! Library; "<name> (bundle)" when the name is taken). Other actions (hotkeys, image presets, material libraries:
-//! their action names are not known yet) are listed as skipped. The archive is read by `fileio::zip` (sizes capped,
-//! overlapping entries refused); entries are matched by exact name, never written to disk by their names.
+//! Library; "<name> (bundle)" when the name is taken), `import-cutlib` → `libraries` (the `.clb` loaded as a
+//! material library, as from an `.oebundle`: the same content is skipped, a name taken loads as "<name> (bundle)"),
+//! `import-imagepresets` → `images` (the `.lbimg` added to the Adjust Image presets, "<name> (2)" when taken).
+//! `import-hotkeys` is skipped: the layout of LightBurn's `hotkeys.json` is not documented (LightBurn's docs only say
+//! the Hotkey Editor exports and imports it), and OpenEtch keeps its key map in the browser. Other actions are listed
+//! as skipped. The archive is read by `fileio::zip` (sizes capped, overlapping entries refused); entries are matched
+//! by exact name, never written to disk by their names, and a file listed more than once is imported once. One
+//! settings, one material test presets and one image presets file is read (LightBurn writes one of each), and at most
+//! `library::MAX_LOADED` material libraries; the rest are listed as skipped.
 //!
 //! # Export
 //!
-//! The same layout with the parts OpenEtch can give LightBurn: `devices` (every device as `.lbdev`,
-//! `machine::to_lbdev`), `presets` (`material_test_presets.lbmt`), `art` (each Art Library as `.lbart`). OpenEtch
-//! writes no `settings.lbprefs` (its preferences are a small subset of LightBurn's, and importing a partial file
-//! could reset the rest of LightBurn's settings) and no material libraries (their action name is not known).
+//! The same layout with the parts OpenEtch can give LightBurn, Application items first, then devices and libraries
+//! as in LightBurn's own bundle: `images` (`image_presets.lbimg`), `presets` (`material_test_presets.lbmt`),
+//! `devices` (every device as `.lbdev`, `machine::to_lbdev`), `libraries` (each loaded material library as
+//! `<name>.clb`, its current content), `art` (each Art Library as `.lbart`). Where material libraries sit among
+//! devices and Art Libraries in LightBurn's own manifest is not known (the importer does not depend on the order).
+//! OpenEtch writes no `settings.lbprefs` (its preferences are a small subset of LightBurn's, and importing a partial
+//! file could reset the rest of LightBurn's settings) and no hotkeys (see Import). Whether LightBurn imports an
+//! OpenEtch bundle has not been tried.
 
 use serde_json::{Value, json};
 
@@ -89,25 +119,38 @@ fn part_of(action: &str) -> Option<&'static str> {
         "import-device" => Some("devices"),
         "import-materialtestpresets" => Some("presets"),
         "import-artlib" => Some("art"),
+        "import-cutlib" => Some("libraries"),
+        "import-imagepresets" => Some("images"),
         _ => None,
     }
 }
 
+/// Why an action OpenEtch does not import is skipped.
+fn skip_reason(action: &str) -> String {
+    match action {
+        "import-hotkeys" => "LightBurn's \"import-hotkeys\" is not imported: the layout of LightBurn's hotkeys.json is not documented, and OpenEtch's key map is set in File > Edit hotkeys".into(),
+        "import-toollib" => "LightBurn's \"import-toollib\" is a gantry/CNC tool library, not used on a galvo".into(),
+        a => format!("LightBurn's \"{a}\" is not imported by OpenEtch"),
+    }
+}
+
 /// Import the `parts` of a LightBurn bundle. Returns `{ok, lightburn: true, imported: {prefs, devices, libraries,
-/// presets, art}, browser?, skipped: [text]}`.
+/// presets, images, art}, browser?, skipped: [text]}`.
 pub fn import(st: &AppState, entries: &[fileio::zip::Entry], parts: &[String]) -> Result<Value, EngineError> {
     let items = manifest(entries)?;
     let wanted = |p: &str| parts.iter().any(|x| x == p);
     let mut skipped: Vec<String> = Vec::new();
     let (mut prefs, mut browser) = (false, Value::Null);
     let (mut devices, mut presets, mut art) = (Vec::<String>::new(), Vec::<String>::new(), Vec::<String>::new());
+    let (mut libraries, mut images) = (Vec::<String>::new(), Vec::<String>::new());
     // A file listed again (LightBurn lists each once) is imported once: a hostile manifest repeating one entry
     // thousands of times must not import it thousands of times.
     let mut seen = std::collections::HashSet::new();
+    let (mut single, mut library_items) = (std::collections::HashSet::new(), 0);
     for it in items {
         let label = if it.name.trim().is_empty() { it.filename.clone() } else { it.name.clone() };
         let Some(part) = part_of(&it.action) else {
-            skipped.push(format!("{label}: LightBurn's \"{}\" is not imported by OpenEtch", it.action));
+            skipped.push(format!("{label}: {}", skip_reason(&it.action)));
             continue;
         };
         if !wanted(part) {
@@ -125,6 +168,19 @@ pub fn import(st: &AppState, entries: &[fileio::zip::Entry], parts: &[String]) -
             skipped.push(format!("{label}: {} is missing from the bundle", it.filename));
             continue;
         };
+        // LightBurn writes one settings, one material test presets and one image presets file. Each further one would
+        // be parsed and checked in full only to find the presets full (500 image presets cost seconds to check).
+        if matches!(part, "prefs" | "presets" | "images") && !single.insert(part) {
+            skipped.push(format!("{label}: a bundle holds one {part} file; this one is not read"));
+            continue;
+        }
+        if part == "libraries" {
+            library_items += 1;
+            if library_items > crate::library::MAX_LOADED {
+                skipped.push(format!("{label}: {}", crate::userfiles::too_many_libraries()));
+                continue;
+            }
+        }
         let text = || String::from_utf8(e.data.clone()).map_err(|_| format!("{} is not UTF-8 text", it.filename));
         let result: Result<(), String> = (|| match part {
             "prefs" => {
@@ -158,6 +214,18 @@ pub fn import(st: &AppState, entries: &[fileio::zip::Entry], parts: &[String]) -
                 art.extend(v["name"].as_str().map(str::to_owned));
                 Ok(())
             }
+            "libraries" => {
+                let stem = it.filename.strip_suffix(".clb").unwrap_or(&it.filename);
+                let base = if crate::projects::validate_name(it.name.trim()).is_ok() { it.name.trim() } else { stem };
+                libraries.push(crate::userfiles::import_library(st, base, &e.data)?);
+                Ok(())
+            }
+            "images" => {
+                let v = crate::test_presets::import_lbimg(st, &e.data).map_err(|e| e.to_string())?;
+                images.extend(v["imported"].as_array().into_iter().flatten().filter_map(|n| n.as_str().map(str::to_owned)));
+                skipped.extend(v["warnings"].as_array().into_iter().flatten().filter_map(|w| w.as_str().map(|w| format!("{label}: {w}"))));
+                Ok(())
+            }
             _ => Ok(()),
         })();
         if let Err(why) = result {
@@ -167,7 +235,7 @@ pub fn import(st: &AppState, entries: &[fileio::zip::Entry], parts: &[String]) -
     Ok(json!({
         "ok": true,
         "lightburn": true,
-        "imported": { "prefs": prefs, "devices": devices, "libraries": [], "presets": presets, "art": art },
+        "imported": { "prefs": prefs, "devices": devices, "libraries": libraries, "presets": presets, "images": images, "art": art },
         "browser": browser,
         "skipped": skipped,
     }))
@@ -210,8 +278,8 @@ pub fn manifest_text(items: &[Value]) -> String {
     s
 }
 
-/// A LightBurn bundle of `parts` (`devices`, `presets`, `art`; `prefs` and `libraries` are not written, see the
-/// module docs). Returns the zip and how many parts were left out.
+/// A LightBurn bundle of `parts` (`images`, `presets`, `devices`, `libraries`, `art`; `prefs` is not written, see
+/// the module docs). Returns the zip and how many parts were left out.
 pub fn export(st: &AppState, parts: &[String]) -> Result<(Vec<u8>, usize), EngineError> {
     let wanted = |p: &str| parts.iter().any(|x| x == p);
     let mut entries: Vec<fileio::zip::Entry> = Vec::new();
@@ -229,8 +297,15 @@ pub fn export(st: &AppState, parts: &[String]) -> Result<(Vec<u8>, usize), Engin
         }));
         entries.push(fileio::zip::Entry { name: file, data });
     };
-    if wanted("prefs") || wanted("libraries") {
+    if wanted("prefs") {
         left_out += 1;
+    }
+    // Application items in the order LightBurn's executable lists them (image presets before material test presets).
+    if wanted("images")
+        && let Some(text) = crate::test_presets::export_lbimg(st)?
+    {
+        let name = "image_presets.lbimg".to_owned();
+        add(&mut entries, name, text.into_bytes(), "import-imagepresets", "Application", "filetype:image-presets".into(), "Image Presets".into());
     }
     if wanted("presets")
         && let Some((text, _)) = crate::test_presets::export_lbmt(st)?
@@ -252,6 +327,15 @@ pub fn export(st: &AppState, parts: &[String]) -> Result<(Vec<u8>, usize), Engin
         for (id, controller, display, text) in list {
             let controller = if controller.trim().is_empty() { "JCZFiber".to_owned() } else { controller };
             add(&mut entries, format!("{}.lbdev", file_stem(&id)), text.into_bytes(), "import-device", "Devices", format!("protocol:{controller}"), display);
+        }
+    }
+    if wanted("libraries") {
+        let list: Vec<(String, String)> = {
+            let lib = crate::libs::lock(&st.libs.library);
+            lib.loaded.iter().filter_map(|l| lib.text(&l.name).ok()).collect()
+        };
+        for (name, text) in list {
+            add(&mut entries, format!("{}.clb", file_stem(&name)), text.into_bytes(), "import-cutlib", "Material Libraries", "filetype:material-library".into(), name);
         }
     }
     if wanted("art") {

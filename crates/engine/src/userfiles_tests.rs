@@ -425,6 +425,72 @@ async fn lightburn_bundles_import_and_export() {
     assert_eq!(s, StatusCode::BAD_REQUEST);
 }
 
+/// UX-068: material libraries (`import-cutlib`) and Adjust Image presets (`import-imagepresets`) travel in `.lbzip`
+/// bundles both ways, with the manifest fields inferred from LightBurn 2.2's executable (`crate::lbzip`'s docs);
+/// a library name taken loads as "<name> (bundle)"; hotkeys and tool libraries are skipped with their reasons.
+#[tokio::test]
+async fn lightburn_bundles_carry_material_libraries_and_image_presets() {
+    let st = configured_state("lbzip-lib-a").await;
+    let app = app(&st);
+    let clb = r#"<?xml version="1.0" encoding="UTF-8"?><LightBurnLibrary><Material name="Steel"><Entry Thickness="-1.0000" Desc="Engrave" NoThickTitle="Finish"><CutSetting type="Scan"><index Value="0"/><name Value=""/><maxPower Value="38"/><speed Value="1000"/></CutSetting></Entry></Material></LightBurnLibrary>"#;
+    crate::libs::lock(&st.libs.library).load("Fiber 60W", clb.as_bytes()).unwrap();
+    let body = json!({"adjust": {"gamma": 1.4, "contrast": 20, "brightness": -11}, "image": {"dither": "jarvis", "interval_mm": 0.05}});
+    let (s, v) = json(&app, "PUT", "/api/image-adjust/presets/Slate%20photo", Some(body)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+
+    // Export: the inferred items, Application first, then devices, then libraries.
+    let (s, _, zip) = raw(&app, req("GET", "/api/bundle/export?format=lbzip", Body::empty(), false)).await;
+    assert_eq!(s, StatusCode::OK);
+    let manifest: Value = serde_json::from_slice(&fileio::zip::read_one(&zip, "LightBurnSoftware.json").unwrap().unwrap()).unwrap();
+    let items = manifest["LightBurnSoftware"]["manifest"].as_array().unwrap().clone();
+    let pick = |i: &Value| json!([i["action"], i["filename"], i["group"], i["icon"], i["name"]]);
+    assert!(items.iter().any(|i| pick(i) == json!(["import-imagepresets", "image_presets.lbimg", "Application", "filetype:image-presets", "Image Presets"])), "{items:?}");
+    assert!(items.iter().any(|i| pick(i) == json!(["import-cutlib", "Fiber 60W.clb", "Material Libraries", "filetype:material-library", "Fiber 60W"])), "{items:?}");
+    let groups: Vec<&str> = items.iter().map(|i| i["group"].as_str().unwrap()).collect();
+    let rank = |g: &str| ["Application", "Devices", "Material Libraries", "Art Libraries"].iter().position(|x| *x == g).unwrap();
+    assert!(groups.windows(2).all(|w| rank(w[0]) <= rank(w[1])), "{groups:?}");
+    for it in &items {
+        let data = fileio::zip::read_one(&zip, it["filename"].as_str().unwrap()).unwrap().unwrap();
+        assert_eq!(it["size"].as_u64(), Some(data.len() as u64), "{it}");
+    }
+
+    // Import into another engine: the library's content and the preset come back.
+    let other = configured_state("lbzip-lib-b").await;
+    let app2 = app_of(&other);
+    let (s, _, b) = raw(&app2, req("POST", "/api/bundle/import?parts=libraries,images", Body::from(zip.clone()), false)).await;
+    let v: Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!((v["imported"]["libraries"].clone(), v["imported"]["images"].clone()), (json!(["Fiber 60W"]), json!(["Slate photo"])), "{v}");
+    let text = |st: &Arc<AppState>, n: &str| crate::libs::lock(&st.libs.library).text(n).unwrap().1;
+    assert_eq!(text(&other, "Fiber 60W"), text(&st, "Fiber 60W"));
+    let (_, mine) = json(&app, "GET", "/api/image-adjust/presets", None).await;
+    let (_, theirs) = json(&app2, "GET", "/api/image-adjust/presets", None).await;
+    assert_eq!(theirs["presets"][0]["adjust"], mine["presets"][0]["adjust"], "{theirs}");
+    assert_eq!(theirs["presets"][0]["image"]["dither"], "jarvis", "{theirs}");
+    assert_eq!(theirs["presets"][0]["image"]["interval_mm"], 0.05, "{theirs}");
+    // Again: the same library is already here; the preset's name is taken.
+    let (_, _, b) = raw(&app2, req("POST", "/api/bundle/import?parts=libraries,images", Body::from(zip), false)).await;
+    let v: Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!((v["imported"]["libraries"].clone(), v["imported"]["images"].clone()), (json!([]), json!(["Slate photo (2)"])), "{v}");
+    assert!(v["skipped"].to_string().contains("already here"), "{v}");
+
+    // A different library of a taken name loads as "<name> (bundle)"; a name that is not a plain one falls back to the
+    // file's; hotkeys and tool libraries are skipped with their reasons.
+    let clb2 = clb.replace("Steel", "Brass");
+    let bundle = lightburn_bundle(&[
+        ("import-cutlib", "Fiber 60W.clb", "Fiber 60W", clb2.clone().into_bytes()),
+        ("import-cutlib", "Other.clb", "../evil", clb2.into_bytes()),
+        ("import-hotkeys", "hotkeys.json", "Hotkeys", b"{}".to_vec()),
+        ("import-toollib", "tools.lbtools", "Tools", b"{}".to_vec()),
+    ]);
+    let (_, _, b) = raw(&app2, req("POST", "/api/bundle/import", Body::from(bundle), false)).await;
+    let v: Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(v["imported"]["libraries"], json!(["Fiber 60W (bundle)", "Other"]), "{v}");
+    let skipped = v["skipped"].to_string();
+    assert!(skipped.contains("hotkeys.json is not documented") && skipped.contains("gantry/CNC tool library"), "{v}");
+    assert!(text(&other, "Fiber 60W").contains("Steel") && text(&other, "Fiber 60W (bundle)").contains("Brass"));
+}
+
 /// The owner's own LightBurn bundle (`OPENETCH_LBRN_SAMPLES`, see the samples' README), imported into a scratch
 /// engine. Only counts are checked; nothing of the user's settings is printed.
 #[tokio::test]
@@ -483,4 +549,84 @@ async fn lightburn_bundle_with_a_repeated_manifest_item_imports_it_once() {
 
 fn app_of(st: &Arc<AppState>) -> Router {
     api::router(st.clone(), None)
+}
+
+/// Hostile material libraries and image presets in a `.lbzip`: bad XML and JSON are skipped with their reasons; one
+/// image presets file is read; at most `MAX_LOADED` libraries are tried; a LightBurn-written `.clb` (BOM, CRLF) is
+/// "already here" on a second import; names at the length limit still get " (bundle)" and " (2)" within it.
+#[tokio::test]
+async fn lightburn_bundle_with_hostile_libraries_and_image_presets() {
+    let st = configured_state("lbzip-hostile").await;
+    let app = app(&st);
+    let laughs = r#"<?xml version="1.0"?><!DOCTYPE l [<!ENTITY a "aaaaaaaaaa"><!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;">]><LightBurnLibrary><Material name="&b;"/></LightBurnLibrary>"#;
+    let lb = "\u{feff}<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<LightBurnLibrary>\r\n  <Material name=\"Steel\">\r\n    <Entry Thickness=\"-1.0000\" Desc=\"Engrave\" NoThickTitle=\"Finish\">\r\n      <CutSetting type=\"Scan\">\r\n        <index Value=\"0\" />\r\n        <name Value=\"\" />\r\n        <maxPower Value=\"38\" />\r\n        <speed Value=\"1000\" />\r\n      </CutSetting>\r\n    </Entry>\r\n  </Material>\r\n</LightBurnLibrary>\r\n";
+    let long = "L".repeat(crate::projects::MAX_NAME_CHARS);
+    let lbimg = |name: &str| serde_json::to_vec(&json!({ name: {"Gamma": 1.3, "ImgMode": "Jarvis"}, "a\nb": {"Gamma": 1.0}, "Q": {"Gamma": 1e30}, "R": "x" })).unwrap();
+    let preset = "P".repeat(crate::test_presets::MAX_NAME_CHARS);
+    let bundle = lightburn_bundle(&[
+        ("import-cutlib", "laughs.clb", "Laughs", laughs.as_bytes().to_vec()),
+        ("import-cutlib", "notxml.clb", "NotXml", b"\xff\xfe garbage".to_vec()),
+        ("import-cutlib", "wrong.clb", "Wrong", b"<LightBurnProject/>".to_vec()),
+        ("import-cutlib", "lb.clb", "LB", lb.as_bytes().to_vec()),
+        ("import-cutlib", "long.clb", &long, lb.replace("Steel", "Brass").into_bytes()),
+        ("import-imagepresets", "image_presets.lbimg", "Image Presets", lbimg(&preset)),
+        ("import-imagepresets", "again.lbimg", "Image Presets", lbimg("Again")),
+    ]);
+    let import = |bundle: Vec<u8>| {
+        let app = app.clone();
+        async move {
+            let (s, _, b) = raw(&app, req("POST", "/api/bundle/import?parts=libraries,images", Body::from(bundle), false)).await;
+            let v: Value = serde_json::from_slice(&b).unwrap();
+            assert_eq!(s, StatusCode::OK, "{v}");
+            v
+        }
+    };
+    let v = import(bundle).await;
+    assert_eq!(v["imported"]["libraries"], json!(["LB", long]), "{v}");
+    // One image presets file is read (its bad presets left out with warnings), a second is not.
+    assert_eq!(v["imported"]["images"], json!([preset]), "{v}");
+    let skipped = v["skipped"].to_string();
+    for why in ["Laughs: not valid XML", "NotXml: the library is not UTF-8", "Wrong: ", "a\\nb: a preset name", "Q: adjust: adjust.gamma", "\\\"R\\\" is not a preset", "a bundle holds one images file"] {
+        assert!(skipped.contains(why), "{why}: {v}");
+    }
+    for (data, why) in [(b"{not json".to_vec(), "not JSON"), (vec![b' '; crate::test_presets::MAX_LBIMG_BYTES + 1], "at most 2 MB"), (b"[1]".to_vec(), "expected a JSON object")] {
+        let v = import(lightburn_bundle(&[("import-imagepresets", "image_presets.lbimg", "Image Presets", data)])).await;
+        assert!(v["imported"]["images"] == json!([]) && v["skipped"].to_string().contains(why), "{why}: {v}");
+    }
+
+    // Again: the LightBurn-written library is already here; the long name loads as "<shortened> (bundle)"; the preset
+    // is renamed within the name limit.
+    let lb2 = lb.replace("Steel", "Copper");
+    let v = import(lightburn_bundle(&[
+        ("import-cutlib", "lb.clb", "LB", lb.as_bytes().to_vec()),
+        ("import-cutlib", "long.clb", &long, lb2.clone().into_bytes()),
+        ("import-imagepresets", "image_presets.lbimg", "Image Presets", lbimg(&preset)),
+        ("import-imagepresets", "again.lbimg", "Image Presets", lbimg("Again")),
+    ]))
+    .await;
+    let bundled = format!("{} (bundle)", &long[..crate::projects::MAX_NAME_CHARS - 9]);
+    assert_eq!(v["imported"]["libraries"], json!([bundled]), "{v}");
+    assert!(v["skipped"].to_string().contains("LB: already here"), "{v}");
+    // The same preset again is renamed within the name limit, and so can be saved under its name and read back.
+    let renamed = format!("{} (2)", &preset[..crate::test_presets::MAX_NAME_CHARS - 4]);
+    assert_eq!(v["imported"]["images"], json!([renamed]), "{v}");
+    let (s, v) = json(&app, "PUT", &format!("/api/image-adjust/presets/{}", renamed.replace(' ', "%20")), Some(json!({"adjust": {"gamma": 1.4}}))).await;
+    assert_eq!((s, v["replaced"].clone()), (StatusCode::OK, json!(true)), "{v}");
+
+    // A bundle repeating one library name past MAX_LOADED: only MAX_LOADED are tried.
+    let clb = lb.as_bytes().to_vec();
+    let many: Vec<(String, Vec<u8>)> = (0..crate::library::MAX_LOADED + 5).map(|i| (format!("m{i}.clb"), clb.clone())).collect();
+    let items: Vec<(&str, &str, &str, Vec<u8>)> = many.iter().map(|(f, d)| ("import-cutlib", f.as_str(), "LB", d.clone())).collect();
+    let v = import(lightburn_bundle(&items)).await;
+    let skipped = v["skipped"].as_array().unwrap();
+    assert_eq!(skipped.len(), crate::library::MAX_LOADED + 5, "{v}");
+    assert_eq!(skipped.iter().filter(|s| s.as_str().unwrap().contains("at most 32 material libraries")).count(), 5, "{v}");
+    // The same in an OpenEtch .oebundle (the libraries' import is shared).
+    let manifest = json!({"format": "openetch-bundle", "version": 1});
+    let mut entries = vec![fileio::zip::Entry { name: "bundle.json".into(), data: manifest.to_string().into_bytes() }];
+    entries.extend((0..crate::library::MAX_LOADED + 5).map(|i| fileio::zip::Entry { name: format!("libraries/LB{i}.clb"), data: clb.clone() }));
+    let (s, _, b) = raw(&app, req("POST", "/api/bundle/import?parts=libraries", Body::from(fileio::zip::write(&entries).unwrap()), false)).await;
+    let v: Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["skipped"].as_array().unwrap().iter().filter(|s| s.as_str().unwrap().contains("at most 32 material libraries")).count(), 5, "{v}");
 }
