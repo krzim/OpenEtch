@@ -134,7 +134,7 @@ impl RunOptions {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RunState {
-    /// Waiting for a person to approve it in the UI with the operator PIN.
+    /// Waiting for a person to approve it (the operator PIN in the UI, or Start / the foot switch without a PIN).
     Pending,
     /// Approved; about to start (or about to wait for the physical input).
     Approved,

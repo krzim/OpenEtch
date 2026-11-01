@@ -2,7 +2,8 @@
 //! `<config-dir>/job-counters.json`), Stop At, "end after the current run" for Repeat and Run Continuously, and the
 //! progress of the job that holds the machine (`GET /api/job`, `job_progress` events).
 //!
-//! Safety is unchanged: an approved run still needs the operator PIN; `repeat` and `continuous` make one approval
+//! Safety is unchanged: a run is still approved by a person (the operator PIN, or Start / the foot switch in the
+//! no-PIN `click` approval mode, module `approve`); `repeat` and `continuous` make one approval
 //! cover the configured iterations, each started by `approve` with its own arming token; Stop ends them all and is
 //! never gated. This module never arms anything.
 

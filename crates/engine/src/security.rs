@@ -48,6 +48,37 @@ pub fn has_mcp_marker(headers: &HeaderMap) -> bool {
     MCP_MARKER_HEADERS.iter().any(|h| headers.contains_key(*h))
 }
 
+/// The no-PIN approval mode's check (`--approval click`, `POST /api/runs/{id}/approve`): the request must carry the
+/// fetch-metadata headers a browser adds to a `fetch` from a page of this engine, which page scripts cannot set
+/// (forbidden header names): `Sec-Fetch-Site: same-origin` and an `Origin` that [`origin_allowed`] accepts for the
+/// request's `Host`. A script in another site's page sends `cross-site` and its own origin; an MCP client sends
+/// neither. `Err` is the message for the 403.
+///
+/// What this does **not** prove: a program that is not a browser (curl, a script, an agent with a shell) can send
+/// the same two headers, with no token on loopback and with the access token off it. The token stays the network
+/// guard, and the foot switch is the approval path backed by hardware. Browsers send `Sec-Fetch-*` only to secure
+/// origins (`https://`, or `localhost`/`127.0.0.1`): from a page opened as `http://<lan-name>:7878` on another device
+/// (the owner's PC or iPad) the request has no `Sec-Fetch-Site`, and the `Origin` check alone decides. Browsers set
+/// `Origin` on every `fetch` POST and page scripts cannot change it, so a script in another site's page is still
+/// refused; a non-browser program could send it, exactly as it could send `Sec-Fetch-Site`.
+pub fn same_origin_browser_request(headers: &HeaderMap, cfg: &SecurityConfig) -> Result<(), String> {
+    const HOW: &str = "starting a run without the PIN needs the Start button of the OpenEtch app in a browser, or the \
+                       foot switch";
+    let site = headers.get("sec-fetch-site").and_then(|v| v.to_str().ok()).map(str::trim);
+    match site {
+        Some(s) if s.eq_ignore_ascii_case("same-origin") => {}
+        Some(s) => return Err(format!("{HOW}: this request came from another site (Sec-Fetch-Site: {s})")),
+        // Plain http:// on the network: browsers leave Sec-Fetch-* out, and the Origin check below decides.
+        None => {}
+    }
+    let host = headers.get(header::HOST).and_then(|v| v.to_str().ok()).unwrap_or_default();
+    match headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) {
+        Some(o) if origin_allowed(o, host, cfg) => Ok(()),
+        Some(_) => Err(format!("{HOW}: origin not allowed")),
+        None => Err(format!("{HOW}: this request has no Origin header")),
+    }
+}
+
 /// A fresh random token: 32 bytes as hex.
 pub fn generate_token() -> Result<String, String> {
     let mut buf = [0u8; 32];
@@ -210,6 +241,36 @@ mod tests {
         let mut req = r("GET", "/api/machine");
         req.headers_mut().insert(header::AUTHORIZATION, format!("Bearer {token}").parse().unwrap());
         assert!(token_presented(&req, token));
+    }
+
+    #[test]
+    fn same_origin_browser_requests() {
+        let c = cfg();
+        let h = |pairs: &[(&'static str, &str)]| {
+            let mut h = HeaderMap::new();
+            for (k, v) in pairs {
+                h.insert(*k, v.parse().unwrap());
+            }
+            h
+        };
+        let host = ("host", "localhost:7878");
+        let ok = h(&[host, ("sec-fetch-site", "same-origin"), ("origin", "http://localhost:7878")]);
+        assert_eq!(same_origin_browser_request(&ok, &c), Ok(()));
+        // The Vite dev server proxies the app from another loopback port: still accepted.
+        assert!(same_origin_browser_request(&h(&[host, ("sec-fetch-site", "same-origin"), ("origin", "http://localhost:5173")]), &c).is_ok());
+        // A page opened over plain http:// on the network sends no Sec-Fetch-Site: its Origin decides.
+        assert_eq!(same_origin_browser_request(&h(&[host, ("origin", "http://localhost:7878")]), &c), Ok(()));
+        let foreign = same_origin_browser_request(&h(&[host, ("origin", "http://evil.example")]), &c).unwrap_err();
+        assert!(foreign.contains("origin not allowed") && foreign.contains("foot switch"), "{foreign}");
+        assert!(same_origin_browser_request(&h(&[host]), &c).unwrap_err().contains("no Origin"));
+        for site in ["cross-site", "same-site", "none"] {
+            let e = same_origin_browser_request(&h(&[host, ("sec-fetch-site", site), ("origin", "http://localhost:7878")]), &c);
+            assert!(e.is_err(), "{site}");
+        }
+        assert!(same_origin_browser_request(&h(&[host, ("sec-fetch-site", "same-origin")]), &c).unwrap_err().contains("Origin"));
+        let evil = h(&[host, ("sec-fetch-site", "same-origin"), ("origin", "https://evil.example")]);
+        assert!(same_origin_browser_request(&evil, &c).is_err());
+        assert!(same_origin_browser_request(&h(&[host, ("sec-fetch-site", "same-origin"), ("origin", "null")]), &c).is_err());
     }
 
     #[test]

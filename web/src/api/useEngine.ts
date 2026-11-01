@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, batch, eventsUrl, execute, type Invocation } from "./client.ts";
 import { publishEngineEvent, type EngineMessage } from "./events.ts";
 import { EMPTY_TIMELINE, normalizeHistory, type TimelineModel } from "./history.ts";
-import { runFinishedToast, withApprovalLock } from "./runs.ts";
+import { footSwitchToast, runFinishedToast, withApprovalLock } from "./runs.ts";
 import type { CommandSpec, EngineEvent, GDocument, MachineStatus, Origin, Preview, ProjectInfo } from "./types.ts";
 
 /** WebSocket state shown by the connection indicator. */
@@ -280,9 +280,13 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
               setRemoteEdit((r) => ({ revision, origin, seq: (r?.seq ?? 0) + 1 }));
             }
             break;
-          case "machine":
+          case "machine": {
             void refreshMachine();
+            // The foot switch approves only when exactly one run waits (no-PIN mode); say what it did or why not.
+            const foot = footSwitchToast(ev.event, ev.detail);
+            if (foot) notifyRef.current(foot.msg, foot.kind);
             break;
+          }
           case "run_pending":
             void refreshMachine();
             // This UI's own requests already say so; only runs requested elsewhere (an agent) get a toast.

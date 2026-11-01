@@ -53,8 +53,15 @@ OPTIONS:
   --projects-mount <label>=<path>
                         Also offer the projects in directory <path> as the top folder <label> (repeatable; e.g. a
                         network or cloud-synced folder). More can be saved from the UI (Project locations).
-  --confirm-input <bit> Also require a physical input (0-15, ReadPort) after PIN approval: the run waits up to 30 s
-                        for the input to be released and then pressed. The B6's markcfg suggests a foot pedal on 14
+  --approval <pin|click>
+                        How runs are approved (default pin). pin: the operator PIN (openetch set-pin), typed in
+                        the app. click: no PIN; a run is approved only by Start in the OpenEtch app in a browser
+                        (same-origin Origin header, and Sec-Fetch-Site when the browser sends it) or by pressing the
+                        foot switch (the profile's Start Marking input, start_mark_input_bit; B6: 14, active low), which
+                        approves the one pending run. Never by MCP. The checklist, Require Framing, the door
+                        interlock and Stop work the same in both modes.
+  --confirm-input <bit> Also require a physical input (0-15, ReadPort) after approval: the run waits up to 30 s for
+                        the input to be released and then pressed. The B6's markcfg suggests a foot pedal on 14
                         (unverified).
   --lightburn-prefs <path>
                         LightBurn's prefs.ini, for LightBurn's device list (only that is read; the file is never
@@ -87,6 +94,8 @@ pub struct Config {
     pub config_dir: PathBuf,
     /// Input bit for physical run confirmation, if any.
     pub confirm_input: Option<u8>,
+    /// `--approval`: how runs are approved (default: the operator PIN).
+    pub approval: crate::pin::ApprovalMode,
     /// Where named projects are saved.
     pub projects_dir: PathBuf,
     /// `--projects-mount <label>=<path>`: further project directories, shown as top folders.
@@ -167,6 +176,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Parsed, String> 
     let mut projects_dir: Option<PathBuf> = None;
     let mut projects_mounts = Vec::new();
     let mut confirm_input = None;
+    let mut approval = crate::pin::ApprovalMode::default();
     let mut profile: Option<PathBuf> = None;
     let mut web_dir: Option<PathBuf> = None;
     let mut usb = false;
@@ -217,6 +227,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Parsed, String> 
                     _ => return Err(format!("--confirm-input must be an input bit 0-15 (got '{v}')")),
                 }
             }
+            "--approval" => approval = crate::pin::ApprovalMode::parse(&value("--approval")?)?,
             "--lightburn-prefs" => lightburn_prefs = Some(PathBuf::from(value("--lightburn-prefs")?)),
             "--lightburn-device" => {
                 let v = value("--lightburn-device")?;
@@ -246,6 +257,9 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Parsed, String> 
     if usb && sim_pin.is_some() {
         return Err("--sim-pin is only accepted with the simulator; it cannot be combined with --usb".into());
     }
+    if approval == crate::pin::ApprovalMode::Click && sim_pin.is_some() {
+        return Err("--sim-pin is a test operator PIN; --approval click uses no PIN".into());
+    }
     let listen_text = listen.unwrap_or_else(|| DEFAULT_LISTEN.to_owned());
     let listen: SocketAddr = listen_text.parse().map_err(|e| format!("--listen {listen_text}: {e}"))?;
     let profile_is_default = profile.is_none();
@@ -259,6 +273,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Parsed, String> 
         allow_hosts,
         config_dir: config_dir(config)?,
         confirm_input,
+        approval,
         projects_dir: projects_dir
             .or_else(crate::projects::default_projects_dir)
             .ok_or("cannot find the OS data directory; pass --projects-dir <path>")?,
@@ -485,6 +500,23 @@ mod tests {
         // Never with the real laser, in either order.
         assert!(p(&["--usb", "--sim-pin", "123456"]).unwrap_err().contains("--usb"));
         assert!(p(&["--sim-pin", "123456", "--usb"]).unwrap_err().contains("--usb"));
+    }
+
+    #[test]
+    fn approval_option() {
+        use crate::pin::ApprovalMode;
+        assert_eq!(run(&[]).approval, ApprovalMode::Pin, "the PIN unless asked otherwise");
+        assert_eq!(run(&["--approval", "click"]).approval, ApprovalMode::Click);
+        assert_eq!(run(&["--approval=pin"]).approval, ApprovalMode::Pin);
+        assert_eq!(run(&["--approval", "click", "--usb"]).approval, ApprovalMode::Click);
+        let p = |a: &[&str]| parse(a.iter().map(|s| s.to_string()));
+        for bad in ["none", "", "PIN"] {
+            assert!(p(&["--approval", bad]).unwrap_err().contains("pin or click"), "{bad}");
+        }
+        assert!(p(&["--approval"]).is_err());
+        assert!(p(&["--approval", "click", "--sim-pin", "123456"]).unwrap_err().contains("--sim-pin"));
+        assert!(p(&["--approval", "pin", "--sim-pin", "123456"]).is_ok());
+        assert!(USAGE.contains("--approval <pin|click>"));
     }
 
     #[test]

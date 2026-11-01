@@ -88,6 +88,12 @@ test("approve sends only the PIN and surfaces the error code", async () => {
   assert.deepEqual([...store.keys()], ["openetch.token"]);
 });
 
+test("approve without a PIN (no-PIN mode) sends an empty body", async () => {
+  await api.approveRun("run-2", null);
+  assert.equal(calls[0]?.path, "/api/runs/run-2/approve");
+  assert.deepEqual(calls[0]?.body, {});
+});
+
 test("LightBurn routes: GET devices, POST the device list as JSON, DELETE the upload", async () => {
   reply = { status: 200, body: { available: true, source: null, default_device: null, devices: [] } };
   await api.lightburn();

@@ -1,7 +1,18 @@
 //! Run approval: the only code in the engine that creates a `machine::Armed`, and so the only path to
 //! `Controller::run_parts` (which needs one). It is reachable only from `POST /api/runs/{id}/approve`, which refuses
-//! requests carrying an MCP client header; [`approve`] itself requires the operator PIN (module `pin`). Nothing in
-//! the MCP server calls it.
+//! requests carrying an MCP client header, and from the foot switch ([`foot_switch_pressed`]). Nothing in the MCP
+//! server calls it.
+//!
+//! **Who may approve** ([`Approver`], by the engine's [`ApprovalMode`], `--approval`): in the `pin` mode (the
+//! default) only a request with the operator PIN (module `pin`). In the `click` mode there is no PIN: the Start
+//! button of the web app (the endpoint first checks the browser's `Sec-Fetch-Site: same-origin` and `Origin`,
+//! `security::same_origin_browser_request`), or a release-then-press of the profile's Start Marking input (the foot
+//! switch), which approves the one pending, current run and does nothing (but send `foot_switch_ignored`) when none or
+//! several wait. The input is read by `libs::spawn_io_watch` only while no run or frame holds the board, so a press
+//! while a run waits for its start input belongs to that run, and a press approves only the run that was already the
+//! single one waiting when it began. A non-browser client could imitate the browser headers (on loopback no token is
+//! needed); the foot switch is the path backed by hardware. Every other gate (Stop At, the Job Checklist, Require
+//! Framing, the door interlock, the stop epoch) is the same in both modes.
 //!
 //! Stop is never lost: [`approve`] captures the machine's stop epoch while it claims the machine (inside the runs
 //! lock, which `AppState::stop` also takes to bump the epoch), and no iteration starts streaming once the epoch has
@@ -13,7 +24,10 @@
 //! the iterations the run's options ask for: `repeat` times, or until stopped for `continuous`; each iteration gets
 //! its own arming token here, after (when the run asks for it) the start-marking input has been released and
 //! pressed. Before every iteration after the first, the run ends when Stop At is reached or the operator asked to
-//! end after the current iteration. The job counter counts every iteration that ran to the end.
+//! end after the current iteration. The job counter counts every iteration that ran to the end. A run approved with
+//! the foot switch counts that press as its first iteration's start-input press (it is the same input, released and
+//! pressed); later iterations wait for their own press. The physical confirmation (`--confirm-input`) still waits
+//! for its own press after any approval.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -22,7 +36,7 @@ use machine::{Armed, ControllerError, RunPart, RunReport};
 use serde_json::{Value, json};
 
 use crate::hw::Machine;
-use crate::pin::{CONFIRM_POLL, CONFIRM_READS, PhysicalConfirm};
+use crate::pin::{ApprovalMode, CONFIRM_POLL, CONFIRM_READS, PhysicalConfirm};
 use crate::runs::{RunOptions, RunState};
 use crate::{AppState, EngineError, Event};
 
@@ -30,22 +44,65 @@ use crate::{AppState, EngineError, Event};
 /// waiting for ever is not wanted, so it ends after an hour).
 pub const START_INPUT_TIMEOUT: Duration = Duration::from_secs(3600);
 
-/// Check the operator PIN, then arm and start pending run `id` in a background task. Refused unless the PIN is
-/// right, the run is pending, made from the current document revision, no other run holds the machine, and the job
-/// counter has not reached Stop At.
+/// Who approves a run (see the module docs).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Approver<'a> {
+    /// The `pin` mode: the operator PIN the request carried (`None`: it carried none).
+    Pin(Option<&'a str>),
+    /// The `click` mode: the web app's Start button (the endpoint checked the browser headers).
+    Click,
+    /// The `click` mode: a press of the foot switch ([`foot_switch_pressed`]).
+    FootSwitch,
+}
+
+impl Approver<'_> {
+    fn label(self) -> &'static str {
+        match self {
+            Approver::Pin(_) => "operator PIN",
+            Approver::Click => "Start in the app",
+            Approver::FootSwitch => "foot switch",
+        }
+    }
+}
+
+/// Check who approves (`approver`, against the engine's approval mode), then arm and start pending run `id` in a
+/// background task. Refused unless the approver fits the mode (and in the `pin` mode the PIN is right), the run is
+/// pending, made from the current document revision, no other run holds the machine, and the job counter has not
+/// reached Stop At.
 ///
 /// `checklist`: the Job Checklist items the operator ticked (module `libs`: Require Framing Before Start, the Job
 /// Checklist and the door interlock are checked before the machine is claimed).
-pub(crate) async fn approve(state: &Arc<AppState>, id: &str, pin: Option<&str>, checklist: Option<&[bool]>) -> Result<Value, EngineError> {
-    // The simulator test PIN (`--sim-pin`) never approves anything on a real laser, whatever started the engine.
-    if state.approval.pin.is_sim() && state.machine.kind() != crate::hw::LinkKind::Simulated {
-        return Err(crate::pin::sim_pin_on_real_link());
-    }
-    if let Err((e, locked_until)) = state.approval.pin.verify_reporting(pin) {
-        if let Some(until_unix_s) = locked_until {
-            state.emit(Event::ApprovalLocked { until_unix_s });
+pub(crate) async fn approve(
+    state: &Arc<AppState>,
+    id: &str,
+    approver: Approver<'_>,
+    checklist: Option<&[bool]>,
+) -> Result<Value, EngineError> {
+    match (state.approval_mode(), approver) {
+        (ApprovalMode::Pin, Approver::Pin(pin)) => {
+            // The simulator test PIN (`--sim-pin`) never approves anything on a real laser, whatever started the
+            // engine.
+            if state.approval.pin.is_sim() && state.machine.kind() != crate::hw::LinkKind::Simulated {
+                return Err(crate::pin::sim_pin_on_real_link());
+            }
+            if let Err((e, locked_until)) = state.approval.pin.verify_reporting(pin) {
+                if let Some(until_unix_s) = locked_until {
+                    state.emit(Event::ApprovalLocked { until_unix_s });
+                }
+                return Err(state.approval.pin.error(e));
+            }
         }
-        return Err(state.approval.pin.error(e));
+        (ApprovalMode::Click, Approver::Click | Approver::FootSwitch) => {}
+        (mode, _) => {
+            let how = match mode {
+                ApprovalMode::Pin => "with the operator PIN",
+                ApprovalMode::Click => "with Start in the app or the foot switch",
+            };
+            return Err(EngineError::Approval {
+                code: "approval_mode",
+                message: format!("this engine approves runs {how} (--approval {})", mode.as_str()),
+            });
+        }
     }
     let confirm = state.approval.confirm;
     let pending_revision = state.runs().get(id).filter(|r| r.state == RunState::Pending).map(|r| r.revision);
@@ -104,17 +161,18 @@ pub(crate) async fn approve(state: &Arc<AppState>, id: &str, pin: Option<&str>, 
     state.machine.bump_frame_gen();
     // A pause asked for before this approval (e.g. as the previous job ended) does not carry over.
     state.machine.clear_pause();
-    tracing::warn!(run_id = id, physical_confirm = confirm.is_some(), iterations = ?options.iterations(), "run approved with the operator PIN");
+    tracing::warn!(run_id = id, approved_by = approver.label(), physical_confirm = confirm.is_some(), iterations = ?options.iterations(), "run approved");
     state.job.begin(id, &device, options.iterations(), estimate);
     state.emit(Event::machine("run_approved", Some(id.to_owned())));
 
+    let foot_switch = approver == Approver::FootSwitch;
     let st = state.clone();
     let run_id = id.to_owned();
     let started = Instant::now();
     tokio::spawn(progress_ticker(state.clone(), id.to_owned()));
     tokio::spawn(async move {
         let table = options.table.clone();
-        let job = Job { id: &run_id, device: &device, parts, epoch, confirm, options };
+        let job = Job { id: &run_id, device: &device, parts, epoch, confirm, options, foot_switch };
         let (final_state, report, error) = execute(&st, job).await;
         // Repeat Marking: back to the table's start once the job finished (not after a stop).
         if final_state == RunState::Finished
@@ -148,6 +206,52 @@ pub(crate) async fn approve(state: &Arc<AppState>, id: &str, pin: Option<&str>, 
     Ok(json!({ "ok": true, "id": id, "run_id": id, "state": state_name }))
 }
 
+/// The foot switch that approves runs: the profile's Start Marking input (`start_mark_input_bit`, at the level of
+/// `start_mark_active_low`) while the engine runs in the `click` approval mode; `None` otherwise.
+pub(crate) fn foot_switch_port(st: &AppState) -> Option<machine::InputPort> {
+    if st.approval_mode() != ApprovalMode::Click {
+        return None;
+    }
+    let profile = st.machine.profile();
+    profile.start_mark_input_bit.map(|bit| machine::InputPort { bit, active_low: profile.start_mark_active_low })
+}
+
+/// The runs a foot switch press could approve: the pending runs of the current document revision.
+pub(crate) fn foot_switch_candidates(st: &AppState) -> Vec<String> {
+    let rev = st.revision();
+    st.runs().pending(rev).into_iter().filter(|r| !r.stale).map(|r| r.id).collect()
+}
+
+/// The foot switch was released and then pressed while no run or frame held the board (`libs::spawn_io_watch`):
+/// approve the one pending run of the current document revision (requested in the app or by an agent), if it was
+/// also the only one waiting when the press began (`at_press`, from [`foot_switch_candidates`]). With none or
+/// several waiting nothing is approved and the machine event `foot_switch_ignored` (`no_pending` or
+/// `several_pending`) tells the UI to say so; when the waiting runs changed during the press (a run requested, or
+/// replaced, while the pedal went down) nothing is approved either (`changed_during_press`), so a press never
+/// approves a run that did not exist when it began. A refused approval (door open, checklist, Require Framing, Stop
+/// At, ...) sends `foot_switch_refused` with the reason. An approval sends `foot_switch_approved` with the run id.
+pub(crate) async fn foot_switch_pressed(st: &Arc<AppState>, at_press: &[String]) {
+    let waiting = foot_switch_candidates(st);
+    let [id] = waiting.as_slice() else {
+        let detail = if waiting.is_empty() { "no_pending" } else { "several_pending" };
+        tracing::info!(waiting = waiting.len(), "foot switch pressed; nothing approved");
+        st.emit(Event::machine("foot_switch_ignored", Some(detail.to_owned())));
+        return;
+    };
+    if at_press != waiting.as_slice() {
+        tracing::info!(run_id = %id, "foot switch pressed while the waiting runs changed; nothing approved");
+        st.emit(Event::machine("foot_switch_ignored", Some("changed_during_press".to_owned())));
+        return;
+    }
+    match approve(st, id, Approver::FootSwitch, None).await {
+        Ok(_) => st.emit(Event::machine("foot_switch_approved", Some(id.clone()))),
+        Err(e) => {
+            tracing::warn!(run_id = %id, error = %e, "foot switch: approval refused");
+            st.emit(Event::machine("foot_switch_refused", Some(e.to_string())));
+        }
+    }
+}
+
 /// Send `job_progress` events while the job of `run_id` holds the machine.
 async fn progress_ticker(st: Arc<AppState>, run_id: String) {
     loop {
@@ -170,6 +274,8 @@ struct Job<'a> {
     epoch: u64,
     confirm: Option<PhysicalConfirm>,
     options: RunOptions,
+    /// Approved with the foot switch: that press was the first iteration's start-input press.
+    foot_switch: bool,
 }
 
 /// Wait for the physical confirmation (if configured), then run the iterations the options ask for, each after the
@@ -215,7 +321,7 @@ async fn execute(st: &Arc<AppState>, job: Job<'_>) -> Outcome {
                 return (RunState::Finished, last, None);
             }
         }
-        if let Some(bit) = start_bit {
+        if let Some(bit) = start_bit.filter(|_| !(completed == 0 && job.foot_switch)) {
             st.job.waiting(iteration);
             st.runs().set_state(id, RunState::AwaitingConfirm);
             // The job state is `waiting_for_start_input` (GET /api/job); the event has the same name. The older
@@ -407,3 +513,7 @@ async fn wait_for_input(
         tokio::time::sleep(poll).await;
     }
 }
+
+#[cfg(test)]
+#[path = "approve_tests.rs"]
+mod tests;

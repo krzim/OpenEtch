@@ -38,6 +38,7 @@ pulse_width_enabled = true     # LightBurn Laser_QPulseWidthEnabled
 open_mo_delay_us = 8000.0      # LightBurn Laser_OpenMODelay (informational)
 start_mark_input_bit = 14      # markcfg STARTMARKPORT; on the owner's B6 (2026-11-01) input 14 reads 1 at rest and 0 while
                                # the foot switch is pressed (active low)
+start_mark_active_low = true
 notes = [
     "field, swap/negate, cor_file, red light speed, frequency range and mark speed limits from markcfg7.ini",
     "GALVOX / GALVONEGATE0/1 meaning unverified",

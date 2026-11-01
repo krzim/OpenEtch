@@ -84,8 +84,10 @@ fine interval on a large image can pass the job's segment limit; planning then n
 frame_stop.
 7. job_request_run - create a pending run.
 
-Firing the laser always requires a person to approve the pending run in the OpenEtch UI with their operator PIN \
-(and, if configured, a physical switch on the machine). You cannot and must not approve or start a run, and you \
+Firing the laser always requires a person at the machine to approve the pending run: in the OpenEtch UI with their \
+operator PIN or, when the engine runs without a PIN, with Start in the app or the machine's foot switch (a press \
+approves the one pending run, also one you requested; plus, if configured, a physical confirmation switch). You \
+cannot and must not approve or start a run, and you \
 must never ask for, guess, handle or set the operator PIN, or try to approve runs by any other route (HTTP, \
 shell, browser). machine_stop is always available and stops everything.
 

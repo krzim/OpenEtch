@@ -173,9 +173,12 @@ export const libsApi = {
   projects: () => call("GET", "/api/projects"),
   /** A pending run (nothing fires until it is approved with the PIN). */
   requestRun: (body: Record<string, unknown>) => call("POST", "/api/runs", body),
-  /** Approve with the operator PIN and the ticked Job Checklist (UI only; the PIN goes only into this body). */
-  approve: (id: string, pin: string, checklist: boolean[] | null) =>
-    call("POST", `/api/runs/${enc(id)}/approve`, checklist ? { pin, checklist } : { pin }),
+  /**
+   * Approve with the operator PIN (null without a PIN: Start) and the ticked Job Checklist (UI only; the PIN goes
+   * only into this body).
+   */
+  approve: (id: string, pin: string | null, checklist: boolean[] | null) =>
+    call("POST", `/api/runs/${enc(id)}/approve`, { ...(pin === null ? {} : { pin }), ...(checklist ? { checklist } : {}) }),
 };
 
 export type LibsApi = typeof libsApi;

@@ -487,7 +487,7 @@ async fn approval_pin_errors_have_codes() {
     assert_eq!(
         m["approval"],
         json!({"pin_set": false, "pin_changed": false, "locked_until_unix_s": null, "sim_pin": false,
-               "physical_confirm": {"input_bit": 14, "timeout_s": 30}})
+               "physical_confirm": {"input_bit": 14, "timeout_s": 30}, "mode": "pin", "foot_switch": null})
     );
     let (s, v) = send(&app, approve(pin_body())).await;
     assert_eq!((s, &v["code"], &v["ok"]), (StatusCode::FORBIDDEN, &json!("pin_not_set"), &json!(false)), "{v}");

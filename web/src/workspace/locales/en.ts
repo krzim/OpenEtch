@@ -250,7 +250,7 @@ export const EN = {
   "laser.frameStop": "Stop frame",
   "laser.frameStopTitle": "End red-pointer framing (pending runs are kept)",
   "laser.request": "Request run",
-  "laser.requestTitle": "Create a pending run; it fires only after PIN approval",
+  "laser.requestTitle": "Create a pending run; it fires only after a person approves it",
   "laser.pause": "Pause",
   "laser.resume": "Resume",
   "laser.notYet": "Not supported by the engine yet",

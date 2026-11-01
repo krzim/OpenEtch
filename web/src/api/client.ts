@@ -161,10 +161,13 @@ export const api = {
   /** Creates a pending run; nothing fires until it is approved. */
   requestRun: () => request<unknown>("POST", "/api/runs", { origin: UI_ORIGIN }),
   /**
-   * Approve a pending run with the operator PIN. The PIN goes only into this request body; it is never stored.
-   * Errors are HTTP 403 with `code` "pin_not_set" | "pin_invalid" | "pin_required" | "pin_locked".
+   * Approve a pending run with the operator PIN, or with `pin` null when the engine runs without a PIN (Start; the
+   * browser adds the Sec-Fetch-Site and Origin headers the engine checks). The PIN goes only into this request body;
+   * it is never stored. Errors are HTTP 403 with `code` "pin_not_set" | "pin_invalid" | "pin_required" |
+   * "pin_locked" | "browser_required".
    */
-  approveRun: (id: string, pin: string) => request<unknown>("POST", `/api/runs/${encodeURIComponent(id)}/approve`, { pin }),
+  approveRun: (id: string, pin: string | null) =>
+    request<unknown>("POST", `/api/runs/${encodeURIComponent(id)}/approve`, pin === null ? {} : { pin }),
   /** The current project name and whether the document changed since it was saved. */
   project: () => request<ProjectInfo>("GET", "/api/project"),
   /** Saved projects on the engine (`[{name, modified_unix_s, size}]`); normalize with `projectList`. */

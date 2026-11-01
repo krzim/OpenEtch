@@ -288,7 +288,7 @@ export const EN_LIBS = {
   // ---- Batch ----
   "batch.title": "Batch run",
   "batch.button": "Batch…",
-  "batch.intro": "Run several saved projects one after another with one PIN approval (at most {max}). The run options (repeat, foot pedal) apply to the whole batch.",
+  "batch.intro": "Run several saved projects one after another with one approval (at most {max}). The run options (repeat, foot pedal) apply to the whole batch.",
   "batch.saved": "Saved projects",
   "batch.queue": "Run order",
   "batch.none": "No saved projects.",
@@ -309,7 +309,7 @@ export const EN_LIBS = {
   "tbl.increment": "Step per run",
   "tbl.settle": "Settle time",
   "tbl.returnToStart": "Return to start when finished",
-  "tbl.hint": "The table travels {total} {unit} in all. One PIN approval covers every run. Unverified on hardware.",
+  "tbl.hint": "The table travels {total} {unit} in all. One approval covers every run. Unverified on hardware.",
   "tbl.request": "Request run",
   "tbl.requested": "Repeat Marking of {count} runs requested. Approve it in the Runs card.",
 

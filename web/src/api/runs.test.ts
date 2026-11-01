@@ -4,13 +4,18 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  APPROVAL_CODE_TEXT,
   activeRuns,
   approvalErrorText,
+  approvalHowText,
   approvalNotice,
   approveBlocker,
+  footSwitch,
+  footSwitchToast,
   formatCountdown,
   formatDuration,
   isStale,
+  noPinMode,
   lockSecondsLeft,
   okError,
   pendingRuns,
@@ -226,4 +231,44 @@ test("200 {ok:false} answers (undo with nothing to undo) are errors", () => {
   assert.equal(okError({ ok: false }, "nothing to redo"), "nothing to redo");
   assert.equal(okError({ ok: true, revision: 3 }, "x"), null);
   assert.equal(okError(undefined, "x"), null);
+});
+
+test("no-PIN mode: no PIN notices, Start or the foot switch, foot switch toasts", () => {
+  const click = machine({
+    approval: { pin_set: false, physical_confirm: null, pin_changed: true, mode: "click", foot_switch: { input_bit: 14, active_low: false } },
+  });
+  assert.equal(noPinMode(click), true);
+  // No PIN file is needed: neither "no PIN set" nor "PIN file changed" blocks an approval.
+  assert.equal(approvalNotice(click), null);
+  assert.equal(approveBlocker(run(), click), null);
+  assert.deepEqual(footSwitch(click), { input_bit: 14, active_low: false });
+  assert.equal(approvalHowText(click), "No PIN on this engine: a run starts with Start below or the foot switch (input 14).");
+  const noFoot = machine({ approval: { pin_set: false, physical_confirm: null, mode: "click", foot_switch: null } });
+  assert.equal(footSwitch(noFoot), null);
+  assert.equal(approvalHowText(noFoot), "No PIN on this engine: a run starts with Start below.");
+  // The PIN mode, and an engine that does not report a mode, keep the PIN.
+  const pinModes = [
+    machine({ approval: { pin_set: false, physical_confirm: null, mode: "pin", foot_switch: { input_bit: 14, active_low: false } } }),
+    machine({ approval: { pin_set: true, physical_confirm: null } }),
+  ];
+  for (const m of pinModes) {
+    assert.equal(noPinMode(m), false);
+    assert.equal(footSwitch(m), null);
+    assert.match(approvalHowText(m), /^Approval needs the operator PIN/);
+  }
+  assert.equal(approvalNotice(machine({ approval: { pin_set: false, physical_confirm: null, mode: "pin" } })), APPROVAL_CODE_TEXT.pin_not_set);
+  assert.match(approvalErrorText("browser_required", "x"), /localhost or https/);
+
+  assert.deepEqual(footSwitchToast("foot_switch_ignored", "several_pending"), {
+    msg: "Foot switch: several jobs are waiting. Pick one in the app.",
+    kind: "error",
+  });
+  assert.equal(footSwitchToast("foot_switch_ignored", "no_pending")?.kind, "info");
+  assert.deepEqual(footSwitchToast("foot_switch_ignored", "changed_during_press"), {
+    msg: "Foot switch: the waiting job changed while the pedal was pressed, so nothing started. Check it and press again.",
+    kind: "error",
+  });
+  assert.equal(footSwitchToast("foot_switch_refused", "the door interlock (input 5) is open")?.msg, "Foot switch: not started. the door interlock (input 5) is open");
+  assert.equal(footSwitchToast("foot_switch_approved", "run-7")?.msg, "Foot switch: run run-7 approved.");
+  assert.equal(footSwitchToast("run_approved", "run-7"), null);
 });

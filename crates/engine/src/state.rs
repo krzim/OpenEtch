@@ -35,7 +35,7 @@ use crate::frame::{self, FrameRequest, FrameRun, Pointer};
 use crate::job::JobTracker;
 use crate::hw::{AbortOutcome, Machine};
 use crate::lightburn::LightBurn;
-use crate::pin::ApprovalConfig;
+use crate::pin::{ApprovalConfig, ApprovalMode};
 use crate::projects::{self, LBRN2_EXT, PROJECT_EXT, ProjectDir, ProjectInfo, ProjectState};
 use crate::render::{self, RenderOptions};
 use crate::runs::{self, RunOptions, RunStore, RunView};
@@ -44,8 +44,9 @@ use crate::{EngineError, Event};
 
 /// The message every pending-run answer carries.
 pub const APPROVAL_MESSAGE: &str = "The run is pending. Nothing fires until a person reviews it and approves it in \
-    the OpenEtch UI (Laser workspace) with the operator PIN. Agents cannot and must not approve runs, and must never \
-    ask for, handle or set the PIN.";
+    the OpenEtch UI (Laser workspace) with the operator PIN or, when the engine runs without a PIN, with Start in the \
+    app or the machine's foot switch. Agents cannot and must not approve runs, and must never ask for, handle or set \
+    the PIN.";
 
 /// A planned preview and the document it was planned from.
 pub type PreviewResult = Arc<(Document, Result<Preview, PlanError>)>;
@@ -95,6 +96,8 @@ pub struct AppState {
     pub security: SecurityConfig,
     /// Operator PIN and the optional physical confirmation input.
     pub approval: ApprovalConfig,
+    /// How runs are approved (`--approval`): set once at startup ([`AppState::set_approval_mode`]), else the PIN.
+    approval_mode: std::sync::OnceLock<ApprovalMode>,
     previews: Arc<PreviewGate>,
     /// Where named projects are saved.
     pub projects: ProjectDir,
@@ -331,6 +334,7 @@ impl AppState {
             events: crate::events::channel(),
             security,
             approval,
+            approval_mode: std::sync::OnceLock::new(),
             previews: Arc::default(),
             projects,
             project: Mutex::new(project),
@@ -552,6 +556,17 @@ impl AppState {
 
     pub fn revision(&self) -> u64 {
         lock(&self.session).document().revision
+    }
+
+    /// How runs are approved: the `--approval` mode set at startup, else [`ApprovalMode::Pin`].
+    pub fn approval_mode(&self) -> ApprovalMode {
+        self.approval_mode.get().copied().unwrap_or_default()
+    }
+
+    /// Set the approval mode, once, when the engine starts (`main`); `Err` with the mode already set otherwise. Nothing
+    /// reachable from the API or MCP calls this, so a running engine never changes how runs are approved.
+    pub fn set_approval_mode(&self, mode: ApprovalMode) -> Result<(), ApprovalMode> {
+        self.approval_mode.set(mode).map_err(|_| self.approval_mode())
     }
 
     /// Every step on the timeline (file contents in parameters shortened).
@@ -1149,6 +1164,12 @@ impl AppState {
         let mut v = self.machine.status_json();
         v["device"] = self.devices().active().summary();
         v["approval"] = self.approval.status_json();
+        // `mode`: "pin" or "click" (no PIN: Start in the app or the foot switch); `foot_switch`: the input that
+        // approves the single pending run in the click mode, or null.
+        v["approval"]["mode"] = json!(self.approval_mode().as_str());
+        v["approval"]["foot_switch"] = json!(
+            crate::approve::foot_switch_port(self).map(|p| json!({ "input_bit": p.bit, "active_low": p.active_low }))
+        );
         // Whether framing can light a focus pointer (`pointer: focus | both`): a controllable active device whose
         // profile names a usable focus light output.
         v["focus_light"] = json!(

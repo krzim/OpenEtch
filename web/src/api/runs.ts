@@ -2,7 +2,7 @@
 // which ended, what a run will do (its stats), when approvals are blocked (stale run, PIN unset or changed, lockout)
 // and what the approval error codes mean, and what to tell the user when a run ends or STOP answers. No React, no fetch, so `npm test` covers it.
 
-import type { MachineStatus, PendingRun, RunFinishedEvent, RunStats } from "./types.ts";
+import type { FootSwitch, MachineStatus, PendingRun, RunFinishedEvent, RunStats } from "./types.ts";
 import type { LengthUnit } from "../workspace/prefs.ts";
 import { MM_PER_IN } from "../workspace/units.ts";
 import { tr } from "../workspace/tr.ts";
@@ -66,11 +66,58 @@ export function formatCountdown(s: number): string {
 export function approvalNotice(m: MachineStatus | null, nowUnixS: number = Date.now() / 1000): string | null {
   const a = m?.approval;
   if (!a) return null;
+  // Without a PIN there is no PIN file to set or watch and no lockout.
+  if (noPinMode(m)) return null;
   if (a.pin_set === false) return APPROVAL_CODE_TEXT.pin_not_set;
   if (a.pin_changed === true) return APPROVAL_CODE_TEXT.pin_changed;
   const left = lockSecondsLeft(m, nowUnixS);
   if (left > 0) return `Too many wrong PINs. Approvals unlock in ${formatCountdown(left)}.`;
   return null;
+}
+
+/**
+ * True when the engine approves runs without a PIN (`--approval click`): Start in this app or the foot switch. An
+ * engine that does not report `approval.mode` uses the PIN.
+ */
+export function noPinMode(m: MachineStatus | null): boolean {
+  return m?.approval?.mode === "click";
+}
+
+/** The foot switch whose press approves the single pending run (no-PIN mode only), or null. */
+export function footSwitch(m: MachineStatus | null): FootSwitch | null {
+  const f = noPinMode(m) ? m?.approval?.foot_switch : null;
+  return f && num(f.input_bit) ? f : null;
+}
+
+/** The line on the pending-runs card that says how a run is approved. */
+export function approvalHowText(m: MachineStatus | null): string {
+  const pedal = m?.approval?.physical_confirm ?? null;
+  const confirm = pedal ? tr("lp.thenTheFootPedalInputV1", { v1: pedal.input_bit }) : "";
+  if (!noPinMode(m)) return `Approval needs the operator PIN${confirm}.`;
+  const foot = footSwitch(m);
+  const how = foot ? tr("apir.startOrFootSwitchV1", { v1: foot.input_bit }) : tr("apir.startNoPin");
+  return `${how}${confirm}.`;
+}
+
+/**
+ * Toast for the foot switch's machine events (no-PIN mode): `foot_switch_ignored` when none or several runs wait,
+ * `foot_switch_refused` with the engine's reason, `foot_switch_approved` with the run id. Null for other events.
+ */
+export function footSwitchToast(event: unknown, detail: unknown): { msg: string; kind: "info" | "error" } | null {
+  const d = typeof detail === "string" ? detail : "";
+  switch (event) {
+    case "foot_switch_ignored":
+      if (d === "several_pending") return { msg: tr("apir.footSwitchSeveralPending"), kind: "error" };
+      // A run was requested or replaced while the pedal went down: a press approves only the run it began with.
+      if (d === "changed_during_press") return { msg: tr("apir.footSwitchChangedDuringPress"), kind: "error" };
+      return { msg: tr("apir.footSwitchNoPending"), kind: "info" };
+    case "foot_switch_refused":
+      return { msg: tr("apir.footSwitchRefusedV1", { v1: d || "?" }), kind: "error" };
+    case "foot_switch_approved":
+      return { msg: tr("apir.footSwitchApprovedV1", { v1: d || "run" }), kind: "info" };
+    default:
+      return null;
+  }
 }
 
 /**
@@ -124,6 +171,8 @@ export const APPROVAL_CODE_TEXT: Readonly<Record<string, string>> = {
   pin_required: tr("apir.enterTheOperatorPin"),
   pin_locked: tr("apir.tooManyWrongPinsApprovalsAre"),
   pin_changed: tr("apir.pinFileChangedRestartTheEngine"),
+  browser_required: tr("apir.browserRequired"),
+  approval_mode: tr("apir.approvalModeChanged"),
 };
 
 /** Message for a failed approval: the code's text when known, else the engine's own message. */

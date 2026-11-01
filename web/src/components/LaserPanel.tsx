@@ -2,7 +2,9 @@
 // runs, and preview stats. Approval is the only way the UI can make the laser fire: it needs two separate taps plus the
 // operator PIN (set on the engine machine with `openetch set-pin`), shows what will fire, and is refused for stale runs,
 // a changed PIN file and a PIN lockout. The PIN lives only in this component's state while the confirm step is open and
-// goes only into the approve request body.
+// goes only into the approve request body. When the engine runs without a PIN (`--approval click`) the confirm step has
+// no PIN field: Start approves (the engine checks that the request comes from this page in a browser), and the card
+// says when the foot switch can approve the single pending run instead.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, ApiError } from "../api/client.ts";
@@ -12,9 +14,12 @@ import {
   activeRuns,
   approvalErrorText,
   approvalNotice,
+  approvalHowText,
   approveBlocker,
+  footSwitch,
   isStale,
   lockSecondsLeft,
+  noPinMode,
   pendingRuns,
   pinHint,
   recentRuns,
@@ -127,7 +132,6 @@ export function RunsCard(props: {
   const active = activeRuns(props.machine);
   const recent = recentRuns(props.machine);
   const approval = props.machine?.approval;
-  const pedal = approval?.physical_confirm ?? null;
   const nowUnixS = useLockClock(props.machine);
   const notice = approvalNotice(props.machine, nowUnixS);
   return (
@@ -146,7 +150,7 @@ export function RunsCard(props: {
         </h3>
         {approval && (
           <p className={notice ? "run-hint" : "muted"} role={notice ? "status" : undefined}>
-            {notice ?? `Approval needs the operator PIN${pedal ? t("lp.thenTheFootPedalInputV1", { v1: pedal.input_bit }) : ""}.`}
+            {notice ?? approvalHowText(props.machine)}
           </p>
         )}
         {pending.length === 0 ? (
@@ -267,7 +271,10 @@ function PendingRunRow(props: {
   const pinRef = useRef<HTMLInputElement>(null);
   const blocker = approveBlocker(run, machine, { docRevision: props.docRevision, nowUnixS: props.nowUnixS });
   const stale = isStale(run, props.docRevision);
-  const hint = pinHint(pin);
+  // No PIN on this engine: Start alone approves (and the foot switch, when the profile has one).
+  const noPin = noPinMode(machine);
+  const foot = footSwitch(machine);
+  const hint = noPin ? null : pinHint(pin);
   // Require Framing, Door Protect and the Job Checklist of the active device (src/libs/JobSafety.tsx).
   const gates = useApprovalGates();
 
@@ -290,10 +297,10 @@ function PendingRunRow(props: {
     if (blocker && step === "confirm") setStep("idle");
   }, [blocker, step]);
 
-  const canFire = step === "confirm" && !blocker && validPin(pin) && gates.complete;
+  const canFire = step === "confirm" && !blocker && (noPin || validPin(pin)) && gates.complete;
   const approve = async () => {
     if (!canFire) return;
-    const sent = pin;
+    const sent = noPin ? null : pin;
     setPin("");
     setStep("sending");
     setError(null);
@@ -338,27 +345,29 @@ function PendingRunRow(props: {
             <strong>{t("lp.thisFiresTheLaser")}</strong> Enclosure closed, eyewear on, focus and stock checked?
           </p>
           <ApprovalChecks state={gates} disabled={step === "sending"} />
-          <label className="pin-field">
-            <span>{t("lp.operatorPin")}</span>
-            <input
-              ref={pinRef}
-              type="password"
-              inputMode="numeric"
-              pattern="[0-9]*"
-              minLength={6}
-              maxLength={12}
-              placeholder={t("lp.612Digits")}
-              aria-describedby={hint ? `pin-hint-${run.id}` : undefined}
-              autoComplete="off"
-              value={pin}
-              disabled={step === "sending"}
-              onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 12))}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void approve();
-                else if (e.key === "Escape") setStep("idle");
-              }}
-            />
-          </label>
+          {!noPin && (
+            <label className="pin-field">
+              <span>{t("lp.operatorPin")}</span>
+              <input
+                ref={pinRef}
+                type="password"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                minLength={6}
+                maxLength={12}
+                placeholder={t("lp.612Digits")}
+                aria-describedby={hint ? `pin-hint-${run.id}` : undefined}
+                autoComplete="off"
+                value={pin}
+                disabled={step === "sending"}
+                onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 12))}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void approve();
+                  else if (e.key === "Escape") setStep("idle");
+                }}
+              />
+            </label>
+          )}
           {hint && (
             <p className="run-hint" id={`pin-hint-${run.id}`}>
               {hint}
@@ -369,9 +378,10 @@ function PendingRunRow(props: {
               {t("lp.cancel")}
             </button>
             <button className="btn btn-danger" onClick={() => void approve()} disabled={!canFire}>
-              {step === "sending" ? t("rest.approving") : t("lp.confirmAndFire")}
+              {step === "sending" ? t("rest.approving") : noPin ? t("lp.start") : t("lp.confirmAndFire")}
             </button>
           </div>
+          {foot && <p className="muted">{t("lp.orPressTheFootSwitchV1", { v1: foot.input_bit })}</p>}
         </div>
       )}
     </div>

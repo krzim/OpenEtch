@@ -1,5 +1,13 @@
 //! The operator PIN that approving a run requires, and the optional physical confirmation input.
 //!
+//! **Approval modes** ([`ApprovalMode`], `--approval pin|click`, fixed at startup): with `pin` (the default) every
+//! approval needs the PIN below. With `click` there is no PIN: a run is approved only by the Start button of the
+//! OpenEtch web app (a browser request carrying `Sec-Fetch-Site: same-origin` and an accepted `Origin`, which page
+//! scripts cannot set) or by a press of the foot switch (the profile's Start Marking input). Neither path is open to
+//! MCP. A non-browser HTTP client could imitate those headers (on loopback it needs no token; off loopback it needs
+//! the access token), and an agent driving the browser can click Start; the foot switch is the path backed by
+//! hardware, and the token stays the network guard. Everything else (checklist, Require Framing, the
+//! door interlock, Stop) applies in both modes.
 //! A person sets the PIN with `openetch set-pin` (interactive; refused unless stdin is a terminal; changing an
 //! existing PIN asks for the current one first; `set-pin --reset` deletes it after a typed confirmation). It is
 //! stored as a salted SHA-256 hash in `operator-pin` in the engine's config directory (on Unix the directory is
@@ -554,6 +562,38 @@ impl PhysicalConfirm {
     }
 }
 
+/// How runs are approved (`--approval`). Fixed when the engine starts ([`crate::AppState::set_approval_mode`]); no
+/// API, MCP tool or UI setting changes it, so nothing that talks to a running engine can switch the PIN off.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ApprovalMode {
+    /// The operator PIN (`openetch set-pin`), typed in the web app's approval dialog. The default.
+    #[default]
+    Pin,
+    /// No PIN: a run is approved only by the Start button of the OpenEtch web app (a same-origin browser request,
+    /// see `api::approve_run` and [`crate::security::same_origin_browser_request`]) or by a press of the foot switch
+    /// (the profile's Start Marking input, `approve::foot_switch_pressed`). Every other gate stays.
+    Click,
+}
+
+impl ApprovalMode {
+    /// `pin` or `click` (the `--approval` value and `GET /api/machine`'s `approval.mode`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ApprovalMode::Pin => "pin",
+            ApprovalMode::Click => "click",
+        }
+    }
+
+    /// Parse an `--approval` value.
+    pub fn parse(s: &str) -> Result<Self, String> {
+        match s.trim() {
+            "pin" => Ok(ApprovalMode::Pin),
+            "click" => Ok(ApprovalMode::Click),
+            other => Err(format!("--approval must be pin or click (got '{other}')")),
+        }
+    }
+}
+
 /// How runs are approved.
 #[derive(Debug)]
 pub struct ApprovalConfig {
@@ -831,6 +871,17 @@ mod tests {
         let now = unix_s(SystemTime::now());
         assert!(until >= now + 59 && until <= now + 61, "{until} vs {now}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn approval_modes() {
+        assert_eq!(ApprovalMode::default(), ApprovalMode::Pin, "a fresh install asks for the PIN");
+        for m in [ApprovalMode::Pin, ApprovalMode::Click] {
+            assert_eq!(ApprovalMode::parse(m.as_str()), Ok(m));
+        }
+        for bad in ["", "PIN", "none", "pedal"] {
+            assert!(ApprovalMode::parse(bad).unwrap_err().contains("pin or click"), "{bad}");
+        }
     }
 
     #[test]

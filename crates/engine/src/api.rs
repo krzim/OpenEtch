@@ -18,6 +18,7 @@ use serde_json::{Value, json};
 use tower_http::services::{ServeDir, ServeFile};
 
 use crate::frame::FrameRequest;
+use crate::pin::ApprovalMode;
 use crate::render::RenderOptions;
 use crate::security::{self, has_mcp_marker};
 use crate::state::{FileFormat, UploadFormat, UploadOptions, parse_origin};
@@ -590,8 +591,11 @@ struct ApproveBody {
     checklist: Option<Vec<bool>>,
 }
 
-/// Approval by a person: `{"pin": "<operator PIN>"}`. Refuses anything that looks like an MCP client or names a
-/// non-UI origin; PIN refusals are 403 with `code` (`pin_not_set`, `pin_required`, `pin_invalid`, `pin_locked`).
+/// Approval by a person. Refuses anything that looks like an MCP client or names a non-UI origin. In the `pin`
+/// approval mode the body is `{"pin": "<operator PIN>"}` and PIN refusals are 403 with `code` (`pin_not_set`,
+/// `pin_required`, `pin_invalid`, `pin_locked`). In the `click` mode (no PIN) the request must come from the web
+/// app's Start button in a browser (`Sec-Fetch-Site: same-origin` and an accepted `Origin`; else 403 with code
+/// `browser_required`); a `pin` in the body is ignored.
 async fn approve_run(
     State(st): State<Arc<AppState>>,
     UrlPath(id): UrlPath<String>,
@@ -606,5 +610,15 @@ async fn approve_run(
     if parse_origin(b.origin.as_ref())? != commands::Origin::Ui {
         return Err(EngineError::Forbidden("runs can only be approved from the UI".into()));
     }
-    Ok(Json(approve::approve(&st, &id, b.pin.as_deref(), b.checklist.as_deref()).await?))
+    let approver = match st.approval_mode() {
+        ApprovalMode::Pin => approve::Approver::Pin(b.pin.as_deref()),
+        ApprovalMode::Click => {
+            if let Err(message) = security::same_origin_browser_request(&headers, &st.security) {
+                tracing::warn!(run_id = %id, %message, "refused a no-PIN approval that did not come from the app in a browser");
+                return Err(EngineError::Approval { code: "browser_required", message });
+            }
+            approve::Approver::Click
+        }
+    };
+    Ok(Json(approve::approve(&st, &id, approver, b.checklist.as_deref()).await?))
 }

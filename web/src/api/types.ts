@@ -379,6 +379,19 @@ export interface ApprovalInfo {
   pin_changed?: boolean;
   /** After repeated wrong PINs: when approvals unlock (engine clock, Unix seconds), or null when unlocked. */
   locked_until_unix_s?: number | null;
+  /**
+   * How runs are approved (`--approval`, fixed when the engine starts): "pin" (the operator PIN; also what an older
+   * engine without this field does) or "click" (no PIN: Start in this app, or the foot switch).
+   */
+  mode?: "pin" | "click";
+  /** In the "click" mode: the input (the profile's Start Marking input) whose press approves the single pending run. */
+  foot_switch?: FootSwitch | null;
+}
+
+/** The foot switch that approves runs in the no-PIN mode (`approval.foot_switch`). */
+export interface FootSwitch {
+  input_bit: number;
+  active_low: boolean;
 }
 
 /** GET /api/machine. Only `connected` is relied on; everything else is displayed when present. */

@@ -9,7 +9,7 @@ use commands::Session;
 use engine::cli::{self, Config, Parsed};
 use engine::devices::{self, DeviceRegistry};
 use engine::hw::Machine;
-use engine::pin::{self, ApprovalConfig, PhysicalConfirm, PinStore};
+use engine::pin::{self, ApprovalConfig, ApprovalMode, PhysicalConfirm, PinStore};
 use engine::projects::ProjectDir;
 use engine::security::{SecurityConfig, generate_token};
 use engine::{AppState, api};
@@ -207,7 +207,16 @@ async fn run(config: Config) -> Result<(), String> {
         None => PinStore::new(&config.config_dir),
     };
     let approval = ApprovalConfig { pin: pin_store, confirm: config.confirm_input.map(PhysicalConfirm::new) };
-    if approval.pin.is_sim() {
+    if config.approval == ApprovalMode::Click {
+        let foot = match machine.profile().start_mark_input_bit {
+            Some(bit) => format!(" or by pressing the foot switch (input {bit}, the profile's Start Marking input)"),
+            None => " (the profile has no Start Marking input, so there is no foot switch)".to_owned(),
+        };
+        println!(
+            "openetch: approval without a PIN (--approval click): runs start only with Start in the OpenEtch app (in \
+             a browser at http://localhost or https){foot}; never from MCP"
+        );
+    } else if approval.pin.is_sim() {
         let banner = "SIMULATOR TEST PIN ACTIVE (--sim-pin): runs on this engine are approved with a PIN given on the \
                       command line, held in memory only. The engine drives the simulator; nothing reaches a laser. \
                       Never use --sim-pin on an engine that drives a laser.";
@@ -232,6 +241,10 @@ async fn run(config: Config) -> Result<(), String> {
     let projects = ProjectDir::new(&config.projects_dir);
     tracing::info!(path = %config.projects_dir.display(), "projects directory");
     let state = AppState::new(Session::new(document), machine.clone(), security, approval, projects);
+    // Before anything serves requests or watches inputs; it never changes while the engine runs.
+    if state.set_approval_mode(config.approval).is_err() {
+        return Err("internal error: the approval mode was already set".into());
+    }
     state.install_devices(registry);
     state.job.open(config.config_dir.join(engine::job::COUNTERS_FILE));
     // Libraries, preferences, job log, camera calibrations (module `libs`).

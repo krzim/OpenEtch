@@ -25,7 +25,7 @@ export const EN_JOB = {
   "job.endAfterToast": "The job ends after the current run.",
   "job.options": "Run options",
   "job.repeat": "Repeat",
-  "job.repeatTitle": "Mark the job this many times in a row; one PIN approval covers them all",
+  "job.repeatTitle": "Mark the job this many times in a row; one approval covers them all",
   "job.times": "times",
   "job.continuous": "Run continuously",
   "job.continuousTitle": "Start the job again after every run until STOP, Stop At or End after this run",
@@ -89,7 +89,7 @@ export const EN_JOB = {
   "pvt.speed": "Playback speed",
   "pvt.speedTitle": "Playback speed relative to the estimated real time",
   "pvt.startHere": "Start here",
-  "pvt.startHereTitle": "Request a run from this point (segment {segment}); it still needs PIN approval",
+  "pvt.startHereTitle": "Request a run from this point (segment {segment}); it still needs approval",
   "pvt.startHereEnd": "Move the slider back to where the run should start",
   "pvt.saveImage": "Save preview image (PNG)",
 
