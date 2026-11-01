@@ -800,7 +800,9 @@ function FieldEditor(p: { value: string; onChange: (v: string) => void; onEnter:
  * "Field size 153.8 mm — from your LightBurn device JCZFiber  Edit", or for a gantry device "Workspace 600 × 400 mm —
  * from your active device Shop CO2" (no Edit: the device's workspace and origin are used as they are).
  */
-function FieldSummary(p: { mm: number; source: string; onEdit?: () => void; workspaceMm?: [number, number] | null }) {
+function FieldSummary(p: { mm: number; source: string; onEdit?: () => void; workspaceMm?: [number, number] | null; machineMm?: number | null }) {
+  // LightBurn stores the field to 0.1 mm (153.8 for a 153.75 mm lens): say so instead of showing two unexplained numbers.
+  const rounded = p.machineMm != null && !p.workspaceMm && sameField(p.mm, p.machineMm) && Math.abs(p.mm - p.machineMm) >= 1e-3;
   return (
     <p className="field-summary">
       <span>
@@ -814,6 +816,7 @@ function FieldSummary(p: { mm: number; source: string; onEdit?: () => void; work
           </>
         )}{" "}
         — {p.source}
+        {rounded && <span className="muted"> (LightBurn's rounding of this laser's {fmt(p.machineMm as number, 3)} mm field)</span>}
       </span>
       {p.onEdit && !p.workspaceMm && (
         <button className="link-btn" onClick={p.onEdit}>
@@ -822,6 +825,11 @@ function FieldSummary(p: { mm: number; source: string; onEdit?: () => void; work
       )}
     </p>
   );
+}
+
+/** Two field sizes that are the same lens: LightBurn keeps 0.1 mm, EzCad and the .cor file keep more. */
+function sameField(a: number, b: number): boolean {
+  return Math.abs(a - b) <= 0.05 + 1e-9;
 }
 
 /** One-tap sizes: every LightBurn device's, the design's, the machine's, 110 and 150. */
@@ -952,7 +960,7 @@ function ImportDialog(p: { file: FileActions; initialFiles: File[]; initialMode:
         reading ? (
           <p className="field-summary muted">Reading the file…</p>
         ) : shared ? (
-          <FieldSummary mm={shared.fieldMm} source={fieldSourceText(shared)} onEdit={edit} workspaceMm={shared.workspaceMm} />
+          <FieldSummary mm={shared.fieldMm} source={fieldSourceText(shared)} onEdit={edit} workspaceMm={shared.workspaceMm} machineMm={p.file.machineFieldMm} />
         ) : (
           <>
             <p className="field-summary">
@@ -1009,7 +1017,7 @@ function ExportDialog({ file, onClose }: { file: FileActions; onClose: () => voi
   const fieldMm = field === null ? file.exportFieldMm : typed;
   const origin = exportFieldOrigin(file.importedFieldMm, file.docFieldMm, file.machineFieldMm);
   const device = file.lightburnDevices.find((d) => d.name === file.lightburnDevice) ?? (file.lightburnDevices.length === 1 ? file.lightburnDevices[0] : null);
-  const deviceDiffers = device !== null && device.field_mm !== null && Math.abs(device.field_mm - file.exportFieldMm) >= 1e-3;
+  const deviceDiffers = device !== null && device.field_mm !== null && !sameField(device.field_mm, file.exportFieldMm);
   // A gantry device: the engine lays the file out for its workspace and origin, so there is no field size to pick.
   const active = file.activeDevice;
   const gantry = active !== null && !isGalvo(active.kind);
@@ -1044,8 +1052,10 @@ function ExportDialog({ file, onClose }: { file: FileActions; onClose: () => voi
         </>
       ) : field === null ? (
         <>
-          <FieldSummary mm={file.exportFieldMm} source={exportFieldOriginText(origin)} onEdit={() => setField(fmt(file.exportFieldMm, 3))} />
-          {active && <p className="hint">Active device: {active.display_name} ({workspaceText([active.workspace_mm[0], active.workspace_mm[0]])} field).</p>}
+          <FieldSummary mm={file.exportFieldMm} source={exportFieldOriginText(origin)} onEdit={() => setField(fmt(file.exportFieldMm, 3))} machineMm={file.machineFieldMm} />
+          {active && !sameField(active.workspace_mm[0], file.exportFieldMm) && (
+            <p className="hint">Active device: {active.display_name} ({workspaceText([active.workspace_mm[0], active.workspace_mm[0]])} field).</p>
+          )}
           {deviceDiffers && device && (
             <p className="hint">
               Your {active ? "active" : "LightBurn"} device {device.name} uses {fmt(device.field_mm, 3)} mm. If the file will be opened with that device,
