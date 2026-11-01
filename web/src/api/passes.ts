@@ -15,6 +15,8 @@ export const MAX_SUB_LAYERS = 64;
 import * as C from "./commands.ts";
 import { layerEnergy } from "./laser.ts";
 import type { Cleanup, CutSettings, FillMode, GDocument, Layer, Preview, PreviewSegment } from "./types.ts";
+import type { SpeedUnit } from "../workspace/prefs.ts";
+import { formatSpeed } from "../workspace/units.ts";
 
 /** One tab of a layer's pass list. */
 export interface PassEntry {
@@ -102,9 +104,10 @@ export function modeLabel(mode: FillMode | string | undefined): string {
   return mode === "fill" ? "Fill" : mode === "fill_then_line" ? "Fill+Line" : mode === "line" ? "Line" : String(mode ?? "");
 }
 
-/** One-line settings summary: "Fill · 20% · 1000 mm/s · 30 kHz · 200 ns · ×2". */
-export function settingsSummary(s: CutSettings): string {
-  const parts = [modeLabel(s.mode), `${num(s.power_pct)}%`, `${num(s.speed_mm_s)} mm/s`, `${num(s.frequency_khz)} kHz`];
+/** One-line settings summary: "Fill · 20% · 1000 mm/s · 30 kHz · 200 ns · ×2", the speed in the display unit. */
+export function settingsSummary(s: CutSettings, speedUnit: SpeedUnit = "mm/s"): string {
+  const speed = speedUnit === "mm/s" ? `${num(s.speed_mm_s)} mm/s` : formatSpeed(s.speed_mm_s, speedUnit);
+  const parts = [modeLabel(s.mode), `${num(s.power_pct)}%`, speed, `${num(s.frequency_khz)} kHz`];
   if (s.pulse_width_ns !== null && s.pulse_width_ns !== undefined) parts.push(`${num(s.pulse_width_ns)} ns`);
   if (s.passes !== 1) parts.push(`×${s.passes}`);
   return parts.join(" · ");

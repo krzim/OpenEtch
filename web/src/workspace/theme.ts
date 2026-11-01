@@ -10,6 +10,12 @@ export type Theme = "light" | "dark";
 /** Field (canvas work area) background per theme; keep in step with `--field` in styles.css. */
 export const FIELD_BG: Record<Theme, string> = { light: "#ffffff", dark: "#1d2024" };
 
+/** Toolpath preview ink (drawn on a canvas, so not from CSS); keep in step with `--tp-jump` and `--tp-shade` in styles.css. */
+export const TOOLPATH_INK: Record<Theme, { jumpColor: string; shadeColor: string }> = {
+  light: { jumpColor: "#9aa0a8", shadeColor: "#111111" },
+  dark: { jumpColor: "#6f7783", shadeColor: "#f2f2f2" },
+};
+
 export function resolveTheme(pref: ThemePref, systemDark: boolean): Theme {
   return pref === "system" ? (systemDark ? "dark" : "light") : pref;
 }

@@ -7,6 +7,8 @@ import type { ReactNode } from "react";
 import type { Workspace } from "./TopBar.tsx";
 import type { SnapSettings, Tool, ViewStyle } from "./Viewport.tsx";
 import { Icon } from "./ui.tsx";
+import { usePrefs } from "../workspace/usePrefs.ts";
+import { formatLength } from "../workspace/units.ts";
 
 export type ArrangeAction =
   | "left"
@@ -96,6 +98,7 @@ function Mini(props: { icon: string; title: string; onClick: () => void; disable
 }
 
 export function Toolbar(p: ToolbarProps) {
+  const lengthUnit = usePrefs().units;
   const two = p.units >= 2;
   const three = p.units >= 3;
   const a = (x: ArrangeAction) => () => p.onArrange(x);
@@ -152,7 +155,7 @@ export function Toolbar(p: ToolbarProps) {
               />
               <Mini
                 icon="gridSnap"
-                title={`Snap to grid ${p.snap.grid ? "on" : "off"} (${p.snap.gridMm} mm)`}
+                title={`Snap to grid ${p.snap.grid ? "on" : "off"} (${formatLength(p.snap.gridMm, lengthUnit, 3)})`}
                 active={p.snap.grid}
                 onClick={() => p.onSnap({ ...p.snap, grid: !p.snap.grid })}
               />

@@ -1,13 +1,55 @@
 // Maths of the numeric edits toolbar (LightBurn's Numeric Edits: X, Y, W, H, rotation, lock aspect, 9-point anchor,
 // mm or % sizing). Every result is an `object.transform` parameter set in field mm; the toolbar sends it as one
-// command.
+// command. The 9-point anchor is one setting shared by the toolbar and the Properties panel (`useAnchor`), so their
+// X/Y always refer to the same point; it is kept in this browser.
 
+import { useSyncExternalStore } from "react";
 import type { Vec2 } from "../api/types.ts";
 import type { Box } from "../geometry.ts";
 
 /** Reference point of the selection's bounding box (nw = top left; +Y is up). */
 export type Anchor = "nw" | "n" | "ne" | "w" | "c" | "e" | "sw" | "s" | "se";
 export const ANCHORS: Anchor[] = ["nw", "n", "ne", "w", "c", "e", "sw", "s", "se"];
+
+/** A stored anchor, or the centre for anything else. */
+export function parseAnchor(v: unknown): Anchor {
+  return typeof v === "string" && (ANCHORS as string[]).includes(v) ? (v as Anchor) : "c";
+}
+
+const ANCHOR_KEY = "openetch.anchor";
+const anchorListeners = new Set<() => void>();
+let anchorValue: Anchor = (() => {
+  try {
+    return parseAnchor(localStorage.getItem(ANCHOR_KEY));
+  } catch {
+    return "c";
+  }
+})();
+
+export function getAnchor(): Anchor {
+  return anchorValue;
+}
+
+export function setAnchor(a: Anchor): void {
+  if (a === anchorValue) return;
+  anchorValue = a;
+  try {
+    localStorage.setItem(ANCHOR_KEY, a);
+  } catch {
+    // Storage unavailable: the anchor lasts for this page.
+  }
+  for (const l of anchorListeners) l();
+}
+
+export function subscribeAnchor(fn: () => void): () => void {
+  anchorListeners.add(fn);
+  return () => anchorListeners.delete(fn);
+}
+
+/** React hook: the shared anchor and its setter (numeric toolbar and Properties panel). */
+export function useAnchor(): [Anchor, (a: Anchor) => void] {
+  return [useSyncExternalStore(subscribeAnchor, getAnchor, getAnchor), setAnchor];
+}
 
 export function anchorPoint(b: Box, a: Anchor): Vec2 {
   const x = a.includes("w") ? b.x0 : a.includes("e") ? b.x1 : (b.x0 + b.x1) / 2;

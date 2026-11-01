@@ -61,6 +61,23 @@ export function formatLength(mm: number, u: LengthUnit, digits = 2): string {
   return `${trimNumber(lengthToDisplay(mm, u), lengthDigits(u, digits))} ${u}`;
 }
 
+/** A total length with `digits` decimals (one more in inches): "512.3 mm" or "20.17 in". */
+export function lengthText(mm: number, u: LengthUnit, digits = 1): string {
+  return `${lengthToDisplay(mm, u).toFixed(lengthDigits(u, digits))} ${u}`;
+}
+
+/** A length with fixed decimals for live readouts: "12.35 mm" or "0.486 in" (inches get one more decimal). */
+export function fixedLength(mm: number, u: LengthUnit, digits = 2): string {
+  return `${fixedNumber(mm, u, digits)} ${u}`;
+}
+
+/** The number only, as `fixedLength` writes it: "12.35" or "0.486". */
+export function fixedNumber(mm: number, u: LengthUnit, digits = 2): string {
+  const v = lengthToDisplay(mm, u);
+  const s = v.toFixed(lengthDigits(u, digits));
+  return /^-0(\.0*)?$/.test(s) ? s.slice(1) : s;
+}
+
 /** "1000 mm/s", "60000 mm/min", "39.37 in/s". */
 export function formatSpeed(mmPerS: number, u: SpeedUnit): string {
   return `${trimNumber(speedToDisplay(mmPerS, u), u === "in/s" ? 2 : 1)} ${u}`;

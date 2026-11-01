@@ -192,7 +192,11 @@ export function setReference(sel: Selection, id: string): Selection {
   return sel.objects.includes(id) ? { ...sel, reference: id } : sel;
 }
 
-/** Drop ids that no longer exist, or whose layer is hidden, after a document refetch. Same object when unchanged. */
+/**
+ * Drop ids that no longer exist, or whose layer is hidden, after a document refetch. Same object when unchanged.
+ * When the selected objects moved to another layer (a palette swatch, the Layer field, an agent), the selection's
+ * layer follows them, so Cuts / Layers and Properties highlight the layer they are on now.
+ */
 export function pruneSelection(sel: Selection, doc: GDocument | null): Selection {
   if (!doc) return sel;
   const visible = visibleLayerIds(doc);
@@ -201,7 +205,11 @@ export function pruneSelection(sel: Selection, doc: GDocument | null): Selection
     const o = byId.get(id);
     return !!o && isVisible(doc, o, visible);
   });
-  const layer = sel.layer && doc.layers.some((l) => l.id === sel.layer) ? sel.layer : null;
+  let layer = sel.layer && doc.layers.some((l) => l.id === sel.layer) ? sel.layer : null;
+  if (objects.length && !objects.some((id) => byId.get(id)?.layer === layer)) {
+    const added = (sel.lastAdded ?? []).filter((id) => objects.includes(id));
+    layer = layerOf(doc, added.length ? added : objects, layer);
+  }
   const stock = sel.stock && doc.stock !== null;
   if (objects.length === sel.objects.length && layer === sel.layer && stock === sel.stock) return sel;
   return {

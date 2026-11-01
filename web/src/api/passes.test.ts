@@ -111,6 +111,8 @@ test("cleanup pass: same shape, one fast low-energy pass at 45°, once after the
 test("settings summary and mode labels", () => {
   assert.equal(P.settingsSummary(cut()), "Fill · 40% · 1000 mm/s · 30 kHz · 200 ns · ×2");
   assert.equal(P.settingsSummary(cut({ mode: "line", pulse_width_ns: null, passes: 1 })), "Line · 40% · 1000 mm/s · 30 kHz");
+  assert.equal(P.settingsSummary(cut({ pulse_width_ns: null, passes: 1 }), "mm/min"), "Fill · 40% · 60000 mm/min · 30 kHz");
+  assert.equal(P.settingsSummary(cut({ pulse_width_ns: null, passes: 1 }), "in/s"), "Fill · 40% · 39.37 in/s · 30 kHz");
   assert.equal(P.modeLabel("fill_then_line"), "Fill+Line");
 });
 

@@ -4,8 +4,9 @@
 // output, select, copy/paste settings, delete), the Output and Show headers toggle every layer, and the quick-edit row
 // under the list changes the selected layer's main speed, power, passes, interval and frequency.
 //
-// Reordering layers needs an engine `layer.move {id, to_index}`; the up/down buttons appear only when the engine has
-// it (it does not yet). Every change is a `layer.*` command.
+// The list order is the cut order (jobs burn layer by layer). Drag a row (above or below another), or use the up/down
+// buttons or the right-click menu, to reorder: one `layer.move {id, to_index}` each, shown only on engines that have
+// it. Every change is a `layer.*` command.
 
 import { useRef, useState } from "react";
 import type { Invocation } from "../api/client.ts";
@@ -20,19 +21,18 @@ import { Dock } from "./Dock.tsx";
 import { WsModal } from "./WsModal.tsx";
 import {
   copyLayerSettings,
+  dropIndex,
   invertAll,
   layerRows,
   modeLabel,
   onlyThis,
   pasteLayerSettings,
   setAll,
+  stepIndex,
   type LayerSettingsClip,
 } from "./layersTable.ts";
 import { formatSpeed, speedToDisplay, trimNumber } from "./units.ts";
 import { usePrefs, useT } from "./usePrefs.ts";
-
-/** Engine command to reorder layers (not in the engine yet; the UI shows reorder buttons once it is). */
-export const LAYER_MOVE = "layer.move";
 
 type Run = (inv: Invocation | Invocation[]) => Promise<unknown>;
 
@@ -59,7 +59,8 @@ export function CutsLayers(p: CutsLayersProps) {
   const [editing, setEditing] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [, bump] = useState(0);
-  const drag = useRef<string | null>(null);
+  const drag = useRef<number | null>(null);
+  const [dropAt, setDropAt] = useState<{ index: number; after: boolean } | null>(null);
   const { doc, run, report } = p;
 
   const batch = (invs: Invocation[]) => {
@@ -69,14 +70,22 @@ export function CutsLayers(p: CutsLayersProps) {
   if (!doc) return null;
   const rows = layerRows(doc);
   const current = p.selection.layer;
-  const canMove = p.has(LAYER_MOVE);
+  const canMove = p.has(C.OPT.layerMove);
   const canSub = p.has(C.OPT.layerSubAdd) && p.has(C.OPT.layerSubDelete);
   const editLayer = editing ? doc.layers.find((l) => l.id === editing) : undefined;
   const delLayer = confirmDelete ? doc.layers.find((l) => l.id === confirmDelete) : undefined;
 
-  const moveLayer = (id: string, to: number) => {
-    if (to < 0 || to >= doc.layers.length) return;
-    void run({ id: LAYER_MOVE, params: { id, to_index: to } }).catch(report);
+  const moveLayer = (id: string, to: number | null) => {
+    if (to === null || to < 0 || to >= doc.layers.length) return;
+    void run(C.layerMove(id, to)).catch(report);
+  };
+  const endDrag = () => {
+    drag.current = null;
+    setDropAt(null);
+  };
+  const dropHalf = (e: React.DragEvent<HTMLElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    return e.clientY > r.top + r.height / 2;
   };
 
   const copy = (l: Layer) => {
@@ -130,8 +139,8 @@ export function CutsLayers(p: CutsLayersProps) {
     if (canMove) {
       items.push(
         { sep: true },
-        { label: t("layers.moveUp"), disabled: index === 0, action: () => moveLayer(l.id, index - 1) },
-        { label: t("layers.moveDown"), disabled: index === doc.layers.length - 1, action: () => moveLayer(l.id, index + 1) },
+        { label: t("layers.moveUp"), disabled: stepIndex(index, -1, doc.layers.length) === null, action: () => moveLayer(l.id, stepIndex(index, -1, doc.layers.length)) },
+        { label: t("layers.moveDown"), disabled: stepIndex(index, 1, doc.layers.length) === null, action: () => moveLayer(l.id, stepIndex(index, 1, doc.layers.length)) },
       );
     }
     items.push(
@@ -191,15 +200,34 @@ export function CutsLayers(p: CutsLayersProps) {
               return [
                 <tr
                   key={l.id}
-                  className={`cuts-row${current === l.id ? " selected" : ""}${l.output ? "" : " no-output"}${l.visible ? "" : " hidden-layer"}`}
-                  title={t("layers.rowTitle", { count: r.objects })}
+                  className={`cuts-row${current === l.id ? " selected" : ""}${l.output ? "" : " no-output"}${l.visible ? "" : " hidden-layer"}${
+                    dropAt?.index === index ? (dropAt.after ? " drop-after" : " drop-before") : ""
+                  }`}
+                  title={canMove ? t("layers.rowTitleMove", { count: r.objects }) : t("layers.rowTitle", { count: r.objects })}
                   draggable={canMove}
-                  onDragStart={() => (drag.current = l.id)}
-                  onDragOver={(e) => canMove && e.preventDefault()}
-                  onDrop={() => {
-                    if (drag.current && drag.current !== l.id) moveLayer(drag.current, index);
-                    drag.current = null;
+                  onDragStart={(e) => {
+                    drag.current = index;
+                    e.dataTransfer.effectAllowed = "move";
+                    // Firefox starts a drag only with data set.
+                    e.dataTransfer.setData("text/plain", l.name);
                   }}
+                  onDragOver={(e) => {
+                    if (!canMove || drag.current === null) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "move";
+                    const after = dropHalf(e);
+                    if (dropAt?.index !== index || dropAt.after !== after) setDropAt({ index, after });
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const from = drag.current;
+                    if (from !== null) {
+                      const id = rows[from]?.layer.id;
+                      if (id) moveLayer(id, dropIndex(from, index, dropHalf(e), rows.length));
+                    }
+                    endDrag();
+                  }}
+                  onDragEnd={endDrag}
                   onClick={(e) => p.onSelectLayer(l.id, e.shiftKey)}
                   onDoubleClick={() => setEditing(l.id)}
                   onContextMenu={(e) => {
@@ -263,11 +291,11 @@ export function CutsLayers(p: CutsLayersProps) {
                       <button
                         className="tog"
                         disabled={index === 0}
-                        title={t("layers.moveUp")}
+                        title={t("layers.moveUpTitle")}
                         aria-label={t("layers.moveUp")}
                         onClick={(e) => {
                           e.stopPropagation();
-                          moveLayer(l.id, index - 1);
+                          moveLayer(l.id, stepIndex(index, -1, rows.length));
                         }}
                       >
                         <Icon name="chevronUp" size={14} />
@@ -275,11 +303,11 @@ export function CutsLayers(p: CutsLayersProps) {
                       <button
                         className="tog"
                         disabled={index === rows.length - 1}
-                        title={t("layers.moveDown")}
+                        title={t("layers.moveDownTitle")}
                         aria-label={t("layers.moveDown")}
                         onClick={(e) => {
                           e.stopPropagation();
-                          moveLayer(l.id, index + 1);
+                          moveLayer(l.id, stepIndex(index, 1, rows.length));
                         }}
                       >
                         <Icon name="chevronDown" size={14} />

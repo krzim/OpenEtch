@@ -161,3 +161,21 @@ export function pasteLayerSettings(target: Layer, clip: LayerSettingsClip, canSu
   }
   return invs;
 }
+
+/**
+ * Where a dragged layer lands: dropping it on the upper half of row `over` puts it before that row, on the lower half
+ * after it. Returns the `to_index` for `layer.move` (its position once moved; the others keep their order), or null
+ * when nothing would change.
+ */
+export function dropIndex(from: number, over: number, after: boolean, count: number): number | null {
+  if (!(from >= 0 && from < count && over >= 0 && over < count)) return null;
+  const slot = over + (after ? 1 : 0);
+  const to = slot > from ? slot - 1 : slot;
+  return to === from ? null : to;
+}
+
+/** `layer.move` for one step up (-1, burns earlier) or down (+1), or null at the end of the list. */
+export function stepIndex(from: number, step: -1 | 1, count: number): number | null {
+  const to = from + step;
+  return from >= 0 && from < count && to >= 0 && to < count ? to : null;
+}

@@ -158,6 +158,10 @@ test("stats rows show what will fire", () => {
   // plan::Stats has no layer count, so there is no Layers row; missing fields are left out rather than shown as NaN.
   assert.deepEqual(runStatRows({ id: "r", stats: { mark_length_mm: 2 } }), [["Mark", "2.0 mm"]]);
   assert.deepEqual(runStatRows({ id: "r" }), []);
+  assert.deepEqual(runStatRows({ id: "r", stats: { mark_length_mm: 1270, jump_length_mm: 25.4 } }, "in"), [
+    ["Mark", "50.00 in"],
+    ["Jump", "1.00 in"],
+  ]);
 });
 
 test("the packet count shows only while a run is pending", () => {

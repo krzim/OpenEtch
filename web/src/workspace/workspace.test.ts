@@ -19,12 +19,12 @@ import {
   unbindChord,
 } from "./hotkeys.ts";
 import { interpolate, languages, registerLocale, translate, translateDynamic } from "./i18n.ts";
-import { copyLayerSettings, invertAll, layerRows, onlyThis, pasteLayerSettings, setAll, settingsPatch } from "./layersTable.ts";
-import { anchorPoint, moveTo, resizeTo, rotationDelta, scalePercent } from "./numeric.ts";
+import { copyLayerSettings, dropIndex, invertAll, layerRows, onlyThis, pasteLayerSettings, setAll, settingsPatch, stepIndex } from "./layersTable.ts";
+import { anchorPoint, getAnchor, moveTo, parseAnchor, resizeTo, rotationDelta, scalePercent, setAnchor, subscribeAnchor } from "./numeric.ts";
 import { assignPlan, entryForLayer, layerForEntry, normColor, PALETTE } from "./palette.ts";
 import { DEFAULT_PREFS, sanitizePrefs } from "./prefs.ts";
 import { canvasColor, contrast, FIELD_BG, parseHex, resolveTheme } from "./theme.ts";
-import { coord, formatLength, formatSpeed, lengthFromDisplay, lengthToDisplay, speedFromDisplay, speedToDisplay, unitConversion, zoomPercent } from "./units.ts";
+import { coord, fixedLength, fixedNumber, formatLength, formatSpeed, lengthFromDisplay, lengthText, lengthToDisplay, speedFromDisplay, speedToDisplay, unitConversion, zoomPercent } from "./units.ts";
 
 // --- prefs ----------------------------------------------------------------------------------------------------------------
 
@@ -392,4 +392,46 @@ test("rotation: absolute for one object, relative for several", () => {
   assert.equal(rotationDelta(170, -170, true), 20);
   assert.equal(rotationDelta(0, 90, false), 90);
   assert.equal(rotationDelta(10, 10, true), null);
+});
+
+test("layer reorder: drop position and up/down steps give layer.move's to_index", () => {
+  // Rows A B C D; drag B (1).
+  assert.equal(dropIndex(1, 0, false, 4), 0, "before A");
+  assert.equal(dropIndex(1, 0, true, 4), null, "after A is where it is");
+  assert.equal(dropIndex(1, 1, false, 4), null, "onto itself");
+  assert.equal(dropIndex(1, 2, false, 4), null, "before C is where it is");
+  assert.equal(dropIndex(1, 2, true, 4), 2, "after C");
+  assert.equal(dropIndex(1, 3, true, 4), 3, "after D: last");
+  assert.equal(dropIndex(3, 0, false, 4), 0, "last to first");
+  assert.equal(dropIndex(3, 1, true, 4), 2);
+  assert.equal(dropIndex(0, 3, false, 4), 2, "before D");
+  assert.equal(dropIndex(5, 0, false, 4), null, "unknown row");
+  assert.equal(dropIndex(0, 4, false, 4), null);
+  assert.equal(stepIndex(0, -1, 3), null);
+  assert.equal(stepIndex(0, 1, 3), 1);
+  assert.equal(stepIndex(2, 1, 3), null);
+  assert.equal(stepIndex(2, -1, 3), 1);
+});
+
+test("one 9-point anchor shared by the numeric toolbar and Properties", () => {
+  assert.equal(parseAnchor("ne"), "ne");
+  assert.equal(parseAnchor("middle"), "c");
+  assert.equal(parseAnchor(null), "c");
+  const seen: string[] = [];
+  const off = subscribeAnchor(() => seen.push(getAnchor()));
+  const before = getAnchor();
+  setAnchor("sw");
+  setAnchor("sw");
+  assert.equal(getAnchor(), "sw");
+  assert.deepEqual(seen, before === "sw" ? [] : ["sw"], "every user is told once per change");
+  off();
+  setAnchor(before);
+});
+
+test("readout lengths follow the display unit", () => {
+  assert.equal(fixedLength(12.345, "mm"), "12.35 mm");
+  assert.equal(fixedLength(25.4, "in"), "1.000 in");
+  assert.equal(fixedNumber(-0.001, "mm"), "0.00", "no -0");
+  assert.equal(lengthText(512.34, "mm"), "512.3 mm");
+  assert.equal(lengthText(512.34, "in", 0), "20.2 in");
 });

@@ -10,22 +10,12 @@ import { paramsTemplate } from "../api/schema.ts";
 import type { CommandSpec, GDocument, StockShape, Vec2 } from "../api/types.ts";
 import { evalNumber } from "../editing.ts";
 import { boxSize, objectBounds, unionBoxes } from "../geometry.ts";
-import { Modal } from "./ui.tsx";
+import { Modal, UnitTextField } from "./ui.tsx";
 
 type Run = (inv: Invocation) => Promise<unknown>;
 
-/** Plain number input for dialogs: keeps the text, parses on submit. */
-function Num(props: { label: string; value: string; onChange: (v: string) => void; unit?: string }) {
-  return (
-    <label className="field">
-      <span className="field-label">{props.label}</span>
-      <span className="field-input">
-        <input type="text" inputMode="decimal" value={props.value} onChange={(e) => props.onChange(e.target.value)} />
-        {props.unit && <span className="unit">{props.unit}</span>}
-      </span>
-    </label>
-  );
-}
+/** Number input for dialogs: keeps the text (mm), parses on submit; lengths show in the display unit. */
+const Num = UnitTextField;
 
 /** A typed number (simple maths allowed), or null. */
 function parse(v: string): number | null {

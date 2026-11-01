@@ -43,6 +43,7 @@ export const OPT = {
   stockMove: "stock.move",
   stockClear: "stock.clear",
   layerDelete: "layer.delete",
+  layerMove: "layer.move",
   docRename: "doc.rename",
   shapePath: "shape.path",
   layerSubAdd: "layer.sub_add",
@@ -242,6 +243,14 @@ export function stockClear(): Invocation {
 /** Delete a layer; a layer that still has objects needs `reassignTo`, the layer they move to. */
 export function layerDelete(id: string, reassignTo?: string): Invocation {
   return { id: OPT.layerDelete, params: reassignTo ? { id, reassign_to: reassignTo } : { id } };
+}
+
+/**
+ * Move a layer to position `toIndex` (0-based) of the layer list; the others keep their order. Jobs burn layer by
+ * layer in list order, so this changes the cut order. One undo step.
+ */
+export function layerMove(id: string, toIndex: number): Invocation {
+  return { id: OPT.layerMove, params: { id, to_index: toIndex } };
 }
 
 /** Rename the document. */

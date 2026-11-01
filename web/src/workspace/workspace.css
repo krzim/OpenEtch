@@ -113,6 +113,19 @@
   opacity: 0.45;
 }
 
+/* Where a dragged layer will land (layer.move): a line above or below the row. */
+.cuts-row.drop-before > td {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.cuts-row.drop-after > td {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.cuts-row[draggable="true"] {
+  cursor: grab;
+}
+
 .cuts-sub {
   color: var(--text-2);
   height: 26px;
@@ -148,8 +161,21 @@
   text-align: center;
 }
 
+/* Up/down stacked in one narrow column, so the table still fits the right panel. */
 .c-order {
-  width: 52px;
+  width: 22px;
+  padding: 0 1px;
+}
+
+.c-order .tog {
+  display: flex;
+  width: 20px;
+  height: 14px;
+  padding: 0;
+}
+
+.c-order .tog:disabled {
+  visibility: hidden;
 }
 
 .cuts-name {
@@ -296,14 +322,18 @@
 
 /* ---- numeric edits bar ------------------------------------------------------------------------------------------ */
 
+/* Groups wrap onto more rows instead of scrolling sideways; a narrow canvas column also gets narrower fields (the bar
+   is a size container, so this follows the canvas column, not the window). */
 .numeric-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 4px 12px;
   padding: 3px 8px;
   background: var(--chrome);
   border-bottom: 1px solid var(--border);
-  overflow-x: auto;
+  container: numbar / inline-size;
+  min-width: 0;
   flex: none;
   min-height: 38px;
   scrollbar-width: thin;
@@ -341,6 +371,61 @@
 
 .numeric-bar .anchor-grid.small {
   flex: none;
+  margin-bottom: 0;
+  padding: 0;
+  grid-template-columns: repeat(3, 13px);
+}
+
+.numeric-bar .anchor-grid.small button {
+  width: 13px;
+  height: 13px;
+}
+
+.numeric-bar .anchor-grid.small .anchor-dot {
+  width: 7px;
+  height: 7px;
+}
+
+.numeric-bar .field {
+  min-height: 32px;
+}
+
+.numeric-bar .segmented {
+  margin-bottom: 0;
+}
+
+.num-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  min-width: 0;
+}
+
+@container numbar (max-width: 860px) {
+  .numeric-bar .field-input {
+    width: 78px;
+  }
+
+  .num-group {
+    gap: 4px;
+  }
+}
+
+@container numbar (max-width: 560px) {
+  .numeric-bar .field-input {
+    width: 66px;
+  }
+
+  .numeric-bar .field-input .unit {
+    display: none;
+  }
+
+  /* The status bar's units button switches mm / in too. */
+  .numeric-sep,
+  .numeric-bar > .unit-toggle {
+    display: none;
+  }
 }
 
 .numeric-bar .lock-btn.active {

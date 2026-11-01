@@ -3,6 +3,8 @@
 // and what the approval error codes mean, and what to tell the user when a run ends or STOP answers. No React, no fetch, so `npm test` covers it.
 
 import type { MachineStatus, PendingRun, RunFinishedEvent, RunStats } from "./types.ts";
+import type { LengthUnit } from "../workspace/prefs.ts";
+import { MM_PER_IN } from "../workspace/units.ts";
 
 /** States of a run that has been approved but not yet ended. */
 export const ACTIVE_STATES: readonly string[] = ["approved", "awaiting_confirm", "running"];
@@ -166,19 +168,21 @@ export function formatDuration(s: number): string {
   return `${m} min ${String(sec).padStart(2, "0")} s`;
 }
 
-function mm(v: number): string {
+/** "512.3 mm" / "1.25 m", or "20.17 in" in inches. */
+function len(v: number, u: LengthUnit): string {
+  if (u === "in") return `${(v / MM_PER_IN).toFixed(2)} in`;
   return v >= 1000 ? `${(v / 1000).toFixed(2)} m` : `${v.toFixed(1)} mm`;
 }
 
 const num = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 
 /** What a run will do, as label/value rows for the approval card. Missing fields are left out. */
-export function runStatRows(run: PendingRun): [string, string][] {
+export function runStatRows(run: PendingRun, lu: LengthUnit = "mm"): [string, string][] {
   const s: RunStats = run.stats && typeof run.stats === "object" ? run.stats : {};
   const rows: [string, string][] = [];
   if (num(s.estimated_time_s)) rows.push(["Est. time", formatDuration(s.estimated_time_s)]);
-  if (num(s.mark_length_mm)) rows.push(["Mark", mm(s.mark_length_mm)]);
-  if (num(s.jump_length_mm)) rows.push(["Jump", mm(s.jump_length_mm)]);
+  if (num(s.mark_length_mm)) rows.push(["Mark", len(s.mark_length_mm, lu)]);
+  if (num(s.jump_length_mm)) rows.push(["Jump", len(s.jump_length_mm, lu)]);
   if (num(s.segment_count)) rows.push(["Segments", String(s.segment_count)]);
   // The engine drops a run's packets once it is approved, so the count means something only while it is pending.
   const pending = run.state === undefined || run.state === "pending";

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { evalNumber } from "../editing.ts";
 import { useUnitConversion } from "../workspace/usePrefs.ts";
+import { trimNumber } from "../workspace/units.ts";
 
 /**
  * Centered modal with a title, body and footer. Escape or a backdrop tap cancels; with `onSubmit`, Enter in a text
@@ -50,6 +51,39 @@ export function fmt(v: number | null | undefined, digits = 3): string {
   if (v === null || v === undefined || !Number.isFinite(v)) return "";
   const r = Number(v.toFixed(digits));
   return Object.is(r, -0) ? "0" : String(r);
+}
+
+/**
+ * A number entry whose value stays in engine units (mm): with Preferences set to inches the field shows and takes
+ * inches (workspace/usePrefs.ts) and hands the converted mm text back, like NumberField. For dialogs that keep the
+ * text and parse it on submit.
+ */
+export function UnitTextField(props: { label: string; value: string; onChange: (v: string) => void; unit?: string; title?: string }) {
+  const conv = useUnitConversion(props.unit);
+  // What the user typed, kept while the parent's value is still the one that text produced.
+  const [typed, setTyped] = useState<{ text: string; value: string } | null>(null);
+  const converts = conv.unit !== props.unit;
+  let shown = props.value;
+  if (converts) {
+    const n = evalNumber(props.value);
+    shown = typed && typed.value === props.value ? typed.text : n === null ? props.value : trimNumber(conv.to(n), 4 + conv.extraDigits);
+  }
+  const change = (text: string) => {
+    if (!converts) return props.onChange(text);
+    const n = evalNumber(text);
+    const value = n === null ? text : String(conv.from(n));
+    setTyped({ text, value });
+    props.onChange(value);
+  };
+  return (
+    <label className="field" title={props.title}>
+      <span className="field-label">{props.label}</span>
+      <span className="field-input">
+        <input type="text" inputMode="decimal" value={shown} onChange={(e) => change(e.target.value)} />
+        {conv.unit && <span className="unit">{conv.unit}</span>}
+      </span>
+    </label>
+  );
 }
 
 /**
@@ -302,6 +336,8 @@ export function CheckField(props: { label: string; checked: boolean; onChange: (
 const ICONS: Record<string, ReactNode> = {
   stock: <path d="M3 8l9-4 9 4v8l-9 4-9-4z M3 8l9 4 9-4 M12 12v8" />,
   rect: <rect x="4" y="6" width="16" height="12" rx="1" />,
+  path: <path d="M5 18C7 9 17 15 19 6 M3.5 16.5h3v3h-3z M17.5 4.5h3v3h-3z" />,
+  image: <path d="M4 5h16v14H4z M4 16l5-5 4 4 3-3 4 4 M15.5 8.5h.01" />,
   ellipse: <ellipse cx="12" cy="12" rx="9" ry="6" />,
   circle: <path d="M12 4a8 8 0 100 16 8 8 0 000-16z M12 11.2v1.6 M11.2 12h1.6" />,
   import: <path d="M12 3v12 M7 10l5 5 5-5 M4 17v3h16v-3" />,

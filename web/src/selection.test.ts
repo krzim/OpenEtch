@@ -154,6 +154,20 @@ test("prune drops deleted ids and objects on hidden layers, and keeps identity w
   assert.equal(pruneSelection(p, hidden), p);
 });
 
+test("prune: the selection's layer follows its objects to another layer", () => {
+  const s = applySelect(EMPTY_SELECTION, doc, ["obj-1"], "replace");
+  assert.equal(s.layer, "layer-1");
+  assert.equal(pruneSelection(s, doc), s, "unchanged while the objects stay");
+  const moved: GDocument = { ...doc, objects: doc.objects.map((o) => (o.id === "obj-1" ? { ...o, layer: "layer-2" } : o)) };
+  assert.equal(pruneSelection(s, moved).layer, "layer-2");
+  // Objects on several layers keep the layer while one of them is still on it.
+  const both = applySelect(EMPTY_SELECTION, doc, ["obj-1", "obj-3"], "replace");
+  assert.equal(pruneSelection({ ...both, layer: "layer-2" }, doc).layer, "layer-2");
+  // A layer picked with nothing selected stays.
+  const picked = { ...EMPTY_SELECTION, layer: "layer-2" };
+  assert.equal(pruneSelection(picked, doc), picked);
+});
+
 test("align reference: last added, first in draw order among a batch, or the Ctrl+click-twice pick", () => {
   let s = applySelect(EMPTY_SELECTION, doc, ["obj-2", "obj-1"], "replace");
   assert.equal(alignReference(s, doc), "obj-1", "first in draw order among those selected together");

@@ -77,6 +77,7 @@ test("measure: distance, deltas, angle and text", () => {
   near(m.angleDeg, 53.130102, 1e-6);
   assert.equal(measure([0, 0], [-1, 0]).angleDeg, 180);
   assert.equal(measureText(m), "5.00 mm · ΔX 3.00 · ΔY 4.00 · 53.1°");
+  assert.equal(measureText(measure([0, 0], [25.4, -50.8]), "in"), "2.236 in · ΔX 1.000 · ΔY -2.000 · -63.4°");
 });
 
 test("ruler ticks: labelled majors on round numbers, minors between them", () => {
@@ -91,4 +92,19 @@ test("ruler ticks: labelled majors on round numbers, minors between them", () =>
   const fine = rulerTicks(0, 1, 400);
   assert.ok(fine.filter((x) => x.major).every((x) => /^\d\.\d+$|^\d$/.test(x.label ?? "")), "fractional labels");
   assert.deepEqual(rulerTicks(0, 10, 0), []);
+});
+
+test("ruler ticks in inches: labels in inches on round inch values, positions in mm", () => {
+  // 3 px/mm = 76.2 px/in: a label every inch.
+  const t = rulerTicks(-30, 80, 3, 60, "in");
+  const majors = t.filter((x) => x.major);
+  assert.deepEqual(
+    majors.map((x) => x.label),
+    ["-1", "0", "1", "2", "3"],
+  );
+  assert.ok(majors.every((x) => Math.abs(x.v - Number(x.label) * 25.4) < 1e-9));
+  assert.ok(t.filter((x) => !x.major).length > 0, "minor ticks between");
+  // Zoomed in: tenths of an inch.
+  const fine = rulerTicks(0, 10, 40, 60, "in");
+  assert.ok(fine.filter((x) => x.major).some((x) => x.label === "0.2"));
 });

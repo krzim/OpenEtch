@@ -1,6 +1,8 @@
 // Numeric edits toolbar (LightBurn's Numeric Edits, above the canvas): X, Y, W, H and rotation of the selection's
-// bounding box at the chosen 9-point anchor, lock aspect, and mm or % sizing. Each field commits one
+// bounding box at the chosen 9-point anchor (shared with the Properties panel), lock aspect, and mm or % sizing. Each field commits one
 // `object.transform` on Enter or blur. Values show in the display unit (Preferences); fields accept maths ("20/3").
+// The fields come in groups (anchor + X/Y, size, rotation, units) that wrap onto a second row and get narrower in a
+// narrow canvas column, so nothing is clipped or needs sideways scrolling.
 
 import { useState } from "react";
 import type { Invocation } from "../api/client.ts";
@@ -9,7 +11,7 @@ import type { GDocument } from "../api/types.ts";
 import { objectBounds, transformParts, unionBoxes } from "../geometry.ts";
 import { NumberField } from "../components/ui.tsx";
 import type { Selection } from "../selection.ts";
-import { ANCHORS, anchorPoint, moveTo, resizeTo, rotationDelta, scalePercent, type Anchor } from "./numeric.ts";
+import { ANCHORS, anchorPoint, moveTo, resizeTo, rotationDelta, scalePercent, useAnchor } from "./numeric.ts";
 import { updatePrefs } from "./prefs.ts";
 import { usePrefs, useT } from "./usePrefs.ts";
 import "./workspace.css";
@@ -24,7 +26,7 @@ export interface NumericBarProps {
 export function NumericBar(p: NumericBarProps) {
   const t = useT();
   const prefs = usePrefs();
-  const [anchor, setAnchor] = useState<Anchor>("c");
+  const [anchor, setAnchor] = useAnchor();
   const [lock, setLock] = useState(true);
   const [percent, setPercent] = useState(false);
   const objs = p.doc ? p.doc.objects.filter((o) => p.selection.objects.includes(o.id)) : [];
@@ -58,35 +60,41 @@ export function NumericBar(p: NumericBarProps) {
   const sizeUnit = percent ? "%" : "mm";
   return (
     <div className={`numeric-bar${none ? " empty" : ""}`} role="toolbar" aria-label={t("numeric.label")}>
-      <div className="anchor-grid small" role="radiogroup" aria-label={t("numeric.anchor")}>
-        {ANCHORS.map((a) => (
-          <button key={a} role="radio" aria-checked={a === anchor} className={a === anchor ? "active" : ""} title={t("numeric.anchorTitle")} onClick={() => setAnchor(a)}>
-            <span className="anchor-dot" />
+      <div className="num-group">
+        <div className="anchor-grid small" role="radiogroup" aria-label={t("numeric.anchor")}>
+          {ANCHORS.map((a) => (
+            <button key={a} role="radio" aria-checked={a === anchor} className={a === anchor ? "active" : ""} title={t("numeric.anchorTitle")} onClick={() => setAnchor(a)}>
+              <span className="anchor-dot" />
+            </button>
+          ))}
+        </div>
+        <NumberField label="X" unit="mm" value={box ? ax : null} disabled={none} onCommit={(v) => setXY(v, null)} />
+        <NumberField label="Y" unit="mm" value={box ? ay : null} disabled={none} onCommit={(v) => setXY(null, v)} />
+      </div>
+      <div className="num-group">
+        <NumberField key={percent ? `w%${p.doc?.revision}` : "w"} label="W" unit={sizeUnit} value={box ? (percent ? 100 : w) : null} min={percent ? 0.1 : 0.001} disabled={none} onCommit={(v) => setSize(v, null)} />
+        <button
+          className={`icon-btn small lock-btn${lock ? " active" : ""}`}
+          aria-pressed={lock}
+          title={lock ? t("numeric.lockOn") : t("numeric.lockOff")}
+          aria-label={t("numeric.lock")}
+          onClick={() => setLock((v) => !v)}
+        >
+          <LockIcon locked={lock} />
+        </button>
+        <NumberField key={percent ? `h%${p.doc?.revision}` : "h"} label="H" unit={sizeUnit} value={box ? (percent ? 100 : h) : null} min={percent ? 0.1 : 0.001} disabled={none} onCommit={(v) => setSize(null, v)} />
+        <div className="segmented unit-toggle" role="radiogroup" aria-label={t("numeric.sizeMode")}>
+          <button role="radio" aria-checked={!percent} className={!percent ? "active" : ""} onClick={() => setPercent(false)} title={t("numeric.sizeAbs")}>
+            {prefs.units}
           </button>
-        ))}
+          <button role="radio" aria-checked={percent} className={percent ? "active" : ""} onClick={() => setPercent(true)} title={t("numeric.sizePct")}>
+            %
+          </button>
+        </div>
       </div>
-      <NumberField label="X" unit="mm" value={box ? ax : null} disabled={none} onCommit={(v) => setXY(v, null)} />
-      <NumberField label="Y" unit="mm" value={box ? ay : null} disabled={none} onCommit={(v) => setXY(null, v)} />
-      <NumberField key={percent ? `w%${p.doc?.revision}` : "w"} label="W" unit={sizeUnit} value={box ? (percent ? 100 : w) : null} min={percent ? 0.1 : 0.001} disabled={none} onCommit={(v) => setSize(v, null)} />
-      <button
-        className={`icon-btn small lock-btn${lock ? " active" : ""}`}
-        aria-pressed={lock}
-        title={lock ? t("numeric.lockOn") : t("numeric.lockOff")}
-        aria-label={t("numeric.lock")}
-        onClick={() => setLock((v) => !v)}
-      >
-        <LockIcon locked={lock} />
-      </button>
-      <NumberField key={percent ? `h%${p.doc?.revision}` : "h"} label="H" unit={sizeUnit} value={box ? (percent ? 100 : h) : null} min={percent ? 0.1 : 0.001} disabled={none} onCommit={(v) => setSize(null, v)} />
-      <div className="segmented unit-toggle" role="radiogroup" aria-label={t("numeric.sizeMode")}>
-        <button role="radio" aria-checked={!percent} className={!percent ? "active" : ""} onClick={() => setPercent(false)} title={t("numeric.sizeAbs")}>
-          {prefs.units}
-        </button>
-        <button role="radio" aria-checked={percent} className={percent ? "active" : ""} onClick={() => setPercent(true)} title={t("numeric.sizePct")}>
-          %
-        </button>
+      <div className="num-group">
+        <NumberField label={single || none ? t("numeric.rotate") : t("numeric.rotateBy")} unit="°" value={box ? (single ? rot : 0) : null} digits={2} disabled={none} onCommit={setRot} />
       </div>
-      <NumberField label={single || none ? t("numeric.rotate") : t("numeric.rotateBy")} unit="°" value={box ? (single ? rot : 0) : null} digits={2} disabled={none} onCommit={setRot} />
       <span className="numeric-sep" />
       <div className="segmented unit-toggle" role="radiogroup" aria-label={t("prefs.units")} title={t("numeric.unitsTitle")}>
         {(["mm", "in"] as const).map((u) => (

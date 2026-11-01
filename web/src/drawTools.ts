@@ -3,6 +3,8 @@
 // measure readout and ruler ticks. Tested in drawTools.test.ts.
 
 import type { Vec2 } from "./api/types.ts";
+import type { LengthUnit } from "./workspace/prefs.ts";
+import { fixedLength, fixedNumber, MM_PER_IN } from "./workspace/units.ts";
 
 /** LightBurn's and Fusion's angle step while Shift is held. */
 export const ANGLE_STEP_DEG = 15;
@@ -145,9 +147,9 @@ export function measure(a: Vec2, b: Vec2): Measure {
   return { dist: Math.hypot(dx, dy), dx, dy, angleDeg: dx === 0 && dy === 0 ? 0 : normalizeDeg((Math.atan2(dy, dx) * 180) / Math.PI) };
 }
 
-/** "12.35 mm · ΔX 10.00 · ΔY 7.25 · 35.9°". */
-export function measureText(m: Measure): string {
-  return `${m.dist.toFixed(2)} mm · ΔX ${m.dx.toFixed(2)} · ΔY ${m.dy.toFixed(2)} · ${m.angleDeg.toFixed(1)}°`;
+/** "12.35 mm · ΔX 10.00 · ΔY 7.25 · 35.9°" in the display unit ("0.486 in · ΔX 0.394 · ..."). */
+export function measureText(m: Measure, u: LengthUnit = "mm"): string {
+  return `${fixedLength(m.dist, u)} · ΔX ${fixedNumber(m.dx, u)} · ΔY ${fixedNumber(m.dy, u)} · ${m.angleDeg.toFixed(1)}°`;
 }
 
 export interface Tick {
@@ -157,17 +159,20 @@ export interface Tick {
 }
 
 /**
- * Ruler ticks between field coordinates `v0` and `v1` at `scale` px/mm: a labelled major tick every 1/2/5 × 10^n mm
- * with at least `minLabelPx` between labels, and minor ticks between them (no closer than 5 px).
+ * Ruler ticks between field coordinates `v0` and `v1` (mm) at `scale` px/mm: a labelled major tick every 1/2/5 × 10^n
+ * display units (mm, or inches with `unit` "in") with at least `minLabelPx` between labels, and minor ticks between
+ * them (no closer than 5 px). `v` is always in mm; labels are in the display unit.
  */
-export function rulerTicks(v0: number, v1: number, scale: number, minLabelPx = 60): Tick[] {
-  const lo = Math.min(v0, v1);
-  const hi = Math.max(v0, v1);
-  if (!(scale > 0) || !Number.isFinite(lo) || !Number.isFinite(hi)) return [];
-  const raw = minLabelPx / scale;
+export function rulerTicks(v0: number, v1: number, scale: number, minLabelPx = 60, unit: LengthUnit = "mm"): Tick[] {
+  const k = unit === "in" ? MM_PER_IN : 1;
+  const lo = Math.min(v0, v1) / k;
+  const hi = Math.max(v0, v1) / k;
+  const s = scale * k;
+  if (!(s > 0) || !Number.isFinite(lo) || !Number.isFinite(hi)) return [];
+  const raw = minLabelPx / s;
   const pow = Math.pow(10, Math.floor(Math.log10(raw)));
-  const major = [1, 2, 5, 10].map((m) => m * pow).find((s) => s >= raw) ?? 10 * pow;
-  const divs = [10, 5, 2].find((d) => (major / d) * scale >= 5) ?? 1;
+  const major = [1, 2, 5, 10].map((m) => m * pow).find((x) => x >= raw) ?? 10 * pow;
+  const divs = [10, 5, 2].find((d) => (major / d) * s >= 5) ?? 1;
   const minor = major / divs;
   const out: Tick[] = [];
   const start = Math.ceil(lo / minor);
@@ -178,7 +183,7 @@ export function rulerTicks(v0: number, v1: number, scale: number, minLabelPx = 6
     const v = i * minor;
     const isMajor = i % divs === 0;
     const vv = Math.abs(v) < minor * 1e-6 ? 0 : v;
-    out.push(isMajor ? { v: vv, major: true, label: vv.toFixed(digits) } : { v: vv, major: false });
+    out.push(isMajor ? { v: vv * k, major: true, label: vv.toFixed(digits) } : { v: vv * k, major: false });
   }
   return out;
 }

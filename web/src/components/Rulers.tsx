@@ -1,10 +1,11 @@
-// Rulers along the top and left of the canvas, in field millimetres (+Y up, so the left ruler counts up), with the
-// guides marked on them. Dragging out of a ruler makes a guide (top ruler: horizontal, left ruler: vertical, as in
-// LightBurn); dropping it back on a ruler throws it away. The corner square clears all guides.
+// Rulers along the top and left of the canvas, in field millimetres or inches (the display unit; +Y up, so the left
+// ruler counts up), with the guides marked on them. Dragging out of a ruler makes a guide (top ruler: horizontal, left
+// ruler: vertical, as in LightBurn); dropping it back on a ruler throws it away. The corner square clears all guides.
 
 import type { RenderCtx } from "../canvasTool.ts";
 import type { Vec2 } from "../api/types.ts";
 import { rulerTicks } from "../drawTools.ts";
+import { usePrefs } from "../workspace/usePrefs.ts";
 
 /** Ruler thickness, px. */
 export const RULER_PX = 20;
@@ -17,9 +18,10 @@ export function Rulers(props: {
   onClearGuides: () => void;
 }) {
   const { r } = props;
+  const unit = usePrefs().units;
   const [w, h] = r.size;
-  const xs = rulerTicks(r.toField([RULER_PX, 0])[0], r.toField([w, 0])[0], r.scale);
-  const ys = rulerTicks(r.toField([0, h])[1], r.toField([0, RULER_PX])[1], r.scale);
+  const xs = rulerTicks(r.toField([RULER_PX, 0])[0], r.toField([w, 0])[0], r.scale, 60, unit);
+  const ys = rulerTicks(r.toField([0, h])[1], r.toField([0, RULER_PX])[1], r.scale, 60, unit);
 
   /** Pointer handlers for one ruler: the guide follows the pointer until release. */
   const dragHandlers = (axis: "x" | "y") => {
@@ -92,12 +94,12 @@ export function Rulers(props: {
       </div>
       <button
         className="et-ruler-corner"
-        title={props.guides ? `Clear ${props.guides} guide${props.guides === 1 ? "" : "s"}` : "Rulers in mm. Drag out of a ruler to place a guide."}
+        title={props.guides ? `Clear ${props.guides} guide${props.guides === 1 ? "" : "s"}` : `Rulers in ${unit === "in" ? "inches" : "mm"}. Drag out of a ruler to place a guide.`}
         aria-label="Clear guides"
         disabled={!props.guides}
         onClick={props.onClearGuides}
       >
-        mm
+        {unit}
       </button>
     </>
   );

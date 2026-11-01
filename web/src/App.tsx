@@ -35,6 +35,7 @@ import { ContextMenu, type MenuItem } from "./components/ContextMenu.tsx";
 import { ArrayDialog, CommandPalette, PlaceDialog, StockDialog } from "./components/Dialogs.tsx";
 import { DeviceBar, DevicesWindow, useDevices } from "./components/Devices.tsx";
 import { useEditTools } from "./components/EditTools.tsx";
+import { guideScope } from "./guides.ts";
 import { DropOverlay, useFileDrop } from "./components/FileDrop.tsx";
 import { FileDialogs, FileMenu, useFileActions } from "./components/FileMenu.tsx";
 import { MachineCard, PreviewPlayer, PreviewStatsCard, RunsCard } from "./components/LaserPanel.tsx";
@@ -259,6 +260,8 @@ export function App() {
     notify,
     report,
     onGridArray: () => setDialog("array"),
+    // Guides belong to the project (not the document's name, which projects can share); wait until both are known.
+    guideScope: doc && engine.projectKnown ? guideScope(file.projectName, file.openedName) : null,
   });
 
   // ---- import: drop and picker share one router ------------------------------------------------------------------

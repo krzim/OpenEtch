@@ -27,6 +27,9 @@ import type { PreviewOptions } from "./Viewport.tsx";
 import { DitheredImagesOption } from "./ImageSettings.tsx";
 import { Icon } from "./ui.tsx";
 import { originBadge } from "./Timeline.tsx";
+import type { LengthUnit, SpeedUnit } from "../workspace/prefs.ts";
+import { usePrefs } from "../workspace/usePrefs.ts";
+import { formatSpeed, lengthText } from "../workspace/units.ts";
 
 /** Machine status; `children` (the LightBurn devices section) render at the bottom of the card. */
 export function MachineCard({ machine, httpError, children }: { machine: MachineStatus | null; httpError: string | null; children?: ReactNode }) {
@@ -172,7 +175,7 @@ const CONFIRM_TIMEOUT_MS = 20_000;
 
 /** Summary, stats, packet count and revision: what this run will do. */
 function RunFacts({ run }: { run: PendingRun }) {
-  const rows = runStatRows(run);
+  const rows = runStatRows(run, usePrefs().units);
   return (
     <>
       {run.summary && <div className="run-summary">{String(run.summary)}</div>}
@@ -372,6 +375,7 @@ export function PreviewStatsCard(p: {
   onOptions: (o: PreviewOptions) => void;
 }) {
   const { preview, options, onOptions } = p;
+  const { units: lu, speedUnit } = usePrefs();
   // Per-pass rows of layers with sub-layers (one walk over the segments per preview).
   const passes = useMemo(
     () => (p.enabled ? previewPasses(preview, p.doc, passResolver(preview, p.doc)) : new Map<string, PassPreview[]>()),
@@ -390,7 +394,7 @@ export function PreviewStatsCard(p: {
   }
   const layers = previewLayers(preview, p.doc);
   const time = typeof preview?.stats?.estimated_time_s === "number" ? preview.stats.estimated_time_s : null;
-  const rows = statRows(preview?.stats, ["estimated_time_s", "mark_length_mm", "jump_length_mm", "segment_count"]);
+  const rows = statRows(preview?.stats, ["estimated_time_s", "mark_length_mm", "jump_length_mm", "segment_count"], lu);
   const toggle = (id: string) => {
     const hidden = new Set(options.hidden);
     if (hidden.has(id)) hidden.delete(id);
@@ -422,11 +426,11 @@ export function PreviewStatsCard(p: {
           <dl className="kv">
             <dt>Marks</dt>
             <dd>
-              {markN} · {(typeof preview.stats?.mark_length_mm === "number" ? preview.stats.mark_length_mm : markLen).toFixed(1)} mm
+              {markN} · {lengthText(typeof preview.stats?.mark_length_mm === "number" ? preview.stats.mark_length_mm : markLen, lu, 1)}
             </dd>
             <dt>Travel</dt>
             <dd>
-              {segs.length - markN} · {(typeof preview.stats?.jump_length_mm === "number" ? preview.stats.jump_length_mm : jumpLen).toFixed(1)} mm
+              {segs.length - markN} · {lengthText(typeof preview.stats?.jump_length_mm === "number" ? preview.stats.jump_length_mm : jumpLen, lu, 1)}
             </dd>
             {rows.map(([k, v]) => (
               <FragmentKV key={k} k={k} v={v} raw />
@@ -447,7 +451,7 @@ export function PreviewStatsCard(p: {
                     <span className="pv-name">{l.name}</span>
                   </label>
                   <span className="pv-meta">
-                    {l.mode === "fill" ? "Fill" : l.mode === "fill_then_line" ? "Fill+Line" : "Line"} · {l.markLengthMm.toFixed(0)} mm
+                    {l.mode === "fill" ? "Fill" : l.mode === "fill_then_line" ? "Fill+Line" : "Line"} · {lengthText(l.markLengthMm, lu, 0)}
                     {l.estimatedTimeS !== null ? ` · ${formatDuration(l.estimatedTimeS)}` : ""}
                   </span>
                   <button className="chip" title="Show only this layer" onClick={() => solo(l.id)}>
@@ -458,14 +462,14 @@ export function PreviewStatsCard(p: {
                       {passes.get(l.id)!.map((r) => {
                         const off = options.hidden.has(l.id) || options.hiddenPasses.has(r.key);
                         return (
-                          <div key={r.key} className={`pv-pass${off ? " off" : ""}`} title={settingsSummary(r.settings)}>
+                          <div key={r.key} className={`pv-pass${off ? " off" : ""}`} title={settingsSummary(r.settings, speedUnit)}>
                             <label title="Show this pass's toolpath (display only)">
                               <input type="checkbox" checked={!options.hiddenPasses.has(r.key)} onChange={() => togglePassRow(r)} />
                               <span className="swatch small" style={{ background: r.color }} />
                               <span className="pv-name">{r.label}</span>
                               {r.cleanup && <span className="badge pass-badge">Cleanup</span>}
                             </label>
-                            <span className="pv-meta">{passMeta(r)}</span>
+                            <span className="pv-meta">{passMeta(r, lu, speedUnit)}</span>
                             <button className="chip" title="Show only this pass" onClick={() => soloPassRow(r)}>
                               Solo
                             </button>
@@ -494,11 +498,12 @@ export function PreviewStatsCard(p: {
 }
 
 /** "Fill · 20% · 1000 mm/s · 30 kHz · 200 ns · 2 passes · 512 mm · ≈12 s" for one pass row. */
-function passMeta(r: PassPreview): string {
+function passMeta(r: PassPreview, lu: LengthUnit, speedUnit: SpeedUnit): string {
   const st = r.settings;
-  const parts = [modeLabel(st.mode), `${fmtNum(st.power_pct)}%`, `${fmtNum(st.speed_mm_s)} mm/s`, `${fmtNum(st.frequency_khz)} kHz`];
+  const speed = speedUnit === "mm/s" ? `${fmtNum(st.speed_mm_s)} mm/s` : formatSpeed(st.speed_mm_s, speedUnit);
+  const parts = [modeLabel(st.mode), `${fmtNum(st.power_pct)}%`, speed, `${fmtNum(st.frequency_khz)} kHz`];
   if (st.pulse_width_ns !== null && st.pulse_width_ns !== undefined) parts.push(`${st.pulse_width_ns} ns`);
-  parts.push(r.jobPasses === 1 ? "1 pass" : `${r.jobPasses} passes`, `${r.markLengthMm.toFixed(0)} mm`);
+  parts.push(r.jobPasses === 1 ? "1 pass" : `${r.jobPasses} passes`, lengthText(r.markLengthMm, lu, 0));
   if (r.estimatedTimeS !== null) parts.push(`${r.approx ? "≈" : ""}${formatDuration(r.estimatedTimeS)}`);
   return parts.join(" · ");
 }

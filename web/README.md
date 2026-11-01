@@ -36,7 +36,14 @@ anywhere else.
   `crates/commands/src/builtin`. At startup the UI compares them against `GET /api/commands` and shows
   "N cmd missing" in the top bar (hover for the list) if the engine lacks any. The **Commands** toolbar button runs any
   registered document command with raw JSON parameters: the same catalogue an agent sees over MCP.
-- **Viewport** draws in field millimetres with +Y up (one SVG group carries the pan/zoom and the y-flip). The field
+- **Viewport** draws in field millimetres with +Y up, as stacked layers that share one view transform (pan/zoom and
+  the y-flip): field, grid and stock (SVG), images (canvas), object outlines and fills (SVG), the toolpath preview
+  (canvas) and the interaction SVG on top (handles, marquee, canvas tools, snap glyphs). The scene layers are memoized
+  on document and preview data, so a zoom or pan only changes their transform (strokes use `vector-effect:
+  non-scaling-stroke`) and repaints the canvases' visible region at device-pixel resolution: images from cached
+  ImageBitmaps (original and dithered preview; smoothing off once magnified past native resolution, so pixels stay
+  crisp), the toolpath from segments uploaded once to WebGL2 (`components/toolpathGL.ts`; a tiled 2D canvas without
+  it). Wheel, pinch and pan updates are coalesced to one per animation frame (`src/sceneLayers.ts`). The field
   square comes from `GET /api/machine` (`field_mm`), 153.75 mm until the engine reports it. Pointer Events throughout:
   drag empty space to pan, wheel or pinch to zoom, two fingers to pan, tap to select (shift adds), drag a selection to
   move it (one `object.transform` translate on release). Rectangle/Ellipse tools: drag to draw (Shift: square or
@@ -53,8 +60,10 @@ anywhere else.
   shapes (Alt+C), offset (Alt+O), fillet, break apart (Alt+B), auto-join (Alt+J), close, delete duplicates (Alt+D),
   convert (Ctrl+Shift+C), optimize (Alt+Shift+O), reverse; draw order (PgUp/PgDn, Ctrl+PgUp/PgDn), lock, make same
   size, Transform (scale %, shear, mirror across a picked line, two-point rotate Ctrl+2 / scale), grid and circular
-  arrays (centre pick), copy along path, quick nest. Rulers (mm) run along the top and left; drag a guide out of a
-  ruler (back onto it to remove; guides move with the Select tool). Guides are kept per document in this browser
+  arrays (centre pick), copy along path, quick nest. Rulers (in the display unit) run along the top and left; drag a
+  guide out of a ruler (back onto it to remove; guides move with the Select tool). Guides are kept per project in this
+  browser (the saved project's name, else the opened file, else one unsaved slot; Save carries them to the project
+  and New clears the unsaved slot; guides an older version stored by document name are adopted once)
   (`src/guides.ts`) and are snap targets. The Viewport hands presses to these tools through `src/canvasTool.ts`.
 - **Snapping** (`src/snapping.ts`, Fusion 360-style): centres, quadrants, vertices/endpoints, straight-segment
   midpoints, intersections between outlines near the cursor and the nearest point on an outline, plus stock, field and
@@ -138,8 +147,11 @@ src/
   api/lightburn.ts    LightBurn devices, .lbrn2 DeviceName, the import field-size rule, prefs.ini device list (pure; tested)
   api/useEngine.ts    React hook: fetching, WebSocket events, refetch coalescing
   geometry.ts         affine maths, geometry -> SVG path, bounds (pure; tested)
+  sceneLayers.ts      canvas layer maths: view matrix, grid spacing, image smoothing, per-frame view coalescing,
+                      toolpath batches by style and tile (pure; tested)
   selection.ts        UI-only selection state (pure; tested)
   components/         TopBar, FileMenu, Toolbar, BrowserPanel, Viewport, PropertiesPanel, LaserPanel, LightBurn, Timeline, Dialogs, ui
+  components/SceneCanvas.tsx, toolpathGL.ts   the Viewport's canvas layers: images (ImageBitmap cache), toolpath (WebGL2)
   components/EditTools.tsx, EditMenus.tsx, EditDialogs.tsx, Rulers.tsx, edit.css   editing tools, menus, dialogs, rulers
   api/geomCommands.ts geometry command builders (path.*, node.*, shape.polygon/line, arrays, order, lock...) (tested)
   nodes.ts, drawTools.ts, guides.ts   node model, drawing/measure/ruler maths, guides (pure; tested)
@@ -166,4 +178,13 @@ src/
   handlers stay the single implementation. F1 or `?` opens the cheat sheet; File > Edit hotkeys rebinds.
 - **Docks.** Cuts / Layers (both workspaces) and Laser (Laser workspace) are collapsible docks in the right panel; the
   colour palette (C00-C29, T1, T2) and the numeric edits bar frame the canvas in the Design workspace; the status bar
-  is the last row. Layer reordering appears once the engine has `layer.move {id, to_index}`.
+  is the last row. The numeric bar's field groups wrap onto a second row and narrow in a narrow canvas column (a CSS
+  size container), and its 9-point anchor is the same one Properties uses (`useAnchor` in `numeric.ts`, kept in this
+  browser).
+- **Layer order** is the cut order. Cuts / Layers reorders by drag (above or below a row) and up/down buttons, the
+  Browser tree by drag and Move up / Move down in the layer menu, each one `layer.move {id, to_index}`; hidden on
+  engines without it. After a palette swatch or the Layer field moves the selection, the highlighted layer follows it
+  (`pruneSelection`).
+- **Display units everywhere**: besides fields, the rulers, canvas readouts (cursor, field size, drag/size, node and
+  Measure readouts), cut-settings summaries, Laser stats, hints and dialog messages use the length and speed units;
+  dialogs share `UnitTextField` (ui.tsx).

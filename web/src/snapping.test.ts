@@ -16,6 +16,7 @@ import {
   intersectionsNear,
   isRound,
   nearestOnOutline,
+  objectIconName,
   objectSnaps,
   pathPoints,
   polygonCentroid,
@@ -214,6 +215,14 @@ test("circles: round only with equal radii and no stretch; names and diameter", 
   assert.equal(displayName(obj("e", { kind: "ellipse", rx_mm: 3, ry_mm: 2 }, T(0, 0), "Ellipse 3")), "Ellipse 3");
   assert.equal(displayName(obj("e", { kind: "ellipse", rx_mm: 3, ry_mm: 3 }, T(0, 0), "Ellipses")), "Ellipses");
   assert.equal(displayName(obj("obj-7", { kind: "ellipse", rx_mm: 3, ry_mm: 3 })), "Circle obj-7");
+});
+
+test("Browser icons: paths (lines, polygons, converted shapes) get the path icon, never Import", () => {
+  assert.equal(objectIconName(path("p", "M0,0 L10,0")), "path");
+  assert.equal(objectIconName(circle("c", 5)), "circle");
+  assert.equal(objectIconName(obj("e", { kind: "ellipse", rx_mm: 5, ry_mm: 4 })), "ellipse");
+  assert.equal(objectIconName(obj("r", { kind: "rect", width_mm: 5, height_mm: 4, corner_radius_mm: 0 })), "rect");
+  assert.equal(objectIconName(obj("i", { kind: "image", width_mm: 5, height_mm: 4, mime: "image/png", data_base64: "" })), "image");
 });
 
 test("caps: a huge path keeps at most MAX_POINTS_PER_OBJECT candidates, corners first", () => {

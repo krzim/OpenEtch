@@ -63,6 +63,7 @@ import {
 } from "../api/project.ts";
 import type { ProjectEntry } from "../api/types.ts";
 import type { Engine } from "../api/useEngine.ts";
+import { carryGuides, clearGuides, guideScope, UNSAVED_SCOPE } from "../guides.ts";
 import { Icon, Modal, fmt } from "./ui.tsx";
 
 type Notify = (msg: string, kind?: "info" | "error") => void;
@@ -253,6 +254,8 @@ export function useFileActions(p: {
       setModal(null);
       void task(async () => {
         await engine.run(C.docNew());
+        // The new document starts without guides; the discarded unsaved one's go with it.
+        clearGuides(UNSAVED_SCOPE);
         detach("");
         setLoadedUnsaved(false);
         setImportedFieldMm(null);
@@ -274,7 +277,10 @@ export function useFileActions(p: {
         // Keep the document's own name (Browser tree, exports, the saved file) in step with the project name.
         const d = live.current.doc;
         if (d && d.name !== name && engine.has(C.OPT.docRename)) await engine.run(C.docRename(name)).catch(() => undefined);
+        const fromScope = guideScope(live.current.projectName, live.current.openedName);
         await api.saveProject(name, overwrite);
+        // The guides follow the document into the project it is now saved as.
+        carryGuides(fromScope, guideScope(name, null));
         setDetachedFrom(undefined);
         setSuggestedName("");
         setLoadedUnsaved(false);

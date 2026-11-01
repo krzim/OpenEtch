@@ -1,6 +1,10 @@
-// The centre canvas: an SVG in field millimetres with +Y up. One group carries the view transform (pan/zoom and the
-// y-flip); everything inside it is drawn in field mm. Stroke widths are divided by the zoom so they stay a constant
-// number of screen pixels.
+// The centre canvas, in field millimetres with +Y up, drawn as stacked layers that each carry the same view transform
+// (pan/zoom and the y-flip): the field, grid and stock (SVG), images (canvas), object outlines and fills (SVG), the
+// toolpath preview (canvas), and on top the interaction SVG (handles, marquee, rubber bands, the canvas tool, snap
+// glyphs). The scene layers are memoized on document and preview data, not on the view: a zoom or pan only changes
+// their transform (SVG strokes use vector-effect: non-scaling-stroke) and repaints the canvases' visible region from
+// view-independent caches (components/SceneCanvas.tsx, sceneLayers.ts). Wheel, pinch and pan updates are coalesced
+// to one per animation frame. Overlay strokes are divided by the zoom so they stay a constant number of screen px.
 //
 // Interaction uses Pointer Events only (mouse, pen and touch alike), following LightBurn:
 // - click an object (its line, or inside a closed shape) to select it; Shift adds, Ctrl toggles, Ctrl+Shift removes;
@@ -20,12 +24,11 @@
 //   guides and the grid. A dragged selection snaps by its own snap point nearest to where it was grabbed.
 // Every edit is a command sent on pointerup; until the engine answers, the change is drawn as a transient transform.
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import type { Invocation } from "../api/client.ts";
 import * as C from "../api/commands.ts";
 import { createdIds } from "../api/drop.ts";
-import { energyOpacity, layerEnergy } from "../api/laser.ts";
-import { markHidden, passColor, passEnergy, passResolver } from "../api/passes.ts";
 import type { Affine, GDocument, Layer, Preview, Vec2 } from "../api/types.ts";
 import type { CanvasCtx, CanvasTool, CanvasToolId, RenderCtx } from "../canvasTool.ts";
 import { circleLocked } from "../circleLock.ts";
@@ -69,6 +72,8 @@ import {
   type Selection,
 } from "../selection.ts";
 import { useDitheredHref } from "./ImageSettings.tsx";
+import { CanvasLayer, ToolpathLayer, originalHref, paintImages, useBitmaps, useDpr, type ImageItem, type PaintArgs } from "./SceneCanvas.tsx";
+import { buildToolpath, frameCoalescer, gridSpacing, type ToolpathStyle, type View } from "../sceneLayers.ts";
 import {
   SNAP_TOL_PX,
   buildSnapIndex,
@@ -87,8 +92,9 @@ import {
   type SnapPoint,
 } from "../snapping.ts";
 import { Icon } from "./ui.tsx";
-import { canvasColor } from "../workspace/theme.ts";
+import { TOOLPATH_INK, canvasColor, type Theme } from "../workspace/theme.ts";
 import { usePrefs, useResolvedTheme } from "../workspace/usePrefs.ts";
+import { fixedLength, fixedNumber, formatLength, lengthDigits, lengthToDisplay, trimNumber } from "../workspace/units.ts";
 import { onViewCommand, publishViewStatus } from "../workspace/viewStatus.ts";
 
 export type Tool = "select" | "rect" | "ellipse" | "circle" | CanvasToolId;
@@ -96,13 +102,6 @@ export type Tool = "select" | "rect" | "ellipse" | "circle" | CanvasToolId;
 /** Tools that draw a shape here (the canvas tools in components/EditTools.tsx draw lines, pens and polygons). */
 type DrawTool = "rect" | "ellipse" | "circle";
 const isDrawTool = (t: Tool): t is DrawTool => t === "rect" || t === "ellipse" || t === "circle";
-
-/** View transform: field point (cx, cy) at the canvas centre, `scale` screen px per mm. */
-interface View {
-  cx: number;
-  cy: number;
-  scale: number;
-}
 
 export interface SnapSettings {
   objects: boolean;
@@ -205,13 +204,33 @@ export function Viewport(props: ViewportProps) {
   const galvo = Math.abs(wsW - wsH) < 1e-3;
   // Display preferences (workspace/prefs.ts): grid, wheel direction, snap distance and kinds, crosshair; and the theme.
   const uiPrefs = usePrefs();
+  /** Display length unit for readouts (fields convert on their own). */
+  const lu = uiPrefs.units;
   const theme = useResolvedTheme();
   const wheelSign = useRef(1);
   wheelSign.current = uiPrefs.invertWheel ? -1 : 1;
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [size, setSize] = useState<Vec2>([1, 1]);
-  const [view, setView] = useState<View>({ cx: 0, cy: 0, scale: 3 });
+  const [view, setViewState] = useState<View>({ cx: 0, cy: 0, scale: 3 });
+  /** The newest view asked for; the drawn one (`view`) catches up once per animation frame. */
+  const viewRef = useRef<View>(view);
+  const frames = useRef<ReturnType<typeof frameCoalescer<View>> | null>(null);
+  frames.current ??= frameCoalescer<View>(
+    (cb) => requestAnimationFrame(cb),
+    (v) => flushSync(() => setViewState(v)),
+  );
+  /** Pan/zoom from wheel, pinch, drags and hotkeys: composes with updates not drawn yet, drawn on the next frame. */
+  const queueView = useCallback((next: View | ((v: View) => View)) => {
+    viewRef.current = typeof next === "function" ? next(viewRef.current) : next;
+    frames.current?.push(viewRef.current);
+  }, []);
+  /** Set the view now (fit, zoom to selection). */
+  const setView = useCallback((v: View) => {
+    viewRef.current = v;
+    setViewState(v);
+  }, []);
+  const dpr = useDpr();
   const [cursor, setCursor] = useState<Vec2 | null>(null);
   const [transient, setTransient] = useState<Transient | null>(null);
   const [draw, setDraw] = useState<{ a: Vec2; b: Vec2; tool: DrawTool } | null>(null);
@@ -248,7 +267,7 @@ export function Viewport(props: ViewportProps) {
       const [cx, cy] = boxCenter(b);
       setView({ cx, cy, scale });
     },
-    [size],
+    [size, setView],
   );
   const fieldBox = useMemo<Box>(() => ({ x0: -wsW / 2, y0: -wsH / 2, x1: wsW / 2, y1: wsH / 2 }), [wsW, wsH]);
   const fitField = useCallback(() => {
@@ -293,16 +312,16 @@ export function Viewport(props: ViewportProps) {
       const s = local(e);
       const pixel = e.deltaMode === 0;
       if (!e.ctrlKey && pixel && e.deltaX !== 0) {
-        setView((v) => ({ ...v, cx: v.cx + e.deltaX / v.scale, cy: v.cy - e.deltaY / v.scale }));
+        queueView((v) => ({ ...v, cx: v.cx + e.deltaX / v.scale, cy: v.cy - e.deltaY / v.scale }));
         return;
       }
       const dy = (pixel ? e.deltaY : e.deltaY * 40) * (e.ctrlKey ? 1 : wheelSign.current);
       const factor = Math.exp(-clamp(dy, -300, 300) * (e.ctrlKey ? 0.01 : 0.0015));
-      setView((v) => zoomAtPure(v, size, s, factor));
+      queueView((v) => zoomAtPure(v, size, s, factor));
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
-  }, [size]);
+  }, [size, queueView]);
 
   const selectedSet = useMemo(() => new Set(selection.objects), [selection.objects]);
   const layerById = useMemo(() => new Map((doc?.layers ?? []).map((l) => [l.id, l])), [doc]);
@@ -465,14 +484,14 @@ export function Viewport(props: ViewportProps) {
       // Second finger: abandon the single-pointer gesture and pinch instead.
       cancelGesture();
       const [p, q] = [...pointers.current.values()] as [Vec2, Vec2];
-      gesture.current = { kind: "pinch", dist: dist(p, q), mid: mid(p, q), view };
+      gesture.current = { kind: "pinch", dist: dist(p, q), mid: mid(p, q), view: viewRef.current };
       return;
     }
     if (pointers.current.size > 2) return;
     const m = modsOf(e);
     lastMove.current = { s, m };
     if (mouse && e.button === 1) {
-      gesture.current = { kind: "pan", start: s, view, moved: false, clearOnTap: false };
+      gesture.current = { kind: "pan", start: s, view: viewRef.current, moved: false, clearOnTap: false };
       return;
     }
     const f = toField(s[0], s[1]);
@@ -563,7 +582,7 @@ export function Viewport(props: ViewportProps) {
 
     if (e.pointerType === "touch") {
       // One finger on empty space pans; a tap clears the selection.
-      gesture.current = { kind: "pan", start: s, view, moved: false, clearOnTap: op === "replace" };
+      gesture.current = { kind: "pan", start: s, view: viewRef.current, moved: false, clearOnTap: op === "replace" };
       return;
     }
     gesture.current = { kind: "marquee", start: f, startScreen: s, op, moved: false };
@@ -580,7 +599,7 @@ export function Viewport(props: ViewportProps) {
         if (!g.moved && Math.hypot(dx, dy) < TAP_SLOP) return;
         g.moved = true;
         autoFit.current = false;
-        setView({ ...g.view, cx: g.view.cx - dx / g.view.scale, cy: g.view.cy + dy / g.view.scale });
+        queueView({ ...g.view, cx: g.view.cx - dx / g.view.scale, cy: g.view.cy + dy / g.view.scale });
         break;
       }
       case "marquee": {
@@ -604,7 +623,7 @@ export function Viewport(props: ViewportProps) {
         setSnapShown(hit);
         setTransient({ m: [1, 0, 0, 1, d[0], d[1]], stock: g.stock });
         const from = g.ref.owner ? snapLabel(g.ref) : "";
-        setReadout(`Δ ${d[0].toFixed(2)}, ${d[1].toFixed(2)} mm${from ? ` · ${from}` : ""}${hit?.label ? ` → ${hit.label}` : ""}`);
+        setReadout(`Δ ${fixedNumber(d[0], lu)}, ${fixedLength(d[1], lu)}${from ? ` · ${from}` : ""}${hit?.label ? ` → ${hit.label}` : ""}`);
         break;
       }
       case "scale": {
@@ -615,7 +634,7 @@ export function Viewport(props: ViewportProps) {
         const h = (g.box.y1 - g.box.y0) * Math.abs(sc.sy);
         const [px, py] = [Math.abs(sc.sx) * 100, Math.abs(sc.sy) * 100];
         const flipped = sc.sx < 0 && sc.sy < 0 ? " · mirrored both ways" : sc.sx < 0 ? " · mirrored horizontally" : sc.sy < 0 ? " · mirrored vertically" : "";
-        setReadout(`${w.toFixed(2)} × ${h.toFixed(2)} mm (${px.toFixed(1)}%${px !== py ? ` × ${py.toFixed(1)}%` : ""})${flipped}`);
+        setReadout(`${fixedNumber(w, lu)} × ${fixedLength(h, lu)} (${px.toFixed(1)}%${px !== py ? ` × ${py.toFixed(1)}%` : ""})${flipped}`);
         break;
       }
       case "rotate": {
@@ -658,7 +677,7 @@ export function Viewport(props: ViewportProps) {
       autoFit.current = false;
       // Zoom about the starting midpoint, then pan by the midpoint's travel.
       const z = zoomAtPure(g.view, size, g.mid, factor);
-      setView({ ...z, cx: z.cx - (m[0] - g.mid[0]) / z.scale, cy: z.cy + (m[1] - g.mid[1]) / z.scale });
+      queueView({ ...z, cx: z.cx - (m[0] - g.mid[0]) / z.scale, cy: z.cy + (m[1] - g.mid[1]) / z.scale });
       return;
     }
     const m = modsOf(e);
@@ -829,9 +848,9 @@ export function Viewport(props: ViewportProps) {
         if (cmd === "selection") {
           const b = selBounds ?? stockBox;
           if (b) fitBox(pad(b, 3));
-        } else setView((v) => zoomAtPure(v, size, [size[0] / 2, size[1] / 2], cmd === "zoomIn" ? 1.25 : 0.8));
+        } else queueView((v) => zoomAtPure(v, size, [size[0] / 2, size[1] / 2], cmd === "zoomIn" ? 1.25 : 0.8));
       }),
-    [fitField, fitBox, selBounds, stockBox, size],
+    [fitField, fitBox, selBounds, stockBox, size, queueView],
   );
   useEffect(() => {
     publishViewStatus({ cursor, snap: snapShown ? { p: snapShown.p, label: snapShown.label, kind: snapShown.kind } : null, scale: view.scale });
@@ -851,13 +870,11 @@ export function Viewport(props: ViewportProps) {
   const halfY = wsH / 2;
   const matrix = `matrix(${view.scale},0,0,${-view.scale},${size[0] / 2 - view.scale * view.cx},${size[1] / 2 + view.scale * view.cy})`;
 
+  // The grid path only changes when its spacing does (a handful of steps over the zoom range).
+  const spacing = gridSpacing(view.scale, uiPrefs.gridMm, Math.max(halfX, halfY));
   const grid = useMemo(() => {
     if (!uiPrefs.gridVisible) return { dMinor: "", dMajor: "" };
-    // A fixed spacing from Preferences while it is at least 4 px on screen and the line count stays sane.
-    const g = uiPrefs.gridMm;
-    const fixed = g > 0 && g * view.scale >= 4 && Math.max(halfX, halfY) / g <= 2000 ? g : 0;
-    const minor = fixed || ([0.5, 1, 2, 5, 10, 20, 50].find((st) => st * view.scale >= 10) ?? 50);
-    const major = fixed ? fixed * 10 : minor * (minor === 2 || minor === 20 ? 5 : minor === 0.5 || minor === 5 || minor === 50 ? 2 : 10);
+    const { minor, major } = spacing;
     let dMinor = "";
     let dMajor = "";
     // Lines through the origin (the field centre), across the whole workspace.
@@ -877,7 +894,8 @@ export function Viewport(props: ViewportProps) {
       else dMinor += line;
     }
     return { dMinor, dMajor };
-  }, [halfX, halfY, view.scale, uiPrefs.gridVisible, uiPrefs.gridMm]);
+    // `spacing` stands for its two numbers.
+  }, [halfX, halfY, spacing.minor, spacing.major, uiPrefs.gridVisible]);
 
   /** Object path data in the field frame, cached per document. */
   const paths = useMemo(() => {
@@ -901,31 +919,77 @@ export function Viewport(props: ViewportProps) {
     return out;
   }, [doc, viewStyle, paths, liveObjects, selectedSet]);
 
-  const previewPaths = useMemo(() => {
-    if (!preview || !showPreview) return null;
-    // Marks by layer and pass (main settings or sub-layer), so each pass of a layer gets its own colour.
-    const marks = new Map<string, { layer: string; pass: number | null; d: string }>();
-    let jumps = "";
-    const segs = preview.segments ?? [];
-    const n = previewOptions.upTo === null ? segs.length : Math.min(segs.length, previewOptions.upTo);
-    const resolve = passResolver(preview, doc);
-    let head: Vec2 | null = null;
-    for (let i = 0; i < n; i++) {
-      const s = segs[i];
-      head = s.to;
-      if (s.kind === "mark") {
-        const layer = s.layer ?? "";
-        const pass = resolve(s);
-        if (markHidden(previewOptions, layer, pass)) continue;
-        const k = `${layer}#${pass ?? ""}`;
-        const m = marks.get(k) ?? { layer, pass, d: "" };
-        m.d += `M${r4(s.from[0])},${r4(s.from[1])}L${r4(s.to[0])},${r4(s.to[1])}`;
-        marks.set(k, m);
-      } else if (previewOptions.jumps) jumps += `M${r4(s.from[0])},${r4(s.from[1])}L${r4(s.to[0])},${r4(s.to[1])}`;
-    }
-    const maxE = Math.max(0, ...(doc?.layers ?? []).flatMap((l) => [l.settings, ...(l.sub_layers ?? [])].map(layerEnergy)));
-    return { marks: [...marks.entries()], jumps, head: previewOptions.upTo !== null && n < segs.length ? head : null, maxE };
-  }, [preview, showPreview, previewOptions, doc]);
+  // The toolpath preview, packed by style and tile once per preview (drawn on a canvas, sceneLayers.ts).
+  const { hidden: tpHidden, hiddenPasses: tpHiddenPasses, upTo: tpUpTo, jumps: tpJumps, shade: tpShade } = previewOptions;
+  const toolpath = useMemo(
+    () => (preview && showPreview ? buildToolpath(preview, doc, { hidden: tpHidden, hiddenPasses: tpHiddenPasses, upTo: tpUpTo, jumps: tpJumps }) : null),
+    [preview, showPreview, doc, tpHidden, tpHiddenPasses, tpUpTo, tpJumps],
+  );
+  const toolpathStyle = useMemo<ToolpathStyle>(() => ({ layers: layerById, theme, shade: tpShade, ...TOOLPATH_INK[theme] }), [layerById, theme, tpShade]);
+
+  // Images: drawn on a canvas under the outlines from cached bitmaps (the original, or the layer's dithered preview).
+  const imageObjects = useMemo(() => (doc?.objects ?? []).filter((o) => o.geometry.kind === "image"), [doc]);
+  const [dithered, setDithered] = useState<ReadonlyMap<string, string>>(() => new Map());
+  const onDithered = useCallback((id: string, href: string | null) => {
+    setDithered((m) => {
+      if ((m.get(id) ?? null) === href) return m;
+      const next = new Map(m);
+      if (href) next.set(id, href);
+      else next.delete(id);
+      return next;
+    });
+  }, []);
+  const imageSources = useMemo(
+    () =>
+      imageObjects
+        .filter((o) => layerById.get(o.layer)?.visible !== false)
+        .map((o) => ({ o, g: o.geometry as ImageGeom, href: dithered.get(o.id) ?? originalHref(o.geometry as ImageGeom) })),
+    [imageObjects, layerById, dithered],
+  );
+  const imageHrefs = useMemo(() => [...new Set(imageSources.map((i) => i.href))], [imageSources]);
+  const bitmapVersion = useBitmaps(imageHrefs);
+  const imageItems = useMemo<ImageItem[]>(
+    () =>
+      imageSources.map(({ o, g, href }) => ({
+        id: o.id,
+        href,
+        m: liveObjects && selectedSet.has(o.id) ? mul(liveObjects, o.transform) : o.transform,
+        widthMm: g.width_mm,
+        heightMm: g.height_mm,
+      })),
+    [imageSources, liveObjects, selectedSet],
+  );
+  const paintImageLayer = useMemo(
+    () => (imageItems.length ? (ctx: CanvasRenderingContext2D, a: PaintArgs) => paintImages(ctx, a, imageItems, showPreview ? 0.3 : 1) : null),
+    // A finished bitmap load (`bitmapVersion`) repaints.
+    [imageItems, showPreview, bitmapVersion],
+  );
+
+  // The field, grid and stock: view-independent SVG under the images.
+  const stockD = stock ? toPathData(stock.cmds, liveStock ? mul(liveStock, stock.transform) : stock.transform) : null;
+  const back = useMemo(
+    () => (
+      <>
+        {/* the active device's workspace: a galvo field (square) or a gantry bed (rectangle) */}
+        <rect className="field-bg" x={-halfX} y={-halfY} width={wsW} height={wsH} />
+        <path className="grid-minor" d={grid.dMinor} strokeWidth={0.6} vectorEffect={NSS} />
+        <path className="grid-major" d={grid.dMajor} strokeWidth={0.9} vectorEffect={NSS} />
+        <path className="axis-x" d={`M${-halfX},0H${halfX}`} strokeWidth={1.2} vectorEffect={NSS} />
+        <path className="axis-y" d={`M0,${-halfY}V${halfY}`} strokeWidth={1.2} vectorEffect={NSS} />
+        <rect className="field-edge" x={-halfX} y={-halfY} width={wsW} height={wsH} strokeWidth={1.5} vectorEffect={NSS} />
+        {stockD && (
+          <path
+            className={`stock${selection.stock ? " selected" : ""}`}
+            d={stockD}
+            strokeWidth={selection.stock ? 2 : 1.5}
+            strokeDasharray="6 3"
+            vectorEffect={NSS}
+          />
+        )}
+      </>
+    ),
+    [halfX, halfY, wsW, wsH, grid, stockD, selection.stock],
+  );
 
   const drawBox = draw ? boxFromPoints(draw.a, draw.b) : null;
   const marqueeBox = marquee ? boxFromPoints(marquee.a, marquee.b) : null;
@@ -959,8 +1023,33 @@ export function Viewport(props: ViewportProps) {
         props.onContextMenu(e.clientX, e.clientY);
       }}
     >
+      {imageObjects.map((o) => (
+        <DitheredSource key={o.id} id={o.id} g={o.geometry as ImageGeom} layer={layerById.get(o.layer)} onHref={onDithered} />
+      ))}
+      <svg className="vp-layer vp-back" width={size[0]} height={size[1]} aria-hidden="true">
+        <g transform={matrix}>{back}</g>
+      </svg>
+      {paintImageLayer && <CanvasLayer className="vp-images" view={view} size={size} dpr={dpr} paint={paintImageLayer} />}
+      <svg className="vp-layer vp-objects" width={size[0]} height={size[1]} aria-hidden="true">
+        <g transform={matrix}>
+          <ObjectsLayer
+            doc={doc}
+            paths={paths}
+            fills={fills}
+            layerById={layerById}
+            selectedSet={selectedSet}
+            liveM={liveM}
+            outside={outside}
+            theme={theme}
+            viewStyle={viewStyle}
+            dimmed={showPreview}
+          />
+        </g>
+      </svg>
+      {toolpath && toolpath.segments > 0 && <ToolpathLayer view={view} size={size} dpr={dpr} toolpath={toolpath} style={toolpathStyle} />}
       <svg
         ref={svgRef}
+        className="vp-main"
         width={size[0]}
         height={size[1]}
         onPointerDown={onPointerDown}
@@ -975,67 +1064,7 @@ export function Viewport(props: ViewportProps) {
         onAuxClick={(e) => e.preventDefault()}
       >
         <g transform={matrix}>
-          {/* the active device's workspace: a galvo field (square) or a gantry bed (rectangle) */}
-          <rect className="field-bg" x={-halfX} y={-halfY} width={wsW} height={wsH} />
-          <path className="grid-minor" d={grid.dMinor} strokeWidth={px(0.6)} />
-          <path className="grid-major" d={grid.dMajor} strokeWidth={px(0.9)} />
-          <path className="axis-x" d={`M${-halfX},0H${halfX}`} strokeWidth={px(1.2)} />
-          <path className="axis-y" d={`M0,${-halfY}V${halfY}`} strokeWidth={px(1.2)} />
-          <rect className="field-edge" x={-halfX} y={-halfY} width={wsW} height={wsH} strokeWidth={px(1.5)} />
-
-          {stock && (
-            <path
-              className={`stock${selection.stock ? " selected" : ""}`}
-              d={toPathData(stock.cmds, liveStock ? mul(liveStock, stock.transform) : stock.transform)}
-              strokeWidth={px(selection.stock ? 2 : 1.5)}
-              strokeDasharray={`${px(6)} ${px(3)}`}
-            />
-          )}
-
-          <g className={showPreview ? "objects dimmed" : "objects"}>
-            {fills.map(({ layer, d }) => (
-              <path key={`fill-${layer.id}`} className="obj-fill" d={d} fill={canvasColor(layer.color, theme)} fillOpacity={layer.output ? 0.35 : 0.15} fillRule="evenodd" />
-            ))}
-            {doc?.objects.map((o) => {
-              const layer = layerById.get(o.layer);
-              if (layer && !layer.visible) return null;
-              const d = paths.get(o.id) ?? "";
-              const sel = selectedSet.has(o.id);
-              const moving = sel && !!liveM;
-              const out = outside.has(o.id);
-              const fillHere = moving && viewStyle === "filled" && layer && layer.settings.mode !== "line" && o.geometry.kind !== "image";
-              return (
-                <g key={o.id} data-oid={o.id} transform={moving ? liveM : undefined} className={layer && !layer.output ? "no-output" : undefined}>
-                  {o.geometry.kind === "image" && <ImageObject id={o.id} g={o.geometry} t={o.transform} layer={layer} />}
-                  {fillHere && <path className="obj-fill" d={d} fill={canvasColor(layer.color, theme)} fillOpacity={0.35} fillRule="evenodd" />}
-                  <path className="obj" d={d} stroke={canvasColor(layer?.color, theme)} strokeWidth={px(1.3)} />
-                  {sel && <path className="obj-selected" d={d} strokeWidth={px(1.6)} strokeDasharray={`${px(5)} ${px(4)}`} />}
-                  {out && <path className="obj-outside" d={d} strokeWidth={px(3)} />}
-                </g>
-              );
-            })}
-          </g>
-
-          {previewPaths && (
-            <g className="toolpath" pointerEvents="none">
-              {previewPaths.jumps && <path className="tp-jump" d={previewPaths.jumps} strokeWidth={px(0.8)} strokeDasharray={`${px(4)} ${px(3)}`} />}
-              {previewPaths.marks.map(([key, m]) => {
-                const l = layerById.get(m.layer);
-                const shade = previewOptions.shade;
-                return (
-                  <path
-                    key={key}
-                    className={shade ? "tp-mark shade" : "tp-mark"}
-                    d={m.d}
-                    stroke={shade ? undefined : canvasColor(l ? passColor(l.color, m.pass ?? 0) : "#dd2222", theme)}
-                    strokeOpacity={shade ? energyOpacity(passEnergy(l, m.pass), previewPaths.maxE) : 1}
-                    strokeWidth={px(1.2)}
-                  />
-                );
-              })}
-              {previewPaths.head && <circle className="tp-head" cx={previewPaths.head[0]} cy={previewPaths.head[1]} r={px(4)} strokeWidth={px(1.5)} />}
-            </g>
-          )}
+          {toolpath?.head && <circle className="tp-head" cx={toolpath.head[0]} cy={toolpath.head[1]} r={px(4)} strokeWidth={px(1.5)} pointerEvents="none" />}
 
           {selectedGroups.map((b, i) => (
             <rect
@@ -1160,10 +1189,14 @@ export function Viewport(props: ViewportProps) {
         </div>
       )}
       <div className="vp-overlay vp-bottom-left">
-        {cursor ? `X ${cursor[0].toFixed(2)}  Y ${cursor[1].toFixed(2)} mm` : galvo ? `Field ${wsW} mm` : `Workspace ${wsW} × ${wsH} mm`}
+        {cursor
+          ? `X ${fixedNumber(cursor[0], lu)}  Y ${fixedLength(cursor[1], lu)}`
+          : galvo
+            ? `Field ${formatLength(wsW, lu, 3)}`
+            : `Workspace ${trimNumber(lengthToDisplay(wsW, lu), lengthDigits(lu, 3))} × ${formatLength(wsH, lu, 3)}`}
         {draw && draw.tool === "circle"
-          ? `  ·  Ø ${(2 * dist(draw.a, draw.b)).toFixed(2)} mm`
-          : drawBox && `  ·  ${(drawBox.x1 - drawBox.x0).toFixed(2)} × ${(drawBox.y1 - drawBox.y0).toFixed(2)} mm`}
+          ? `  ·  Ø ${fixedLength(2 * dist(draw.a, draw.b), lu)}`
+          : drawBox && `  ·  ${fixedNumber(drawBox.x1 - drawBox.x0, lu)} × ${fixedLength(drawBox.y1 - drawBox.y0, lu)}`}
         {readout && `  ·  ${readout}`}
       </div>
       {props.canvasTool?.overlay(renderCtx)}
@@ -1172,7 +1205,7 @@ export function Viewport(props: ViewportProps) {
           {tool === "circle"
             ? "Press at the centre and drag the radius"
             : `Drag to draw ${tool === "rect" ? "a rectangle (Shift: square" : "an ellipse (Shift: circle"}, Ctrl: from the centre)`}{" "}
-          · tap for 20 mm · {tool === "circle" ? "Ctrl: no snap · " : ""}Alt: guides only · Esc to cancel
+          · tap for {formatLength(20, lu)} · {tool === "circle" ? "Ctrl: no snap · " : ""}Alt: guides only · Esc to cancel
         </div>
       )}
     </div>
@@ -1231,27 +1264,62 @@ function SnapOverlay({ hit, at }: { hit: SnapHit; at: (p: Vec2) => Vec2 }) {
   );
 }
 
-/** A bitmap drawn in its object frame (centred on the local origin; SVG images are y-down, the field is y-up). */
-function ImageObject({ id, g, t, layer }: { id: string; g: { width_mm: number; height_mm: number; mime: string; data_base64: string }; t: Affine; layer?: Layer }) {
-  const original = useMemo(() => `data:${g.mime};base64,${g.data_base64}`, [g.mime, g.data_base64]);
-  // The layer's dithered preview when the image view is "dithered" (or the Adjust image dialog is open).
-  const dithered = useDitheredHref(id, g, layer);
+type ImageGeom = Extract<GDocument["objects"][number]["geometry"], { kind: "image" }>;
+
+/** SVG `vector-effect`: strokes keep their width in screen px whatever the zoom. */
+const NSS = "non-scaling-stroke";
+
+/** Reports an image's dithered preview (when the image view is "dithered" or Adjust image is open), else null. */
+const DitheredSource = memo(function DitheredSource(p: { id: string; g: ImageGeom; layer?: Layer; onHref: (id: string, href: string | null) => void }) {
+  const { id, onHref } = p;
+  const href = useDitheredHref(id, p.g, p.layer);
+  useEffect(() => onHref(id, href), [id, href, onHref]);
+  useEffect(() => () => onHref(id, null), [id, onHref]);
+  return null;
+});
+
+/**
+ * Object outlines and fills in field mm. Memoized on document data, not the view: a zoom or pan changes only the
+ * transform of the group around it, and strokes keep their screen width with vector-effect.
+ */
+const ObjectsLayer = memo(function ObjectsLayer(p: {
+  doc: GDocument | null;
+  paths: ReadonlyMap<string, string>;
+  fills: { layer: Layer; d: string }[];
+  layerById: ReadonlyMap<string, Layer>;
+  selectedSet: ReadonlySet<string>;
+  liveM: string | undefined;
+  outside: ReadonlySet<string>;
+  theme: Theme;
+  viewStyle: ViewStyle;
+  dimmed: boolean;
+}) {
+  const { doc, paths, layerById, selectedSet, liveM, outside, theme, viewStyle } = p;
   return (
-    <g transform={`matrix(${t.join(",")})`} pointerEvents="none">
-      <image
-        href={dithered ?? original}
-        style={dithered ? { imageRendering: "pixelated" } : undefined}
-        x={-g.width_mm / 2}
-        y={-g.height_mm / 2}
-        width={g.width_mm}
-        height={g.height_mm}
-        preserveAspectRatio="none"
-        transform="scale(1,-1)"
-        className="obj-image"
-      />
+    <g className={p.dimmed ? "objects dimmed" : "objects"}>
+      {p.fills.map(({ layer, d }) => (
+        <path key={`fill-${layer.id}`} className="obj-fill" d={d} fill={canvasColor(layer.color, theme)} fillOpacity={layer.output ? 0.35 : 0.15} fillRule="evenodd" />
+      ))}
+      {doc?.objects.map((o) => {
+        const layer = layerById.get(o.layer);
+        if (layer && !layer.visible) return null;
+        const d = paths.get(o.id) ?? "";
+        const sel = selectedSet.has(o.id);
+        const moving = sel && !!liveM;
+        const out = outside.has(o.id);
+        const fillHere = moving && viewStyle === "filled" && layer && layer.settings.mode !== "line" && o.geometry.kind !== "image";
+        return (
+          <g key={o.id} data-oid={o.id} transform={moving ? liveM : undefined} className={layer && !layer.output ? "no-output" : undefined}>
+            {fillHere && <path className="obj-fill" d={d} fill={canvasColor(layer.color, theme)} fillOpacity={0.35} fillRule="evenodd" />}
+            <path className="obj" d={d} stroke={canvasColor(layer?.color, theme)} strokeWidth={1.3} vectorEffect={NSS} />
+            {sel && <path className="obj-selected" d={d} strokeWidth={1.6} strokeDasharray="5 4" vectorEffect={NSS} />}
+            {out && <path className="obj-outside" d={d} strokeWidth={3} vectorEffect={NSS} />}
+          </g>
+        );
+      })}
     </g>
   );
-}
+});
 
 /** Where the dragged handle is: its start point moved by the pointer's travel (the grab is a few px off the handle). */
 function handleTarget(g: { box: Box; handle: Handle; start: Vec2 }, f: Vec2): Vec2 {
@@ -1306,9 +1374,6 @@ function mid(a: Vec2, b: Vec2): Vec2 {
 }
 function round6(v: number): number {
   return Math.round(v * 1e6) / 1e6;
-}
-function r4(v: number): number {
-  return Math.round(v * 1e4) / 1e4;
 }
 function pad(b: Box, m: number): Box {
   return { x0: b.x0 - m, y0: b.y0 - m, x1: b.x1 + m, y1: b.y1 + m };

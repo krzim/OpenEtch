@@ -88,7 +88,8 @@
 }
 
 /* Dark theme: "Match system" (no data-theme yet, or data-theme="system" never set) follows the OS; data-theme="dark"
-   forces it. Keep --field in step with FIELD_BG in workspace/theme.ts (canvas stroke contrast). */
+   forces it. Keep --field in step with FIELD_BG in workspace/theme.ts (canvas stroke contrast), and --tp-jump and
+   --tp-shade with TOOLPATH_INK there (the toolpath preview is drawn on a canvas). */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #17191c;
@@ -981,6 +982,15 @@ textarea {
   border-left: 3px solid transparent;
 }
 
+/* Where a dragged layer will land (layer.move). */
+.tree-row.drop-before {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.tree-row.drop-after {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
 .tree-head:hover,
 .tree-row:hover {
   background: var(--chrome-2);
@@ -1306,6 +1316,18 @@ textarea {
   cursor: default;
 }
 
+/* Scene layers under the interaction SVG (Viewport.tsx): field and grid, images (canvas), outlines, toolpath (canvas). */
+.viewport .vp-layer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+}
+
+.viewport svg.vp-main {
+  position: relative;
+}
+
 .viewport.tool-rect svg,
 .viewport.tool-ellipse svg,
 .viewport.tool-circle svg {
@@ -1349,8 +1371,7 @@ textarea {
   fill: var(--accent-fill);
 }
 
-.objects path,
-.objects image {
+.objects path {
   pointer-events: none;
 }
 
@@ -1374,9 +1395,10 @@ textarea {
   animation: ants 0.8s linear infinite;
 }
 
+/* One dash period (5 + 4 screen px: the outline keeps its screen width and dashes). */
 @keyframes ants {
   to {
-    stroke-dashoffset: -1;
+    stroke-dashoffset: -9;
   }
 }
 
@@ -1391,13 +1413,9 @@ textarea {
   stroke: var(--outside);
 }
 
-.obj-image {
-  image-rendering: auto;
-}
-
+/* Images are dimmed on their canvas (Viewport.tsx paintImages). */
 .objects.dimmed .obj,
-.objects.dimmed .obj-fill,
-.objects.dimmed .obj-image {
+.objects.dimmed .obj-fill {
   opacity: 0.3;
 }
 

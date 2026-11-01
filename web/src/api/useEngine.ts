@@ -24,6 +24,8 @@ export interface Engine {
   has: (id: string) => boolean;
   /** GET /api/project, or null until it answers (or when the engine has no project routes). */
   project: ProjectInfo | null;
+  /** GET /api/project has answered at least once (with a project, or with an error on engines without the route). */
+  projectKnown: boolean;
   link: LinkState;
   /** Last HTTP error talking to the engine, cleared on the next success. */
   httpError: string | null;
@@ -97,6 +99,7 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [commands, setCommands] = useState<CommandSpec[] | null>(null);
   const [project, setProject] = useState<ProjectInfo | null>(null);
+  const [projectKnown, setProjectKnown] = useState(false);
   const [link, setLink] = useState<LinkState>("connecting");
   const [httpError, setHttpError] = useState<string | null>(null);
   const [remoteEdit, setRemoteEdit] = useState<RemoteEdit | null>(null);
@@ -137,6 +140,8 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
       // An engine without project routes answers 404: no indicator, and the File menu falls back to its own checks.
       setProject(null);
       if (!(e instanceof ApiError && e.status === 404)) fail(e);
+    } finally {
+      setProjectKnown(true);
     }
   });
 
@@ -342,6 +347,7 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
     commands,
     has,
     project,
+    projectKnown,
     link,
     httpError,
     remoteEdit,

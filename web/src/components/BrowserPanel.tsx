@@ -1,13 +1,16 @@
 // Left "Browser" panel, after Fusion's browser tree: Document > Stock, Layers, Objects (grouped by layer, with their
 // groups). Clicking selects (Shift adds, Ctrl toggles; Shift+click a layer selects every shape on it, as in
 // LightBurn); the eye and output toggles issue `layer.update`; right-click a layer for "show only" / "output only".
-// Double-click the document name to rename it.
+// Layers are listed in cut order: drag one above or below another, or use Move up / Move down in its menu
+// (`layer.move`, on engines that have it). Double-click the document name to rename it.
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { Invocation } from "../api/client.ts";
 import * as C from "../api/commands.ts";
 import type { GDocument } from "../api/types.ts";
 import { selectOpFor, topGroup, type SelectOp, type Selection } from "../selection.ts";
+import { objectIconName } from "../snapping.ts";
+import { dropIndex, stepIndex } from "../workspace/layersTable.ts";
 import { ContextMenu, type MenuItem } from "./ContextMenu.tsx";
 import { Icon } from "./ui.tsx";
 
@@ -30,6 +33,8 @@ export function BrowserPanel(props: BrowserPanelProps) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [renaming, setRenaming] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; layer: string } | null>(null);
+  const drag = useRef<number | null>(null);
+  const [dropAt, setDropAt] = useState<{ index: number; after: boolean } | null>(null);
   const toggle = (k: string) => setCollapsed((c) => ({ ...c, [k]: !c[k] }));
   const open = (k: string) => !collapsed[k];
 
@@ -45,6 +50,18 @@ export function BrowserPanel(props: BrowserPanelProps) {
     setRenaming(null);
     if (n && n !== doc.name) run(C.docRename(n)).catch(report);
   };
+  const canMove = props.has(C.OPT.layerMove);
+  const moveLayer = (id: string, to: number | null) => {
+    if (to !== null) run(C.layerMove(id, to)).catch(report);
+  };
+  const endDrag = () => {
+    drag.current = null;
+    setDropAt(null);
+  };
+  const lowerHalf = (e: React.DragEvent<HTMLElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    return e.clientY > r.top + r.height / 2;
+  };
   const groupName = (id: string) => {
     const g = topGroup(doc, id);
     return g ? (doc.groups?.find((x) => x.id === g)?.name ?? g) : null;
@@ -53,6 +70,16 @@ export function BrowserPanel(props: BrowserPanelProps) {
   const layerMenu = (layer: string): MenuItem[] => {
     const others = doc.layers.filter((l) => l.id !== layer);
     const batch = (invs: Invocation[]) => invs.length && run(invs.length === 1 ? invs[0] : invs).catch(report);
+    const index = doc.layers.findIndex((l) => l.id === layer);
+    const up = stepIndex(index, -1, doc.layers.length);
+    const down = stepIndex(index, 1, doc.layers.length);
+    const order: MenuItem[] = canMove
+      ? [
+          { sep: true },
+          { label: "Move up (burns earlier)", disabled: up === null, action: () => moveLayer(layer, up) },
+          { label: "Move down (burns later)", disabled: down === null, action: () => moveLayer(layer, down) },
+        ]
+      : [];
     return [
       { label: "Select all shapes in this layer", action: () => props.onSelectLayer(layer, true) },
       { sep: true },
@@ -66,6 +93,7 @@ export function BrowserPanel(props: BrowserPanelProps) {
         action: () => batch([C.layerUpdate(layer, { output: true }), ...others.filter((l) => l.output).map((l) => C.layerUpdate(l.id, { output: false }))]),
       },
       { label: "Enable output for all layers", action: () => batch(doc.layers.filter((l) => !l.output).map((l) => C.layerUpdate(l.id, { output: true }))) },
+      ...order,
     ];
   };
 
@@ -121,12 +149,35 @@ export function BrowserPanel(props: BrowserPanelProps) {
           />
           {open("layers") && (
             <div className="tree-children">
-              {doc.layers.map((l) => (
+              {doc.layers.map((l, index) => (
                 <div
                   key={l.id}
                   role="treeitem"
-                  className={`tree-row${selection.layer === l.id && selection.objects.length === 0 ? " selected" : ""}${l.output ? "" : " no-output"}`}
-                  title="Click to edit its settings; Shift+click selects every shape on it; right-click for more"
+                  className={`tree-row${selection.layer === l.id && selection.objects.length === 0 ? " selected" : ""}${l.output ? "" : " no-output"}${
+                    dropAt?.index === index ? (dropAt.after ? " drop-after" : " drop-before") : ""
+                  }`}
+                  title={`Click to edit its settings; Shift+click selects every shape on it; ${canMove ? "drag to change the cut order; " : ""}right-click for more`}
+                  draggable={canMove}
+                  onDragStart={(e) => {
+                    drag.current = index;
+                    e.dataTransfer.effectAllowed = "move";
+                    e.dataTransfer.setData("text/plain", l.name);
+                  }}
+                  onDragOver={(e) => {
+                    if (!canMove || drag.current === null) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "move";
+                    const after = lowerHalf(e);
+                    if (dropAt?.index !== index || dropAt.after !== after) setDropAt({ index, after });
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const from = drag.current;
+                    const id = from !== null ? doc.layers[from]?.id : undefined;
+                    if (from !== null && id) moveLayer(id, dropIndex(from, index, lowerHalf(e), doc.layers.length));
+                    endDrag();
+                  }}
+                  onDragEnd={endDrag}
                   onClick={(e) => props.onSelectLayer(l.id, e.shiftKey)}
                   onContextMenu={(e) => {
                     e.preventDefault();
@@ -189,10 +240,7 @@ export function BrowserPanel(props: BrowserPanelProps) {
                                 props.onObjectMenu(e.clientX, e.clientY, o.id);
                               }}
                             >
-                              <Icon
-                                name={o.geometry.kind === "ellipse" ? "ellipse" : o.geometry.kind === "rect" ? "rect" : o.geometry.kind === "image" ? "preview" : "import"}
-                                size={16}
-                              />
+                              <Icon name={objectIconName(o)} size={16} />
                               <span className="tree-label">{o.name || o.id}</span>
                               {g && (
                                 <span className="tree-meta" title="Group">

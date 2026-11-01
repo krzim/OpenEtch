@@ -11,12 +11,15 @@ import { useCircleLock } from "../circleLock.ts";
 import { MAX_SUB_LAYERS, clampPass, cleanupPass, passAfterDelete, passAfterMove, passColor, passEntries, passFromResult, settingsSummary } from "../api/passes.ts";
 import type { Cleanup, CutSettings, FillMode, GDocument, Layer, MachineStatus, Vec2 } from "../api/types.ts";
 import { roundMm } from "../editing.ts";
-import { normDeg, objectBounds, transformParts, unionBoxes, type Box } from "../geometry.ts";
+import { normDeg, objectBounds, transformParts, unionBoxes } from "../geometry.ts";
 import { topGroup, unitsOf, type Selection } from "../selection.ts";
 import { circleOf, shapeKindName } from "../snapping.ts";
+import { ANCHORS, anchorPoint, useAnchor } from "../workspace/numeric.ts";
+import { usePrefs } from "../workspace/usePrefs.ts";
+import { formatLength, lengthDigits, lengthToDisplay, trimNumber } from "../workspace/units.ts";
 import { ImageSettings } from "./ImageSettings.tsx";
 import type { ArrangeAction } from "./Toolbar.tsx";
-import { CheckField, ColorField, Icon, NumberField, PairField, TextField, fmt } from "./ui.tsx";
+import { CheckField, ColorField, Icon, NumberField, PairField, TextField } from "./ui.tsx";
 
 type Run = (inv: Invocation | Invocation[]) => Promise<unknown>;
 
@@ -53,19 +56,11 @@ export function PropertiesPanel(props: PropertiesPanelProps) {
   );
 }
 
-/** Reference point for X/Y (LightBurn's 9-point anchor). */
-type Anchor = "nw" | "n" | "ne" | "w" | "c" | "e" | "sw" | "s" | "se";
-const ANCHORS: Anchor[] = ["nw", "n", "ne", "w", "c", "e", "sw", "s", "se"];
-
-function anchorPoint(b: Box, a: Anchor): Vec2 {
-  const x = a.includes("w") ? b.x0 : a.includes("e") ? b.x1 : (b.x0 + b.x1) / 2;
-  const y = a.startsWith("s") ? b.y0 : a.startsWith("n") ? b.y1 : (b.y0 + b.y1) / 2;
-  return [x, y];
-}
-
 function ObjectSection({ doc, selection, run, report, onArrange, workspaceMm }: PropertiesPanelProps & { doc: GDocument }) {
   const [lockAspect, setLockAspect] = useState(true);
-  const [anchor, setAnchor] = useState<Anchor>("c");
+  // LightBurn's 9-point anchor, the same one the numeric toolbar uses.
+  const [anchor, setAnchor] = useAnchor();
+  const { units: lu, nudge } = usePrefs();
   const [keepRound, setKeepRound] = useCircleLock();
   const objs = doc.objects.filter((o) => selection.objects.includes(o.id));
   const bounds = unionBoxes(objs.map(objectBounds));
@@ -198,8 +193,9 @@ function ObjectSection({ doc, selection, run, report, onArrange, workspaceMm }: 
         )}
       </div>
       <p className="hint">
-        X/Y are the chosen reference point of the bounding box in the field frame. Arrows nudge 5 mm (Ctrl 1, Shift 20,
-        Ctrl+Shift 0.1); <kbd>.</kbd> and <kbd>,</kbd> rotate 90°.
+        X/Y are the chosen reference point of the bounding box in the field frame. Arrows nudge {formatLength(nudge.normal, lu, 3)} (Ctrl{" "}
+        {formatLength(nudge.ctrl, lu, 3)}, Shift {formatLength(nudge.shift, lu, 3)}, Ctrl+Shift {formatLength(nudge.ctrlShift, lu, 3)});{" "}
+        <kbd>.</kbd> and <kbd>,</kbd> rotate 90°.
       </p>
     </section>
   );
@@ -207,13 +203,17 @@ function ObjectSection({ doc, selection, run, report, onArrange, workspaceMm }: 
 
 function StockSection({ doc, has, run, report, onEditStock }: PropertiesPanelProps & { doc: GDocument }) {
   const s = doc.stock;
+  const lu = usePrefs().units;
   if (!s) return null;
   const exec = (inv: Invocation) => run(inv).catch(report);
   const move = (p: { center?: Vec2; rotation_deg?: number }) => {
     if (has(C.OPT.stockMove)) exec(C.stockMove(p));
     else exec(C.stockDefine({ ...s, center: p.center ?? s.center, rotation_deg: p.rotation_deg ?? s.rotation_deg }));
   };
-  const dims = s.shape.kind === "rect" ? `${fmt(s.shape.width_mm)} × ${fmt(s.shape.height_mm)} mm` : `Ø ${fmt(s.shape.diameter_mm)} mm`;
+  const dims =
+    s.shape.kind === "rect"
+      ? `${trimNumber(lengthToDisplay(s.shape.width_mm, lu), lengthDigits(lu, 3))} × ${formatLength(s.shape.height_mm, lu, 3)}`
+      : `Ø ${formatLength(s.shape.diameter_mm, lu, 3)}`;
   return (
     <section className="prop-section">
       <h3>Stock</h3>
@@ -223,7 +223,7 @@ function StockSection({ doc, has, run, report, onEditStock }: PropertiesPanelPro
         <dt>Shape</dt>
         <dd>{dims}</dd>
         <dt>Thickness</dt>
-        <dd>{fmt(s.thickness_mm)} mm</dd>
+        <dd>{formatLength(s.thickness_mm, lu, 3)}</dd>
         <dt>Material</dt>
         <dd>{s.material ?? "—"}</dd>
       </dl>
@@ -332,6 +332,7 @@ function PassEditor({
 }) {
   // The open pass, per layer: selecting another layer opens its Main tab.
   const [open, setOpen] = useState<{ layer: string; pass: number }>({ layer: layer.id, pass: 0 });
+  const speedUnit = usePrefs().speedUnit;
   const pass = clampPass(layer, open.layer === layer.id ? open.pass : 0);
   const select = (p: number) => setOpen({ layer: layer.id, pass: p });
   const entries = passEntries(layer);
@@ -389,13 +390,13 @@ function PassEditor({
             role="tab"
             aria-selected={e.pass === pass}
             className={`pass-tab${e.pass === pass ? " active" : ""}`}
-            title={`${e.label}: ${settingsSummary(e.settings)}`}
+            title={`${e.label}: ${settingsSummary(e.settings, speedUnit)}`}
             onClick={() => select(e.pass)}
           >
             <span className="pass-tab-dot" style={{ background: passColor(layer.color, e.pass) }} />
             <span className="pass-tab-name">{e.label}</span>
             {e.cleanup && <span className="badge pass-badge">Cleanup</span>}
-            <span className="pass-tab-meta">{settingsSummary(e.settings)}</span>
+            <span className="pass-tab-meta">{settingsSummary(e.settings, speedUnit)}</span>
           </button>
         ))}
       </div>
@@ -483,7 +484,7 @@ function PassEditor({
       ) : (
         <dl className="kv">
           <dt>Settings</dt>
-          <dd>{settingsSummary(entry.settings)}</dd>
+          <dd>{settingsSummary(entry.settings, speedUnit)}</dd>
         </dl>
       )}
     </>

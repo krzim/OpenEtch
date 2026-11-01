@@ -125,6 +125,11 @@ test("engine errors lose the HTTP prefix and name objects", () => {
     'objects "Ellipse [0,2]" fall outside the ±76.875 mm field',
   );
   assert.equal(friendlyError("layer-2 has no objects; obj-77 unknown", doc), 'layer "Fill" has no objects; obj-77 unknown');
+  // The engine's lock refusal names the id once and bare, so it reads with plain quotes.
+  assert.equal(
+    friendlyError("object.transform: object obj-5 is locked; unlock it first (object.lock with locked: false)", doc),
+    'object.transform: object "Ellipse [0,2]" is locked; unlock it first (object.lock with locked: false)',
+  );
 });
 
 test("stats rows have labels and units", () => {
@@ -133,6 +138,7 @@ test("stats rows have labels and units", () => {
     ["Estimated time", "0.3 s"],
     ["Odd thing (kHz)", "2"],
   ]);
+  assert.deepEqual(statRows({ mark_length_mm: 254 }, [], "in"), [["Mark length", "10.00 in"]]);
   assert.equal(humanKey("estimated_time_s"), "Estimated time (s)");
   assert.equal(formatDuration(42.4), "42 s");
   assert.equal(formatDuration(185), "3 min 05 s");

@@ -37,7 +37,10 @@ import {
 } from "../drawTools.ts";
 import { constrainDelta, roundMm, type Mods } from "../editing.ts";
 import { boxFromPoints, geometryCmds, toPathData } from "../geometry.ts";
-import { guideLabel, guideSnapPart, guidesKey, loadGuides, newGuideId, saveGuides, type Guide } from "../guides.ts";
+import { getPrefs } from "../workspace/prefs.ts";
+import { usePrefs } from "../workspace/usePrefs.ts";
+import { fixedLength, fixedNumber, formatLength, lengthDigits, lengthFromDisplay, lengthToDisplay, trimNumber } from "../workspace/units.ts";
+import { guideLabel, guideSnapPart, loadGuidesFor, newGuideId, onGuidesChanged, saveGuidesFor, type Guide } from "../guides.ts";
 import {
   clickNode,
   handlesShown,
@@ -82,6 +85,11 @@ export interface EditToolsProps {
   report: (e: unknown) => void;
   /** Open the app's grid array dialog. */
   onGridArray: () => void;
+  /**
+   * Which project the guides belong to (`guideScope`), or null while the document and project are still loading
+   * (guides are then neither loaded nor stored).
+   */
+  guideScope: string | null;
 }
 
 export interface EditTools {
@@ -225,6 +233,9 @@ function canvasFocused(): boolean {
   return !a || a === document.body || !!a.closest?.(".viewport");
 }
 
+/** The display length unit, read when a readout is written (Preferences can change between drags). */
+const lu = () => getPrefs().units;
+
 function errText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
@@ -253,19 +264,29 @@ export function useEditTools(p: EditToolsProps): EditTools {
     }
   };
 
-  // ---- guides (per document, this browser) ----
-  const gkey = guidesKey(p.doc?.name);
-  const [guides, setGuides] = useState<Guide[]>(() => loadGuides(gkey));
+  // ---- guides (per project, this browser; see guides.ts) ----
+  const gscope = p.guideScope;
+  const [guides, setGuides] = useState<Guide[]>([]);
   const guidesRef = useRef(guides);
   guidesRef.current = guides;
-  const gkeyRef = useRef(gkey);
+  const gscopeRef = useRef(gscope);
+  const docNameRef = useRef(p.doc?.name);
+  docNameRef.current = p.doc?.name;
   useEffect(() => {
-    gkeyRef.current = gkey;
-    setGuides(loadGuides(gkey));
-  }, [gkey]);
+    gscopeRef.current = gscope;
+    setGuides(gscope === null ? [] : loadGuidesFor(gscope, docNameRef.current));
+  }, [gscope]);
+  // A save carried the guides to the project's slot (or New cleared the unsaved one): reload when it is ours.
+  useEffect(
+    () =>
+      onGuidesChanged((scope) => {
+        if (scope === gscopeRef.current) setGuides(loadGuidesFor(scope, docNameRef.current));
+      }),
+    [],
+  );
   const commitGuides = (next: Guide[]) => {
     setGuides(next);
-    saveGuides(gkeyRef.current, next);
+    if (gscopeRef.current !== null) saveGuidesFor(gscopeRef.current, next);
   };
   const [wsW, wsH] = p.workspaceMm;
   const snapParts = useMemo(() => {
@@ -542,7 +563,7 @@ export function useEditTools(p: EditToolsProps): EditTools {
         if (prev && !prev.done) {
           const b = drawPoint(f, m, ctx, prev.a);
           store.set({ meas: { a: prev.a, b, done: true } });
-          ctx.readout(measureText(measure(prev.a, b)));
+          ctx.readout(measureText(measure(prev.a, b), lu()));
           gest.current = { kind: "none" };
           return true;
         }
@@ -613,7 +634,7 @@ export function useEditTools(p: EditToolsProps): EditTools {
         }
         g.d = d;
         store.set({ preview: moveNodes(st.nl, new Set(g.indices), d) });
-        ctx.readout(`Δ ${d[0].toFixed(2)}, ${d[1].toFixed(2)} mm · ${g.indices.length} node${g.indices.length === 1 ? "" : "s"}`);
+        ctx.readout(`Δ ${fixedNumber(d[0], lu())}, ${fixedLength(d[1], lu())} · ${g.indices.length} node${g.indices.length === 1 ? "" : "s"}`);
         break;
       }
       case "handle": {
@@ -625,7 +646,7 @@ export function useEditTools(p: EditToolsProps): EditTools {
         const to = drawPoint(f, m, ctx, node?.point ?? null);
         g.to = to;
         store.set({ preview: moveHandle(nl, g.index, g.side, to) });
-        if (node) ctx.readout(`Handle ${dist(node.point, to).toFixed(2)} mm · ${measure(node.point, to).angleDeg.toFixed(1)}°`);
+        if (node) ctx.readout(`Handle ${fixedLength(dist(node.point, to), lu())} · ${measure(node.point, to).angleDeg.toFixed(1)}°`);
         break;
       }
       case "segment": {
@@ -638,7 +659,7 @@ export function useEditTools(p: EditToolsProps): EditTools {
         if (m.shift) d = constrainDelta(d);
         g.d = d;
         store.set({ preview: moveNodes(nl, new Set([seg.from, seg.to]), d) });
-        ctx.readout(`Δ ${d[0].toFixed(2)}, ${d[1].toFixed(2)} mm · segment`);
+        ctx.readout(`Δ ${fixedNumber(d[0], lu())}, ${fixedLength(d[1], lu())} · segment`);
         break;
       }
       case "nbox": {
@@ -654,14 +675,14 @@ export function useEditTools(p: EditToolsProps): EditTools {
         const pts = st.pen.slice();
         if (pts.length) pts[pts.length - 1] = penNode(g.p, handle);
         store.set({ pen: pts, rubber: null });
-        ctx.readout(`Handle ${dist(g.p, handle).toFixed(2)} mm`);
+        ctx.readout(`Handle ${fixedLength(dist(g.p, handle), lu())}`);
         break;
       }
       case "poly": {
         const q = drawPoint(f, { ...m, shift: false }, ctx, null);
         store.set({ poly: { c: g.c, p: q, shift: m.shift } });
         const r = polygonFromDrag(g.c, q, m.shift);
-        ctx.readout(`R ${r.radius.toFixed(2)} mm · ${r.rotationDeg.toFixed(1)}°`);
+        ctx.readout(`R ${fixedLength(r.radius, lu())} · ${r.rotationDeg.toFixed(1)}°`);
         break;
       }
       case "measure": {
@@ -671,7 +692,7 @@ export function useEditTools(p: EditToolsProps): EditTools {
         g.moved = true;
         const b = drawPoint(f, m, ctx, prev.a);
         store.set({ meas: { a: prev.a, b, done: false } });
-        ctx.readout(measureText(measure(prev.a, b)));
+        ctx.readout(measureText(measure(prev.a, b), lu()));
         break;
       }
     }
@@ -793,7 +814,7 @@ export function useEditTools(p: EditToolsProps): EditTools {
         if (last) {
           store.set({ rubber: q });
           const ms = measure(last, q);
-          ctx.readout(`${ms.dist.toFixed(2)} mm · ${ms.angleDeg.toFixed(1)}°`);
+          ctx.readout(`${fixedLength(ms.dist, lu())} · ${ms.angleDeg.toFixed(1)}°`);
         }
         return true;
       }
@@ -805,7 +826,7 @@ export function useEditTools(p: EditToolsProps): EditTools {
         if (prev && !prev.done) {
           const b = drawPoint(f, m, ctx, prev.a);
           store.set({ meas: { a: prev.a, b, done: false } });
-          ctx.readout(measureText(measure(prev.a, b)));
+          ctx.readout(measureText(measure(prev.a, b), lu()));
         } else drawPoint(f, m, ctx, null);
         return true;
       }
@@ -1445,6 +1466,7 @@ function EditOverlay(props: {
 }) {
   const st = useLive(props.store);
   const { tool, r } = props;
+  const units = usePrefs().units;
   let bar: ReactNode = null;
   const btn = (label: string, onClick: () => void, title?: string, disabled?: boolean) => (
     <button key={label} className="btn btn-small" onClick={onClick} title={title} disabled={disabled}>
@@ -1542,15 +1564,15 @@ function EditOverlay(props: {
               type="number"
               min={0}
               step={0.1}
-              value={o.cornerMm}
+              value={trimNumber(lengthToDisplay(o.cornerMm, units), lengthDigits(units, 3))}
               onChange={(e) => {
                 const v = Number(e.target.value);
-                if (v >= 0 && Number.isFinite(v)) props.onPolyOpts({ ...o, cornerMm: v });
+                if (v >= 0 && Number.isFinite(v)) props.onPolyOpts({ ...o, cornerMm: lengthFromDisplay(v, units) });
               }}
             />
-            mm
+            {units}
           </label>
-          <span className="et-hint">Drag from the centre to a corner · Shift: 15° steps · tap for 20 mm</span>
+          <span className="et-hint">Drag from the centre to a corner · Shift: 15° steps · tap for {formatLength(20, units)}</span>
         </>
       );
       break;
@@ -1558,7 +1580,7 @@ function EditOverlay(props: {
     case "measure":
       bar = (
         <span>
-          <b>Measure</b>: {st.meas ? measureText(measure(st.meas.a, st.meas.b)) : "click two points or drag (snaps to objects; Shift: 15°)"}
+          <b>Measure</b>: {st.meas ? measureText(measure(st.meas.a, st.meas.b), units) : "click two points or drag (snaps to objects; Shift: 15°)"}
         </span>
       );
       break;
@@ -1590,9 +1612,9 @@ function EditOverlay(props: {
     const s = r.toScreen([(meas.a[0] + meas.b[0]) / 2, (meas.a[1] + meas.b[1]) / 2]);
     label = (
       <div className="vp-overlay et-measure-label" style={{ left: s[0] + 10, top: s[1] + 10 }}>
-        {m.dist.toFixed(2)} mm
+        {fixedLength(m.dist, units)}
         <br />
-        ΔX {m.dx.toFixed(2)} · ΔY {m.dy.toFixed(2)} · {m.angleDeg.toFixed(1)}°
+        ΔX {fixedNumber(m.dx, units)} · ΔY {fixedNumber(m.dy, units)} · {m.angleDeg.toFixed(1)}°
       </div>
     );
   }

@@ -8,9 +8,9 @@ import * as G from "../api/geomCommands.ts";
 import type { GDocument, Vec2 } from "../api/types.ts";
 import { evalNumber } from "../editing.ts";
 import { boxCenter, objectBounds, unionBoxes } from "../geometry.ts";
-import { Modal } from "./ui.tsx";
-import { useUnitConversion } from "../workspace/usePrefs.ts";
-import { trimNumber } from "../workspace/units.ts";
+import { Modal, UnitTextField } from "./ui.tsx";
+import { usePrefs } from "../workspace/usePrefs.ts";
+import { fixedLength, fixedNumber, formatLength } from "../workspace/units.ts";
 
 export type PickKind = "circularCenter" | "mirror" | "rotate2" | "scale2" | "scale2rot";
 
@@ -49,37 +49,8 @@ interface Props {
   onPick: (kind: PickKind, values?: CircularValues) => void;
 }
 
-/**
- * A number entry whose value stays in engine units (mm): with Preferences set to inches the field shows and takes
- * inches (workspace/usePrefs.ts) and hands the converted mm text back, like ui.tsx's NumberField.
- */
-function Num(props: { label: string; value: string; onChange: (v: string) => void; unit?: string; title?: string }) {
-  const conv = useUnitConversion(props.unit);
-  // What the user typed, kept while the parent's value is still the one that text produced.
-  const [typed, setTyped] = useState<{ text: string; value: string } | null>(null);
-  const converts = conv.unit !== props.unit;
-  let shown = props.value;
-  if (converts) {
-    const n = evalNumber(props.value);
-    shown = typed && typed.value === props.value ? typed.text : n === null ? props.value : trimNumber(conv.to(n), 4 + conv.extraDigits);
-  }
-  const change = (text: string) => {
-    if (!converts) return props.onChange(text);
-    const n = evalNumber(text);
-    const value = n === null ? text : String(conv.from(n));
-    setTyped({ text, value });
-    props.onChange(value);
-  };
-  return (
-    <label className="field" title={props.title}>
-      <span className="field-label">{props.label}</span>
-      <span className="field-input">
-        <input type="text" inputMode="decimal" value={shown} onChange={(e) => change(e.target.value)} />
-        {conv.unit && <span className="unit">{conv.unit}</span>}
-      </span>
-    </label>
-  );
-}
+/** Number entry in the display unit (inches when chosen) whose value stays mm text: ui.tsx's `UnitTextField`. */
+const Num = UnitTextField;
 
 function Check(props: { label: string; checked: boolean; onChange: (v: boolean) => void; title?: string }) {
   return (
@@ -186,9 +157,10 @@ function OffsetDialog({ p }: { p: Props }) {
   const [del, setDel] = useState(false);
   const [combine, setCombine] = useState(false);
   const { busy, error, submit } = useSubmit(p);
+  const lu = usePrefs().units;
   const ok = () => {
     const v = num(d);
-    if (v === null || v === 0 || Math.abs(v) > 1000) return submit("Distance must be a non-zero number up to 1000 mm.");
+    if (v === null || v === 0 || Math.abs(v) > 1000) return submit(`Distance must be a non-zero number up to ${formatLength(1000, lu)}.`);
     void submit(G.offset(p.ids, { distance_mm: v, direction, join, keep_original: !del, combine }));
   };
   return (
@@ -207,9 +179,10 @@ function FilletDialog({ p, nodeId, corners }: { p: Props; nodeId: string | null;
   const [r, setR] = useState("1");
   const [which, setWhich] = useState<"all" | "nodes">(nodeId && corners.length ? "nodes" : "all");
   const { busy, error, submit } = useSubmit(p);
+  const lu = usePrefs().units;
   const ok = () => {
     const v = num(r);
-    if (v === null || v === 0 || Math.abs(v) > 1000) return submit("Radius must be a non-zero number up to 1000 mm.");
+    if (v === null || v === 0 || Math.abs(v) > 1000) return submit(`Radius must be a non-zero number up to ${formatLength(1000, lu)}.`);
     void submit(which === "nodes" && nodeId ? G.fillet([nodeId], v, corners) : G.fillet(p.ids, v));
   };
   return (
@@ -313,6 +286,7 @@ function CircularDialog({ p, init }: { p: Props; init: CircularValues | null }) 
   const [v, setV] = useState<CircularValues>(init ?? { count: "6", angle: "360", rotate: true, cx: String(c0[0]), cy: String(c0[1]) });
   const set = (patch: Partial<CircularValues>) => setV((x) => ({ ...x, ...patch }));
   const { busy, error, submit } = useSubmit(p);
+  const lu = usePrefs().units;
   const ok = () => {
     const count = num(v.count);
     const angle = num(v.angle);
@@ -348,7 +322,7 @@ function CircularDialog({ p, init }: { p: Props; init: CircularValues | null }) 
       </div>
       {sel && (
         <p className="hint">
-          Selection centre {boxCenter(sel)[0].toFixed(2)}, {boxCenter(sel)[1].toFixed(2)} mm; the copies turn about the centre above.
+          Selection centre {fixedNumber(boxCenter(sel)[0], lu)}, {fixedLength(boxCenter(sel)[1], lu)}; the copies turn about the centre above.
         </p>
       )}
     </Frame>
@@ -361,6 +335,7 @@ function AlongDialog({ p }: { p: Props }) {
   const [spacing, setSpacing] = useState("10");
   const [rotate, setRotate] = useState(true);
   const { busy, error, submit } = useSubmit(p);
+  const lu = usePrefs().units;
   const path = p.ids[p.ids.length - 1];
   const pathObj = p.doc.objects.find((o) => o.id === path);
   const ok = () => {
@@ -372,7 +347,7 @@ function AlongDialog({ p }: { p: Props }) {
       return void submit(G.alongPath(ids, path, { count: n, rotate_to_path: rotate }));
     }
     const s = num(spacing);
-    if (s === null || s <= 0) return submit("Spacing must be above 0 mm.");
+    if (s === null || s <= 0) return submit(`Spacing must be above ${formatLength(0, lu)}.`);
     void submit(G.alongPath(ids, path, { spacing_mm: s, rotate_to_path: rotate }));
   };
   return (
@@ -421,9 +396,10 @@ function ToleranceDialog({ p, kind }: { p: Props; kind: "optimize" | "close" | "
   const [mode, setMode] = useState<"line" | "move_ends">("line");
   const { busy, error, submit } = useSubmit(p);
   const max = kind === "close" ? 1000 : 10;
+  const lu = usePrefs().units;
   const ok = () => {
     const t = num(tol);
-    if (t === null || t < 0 || t > max) return submit(`Tolerance must be from 0 to ${max} mm.`);
+    if (t === null || t < 0 || t > max) return submit(`Tolerance must be from 0 to ${formatLength(max, lu)}.`);
     if (kind === "optimize") return void submit(G.optimize(p.ids, t));
     if (kind === "autojoin") return void submit(G.autoJoin(p.ids, t));
     void submit(G.closePaths(p.ids, { tolerance_mm: t, mode }));
