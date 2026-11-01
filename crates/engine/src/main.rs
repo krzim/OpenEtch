@@ -214,7 +214,7 @@ async fn run(config: Config) -> Result<(), String> {
         };
         println!(
             "openetch: approval without a PIN (--approval click): runs start only with Start in the OpenEtch app (in \
-             a browser at http://localhost or https){foot}; never from MCP"
+             a browser on this engine's own page){foot}; never from MCP"
         );
     } else if approval.pin.is_sim() {
         let banner = "SIMULATOR TEST PIN ACTIVE (--sim-pin): runs on this engine are approved with a PIN given on the \
