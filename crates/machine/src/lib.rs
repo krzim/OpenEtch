@@ -14,6 +14,9 @@
 //!   cannot emit; [`Controller::run`] needs an [`Armed`] token that only the engine's UI approval creates;
 //!   [`Controller::abort`] is never gated.
 //!
+//! - [`MachineDriver`] / [`Driver`] ([`driver`]): the machine-driver interface. The galvo [`Controller`] is one
+//!   driver; [`grbl::GrblController`] (GRBL 1.1 over a serial port, [`grbl`]) is the other.
+//!
 //! [`field_to_galvo`] wraps `lmc::units::field_to_galvo`, the one field mm -> galvo word conversion (field bounds,
 //! negate in the field frame, then swap) that `plan::Target` encodes jobs with too.
 #![forbid(unsafe_code)]
@@ -22,6 +25,8 @@ mod armed;
 mod check;
 mod controller;
 pub mod device;
+pub mod driver;
+pub mod grbl;
 mod geometry;
 mod init;
 pub mod lightburn;
@@ -35,7 +40,7 @@ mod usb;
 pub use armed::Armed;
 pub use check::{JobCheckError, check_job};
 pub use controller::{
-    AXIS_TIMEOUT, AbortHandle, BoardInfo, Controller, ControllerError, ControllerState, FrameStyle, PollConfig, RunControl,
+    MAX_FRAME_LOOPS, AXIS_TIMEOUT, AbortHandle, BoardInfo, Controller, ControllerError, ControllerState, FrameStyle, PollConfig, RunControl,
     RunPart, RunProgress, RunReport,
 };
 pub use geometry::{FieldError, field_to_galvo};
@@ -45,6 +50,7 @@ pub use lightburn::{
     LightBurnDevice, LightBurnError, LightBurnPrefs, LightBurnSettings, ProfileDiff, find_device, parse_devices,
     parse_lbdev, profile_from_lightburn, to_lbdev,
 };
+pub use driver::{Driver, DriverJob, DriverKind, GrblDriver, LmcDriver, MachineDriver};
 pub use device::{Bases, Device, DeviceKind, DeviceSource, Origin, ProfileBase, edit_profile, merge_patch};
 pub use markcfg::MarkcfgImport;
 pub use profile::{

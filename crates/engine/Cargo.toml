@@ -17,6 +17,8 @@ path = "src/main.rs"
 [features]
 # Real hardware over USB (nusb). Without it the engine always drives the simulated board.
 usb = ["machine/usb"]
+# GRBL gantries over a real serial port (serial2). Without it a GRBL device runs only on the simulator.
+serial = ["machine/serial"]
 # UVC camera capture on the engine's computer (nokhwa); without it the camera takes frames uploaded by a browser.
 camera = ["dep:nokhwa"]
 

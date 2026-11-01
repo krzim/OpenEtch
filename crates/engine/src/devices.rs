@@ -500,6 +500,7 @@ impl DeviceRegistry {
             controllable: true,
             base: None,
             profile: Some(profile),
+            grbl: None,
             lightburn: None,
         };
         self.add_manual(d)

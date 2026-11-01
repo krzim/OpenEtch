@@ -41,6 +41,8 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 
 # machine I/O
 nusb = "0.2"
+# GRBL serial ports (BSD-2-Clause OR Apache-2.0; not `serialport`, which is MPL-2.0)
+serial2 = "0.2.39"
 
 # engine
 tokio = { version = "1", features = ["full"] }

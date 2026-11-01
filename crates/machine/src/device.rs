@@ -3,8 +3,11 @@
 //! parser) or built in. Pure: the engine keeps the registry on disk.
 //!
 //! A [`Device`] has a workspace (`workspace_mm`, `origin`) that drives the canvas and LightBurn import/export, and,
-//! for a JCZ (BJJCZ LMC, EzCad2-family) galvo, a [`MachineProfile`]: the only kind OpenEtch can drive today
-//! ([`Device::controllable`]). Every other kind is **design-only**: its workspace is used, running is refused.
+//! for a JCZ (BJJCZ LMC, EzCad2-family) galvo, a [`MachineProfile`], or for a GRBL gantry ([`DeviceKind::Grbl`],
+//! made in OpenEtch with [`Device::grbl_device`]), a [`GrblProfile`]: the kinds OpenEtch can drive
+//! ([`Device::controllable`]). Every other kind is **design-only**: its workspace is used, running is refused. A
+//! LightBurn GRBL device imports as a design-only gantry; a person makes it a GRBL device, so no machine starts being
+//! driven by an import alone.
 //!
 //! **Family** ([`classify`]; LightBurn's `Name` is an open set, so it is never matched against a closed list): a galvo
 //! when `Type` is `LibUSB`, `Name` contains "Fiber" or "EZCad", or any `Galvo_*` setting is present; a JCZ galvo when
@@ -24,6 +27,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::grbl::GrblProfile;
 use crate::lightburn::{LightBurnDevice, ProfileDiff, profile_from_lightburn};
 use crate::profile::MachineProfile;
 
@@ -44,6 +48,8 @@ pub enum DeviceKind {
     JczGalvo,
     /// A GCode or DSP machine with a bed (design-only).
     Gantry,
+    /// A GRBL 1.1 gantry over a serial port, with a [`GrblProfile`]: OpenEtch can drive it.
+    Grbl,
     /// Another galvo board (BSL, EzCad3; design-only).
     GalvoOther,
     /// LightBurn's "No Machine" placeholder (design-only).
@@ -55,6 +61,7 @@ impl DeviceKind {
         match self {
             DeviceKind::JczGalvo => "jcz_galvo",
             DeviceKind::Gantry => "gantry",
+            DeviceKind::Grbl => "grbl",
             DeviceKind::GalvoOther => "galvo_other",
             DeviceKind::Unknown => "unknown",
         }
@@ -192,6 +199,9 @@ pub struct Device {
     /// The machine profile (JCZ galvos only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<MachineProfile>,
+    /// The GRBL profile (GRBL gantries only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grbl: Option<GrblProfile>,
     /// The typed LightBurn settings it was made from (never anything else of the file).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lightburn: Option<LightBurnDevice>,
@@ -319,6 +329,7 @@ pub fn from_lightburn(dev: &LightBurnDevice, source: DeviceSource, bases: &Bases
         controllable: profile.is_some(),
         base,
         profile,
+        grbl: None,
         lightburn: Some(dev.clone()),
     })
 }
@@ -339,8 +350,32 @@ impl Device {
             controllable: true,
             base: None,
             profile: Some(profile),
+            grbl: None,
             lightburn: None,
         }
+    }
+
+    /// A GRBL gantry made in OpenEtch (source `manual`; the registry assigns the id): its bed and origin come from
+    /// the profile. Refused when the profile does not validate.
+    pub fn grbl_device(display_name: &str, profile: GrblProfile) -> Result<Self, String> {
+        profile.validate().map_err(|e| e.to_string())?;
+        let name = display_name.trim();
+        let name = if name.is_empty() { "GRBL laser" } else { name };
+        Ok(Device {
+            id: String::new(),
+            name: "GRBL".into(),
+            display_name: name.to_owned(),
+            source: DeviceSource::Manual,
+            kind: DeviceKind::Grbl,
+            lightburn_type: "Serial".into(),
+            workspace_mm: profile.work_area_mm,
+            origin: profile.origin,
+            controllable: true,
+            base: None,
+            profile: None,
+            grbl: Some(profile),
+            lightburn: None,
+        })
     }
 
     /// [`identity`] of this device.
@@ -372,6 +407,7 @@ impl Device {
         }
         let what = match self.kind {
             DeviceKind::JczGalvo => "it has no machine profile".to_owned(),
+            DeviceKind::Grbl => "it has no GRBL profile".to_owned(),
             DeviceKind::Gantry => format!("OpenEtch can't drive {} controllers yet (only JCZ/LMC galvos)", self.name),
             DeviceKind::GalvoOther => format!("OpenEtch can't drive {} galvos yet (only JCZ/LMC boards)", self.name),
             DeviceKind::Unknown => "it is a placeholder without a controller".to_owned(),
@@ -406,6 +442,12 @@ impl Device {
         if let Some(p) = &d.profile {
             p.validate().map_err(|e| e.to_string())?;
         }
+        if let Some(g) = &d.grbl {
+            g.validate().map_err(|e| e.to_string())?;
+            if d.kind != DeviceKind::Grbl || g.work_area_mm != d.workspace_mm || g.origin != d.origin {
+                return Err("a GRBL profile belongs to a GRBL device with the profile's bed and origin".into());
+            }
+        }
         let max = if d.kind.is_galvo() { MAX_FIELD_MM } else { MAX_BED_MM };
         if !d.workspace_mm.iter().all(|v| v.is_finite() && *v > 0.0 && *v <= max) {
             return Err(format!("unusable workspace {:?} mm", d.workspace_mm));
@@ -413,8 +455,8 @@ impl Device {
         if d.kind.is_galvo() != (d.origin == Origin::Center) {
             return Err("a galvo's origin is its centre and a gantry's a corner".into());
         }
-        // Only a JCZ galvo with a profile can be driven, whatever the file says.
-        d.controllable = d.kind == DeviceKind::JczGalvo && d.profile.is_some();
+        // Only a JCZ galvo with a profile, or a GRBL device with a GRBL profile, can be driven, whatever the file says.
+        d.controllable = (d.kind == DeviceKind::JczGalvo && d.profile.is_some()) || (d.kind == DeviceKind::Grbl && d.grbl.is_some());
         Ok(d)
     }
 
@@ -458,6 +500,21 @@ impl Device {
             row("Work area (mm)", Some("Width/Height"), json!(self.workspace_mm)),
             row("Origin", Some("MirrorX/MirrorY"), json!(self.origin.label())),
         ];
+        if let Some(g) = &self.grbl {
+            sections.push(json!({ "title": "Device", "rows": general }));
+            sections.push(json!({ "title": "GRBL", "rows": [
+                row("Serial port", None, json!(g.port)),
+                row("Baud rate", None, json!(g.baud)),
+                row("S-value max ($30)", None, json!(g.s_max)),
+                row("S-value min ($31)", None, json!(g.s_min)),
+                row("Max power (%)", None, json!(g.max_power_pct)),
+                row("Max feed (mm/min)", None, json!(g.max_feed_mm_min)),
+                row("Frame / jog feed (mm/min)", None, json!(g.frame_feed_mm_min)),
+                row("Homing ($22)", None, json!(g.homing)),
+                row("Power mode", None, json!(if g.dynamic_power { "M4 dynamic" } else { "M3 constant" })),
+            ]}));
+            return json!(sections);
+        }
         let Some(d) = &self.lightburn else {
             if let Some(p) = &self.profile {
                 general.push(row("Machine profile", None, json!(p.name)));

@@ -105,6 +105,9 @@ pub enum ControllerError {
     /// The profile's Door Protect input is active (the enclosure is open): the run did not start, or was aborted.
     #[error("the door interlock (input {0}) is open")]
     DoorOpen(u8),
+    /// A GRBL board's error, alarm or refusal (the GRBL driver).
+    #[error(transparent)]
+    Grbl(#[from] crate::grbl::GrblError),
 }
 
 type Result<T, E = ControllerError> = std::result::Result<T, E>;
@@ -220,6 +223,23 @@ impl RunControl {
         }
     }
 
+    /// A run of `total` lines (or other units) in one part starts (the GRBL driver).
+    pub(crate) fn start_count(&self, total: usize) {
+        self.0.paused.store(false, Ordering::SeqCst);
+        self.0.packets_sent.store(0, Ordering::SeqCst);
+        self.0.packets_total.store(total, Ordering::SeqCst);
+        self.0.part.store(0, Ordering::SeqCst);
+        self.0.parts.store(1, Ordering::SeqCst);
+    }
+
+    pub(crate) fn set_sent(&self, sent: usize) {
+        self.0.packets_sent.store(sent, Ordering::SeqCst);
+    }
+
+    pub(crate) fn set_paused(&self, paused: bool) {
+        self.0.paused.store(paused, Ordering::SeqCst);
+    }
+
     fn start(&self, parts: &[RunPart]) {
         // `pause_requested` is kept (see the type docs).
         self.0.paused.store(false, Ordering::SeqCst);
@@ -300,7 +320,7 @@ impl AbortHandle {
         self.0.load(Ordering::SeqCst)
     }
 
-    fn clear(&self) {
+    pub(crate) fn clear(&self) {
         self.0.store(false, Ordering::SeqCst);
     }
 }
@@ -352,16 +372,13 @@ impl<L: Link> Controller<L> {
     }
 
     pub fn with_settings(link: L, settings: InitSettings, poll: PollConfig) -> Self {
-        Controller {
-            link,
-            settings,
-            poll,
-            profile: None,
-            state: ControllerState::Uninitialized,
-            abort: AbortHandle::default(),
-            control: RunControl::default(),
-            info: None,
-        }
+        Self::with_handles(link, settings, poll, AbortHandle::default(), RunControl::default())
+    }
+
+    /// [`Controller::with_settings`] sharing existing abort and run-control handles, so a machine that changes
+    /// drivers keeps the handles its stop and pause buttons hold.
+    pub fn with_handles(link: L, settings: InitSettings, poll: PollConfig, abort: AbortHandle, control: RunControl) -> Self {
+        Controller { link, settings, poll, profile: None, state: ControllerState::Uninitialized, abort, control, info: None }
     }
 
     pub fn link(&self) -> &L {

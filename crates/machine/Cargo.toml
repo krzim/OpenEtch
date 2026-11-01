@@ -15,6 +15,9 @@ toml = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 nusb = { workspace = true, optional = true }
+# Serial ports for GRBL (BSD-2-Clause OR Apache-2.0), feature `serial`.
+serial2 = { workspace = true, optional = true }
 
 [features]
 usb = ["dep:nusb"]
+serial = ["dep:serial2"]
