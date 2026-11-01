@@ -9,7 +9,10 @@
 //!   below, modes, encoding, type, 0), then per shape u16 code (Unicode), u16 length, name and bytes.
 //!
 //! Big fonts (`bigfont`, Asian double-byte codes) are refused. No real `.shx` file was available while this was
-//! written: the tests build files in this layout, so parsing real AutoCAD fonts is unverified.
+//! written: the tests build files in this layout, so parsing real AutoCAD fonts is unverified. The layouts, the
+//! code 11 angles and the bulge direction agree with two MIT-licensed readers (ezdxf's `fonts/shapefile.py`,
+//! ixmilia/shx); they disagree on the byte order of a unifont's two-byte code 7 subshape number (ezdxf: little-endian;
+//! ixmilia: big-endian, as here), which only a real unifont can settle.
 //!
 //! Units: the font's `above` is the capital height; OpenEtch scales a text so that capitals are 0.7 of its height,
 //! as with most TrueType fonts (em = above / 0.7).
@@ -320,6 +323,18 @@ fn spec_of(def: &[u8]) -> &[u8] {
     }
 }
 
+/// The character a shape number draws. Non-Unicode fonts keep the dimensioning symbols (AutoCAD's `%%d`, `%%p`,
+/// `%%c`) at shape numbers 256-258 (Customization Guide: Degree_Sign, Plus_Or_Minus_Sign, Diameter_Symbol), older
+/// ones at 127-129 (as Bentley's SHX documentation lists them); Unicode fonts have them at their own code points.
+fn shape_char(kind: Kind, code: u16) -> Option<char> {
+    const SYMBOLS: [char; 3] = ['°', '±', '\u{2205}'];
+    match (kind, code) {
+        (Kind::Shapes, 256..=258) => Some(SYMBOLS[usize::from(code - 256)]),
+        (Kind::Shapes, 127..=129) => Some(SYMBOLS[usize::from(code - 127)]),
+        _ => char::from_u32(u32::from(code)).filter(|c| !c.is_control()),
+    }
+}
+
 /// Parse an `.shx` font named `name` (the file stem).
 pub fn parse(name: &str, d: &[u8]) -> Result<StrokeFont, String> {
     if !is_shx(d) {
@@ -375,11 +390,12 @@ pub fn parse(name: &str, d: &[u8]) -> Result<StrokeFont, String> {
     let above = f64::from(info.first().copied().filter(|a| *a > 0).unwrap_or(21));
     let below = f64::from(info.get(1).copied().unwrap_or(7));
     let mut glyphs = HashMap::new();
-    for (&code, spec) in &defs {
-        let Some(c) = char::from_u32(u32::from(code)) else { continue };
-        if c.is_control() {
-            continue;
-        }
+    // In code order, so a font's 256-258 symbols win over a 176/177 shape, which wins over 127/128.
+    let mut codes: Vec<u16> = defs.keys().copied().collect();
+    codes.sort_unstable();
+    for code in codes {
+        let Some(c) = shape_char(kind, code) else { continue };
+        let spec = defs[&code];
         let mut pen = Pen {
             shapes: &defs,
             kind,
@@ -396,6 +412,10 @@ pub fn parse(name: &str, d: &[u8]) -> Result<StrokeFont, String> {
     }
     if glyphs.is_empty() {
         return Err(format!("{name}: the font has no character shapes"));
+    }
+    // Autodesk's diameter symbol is U+2205; U+2300 (DIAMETER SIGN) is what most keyboards and character maps give.
+    if let Some(g) = glyphs.get(&'\u{2205}').cloned() {
+        glyphs.entry('\u{2300}').or_insert(g);
     }
     let space = glyphs.get(&' ').map_or(above * 0.6, |g| g.advance);
     Ok(StrokeFont {
@@ -499,6 +519,52 @@ mod tests {
     }
 
     #[test]
+    fn dimensioning_symbols() {
+        let up: &[u8] = &[0x01, 0x14, 0]; // height 1
+        let tall: &[u8] = &[0x01, 0x24, 0]; // height 2
+        let wide: &[u8] = &[0x01, 0x10, 0]; // flat, width 1
+        // Old numbering only: 127-129 are the symbols, not control characters.
+        let old = shapes_file(&[(0, "T", &[10, 2, 0, 0]), (127, "", up), (128, "", up), (129, "", up)]);
+        let font = parse("t", &old).unwrap();
+        for c in ['°', '±', '\u{2205}', '\u{2300}'] {
+            assert!(font.glyph(c).is_some(), "{c}");
+        }
+        // 256-258 win over 127-129 and over a 176 shape, whatever order the file lists them in.
+        let both = shapes_file(&[
+            (0, "T", &[10, 2, 0, 0]),
+            (258, "", tall),
+            (257, "", tall),
+            (256, "", tall),
+            (176, "", wide),
+            (177, "", wide),
+            (127, "", up),
+            (129, "", up),
+        ]);
+        let font = parse("t", &both).unwrap();
+        for c in ['°', '±', '\u{2205}', '\u{2300}'] {
+            assert_eq!(geom::bounds(&font.glyph(c).unwrap().path).unwrap().height(), 2.0, "{c}");
+        }
+        assert!(font.glyph('\u{100}').is_none(), "256 is not Latin A with macron in a non-Unicode font");
+        // Without 256-258, a 176 shape wins over 127.
+        let mid = shapes_file(&[(0, "T", &[10, 2, 0, 0]), (176, "", wide), (127, "", up)]);
+        let b = geom::bounds(&parse("t", &mid).unwrap().glyph('°').unwrap().path).unwrap();
+        assert_eq!((b.width(), b.height()), (1.0, 0.0));
+        // A unifont keeps its code points: 0x7F stays a control character.
+        let mut d = b"AutoCAD-86 unifont 1.0\r\n\x1A".to_vec();
+        d.extend(3u32.to_le_bytes());
+        let info: &[u8] = b"U\0\x0A\x02\x00\x00\x00\x00";
+        d.extend((info.len() as u16).to_le_bytes());
+        d.extend(info);
+        for code in [0x7Fu16, 0x00B0] {
+            d.extend(code.to_le_bytes());
+            d.extend(4u16.to_le_bytes());
+            d.extend(b"\0\x01\x14\0");
+        }
+        let font = parse("u", &d).unwrap();
+        assert!(font.glyph('°').is_some() && font.glyph('\u{7F}').is_none());
+    }
+
+    #[test]
     fn looping_subshapes_stop() {
         let a: &[u8] = &[7, b'A', 0];
         let f = shapes_file(&[(0, "T", &[10, 2, 0, 0]), (u16::from(b'A'), "", a), (u16::from(b'B'), "", &[0x14, 0])]);
@@ -507,7 +573,12 @@ mod tests {
     }
 
     /// Real `.shx` fonts, when there are some (OPENETCH_SHX_SAMPLES: folders, separated like PATH; read in place,
-    /// never copied). No permissively licensed real .shx file was found to commit: see ARCHITECTURE.md "Text".
+    /// never copied). Arcs, bulges and code 7 are covered by synthetic tests only: see ARCHITECTURE.md "Text". A
+    /// 2026-11-01 search ruled out the .shx files in mlightcad/shx-parser (`data/ISO.shx`, `SIMPLEX8.shx`: no font
+    /// licence), 15831944/fonts-AutoCad ("not for commercial usage"), IzharAzati/ShxFonts (GPL-2.0),
+    /// lendres/CAD-Support-Files (Autodesk and other vendors' fonts in an MIT repo) and cadforum.cz (no licence).
+    /// artkis/laserfont-single-line-stencil's `laserfont2.shx` and `laserfont3.shx` (SIL OFL 1.1) are committed as
+    /// test fixtures (`tests/laserfont_shx.rs`); they use line codes only (no arcs, bulges or code 7).
     /// Every font must parse and give A-Z outlines that start at the baseline and fit the capital height.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]

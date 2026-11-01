@@ -305,6 +305,13 @@ again byte for byte (items keep LightBurn's thumbnail, size and compressed art w
 **LightBurn settings that will not be executed** (LAY-034, `lbrn::unexecuted_settings`): per layer, the kept
 `lbrn2.*` tags whose LightBurn switch is on but OpenEtch's own option is off (Wobble, Perforation, Tabs, Flood Fill,
 Auto-rotate, Kerf Offset, Dot Mode) and unknown tags (`active: null`); gantry-only and bookkeeping tags are left out.
+The import turns on the options that mean the same as LightBurn's (`crates/lbrn/src/options.rs`, main settings and
+sub-layers): `scanOpt` Fill Grouping (absent = all at once, LightBurn's default), Flood Fill, Auto-rotate, Wobble,
+Perforation and Dot Mode (parameters LightBurn left out at its defaults: wobble 0.05 / 0.1 mm, perforation 0.1 / 0.1
+mm, dot time 0 ms, which OpenEtch cannot use, and spacing 0.1 mm), so those are listed only when their values cannot
+be used or the option was turned off; Tabs and Kerf Offset are never turned on (LightBurn's tabs and kerf do not
+mean the same as OpenEtch's, see `crates/lbrn/src/unexecuted.rs`). Export writes an option's tags back only when it
+no longer reads as the kept tags say, so unchanged imports stay byte for byte.
 `doc.import_lbrn2` warns for the active ones and returns `unsupported_settings`; `GET /api/preview` adds
 `unsupported` to each layer that has some; `GET /api/layers/unsupported` lists them for the active document.
 
@@ -430,8 +437,10 @@ asked) when "best start point" is off or optimization is off; as in LightBurn, b
 (`doc::CutOptions`, `layer.update` `settings.options`, partial): `output` (a sub-layer's own output toggle), Pause
 Before / After (DelayTime words), `dot_mode` {dot_time_ms, dot_spacing_mm} (line passes become dots: JumpTo +
 LaserOnPoint), `wobble` {step_mm, size_mm} (a circle per step, centred on the path), `fill_dot_width_mm` (both ends of
-every hatch line shortened by half), `fill_grouping` (`individually`, the default kept for older files; `all_at_once`,
-LightBurn's default, where overlaps cancel even-odd; `by_group`), `auto_rotate` (the hatch turns by the increment per
+every hatch line shortened by half), `fill_grouping` (`all_at_once`, LightBurn's default and that of new layers: one
+hatch over every shape of the pass (shapes with different power scales apart), so the scanlines sweep across the layer once and overlaps cancel even-odd;
+`individually`, shape after shape, which a missing field means so documents saved before keep filling that way;
+`by_group`), `auto_rotate` (the hatch turns by the increment per
 run of the job, the job counter, instead of per pass; repeats of one approval keep one angle), `flood_fill` (the hatch
 split into connected regions), `perforation` {cut_mm, skip_mm}, `tabs` {count | spacing_mm, size_mm} (gaps on
 closed outlines), `z_offset_mm` / `z_step_mm` (needs a board-driven Z axis, else a plan warning; each Z position is a
@@ -603,9 +612,10 @@ merges overlapping glyphs only (polygons within 0.01 mm), the rest keep their cu
 fontdb (lazily scanned), `.ttf/.otf/.ttc/.shx/.jsf` from the folders in `OPENETCH_FONT_DIRS` (`;` on Windows, `:`
 elsewhere), and 12 bundled Hershey fonts (`kind: stroke`, never filled or welded); bold/italic use the family's own
 faces (a missing italic is slanted, a missing bold is reported). `.jsf` (EzCad) and `.shx` (AutoCAD) layouts are
-described in `jsf.rs` / `shx.rs`; the owner's 162 EzCad fonts all parse; no real `.shx` with a licence that allows
-committing it was found (ixmilia/shx's `ISO3098B.SHX` comes from a page with no licence, tatarize/shxparser marks its
-test fonts "of dubious providence", ezdxf ships none), so SHX is tested on synthetic files, plus any real fonts in
+described in `jsf.rs` / `shx.rs`; the owner's 162 EzCad fonts all parse. Two real AutoCAD-compiled unifonts
+(artkis/laserfont-single-line-stencil's `laserfont2.shx` / `laserfont3.shx`, SIL OFL 1.1) are committed in
+`crates/text/tests/fixtures/shx` and match an independent decode of their `.shp` sources point for point; they use line
+codes only, so arcs, bulges and code 7 are tested on synthetic files, plus any real fonts in
 `OPENETCH_SHX_SAMPLES` (`text::shx` `real_shx_fonts_parse`, read in place); Asian big fonts and GB2312 JSF codes are not mapped. LightBurn's own single-line font format is
 undocumented and not read.
 - Commands: `shape.text {text, font?, height_mm? (5), ...the settings, center, rotation_deg, layer, name}`,

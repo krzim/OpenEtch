@@ -20,7 +20,7 @@ of 2807 keys), and more languages are translation content, not code.
 | 1 | Sub-layers and cleanup passes, gantry origins, LightBurn device registry | LAY-067, LAY-032, device items | done |
 | 2 | Fusion-style snapping and circle tool; image engraving (all dither modes, DPI, negative, angle, grayscale, adjust image) | DES-049, LAY-023..030, OTH-022, UX-028 | done |
 | 3 | Geometry engine and editing: booleans and weld, offsets, Offset Fill, kerf, break apart, auto-join, close path, delete duplicates, convert to path, fillet, trim, node editing, pen/line/polygon/star tools, draw modifiers, arrange and draw order, lock, transforms, arrays, measure, rulers, guides, nesting | DES-005..079, LAY-046, LAY-050 | done |
-| 4 | Text: system fonts, single-line/stroke fonts, formatting, welded text, bend text, text on path, variable text, barcodes/QR/DataMatrix | DES-050..058, JOB-001..003, OTH-032..033 | done; DES-051 left |
+| 4 | Text: system fonts, single-line/stroke fonts, formatting, welded text, bend text, text on path, variable text, barcodes/QR/DataMatrix | DES-050..058, JOB-001..003, OTH-032..033 | done |
 | 5 | Running jobs and the machine: pause/resume, progress, counter, repeat, run continuously, start/stop inputs, cut selected; framing modes, live framing, red dot, blanking, focus light; galvo calibration and lens wizard; device editor, .lbdev, markcfg, add-galvo wizard; Z axis; rotary; preview slider, play, start here; camera | JOB-007..084, OTH-005..030 | done |
 | 6 | Cut order and per-layer options | JOB-008..018, LAY-001..066 | done |
 | 7 | Layers, libraries and workspace: Cuts/Layers window, defaults, material library, material/interval/focus tests, Laser window, numeric toolbar, docks, hotkeys, units, theme, preferences, i18n, help, logs | LAY-037..071, UX-041..074 | done |
@@ -44,13 +44,12 @@ None: DES-055 (barcode types) was the last one; ArUco MIP 36h11 is now done (the
 
 ### Needs a sample file from the owner
 
-2026-11-01: the owner's LightBurn 2.2 samples (`Test files/lightburn-samples`) settled DES-045, UX-045, OTH-022 and DES-055 and most of UX-068. Before that: the 26 sample projects in the sample folders hold only Path, Rect, Ellipse, Text, Group and
+2026-11-01: the owner's LightBurn 2.2 samples (`Test files/lightburn-samples`) settled DES-045, UX-045, OTH-022 and DES-055 and most of UX-068; DES-051 was closed with two OFL 1.1 SHX fonts found online. Before that: the 26 sample projects in the sample folders hold only Path, Rect, Ellipse, Text, Group and
 Bitmap shapes (no Polygon), every Enhance value in them is 0, and no .lbart, .lbzip or .shx file is on the computer.
 
 | Item | File needed | Then |
 |---|---|---|
 | UX-068 .lbzip (import and export done with the owner's LightBurn 2.2 bundle) | A bundle exported with a material library loaded (and hotkeys / image presets ticked), and the owner importing OpenEtch's own `.lbzip` in LightBurn | Map the remaining manifest actions in `crates/engine/src/lbzip.rs` |
-| DES-051 Real SHX font | A real .shx the owner may use (not a LightBurn file; the owner's LightBurn has no SHX folder set) | Point `OPENETCH_SHX_SAMPLES` at it and run `text::shx::real_shx_fonts_parse` |
 
 ### Needs other hardware (n/a for the B6)
 
