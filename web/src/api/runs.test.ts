@@ -10,6 +10,8 @@ import {
   approvalHowText,
   approvalNotice,
   approveBlocker,
+  footCycle,
+  footCycleText,
   footSwitch,
   footSwitchToast,
   formatCountdown,
@@ -233,7 +235,7 @@ test("200 {ok:false} answers (undo with nothing to undo) are errors", () => {
   assert.equal(okError(undefined, "x"), null);
 });
 
-test("no-PIN mode: no PIN notices, Start or the foot switch, foot switch toasts", () => {
+test("no-PIN mode: no PIN notices, one-click Start, the foot switch cycle and its toasts", () => {
   const click = machine({
     approval: { pin_set: false, physical_confirm: null, pin_changed: true, mode: "click", foot_switch: { input_bit: 14, active_low: false } },
   });
@@ -242,10 +244,10 @@ test("no-PIN mode: no PIN notices, Start or the foot switch, foot switch toasts"
   assert.equal(approvalNotice(click), null);
   assert.equal(approveBlocker(run(), click), null);
   assert.deepEqual(footSwitch(click), { input_bit: 14, active_low: false });
-  assert.equal(approvalHowText(click), "No PIN on this engine: a run starts with Start below or the foot switch (input 14).");
+  assert.equal(approvalHowText(click), "No PIN on this engine: Start burns at once; the foot switch (input 14) frames the job, then burns it.");
   const noFoot = machine({ approval: { pin_set: false, physical_confirm: null, mode: "click", foot_switch: null } });
   assert.equal(footSwitch(noFoot), null);
-  assert.equal(approvalHowText(noFoot), "No PIN on this engine: a run starts with Start below.");
+  assert.equal(approvalHowText(noFoot), "No PIN on this engine: Start burns at once.");
   // The PIN mode, and an engine that does not report a mode, keep the PIN.
   const pinModes = [
     machine({ approval: { pin_set: false, physical_confirm: null, mode: "pin", foot_switch: { input_bit: 14, active_low: false } } }),
@@ -259,16 +261,32 @@ test("no-PIN mode: no PIN notices, Start or the foot switch, foot switch toasts"
   assert.equal(approvalNotice(machine({ approval: { pin_set: false, physical_confirm: null, mode: "pin" } })), APPROVAL_CODE_TEXT.pin_not_set);
   assert.match(approvalErrorText("browser_required", "x"), /localhost or https/);
 
-  assert.deepEqual(footSwitchToast("foot_switch_ignored", "several_pending"), {
-    msg: "Foot switch: several jobs are waiting. Pick one in the app.",
+  // The foot switch cycle: what a press does now, by phase; none without a foot switch or in the PIN mode.
+  const cycle = (phase: "off" | "framing" | "burning") =>
+    machine({
+      approval: { pin_set: false, physical_confirm: null, mode: "click", foot_switch: { input_bit: 14, active_low: true } },
+      foot_cycle: { available: true, phase, revision: phase === "off" ? null : 4, run_id: null, since_unix_s: null, idle_timeout_s: 600, notice: null },
+    });
+  assert.equal(footCycleText(cycle("off")), "Foot switch (input 14): press to frame the job, press again to burn it.");
+  assert.equal(footCycleText(cycle("framing")), "Framing. Press the foot switch to burn.");
+  assert.match(footCycleText(cycle("burning")) ?? "", /^Burning\. Framing resumes/);
+  assert.equal(footCycle(cycle("framing"))?.revision, 4);
+  const unavailable = machine({
+    approval: { pin_set: false, physical_confirm: null, mode: "click", foot_switch: null },
+    foot_cycle: { available: false, phase: "off", revision: null, run_id: null, since_unix_s: null, idle_timeout_s: 600, notice: null },
+  });
+  assert.equal(footCycleText(unavailable), null);
+  assert.equal(footCycle(machine({ approval: { pin_set: true, physical_confirm: null, mode: "pin" }, foot_cycle: cycle("framing").foot_cycle })), null);
+  assert.equal(footCycleText(noFoot), null, "an engine without foot_cycle shows no cycle line");
+
+  // The engine's notices: an error when nothing was burned, else information.
+  assert.deepEqual(footSwitchToast("foot_cycle_notice", "Foot switch: not burned: the door interlock (input 15) is open. Still framing."), {
+    msg: "Foot switch: not burned: the door interlock (input 15) is open. Still framing.",
     kind: "error",
   });
-  assert.equal(footSwitchToast("foot_switch_ignored", "no_pending")?.kind, "info");
-  assert.deepEqual(footSwitchToast("foot_switch_ignored", "changed_during_press"), {
-    msg: "Foot switch: the waiting job changed while the pedal was pressed, so nothing started. Check it and press again.",
-    kind: "error",
-  });
-  assert.equal(footSwitchToast("foot_switch_refused", "the door interlock (input 5) is open")?.msg, "Foot switch: not started. the door interlock (input 5) is open");
-  assert.equal(footSwitchToast("foot_switch_approved", "run-7")?.msg, "Foot switch: run run-7 approved.");
+  assert.equal(footSwitchToast("foot_cycle_notice", "Foot switch: the job changed since it was framed, so it was not burned. Framing the new version: press again to burn it.")?.kind, "error");
+  assert.equal(footSwitchToast("foot_cycle_notice", "Framing was stopped, so the foot switch cycle ended. Press the foot switch to frame again.")?.kind, "info");
+  assert.equal(footSwitchToast("foot_cycle_notice", ""), null);
+  assert.equal(footSwitchToast("foot_switch_approved", "run-7"), null, "the old single-run events are gone");
   assert.equal(footSwitchToast("run_approved", "run-7"), null);
 });

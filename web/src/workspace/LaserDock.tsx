@@ -1,8 +1,11 @@
 // Laser window (LightBurn's Laser window, docked Fusion-style): the device dropdown, machine status, job progress with
 // Pause / Resume / End after this run (components/JobControls.tsx), Frame with its options popover and Stop frame
-// (components/FramingOptions.tsx), Request run with the run options (Repeat, Run continuously, Start Marking input,
-// Cut Selected Graphics), the job counter (Count, Reset Count, Stop At), Optimization Settings and Rotary Setup, and
-// STOP, which is always allowed. Request run never fires by itself: the run waits for PIN approval in the Runs card.
+// (components/FramingOptions.tsx), Start or Request run with the run options (Repeat, Run continuously, Start Marking
+// input, Cut Selected Graphics), the job counter (Count, Reset Count, Stop At), Optimization Settings and Rotary Setup,
+// and STOP, which is always allowed. With the operator PIN, Request run never fires by itself: the run waits for PIN
+// approval in the Runs card. Without a PIN (`--approval click`), Start burns the job in one click like LightBurn's
+// (with the Job Checklist and Require Framing shown inline when they are on), and the foot switch cycle's state is shown
+// (press to frame, press again to burn what was framed).
 
 import { useEffect, useState, type ReactNode } from "react";
 import type { Invocation } from "../api/client.ts";
@@ -10,7 +13,10 @@ import type { GDocument, MachineStatus } from "../api/types.ts";
 import type { LinkState } from "../api/useEngine.ts";
 import { FramingControls } from "../components/FramingOptions.tsx";
 import { MachineJog } from "../components/MachineJog.tsx";
-import { JobCounter, JobProgress, RunOptionsPanel, requestRunWithOptions, useJobStatus } from "../components/JobControls.tsx";
+import { JobCounter, JobProgress, RunOptionsPanel, runJob, useJobStatus } from "../components/JobControls.tsx";
+import { footCycle, footCycleText, noPinMode } from "../api/runs.ts";
+import { ApprovalChecks, useApprovalGates } from "../libs/JobSafety.tsx";
+import { checklistTicks } from "../libs/model.ts";
 import { OptimizationDialog } from "../components/OptimizationDialog.tsx";
 import { RotaryDialog } from "../components/RotaryDialog.tsx";
 import { Icon } from "../components/ui.tsx";
@@ -85,10 +91,19 @@ export function LaserDock(p: LaserDockProps) {
     noLaser: t("laser.noLaser"),
   }[st.text];
   const dotClass = st.text === "ready" || st.text === "framing" || st.text === "running" ? "ok" : st.text === "busy" ? "wait" : "bad";
+  // No PIN on this engine: Start burns at once (LightBurn's Start); else Request run makes a run to approve with the PIN.
+  const noPin = noPinMode(p.machine);
+  const gates = useApprovalGates();
+  const cycle = footCycle(p.machine);
+  const cycleText = footCycleText(p.machine);
   const request = () => {
     setRequesting(true);
-    requestRunWithOptions(p.selection)
-      .then((msg) => p.notify(msg))
+    runJob(noPin, p.selection, null, noPin ? checklistTicks(gates.gates.checklist, gates.ticks) : null)
+      .then((msg) => {
+        p.notify(msg);
+        // The checklist is ticked again for every job.
+        gates.reset();
+      })
       .catch(p.report)
       .finally(() => {
         setRequesting(false);
@@ -123,15 +138,26 @@ export function LaserDock(p: LaserDockProps) {
           onChanged={p.onChanged}
         />
       </div>
+      {noPin && <ApprovalChecks state={gates} disabled={requesting} showDoor={false} />}
       <div className="laser-buttons">
-        <button className="btn btn-primary" disabled={!!p.designOnly || requesting} onClick={request} title={p.designOnly ?? t("laser.requestTitle")}>
-          <Icon name="run" size={18} /> {t("laser.request")}
+        <button
+          className="btn btn-primary"
+          disabled={!!p.designOnly || requesting || (noPin && !gates.complete)}
+          onClick={request}
+          title={p.designOnly ?? (noPin ? t("laser.startTitle") : t("laser.requestTitle"))}
+        >
+          <Icon name="run" size={18} /> {noPin ? t("laser.start") : t("laser.request")}
         </button>
         <button className="btn btn-stop laser-stop" onClick={p.onStop} title={t("laser.stopTitle")}>
           <Icon name="stop" size={18} /> {t("laser.stop")}
         </button>
       </div>
 
+      {cycleText && (
+        <p className={`foot-cycle foot-cycle-${cycle?.phase ?? "off"}${cycle?.phase === "off" ? " hint" : " run-hint"}`} role="status">
+          {cycleText}
+        </p>
+      )}
       <RunOptionsPanel selected={p.selection.length} hasStartInput={null} />
       {p.extras}
       <JobCounter state={job} report={p.report} />

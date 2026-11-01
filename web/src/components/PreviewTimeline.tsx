@@ -9,7 +9,7 @@ import { PLAYBACK_SPEEDS, clockText, segmentTimes, segmentsDoneAt, startHereSegm
 import { jobApi, saveBlob } from "../api/jobApi.ts";
 import type { Preview } from "../api/types.ts";
 import { useT } from "../workspace/usePrefs.ts";
-import { requestRunWithOptions } from "./JobControls.tsx";
+import { runJob } from "./JobControls.tsx";
 import { Icon } from "./ui.tsx";
 import type { PreviewOptions } from "./Viewport.tsx";
 import "./job.css";
@@ -26,6 +26,8 @@ export function PreviewTimeline(p: {
   notify: Notify;
   report: (e: unknown) => void;
   onRequested: () => void;
+  /** No PIN on the engine: Start Here burns at once instead of requesting a run. */
+  noPin?: boolean;
 }) {
   const t = useT();
   const { preview, options, onOptions } = p;
@@ -86,7 +88,7 @@ export function PreviewTimeline(p: {
   const startHere = () => {
     if (startAt === null) return;
     setBusy(true);
-    requestRunWithOptions([], startAt)
+    runJob(!!p.noPin, [], startAt)
       .then((msg) => p.notify(msg))
       .catch((e: unknown) => (e instanceof Error && !("status" in e) ? p.notify(e.message, "error") : p.report(e)))
       .finally(() => {

@@ -3,8 +3,10 @@
 // Pause / Resume / End after this run, the run options for the next request (Repeat, Run continuously, Start Marking
 // input with Require Full Pulse, Cut Selected Graphics) and the job counter (Count, Reset Count, Stop At).
 //
-// Nothing here fires the laser: "Request run" creates a pending run that still needs the operator PIN in the Runs card.
-// Pause is never gated; Resume continues a run a person approved, so the engine only takes it from the UI.
+// With the operator PIN, "Request run" creates a pending run that still needs the PIN in the Runs card. Without a PIN
+// (`--approval click`), Start ([`runJob`]) plans and burns the job in one click, like LightBurn's Start; the engine
+// accepts that only from this page in a browser. Pause is never gated; Resume continues a run a person approved, so the
+// engine only takes it from the UI.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError } from "../api/client.ts";
@@ -26,6 +28,8 @@ import {
 } from "../api/job.ts";
 import { jobApi } from "../api/jobApi.ts";
 import { formatDuration } from "../api/laser.ts";
+import { approvalErrorText } from "../api/runs.ts";
+import { approvalRefusalText } from "../libs/model.ts";
 import type { LinkState } from "../api/useEngine.ts";
 import { usePrefs, useT } from "../workspace/usePrefs.ts";
 import { getPrefs } from "../workspace/prefs.ts";
@@ -96,6 +100,30 @@ export async function requestRunWithOptions(selection: readonly string[], fromSe
   const body = runRequestBody(fromSegment === null && !getPrefs().beginnerMode ? o : { ...o, cutSelected: false }, { selection, fromSegment });
   await jobApi.requestRun(body);
   return fromSegment === null ? tr("rest.runRequested") : tr("rest.runFromRequested", { n: fromSegment });
+}
+
+/**
+ * Start (no-PIN engine: plan and burn now, with the Job Checklist ticks when it is on) or Request run (PIN engine: a
+ * pending run to approve with the PIN), with the Laser window's options. Resolves to the toast text; a refused Start
+ * throws an Error with a readable reason (door open, checklist, Require Framing, ...).
+ */
+export async function runJob(
+  noPin: boolean,
+  selection: readonly string[],
+  fromSegment: number | null = null,
+  checklist: boolean[] | null = null,
+): Promise<string> {
+  if (!noPin) return requestRunWithOptions(selection, fromSegment);
+  const o = getRunOptions();
+  const body = runRequestBody(fromSegment === null && !getPrefs().beginnerMode ? o : { ...o, cutSelected: false }, { selection, fromSegment });
+  try {
+    await jobApi.start(checklist ? { ...body, checklist } : body);
+  } catch (e) {
+    if (!(e instanceof ApiError)) throw e;
+    const detail = e.detail || e.message;
+    throw new Error(approvalErrorText(e.code, approvalRefusalText(detail) ?? detail));
+  }
+  return fromSegment === null ? tr("rest.jobStarted") : tr("rest.jobStartedFrom", { n: fromSegment });
 }
 
 /** Pause a running job, or resume a paused one (the Pause / resume hotkey). Resolves to the toast text. */

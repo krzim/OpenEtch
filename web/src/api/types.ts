@@ -384,11 +384,11 @@ export interface ApprovalInfo {
    * engine without this field does) or "click" (no PIN: Start in this app, or the foot switch).
    */
   mode?: "pin" | "click";
-  /** In the "click" mode: the input (the profile's Start Marking input) whose press approves the single pending run. */
+  /** In the "click" mode: the input (the profile's Start Marking input) that drives the foot switch cycle. */
   foot_switch?: FootSwitch | null;
 }
 
-/** The foot switch that approves runs in the no-PIN mode (`approval.foot_switch`). */
+/** The foot switch of the no-PIN mode (`approval.foot_switch`): press to frame, press again to burn what was framed. */
 export interface FootSwitch {
   input_bit: number;
   active_low: boolean;
@@ -405,7 +405,24 @@ export interface MachineStatus {
   /** Pending and recent runs in every state. */
   runs?: PendingRun[];
   approval?: ApprovalInfo;
+  /** The foot switch cycle (no-PIN mode): press to frame the job, press again to burn what was framed. */
+  foot_cycle?: FootCycle;
   [key: string]: unknown;
+}
+
+/** GET /api/machine `foot_cycle`. */
+export interface FootCycle {
+  /** The engine runs without a PIN and the device has a foot switch (Start Marking input). */
+  available: boolean;
+  phase: "off" | "framing" | "burning";
+  /** The document revision being framed or burned. */
+  revision: number | null;
+  run_id: string | null;
+  since_unix_s: number | null;
+  /** Framing (and the cycle) ends after this long without a press. */
+  idle_timeout_s: number;
+  /** The last notice (why a press did not burn, why the cycle ended). */
+  notice: string | null;
 }
 
 /** `approval_locked`: too many wrong PINs; approvals are refused until `until_unix_s` (engine clock). */
