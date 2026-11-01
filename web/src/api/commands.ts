@@ -27,6 +27,26 @@ export const CMD = {
 /** Every id in [`CMD`], for the startup check. */
 export const REQUIRED_COMMANDS: string[] = Object.values(CMD);
 
+/**
+ * Commands of newer engines. The UI checks for each before using it (`has`) and hides or explains the feature when
+ * the engine lacks it, so these are not part of the startup check.
+ */
+export const OPT = {
+  importDxf: "art.import_dxf",
+  importImage: "art.import_image",
+  duplicate: "object.duplicate",
+  align: "object.align",
+  distribute: "object.distribute",
+  move: "object.move",
+  groupCreate: "group.create",
+  groupUngroup: "group.ungroup",
+  stockMove: "stock.move",
+  stockClear: "stock.clear",
+  layerDelete: "layer.delete",
+  docRename: "doc.rename",
+  shapePath: "shape.path",
+} as const;
+
 /** Define (or replace) the stock. */
 export function stockDefine(p: {
   name: string;
@@ -148,4 +168,80 @@ export function importLbrn2(content: string, mode: "replace" | "merge", field_mm
 /** Convert the document to a LightBurn project: the result is `{content, warnings, field_mm}`. Read-only. */
 export function exportLbrn2(field_mm?: number): Invocation {
   return { id: CMD.exportLbrn2, params: field_mm !== undefined ? { field_mm } : {} };
+}
+
+/** Import DXF text (mm from `$INSUNITS`, else assumed mm with a warning). */
+export function importDxf(content: string, name: string, layer: string | null): Invocation {
+  const params: Record<string, unknown> = { content, name };
+  if (layer) params.layer = layer;
+  return { id: OPT.importDxf, params };
+}
+
+/** Import a bitmap (base64) as an image object centred on the field origin. */
+export function importImage(data_base64: string, mime: string, name: string, layer: string | null): Invocation {
+  const params: Record<string, unknown> = { data_base64, mime, name };
+  if (layer) params.layer = layer;
+  return { id: OPT.importImage, params };
+}
+
+/** Copy objects, offset by `offset` mm (default in place). The result's `created` lists the copies. */
+export function duplicate(ids: string[], offset: Vec2 = [0, 0]): Invocation {
+  return { id: OPT.duplicate, params: offset[0] === 0 && offset[1] === 0 ? { ids } : { ids, offset } };
+}
+
+/** What `object.align` lines the objects up with. */
+export type AlignReference =
+  | { kind: "last" }
+  | { kind: "first" }
+  | { kind: "selection" }
+  | { kind: "object"; id: string }
+  | { kind: "stock" }
+  | { kind: "field" };
+
+/** Move objects so their x/y keypoint lands on the reference's same keypoint. Omitted axes do not move. */
+export function align(
+  ids: string[],
+  p: { reference?: AlignReference; x?: "left" | "center" | "right"; y?: "top" | "center" | "bottom"; mode?: "group" | "each" },
+): Invocation {
+  return { id: OPT.align, params: { ids, ...p } };
+}
+
+/** Even out the spacing of objects along an axis. */
+export function distribute(ids: string[], axis: "x" | "y", by: "centers" | "gaps"): Invocation {
+  return { id: OPT.distribute, params: { ids, axis, by } };
+}
+
+/** Group objects (or groups); the result is the new group id. */
+export function groupCreate(ids: string[], name?: string): Invocation {
+  return { id: OPT.groupCreate, params: name ? { ids, name } : { ids } };
+}
+
+/** Remove one level of grouping. */
+export function groupUngroup(group: string): Invocation {
+  return { id: OPT.groupUngroup, params: { group } };
+}
+
+/** Move or rotate the stock: `translate` by [dx, dy], `rotate_by_deg` relative. */
+export function stockMove(p: { center?: Vec2; translate?: Vec2; rotation_deg?: number; rotate_by_deg?: number }): Invocation {
+  return { id: OPT.stockMove, params: { ...p } };
+}
+
+/** Remove the stock. */
+export function stockClear(): Invocation {
+  return { id: OPT.stockClear, params: {} };
+}
+
+/** Delete a layer; a layer that still has objects needs `reassignTo`, the layer they move to. */
+export function layerDelete(id: string, reassignTo?: string): Invocation {
+  return { id: OPT.layerDelete, params: reassignTo ? { id, reassign_to: reassignTo } : { id } };
+}
+
+/** Rename the document. */
+export function docRename(name: string): Invocation {
+  return { id: OPT.docRename, params: { name } };
+}
+
+/** Add a path given as SVG path data in field mm (used to paste cut objects). */
+export function shapePath(svg_path_data: string, layer: string, name: string): Invocation {
+  return { id: OPT.shapePath, params: { svg_path_data, layer, name } };
 }

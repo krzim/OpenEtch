@@ -40,6 +40,15 @@ const ALL_IDS: &[&str] = &[
     "object.duplicate",
     "art.place",
     "art.array",
+    "stock.move",
+    "object.move",
+    "object.align",
+    "object.distribute",
+    "group.create",
+    "group.ungroup",
+    "group.rename",
+    "art.import_image",
+    "art.import_dxf",
 ];
 
 #[test]

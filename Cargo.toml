@@ -19,8 +19,8 @@ machine = { path = "crates/machine" }
 lbrn = { path = "crates/lbrn" }
 
 # shared
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
 thiserror = "2"
 schemars = "1"
 kurbo = { version = "0.13", features = ["serde"] }
@@ -33,6 +33,8 @@ lyon_algorithms = "1"
 i_overlay = "9.1"
 # LightBurn .lbrn2 reading (writing is hand-written in crates/lbrn)
 roxmltree = "0.21"
+# DXF reading (art.import_dxf)
+dxf = "0.6.2"
 
 # machine I/O
 nusb = "0.2"

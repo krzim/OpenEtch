@@ -62,7 +62,9 @@ export type BezPathJson = string | KurboPathEl[];
 export type Geometry =
   | { kind: "rect"; width_mm: number; height_mm: number; corner_radius_mm: number }
   | { kind: "ellipse"; rx_mm: number; ry_mm: number }
-  | { kind: "path"; path: BezPathJson };
+  | { kind: "path"; path: BezPathJson }
+  /** A bitmap centred on the local origin. Not engraved yet (the planner skips it with a warning). */
+  | { kind: "image"; width_mm: number; height_mm: number; mime: string; data_base64: string };
 
 export interface DocObject {
   id: string;
@@ -72,6 +74,17 @@ export interface DocObject {
   geometry: Geometry;
   /** Local to field frame. */
   transform: Affine;
+  /** The group this object belongs to directly, if any. */
+  group?: string | null;
+  /** Foreign data kept for round trips (e.g. LightBurn text attributes). */
+  extras?: Record<string, string>;
+}
+
+/** A group of objects; groups nest through `parent`. */
+export interface Group {
+  id: string;
+  name: string;
+  parent?: string | null;
 }
 
 export type StockShape =
@@ -97,6 +110,9 @@ export interface GDocument {
   next_id: number;
   /** Galvo field size the document was laid out for; the engine fills it from the machine profile. */
   field_mm?: number | null;
+  /** Groups (absent on older engines). */
+  groups?: Group[];
+  extras?: Record<string, string>;
 }
 
 /**
@@ -105,11 +121,33 @@ export interface GDocument {
  */
 export type Origin = string | { kind: "ui" | "script" } | { kind: "agent"; name: string };
 
+/** One row of an older engine's GET /api/history (an append-only log). */
 export interface HistoryEntry {
   revision: number;
   command: string;
   origin: Origin;
   summary: string;
+}
+
+/** Where a timeline step is: applied, after the marker (rolled back), or failed on replay. */
+export type StepState = "active" | "rolled_back" | "failed";
+
+/** One step of the Fusion-style timeline (GET /api/history `steps`). */
+export interface HistoryStep {
+  index: number;
+  invocations?: { id: string; params?: unknown }[];
+  origin: Origin;
+  summary: string;
+  state: StepState | string;
+  /** Why a replayed step failed. */
+  error?: string | null;
+  revision?: number;
+}
+
+/** GET /api/history on engines with the timeline: `marker` is the index of the last applied step. */
+export interface HistoryTimeline {
+  marker: number;
+  steps: HistoryStep[];
 }
 
 export type Risk = "query" | "edit" | "pointer" | "emit";
@@ -128,14 +166,29 @@ export interface PreviewSegment {
   kind: "jump" | "mark";
   /** Layer id for marks; may be null for jumps. */
   layer?: string | null;
+  /** Pass index within the layer (newer engines). */
+  pass?: number;
   from: Vec2;
   to: Vec2;
 }
 
+/** Per-layer preview data (newer engines). */
+export interface PreviewLayer {
+  layer_id: string;
+  name?: string;
+  color?: string;
+  mode?: FillMode | string;
+  segments?: number;
+  mark_length_mm?: number;
+  estimated_time_s?: number;
+}
+
 export interface Preview {
   segments: PreviewSegment[];
-  /** Free-form job statistics (time estimate, mark/jump length...). Shown as key/value pairs. */
+  /** Free-form job statistics (time estimate, mark/jump length...). */
   stats?: Record<string, unknown>;
+  layers?: PreviewLayer[];
+  warnings?: string[];
 }
 
 /** Where a run is in its life (ARCHITECTURE.md, shared run states). Unknown strings from a newer engine are kept. */
@@ -260,4 +313,5 @@ export type EngineEvent =
   | { type: "run_pending"; [key: string]: unknown }
   | ApprovalLockedEvent
   | RunFinishedEvent
-  | ProjectSavedEvent;
+  | ProjectSavedEvent
+  | { type: "history_changed"; [key: string]: unknown };

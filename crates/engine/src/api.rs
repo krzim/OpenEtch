@@ -20,7 +20,7 @@ use tower_http::services::{ServeDir, ServeFile};
 use crate::frame::FrameRequest;
 use crate::render::RenderOptions;
 use crate::security::{self, has_mcp_marker};
-use crate::state::{FileFormat, parse_origin};
+use crate::state::{FileFormat, UploadFormat, UploadOptions, parse_origin};
 use crate::{AppState, EngineError, approve, events, mcp};
 
 /// Largest request body (SVG imports can be large; the commands crate refuses imports over 20 MB).
@@ -39,7 +39,10 @@ pub fn router(state: Arc<AppState>, web_dir: Option<&Path>) -> Router {
         .route("/redo", post(redo))
         .route("/document", get(document))
         .route("/history", get(history))
+        .route("/history/goto", post(history_goto))
+        .route("/history/delete", post(history_delete))
         .route("/preview", get(preview))
+        .route("/fill_regions", get(fill_regions))
         .route("/preview.svg", get(preview_svg))
         .route("/machine", get(machine_status))
         .route("/machine/frame", post(frame_start))
@@ -156,16 +159,84 @@ async fn document(State(st): State<Arc<AppState>>) -> Json<doc::Document> {
     Json(st.document())
 }
 
-async fn history(State(st): State<Arc<AppState>>) -> Json<Vec<commands::HistoryEntry>> {
-    Json(st.history())
+async fn history(State(st): State<Arc<AppState>>) -> Json<commands::HistoryView> {
+    Json(st.history_view())
 }
 
-async fn preview(State(st): State<Arc<AppState>>) -> Result<Response, EngineError> {
+/// Body of `POST /api/history/goto`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GotoBody {
+    /// Index of the last step to apply; 0 rolls back everything.
+    marker: usize,
+    #[serde(default)]
+    origin: Option<Value>,
+}
+
+/// Body of `POST /api/history/delete`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeleteStepBody {
+    /// 1-based index of the step to delete.
+    index: usize,
+    #[serde(default)]
+    origin: Option<Value>,
+}
+
+/// `POST /api/history/goto` and `/api/history/delete`: a refusal (marker past the end, no such step) is
+/// `200 {ok: false, error}`, like a failed command.
+fn timeline_response(r: Result<Value, EngineError>) -> Response {
+    match r {
+        Ok(v) => Json(v).into_response(),
+        Err(EngineError::Command(e)) => command_failure(e),
+        Err(e) => e.into_response(),
+    }
+}
+
+async fn history_goto(State(st): State<Arc<AppState>>, body: Bytes) -> Result<Response, EngineError> {
+    let b: GotoBody = body_required(&body)?;
+    let origin = parse_origin(b.origin.as_ref())?;
+    // Blocking thread: restoring a snapshot of a large document copies it.
+    Ok(timeline_response(st.blocking(move |st| st.history_goto(b.marker, origin)).await))
+}
+
+async fn history_delete(State(st): State<Arc<AppState>>, body: Bytes) -> Result<Response, EngineError> {
+    let b: DeleteStepBody = body_required(&body)?;
+    let origin = parse_origin(b.origin.as_ref())?;
+    // Blocking thread: the later steps are replayed (an import can take seconds).
+    Ok(timeline_response(st.blocking(move |st| st.history_delete(b.index, origin)).await))
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreviewQuery {
+    /// `?layers=layer-1,layer-3`: only those layers' segments and entries (stats stay the whole job's).
+    layers: Option<String>,
+}
+
+async fn preview(
+    State(st): State<Arc<AppState>>,
+    q: Result<Query<PreviewQuery>, QueryRejection>,
+) -> Result<Response, EngineError> {
+    let Query(q) = q.map_err(|e| EngineError::BadRequest(format!("bad query: {e}")))?;
     let result = st.preview().await?;
     match &result.1 {
-        Ok(p) => Ok(Json(p).into_response()),
+        Ok(p) => match q.layers {
+            None => Ok(Json(p).into_response()),
+            Some(list) => {
+                let ids: Vec<&str> = list.split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
+                let mut p = p.clone();
+                p.retain_layers(&ids);
+                Ok(Json(p).into_response())
+            }
+        },
         Err(e) => Err(EngineError::Plan(e.clone())),
     }
+}
+
+/// `GET /api/fill_regions`: per fill layer, the even-odd regions its hatch covers, as SVG paths in field mm.
+async fn fill_regions(State(st): State<Arc<AppState>>) -> Result<Json<plan::FillRegions>, EngineError> {
+    Ok(Json(st.fill_regions().await?))
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -301,54 +372,54 @@ async fn download(State(st): State<Arc<AppState>>, q: FileQuery) -> Result<Respo
     Ok((headers, file.content).into_response())
 }
 
-/// `POST /api/document/upload?format=openetch|lbrn2&mode=replace|merge[&field_mm=150]` with the raw file as the
-/// body (at most [`MAX_UPLOAD_BYTES`], UTF-8). Runs `doc.load` or `doc.import_lbrn2` with origin `ui`; answers like
-/// `/api/execute` (a failing command is 200 `{ok: false, error}`).
+/// A finite number from a query parameter. `parse` accepts "NaN" and "inf", which would become JSON null (the
+/// command's default) downstream, so they are refused.
+fn finite_param(name: &str, v: &str) -> Result<f64, EngineError> {
+    match v.parse::<f64>() {
+        Ok(f) if f.is_finite() => Ok(f),
+        _ => Err(EngineError::BadRequest(format!("{name} '{v}' is not a finite number"))),
+    }
+}
+
+/// `POST /api/document/upload?format=openetch|lbrn2|svg|dxf|image[&mode=replace|merge][&field_mm=150][&layer=..]
+/// [&name=..][&width_mm=..][&mime=image/png]` with the raw file as the body (at most [`MAX_UPLOAD_BYTES`]). Runs
+/// `doc.load`, `doc.import_lbrn2`, `art.import_svg`, `art.import_dxf` or `art.import_image` with origin `ui` (see
+/// [`AppState::upload`]); answers like `/api/execute` (a failing command is 200 `{ok: false, error}`).
 async fn upload(
     State(st): State<Arc<AppState>>,
     q: FileQuery,
     body: Result<Bytes, BytesRejection>,
 ) -> Result<Response, EngineError> {
-    let q = file_query(q, &["format", "mode", "field_mm"])?;
+    let q = file_query(q, &["format", "mode", "field_mm", "layer", "name", "width_mm", "mime"])?;
     let body = body.map_err(|e| match e.status() {
         StatusCode::PAYLOAD_TOO_LARGE => {
             EngineError::TooLarge(format!("the file is larger than {} MB", MAX_UPLOAD_BYTES / (1024 * 1024)))
         }
         _ => EngineError::BadRequest(format!("cannot read the upload: {e}")),
     })?;
-    let format = FileFormat::parse(q.get("format").map(String::as_str).ok_or_else(|| {
-        EngineError::BadRequest("the format query parameter is required (openetch or lbrn2)".into())
+    let format = UploadFormat::parse(q.get("format").map(String::as_str).ok_or_else(|| {
+        EngineError::BadRequest("the format query parameter is required (openetch, lbrn2, svg, dxf or image)".into())
     })?)?;
     let merge = match q.get("mode").map(String::as_str) {
-        None | Some("replace") => false,
-        Some("merge") => true,
+        None => None,
+        Some("replace") => Some(false),
+        Some("merge") => Some(true),
         Some(other) => return Err(EngineError::BadRequest(format!("unknown mode '{other}' (replace or merge)"))),
     };
-    let field_mm = match q.get("field_mm") {
-        None => None,
-        // `parse` accepts "NaN" and "inf", which would become JSON null (the document's field) downstream.
-        Some(v) => match v.parse::<f64>() {
-            Ok(f) if f.is_finite() => Some(f),
-            _ => return Err(EngineError::BadRequest(format!("field_mm '{v}' is not a finite number"))),
-        },
+    let opts = UploadOptions {
+        merge,
+        field_mm: q.get("field_mm").map(|v| finite_param("field_mm", v)).transpose()?,
+        layer: q.get("layer").cloned(),
+        name: q.get("name").cloned(),
+        width_mm: q.get("width_mm").map(|v| finite_param("width_mm", v)).transpose()?,
+        mime: q.get("mime").cloned(),
     };
     if body.is_empty() {
         return Err(EngineError::BadRequest("the upload is empty".into()));
     }
-    // Large files are converted and imported on a blocking thread; the body is moved, not copied.
-    let result = st
-        .blocking(move |st| {
-            // No copy when the body buffer is not shared (the usual case).
-            let mut text = String::from_utf8(Vec::from(body)).map_err(|_| {
-                EngineError::BadRequest("the file is not UTF-8 text (expected .openetch JSON or .lbrn2 XML)".into())
-            })?;
-            // LightBurn and some editors write a byte-order mark.
-            if text.starts_with('\u{feff}') {
-                text.drain(..'\u{feff}'.len_utf8());
-            }
-            st.upload(format, merge, field_mm, text, commands::Origin::Ui)
-        })
-        .await;
+    // Large files are converted and imported on a blocking thread; the body is moved, not copied (when its buffer
+    // is not shared, the usual case).
+    let result = st.blocking(move |st| st.upload(format, opts, Vec::from(body), commands::Origin::Ui)).await;
     match result {
         Ok(o) => Ok(Json(json!({ "ok": true, "result": o.result, "revision": o.revision })).into_response()),
         Err(EngineError::Command(e)) => Ok(command_failure(e)),

@@ -152,9 +152,12 @@ async fn execute_edits_and_reports_failures() {
     assert_eq!(s, StatusCode::BAD_REQUEST);
 
     let (_, hist) = send(&app, req("GET", "/api/history", None)).await;
-    assert_eq!(hist.as_array().unwrap().len(), 1);
-    assert_eq!(hist[0]["command"], "shape.rect");
-    assert_eq!(hist[0]["origin"]["kind"], "ui");
+    assert_eq!(hist["marker"], 1);
+    assert_eq!(hist["steps"].as_array().unwrap().len(), 1);
+    assert_eq!(hist["steps"][0]["command"], "shape.rect");
+    assert_eq!(hist["steps"][0]["origin"]["kind"], "ui");
+    assert_eq!(hist["steps"][0]["index"], 1);
+    assert_eq!(hist["steps"][0]["state"], "active");
 }
 
 #[tokio::test]
@@ -177,8 +180,9 @@ async fn batch_is_atomic() {
     assert_eq!(v["revision"], 1);
     assert_eq!(v["results"].as_array().unwrap().len(), 2);
     let (_, hist) = send(&app, req("GET", "/api/history", None)).await;
-    assert_eq!(hist.as_array().unwrap().len(), 1);
-    assert_eq!(hist[0]["origin"], json!({"kind": "agent", "name": "test"}));
+    assert_eq!(hist["steps"].as_array().unwrap().len(), 1);
+    assert_eq!(hist["steps"][0]["origin"], json!({"kind": "agent", "name": "test"}));
+    assert_eq!(hist["steps"][0]["invocations"].as_array().unwrap().len(), 2, "{hist}");
     // One undo removes both.
     let (_, v) = send(&app, req("POST", "/api/undo", Some(json!({"origin": "ui"})))).await;
     assert_eq!(v["ok"], true);
@@ -1056,20 +1060,29 @@ async fn upload_replaces_and_merges() {
     assert_eq!(v["ok"], true, "{v}");
     assert_eq!(st.project_name(), None);
 
-    // An .openetch upload replaces the document and is not a saved project.
+    // An .openetch upload replaces the document and is not a saved project: it is unsaved (the engine cannot
+    // save back to the file it came from), so New and Open ask first.
     let saved = doc::file::to_openetch_json(&doc::Document { name: "Upload".into(), ..doc::Document::default() });
     let (_, v) = send(&app, raw("POST", "/api/document/upload?format=openetch", saved)).await;
     assert_eq!(v["ok"], true, "{v}");
     assert_eq!(st.document().name, "Upload");
     assert_eq!(st.document().field_mm, Some(150.0), "the file had none: the document's is kept");
     let (_, p) = send(&app, req("GET", "/api/project", None)).await;
-    assert_eq!((&p["name"], &p["dirty"]), (&json!(null), &json!(false)), "{p}");
+    assert_eq!((&p["name"], &p["dirty"]), (&json!(null), &json!(true)), "{p}");
 
     // Refusals: all JSON, nothing changed.
     let rev = st.revision();
     for (uri, body, status) in [
         ("/api/document/upload", LBRN2.as_bytes().to_vec(), StatusCode::BAD_REQUEST),
-        ("/api/document/upload?format=svg", LBRN2.as_bytes().to_vec(), StatusCode::BAD_REQUEST),
+        ("/api/document/upload?format=pdf", LBRN2.as_bytes().to_vec(), StatusCode::BAD_REQUEST),
+        ("/api/document/upload?format=svg&mode=replace", SVG.as_bytes().to_vec(), StatusCode::BAD_REQUEST),
+        ("/api/document/upload?format=svg&field_mm=150", SVG.as_bytes().to_vec(), StatusCode::BAD_REQUEST),
+        ("/api/document/upload?format=svg&mime=image/png", SVG.as_bytes().to_vec(), StatusCode::BAD_REQUEST),
+        ("/api/document/upload?format=svg&width_mm=inf", SVG.as_bytes().to_vec(), StatusCode::BAD_REQUEST),
+        ("/api/document/upload?format=lbrn2&layer=layer-1", LBRN2.as_bytes().to_vec(), StatusCode::BAD_REQUEST),
+        ("/api/document/upload?format=openetch&width_mm=10", b"{}".to_vec(), StatusCode::BAD_REQUEST),
+        ("/api/document/upload?format=image", SVG.as_bytes().to_vec(), StatusCode::BAD_REQUEST),
+        ("/api/document/upload?format=dxf", vec![0xff, 0xfe, 0x3c], StatusCode::BAD_REQUEST),
         ("/api/document/upload?format=lbrn2&mode=append", LBRN2.as_bytes().to_vec(), StatusCode::BAD_REQUEST),
         ("/api/document/upload?format=lbrn2&field_mm=wide", LBRN2.as_bytes().to_vec(), StatusCode::BAD_REQUEST),
         // Rust parses these as floats; they must not fall back to the document's field size.
@@ -1234,4 +1247,159 @@ async fn real_lightburn_files_go_through_the_routes() {
         println!("{}: {objects} object(s) through upload, save, open, download, upload", path.display());
         let _ = std::fs::remove_dir_all(st.projects.root().parent().unwrap());
     }
+}
+
+const SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="10mm" height="10mm" viewBox="0 0 10 10"><rect width="10" height="10"/></svg>"#;
+
+/// A 1x1 PNG.
+const PNG_1X1: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+
+/// A DXF with one 10 mm line ($INSUNITS 4 = mm).
+const DXF: &str = "0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n0\nLINE\n8\n0\n10\n0.0\n20\n0.0\n30\n0.0\n11\n10.0\n21\n0.0\n31\n0.0\n0\nENDSEC\n0\nEOF\n";
+
+#[tokio::test]
+async fn svg_uploads_add_art_on_the_given_layer() {
+    let st = test_state().await;
+    let app = app(&st);
+    let (_, v) = send(&app, exec("layer.add", json!({"name": "Engrave"}))).await;
+    let layer = v["result"]["id"].as_str().unwrap().to_owned();
+    let uri = format!("/api/document/upload?format=svg&layer={layer}&name=Logo&width_mm=20");
+    let (s, v) = send(&app, raw("POST", &uri, format!("\u{feff}{SVG}"))).await;
+    assert_eq!((s, &v["ok"]), (StatusCode::OK, &json!(true)), "{v}");
+    let id = v["result"]["created"][0].as_str().unwrap().to_owned();
+    let o = st.document().object(&id).cloned().unwrap();
+    assert_eq!((o.layer.as_str(), o.name.as_str()), (layer.as_str(), "Logo"));
+    assert_eq!(v["result"]["bounds"]["size"], json!([20.0, 20.0]));
+    // mode=merge is accepted (it is what SVG uploads always do); a broken SVG is refused like a command.
+    let (s, v) = send(&app, raw("POST", "/api/document/upload?format=svg&mode=merge", SVG)).await;
+    assert_eq!((s, &v["ok"]), (StatusCode::OK, &json!(true)), "{v}");
+    let rev = st.revision();
+    let (s, v) = send(&app, raw("POST", "/api/document/upload?format=svg", LBRN2)).await;
+    assert_eq!((s, &v["ok"]), (StatusCode::OK, &json!(false)), "{v}");
+    assert_eq!(st.revision(), rev);
+    assert_eq!(st.history().last().unwrap().command, "art.import_svg");
+    let _ = std::fs::remove_dir_all(st.projects.root().parent().unwrap());
+}
+
+#[tokio::test]
+async fn image_and_dxf_uploads_go_to_their_import_commands() {
+    use base64::Engine as _;
+    let st = test_state().await;
+    let app = app(&st);
+    let png = base64::engine::general_purpose::STANDARD.decode(PNG_1X1).unwrap();
+    let (s, v) = send(&app, raw("POST", "/api/document/upload?format=image&width_mm=12&name=Photo", png.clone())).await;
+    assert_eq!((s, &v["ok"]), (StatusCode::OK, &json!(true)), "{v}");
+    let id = v["result"]["created"][0].as_str().unwrap().to_owned();
+    let o = st.document().object(&id).cloned().unwrap();
+    assert_eq!(o.name, "Photo");
+    match &o.geometry {
+        doc::Geometry::Image { width_mm, mime, data_base64, .. } => {
+            assert_eq!((*width_mm, mime.as_str()), (12.0, "image/png"));
+            assert_eq!(&**data_base64, PNG_1X1);
+        }
+        other => panic!("expected an image, got {other:?}"),
+    }
+    // GET /api/history does not repeat the file.
+    let (_, h) = send(&app, req("GET", "/api/history", None)).await;
+    assert!(h.to_string().len() < 4000, "{h}");
+
+    let (s, v) = send(&app, raw("POST", "/api/document/upload?format=dxf&name=Jig", DXF)).await;
+    assert_eq!((s, &v["ok"]), (StatusCode::OK, &json!(true)), "{v}");
+    assert_eq!(v["result"]["bounds"]["size"][0], json!(10.0), "{v}");
+    assert_eq!(st.history().last().unwrap().command, "art.import_dxf");
+    let _ = std::fs::remove_dir_all(st.projects.root().parent().unwrap());
+}
+
+#[tokio::test]
+async fn history_routes_roll_back_insert_and_delete() {
+    let st = test_state().await;
+    let app = app(&st);
+    let id = rect(&app, 10.0, 10.0).await;
+    let mv = || exec("object.transform", json!({"ids": [id.clone()], "translate": [5, 0]}));
+    send(&app, mv()).await;
+    send(&app, mv()).await;
+    let x0 = |st: &AppState| st.document().object(&id).map(|o| (o.bounds().x0 * 1e6).round() / 1e6);
+    assert_eq!(x0(&st), Some(5.0));
+
+    let mut events = st.subscribe();
+    let (s, v) = send(&app, req("POST", "/api/history/goto", Some(json!({"marker": 1})))).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(v, json!({"ok": true, "marker": 1, "revision": 4}));
+    assert_eq!(events.recv().await.unwrap(), crate::Event::DocumentChanged { revision: 4, origin: commands::Origin::Ui });
+    assert_eq!(events.recv().await.unwrap(), crate::Event::HistoryChanged { marker: 1, steps: 3, revision: 4 });
+    assert_eq!(x0(&st), Some(-5.0));
+    let (_, h) = send(&app, req("GET", "/api/history", None)).await;
+    let states: Vec<&str> = h["steps"].as_array().unwrap().iter().map(|s| s["state"].as_str().unwrap()).collect();
+    assert_eq!(states, ["active", "rolled_back", "rolled_back"]);
+
+    // An edit while rolled back is inserted after the marker.
+    let (_, v) = send(&app, exec("object.rename", json!({"id": id, "name": "Plate"}))).await;
+    assert_eq!(v["ok"], true, "{v}");
+    let (_, h) = send(&app, req("GET", "/api/history", None)).await;
+    assert_eq!(h["marker"], 2);
+    assert_eq!(h["steps"][1]["command"], "object.rename");
+    assert_eq!(h["steps"][3]["state"], "rolled_back");
+
+    // Delete the first move (step 3), then roll to the end: one move left.
+    let (_, v) = send(&app, req("POST", "/api/history/delete", Some(json!({"index": 3})))).await;
+    assert_eq!(v["ok"], true, "{v}");
+    let (_, v) = send(&app, req("POST", "/api/history/goto", Some(json!({"marker": 3})))).await;
+    assert_eq!(v["marker"], 3);
+    assert_eq!(x0(&st), Some(0.0));
+    assert_eq!(st.document().object(&id).unwrap().name, "Plate");
+
+    // Deleting the rectangle leaves the later steps failed (red), kept on the timeline.
+    send(&app, req("POST", "/api/history/delete", Some(json!({"index": 1})))).await;
+    let (_, h) = send(&app, req("GET", "/api/history", None)).await;
+    let states: Vec<&str> = h["steps"].as_array().unwrap().iter().map(|s| s["state"].as_str().unwrap()).collect();
+    assert_eq!(states, ["failed", "failed"]);
+    assert!(h["steps"][0]["error"].as_str().unwrap().contains(&id), "{h}");
+
+    // Refusals.
+    let (s, v) = send(&app, req("POST", "/api/history/goto", Some(json!({"marker": 9})))).await;
+    assert_eq!((s, &v["ok"]), (StatusCode::OK, &json!(false)), "{v}");
+    let (s, v) = send(&app, req("POST", "/api/history/delete", Some(json!({"index": 0})))).await;
+    assert_eq!((s, &v["ok"]), (StatusCode::OK, &json!(false)), "{v}");
+    let (s, _) = send(&app, req("POST", "/api/history/goto", Some(json!({"marker": -1})))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    let (s, _) = send(&app, req("POST", "/api/history/goto", None)).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    let _ = std::fs::remove_dir_all(st.projects.root().parent().unwrap());
+}
+
+#[tokio::test]
+async fn preview_has_layers_and_filters_and_fill_regions_are_served() {
+    let st = test_state().await;
+    let app = app(&st);
+    let (_, v) = send(&app, exec("layer.add", json!({"name": "Engrave", "settings": {"mode": "fill"}}))).await;
+    let fill = v["result"]["id"].as_str().unwrap().to_owned();
+    rect(&app, 10.0, 10.0).await;
+    send(&app, exec("shape.ellipse", json!({"rx_mm": 5, "ry_mm": 5, "center": [20, 0], "layer": fill}))).await;
+
+    let (s, v) = send(&app, req("GET", "/api/preview", None)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let layers = v["layers"].as_array().unwrap();
+    assert_eq!(layers.len(), 2);
+    assert_eq!(layers[1]["layer_id"], json!(fill));
+    assert_eq!(layers[1]["mode"], "fill");
+    assert!(layers[1]["segments"].as_u64().unwrap() > 4);
+    assert!(layers[0]["estimated_time_s"].as_f64().unwrap() > 0.0);
+    assert!(v["segments"].as_array().unwrap().iter().all(|s| s["pass"].is_u64()));
+
+    let (s, f) = send(&app, req("GET", &format!("/api/preview?layers={fill}"), None)).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(f["segments"].as_array().unwrap().iter().all(|s| s["layer"] == json!(fill)));
+    assert_eq!(f["layers"].as_array().unwrap().len(), 1);
+    assert_eq!(f["stats"], v["stats"]);
+    let (s, _) = send(&app, req("GET", "/api/preview?colour=red", None)).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+
+    let (s, r) = send(&app, req("GET", "/api/fill_regions", None)).await;
+    assert_eq!(s, StatusCode::OK, "{r}");
+    let layers = r["layers"].as_array().unwrap();
+    assert_eq!(layers.len(), 1, "only fill layers: {r}");
+    assert_eq!(layers[0]["layer_id"], json!(fill));
+    assert_eq!(layers[0]["object_ids"], json!(["obj-4"]));
+    assert!(layers[0]["paths"][0].as_str().unwrap().starts_with('M'));
+    let _ = std::fs::remove_dir_all(st.projects.root().parent().unwrap());
 }

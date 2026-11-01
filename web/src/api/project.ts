@@ -6,6 +6,9 @@ import type { GDocument, ProjectEntry, ProjectInfo } from "./types.ts";
 /** File formats the engine reads and writes: the native project and LightBurn's. */
 export type FileFormat = "openetch" | "lbrn2";
 
+/** Formats `POST /api/document/upload` takes: the two project formats plus large artwork (always merged). */
+export type UploadFormat = FileFormat | "svg" | "dxf" | "image";
+
 /** How `doc.import_lbrn2` treats the current document. */
 export type ImportMode = "replace" | "merge";
 

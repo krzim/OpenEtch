@@ -31,7 +31,7 @@ use crate::{AppState, EngineError};
 pub const MCP_AGENT: &str = "mcp";
 
 /// Every tool, in listing order.
-pub const TOOL_NAMES: [&str; 16] = [
+pub const TOOL_NAMES: [&str; 18] = [
     "list_commands",
     "execute",
     "batch",
@@ -48,6 +48,8 @@ pub const TOOL_NAMES: [&str; 16] = [
     "project_save",
     "project_open",
     "project_export_lbrn2",
+    "history_list",
+    "history_goto",
 ];
 
 /// Server instructions shown to the model.
@@ -85,7 +87,12 @@ galvo field size they were laid out for, and a wrong field_mm shifts everything 
 person has not said (e.g. a 150 mm or 110 mm LightBurn workspace), ask, or check the import warnings and bounds.
 
 Use list_commands for every command's input schema; execute runs one command, batch runs several as one undo step \
-(all-or-nothing). Edits you make are tagged as agent edits in the history and can be undone.";
+(all-or-nothing). Edits you make are tagged as agent edits in the history and can be undone.
+
+History is a timeline like Fusion 360's: history_list shows every step (index, command, origin, summary, state \
+active|rolled_back|failed) and the marker (index of the last applied step). history_goto {marker} rolls back or \
+forward without losing steps; an edit made while rolled back is inserted after the marker and the later steps are \
+replayed (a step that no longer applies is kept as failed). undo/redo move the marker by one step.";
 
 /// The MCP server handler. Cheap to clone; one per MCP session.
 #[derive(Clone)]
@@ -148,6 +155,14 @@ struct SaveArgs {
     /// Replace an existing project that is not the current one. Default false; only when the person asked.
     #[serde(default)]
     overwrite: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct GotoArgs {
+    /// Index of the last step to apply (from history_list); 0 rolls everything back, the number of steps rolls
+    /// forward to the end.
+    marker: usize,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -305,6 +320,22 @@ impl GalvoMcp {
                  warnings, field_mm}. For the XML itself use execute doc.export_lbrn2.",
                 false,
             ),
+            tool::<NoArgs>(
+                "history_list",
+                "List the timeline",
+                "The edit timeline: {marker, steps: [{index, command, invocations, origin, summary, state, error?}]}. \
+                 marker is the index of the last applied step (0 = none); state is active, rolled_back (after the \
+                 marker) or failed (no longer applies after an earlier step changed; shown red). File contents in \
+                 parameters are shortened.",
+                true,
+            ),
+            tool::<GotoArgs>(
+                "history_goto",
+                "Roll the timeline",
+                "Move the timeline marker: apply steps 1..=marker and roll back the rest, without deleting anything. \
+                 An edit made while rolled back is inserted after the marker. Returns {ok, marker, revision}.",
+                false,
+            ),
         ]
     }
 
@@ -399,6 +430,14 @@ impl GalvoMcp {
             "project_export_lbrn2" => {
                 let x: ExportArgs = args(name, a)?;
                 Ok(ok_json(st.project_export_lbrn2(&x.name, x.overwrite, Self::origin()).await?))
+            }
+            "history_list" => {
+                args::<NoArgs>(name, a)?;
+                Ok(ok_json(json!(st.history_view())))
+            }
+            "history_goto" => {
+                let x: GotoArgs = args(name, a)?;
+                Ok(ok_json(st.blocking(move |st| st.history_goto(x.marker, Self::origin())).await?))
             }
             other => Err(EngineError::NotFound(format!("unknown tool '{other}' (tools: {})", TOOL_NAMES.join(", ")))),
         }
@@ -511,6 +550,28 @@ mod tests {
         {
             assert!(!body.contains(forbidden), "mcp.rs must not reference {forbidden}");
         }
+    }
+
+    #[tokio::test]
+    async fn history_tools_list_and_roll_the_timeline() {
+        let st = test_state().await;
+        let mcp = GalvoMcp::new(st.clone());
+        for _ in 0..2 {
+            let r = mcp.call("execute", obj(json!({"id": "shape.rect", "params": {"width_mm": 4, "height_mm": 4}}))).await;
+            assert_eq!(r.is_error, Some(false), "{}", text_of(&r));
+        }
+        let r = mcp.call("history_goto", obj(json!({"marker": 1}))).await;
+        assert_eq!(r.is_error, Some(false), "{}", text_of(&r));
+        assert_eq!(st.document().objects.len(), 1);
+        let r = mcp.call("history_list", JsonObject::new()).await;
+        let v: Value = serde_json::from_str(&text_of(&r)).unwrap();
+        assert_eq!(v["marker"], 1);
+        assert_eq!(v["steps"][1]["state"], "rolled_back");
+        assert_eq!(v["steps"][0]["origin"], json!({"kind": "agent", "name": MCP_AGENT}));
+        let r = mcp.call("history_goto", obj(json!({"marker": 7}))).await;
+        assert_eq!(r.is_error, Some(true));
+        let r = mcp.call("history_goto", obj(json!({}))).await;
+        assert_eq!(r.is_error, Some(true));
     }
 
     #[tokio::test]

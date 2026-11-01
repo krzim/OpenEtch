@@ -4,7 +4,8 @@
 //!
 //! Projects: the document is saved to and opened from `<projects-dir>/<name>.openetch` ([`ProjectDir`]); the
 //! current project name and the revision it was saved at live in [`ProjectState`] (cleared by `doc.new`,
-//! `doc.load` and a replacing `doc.import_lbrn2`, set by save and open) and are updated under the session lock,
+//! `doc.load` and a replacing `doc.import_lbrn2`, set by save and open; only `doc.new` leaves a clean document, a
+//! loaded or imported file is unsaved until it is saved as a project) and are updated under the session lock,
 //! before `document_changed` is sent. Project names that differ only in case are the same project (Windows and
 //! macOS file names ignore case), so saves refuse to replace one unless asked to and opens find it.
 //! The document's `field_mm` comes from the machine profile when the engine starts with a document that has none,
@@ -14,10 +15,11 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use commands::{CommandSpec, HistoryEntry, Invocation, Origin, Outcome, Risk, Session};
+use commands::{CommandSpec, HistoryStep, HistoryView, Invocation, Origin, Outcome, Risk, Session};
 use doc::Document;
 use doc::file::try_to_openetch_json;
-use plan::{PlanError, Preview};
+use plan::{FillRegions, PlanError, Preview};
+use base64::Engine as _;
 use serde_json::{Value, json};
 use tokio::sync::broadcast;
 
@@ -88,24 +90,23 @@ pub struct AppState {
     project: Mutex<ProjectState>,
 }
 
-/// Commands that replace the document with one no project file holds: they clear the current project, and the new
-/// document is clean (nothing in it is unsaved).
-const REPLACING: [&str; 2] = ["doc.new", "doc.load"];
-
 /// How an invocation changes which project the document belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Replaces {
     /// It edits the current document (or does not edit).
     No,
-    /// `doc.new` / `doc.load`: a new document that counts as clean.
+    /// `doc.new`: a new, empty document that counts as clean.
     Clean,
-    /// A replacing LightBurn import: a new document (the current project no longer holds it) with unsaved content.
+    /// `doc.load` (an uploaded `.openetch`, unless it is a project being opened) or a replacing LightBurn import:
+    /// a new document no project holds, so its content is unsaved.
     Unsaved,
 }
 
 fn replaces(inv: &Invocation) -> Replaces {
-    if REPLACING.contains(&inv.id.as_str()) {
-        return Replaces::Clean;
+    match inv.id.as_str() {
+        "doc.new" => return Replaces::Clean,
+        "doc.load" => return Replaces::Unsaved,
+        _ => {}
     }
     // `mode` defaults to replace; an invalid mode fails the command, so it never matters here.
     let mode = inv.params.get("mode").and_then(Value::as_str);
@@ -149,6 +150,94 @@ impl FileFormat {
             FileFormat::Lbrn2 => LBRN2_EXT,
         }
     }
+}
+
+/// Formats `POST /api/document/upload` accepts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UploadFormat {
+    /// A native `.openetch` project: replaces the document (`doc.load`).
+    OpenEtch,
+    /// A LightBurn `.lbrn2` project: `doc.import_lbrn2`, replace or merge.
+    Lbrn2,
+    /// SVG art, added to the document (`art.import_svg`).
+    Svg,
+    /// DXF drawing, added to the document (`art.import_dxf`).
+    Dxf,
+    /// A bitmap (PNG, JPEG, ...), added to the document (`art.import_image`).
+    Image,
+}
+
+impl UploadFormat {
+    pub fn parse(s: &str) -> Result<Self, EngineError> {
+        match s {
+            "openetch" => Ok(UploadFormat::OpenEtch),
+            "lbrn2" => Ok(UploadFormat::Lbrn2),
+            "svg" => Ok(UploadFormat::Svg),
+            "dxf" => Ok(UploadFormat::Dxf),
+            "image" => Ok(UploadFormat::Image),
+            other => Err(EngineError::BadRequest(format!(
+                "unknown format '{other}' (expected openetch, lbrn2, svg, dxf or image)"
+            ))),
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            UploadFormat::OpenEtch => "openetch",
+            UploadFormat::Lbrn2 => "lbrn2",
+            UploadFormat::Svg => "svg",
+            UploadFormat::Dxf => "dxf",
+            UploadFormat::Image => "image",
+        }
+    }
+}
+
+/// The query parameters of an upload, checked against its format by [`AppState::upload`].
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct UploadOptions {
+    /// `mode`: `Some(true)` merge, `Some(false)` replace, `None` not given.
+    pub merge: Option<bool>,
+    /// LightBurn only: the field the file was laid out for.
+    pub field_mm: Option<f64>,
+    /// SVG, DXF and images: the layer to put the art on (default the first layer).
+    pub layer: Option<String>,
+    /// SVG, DXF and images: the new object's name.
+    pub name: Option<String>,
+    /// SVG, DXF and images: scale to this width in mm.
+    pub width_mm: Option<f64>,
+    /// Images only: the media type (default: sniffed from the file's first bytes).
+    pub mime: Option<String>,
+}
+
+/// The media type of a bitmap from its first bytes, for the formats browsers and LightBurn commonly use.
+pub fn sniff_image(bytes: &[u8]) -> Option<&'static str> {
+    let starts = |sig: &[u8]| bytes.starts_with(sig);
+    if starts(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if starts(&[0xff, 0xd8, 0xff]) {
+        Some("image/jpeg")
+    } else if starts(b"GIF87a") || starts(b"GIF89a") {
+        Some("image/gif")
+    } else if starts(b"BM") {
+        Some("image/bmp")
+    } else if bytes.len() >= 12 && starts(b"RIFF") && &bytes[8..12] == b"WEBP" {
+        Some("image/webp")
+    } else if starts(b"II*\0") || starts(b"MM\0*") {
+        Some("image/tiff")
+    } else {
+        None
+    }
+}
+
+/// UTF-8 text of an uploaded file without a byte-order mark (LightBurn and some editors write one). Moves the
+/// bytes, never copies them.
+fn upload_text(bytes: Vec<u8>, what: &str) -> Result<String, EngineError> {
+    let mut text = String::from_utf8(bytes)
+        .map_err(|_| EngineError::BadRequest(format!("the file is not UTF-8 text (expected {what})")))?;
+    if text.starts_with('\u{feff}') {
+        text.drain(..'\u{feff}'.len_utf8());
+    }
+    Ok(text)
 }
 
 /// The document as a file to download.
@@ -244,8 +333,47 @@ impl AppState {
         lock(&self.session).document().revision
     }
 
-    pub fn history(&self) -> Vec<HistoryEntry> {
-        lock(&self.session).history().to_vec()
+    /// Every step on the timeline (file contents in parameters shortened).
+    pub fn history(&self) -> Vec<HistoryStep> {
+        self.history_view().steps
+    }
+
+    /// `GET /api/history`: the marker and every step.
+    pub fn history_view(&self) -> HistoryView {
+        lock(&self.session).history_view()
+    }
+
+    /// Announce a document change (when the revision moved) and the timeline (always).
+    fn announce(&self, before: u64, after: u64, origin: Origin, (marker, steps): (usize, usize)) {
+        if after != before {
+            self.emit(Event::DocumentChanged { revision: after, origin });
+        }
+        self.emit(Event::HistoryChanged { marker, steps, revision: after });
+    }
+
+    /// Roll the timeline to `marker` (0 = before the first step). Returns `{ok, marker, revision}`.
+    pub fn history_goto(&self, marker: usize, origin: Origin) -> Result<Value, EngineError> {
+        self.timeline_op(origin, |s| s.goto(marker))
+    }
+
+    /// Delete timeline step `index` (1-based) and replay the steps after it. Returns `{ok, marker, revision}`.
+    pub fn history_delete(&self, index: usize, origin: Origin) -> Result<Value, EngineError> {
+        self.timeline_op(origin, |s| s.delete_step(index))
+    }
+
+    fn timeline_op(
+        &self,
+        origin: Origin,
+        op: impl FnOnce(&mut Session) -> Result<u64, commands::CommandError>,
+    ) -> Result<Value, EngineError> {
+        let (before, after, hist) = {
+            let mut s = lock(&self.session);
+            let before = s.document().revision;
+            let after = op(&mut s)?;
+            (before, after, (s.marker(), s.history().len()))
+        };
+        self.announce(before, after, origin, hist);
+        Ok(json!({ "ok": true, "marker": hist.0, "revision": after }))
     }
 
     /// Run one command (see [`AppState::batch`]).
@@ -271,7 +399,7 @@ impl AppState {
         if invs.is_empty() {
             return Err(EngineError::BadRequest("batch has no commands".into()));
         }
-        let (outcomes, before, after) = {
+        let (outcomes, before, after, hist) = {
             let mut s = lock(&self.session);
             let mut last_edit = Replaces::No;
             for inv in &invs {
@@ -312,10 +440,10 @@ impl AppState {
                 // it, and undo only returns to documents that had one), so it is only reported.
                 tracing::warn!(revision = after, "the document has no field_mm");
             }
-            (outcomes, before, after)
+            (outcomes, before, after, (s.marker(), s.history().len()))
         };
         if after != before {
-            self.emit(Event::DocumentChanged { revision: after, origin });
+            self.announce(before, after, origin, hist);
         }
         Ok(outcomes)
     }
@@ -446,52 +574,117 @@ impl AppState {
         Ok(DownloadFile { stem, format, content, warnings })
     }
 
-    /// Run an uploaded file: `.openetch` through `doc.load` (replace only), `.lbrn2` through `doc.import_lbrn2`
-    /// (`replace` or `merge`, optional `field_mm`).
+    /// Run an uploaded file (the raw bytes): `.openetch` through `doc.load` (replace only), `.lbrn2` through
+    /// `doc.import_lbrn2` (`replace` or `merge`, optional `field_mm`), SVG through `art.import_svg`, DXF through
+    /// `art.import_dxf` and bitmaps through `art.import_image` (merge only, optional `layer`, `name`, `width_mm`;
+    /// images also `mime`, else sniffed). Options that do not apply to the format are refused (400).
     pub fn upload(
         &self,
-        format: FileFormat,
-        merge: bool,
-        field_mm: Option<f64>,
-        content: String,
+        format: UploadFormat,
+        opts: UploadOptions,
+        bytes: Vec<u8>,
         origin: Origin,
     ) -> Result<Outcome, EngineError> {
+        let refuse = |what: &str, only: &str| {
+            Err(EngineError::BadRequest(format!("{what} is only for {only} uploads, not {}", format.name())))
+        };
+        let art = matches!(format, UploadFormat::Svg | UploadFormat::Dxf | UploadFormat::Image);
+        if !art {
+            if opts.layer.is_some() {
+                return refuse("layer", "svg, dxf and image");
+            }
+            if opts.name.is_some() {
+                return refuse("name", "svg, dxf and image");
+            }
+            if opts.width_mm.is_some() {
+                return refuse("width_mm", "svg, dxf and image");
+            }
+        }
+        if format != UploadFormat::Image && opts.mime.is_some() {
+            return refuse("mime", "image");
+        }
+        if format != UploadFormat::Lbrn2 && opts.field_mm.is_some() {
+            return refuse("field_mm", "LightBurn");
+        }
         let inv = match format {
-            FileFormat::OpenEtch => {
-                if merge {
+            UploadFormat::OpenEtch => {
+                if opts.merge == Some(true) {
                     return Err(EngineError::BadRequest(
                         "mode=merge is only for LightBurn imports; an .openetch project replaces the document".into(),
                     ));
                 }
-                if field_mm.is_some() {
-                    return Err(EngineError::BadRequest("field_mm is only for LightBurn imports".into()));
-                }
-                Invocation { id: "doc.load".into(), params: content_params(content) }
+                let text = upload_text(bytes, ".openetch JSON or .lbrn2 XML")?;
+                Invocation { id: "doc.load".into(), params: content_params(text) }
             }
-            FileFormat::Lbrn2 => {
-                let mut params = content_params(content);
-                params["mode"] = json!(if merge { "merge" } else { "replace" });
-                if let Some(f) = field_mm {
+            UploadFormat::Lbrn2 => {
+                let mut params = content_params(upload_text(bytes, ".openetch JSON or .lbrn2 XML")?);
+                params["mode"] = json!(if opts.merge == Some(true) { "merge" } else { "replace" });
+                if let Some(f) = opts.field_mm {
                     params["field_mm"] = json!(f);
                 }
                 Invocation { id: "doc.import_lbrn2".into(), params }
+            }
+            UploadFormat::Svg | UploadFormat::Dxf | UploadFormat::Image => {
+                if opts.merge == Some(false) {
+                    return Err(EngineError::BadRequest(format!(
+                        "{} uploads add to the document; use mode=merge or leave mode out",
+                        format.name()
+                    )));
+                }
+                let mut params = serde_json::Map::new();
+                let id = match format {
+                    UploadFormat::Svg => {
+                        params.insert("svg".into(), Value::String(upload_text(bytes, "SVG")?));
+                        "art.import_svg"
+                    }
+                    UploadFormat::Dxf => {
+                        params.insert("content".into(), Value::String(upload_text(bytes, "DXF")?));
+                        "art.import_dxf"
+                    }
+                    _ => {
+                        let mime = match opts.mime {
+                            Some(m) => m,
+                            None => sniff_image(&bytes)
+                                .ok_or_else(|| {
+                                    EngineError::BadRequest(
+                                        "not an image the engine recognises (PNG, JPEG, GIF, BMP, WebP or TIFF); pass \
+                                         mime=image/... if it is one"
+                                            .into(),
+                                    )
+                                })?
+                                .to_owned(),
+                        };
+                        let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                        drop(bytes);
+                        params.insert("data_base64".into(), Value::String(data));
+                        params.insert("mime".into(), Value::String(mime));
+                        "art.import_image"
+                    }
+                };
+                if let Some(l) = opts.layer {
+                    params.insert("layer".into(), Value::String(l));
+                }
+                if let Some(n) = opts.name {
+                    params.insert("name".into(), Value::String(n));
+                }
+                if let Some(w) = opts.width_mm {
+                    params.insert("width_mm".into(), json!(w));
+                }
+                Invocation { id: id.into(), params: Value::Object(params) }
             }
         };
         self.execute(inv, origin)
     }
 
-    /// Undo the last edit (by anyone); returns the new revision. `origin` is who asked, for the event.
+    /// Undo: move the timeline marker back over the last applied edit (by anyone); returns the new revision.
+    /// `origin` is who asked, for the event.
     pub fn undo(&self, origin: Origin) -> Result<u64, EngineError> {
-        let rev = lock(&self.session).undo()?;
-        self.emit(Event::DocumentChanged { revision: rev, origin });
-        Ok(rev)
+        self.timeline_op(origin, Session::undo).map(|v| v["revision"].as_u64().unwrap_or_default())
     }
 
-    /// Redo the last undone edit; returns the new revision.
+    /// Redo: move the marker forward over the next rolled-back edit; returns the new revision.
     pub fn redo(&self, origin: Origin) -> Result<u64, EngineError> {
-        let rev = lock(&self.session).redo()?;
-        self.emit(Event::DocumentChanged { revision: rev, origin });
-        Ok(rev)
+        self.timeline_op(origin, Session::redo).map(|v| v["revision"].as_u64().unwrap_or_default())
     }
 
     /// Plan the current document (no encoding). An empty document previews as nothing rather than an error.
@@ -513,7 +706,7 @@ impl AppState {
         let shared = self.previews.clone();
         Ok(tokio::task::spawn_blocking(move || {
             let preview = match plan::plan_job(&doc, &target) {
-                Ok(job) => Ok(plan::preview_plan(&job)),
+                Ok(job) => Ok(plan::preview_document(&doc, &job)),
                 Err(PlanError::Empty) => Ok(Preview::default()),
                 Err(e) => Err(e),
             };
@@ -530,6 +723,12 @@ impl AppState {
             result
         })
         .await?)
+    }
+
+    /// The even-odd fill regions of every fill layer of the current document (display only).
+    pub async fn fill_regions(&self) -> Result<FillRegions, EngineError> {
+        let doc = self.document();
+        Ok(tokio::task::spawn_blocking(move || plan::fill_regions(&doc)).await?)
     }
 
     /// Hold the preview slot as a running plan would (tests).
@@ -686,7 +885,20 @@ mod tests {
         fill_field_mm(&mut inv, 150.0);
         assert_eq!(inv.params, json!({}));
         assert_eq!(FileFormat::parse("lbrn2").unwrap().extension(), "lbrn2");
-        assert!(FileFormat::parse("svg").is_err());
+        assert!(FileFormat::parse("svg").is_err(), "downloads are openetch or lbrn2");
+        assert_eq!(UploadFormat::parse("svg").unwrap(), UploadFormat::Svg);
+        assert!(UploadFormat::parse("pdf").is_err());
+    }
+
+    #[test]
+    fn images_are_sniffed() {
+        assert_eq!(sniff_image(b"\x89PNG\r\n\x1a\n\0\0"), Some("image/png"));
+        assert_eq!(sniff_image(&[0xff, 0xd8, 0xff, 0xe0]), Some("image/jpeg"));
+        assert_eq!(sniff_image(b"GIF89a.."), Some("image/gif"));
+        assert_eq!(sniff_image(b"RIFF\0\0\0\0WEBPVP8 "), Some("image/webp"));
+        assert_eq!(sniff_image(b"II*\0...."), Some("image/tiff"));
+        assert_eq!(sniff_image(b"<svg/>"), None);
+        assert_eq!(sniff_image(b""), None);
     }
 
     #[test]

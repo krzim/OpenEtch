@@ -24,7 +24,7 @@ pub(super) fn add_object(
     } else {
         name
     };
-    doc.objects.push(Object { id: id.clone(), name, layer, geometry, transform });
+    doc.objects.push(Object::new(id.clone(), name, layer, geometry, transform));
     Ok(id)
 }
 

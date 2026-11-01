@@ -1,12 +1,14 @@
 // The File menu, Fusion-style at the far left of the top bar: New, Open (engine projects or a file from this device),
 // Save / Save as (engine projects), Import LightBurn (.lbrn2, replace or merge), Export to LightBurn and Download
 // .openetch. `useFileActions` holds the state and actions; `FileMenu` is the tap-to-open dropdown and `FileDialogs`
-// the dialogs and the dismissible warnings panel. Downloads are fetched with the Authorization header and saved from
+// the dialogs and the dismissible warnings panel. Files dropped on the window or picked with Import are routed in
+// App.tsx (api/drop.ts); LightBurn files land in the import dialog here, which offers Open (replace) or Import (merge). Downloads are fetched with the Authorization header and saved from
 // a blob link, so they work with token auth. Replacing a document with unsaved changes asks first.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, execute } from "../api/client.ts";
+import { createdIds } from "../api/drop.ts";
 import * as C from "../api/commands.ts";
 import {
   MAX_UPLOAD_BYTES,
@@ -47,7 +49,7 @@ export type SaveOutcome = "saved" | "exists" | "failed";
 type FileModal =
   | { kind: "open" }
   | { kind: "saveAs" }
-  | { kind: "import"; file: File | null; mode: ImportMode }
+  | { kind: "import"; files: File[]; mode: ImportMode; nonce?: number }
   | { kind: "confirm"; title: string; message: string; confirmLabel: string; action: () => void; back: FileModal | null };
 
 export interface FileActions {
@@ -56,6 +58,8 @@ export interface FileActions {
   /** Unsaved changes; null when the engine reports no project state. */
   dirty: boolean | null;
   busy: boolean;
+  /** Mark the busy state while App imports dropped files, so File actions wait. */
+  setBusy: (b: boolean) => void;
   modal: FileModal | null;
   warnings: { title: string; items: string[] } | null;
   /** Name offered by Save as. */
@@ -71,8 +75,10 @@ export interface FileActions {
   /** Save under `name`; `overwrite: false` lets the engine refuse to replace another project (outcome "exists"). */
   saveAs: (name: string, overwrite?: boolean) => Promise<SaveOutcome>;
   openProject: (name: string) => void;
-  uploadFile: (file: File) => void;
-  importLbrn2: (file: File, mode: ImportMode, fieldMm: number) => void;
+  /** Open a .openetch (replace), or put a .lbrn2 in the import dialog with `lbrn2Mode` preselected. */
+  uploadFile: (file: File, lbrn2Mode?: ImportMode) => void;
+  /** Import LightBurn files one after another (several files are always merged). */
+  importLbrn2: (files: File[], mode: ImportMode, fieldMm: number) => void;
   exportLbrn2: () => void;
   downloadOpenetch: () => void;
 }
@@ -91,8 +97,18 @@ function saveBlob(blob: Blob, filename: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
-export function useFileActions(p: { engine: Engine; machineFieldMm: number | null; fallbackFieldMm: number; notify: Notify; report: (e: unknown) => void }): FileActions {
+export function useFileActions(p: {
+  engine: Engine;
+  machineFieldMm: number | null;
+  fallbackFieldMm: number;
+  notify: Notify;
+  report: (e: unknown) => void;
+  /** Called with the ids of objects an import created, so they can be selected (LightBurn "Select imported shapes"). */
+  onImported?: (ids: string[]) => void;
+}): FileActions {
   const { engine, notify, report } = p;
+  const onImportedRef = useRef(p.onImported);
+  onImportedRef.current = p.onImported;
   const { doc, project } = engine;
   const [busy, setBusy] = useState(false);
   const [modal, setModal] = useState<FileModal | null>(null);
@@ -102,8 +118,12 @@ export function useFileActions(p: { engine: Engine; machineFieldMm: number | nul
   // document is the project the engine reports.
   const [detachedFrom, setDetachedFrom] = useState<string | null | undefined>(undefined);
 
+  // A file opened from this device has never been saved on the engine, which reports it as clean; it counts as
+  // unsaved until it is saved (or replaced by New or a saved project).
+  const [loadedUnsaved, setLoadedUnsaved] = useState(false);
   const projectName = currentProjectName(project, detachedFrom);
-  const dirty = projectDirty(project, doc?.revision ?? null);
+  const engineDirty = projectDirty(project, doc?.revision ?? null);
+  const dirty = loadedUnsaved && engineDirty !== null && projectName === null ? true : engineDirty;
   const docFieldMm = validField(doc?.field_mm);
   const defaultFieldMm = docFieldMm ?? p.machineFieldMm ?? p.fallbackFieldMm;
 
@@ -164,6 +184,7 @@ export function useFileActions(p: { engine: Engine; machineFieldMm: number | nul
       void task(async () => {
         await engine.run(C.docNew());
         detach("");
+        setLoadedUnsaved(false);
         notify("New document.");
       });
     }, null);
@@ -178,9 +199,13 @@ export function useFileActions(p: { engine: Engine; machineFieldMm: number | nul
       }
       setBusy(true);
       try {
+        // Keep the document's own name (Browser tree, exports, the saved file) in step with the project name.
+        const d = live.current.doc;
+        if (d && d.name !== name && engine.has(C.OPT.docRename)) await engine.run(C.docRename(name)).catch(() => undefined);
         await api.saveProject(name, overwrite);
         setDetachedFrom(undefined);
         setSuggestedName("");
+        setLoadedUnsaved(false);
         notify(`Saved "${name}".`);
         return "saved";
       } catch (e) {
@@ -209,6 +234,7 @@ export function useFileActions(p: { engine: Engine; machineFieldMm: number | nul
           await api.openProject(name);
           setDetachedFrom(undefined);
           setSuggestedName("");
+          setLoadedUnsaved(false);
           notify(`Opened "${name}".`);
           await engine.refreshDoc();
         });
@@ -218,7 +244,7 @@ export function useFileActions(p: { engine: Engine; machineFieldMm: number | nul
   );
 
   const uploadFile = useCallback(
-    (file: File) => {
+    (file: File, lbrn2Mode: ImportMode = "replace") => {
       const format = fileFormat(file.name);
       if (format === null) {
         notify("Choose a .openetch project or a LightBurn .lbrn2 file.", "error");
@@ -226,7 +252,7 @@ export function useFileActions(p: { engine: Engine; machineFieldMm: number | nul
       }
       if (format === "lbrn2") {
         // LightBurn files need a field size and a replace/merge choice.
-        setModal({ kind: "import", file, mode: "replace" });
+        setModal({ kind: "import", files: [file], mode: lbrn2Mode });
         return;
       }
       if (file.size > MAX_UPLOAD_BYTES) {
@@ -238,6 +264,7 @@ export function useFileActions(p: { engine: Engine; machineFieldMm: number | nul
         void task(async () => {
           const result = commandResult(await api.upload(file, "openetch").catch((e: unknown) => Promise.reject(fileError(e, file.name))));
           detach(suggestProjectName(fileStem(file.name)));
+          setLoadedUnsaved(true);
           notify(`Opened ${file.name}. Save it to keep it on the engine.`);
           showWarnings(`Opening ${file.name}`, warningList(result));
           await engine.refreshDoc();
@@ -248,22 +275,50 @@ export function useFileActions(p: { engine: Engine; machineFieldMm: number | nul
   );
 
   const importLbrn2 = useCallback(
-    (file: File, mode: ImportMode, fieldMm: number) => {
+    (files: File[], requested: ImportMode, fieldMm: number) => {
+      // Several files at once are always merged: replacing with each in turn would keep only the last.
+      const mode: ImportMode = files.length > 1 ? "merge" : requested;
       const go = () => {
         setModal(null);
         void task(async () => {
-          // The upload route takes the raw file (up to 50 MB) and the field size it was laid out for.
-          if (file.size > MAX_UPLOAD_BYTES) throw new Error(`${file.name} is larger than ${formatBytes(MAX_UPLOAD_BYTES)}.`);
-          const field = sameField(fieldMm, validField(live.current.doc?.field_mm)) ? undefined : fieldMm;
-          const result = commandResult(await api.upload(file, "lbrn2", mode, field).catch((e: unknown) => Promise.reject(fileError(e, file.name))));
+          const created: string[] = [];
+          const warnings: string[] = [];
+          const failed: string[] = [];
+          let objects = 0;
+          let last: ReturnType<typeof importOutcome> | null = null;
+          for (const file of files) {
+            try {
+              // The upload route takes the raw file (up to 50 MB) and the field size it was laid out for.
+              if (file.size > MAX_UPLOAD_BYTES) throw new Error(`${file.name} is larger than ${formatBytes(MAX_UPLOAD_BYTES)}.`);
+              const field = sameField(fieldMm, validField(live.current.doc?.field_mm)) ? undefined : fieldMm;
+              const result = commandResult(await api.upload(file, "lbrn2", mode, field).catch((e: unknown) => Promise.reject(fileError(e, file.name))));
+              const outcome = importOutcome(result);
+              last = outcome;
+              objects += outcome.objects;
+              created.push(...createdIds(result));
+              warnings.push(...outcome.warnings.map((w) => (files.length > 1 ? `${file.name}: ${w}` : w)));
+            } catch (e) {
+              if (files.length === 1) throw e;
+              failed.push(`${file.name}: ${e instanceof Error ? e.message : String(e)}`);
+            }
+          }
           await engine.refreshDoc();
-          const outcome = importOutcome(result);
-          if (mode === "replace") detach(suggestProjectName(fileStem(file.name)));
-          notify(importMessage(outcome, mode));
-          showWarnings(`Import of ${file.name}`, outcome.warnings);
+          if (mode === "replace") {
+            detach(suggestProjectName(fileStem(files[0].name)));
+            setLoadedUnsaved(true);
+          }
+          if (created.length) onImportedRef.current?.(created);
+          if (files.length === 1 && last) notify(importMessage(last, mode));
+          else
+            notify(
+              `Merged ${files.length - failed.length} of ${files.length} LightBurn files (${objects} object${objects === 1 ? "" : "s"}).`,
+              failed.length ? "error" : "info",
+            );
+          for (const f of failed) notify(f, "error");
+          showWarnings(files.length > 1 ? `Import of ${files.length} LightBurn files` : `Import of ${files[0].name}`, warnings);
         });
       };
-      if (mode === "replace") guard(`Importing ${file.name}`, "Discard and import", go, { kind: "import", file, mode });
+      if (mode === "replace") guard(`Importing ${files[0].name}`, "Discard and import", go, { kind: "import", files, mode });
       else go();
     },
     [guard, task, engine, detach, notify, showWarnings],
@@ -300,6 +355,7 @@ export function useFileActions(p: { engine: Engine; machineFieldMm: number | nul
     projectName,
     dirty,
     busy,
+    setBusy,
     modal,
     warnings,
     suggestedName,
@@ -325,8 +381,14 @@ export function saveShortcut(): string {
   return /Mac|iPhone|iPad|iPod/.test(plat) ? "⌘S" : "Ctrl+S";
 }
 
-/** The File button and its tap-to-open dropdown. */
-export function FileMenu({ file }: { file: FileActions }) {
+/** "Ctrl+X" or "⌘X" for a menu hint. */
+function shortcut(key: string, shift = false): string {
+  const mac = saveShortcut().startsWith("⌘");
+  return mac ? `${shift ? "⇧" : ""}⌘${key}` : `Ctrl+${shift ? "Shift+" : ""}${key}`;
+}
+
+/** The File button and its tap-to-open dropdown. `onImport` opens the Import picker (also Ctrl+I or a drop). */
+export function FileMenu({ file, onImport }: { file: FileActions; onImport: () => void }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -365,11 +427,12 @@ export function FileMenu({ file }: { file: FileActions }) {
       {open && (
         <div className="menu" role="menu" aria-label="File">
           {item("New", file.newDocument)}
-          {item("Open…", () => file.setModal({ kind: "open" }))}
+          {item("Open…", () => file.setModal({ kind: "open" }), shortcut("O"))}
           {item("Save", file.save, saveShortcut())}
-          {item("Save as…", () => file.setModal({ kind: "saveAs" }))}
+          {item("Save as…", () => file.setModal({ kind: "saveAs" }), shortcut("S", true))}
           <div className="menu-sep" role="separator" />
-          {item("Import LightBurn…", () => file.setModal({ kind: "import", file: null, mode: "replace" }), ".lbrn2")}
+          {item("Import…", onImport, shortcut("I"))}
+          {item("Import LightBurn…", () => file.setModal({ kind: "import", files: [], mode: "replace" }), ".lbrn2")}
           {item("Export to LightBurn", file.exportLbrn2, ".lbrn2")}
           <div className="menu-sep" role="separator" />
           {item("Download .openetch", file.downloadOpenetch)}
@@ -403,7 +466,7 @@ export function FileDialogs({ file, docName }: { file: FileActions; docName: str
     <>
       {m?.kind === "open" && <OpenDialog file={file} onClose={close} />}
       {m?.kind === "saveAs" && <SaveAsDialog file={file} docName={docName} onClose={close} />}
-      {m?.kind === "import" && <ImportDialog file={file} initialFile={m.file} initialMode={m.mode} onClose={close} />}
+      {m?.kind === "import" && <ImportDialog key={m.nonce ?? 0} file={file} initialFiles={m.files} initialMode={m.mode} onClose={close} />}
       {m?.kind === "confirm" && (
         <Modal
           title={m.title}
@@ -593,9 +656,9 @@ function SaveAsDialog({ file, docName, onClose }: { file: FileActions; docName: 
   );
 }
 
-function ImportDialog(p: { file: FileActions; initialFile: File | null; initialMode: ImportMode; onClose: () => void }) {
+function ImportDialog(p: { file: FileActions; initialFiles: File[]; initialMode: ImportMode; onClose: () => void }) {
   const { file } = p;
-  const [picked, setPicked] = useState<File | null>(p.initialFile);
+  const [picked, setPicked] = useState<File[]>(p.initialFiles);
   const [mode, setMode] = useState<ImportMode>(p.initialMode);
   const [field, setField] = useState(fmt(file.defaultFieldMm, 3));
   const input = useRef<HTMLInputElement>(null);
@@ -603,9 +666,14 @@ function ImportDialog(p: { file: FileActions; initialFile: File | null; initialM
   const fieldOk = field.trim() !== "" && Number.isFinite(n) && n > 0 && n <= 2000;
   const error = !fieldOk ? "Field size must be a number between 0 and 2000 mm." : null;
   const choices = fieldChoices(file.docFieldMm, file.machineFieldMm);
+  const several = picked.length > 1;
+  const effective: ImportMode = several ? "merge" : mode;
+  const submit = () => {
+    if (picked.length > 0 && fieldOk && !file.busy) file.importLbrn2(picked, effective, n);
+  };
   return (
     <Modal
-      title="Import LightBurn project"
+      title="Open or import LightBurn project"
       onClose={p.onClose}
       footer={
         <>
@@ -613,8 +681,8 @@ function ImportDialog(p: { file: FileActions; initialFile: File | null; initialM
           <button className="btn" onClick={p.onClose}>
             Cancel
           </button>
-          <button className="btn btn-primary" disabled={!picked || !fieldOk || file.busy} onClick={() => picked && file.importLbrn2(picked, mode, n)}>
-            Import
+          <button className="btn btn-primary" disabled={picked.length === 0 || !fieldOk || file.busy} onClick={submit}>
+            {effective === "replace" ? "Open" : "Import"}
           </button>
         </>
       }
@@ -623,32 +691,53 @@ function ImportDialog(p: { file: FileActions; initialFile: File | null; initialM
         ref={input}
         type="file"
         accept=".lbrn2"
+        multiple
         hidden
         onChange={(e) => {
-          const f = e.target.files?.[0];
+          const f = Array.from(e.target.files ?? []);
           e.target.value = "";
-          if (f) setPicked(f);
+          if (f.length) setPicked(f);
         }}
       />
       <div className="field">
-        <span className="field-label">File</span>
+        <span className="field-label">{several ? "Files" : "File"}</span>
         <button className="btn file-pick" onClick={() => input.current?.click()}>
           <Icon name="upload" />
-          <span className="file-pick-name">{picked ? `${picked.name} (${formatBytes(picked.size)})` : "Choose a .lbrn2 file…"}</span>
+          <span className="file-pick-name">
+            {picked.length === 0
+              ? "Choose or drop a .lbrn2 file…"
+              : several
+                ? `${picked.length} files (${formatBytes(picked.reduce((a, f) => a + f.size, 0))})`
+                : `${picked[0].name} (${formatBytes(picked[0].size)})`}
+          </span>
         </button>
       </div>
-      <div className="segmented">
-        <button className={mode === "replace" ? "active" : ""} onClick={() => setMode("replace")}>
-          Replace document
+      {several && <p className="hint">{picked.map((f) => f.name).join(", ")}</p>}
+      <div className="segmented" role="radiogroup" aria-label="Open or import">
+        <button
+          role="radio"
+          aria-checked={effective === "replace"}
+          className={effective === "replace" ? "active" : ""}
+          disabled={several}
+          title={several ? "Several files are always imported into the document" : "Replace the document with the project's graphics and layers"}
+          onClick={() => setMode("replace")}
+        >
+          Open (replace)
         </button>
-        <button className={mode === "merge" ? "active" : ""} onClick={() => setMode("merge")}>
-          Merge into document
+        <button
+          role="radio"
+          aria-checked={effective === "merge"}
+          className={effective === "merge" ? "active" : ""}
+          title="Add the project's graphics (and any new layers) to this document"
+          onClick={() => setMode("merge")}
+        >
+          Import (merge)
         </button>
       </div>
       <label className="field">
         <span className="field-label">Field size</span>
         <span className="field-input">
-          <input type="text" inputMode="decimal" value={field} onChange={(e) => setField(e.target.value)} />
+          <input type="text" inputMode="decimal" value={field} onChange={(e) => setField(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
           <span className="unit">mm</span>
         </span>
       </label>
@@ -661,8 +750,9 @@ function ImportDialog(p: { file: FileActions; initialFile: File | null; initialM
         ))}
       </div>
       <p className="hint">
-        LightBurn files do not record the galvo field size. Use the size the project was laid out with in LightBurn; a
-        different size shifts everything by half the difference. Text comes in as outlines; images are skipped.
+        Open replaces this document with the project's graphics and cut settings (LightBurn's Open); Import adds its
+        graphics and any layers it needs (LightBurn's Import). LightBurn files do not record the galvo field size: use
+        the size the project was laid out with, since a different size shifts everything by half the difference.
       </p>
     </Modal>
   );

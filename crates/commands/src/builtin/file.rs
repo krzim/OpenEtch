@@ -47,7 +47,7 @@ fn field(cmd: &str, given: Option<f64>, doc: &Document) -> Result<f64> {
 
 /// Raise `next_id` past every numbered id, so later allocations never collide.
 fn fix_next_id(doc: &mut Document) {
-    let ids = doc.layers.iter().map(|l| &l.id).chain(doc.objects.iter().map(|o| &o.id));
+    let ids = doc.layers.iter().map(|l| &l.id).chain(doc.objects.iter().map(|o| &o.id)).chain(doc.groups.iter().map(|g| &g.id));
     if let Some(max) = ids.filter_map(|id| id.rsplit_once('-').and_then(|(_, n)| n.parse::<u64>().ok())).max() {
         doc.next_id = doc.next_id.max(max.saturating_add(1));
     }
@@ -172,6 +172,15 @@ pub struct ImportLbrn2Input {
     /// Galvo field size in mm the LightBurn project was laid out for (LightBurn files do not record it). Default:
     /// the document's field_mm.
     pub field_mm: Option<f64>,
+    /// File name (without extension) used to name the group a merge creates. Default "Imported LightBurn".
+    pub name: Option<String>,
+}
+
+/// The name of the group holding a merged file's objects.
+fn merged_group_name(name: Option<&str>) -> String {
+    let clean: String = name.unwrap_or_default().chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+    let clean = clean.trim();
+    if clean.is_empty() { "Imported LightBurn".into() } else { clean.chars().take(200).collect() }
 }
 
 /// `doc.import_lbrn2`.
@@ -181,11 +190,11 @@ impl Command for ImportLbrn2 {
     type Input = ImportLbrn2Input;
     const ID: &'static str = "doc.import_lbrn2";
     const TITLE: &'static str = "Import LightBurn project";
-    const DESCRIPTION: &'static str = "Import a LightBurn .lbrn2 project given as text. Cut settings become layers \
-        (power %, speed mm/s, frequency kHz, pulse width ns, hatch, passes, sub-layers); rectangles, ellipses and \
-        paths become objects (groups flattened, text as its outline) moved into the field frame using field_mm. \
-        Bitmaps and other shapes are skipped. Returns created object ids, created/reused layer ids, warnings and \
-        bounds. Undoable.";
+    const DESCRIPTION: &'static str = "Import a LightBurn .lbrn2 project or .lbt template given as text. Cut \
+        settings become layers; shapes become objects and groups in the field frame (via field_mm). Text is drawn \
+        and burned as LightBurn's saved outline, bitmaps become images (not engraved yet); everything else is kept \
+        for doc.export_lbrn2. replace swaps the document; merge adds the file's objects as one group. Returns \
+        created object, group and layer ids, reused layer ids, warnings and bounds. Undoable.";
     const RISK: Risk = Risk::Edit;
 
     fn apply(doc: &mut Document, input: ImportLbrn2Input) -> Result<(Value, String)> {
@@ -193,10 +202,11 @@ impl Command for ImportLbrn2 {
         let text = content(id, &input.content)?;
         let field_mm = field(id, input.field_mm, doc)?;
         let project = lbrn::parse(text).map_err(|e| invalid(id, e.to_string()))?;
-        let (layers, objects, warnings) =
+        let lbrn::Imported { layers, objects, groups, extras, warnings } =
             lbrn::to_document(&project, field_mm).map_err(|e| invalid(id, e.to_string()))?;
         // Nothing below can fail, so the document is never left half-changed.
         let (mut created_layers, mut reused_layers, mut created) = (Vec::new(), Vec::new(), Vec::new());
+        let mut created_groups = Vec::new();
         match input.mode {
             ImportMode::Replace => {
                 let mut fresh = Document {
@@ -204,16 +214,19 @@ impl Command for ImportLbrn2 {
                     field_mm: doc.field_mm.or(Some(field_mm)),
                     layers,
                     objects,
+                    groups,
+                    extras,
                     ..Document::default()
                 };
                 fix_next_id(&mut fresh);
                 created_layers = fresh.layers.iter().map(|l| l.id.clone()).collect();
                 created = object_ids(&fresh);
+                created_groups = fresh.groups.iter().map(|g| g.id.clone()).collect();
                 *doc = fresh;
             }
             ImportMode::Merge => {
                 // Check the ids up front, so the allocations below cannot fail half-way.
-                let needed = (layers.len() + objects.len()) as u64;
+                let needed = (layers.len() + objects.len() + groups.len() + 1) as u64;
                 if doc.next_id.saturating_add(needed) > doc::MAX_ID {
                     return Err(doc::IdsExhausted(doc.next_id).into());
                 }
@@ -243,14 +256,45 @@ impl Command for ImportLbrn2 {
                     };
                     map.insert(old, target);
                 }
-                for mut o in objects {
+                let mut objects = objects;
+                for o in &mut objects {
                     if let Some(layer) = map.get(&o.layer) {
                         o.layer = layer.clone();
                     }
                     o.id = doc.alloc_id("obj")?;
                     created.push(o.id.clone());
+                }
+                // The file's objects come in as one group when there is more than one item (LightBurn's "group
+                // imported shapes"), its own groups nested inside. The file's document-level LightBurn data
+                // (root attributes, notes, thumbnail) stays with the file.
+                let top_items = objects.iter().filter(|o| o.group.is_none()).count()
+                    + groups.iter().filter(|g| g.parent.is_none()).count();
+                let outer = (top_items > 1).then(|| doc.alloc_id("group")).transpose()?;
+                let mut group_map: HashMap<String, String> = HashMap::new();
+                for g in &groups {
+                    group_map.insert(g.id.clone(), doc.alloc_id("group")?);
+                }
+                if let Some(outer) = &outer {
+                    doc.groups.push(doc::Group::new(outer.clone(), merged_group_name(input.name.as_deref()), None));
+                    created_groups.push(outer.clone());
+                }
+                for mut g in groups {
+                    g.id = group_map[&g.id].clone();
+                    g.parent = match &g.parent {
+                        Some(p) => group_map.get(p).cloned(),
+                        None => outer.clone(),
+                    };
+                    created_groups.push(g.id.clone());
+                    doc.groups.push(g);
+                }
+                for mut o in objects {
+                    o.group = match &o.group {
+                        Some(g) => group_map.get(g).cloned(),
+                        None => outer.clone(),
+                    };
                     doc.objects.push(o);
                 }
+                doc.prune_groups();
             }
         }
         let mode = match input.mode {
@@ -264,6 +308,7 @@ impl Command for ImportLbrn2 {
             reused_layers.len()
         );
         let mut r = util::edit_result(doc, &created, &[]);
+        r["created_groups"] = json!(created_groups);
         r["created_layers"] = json!(created_layers);
         r["reused_layers"] = json!(reused_layers);
         r["warnings"] = json!(warnings);
@@ -421,7 +466,8 @@ mod tests {
         assert_eq!(r["mode"], json!("replace"));
         assert_eq!(r["created"], json!(["obj-2", "obj-3"]));
         assert_eq!(r["created_layers"], json!(["layer-1"]));
-        assert!(r["warnings"].to_string().contains("bitmap was skipped"), "{}", r["warnings"]);
+        assert!(r["warnings"].to_string().contains("bitmap with no usable image data was kept"), "{}", r["warnings"]);
+        assert_eq!(r["created_groups"], json!([]));
         assert_eq!(r["bounds"]["min"], json!([-5.0, -5.0]));
         assert_eq!(r["bounds"]["max"], json!([15.0, 5.0]));
         let d = s.document();
@@ -447,24 +493,76 @@ mod tests {
     fn import_merge_reuses_matching_layers_with_fresh_ids() {
         let mut s = session(Some(150.0));
         ok(&mut s, "shape.rect", json!({"width_mm": 4, "height_mm": 4}));
-        let r = ok(&mut s, "doc.import_lbrn2", json!({"content": LBRN, "mode": "merge"}));
+        let r = ok(&mut s, "doc.import_lbrn2", json!({"content": LBRN, "mode": "merge", "name": "badge"}));
         assert_eq!(r["created_layers"], json!(["layer-3"]));
         assert_eq!(r["reused_layers"], json!([]));
         assert_eq!(r["created"], json!(["obj-4", "obj-5"]));
+        assert_eq!(r["created_groups"], json!(["group-6"]), "the file's objects come in as one group");
         let r = ok(&mut s, "doc.import_lbrn2", json!({"content": LBRN, "mode": "merge"}));
         assert_eq!(r["created_layers"], json!([]));
         assert_eq!(r["reused_layers"], json!(["layer-3"]));
-        assert_eq!(r["created"], json!(["obj-6", "obj-7"]));
+        assert_eq!(r["created"], json!(["obj-7", "obj-8"]));
         let d = s.document();
         assert_eq!(d.layers.len(), 2);
         assert_eq!(d.objects.len(), 5);
         assert!(d.objects[1..].iter().all(|o| o.layer == "layer-3"));
         assert_eq!(d.objects[0].layer, "layer-1");
+        let names: Vec<&str> = d.groups.iter().map(|g| g.name.as_str()).collect();
+        assert_eq!(names, ["badge", "Imported LightBurn"]);
+        assert_eq!(d.group_members("group-6"), ["obj-4", "obj-5"]);
+        assert!(d.extras.is_empty(), "a merge keeps the document's own file data");
         s.undo().unwrap();
         assert_eq!(s.document().objects.len(), 3);
         s.undo().unwrap();
         assert_eq!(s.document().objects.len(), 1);
         assert_eq!(s.document().layers.len(), 1);
+        assert!(s.document().groups.is_empty());
+    }
+
+    #[test]
+    fn import_keeps_lightburn_groups_text_and_file_data_for_export() {
+        let text = r#"<?xml version="1.0" encoding="UTF-8"?>
+<LightBurnProject AppVersion="2.1.04" FormatVersion="1" MaterialHeight="0" MirrorX="False" MirrorY="False">
+    <Notes ShowOnLoad="1" Notes="keep me"/>
+    <CutSetting type="Cut">
+        <index Value="0"/>
+        <name Value="C00"/>
+        <maxPower Value="20"/>
+        <speed Value="100"/>
+        <priority Value="0"/>
+    </CutSetting>
+    <Shape Type="Group">
+        <XForm>1 0 0 1 0 0</XForm>
+        <Children>
+            <Shape Type="Rect" CutIndex="0" W="4" H="2" Cr="0">
+                <XForm>1 0 0 1 70 75</XForm>
+            </Shape>
+            <Shape Type="Text" CutIndex="0" Font="Arial,-1,100,5,50,0,0,0,0,0" Str="Hi" H="2" HasBackupPath="1">
+                <BackupPath Type="Path" CutIndex="0">
+                    <XForm>1 0 0 1 80 75</XForm>
+                    <VertList>V0 0c0x1c1x1V1 0c0x1c1x1V1 1c0x1c1x1</VertList>
+                    <PrimList>L0 1L1 2L2 0</PrimList>
+                </BackupPath>
+                <XForm>1 0 0 1 80 75</XForm>
+            </Shape>
+        </Children>
+    </Shape>
+</LightBurnProject>
+"#;
+        let mut s = session(Some(150.0));
+        let r = ok(&mut s, "doc.import_lbrn2", json!({"content": text}));
+        assert_eq!(r["created_groups"], json!(["group-2"]));
+        let d = s.document();
+        assert_eq!(d.group_members("group-2"), ["obj-3", "obj-4"]);
+        assert_eq!(d.objects[1].name, "Hi");
+        assert_eq!(d.objects[1].extras.get("lbrn2.Str").map(String::as_str), Some("Hi"));
+        assert!(d.extras.contains_key("lbrn2._root_attrs"));
+        // Saved and opened again, then exported: the file comes back as it was.
+        let saved = ok(&mut s, "doc.save", json!({}))["content"].as_str().unwrap().to_string();
+        ok(&mut s, "doc.new", json!({}));
+        ok(&mut s, "doc.load", json!({"content": saved}));
+        let out = ok(&mut s, "doc.export_lbrn2", json!({}))["content"].as_str().unwrap().to_string();
+        assert_eq!(out, text);
     }
 
     #[test]
@@ -588,6 +686,6 @@ mod tests {
         let p = lbrn::parse(r["content"].as_str().unwrap()).unwrap();
         assert_eq!(p.cut_settings[0].index, 1);
         assert_eq!(p.cut_settings[0].params.q_pulse_width, Some(200.0));
-        assert_eq!(p.shapes.len(), 2);
+        assert_eq!(p.shapes.len(), 3, "the unusable bitmap is kept for LightBurn");
     }
 }

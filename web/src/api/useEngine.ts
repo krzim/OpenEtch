@@ -4,18 +4,24 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, batch, eventsUrl, execute, type Invocation } from "./client.ts";
+import { EMPTY_TIMELINE, normalizeHistory, type TimelineModel } from "./history.ts";
 import { runFinishedToast, withApprovalLock } from "./runs.ts";
-import type { CommandSpec, EngineEvent, GDocument, HistoryEntry, MachineStatus, Origin, Preview, ProjectInfo } from "./types.ts";
+import type { CommandSpec, EngineEvent, GDocument, MachineStatus, Origin, Preview, ProjectInfo } from "./types.ts";
 
 /** WebSocket state shown by the connection indicator. */
 export type LinkState = "connecting" | "open" | "closed";
 
 export interface Engine {
   doc: GDocument | null;
-  history: HistoryEntry[];
+  /** The timeline (steps, states and marker). */
+  timeline: TimelineModel;
   machine: MachineStatus | null;
   preview: Preview | null;
+  /** Why the engine could not plan a preview (e.g. objects outside the field), or null. */
+  previewError: string | null;
   commands: CommandSpec[] | null;
+  /** Whether the engine has a command (false while the list is loading). */
+  has: (id: string) => boolean;
   /** GET /api/project, or null until it answers (or when the engine has no project routes). */
   project: ProjectInfo | null;
   link: LinkState;
@@ -27,6 +33,10 @@ export interface Engine {
   run: (inv: Invocation | Invocation[]) => Promise<unknown>;
   undo: () => Promise<void>;
   redo: () => Promise<void>;
+  /** Roll the timeline marker (newer engines). */
+  historyGoto: (marker: number) => Promise<void>;
+  /** Delete a timeline step and replay the later ones (newer engines). */
+  historyDelete: (index: number) => Promise<void>;
   refreshDoc: () => Promise<void>;
   refreshMachine: () => Promise<void>;
   refreshPreview: () => Promise<void>;
@@ -79,9 +89,10 @@ function useCoalesced(fn: () => Promise<void>): () => Promise<void> {
 
 export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
   const [doc, setDoc] = useState<GDocument | null>(null);
-  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [timeline, setTimeline] = useState<TimelineModel>(EMPTY_TIMELINE);
   const [machine, setMachine] = useState<MachineStatus | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
   const [commands, setCommands] = useState<CommandSpec[] | null>(null);
   const [project, setProject] = useState<ProjectInfo | null>(null);
   const [link, setLink] = useState<LinkState>("connecting");
@@ -100,10 +111,18 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
   const refreshPreview = useCoalesced(async () => {
     try {
       setPreview(await api.preview());
+      setPreviewError(null);
     } catch (e) {
       // A document with nothing to output may legitimately have no preview; keep the old one off screen.
       setPreview(null);
-      if (!(e instanceof ApiError && e.status === 404)) fail(e);
+      if (e instanceof ApiError && e.status === 422) {
+        // A planning error (out of field, power above the limit...): the reason belongs on the Toolpath card, not
+        // in the connection indicator, and the next status poll must not wipe it.
+        setPreviewError(e.detail ?? e.message);
+      } else {
+        setPreviewError(null);
+        if (!(e instanceof ApiError && e.status === 404)) fail(e);
+      }
     }
   });
 
@@ -122,7 +141,7 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
     try {
       const [d, h] = await Promise.all([api.document(), api.history()]);
       setDoc(d);
-      setHistory(Array.isArray(h) ? h : []);
+      setTimeline(normalizeHistory(h));
       setHttpError(null);
     } catch (e) {
       fail(e);
@@ -170,6 +189,30 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
       void refreshDoc();
     }
   }, [refreshDoc]);
+
+  const historyGoto = useCallback(
+    async (marker: number) => {
+      try {
+        await api.historyGoto(marker);
+      } finally {
+        void refreshDoc();
+      }
+    },
+    [refreshDoc],
+  );
+
+  const historyDelete = useCallback(
+    async (index: number) => {
+      try {
+        await api.historyDelete(index);
+      } finally {
+        void refreshDoc();
+      }
+    },
+    [refreshDoc],
+  );
+
+  const has = useCallback((id: string) => !!commands && commands.some((c) => c.id === id), [commands]);
 
   // Initial load.
   useEffect(() => {
@@ -232,7 +275,8 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
             break;
           case "run_pending":
             void refreshMachine();
-            notifyRef.current("A run is waiting for approval in the Laser workspace.", "info");
+            // This UI's own requests already say so; only runs requested elsewhere (an agent) get a toast.
+            if (isRemoteOrigin(ev.origin as Origin | undefined)) notifyRef.current("A run is waiting for approval in the Laser workspace.", "info");
             break;
           case "approval_locked":
             setMachine((m) => withApprovalLock(m, ev.until_unix_s));
@@ -240,6 +284,9 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
             break;
           case "project_saved":
             void refreshProject();
+            break;
+          case "history_changed":
+            void refreshDoc();
             break;
           case "run_finished": {
             void refreshMachine();
@@ -279,10 +326,12 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
 
   return {
     doc,
-    history,
+    timeline,
     machine,
     preview,
+    previewError,
     commands,
+    has,
     project,
     link,
     httpError,
@@ -290,6 +339,8 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
     run,
     undo,
     redo,
+    historyGoto,
+    historyDelete,
     refreshDoc,
     refreshMachine,
     refreshPreview,

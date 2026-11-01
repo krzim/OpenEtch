@@ -1,5 +1,7 @@
 //! Object commands: `object.transform`, `object.set_layer`, `object.rename`, `object.delete`, `object.duplicate`.
 
+use std::collections::BTreeMap;
+
 use doc::{Document, ObjectId};
 use kurbo::{Affine, Point, Vec2};
 use schemars::JsonSchema;
@@ -61,7 +63,7 @@ pub enum Pivot {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TransformInput {
-    /// Exact object ids; they are transformed together as one selection.
+    /// Exact object or group ids (a group stands for all its members); transformed together as one selection.
     pub ids: Vec<ObjectId>,
     /// Move by [dx, dy] mm in the field frame, applied last.
     pub translate: Option<[f64; 2]>,
@@ -146,7 +148,7 @@ pub(super) fn apply_affine(doc: &mut Document, ids: &[ObjectId], t: Affine) {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SetLayerInput {
-    /// Exact object ids.
+    /// Exact object or group ids (a group stands for all its members).
     pub ids: Vec<ObjectId>,
     /// Exact id of the destination layer.
     pub layer: String,
@@ -208,7 +210,7 @@ impl Command for Rename {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DeleteInput {
-    /// Exact object ids to delete.
+    /// Exact object or group ids to delete (a group deletes all its members).
     pub ids: Vec<ObjectId>,
 }
 
@@ -227,15 +229,17 @@ impl Command for Delete {
         let ids = util::object_ids(Self::ID, doc, &i.ids)?;
         let bounds = util::bounds_json(doc, &ids);
         doc.objects.retain(|o| !ids.contains(&o.id));
+        // Deleting the last member of a group removes the group.
+        let groups = doc.prune_groups();
         let summary = format!("deleted {}", ids.join(", "));
-        Ok((json!({ "created": [], "affected": [], "deleted": ids, "bounds": bounds }), summary))
+        Ok((json!({ "created": [], "affected": [], "deleted": ids, "deleted_groups": groups, "bounds": bounds }), summary))
     }
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DuplicateInput {
-    /// Exact object ids to copy.
+    /// Exact object or group ids to copy (a fully copied group is copied as a group).
     pub ids: Vec<ObjectId>,
     /// Offset of the copies from the originals, [dx, dy] mm in the field frame. Default [0, 0] (in place).
     #[serde(default)]
@@ -267,6 +271,10 @@ impl Command for Duplicate {
 }
 
 /// Append translated copies of `ids` (which must exist) and return the new ids in the same order.
+///
+/// Groups: a group whose members are all copied is copied too (name plus `suffix`, same nesting, the copy nested in
+/// the copy of its parent when that is copied as well), and the copies belong to it. A copy of an object whose group
+/// is only partly copied joins the original group.
 pub(super) fn copy_objects(
     doc: &mut Document,
     ids: &[ObjectId],
@@ -274,12 +282,33 @@ pub(super) fn copy_objects(
     suffix: &str,
 ) -> Result<Vec<ObjectId>> {
     let originals: Vec<_> = ids.iter().filter_map(|id| doc.object(id).cloned()).collect();
+    let mut groups: Vec<(usize, doc::Group)> = Vec::new();
+    for o in &originals {
+        let Some(g) = o.group.as_deref() else { continue };
+        for c in doc.group_chain(g) {
+            if groups.iter().all(|(_, have)| have.id != c.id) && doc.group_members(&c.id).iter().all(|m| ids.contains(m))
+            {
+                groups.push((doc.group_chain(&c.id).len(), c.clone()));
+            }
+        }
+    }
+    // Parents first, so a nested copy can name its parent's copy.
+    groups.sort_by_key(|(depth, _)| *depth);
+    let mut renamed: BTreeMap<String, String> = BTreeMap::new();
+    for (_, mut g) in groups {
+        let old = std::mem::replace(&mut g.id, doc.alloc_id("group")?);
+        g.name.push_str(suffix);
+        g.parent = g.parent.map(|p| renamed.get(&p).cloned().unwrap_or(p));
+        renamed.insert(old, g.id.clone());
+        doc.groups.push(g);
+    }
     originals
         .into_iter()
         .map(|mut o| {
             o.id = doc.alloc_id("obj")?;
             o.name.push_str(suffix);
             o.transform = Affine::translate(offset) * o.transform;
+            o.group = o.group.map(|g| renamed.get(&g).cloned().unwrap_or(g));
             let id = o.id.clone();
             doc.objects.push(o);
             Ok(id)
@@ -357,6 +386,39 @@ mod tests {
         let (r, _) = run::<Delete>(&mut d, json!({"ids": ["obj-2"]})).unwrap();
         assert_eq!(r["deleted"], json!(["obj-2"]));
         assert!(d.objects.is_empty());
+    }
+
+    #[test]
+    fn group_ids_duplicate_and_delete_as_groups() {
+        let mut d = doc();
+        run::<ShapeRect>(&mut d, json!({"width_mm": 2, "height_mm": 2})).unwrap(); // obj-3
+        run::<ShapeRect>(&mut d, json!({"width_mm": 2, "height_mm": 2})).unwrap(); // obj-4
+        d.groups.push(doc::Group::new("group-8".into(), "Outer", None));
+        d.groups.push(doc::Group::new("group-9".into(), "Inner", Some("group-8".into())));
+        d.object_mut("obj-2").unwrap().group = Some("group-8".into());
+        d.object_mut("obj-3").unwrap().group = Some("group-9".into());
+        // Copying the whole outer group copies both groups with their nesting.
+        let (r, _) = run::<Duplicate>(&mut d, json!({"ids": ["group-8"]})).unwrap();
+        let created: Vec<String> = serde_json::from_value(r["created"].clone()).unwrap();
+        assert_eq!(created.len(), 2);
+        assert_eq!(d.groups.len(), 4);
+        let inner_copy = d.object(&created[1]).unwrap().group.clone().unwrap();
+        let outer_copy = d.object(&created[0]).unwrap().group.clone().unwrap();
+        assert_eq!(d.group(&inner_copy).unwrap().parent.as_deref(), Some(outer_copy.as_str()));
+        assert_eq!(d.group(&outer_copy).unwrap().name, "Outer copy");
+        // Copying one member of a group puts the copy in the same group.
+        let (r, _) = run::<Duplicate>(&mut d, json!({"ids": ["obj-2"]})).unwrap();
+        let one = r["created"][0].as_str().unwrap();
+        assert_eq!(d.object(one).unwrap().group.as_deref(), Some("group-8"));
+        // Deleting the inner group's only member removes the inner group.
+        let (r, _) = run::<Delete>(&mut d, json!({"ids": ["obj-3"]})).unwrap();
+        assert_eq!(r["deleted_groups"], json!(["group-9"]));
+        assert!(d.group("group-9").is_none() && d.group("group-8").is_some());
+        // A group id deletes every member.
+        let (r, _) = run::<Delete>(&mut d, json!({"ids": ["group-8"]})).unwrap();
+        assert_eq!(r["deleted"], json!(["obj-2", one]));
+        assert!(d.group("group-8").is_none());
+        assert!(matches!(run::<Delete>(&mut d, json!({"ids": ["group-77"]})), Err(CommandError::NotFound { .. })));
     }
 
     #[test]

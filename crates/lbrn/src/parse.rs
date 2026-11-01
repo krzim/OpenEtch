@@ -1,6 +1,10 @@
 //! `.lbrn2` (and `.clb` library) text → [`LbrnProject`]. Bounded: input size, XML nodes, nesting depth, total path
 //! vertices and total path segments (a shared `VertList` / `PrimList` counts once per use, since every use is resolved
 //! into its own copy) are all capped, and DTDs are refused.
+//!
+//! Besides the values, the parser keeps what [`crate::write`] needs to write the file back as it was: the root's
+//! child order, attribute order, the text of numbers and `XForm`s, each path's ids and which lists it carries, the
+//! source text of elements OpenEtch does not model, and the declaration and line endings.
 
 use std::collections::HashMap;
 
@@ -8,7 +12,10 @@ use kurbo::Affine;
 use roxmltree::{Node, ParsingOptions};
 
 use crate::LbrnError;
-use crate::model::{Backup, CutParams, CutSetting, Element, LbrnProject, PathData, Shape, ShapeKind, SubLayer};
+use crate::model::{
+    Backup, CutParams, CutSetting, Element, Encoded, Format, LbrnProject, PathData, RootItem, Shape, ShapeKind,
+    SubLayer,
+};
 use crate::path::{parse_prims, parse_vertices};
 
 /// Largest accepted file. Embedded bitmaps make real projects a few MB; the engine's upload limit is 50 MB.
@@ -35,7 +42,31 @@ fn xml(text: &str) -> Result<roxmltree::Document<'_>, LbrnError> {
         .map_err(|e| LbrnError::Xml(e.to_string()))
 }
 
-/// Parse a LightBurn project.
+/// The source text of `n`, line breaks normalised to `\n`.
+fn raw(n: Node<'_, '_>) -> String {
+    let text = &n.document().input_text()[n.range()];
+    if text.contains('\r') { text.replace("\r\n", "\n").replace('\r', "\n") } else { text.to_string() }
+}
+
+/// How the file is laid out (declaration, line endings, empty-element style).
+fn format_of(doc: &roxmltree::Document<'_>) -> Format {
+    let text = doc.input_text();
+    let root = doc.root_element();
+    let before = text[..root.range().start].trim();
+    let declaration = before
+        .starts_with("<?xml")
+        .then(|| before.find("?>").map(|end| before[..end + 2].to_string()))
+        .flatten();
+    let after = &text[root.range().end..];
+    Format {
+        declaration,
+        crlf: text.contains("\r\n"),
+        final_newline: after.starts_with('\n') || after.starts_with("\r\n"),
+        space_before_slash: text.matches("\" />").count() > text.matches("\"/>").count(),
+    }
+}
+
+/// Parse a LightBurn project (`.lbrn2`, or a `.lbt` template, which has the same layout).
 pub fn parse(text: &str) -> Result<LbrnProject, LbrnError> {
     let doc = xml(text)?;
     let root = doc.root_element();
@@ -62,16 +93,23 @@ pub fn parse(text: &str) -> Result<LbrnProject, LbrnError> {
 
     let mut p = LbrnProject {
         attributes: root.attributes().map(|a| (a.name().to_string(), a.value().to_string())).collect(),
-        cut_settings: Vec::new(),
-        shapes: Vec::new(),
-        extra_elements: Vec::new(),
+        format: format_of(&doc),
+        ..LbrnProject::default()
     };
     for n in root.children().filter(Node::is_element) {
         match n.tag_name().name() {
-            "CutSetting" | "CutSetting_Img" => p.cut_settings.push(cut_setting(n)?),
-            "Shape" => p.shapes.push(cx.shape(n, 0)?),
-            "Thumbnail" => {}
-            _ => p.extra_elements.push(element(n, 0)?),
+            "CutSetting" | "CutSetting_Img" => {
+                p.order.push(RootItem::CutSetting(p.cut_settings.len()));
+                p.cut_settings.push(cut_setting(n)?);
+            }
+            "Shape" => {
+                p.order.push(RootItem::Shape(p.shapes.len()));
+                p.shapes.push(cx.shape(n, 0)?);
+            }
+            _ => {
+                p.order.push(RootItem::Element(p.extra_elements.len()));
+                p.extra_elements.push(element(n, 0, true)?);
+            }
         }
     }
     Ok(p)
@@ -141,12 +179,23 @@ fn index(s: &str, what: &str) -> Result<u32, LbrnError> {
     s.trim().parse().map_err(|_| malformed(format!("{what} '{s}' is not a layer index")))
 }
 
-fn xform(n: Node<'_, '_>) -> Result<Affine, LbrnError> {
-    let Some(x) = child(n, "XForm") else { return Ok(Affine::IDENTITY) };
+/// The `XForm` child as a transform (identity when absent) and its text.
+fn xform(n: Node<'_, '_>) -> Result<(Affine, Option<String>), LbrnError> {
+    let Some(x) = child(n, "XForm") else { return Ok((Affine::IDENTITY, None)) };
     let text = x.text().unwrap_or_default();
+    Ok((parse_xform(text)?, Some(text.to_string())))
+}
+
+/// `a b c d e f` → the transform.
+pub(crate) fn parse_xform(text: &str) -> Result<Affine, LbrnError> {
     let v = text.split_whitespace().map(|t| number(t, "XForm value")).collect::<Result<Vec<_>, _>>()?;
     let v: [f64; 6] = v.try_into().map_err(|_| malformed(format!("XForm '{text}' needs six numbers")))?;
     Ok(Affine::new(v))
+}
+
+/// Every attribute but `Type`, in file order.
+fn attributes(n: Node<'_, '_>) -> Vec<(String, String)> {
+    n.attributes().filter(|a| a.name() != "Type").map(|a| (a.name().to_string(), a.value().to_string())).collect()
 }
 
 fn cut_setting(n: Node<'_, '_>) -> Result<CutSetting, LbrnError> {
@@ -189,7 +238,9 @@ fn params(n: Node<'_, '_>) -> Result<CutParams, LbrnError> {
     Ok(CutParams::from_values(values))
 }
 
-fn element(n: Node<'_, '_>, depth: usize) -> Result<Element, LbrnError> {
+/// A generic element. `keep_raw`: also keep its source text (for elements written back on their own; their
+/// children are covered by it).
+fn element(n: Node<'_, '_>, depth: usize, keep_raw: bool) -> Result<Element, LbrnError> {
     if depth > MAX_DEPTH {
         return Err(LbrnError::TooLarge(format!("elements nested deeper than {MAX_DEPTH}")));
     }
@@ -199,7 +250,12 @@ fn element(n: Node<'_, '_>, depth: usize) -> Result<Element, LbrnError> {
         name: n.tag_name().name().to_string(),
         attributes: n.attributes().map(|a| (a.name().to_string(), a.value().to_string())).collect(),
         text: (!text.is_empty()).then(|| text.to_string()),
-        children: n.children().filter(Node::is_element).map(|c| element(c, depth + 1)).collect::<Result<_, _>>()?,
+        children: n
+            .children()
+            .filter(Node::is_element)
+            .map(|c| element(c, depth + 1, false))
+            .collect::<Result<_, _>>()?,
+        raw: keep_raw.then(|| raw(n)),
     })
 }
 
@@ -226,20 +282,17 @@ impl<'a> Cx<'a> {
         }
         let type_name = n.attribute("Type").ok_or_else(|| malformed("a Shape has no Type"))?;
         let cut_index = n.attribute("CutIndex").map(|i| index(i, "CutIndex")).transpose()?;
-        let (kind, modelled_attrs, modelled_children): (ShapeKind, &[&str], &[&str]) = match type_name {
+        let (kind, modelled_children): (ShapeKind, &[&str]) = match type_name {
             "Rect" => (
                 ShapeKind::Rect {
                     w: attr_number(n, "W")?,
                     h: attr_number(n, "H")?,
                     cr: n.attribute("Cr").map(|c| number(c, "Cr")).transpose()?.unwrap_or(0.0),
                 },
-                &["W", "H", "Cr"],
                 &[],
             ),
-            "Ellipse" => {
-                (ShapeKind::Ellipse { rx: attr_number(n, "Rx")?, ry: attr_number(n, "Ry")? }, &["Rx", "Ry"], &[])
-            }
-            "Path" => (ShapeKind::Path(self.path(n)?), &["VertID", "PrimID"], &["VertList", "PrimList"]),
+            "Ellipse" => (ShapeKind::Ellipse { rx: attr_number(n, "Rx")?, ry: attr_number(n, "Ry")? }, &[]),
+            "Path" => (ShapeKind::Path(self.path(n)?), &["VertList", "PrimList"]),
             "Group" => {
                 let mut children = Vec::new();
                 if let Some(c) = child(n, "Children") {
@@ -247,44 +300,44 @@ impl<'a> Cx<'a> {
                         children.push(self.shape(s, depth + 1)?);
                     }
                 }
-                (ShapeKind::Group(children), &[], &["Children"])
+                (ShapeKind::Group(children), &["Children"])
             }
             "Text" => {
                 let backup = match child(n, "BackupPath") {
                     Some(b) => {
                         // Some versions nest the outline in a Shape inside BackupPath.
                         let src = child(b, "Shape").unwrap_or(b);
+                        let (xform, xform_text) = xform(src)?;
                         Some(Backup {
                             cut_index: src.attribute("CutIndex").map(|i| index(i, "CutIndex")).transpose()?,
-                            xform: xform(src)?,
+                            xform,
+                            xform_text,
+                            attributes: attributes(src),
                             path: self.path(src)?,
                         })
                     }
                     None => None,
                 };
-                (ShapeKind::Text { backup }, &[], &["BackupPath"])
+                (ShapeKind::Text { backup }, &["BackupPath"])
             }
-            "Bitmap" => (ShapeKind::Bitmap { w: attr_number(n, "W")?, h: attr_number(n, "H")? }, &["W", "H"], &[]),
-            other => (ShapeKind::Other { type_name: other.to_string() }, &[], &[]),
+            "Bitmap" => (ShapeKind::Bitmap { w: attr_number(n, "W")?, h: attr_number(n, "H")? }, &[]),
+            other => (ShapeKind::Other { type_name: other.to_string() }, &[]),
         };
-        let attributes = n
-            .attributes()
-            .filter(|a| !matches!(a.name(), "Type" | "CutIndex") && !modelled_attrs.contains(&a.name()))
-            .map(|a| (a.name().to_string(), a.value().to_string()))
-            .collect();
         let children = n
             .children()
             .filter(|c| c.is_element() && !c.has_tag_name("XForm"))
             .filter(|c| !modelled_children.contains(&c.tag_name().name()))
-            .map(|c| element(c, depth + 1))
+            .map(|c| element(c, depth + 1, true))
             .collect::<Result<_, _>>()?;
-        Ok(Shape { kind, cut_index, xform: xform(n)?, attributes, children })
+        let (xform, xform_text) = xform(n)?;
+        Ok(Shape { kind, cut_index, xform, xform_text, attributes: attributes(n), children })
     }
 
     /// The path's own lists, or the shared ones its `VertID`/`PrimID` refer to.
     fn path(&mut self, n: Node<'a, '_>) -> Result<PathData, LbrnError> {
-        let vert_text = match (child(n, "VertList"), n.attribute("VertID")) {
-            (Some(l), _) => l.text().unwrap_or_default(),
+        let own_verts = child(n, "VertList").map(|l| l.text().unwrap_or_default());
+        let vert_text = match (own_verts, n.attribute("VertID")) {
+            (Some(t), _) => t,
             (None, Some(id)) => {
                 self.vert_defs.get(id).copied().ok_or_else(|| malformed(format!("VertID {id} is never defined")))?
             }
@@ -293,8 +346,9 @@ impl<'a> Cx<'a> {
         let vertices = parse_vertices(vert_text, MAX_VERTICES - self.vertices)
             .map_err(|e| total(e, format!("more than {MAX_VERTICES} path vertices in total")))?;
         self.vertices += vertices.len();
-        let prim_text = match (child(n, "PrimList"), n.attribute("PrimID")) {
-            (Some(l), _) => l.text().unwrap_or_default(),
+        let own_prims = child(n, "PrimList").map(|l| l.text().unwrap_or_default());
+        let prim_text = match (own_prims, n.attribute("PrimID")) {
+            (Some(t), _) => t,
             (None, Some(id)) => {
                 self.prim_defs.get(id).copied().ok_or_else(|| malformed(format!("PrimID {id} is never defined")))?
             }
@@ -303,6 +357,12 @@ impl<'a> Cx<'a> {
         let (prims, segments) = parse_prims(prim_text, vertices.len(), MAX_SEGMENTS - self.segments)
             .map_err(|e| total(e, format!("more than {MAX_SEGMENTS} path segments in total")))?;
         self.segments += segments;
-        Ok(PathData { vertices, prims })
+        let encoded = Encoded {
+            vert_id: n.attribute("VertID").map(str::to_string),
+            prim_id: n.attribute("PrimID").map(str::to_string),
+            vert_list: own_verts.map(str::to_string),
+            prim_list: own_prims.map(str::to_string),
+        };
+        Ok(PathData { vertices, prims, encoded: Some(encoded) })
     }
 }

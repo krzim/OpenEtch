@@ -294,7 +294,7 @@ impl PathData {
             }
         }
         drop_empty(&mut v, start, prims.len(), sub_prims);
-        PathData { vertices: v, prims: Prims::List(prims) }
+        PathData { vertices: v, prims: Prims::List(prims), encoded: None }
     }
 }
 
@@ -363,6 +363,7 @@ mod tests {
         let d = PathData {
             vertices: parse_vertices("V0 0V10 0V10 10V0 10V20 0V30 0V30 10", 99).unwrap(),
             prims: parse_prims("L0 1L1 2L2 3L3 0L4 5L5 6", 7, 99).unwrap().0,
+            encoded: None,
         };
         let b = d.to_bez();
         let els = b.elements();
@@ -387,6 +388,7 @@ mod tests {
         let parsed = PathData {
             vertices: parse_vertices(&text.0, 99).unwrap(),
             prims: parse_prims(&text.1, d.vertices.len(), 99).unwrap().0,
+            encoded: None,
         };
         assert_eq!(parsed, d);
         let back = parsed.to_bez();
@@ -400,7 +402,7 @@ mod tests {
 
     #[test]
     fn line_open_and_degenerate_input() {
-        let d = PathData { vertices: parse_vertices("V0 0V1 0V1 1", 9).unwrap(), prims: Prims::LineOpen };
+        let d = PathData { vertices: parse_vertices("V0 0V1 0V1 1", 9).unwrap(), prims: Prims::LineOpen, encoded: None };
         assert_eq!(d.to_bez().elements().len(), 3);
         let mut b = BezPath::new();
         b.move_to((5.0, 5.0));

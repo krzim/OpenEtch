@@ -3,7 +3,8 @@
 //!
 //! This crate is plain data plus geometry helpers. It never changes itself: all edits go through `commands`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use kurbo::{Affine, BezPath, PathEl, Point, Rect, Shape};
 use schemars::JsonSchema;
@@ -13,6 +14,7 @@ pub mod file;
 
 pub type ObjectId = String;
 pub type LayerId = String;
+pub type GroupId = String;
 
 /// Numbered ids ("obj-12") stay below 2^53, so every JSON reader (including ones that hold numbers as doubles) sees
 /// them exactly, and the counter can never wrap.
@@ -30,8 +32,9 @@ pub fn is_plain_name(s: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
 }
 
-/// Whether `key` can be a [`Layer::extras`] key: `<format>.<name>` (e.g. `lbrn2.minPower`, `lbrn2.sub1.speed`), both
-/// parts [plain names](is_plain_name), at most 128 bytes.
+/// Whether `key` can be an `extras` key ([`Layer::extras`], [`Object::extras`], [`Group::extras`],
+/// [`Document::extras`]): `<format>.<name>` (e.g. `lbrn2.minPower`, `lbrn2.sub1.speed`), both parts
+/// [plain names](is_plain_name), at most 128 bytes.
 pub fn is_extras_key(key: &str) -> bool {
     key.len() <= 128 && key.split_once('.').is_some_and(|(format, name)| is_plain_name(format) && is_plain_name(name))
 }
@@ -48,8 +51,16 @@ pub struct Document {
     pub stock: Option<Stock>,
     pub layers: Vec<Layer>,
     pub objects: Vec<Object>,
-    /// Counter for stable ids ("obj-1", "layer-1").
+    /// Groups of objects ([`Object::group`]), nested through [`Group::parent`]. A group always has at least one
+    /// member object (directly or in a nested group): [`Document::prune_groups`] removes empty ones.
+    #[serde(default)]
+    pub groups: Vec<Group>,
+    /// Counter for stable ids ("obj-1", "layer-1", "group-1").
     pub next_id: u64,
+    /// Data from other software that OpenEtch does not model (e.g. LightBurn's `UIPrefs`, `Notes`, thumbnail and root
+    /// attributes as `lbrn2.*`), kept so exports round-trip. Keys pass [`is_extras_key`]. Never used for planning.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extras: BTreeMap<String, String>,
 }
 
 impl Default for Document {
@@ -61,7 +72,9 @@ impl Default for Document {
             stock: None,
             layers: vec![],
             objects: vec![],
+            groups: vec![],
             next_id: 1,
+            extras: BTreeMap::new(),
         };
         let id = doc.alloc_id("layer").expect("a new document has ids to spare");
         doc.layers.push(Layer::new(id, "Layer 1", "#1f77b4"));
@@ -128,9 +141,121 @@ impl Document {
         self.layers.iter_mut().find(|l| l.id == id)
     }
 
-    /// Union of the field-frame bounding boxes of the given objects.
+    /// Union of the field-frame bounding boxes of the given objects (a group id counts as all its members).
     pub fn bounds_of(&self, ids: &[ObjectId]) -> Option<Rect> {
-        ids.iter().filter_map(|id| self.object(id)).map(Object::bounds).reduce(|a, b| a.union(b))
+        self.expand_group_ids(ids).iter().filter_map(|id| self.object(id)).map(Object::bounds).reduce(|a, b| a.union(b))
+    }
+
+    pub fn group(&self, id: &str) -> Option<&Group> {
+        self.groups.iter().find(|g| g.id == id)
+    }
+
+    pub fn group_mut(&mut self, id: &str) -> Option<&mut Group> {
+        self.groups.iter_mut().find(|g| g.id == id)
+    }
+
+    /// `group` and its ancestors, innermost first. Stops at a missing parent or a cycle (a sound document has
+    /// neither).
+    pub fn group_chain(&self, group: &str) -> Vec<&Group> {
+        let mut out: Vec<&Group> = Vec::new();
+        let mut next = self.group(group);
+        while let Some(g) = next {
+            if out.iter().any(|o| o.id == g.id) {
+                break;
+            }
+            out.push(g);
+            next = g.parent.as_deref().and_then(|p| self.group(p));
+        }
+        out
+    }
+
+    /// Whether `group` is `ancestor` or nested (at any depth) inside it.
+    pub fn group_is_within(&self, group: &str, ancestor: &str) -> bool {
+        self.group_chain(group).iter().any(|g| g.id == ancestor)
+    }
+
+    /// The outermost group an object belongs to (what a click on it selects), if any.
+    pub fn top_group_of(&self, object: &str) -> Option<&Group> {
+        let g = self.object(object)?.group.as_deref()?;
+        self.group_chain(g).last().copied()
+    }
+
+    /// Ids of every object in `group` or its nested groups, in document (drawing) order.
+    pub fn group_members(&self, group: &str) -> Vec<ObjectId> {
+        self.objects
+            .iter()
+            .filter(|o| o.group.as_deref().is_some_and(|g| self.group_is_within(g, group)))
+            .map(|o| o.id.clone())
+            .collect()
+    }
+
+    /// `ids` with every group id replaced by its members ([`group_members`](Self::group_members)) and duplicates
+    /// removed (the first occurrence stays). Ids that name neither a group nor an object are kept, so the caller's
+    /// lookup can report them.
+    pub fn expand_group_ids(&self, ids: &[String]) -> Vec<ObjectId> {
+        let mut seen = BTreeSet::new();
+        let mut out = Vec::new();
+        for id in ids {
+            let members = if self.object(id).is_none() && self.group(id).is_some() {
+                self.group_members(id)
+            } else {
+                vec![id.clone()]
+            };
+            for m in members {
+                if seen.insert(m.clone()) {
+                    out.push(m);
+                }
+            }
+        }
+        out
+    }
+
+    /// Repair the groups after objects or groups were removed: a reference to a group that no longer exists is
+    /// cleared, and groups left without any member object (directly or through nested groups) are removed. Returns
+    /// the ids of the removed groups. Commands that delete objects call this, so deleting the last member of a group
+    /// removes the group.
+    pub fn prune_groups(&mut self) -> Vec<GroupId> {
+        let ids: BTreeSet<String> = self.groups.iter().map(|g| g.id.clone()).collect();
+        for o in &mut self.objects {
+            if o.group.as_ref().is_some_and(|g| !ids.contains(g)) {
+                o.group = None;
+            }
+        }
+        for g in &mut self.groups {
+            if g.parent.as_ref().is_some_and(|p| !ids.contains(p) || *p == g.id) {
+                g.parent = None;
+            }
+        }
+        let mut used = BTreeSet::new();
+        for o in &self.objects {
+            if let Some(g) = &o.group {
+                used.extend(self.group_chain(g).into_iter().map(|c| c.id.clone()));
+            }
+        }
+        let removed: Vec<GroupId> =
+            self.groups.iter().filter(|g| !used.contains(&g.id)).map(|g| g.id.clone()).collect();
+        self.groups.retain(|g| used.contains(&g.id));
+        removed
+    }
+}
+
+/// A set of objects (and nested groups) that selects and moves as one unit, as in LightBurn. Objects point at their
+/// innermost group ([`Object::group`]); groups nest through `parent`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct Group {
+    pub id: GroupId,
+    pub name: String,
+    /// The enclosing group, if nested.
+    #[serde(default)]
+    pub parent: Option<GroupId>,
+    /// Data from other software (e.g. a LightBurn group's `XForm` as `lbrn2.*`), kept so exports round-trip.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extras: BTreeMap<String, String>,
+}
+
+impl Group {
+    pub fn new(id: GroupId, name: impl Into<String>, parent: Option<GroupId>) -> Self {
+        Group { id, name: name.into(), parent, extras: BTreeMap::new() }
     }
 }
 
@@ -323,9 +448,21 @@ pub struct Object {
     pub geometry: Geometry,
     /// Local → field frame.
     pub transform: Affine,
+    /// The innermost [`Group`] this object belongs to.
+    #[serde(default)]
+    pub group: Option<GroupId>,
+    /// Data from other software that OpenEtch does not model (e.g. LightBurn text attributes as `lbrn2.*`), kept so
+    /// exports round-trip. Keys pass [`is_extras_key`]. Never used for planning.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extras: BTreeMap<String, String>,
 }
 
 impl Object {
+    /// An ungrouped object without extras.
+    pub fn new(id: ObjectId, name: impl Into<String>, layer: LayerId, geometry: Geometry, transform: Affine) -> Self {
+        Object { id, name: name.into(), layer, geometry, transform, group: None, extras: BTreeMap::new() }
+    }
+
     /// Geometry in the field frame.
     pub fn field_path(&self) -> BezPath {
         self.transform * self.geometry.local_path()
@@ -358,6 +495,7 @@ impl Object {
                 corner_radius_mm.is_finite() && corners(width_mm / 2.0, height_mm / 2.0).into_iter().all(ok)
             }
             Geometry::Ellipse { rx_mm, ry_mm } => corners(*rx_mm, *ry_mm).into_iter().all(ok),
+            Geometry::Image { width_mm, height_mm, .. } => corners(width_mm / 2.0, height_mm / 2.0).into_iter().all(ok),
             Geometry::Path { path } => path.elements().iter().all(|el| match *el {
                 PathEl::MoveTo(p) | PathEl::LineTo(p) => ok(p),
                 PathEl::QuadTo(a, p) => ok(a) && ok(p),
@@ -378,6 +516,10 @@ pub enum Geometry {
     Ellipse { rx_mm: f64, ry_mm: f64 },
     /// Arbitrary path (imported vector art, text outlines).
     Path { path: BezPath },
+    /// A bitmap, `width_mm` x `height_mm` centred on the local origin (the transform may scale, rotate or mirror it).
+    /// `data_base64` is the encoded file (of type `mime`, e.g. `image/png`) in standard base64. It is shared, so
+    /// copies of the document (undo steps) do not copy the image. Planning skips images (not supported yet).
+    Image { width_mm: f64, height_mm: f64, mime: String, data_base64: Arc<str> },
 }
 
 impl Geometry {
@@ -388,6 +530,19 @@ impl Geometry {
             }
             Geometry::Ellipse { rx_mm, ry_mm } => kurbo::Ellipse::new((0.0, 0.0), (rx_mm, ry_mm), 0.0).to_path(0.01),
             Geometry::Path { ref path } => path.clone(),
+            Geometry::Image { width_mm, height_mm, .. } => {
+                Rect::from_center_size((0.0, 0.0), (width_mm, height_mm)).to_path(0.01)
+            }
+        }
+    }
+
+    /// A short lowercase name of the kind: `rect`, `ellipse`, `path` or `image`.
+    pub fn kind_name(&self) -> &'static str {
+        match self {
+            Geometry::Rect { .. } => "rect",
+            Geometry::Ellipse { .. } => "ellipse",
+            Geometry::Path { .. } => "path",
+            Geometry::Image { .. } => "image",
         }
     }
 }
@@ -406,13 +561,13 @@ mod tests {
 
     #[test]
     fn object_bounds_follow_transform() {
-        let obj = Object {
-            id: "obj-1".into(),
-            name: "r".into(),
-            layer: "layer-1".into(),
-            geometry: Geometry::Rect { width_mm: 10.0, height_mm: 4.0, corner_radius_mm: 0.0 },
-            transform: Affine::translate((5.0, -2.0)),
-        };
+        let obj = Object::new(
+            "obj-1".into(),
+            "r",
+            "layer-1".into(),
+            Geometry::Rect { width_mm: 10.0, height_mm: 4.0, corner_radius_mm: 0.0 },
+            Affine::translate((5.0, -2.0)),
+        );
         let b = obj.bounds();
         assert!((b.x0 - 0.0).abs() < 1e-9 && (b.x1 - 10.0).abs() < 1e-9);
         assert!((b.y0 + 4.0).abs() < 1e-9 && (b.y1 - 0.0).abs() < 1e-9);
@@ -452,13 +607,7 @@ mod tests {
     fn numeric_problem_finds_non_finite_and_singular_geometry() {
         let mut doc = Document::default();
         assert_eq!(doc.numeric_problem(), None);
-        let obj = |geometry, transform| Object {
-            id: "obj-9".into(),
-            name: "o".into(),
-            layer: "layer-1".into(),
-            geometry,
-            transform,
-        };
+        let obj = |geometry, transform| Object::new("obj-9".into(), "o", "layer-1".into(), geometry, transform);
         let rect = Geometry::Rect { width_mm: 2.0, height_mm: 2.0, corner_radius_mm: 0.0 };
         for (g, t) in [
             (rect.clone(), Affine::scale(1e200) * Affine::scale(1e200)),
@@ -493,10 +642,79 @@ mod tests {
     #[test]
     fn older_json_without_new_fields_still_loads() {
         let mut v = serde_json::to_value(Document::default()).unwrap();
-        v.as_object_mut().unwrap().remove("field_mm");
+        for key in ["field_mm", "groups", "extras"] {
+            v.as_object_mut().unwrap().remove(key);
+        }
         assert!(v["layers"][0].get("extras").is_none(), "empty extras are not serialized");
         let back: Document = serde_json::from_value(v).unwrap();
         assert_eq!(back.field_mm, None);
+        assert!(back.groups.is_empty() && back.extras.is_empty());
         assert!(back.layers[0].extras.is_empty());
     }
+
+    fn grouped() -> Document {
+        let mut d = Document::default();
+        let rect = Geometry::Rect { width_mm: 2.0, height_mm: 2.0, corner_radius_mm: 0.0 };
+        for (n, x) in [(1, 0.0), (2, 10.0), (3, 20.0)] {
+            d.objects.push(Object::new(format!("obj-{n}"), "r", "layer-1".into(), rect.clone(), Affine::translate((x, 0.0))));
+        }
+        d.groups.push(Group::new("group-8".into(), "outer", None));
+        d.groups.push(Group::new("group-9".into(), "inner", Some("group-8".into())));
+        d.objects[0].group = Some("group-9".into());
+        d.objects[1].group = Some("group-8".into());
+        d
+    }
+
+    #[test]
+    fn groups_nest_and_expand_to_members() {
+        let d = grouped();
+        assert_eq!(d.group_members("group-8"), ["obj-1", "obj-2"]);
+        assert_eq!(d.group_members("group-9"), ["obj-1"]);
+        assert_eq!(d.top_group_of("obj-1").map(|g| g.id.as_str()), Some("group-8"));
+        assert_eq!(d.top_group_of("obj-3"), None);
+        assert!(d.group_is_within("group-9", "group-8") && !d.group_is_within("group-8", "group-9"));
+        let ids = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(d.expand_group_ids(&ids(&["obj-2", "group-8", "nope"])), ["obj-2", "obj-1", "nope"]);
+        let b = d.bounds_of(&ids(&["group-8"])).unwrap();
+        assert!((b.x0 + 1.0).abs() < 1e-9 && (b.x1 - 11.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn prune_groups_removes_empty_and_dangling_groups() {
+        let mut d = grouped();
+        assert!(d.prune_groups().is_empty());
+        d.objects.remove(0);
+        assert_eq!(d.prune_groups(), ["group-9"], "the inner group lost its last member");
+        assert_eq!(d.groups.len(), 1);
+        d.objects.remove(0);
+        assert_eq!(d.prune_groups(), ["group-8"]);
+        let mut d = grouped();
+        d.groups.remove(0);
+        d.prune_groups();
+        assert_eq!(d.groups[0].parent, None, "a missing parent is cleared");
+        assert_eq!(d.objects[1].group, None, "a missing group is cleared");
+    }
+
+    #[test]
+    fn images_have_a_rectangular_outline() {
+        let o = Object::new(
+            "obj-1".into(),
+            "photo",
+            "layer-1".into(),
+            Geometry::Image { width_mm: 30.0, height_mm: 20.0, mime: "image/png".into(), data_base64: "AAAA".into() },
+            Affine::translate((5.0, 0.0)) * Affine::FLIP_X,
+        );
+        let b = o.bounds();
+        assert!((b.x0 + 10.0).abs() < 1e-9 && (b.x1 - 20.0).abs() < 1e-9 && (b.height() - 20.0).abs() < 1e-9);
+        assert_eq!(o.geometry.kind_name(), "image");
+        assert_eq!(o.placement_problem(), None);
+        let json = serde_json::to_value(&o).unwrap();
+        assert_eq!(json["geometry"]["kind"], "image");
+        assert_eq!(json["geometry"]["data_base64"], "AAAA");
+        assert_eq!(json["group"], serde_json::Value::Null);
+        assert!(json.get("extras").is_none());
+        let back: Object = serde_json::from_value(json).unwrap();
+        assert_eq!(back, o);
+    }
+
 }

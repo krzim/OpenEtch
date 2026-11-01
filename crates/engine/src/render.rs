@@ -198,6 +198,8 @@ mod tests {
             layer: "layer-1".into(),
             geometry: Geometry::Rect { width_mm: 10.0, height_mm: 10.0, corner_radius_mm: 0.0 },
             transform: Affine::IDENTITY,
+            group: None,
+            extras: Default::default(),
         });
         d
     }
@@ -210,9 +212,11 @@ mod tests {
                 from: [0.0, 0.0],
                 to: [5.0, 0.0],
                 layer: Some("layer-1".into()),
+                pass: Some(0),
                 emits: true,
             }],
             stats: Stats::default(),
+            ..Preview::default()
         };
         let svg = preview_svg(&doc(), 150.0, Some(&preview), RenderOptions::default());
         assert!(svg.starts_with("<svg") && svg.ends_with("</svg>"));

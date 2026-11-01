@@ -2,8 +2,9 @@
 //! web UI, a keyboard shortcut, a test, or an AI agent over MCP. Each command has a stable dotted id, a JSON Schema for
 //! its input (from `schemars`), a risk class, and a description that doubles as model-facing documentation.
 //!
-//! [`Session`] owns the document, runs commands, keeps undo/redo (whole-document snapshots; documents are small), and
-//! records an origin-tagged history so the UI can show what the AI did.
+//! [`Session`] owns the document, runs commands and keeps a Fusion-style timeline (see the `session` module): every
+//! recorded step with its invocations, origin and summary, a marker that can roll back and forward, insert-and-replay
+//! when editing while rolled back, and undo/redo as moving the marker by one step.
 
 use doc::Document;
 use schemars::JsonSchema;
@@ -12,6 +13,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 mod builtin;
+mod session;
+
+pub use session::{HistoryEntry, HistoryStep, HistoryView, MAX_STEPS, Session, StepState};
 
 /// What a command can affect. Machine actions (`Pointer`, `Emit`) are not document commands; they are listed here so
 /// the engine can expose one catalogue, but the engine gates them separately.
@@ -44,14 +48,6 @@ pub enum Origin {
     Ui,
     Agent(String),
     Script,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HistoryEntry {
-    pub revision: u64,
-    pub command: String,
-    pub origin: Origin,
-    pub summary: String,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -155,103 +151,4 @@ pub struct Invocation {
 pub struct Outcome {
     pub result: Value,
     pub revision: u64,
-}
-
-/// A live editing session: the document, undo/redo, and history.
-pub struct Session {
-    registry: Registry,
-    doc: Document,
-    undo: Vec<Document>,
-    redo: Vec<Document>,
-    history: Vec<HistoryEntry>,
-}
-
-impl Session {
-    pub fn new(doc: Document) -> Self {
-        Session { registry: Registry::new(), doc, undo: Vec::new(), redo: Vec::new(), history: Vec::new() }
-    }
-
-    pub fn registry(&self) -> &Registry {
-        &self.registry
-    }
-
-    pub fn document(&self) -> &Document {
-        &self.doc
-    }
-
-    pub fn history(&self) -> &[HistoryEntry] {
-        &self.history
-    }
-
-    /// Run one command. `Query` commands do not create an undo step or bump the revision.
-    pub fn execute(&mut self, inv: Invocation, origin: Origin) -> Result<Outcome> {
-        self.batch(vec![inv], origin).map(|mut v| v.remove(0))
-    }
-
-    /// Run several commands as one undo step. All-or-nothing: on the first error the document is restored.
-    pub fn batch(&mut self, invs: Vec<Invocation>, origin: Origin) -> Result<Vec<Outcome>> {
-        let before = self.doc.clone();
-        let mut outcomes = Vec::with_capacity(invs.len());
-        let mut summaries = Vec::new();
-        let mut edited = false;
-        for inv in invs {
-            let entry = match self.registry.entry(&inv.id) {
-                Ok(e) => e,
-                Err(e) => {
-                    self.doc = before;
-                    return Err(e);
-                }
-            };
-            let params = if inv.params.is_null() { Value::Object(Default::default()) } else { inv.params };
-            match (entry.apply)(&mut self.doc, params) {
-                Ok((result, summary)) => {
-                    if entry.spec.risk != Risk::Query {
-                        edited = true;
-                        summaries.push((inv.id.clone(), summary));
-                    }
-                    outcomes.push(Outcome { result, revision: self.doc.revision });
-                }
-                Err(e) => {
-                    self.doc = before;
-                    return Err(e);
-                }
-            }
-        }
-        if edited {
-            // Backstop for every command: JSON cannot store NaN or infinity and planning cannot use them, so a
-            // document holding one (e.g. from transforms that overflow) is never committed.
-            if let Some(problem) = self.doc.numeric_problem() {
-                self.doc = before;
-                return Err(CommandError::Failed(format!(
-                    "refused: the result would contain unusable geometry ({problem}); nothing was changed"
-                )));
-            }
-            self.doc.revision = before.revision + 1;
-            self.undo.push(before);
-            self.redo.clear();
-            let command = summaries.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>().join(", ");
-            let summary = summaries.iter().map(|(_, s)| s.as_str()).collect::<Vec<_>>().join("; ");
-            self.history.push(HistoryEntry { revision: self.doc.revision, command, origin, summary });
-            for o in &mut outcomes {
-                o.revision = self.doc.revision;
-            }
-        }
-        Ok(outcomes)
-    }
-
-    pub fn undo(&mut self) -> Result<u64> {
-        let prev = self.undo.pop().ok_or(CommandError::NothingTo("undo"))?;
-        let rev = self.doc.revision + 1;
-        self.redo.push(std::mem::replace(&mut self.doc, prev));
-        self.doc.revision = rev;
-        Ok(rev)
-    }
-
-    pub fn redo(&mut self) -> Result<u64> {
-        let next = self.redo.pop().ok_or(CommandError::NothingTo("redo"))?;
-        let rev = self.doc.revision + 1;
-        self.undo.push(std::mem::replace(&mut self.doc, next));
-        self.doc.revision = rev;
-        Ok(rev)
-    }
 }

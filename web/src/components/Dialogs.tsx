@@ -4,7 +4,10 @@
 import { useMemo, useState } from "react";
 import type { Invocation } from "../api/client.ts";
 import * as C from "../api/commands.ts";
+import { createdIds } from "../api/drop.ts";
+import { paramsTemplate } from "../api/schema.ts";
 import type { CommandSpec, GDocument, StockShape, Vec2 } from "../api/types.ts";
+import { evalNumber } from "../editing.ts";
 import { boxSize, objectBounds, unionBoxes } from "../geometry.ts";
 import { Modal } from "./ui.tsx";
 
@@ -23,16 +26,17 @@ function Num(props: { label: string; value: string; onChange: (v: string) => voi
   );
 }
 
+/** A typed number (simple maths allowed), or null. */
 function parse(v: string): number | null {
-  const n = Number(v.trim());
-  return v.trim() !== "" && Number.isFinite(n) ? n : null;
+  return evalNumber(v);
 }
 
 /** Footer with Cancel and a primary action that runs `submit` and closes on success. */
-function useSubmit(run: Run, onClose: () => void) {
+function useSubmit(run: Run, onClose: () => void, onDone?: (result: unknown) => void) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const submit = async (inv: Invocation | string) => {
+    if (busy) return;
     if (typeof inv === "string") {
       setError(inv);
       return;
@@ -40,7 +44,8 @@ function useSubmit(run: Run, onClose: () => void) {
     setBusy(true);
     setError(null);
     try {
-      await run(inv);
+      const r = await run(inv);
+      onDone?.(r);
       onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -91,6 +96,7 @@ export function StockDialog({ doc, run, onClose }: { doc: GDocument | null; run:
     <Modal
       title={s ? "Edit stock" : "Stock"}
       onClose={onClose}
+      onSubmit={() => submit(build())}
       footer={
         <>
           {error && <span className="form-error">{error}</span>}
@@ -202,6 +208,7 @@ export function PlaceDialog({ ids, run, onClose }: { ids: string[]; run: Run; on
     <Modal
       title={`Place ${ids.length} object${ids.length === 1 ? "" : "s"} on stock`}
       onClose={onClose}
+      onSubmit={() => submit(build())}
       footer={
         <>
           {error && <span className="form-error">{error}</span>}
@@ -254,14 +261,44 @@ export function PlaceDialog({ ids, run, onClose }: { ids: string[]; run: Run; on
   );
 }
 
-export function ArrayDialog({ doc, ids, run, onClose }: { doc: GDocument; ids: string[]; run: Run; onClose: () => void }) {
+export function ArrayDialog({
+  doc,
+  ids,
+  fieldMm,
+  run,
+  onClose,
+  onCreated,
+}: {
+  doc: GDocument;
+  ids: string[];
+  fieldMm: number;
+  run: Run;
+  onClose: () => void;
+  /** The copies' ids, to select them with the originals (LightBurn selects the result). */
+  onCreated?: (ids: string[]) => void;
+}) {
   const b = unionBoxes(doc.objects.filter((o) => ids.includes(o.id)).map(objectBounds));
   const [bw, bh] = b ? boxSize(b) : [10, 10];
   const [cols, setCols] = useState("3");
   const [rows, setRows] = useState("1");
   const [dx, setDx] = useState(String(Number((bw + 2).toFixed(2))));
   const [dy, setDy] = useState(String(Number((bh + 2).toFixed(2))));
-  const { busy, error, submit } = useSubmit(run, onClose);
+  const { busy, error, submit } = useSubmit(run, onClose, (r) => onCreated?.(createdIds(r)));
+  // Warn before creating copies the galvo cannot reach.
+  const nc = parse(cols);
+  const nr = parse(rows);
+  const px = parse(dx);
+  const py = parse(dy);
+  let outside = 0;
+  if (b && nc !== null && nr !== null && px !== null && py !== null && nc >= 1 && nr >= 1 && nc * nr <= 2500) {
+    const h = fieldMm / 2;
+    for (let i = 0; i < nc; i++)
+      for (let j = 0; j < nr; j++) {
+        const ox = i * px;
+        const oy = j * py;
+        if (b.x0 + ox <= -h || b.x1 + ox >= h || b.y0 + oy <= -h || b.y1 + oy >= h) outside++;
+      }
+  }
   const build = (): Invocation | string => {
     const c = parse(cols);
     const r = parse(rows);
@@ -276,6 +313,7 @@ export function ArrayDialog({ doc, ids, run, onClose }: { doc: GDocument; ids: s
     <Modal
       title="Rectangular array"
       onClose={onClose}
+      onSubmit={() => submit(build())}
       footer={
         <>
           {error && <span className="form-error">{error}</span>}
@@ -294,6 +332,12 @@ export function ArrayDialog({ doc, ids, run, onClose }: { doc: GDocument; ids: s
         <Num label="Pitch X" unit="mm" value={dx} onChange={setDx} />
         <Num label="Pitch Y" unit="mm" value={dy} onChange={setDy} />
       </div>
+      {outside > 0 && (
+        <p className="warn-text" role="status">
+          {outside} of the {(nc ?? 0) * (nr ?? 0)} cells would be outside the {fieldMm} mm galvo field. Use a smaller pitch or
+          negative pitch, or move the original first.
+        </p>
+      )}
       <p className="hint">Counts include the original. Pitch is centre-to-centre; negative pitch goes left/down.</p>
     </Modal>
   );
@@ -348,6 +392,7 @@ export function CommandPalette({ commands, run, onClose }: { commands: CommandSp
               onClick={() => {
                 setPicked(c);
                 setResult(null);
+                setParams(JSON.stringify(paramsTemplate(c.input_schema), null, 2));
               }}
             >
               <span className="palette-id">{c.id}</span>

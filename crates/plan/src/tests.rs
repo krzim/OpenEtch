@@ -14,6 +14,8 @@ fn rect(id: &str, w: f64, h: f64, at: (f64, f64)) -> Object {
         layer: "layer-1".into(),
         geometry: Geometry::Rect { width_mm: w, height_mm: h, corner_radius_mm: 0.0 },
         transform: Affine::translate(at),
+        group: None,
+        extras: Default::default(),
     }
 }
 
@@ -289,4 +291,26 @@ fn preview_serialises_with_lowercase_kinds() {
     assert_eq!(json["segments"][1]["kind"], "mark");
     assert_eq!(json["segments"][1]["layer"], "layer-1");
     assert!(json["stats"]["mark_length_mm"].as_f64().is_some());
+}
+
+#[test]
+fn images_are_skipped_with_a_warning() {
+    // Far outside the field, so planning would refuse it if it were not skipped.
+    let image = Object::new(
+        "obj-7".into(),
+        "photo",
+        "layer-1".into(),
+        Geometry::Image { width_mm: 20.0, height_mm: 10.0, mime: "image/png".into(), data_base64: "iVBORw0KGgo=".into() },
+        Affine::translate((500.0, 0.0)),
+    );
+    let plan = plan_job(&doc_with(vec![image.clone()], CutSettings::default()), &target()).unwrap();
+    assert!(plan.passes.is_empty());
+    assert_eq!(plan.warnings.len(), 1);
+    assert!(plan.warnings[0].starts_with(IMAGE_WARNING), "{:?}", plan.warnings);
+    // Vectors next to it still plan; without images there is no warning.
+    let plan = plan_job(&doc_with(vec![image, rect("obj-1", 10.0, 10.0, (0.0, 0.0))], CutSettings::default()), &target()).unwrap();
+    assert_eq!(plan.passes.len(), 1);
+    let plain = plan_job(&doc_with(vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0))], CutSettings::default()), &target()).unwrap();
+    assert!(plain.warnings.is_empty());
+    assert!(serde_json::to_value(&plain).unwrap().get("warnings").is_none());
 }

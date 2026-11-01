@@ -10,6 +10,7 @@ listed here.
 | [luizbueno3d/openlaser-rs](https://github.com/luizbueno3d/openlaser-rs) @ `9d81a15` | MIT OR Apache-2.0 | LightBurn `.lbrn2` facts and code: the compact `VertList`/`PrimList` scanner, the `c0x1`/`c1x1` "no control point" rule, live-Text-XForm-over-BackupPath, and the LightBurn layer palette values (which it transcribed from LightBurn's public colour-palette documentation; values only) | `crates/lbrn` (`path.rs`, `palette.rs` headers) |
 | [tscircuit/lbrnts](https://github.com/tscircuit/lbrnts) | MIT | Format notes only, no code: tool layers T1/T2 (`CutIndex="30"`, `type="Tool"`, never output) | `crates/lbrn` (crate docs) |
 | [jlucaso1/lbrn2-to-svg](https://github.com/jlucaso1/lbrn2-to-svg) | MIT | Format notes only, no code: `XForm` coefficient order, Rect/Ellipse/Bitmap centred on the local origin (cross-checked against real files) | `crates/lbrn` (crate docs) |
+| [ixmilia/dxf-rs](https://github.com/ixmilia/dxf-rs) (`dxf` crate 0.6) | MIT © Brett V. Forsgren | Used as a dependency (not copied) to read DXF files for `art.import_dxf`; native builds only (it needs a random source on wasm32) | `crates/commands` (`builtin/dxf.rs`) |
 | [meerk40t/meerk40t](https://github.com/meerk40t/meerk40t) `balormk/` | MIT © 2021 meerk40t | `.cor` file layout and upload order (cross-checked); the list delay sign rule (`>= 0` is positive) and the polygon delay encoding (`list_laser_on_delay`, `list_polygon_delay` in `balormk/controller.py`) | `crates/corfile`, `crates/lmc` (`units.rs` header) |
 
 ## Fixtures

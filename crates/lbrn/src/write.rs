@@ -1,37 +1,91 @@
-//! [`LbrnProject`] → `.lbrn2` text, laid out like LightBurn's own files: XML declaration, root attributes, the
-//! kept root elements, `CutSetting`s, `Shape`s, then `Notes`. No thumbnail is written. Every path gets fresh, unique
-//! `VertID`/`PrimID` values and its lists inline.
+//! [`LbrnProject`] → `.lbrn2` text, laid out like LightBurn's own files: XML declaration, root attributes, then the
+//! root's children in [`LbrnProject::order`] (else the extra elements, `CutSetting`s, `Shape`s, then `Notes`), four
+//! spaces of indentation per level, `<tag Value="..."/>` values. What the parser kept is written back as it was read:
+//! source text of unmodelled elements, attribute order, the spelling of unchanged numbers and `XForm`s, path ids and
+//! shared lists, the declaration and line endings. New paths get fresh `VertID`/`PrimID` values above every id
+//! already used, with their lists inline.
+
+use std::collections::HashSet;
 
 use kurbo::Affine;
 
-use crate::model::{CutParams, CutSetting, Element, LbrnProject, PathData, Shape, ShapeKind, num};
+use crate::model::{
+    CutParams, CutSetting, Element, Encoded, Format, LbrnProject, PathData, RootItem, Shape, ShapeKind, num, num_like,
+};
 use crate::path::{write_prims, write_vertices};
 
 /// Write a project as `.lbrn2` XML.
 pub fn write(p: &LbrnProject) -> String {
-    let mut w = Writer { out: String::with_capacity(4096), next_id: 0 };
-    w.out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    let mut w = Writer { out: String::with_capacity(4096), next_id: first_free_id(p), format: p.format.clone() };
+    w.out.push_str(p.format.declaration.as_deref().unwrap_or("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"));
+    w.out.push('\n');
     w.open(0, "LightBurnProject", &p.attributes, false);
-    let (tail, head): (Vec<&Element>, Vec<&Element>) = p.extra_elements.iter().partition(|e| e.name == "Notes");
-    for e in head {
-        w.element(1, e);
+    for item in layout(p) {
+        match item {
+            RootItem::CutSetting(i) => w.cut_setting(1, &p.cut_settings[i]),
+            RootItem::Shape(i) => w.shape(1, &p.shapes[i]),
+            RootItem::Element(i) => w.element(1, &p.extra_elements[i]),
+        }
     }
-    for c in &p.cut_settings {
-        w.cut_setting(1, c);
+    w.out.push_str("</LightBurnProject>");
+    if p.format.final_newline {
+        w.out.push('\n');
     }
-    for s in &p.shapes {
-        w.shape(1, s);
+    if p.format.crlf { w.out.replace('\n', "\r\n") } else { w.out }
+}
+
+/// The order to write the root's children in: [`LbrnProject::order`] when it names every item exactly once, else
+/// LightBurn's usual layout.
+fn layout(p: &LbrnProject) -> Vec<RootItem> {
+    let total = p.cut_settings.len() + p.shapes.len() + p.extra_elements.len();
+    let valid = |i: &RootItem| match *i {
+        RootItem::CutSetting(k) => k < p.cut_settings.len(),
+        RootItem::Shape(k) => k < p.shapes.len(),
+        RootItem::Element(k) => k < p.extra_elements.len(),
+    };
+    let unique: HashSet<RootItem> = p.order.iter().copied().filter(valid).collect();
+    if p.order.len() == total && unique.len() == total {
+        return p.order.clone();
     }
-    for e in tail {
-        w.element(1, e);
+    let (tail, head): (Vec<usize>, Vec<usize>) =
+        (0..p.extra_elements.len()).partition(|i| p.extra_elements[*i].name == "Notes");
+    head.into_iter()
+        .map(RootItem::Element)
+        .chain((0..p.cut_settings.len()).map(RootItem::CutSetting))
+        .chain((0..p.shapes.len()).map(RootItem::Shape))
+        .chain(tail.into_iter().map(RootItem::Element))
+        .collect()
+}
+
+/// One above the largest numeric `VertID`/`PrimID` the project keeps, so fresh ids never collide with them.
+fn first_free_id(p: &LbrnProject) -> u64 {
+    fn visit(s: &Shape, max: &mut u64) {
+        let path = match &s.kind {
+            ShapeKind::Path(d) => Some(d),
+            ShapeKind::Text { backup: Some(b) } => Some(&b.path),
+            ShapeKind::Group(children) => {
+                children.iter().for_each(|c| visit(c, max));
+                None
+            }
+            _ => None,
+        };
+        if let Some(e) = path.and_then(|d| d.encoded.as_ref()) {
+            for id in [&e.vert_id, &e.prim_id].into_iter().flatten() {
+                if let Ok(n) = id.trim().parse::<u64>() {
+                    *max = (*max).max(n.saturating_add(1));
+                }
+            }
+        }
     }
-    w.out.push_str("</LightBurnProject>\n");
-    w.out
+    let mut max = 0;
+    p.shapes.iter().for_each(|s| visit(s, &mut max));
+    max
 }
 
 struct Writer {
     out: String,
     next_id: u64,
+    format: Format,
 }
 
 /// Whether XML 1.0 allows `c` in a document at all (its `Char` production). Other characters are dropped on writing,
@@ -49,7 +103,7 @@ fn safe_name(name: &str) -> bool {
         })
 }
 
-fn escape_attr(s: &str) -> String {
+pub(crate) fn escape_attr(s: &str) -> String {
     let mut o = String::with_capacity(s.len());
     for c in s.chars().filter(|c| xml_char(*c)) {
         match c {
@@ -79,8 +133,20 @@ fn escape_text(s: &str) -> String {
     o
 }
 
-fn xform_text(a: Affine) -> String {
+/// `a b c d e f`, or `text` when it reads as exactly `a`.
+fn xform_text(a: Affine, text: Option<&str>) -> String {
+    if let Some(t) = text
+        && crate::parse::parse_xform(t).is_ok_and(|b| b.as_coeffs() == a.as_coeffs())
+    {
+        return t.to_string();
+    }
     a.as_coeffs().map(num).join(" ")
+}
+
+/// Source text that is safe to paste into the output as one element: it must start a tag and must not hold
+/// characters XML cannot carry. (Raw text comes from parsed files and is well-formed; this guards the public model.)
+fn raw_ok(raw: &str) -> bool {
+    raw.starts_with('<') && raw.ends_with('>') && raw.chars().all(xml_char)
 }
 
 impl Writer {
@@ -90,12 +156,17 @@ impl Writer {
         }
     }
 
+    fn empty_end(&self) -> &'static str {
+        if self.format.space_before_slash { " />\n" } else { "/>\n" }
+    }
+
     fn open(&mut self, depth: usize, name: &str, attrs: &[(String, String)], empty: bool) {
         self.indent(depth);
         self.out.push('<');
         self.out.push_str(name);
         self.attributes(attrs);
-        self.out.push_str(if empty { "/>\n" } else { ">\n" });
+        let end = if empty { self.empty_end() } else { ">\n" };
+        self.out.push_str(end);
     }
 
     fn attributes(&mut self, attrs: &[(String, String)]) {
@@ -116,10 +187,18 @@ impl Writer {
 
     fn value(&mut self, depth: usize, tag: &str, value: &str) {
         self.indent(depth);
-        self.out.push_str(&format!("<{tag} Value=\"{}\"/>\n", escape_attr(value)));
+        self.out.push_str(&format!("<{tag} Value=\"{}\"", escape_attr(value)));
+        let end = self.empty_end();
+        self.out.push_str(end);
     }
 
     fn element(&mut self, depth: usize, e: &Element) {
+        if let Some(raw) = e.raw.as_deref().filter(|r| raw_ok(r)) {
+            self.indent(depth);
+            self.out.push_str(raw);
+            self.out.push('\n');
+            return;
+        }
         if !safe_name(&e.name) {
             return;
         }
@@ -169,61 +248,150 @@ impl Writer {
         self.close(depth, name);
     }
 
-    fn path_lists(&mut self, depth: usize, d: &PathData) {
-        self.text_element(depth, "VertList", &write_vertices(&d.vertices));
-        self.text_element(depth, "PrimList", &write_prims(&d.prims));
+    fn fresh_id(&mut self) -> String {
+        let id = self.next_id.to_string();
+        self.next_id += 1;
+        id
+    }
+
+    /// The ids and lists to write for a path: as read, or both lists for a new path, with fresh ids when `ids` (a
+    /// Text's backup outline has none in LightBurn's files).
+    fn encoding(&mut self, d: &PathData, ids: bool) -> Encoded {
+        match &d.encoded {
+            Some(e) => e.clone(),
+            None => {
+                let id = ids.then(|| self.fresh_id());
+                Encoded {
+                    vert_id: id.clone(),
+                    prim_id: id,
+                    vert_list: Some(write_vertices(&d.vertices)),
+                    prim_list: Some(write_prims(&d.prims)),
+                }
+            }
+        }
+    }
+
+    fn path_lists(&mut self, depth: usize, e: &Encoded) {
+        if let Some(v) = &e.vert_list {
+            self.text_element(depth, "VertList", v);
+        }
+        if let Some(p) = &e.prim_list {
+            self.text_element(depth, "PrimList", p);
+        }
+    }
+
+    /// `Type`, then `attributes` in their order with the modelled ones (`model`, in the model's spelling unless the
+    /// source spelling reads the same) in place, then modelled ones the source did not have.
+    fn shape_attributes(
+        type_name: &str,
+        attributes: &[(String, String)],
+        model: Vec<(&'static str, Option<ModelValue>)>,
+    ) -> Vec<(String, String)> {
+        let mut out = vec![("Type".to_string(), type_name.to_string())];
+        let modelled = |k: &str| model.iter().find(|(m, _)| *m == k);
+        for (k, v) in attributes {
+            match modelled(k) {
+                Some((_, Some(m))) => out.push((k.clone(), m.text(Some(v)))),
+                Some((_, None)) => {}
+                None if k == "Type" => {}
+                None => out.push((k.clone(), v.clone())),
+            }
+        }
+        for (k, m) in &model {
+            if let Some(m) = m
+                && !attributes.iter().any(|(a, _)| a == k)
+            {
+                out.push(((*k).to_string(), m.text(None)));
+            }
+        }
+        out
     }
 
     fn shape(&mut self, depth: usize, s: &Shape) {
-        let mut attrs: Vec<(String, String)> = vec![("Type".into(), s.type_name().to_string())];
-        if let Some(i) = s.cut_index {
-            attrs.push(("CutIndex".into(), i.to_string()));
-        }
+        let cut = s.cut_index.map(|i| ModelValue::Int(u64::from(i)));
+        let mut model: Vec<(&'static str, Option<ModelValue>)> = vec![("CutIndex", cut)];
+        let mut path_encoding = None;
         match &s.kind {
-            ShapeKind::Rect { w, h, cr } => {
-                attrs.extend([("W".into(), num(*w)), ("H".into(), num(*h)), ("Cr".into(), num(*cr))]);
+            ShapeKind::Rect { w, h, cr } => model.extend([
+                ("W", Some(ModelValue::Num(*w))),
+                ("H", Some(ModelValue::Num(*h))),
+                ("Cr", Some(ModelValue::Num(*cr))),
+            ]),
+            ShapeKind::Ellipse { rx, ry } => {
+                model.extend([("Rx", Some(ModelValue::Num(*rx))), ("Ry", Some(ModelValue::Num(*ry)))]);
             }
-            ShapeKind::Ellipse { rx, ry } => attrs.extend([("Rx".into(), num(*rx)), ("Ry".into(), num(*ry))]),
-            ShapeKind::Bitmap { w, h } => attrs.extend([("W".into(), num(*w)), ("H".into(), num(*h))]),
-            ShapeKind::Path(_) => {
-                let id = self.next_id.to_string();
-                self.next_id += 1;
-                attrs.extend([("VertID".into(), id.clone()), ("PrimID".into(), id)]);
+            ShapeKind::Bitmap { w, h } => {
+                model.extend([("W", Some(ModelValue::Num(*w))), ("H", Some(ModelValue::Num(*h)))]);
+            }
+            ShapeKind::Path(d) => {
+                let e = self.encoding(d, true);
+                model.extend([
+                    ("VertID", e.vert_id.clone().map(ModelValue::Text)),
+                    ("PrimID", e.prim_id.clone().map(ModelValue::Text)),
+                ]);
+                path_encoding = Some(e);
             }
             ShapeKind::Group(_) | ShapeKind::Text { .. } | ShapeKind::Other { .. } => {}
         }
-        attrs.extend(s.attributes.iter().cloned());
+        let attrs = Self::shape_attributes(s.type_name(), &s.attributes, model);
         self.open(depth, "Shape", &attrs, false);
         let d = depth + 1;
+        let xform = xform_text(s.xform, s.xform_text.as_deref());
         match &s.kind {
             ShapeKind::Text { backup: Some(b) } => {
-                let mut battrs = vec![("Type".to_string(), "Path".to_string())];
-                if let Some(i) = b.cut_index {
-                    battrs.push(("CutIndex".into(), i.to_string()));
-                }
+                let e = self.encoding(&b.path, false);
+                let model = vec![
+                    ("CutIndex", b.cut_index.map(|i| ModelValue::Int(u64::from(i)))),
+                    ("VertID", e.vert_id.clone().map(ModelValue::Text)),
+                    ("PrimID", e.prim_id.clone().map(ModelValue::Text)),
+                ];
+                let battrs = Self::shape_attributes("Path", &b.attributes, model);
                 self.open(d, "BackupPath", &battrs, false);
-                self.text_element(d + 1, "XForm", &xform_text(b.xform));
-                self.path_lists(d + 1, &b.path);
+                self.text_element(d + 1, "XForm", &xform_text(b.xform, b.xform_text.as_deref()));
+                self.path_lists(d + 1, &e);
                 self.close(d, "BackupPath");
-                self.text_element(d, "XForm", &xform_text(s.xform));
+                self.text_element(d, "XForm", &xform);
             }
-            ShapeKind::Path(p) => {
-                self.text_element(d, "XForm", &xform_text(s.xform));
-                self.path_lists(d, p);
+            ShapeKind::Path(_) => {
+                self.text_element(d, "XForm", &xform);
+                if let Some(e) = &path_encoding {
+                    self.path_lists(d, e);
+                }
             }
             ShapeKind::Group(children) => {
-                self.text_element(d, "XForm", &xform_text(s.xform));
+                self.text_element(d, "XForm", &xform);
                 self.open(d, "Children", &[], false);
                 for c in children {
                     self.shape(d + 1, c);
                 }
                 self.close(d, "Children");
             }
-            _ => self.text_element(d, "XForm", &xform_text(s.xform)),
+            _ => self.text_element(d, "XForm", &xform),
         }
         for c in &s.children {
             self.element(d, c);
         }
         self.close(depth, "Shape");
+    }
+}
+
+/// A modelled attribute's value.
+enum ModelValue {
+    Num(f64),
+    Int(u64),
+    Text(String),
+}
+
+impl ModelValue {
+    /// The text to write, keeping `source`'s spelling when it reads as the same value.
+    fn text(&self, source: Option<&str>) -> String {
+        match self {
+            ModelValue::Num(v) => num_like(source, *v),
+            ModelValue::Int(n) => match source {
+                Some(s) if s.trim().parse::<u64>().ok() == Some(*n) => s.to_string(),
+                _ => n.to_string(),
+            },
+            ModelValue::Text(t) => t.clone(),
+        }
     }
 }

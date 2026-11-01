@@ -19,7 +19,7 @@ Mac, PC, phone) and Claude are clients of the same live document. The engine is 
 | `corfile` | EzCad lens correction files (`JCZ_COR_2_1`, `LMC1COR_1.0`): parse, produce the WriteCorLine upload sequence, host-side bilinear correction. **Pure.** | – | no |
 | `doc` | Document model: stock, layers with MOPA cut settings, objects (kurbo paths + affine transforms). **Pure data + geometry helpers.** | kurbo | no |
 | `lbrn` | LightBurn `.lbrn2` projects and `.clb` material libraries: parse, write, convert to and from `doc` (see "File formats"). **Pure.** | doc, kurbo, roxmltree | no |
-| `commands` | Command registry: every change to a document goes through a registered command with a JSON Schema. Session with undo/redo and an origin-tagged history. | doc | no |
+| `commands` | Command registry: every change to a document goes through a registered command with a JSON Schema. Session with a Fusion-style timeline (see "History timeline"). | doc | no |
 | `plan` | Document → job: flatten paths, hatch fills, order travel, encode to LMC list packets for a `MachineProfile`. Also simulation (decode packets to a preview). | doc, lmc | no |
 | `machine` | Machine profile (TOML, importable from EzCad `markcfg7`), the `Link` transport trait, `SimLink`, `UsbLink` (nusb, feature `usb`), `Controller` (init, .cor upload, light framing, run, abort). | lmc, corfile | `usb` feature only |
 | `engine` | Binary. axum HTTP + WebSocket API for the web UI, MCP server (rmcp), run approval, serves `web/dist`. | all | yes |
@@ -100,11 +100,14 @@ says otherwise. `origin` is `"ui"` (default), `"script"` or `"agent:<name>"`.
 | GET | `/api/commands` | `[CommandSpec]` (id, title, description, risk, input_schema) |
 | POST | `/api/execute` | `{ "id": "...", "params": {...}, "origin": "ui" }` → `{ "ok": true, "result": ..., "revision": n }`; a failing command is **200** `{ "ok": false, "error", "candidates"? }` |
 | POST | `/api/batch` | `{ "commands": [{id, params}], "origin": "ui" }` → `{ "ok": true, "results": [...], "revision": n }`; one undo step, all-or-nothing; failure as for execute |
-| POST | `/api/undo` | optional `{ "origin" }` → `{ "ok": true, "revision": n }`; nothing to undo is **200** `{ "ok": false, "error" }`, so clients must check `ok` |
-| POST | `/api/redo` | as `/api/undo` |
+| POST | `/api/undo` | optional `{ "origin" }` → `{ "ok": true, "revision": n }`: moves the timeline marker back over one step (failed steps are skipped); nothing to undo is **200** `{ "ok": false, "error" }`, so clients must check `ok` |
+| POST | `/api/redo` | as `/api/undo`, forward |
 | GET | `/api/document` | full `Document` JSON |
-| GET | `/api/history` | `[HistoryEntry]` (revision, command id, origin, summary) |
-| GET | `/api/preview` | planned job: `{ segments: [{kind: "jump"|"mark", layer, from: [x,y], to: [x,y]}], stats }` in field mm; an empty document is an empty preview; a planning error (out of field, power above the limit, too many passes/segments) is **422** |
+| GET | `/api/history` | `{ "marker": n, "steps": [Step] }` (see "History timeline"); string parameters over 512 bytes (file contents) are replaced by `"<n bytes omitted>"` |
+| POST | `/api/history/goto` | `{ "marker": n, "origin"? }` → `{ "ok": true, "marker", "revision" }`: apply steps `1..=marker`, roll back the rest (0 = before the first step); a marker past the end is **200** `{ "ok": false, "error" }` |
+| POST | `/api/history/delete` | `{ "index": n, "origin"? }` → `{ "ok": true, "marker", "revision" }`: remove step `index` (1-based) and replay the steps after it; no such step is **200** `{ "ok": false, "error" }` |
+| GET | `/api/preview` | planned job: `{ segments: [{kind: "jump"|"mark", layer, pass, from: [x,y], to: [x,y], emits}], stats, layers: [{layer_id, name, color, mode, output, visible, passes, segments, mark_length_mm, jump_length_mm, estimated_time_s}], warnings }` in field mm. `pass` indexes the job's passes in burn order (a jump belongs to the pass it travels into); `layers` lists every document layer in order (zeros for layers with nothing to mark or output off; layer times leave out the job's start-up delay); `warnings` are things the plan left out (images). `?layers=id1,id2` keeps only those layers' segments and entries (stats stay the whole job's). An empty document is an empty preview; a planning error (out of field, power above the limit, too many passes/segments) is **422** |
+| GET | `/api/fill_regions` | `{ layers: [{layer_id, name, color, mode, visible, output, paths: [d], object_ids: [id]}] }`: for every layer whose mode is `fill` or `fill_then_line`, one SVG path per object (its closed subpaths, field mm, +Y up, flattened at 0.05 mm) to draw with `fill-rule: evenodd`, which is exactly the area the hatch covers. Display only |
 | GET | `/api/preview.svg` | rendered preview (stock, objects, toolpath; `?jumps=false` hides travel); still renders the document on a planning error |
 | GET | `/api/machine` | `connected`, `simulated`, `busy`, `state`, `running`, `framing`, `field_mm`, `profile`, `max_power_pct`, `last_error`, `sim_counters`, `approval: { pin_set, pin_changed, locked_until_unix_s: null \| n, physical_confirm: null \| { input_bit, timeout_s } }`, `pending_runs: [Run]`, `runs: [Run]` |
 | POST | `/api/runs` | optional `{ "origin" }` → **201** `{ "ok": true, "id", "run": Run, "message" }`; plans, encodes and checks the document; sends nothing to the board; at most 8 pending |
@@ -117,7 +120,7 @@ says otherwise. `origin` is `"ui"` (default), `"script"` or `"agent:<name>"`.
 | POST | `/api/projects/open` | `{ "name", "origin"? }` → `{ "ok": true, "name", "result", "revision" }`; replaces the document (`doc.load`, one undo step) and makes it the current project; a name differing only in case opens the one matching project (`name` in the answer is its name on disk; several matches are 409); unknown project 404, unusable file 400 |
 | GET | `/api/project` | `{ "name": string \| null, "saved_revision": n \| null, "revision": n, "dirty": bool }`; refetch on `document_changed` and `project_saved` |
 | GET | `/api/document/download` | `?format=openetch` (default) \| `lbrn2` → the document as a file with `Content-Disposition: attachment` (named after the project, else the document; ASCII `filename` plus UTF-8 `filename*`), `Cache-Control: no-store` and `X-OpenEtch-Warnings: <count>` (LightBurn conversion warnings; the texts come from `doc.export_lbrn2`). LightBurn files are laid out for the document's `field_mm` |
-| POST | `/api/document/upload` | `?format=openetch\|lbrn2&mode=replace\|merge&field_mm=<mm>` with the raw file as the body (UTF-8, a BOM is dropped, at most 50 MB, else **413**) → runs `doc.load` (`.openetch`, replace only) or `doc.import_lbrn2` (`field_mm` only for LightBurn, a finite number, else 400; default the document's) on a blocking thread with origin `ui`, answered like `/api/execute` (a refused file is **200** `{ "ok": false, "error" }`). Unknown query parameters, formats or modes are 400 |
+| POST | `/api/document/upload` | `?format=openetch\|lbrn2\|svg\|dxf\|image` with the raw file as the body (at most 50 MB, else **413**) → runs on a blocking thread with origin `ui`, answered like `/api/execute` (a refused file is **200** `{ "ok": false, "error" }`; the result's `created` ids let the UI select what was imported). `openetch`: `doc.load` (replace only). `lbrn2`: `doc.import_lbrn2`, `mode=replace\|merge` (default replace), `field_mm=<mm>` (finite; default the document's). `svg`: `art.import_svg`; `dxf`: `art.import_dxf`; `image`: `art.import_image` with the file base64-encoded and `mime` from the query or sniffed from the first bytes (PNG, JPEG, GIF, BMP, WebP, TIFF; else 400). These three always add to the document (`mode` must be `merge` or absent) and take optional `layer=<id>`, `name=<text>` and `width_mm=<mm>`. Text formats must be UTF-8 (a BOM is dropped). Unknown query parameters, formats or modes, and options that do not apply to the format, are 400 |
 | WS | `/api/events` | server → client JSON events (below) |
 | * | `/mcp` | MCP Streamable HTTP endpoint |
 
@@ -136,6 +139,39 @@ Events on `/api/events`:
 - `{ "type": "run_finished", "id", "ok": bool, "state", "error": string | null }`
 - `{ "type": "approval_locked", "until_unix_s": n }` (too many wrong PINs; approvals locked until then)
 - `{ "type": "project_saved", "name", "revision" }` (refetch `GET /api/project`)
+- `{ "type": "history_changed", "marker": n, "steps": n, "revision": n }` (after every edit, undo, redo, goto or step
+  delete, right after `document_changed`; refetch `GET /api/history`)
+
+**History timeline** (`commands::Session`, like Fusion 360's design timeline). Every successful edit (one execute or
+one batch) is a step `{ index, revision, command, invocations: [{id, params}], origin, summary, state, error? }`:
+`index` is 1-based, `command` the edit command ids joined with ", ", `invocations` the edit invocations as they ran
+(queries in a batch are not recorded), `state` is `"active"` (applied), `"rolled_back"` (after the marker) or
+`"failed"` (its replay failed; `error` says why; it changes nothing and is shown red). The **marker** is the index of
+the last applied step (0 = none); the document is always the snapshot at the marker, so moving it is instant.
+
+- `goto(m)` applies steps `1..=m` and rolls back the rest, deleting nothing. Undo/redo move the marker over one step.
+- An edit made while rolled back is **inserted** right after the marker; every later step is then **replayed** from
+  its recorded invocations so its snapshot is current, and stays rolled back until the marker moves past it (Fusion:
+  drag the marker back to the end). A later step that no longer applies (it edited an object an inserted or deleted
+  step removed) is kept as `failed` and skipped by undo/redo.
+- `delete(i)` removes step `i` and replays the steps after it; a marker after it moves back by one.
+- Ids stay stable across replays: each step remembers the document's `next_id` when it first ran and replays from the
+  same value, and a newly recorded step starts above every id the timeline has ever allocated, so an inserted step
+  never takes an id a later step creates or uses.
+- At most 500 steps are kept: older applied steps are folded into the starting document (with nothing applied, the
+  newest rolled-back steps are dropped instead).
+- The revision always increases (goto, undo, redo and delete each make a new revision), so stale-run checks and
+  preview caching keep working.
+
+**Ids and arranging.** Every command that takes object `ids` also takes group ids, which stand for all the group's
+members (nested groups included). `object.duplicate` and `art.array` copy a fully selected group as a new group;
+`object.delete` removes groups left empty. `object.align {ids, reference?, x?, y?, mode?}` follows LightBurn: the
+default reference is the **last** id (the UI passes the selection in the order objects were added to it), which stays
+put; other references are `first`, `selection`, `object {id}`, `stock` and `field`; a group aligns as one object by
+its bounds; top is +Y. "Centre on stock" is `object.align` with `reference: {kind: "stock"}`, `x`/`y` `center`,
+`mode: "group"`. `object.distribute {ids, axis, by: centers|gaps|spacing, spacing_mm?}` keeps the outermost objects
+for centres and gaps. `object.move {ids, from_point, to_point}` is a snapped drag. `stock.move {center? | translate?,
+rotation_deg? | rotate_by_deg?}` moves the stock only.
 
 **Projects.** Named projects are `<projects-dir>/<name>.openetch` (`--projects-dir`, default the OS data dir +
 `openetch/projects`, e.g. `%APPDATA%\openetch\projects`, `~/Library/Application Support/openetch/projects`,
@@ -149,9 +185,10 @@ matches. Every file is also resolved against the canonical projects directory an
 it, so links pointing elsewhere are neither read nor written through. Saves go to a fresh temporary file that is
 renamed over the old one. The engine tracks the current project (name, saved revision) in memory: save and open set
 it; `doc.new` and `doc.load` (including an `.openetch` upload) clear it, and so does a replacing LightBurn import
-(`doc.import_lbrn2` with `mode` `replace`, the default; the document is then unsaved), while a merging import keeps
-it. The document is dirty whenever its revision differs from the last save, open or `doc.new` (undoing back to the
-saved state still counts as a change). Document commands from `/api/execute`, `/api/batch`, uploads and the MCP
+(`doc.import_lbrn2` with `mode` `replace`, the default), while a merging import keeps it. After `doc.load` (other than
+opening a project) or a replacing import the document is unsaved, because no project holds it; only `doc.new` leaves
+a clean document. The document is dirty whenever its revision differs from the last save, open or `doc.new` (undoing
+back to the saved state still counts as a change). Document commands from `/api/execute`, `/api/batch`, uploads and the MCP
 `execute` / `batch` tools run on a blocking thread, so a large import does not stall the server.
 
 **Field size.** The engine starts with `document.field_mm` set to the machine profile's `field_mm`. `doc.new` and
@@ -171,9 +208,9 @@ or deletes the operator PIN (restart the engine afterwards).
 
 ## MCP tools
 
-`list_commands`, `execute`, `batch`, `inspect_document`, `render_preview` (PNG), `undo`, `redo`, plus separate machine
-tools: `machine_status`, `frame_start`, `frame_stop`, `job_request_run`, `machine_stop`, and project tools:
-`project_list` (`{projects, current}`), `project_save {name, overwrite?}` (replacing an existing project other than
+`list_commands`, `execute`, `batch`, `inspect_document`, `render_preview` (PNG), `undo`, `redo`, `history_list`
+(`{marker, steps}`, as `GET /api/history`), `history_goto {marker}`, plus separate machine tools: `machine_status`,
+`frame_start`, `frame_stop`, `job_request_run`, `machine_stop`, and project tools: `project_list` (`{projects, current}`), `project_save {name, overwrite?}` (replacing an existing project other than
 the current one needs `overwrite: true`, default false), `project_open {name}` and
 `project_export_lbrn2 {name, overwrite?}` (writes `<projects-dir>/<name>.lbrn2`; replacing an existing one, also one
 whose name differs only in case, needs `overwrite: true`, default false; returns `{path, warnings, field_mm}`).
@@ -188,18 +225,32 @@ MCP tool can approve a run or touch the operator PIN, and the server instruction
 - **`.openetch`** (native project): UTF-8 JSON `{"format": "openetch", "version": 1, "document": <doc::Document>}`
   (`doc::file`). Readers refuse other formats (XML is pointed to the LightBurn import) and newer versions, accept a
   UTF-8 BOM, refuse duplicate ids and raise `next_id` past existing ids. `Document.field_mm` is the galvo field the
-  document was laid out for; `Layer.extras` keeps settings from other software that OpenEtch does not model (e.g.
-  `lbrn2.*`) so exports round-trip. Commands: `doc.new`, `doc.load {content}`, `doc.save` (Query, returns
-  `{content, revision}`).
+  document was laid out for. `Document.groups` (`{id, name, parent?}`, nested through `parent`) and `Object.group`
+  (the innermost group) hold LightBurn-style groups; a group with no member objects is removed
+  (`Document::prune_groups`, also on load). `Geometry::Image {width_mm, height_mm, mime, data_base64}` is a bitmap
+  centred on the local origin; jobs skip images with the plan warning "image engraving is not supported yet".
+  `extras` on the document, layers, objects and groups keep data from other software that OpenEtch does not model
+  (`lbrn2.*`) so exports round-trip. All of these are optional, so files from older builds load (still version 1).
+  Commands: `doc.new`, `doc.load {content}`, `doc.save` (Query, returns `{content, revision}`).
 - **`.lbrn2`** (LightBurn project, `crates/lbrn`): XML; mm, y up, origin at the lower-left of LightBurn's workspace,
   so field frame = LightBurn - `field_mm / 2`. The file does not record the field size it was laid out for, so
   import and export take `field_mm` (default the document's); a wrong value shifts everything by half the
   difference. CutSettings become layers (power, speed, frequency Hz to kHz, QPulseWidth ns, hatch, passes,
-  sub-layers; everything else in `extras["lbrn2.*"]`), Rect/Ellipse/Path become objects, groups are flattened, text
-  is imported as its outline (BackupPath), bitmaps and other shapes are skipped with a warning. Export keeps each
-  layer's LightBurn index and writes the stock outline on tool layer T1. Commands: `doc.import_lbrn2 {content,
-  mode?: replace|merge, field_mm?}` (Edit) and `doc.export_lbrn2 {field_mm?}` (Query, returns `{content, warnings,
-  field_mm}`). The format notes are in `crates/lbrn/src/lib.rs`.
+  sub-layers; everything else in `extras["lbrn2.*"]`), Rect/Ellipse/Path become objects, LightBurn groups become
+  groups, Text becomes an object drawn and burned as its saved outline (BackupPath) that keeps its text attributes
+  and is exported as LightBurn text again, bitmaps become images; anything else (unknown shape types, the
+  thumbnail, `UIPrefs`, `Notes`, root attributes, layout) is kept in `extras`. Export writes it all back, with the
+  source text of every number, transform and path list that did not change, so an unchanged import exports byte for
+  byte (the env-gated `crates/lbrn/tests/real_samples.rs` checks every sample file). `.lbt` templates read the same
+  way. Export keeps each layer's LightBurn index and writes the stock outline on tool layer T1. Commands:
+  `doc.import_lbrn2 {content, mode?: replace|merge, field_mm?, name?}` (Edit; merge brings the file's objects in as
+  one group) and `doc.export_lbrn2 {field_mm?}` (Query, returns `{content, warnings, field_mm}`). The format notes
+  are in `crates/lbrn/src/lib.rs`.
+- **`.dxf`, images**: `art.import_dxf {content, layer?, name?, width_mm?, split?, keep_position?}` (lines,
+  polylines with bulges, circles, arcs, ellipses, splines, block references; units from `$INSUNITS`, else mm with a
+  warning; native builds only) and `art.import_image {data_base64, mime, width_mm?, layer?, name?}` (PNG, JPEG, GIF,
+  BMP, WebP; size from the file's resolution, else 254 dpi, fitted to 80 % of the field). Groups: `group.create {ids,
+  name?}`, `group.ungroup {group}` (one level), `group.rename {group, name}`.
 - **`.clb`** (LightBurn material library): read by `lbrn::parse_library` into layer settings.
 
 ## Licensing and provenance

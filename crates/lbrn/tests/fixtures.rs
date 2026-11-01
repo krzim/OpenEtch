@@ -9,7 +9,30 @@ const SETTINGS: &str = include_str!("fixtures/settings.lbrn2");
 const FIELD: f64 = 150.0;
 
 fn import(text: &str) -> (Vec<Layer>, Vec<Object>, Vec<String>) {
-    to_document(&parse(text).unwrap(), FIELD).unwrap()
+    tuple(to_document(&parse(text).unwrap(), FIELD).unwrap())
+}
+
+fn tuple(i: lbrn::Imported) -> (Vec<Layer>, Vec<Object>, Vec<String>) {
+    (i.layers, i.objects, i.warnings)
+}
+
+/// The whole document an import makes.
+fn import_document(text: &str) -> Document {
+    let i = to_document(&parse(text).unwrap(), FIELD).unwrap();
+    Document {
+        layers: i.layers,
+        objects: i.objects,
+        groups: i.groups,
+        extras: i.extras,
+        field_mm: Some(FIELD),
+        next_id: 100,
+        ..Document::default()
+    }
+}
+
+/// Extras without the bookkeeping keys (`lbrn2._*`).
+fn plain_extras(l: &Layer) -> Vec<(&str, &str)> {
+    l.extras.iter().filter(|(k, _)| !k.starts_with("lbrn2._")).map(|(k, v)| (k.as_str(), v.as_str())).collect()
 }
 
 fn close(a: f64, b: f64, tol: f64) -> bool {
@@ -33,13 +56,16 @@ fn parses_the_shapes_fixture() {
     assert_eq!(p.cut_settings[0].params.frequency, Some(100_000.0));
     assert_eq!(p.cut_settings[0].params.other.get("tabCount").map(String::as_str), Some("1"));
     assert_eq!(p.shapes.len(), 11);
-    // The thumbnail is dropped; the other root elements are kept.
+    // Every other root element is kept, the thumbnail included.
     let names: Vec<&str> = p.extra_elements.iter().map(|e| e.name.as_str()).collect();
-    assert_eq!(names, ["VariableText", "UIPrefs", "Notes"]);
-    // The second path resolved both shared lists.
+    assert_eq!(names, ["Thumbnail", "VariableText", "UIPrefs", "Notes"]);
+    // The second path resolved both shared lists, and remembers it only referred to them.
     match (&p.shapes[2].kind, &p.shapes[3].kind) {
         (ShapeKind::Path(a), ShapeKind::Path(b)) => {
-            assert_eq!(a, b);
+            assert_eq!((&a.vertices, &a.prims), (&b.vertices, &b.prims));
+            let (ea, eb) = (a.encoded.as_ref().unwrap(), b.encoded.as_ref().unwrap());
+            assert_eq!((ea.vert_id.as_deref(), ea.prim_id.as_deref()), (Some("1"), Some("2")));
+            assert!(ea.vert_list.is_some() && eb.vert_list.is_none() && eb.prim_list.is_none());
             assert_eq!(a.vertices[1].c0, Some(Point::new(5.0, 3.0)));
             assert_eq!(a.vertices[1].c1, None, "c1x1 is the no-control flag");
         }
@@ -67,7 +93,11 @@ fn write_then_parse_is_identity() {
         let p = parse(text).unwrap();
         let out = write(&p);
         assert!(out.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<LightBurnProject AppVersion="));
-        assert!(!out.contains("Thumbnail"));
+        assert_eq!(out.contains("<Thumbnail Source="), text.contains("<Thumbnail Source="));
+        // Only the comments are gone.
+        let without_comments: String =
+            text.lines().filter(|l| !l.trim_start().starts_with("<!--")).map(|l| format!("{l}\n")).collect();
+        assert_eq!(out, without_comments);
         let back = parse(&out).unwrap();
         assert_eq!(back, p);
         assert_eq!(write(&back), out, "writing is deterministic");
@@ -87,8 +117,36 @@ fn written_layout_mirrors_lightburn() {
     assert!(out.contains("<PrimList>L0 1B1 2L2 0</PrimList>"));
     assert!(out.contains("Str=\"Hi&#10;there\""));
     assert!(out.contains("<CutSetting_Img type=\"Image\">"));
-    // Every path gets its own ids, so no list is shared.
-    assert!(out.contains("VertID=\"0\" PrimID=\"0\"") && out.contains("VertID=\"1\" PrimID=\"1\""));
+    // Path ids and the sharing of lists are kept: the second user of lists 1 and 2 carries none.
+    assert_eq!(out.matches("VertID=\"1\" PrimID=\"2\"").count(), 2);
+    assert_eq!(out.matches("<VertList>").count(), 4);
+}
+
+#[test]
+fn new_paths_get_ids_above_the_kept_ones() {
+    let mut p = parse(SHAPES).unwrap();
+    let mut b = BezPath::new();
+    b.move_to((0.0, 0.0));
+    b.line_to((1.0, 1.0));
+    p.shapes.push(lbrn::Shape::new(ShapeKind::Path(lbrn::PathData::from_bez(&b)), Some(0), Affine::IDENTITY));
+    let out = write(&p);
+    assert!(out.contains("VertID=\"6\" PrimID=\"6\""), "one above the largest kept id (5)");
+    assert_eq!(parse(&out).unwrap().shapes.len(), p.shapes.len());
+}
+
+#[test]
+fn layout_comes_back_as_read() {
+    let crlf = SHAPES.replace("<!-- Hand-written", "<!--").replace('\n', "\r\n");
+    let p = parse(&crlf).unwrap();
+    assert!(p.format.crlf && p.format.final_newline);
+    let out = write(&p);
+    assert!(out.contains("\r\n") && !out.replace("\r\n", "").contains('\n'), "CRLF throughout");
+    let script = "<?xml version='1.0' encoding='UTF-8'?>\n<LightBurnProject AppVersion=\"2.1.04\">\n    \
+        <CutSetting type=\"Cut\">\n        <index Value=\"0\" />\n        <name Value=\"C00\" />\n        \
+        <maxPower Value=\"15.8750\" />\n    </CutSetting>\n</LightBurnProject>";
+    let p = parse(script).unwrap();
+    assert!(p.format.space_before_slash && !p.format.final_newline);
+    assert_eq!(write(&p), script, "declaration, empty-tag style and number spelling are kept");
 }
 
 #[test]
@@ -108,8 +166,7 @@ fn imports_layers_in_priority_order_with_settings() {
     assert!(fill.settings.hatch.cross_hatch && fill.settings.hatch.bidirectional);
     assert_eq!(fill.settings.hatch.interval_mm, 0.03);
     assert_eq!(fill.settings.hatch.angle_deg, 90.0);
-    let extras: Vec<(&str, &str)> = fill.extras.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-    assert_eq!(extras, [("lbrn2.index", "0"), ("lbrn2.minPower", "12"), ("lbrn2.tabCount", "1")]);
+    assert_eq!(plain_extras(fill), [("lbrn2.index", "0"), ("lbrn2.minPower", "12"), ("lbrn2.tabCount", "1")]);
     let outline = &layers[1];
     assert_eq!(outline.color, "#0000ff");
     assert_eq!(outline.settings.mode, FillMode::Line);
@@ -129,13 +186,24 @@ fn imports_layers_in_priority_order_with_settings() {
 
 #[test]
 fn imports_shapes_in_the_field_frame() {
-    let (layers, objects, warnings) = import(SHAPES);
+    let imported = to_document(&parse(SHAPES).unwrap(), FIELD).unwrap();
+    let groups = imported.groups.clone();
+    let (layers, objects, warnings) = tuple(imported);
     let names: Vec<&str> = objects.iter().map(|o| o.name.as_str()).collect();
     assert_eq!(
         names,
-        ["Rectangle 1", "Ellipse 1", "Path 1", "Path 2", "Path 3", "Group 1.1.1", "Group 1.1.2", "Hi", "Rectangle 2"]
+        ["Rectangle 1", "Ellipse 1", "Path 1", "Path 2", "Path 3", "Rectangle 2", "Path 4", "Hi", "dot.png", "Rectangle 3"]
     );
     assert_eq!(objects[0].id, "obj-6", "ids continue after the five layers");
+    // LightBurn's nested groups are kept.
+    let group_names: Vec<&str> = groups.iter().map(|g| g.name.as_str()).collect();
+    assert_eq!(group_names, ["Group 1", "Group 2"]);
+    assert_eq!(groups[0].parent, None);
+    assert_eq!(groups[1].parent.as_deref(), Some(groups[0].id.as_str()));
+    assert_eq!(obj(&objects, "Rectangle 2").group.as_deref(), Some(groups[1].id.as_str()));
+    assert_eq!(obj(&objects, "Path 4").group.as_deref(), Some(groups[1].id.as_str()));
+    assert_eq!(obj(&objects, "Path 3").group, None);
+    assert_eq!(groups[0].extras.get("lbrn2._xform").map(String::as_str), Some("2 0 0 2 100 100"));
     // Rect at LightBurn (75, 75) is the field centre.
     let r = obj(&objects, "Rectangle 1");
     assert!(matches!(r.geometry, Geometry::Rect { width_mm, height_mm, corner_radius_mm }
@@ -151,24 +219,122 @@ fn imports_shapes_in_the_field_frame() {
     assert!(close(p1.bounds().x0 - p2.bounds().x0, 20.0, 1e-9));
     assert!(close(p1.bounds().y0, -25.0, 1e-9) && close(p1.bounds().y1, -17.0, 1e-9));
     // Nested groups compose: scale 2 about (100, 100), then +5 mm in x.
-    let g = obj(&objects, "Group 1.1.1");
+    let g = obj(&objects, "Rectangle 2");
     assert!(rect_close(g.bounds(), Rect::new(33.0, 23.0, 37.0, 27.0), 1e-9), "{:?}", g.bounds());
     assert_eq!(g.layer, layers[2].id);
-    let gp = obj(&objects, "Group 1.1.2");
+    let gp = obj(&objects, "Path 4");
     assert!(rect_close(gp.bounds(), Rect::new(35.0, 35.0, 37.0, 35.0), 1e-9), "{:?}", gp.bounds());
-    // The text became its outline.
+    // The text is drawn as its outline and keeps what LightBurn needs to show it as text.
     let t = obj(&objects, "Hi");
     assert!(matches!(t.geometry, Geometry::Path { .. }));
     assert!(rect_close(t.bounds(), Rect::new(-1.0, -47.0, 1.0, -43.0), 1e-9));
-    assert_eq!(obj(&objects, "Rectangle 2").layer, layers[4].id, "tool shape on the tool layer");
+    let tx = |k: &str| t.extras.get(k).map(String::as_str);
+    assert_eq!(tx("lbrn2._type"), Some("Text"));
+    assert_eq!(tx("lbrn2.Str"), Some("Hi\nthere"));
+    assert_eq!(tx("lbrn2.Font"), Some("Arial,-1,100,5,50,0,0,0,0,0"));
+    assert_eq!(tx("lbrn2._attrs"), Some("CutIndex Font Str H LS LnS Ah Av Weld HasBackupPath"));
+    // The text without an outline is kept, after the object before it.
+    assert!(tx("lbrn2._after.0").is_some_and(|x| x.contains("Str=\"No outline\"")), "{:?}", t.extras);
+    // The bitmap is an image, with its LightBurn attributes and exact data.
+    let image = obj(&objects, "dot.png");
+    assert!(matches!(&image.geometry, Geometry::Image { width_mm, height_mm, mime, data_base64 }
+        if *width_mm == 10.0 && *height_mm == 10.0 && mime == "image/png" && data_base64.starts_with("iVBOR")
+            && data_base64.ends_with("Jggg==")));
+    assert!(rect_close(image.bounds(), Rect::new(-40.0, -40.0, -30.0, -30.0), 1e-9));
+    assert_eq!(image.layer, layers[3].id);
+    assert_eq!(image.extras.get("lbrn2.Gamma").map(String::as_str), Some("1"));
+    assert!(image.extras.get("lbrn2._after.0").is_some_and(|x| x.contains("Type=\"Star\"")));
+    assert_eq!(obj(&objects, "Rectangle 3").layer, layers[4].id, "tool shape on the tool layer");
 
     let has = |s: &str| warnings.iter().any(|w| w.contains(s));
-    assert!(has("outline (BackupPath)"), "{warnings:?}");
-    assert!(has("\"No outline\" was skipped"), "{warnings:?}");
-    assert!(has("bitmap was skipped"), "{warnings:?}");
-    assert!(has("'Star' shape was skipped"), "{warnings:?}");
-    assert!(has("Photo") || has("image (bitmap) settings"), "{warnings:?}");
+    assert!(has("1 text object(s) are shown and burned as LightBurn's saved outline"), "{warnings:?}");
+    assert!(has("text \"No outline\" has no saved outline"), "{warnings:?}");
+    assert!(has("1 image(s) were imported"), "{warnings:?}");
+    assert!(has("'Star' shape was kept for LightBurn export"), "{warnings:?}");
+    assert!(has("C05: image layer"), "{warnings:?}");
     assert!(!has("outside"), "{warnings:?}");
+}
+
+#[test]
+fn an_unchanged_import_exports_as_it_was_read() {
+    let d = import_document(SHAPES);
+    let (p, warnings) = from_document(&d, FIELD).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    // The export is the source as parsed (only the comments, which the model does not keep, are gone).
+    assert_eq!(write(&p), write(&parse(SHAPES).unwrap()));
+    // Also through a saved .openetch file.
+    let loaded = doc::file::from_openetch_json(&doc::file::try_to_openetch_json(&d).unwrap()).unwrap();
+    assert_eq!(write(&from_document(&loaded, FIELD).unwrap().0), write(&p));
+}
+
+#[test]
+fn edits_export_with_everything_else_kept() {
+    let mut d = import_document(SHAPES);
+    let id = |d: &Document, name: &str| d.objects.iter().position(|o| o.name == name).unwrap();
+    // Move the text and a grouped rectangle, change a layer, add a layer and an image.
+    let t = id(&d, "Hi");
+    d.objects[t].transform = Affine::translate((10.0, 0.0)) * d.objects[t].transform;
+    let r = id(&d, "Rectangle 2");
+    d.objects[r].transform = Affine::translate((0.0, 1.0)) * d.objects[r].transform;
+    d.layers[0].settings.power_pct = 31.0;
+    let extra = layer(&mut d, "New", "#00a000", |_| {});
+    let image = Geometry::Image { width_mm: 4.0, height_mm: 2.0, mime: "image/png".into(), data_base64: "iVBORw0KGgo=".into() };
+    object(&mut d, &extra, image, Affine::translate((5.0, 5.0)));
+    let (p, warnings) = from_document(&d, FIELD).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let out = write(&p);
+
+    // The text is still LightBurn text, moved: its XForm and its outline's are the new placement.
+    assert!(out.contains("<Shape Type=\"Text\" CutIndex=\"0\" Font=\"Arial,-1,100,5,50,0,0,0,0,0\" Str=\"Hi&#10;there\""));
+    assert_eq!(out.matches("<XForm>1 0 0 1 85 30</XForm>").count(), 2, "{out}");
+    // The grouped rectangle moved inside its groups: 1 mm in the field is 0.5 in the outer group's scale 2.
+    assert!(out.contains("<Shape Type=\"Rect\" CutIndex=\"3\" W=\"2\" H=\"2\" Cr=\"0\">\n                        <XForm>1 0 0 1 0 0.5</XForm>"), "{out}");
+    // Only the changed value differs in the layer; the rest keeps the source order and spelling.
+    assert!(out.contains("<name Value=\"Fill\"/>\n        <minPower Value=\"12\"/>\n        <maxPower Value=\"31\"/>"));
+    // The new layer comes after the kept settings, the new image is a bitmap on it.
+    let new_setting = out.find("<name Value=\"New\"/>").unwrap();
+    assert!(out.find("<CutSetting type=\"Tool\">").unwrap() < new_setting && new_setting < out.find("<Shape").unwrap());
+    assert!(out.contains("<Shape Type=\"Bitmap\" CutIndex=\"11\" W=\"4\" H=\"2\" Gamma=\"1\""), "{out}");
+    assert!(out.contains("Data=\"iVBORw0KGgo=\">\n        <XForm>1 0 0 1 80 80</XForm>"), "{out}");
+    // Everything else is untouched: thumbnail, notes, shared lists, the kept Star and text.
+    for kept in ["<Thumbnail Source=\"iVBORw0KGgo=\"/>", "Notes=\"hand-written fixture\"", "Type=\"Star\"", "Str=\"No outline\""] {
+        assert!(out.contains(kept), "{kept}");
+    }
+    assert_eq!(out.matches("VertID=\"1\" PrimID=\"2\"").count(), 2);
+    // And it reads back as the edited document.
+    let back = import_document(&out);
+    assert_eq!(back.objects.len(), d.objects.len());
+    assert_eq!(back.groups.len(), d.groups.len());
+    for (a, b) in d.objects.iter().zip(&back.objects) {
+        assert!(rect_close(a.bounds(), b.bounds(), 1e-9), "{}", a.name);
+    }
+}
+
+#[test]
+fn groups_made_in_openetch_export_as_lightburn_groups() {
+    let mut d = sample_document();
+    let gid = d.alloc_id("group").unwrap();
+    d.groups.push(doc::Group::new(gid.clone(), "Pair", None));
+    d.objects[0].group = Some(gid.clone());
+    d.objects[2].group = Some(gid);
+    let (p, _) = from_document(&d, FIELD).unwrap();
+    assert_eq!(p.shapes.len(), 3, "the group takes the place of its first member");
+    match &p.shapes[0].kind {
+        ShapeKind::Group(children) => {
+            assert_eq!(children.len(), 2);
+            assert!(matches!(children[0].kind, ShapeKind::Rect { .. }));
+            assert!(matches!(children[1].kind, ShapeKind::Path(_)));
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(p.shapes[0].xform, Affine::IDENTITY);
+    let back = import_document(&write(&p));
+    assert_eq!(back.groups.len(), 1);
+    assert_eq!(back.objects.iter().filter(|o| o.group.is_some()).count(), 2);
+    // The group's members are drawn together, where the first one was.
+    for (k, b) in [0, 2, 1, 3].into_iter().zip(&back.objects) {
+        assert_same_geometry(&d.objects[k], b, 1e-6);
+    }
 }
 
 #[test]
@@ -242,7 +408,7 @@ fn layer(d: &mut Document, name: &str, color: &str, f: impl FnOnce(&mut Layer)) 
 
 fn object(d: &mut Document, layer: &str, geometry: Geometry, transform: Affine) {
     let id = d.alloc_id("obj").unwrap();
-    d.objects.push(Object { id: id.clone(), name: id, layer: layer.into(), geometry, transform });
+    d.objects.push(Object::new(id.clone(), id, layer.into(), geometry, transform));
 }
 
 fn sample_document() -> Document {
@@ -299,8 +465,8 @@ fn document_round_trips_through_lbrn2() {
     assert!(warnings.is_empty(), "{warnings:?}");
     let text = write(&project);
     let reparsed: LbrnProject = parse(&text).unwrap();
-    assert_eq!(reparsed, project);
-    let (layers, objects, warnings) = to_document(&reparsed, FIELD).unwrap();
+    assert_eq!(write(&reparsed), text);
+    let (layers, objects, warnings) = tuple(to_document(&reparsed, FIELD).unwrap());
     assert!(warnings.is_empty(), "{warnings:?}");
 
     assert_eq!(layers.len(), d.layers.len());
@@ -311,6 +477,7 @@ fn document_round_trips_through_lbrn2() {
         assert_eq!(a.sub_layers, b.sub_layers, "{}", a.name);
         let mut extras = b.extras.clone();
         assert!(extras.remove("lbrn2.index").is_some());
+        extras.retain(|k, _| !k.starts_with("lbrn2._") && !k.contains("._src"));
         assert_eq!(a.extras, extras, "{}", a.name);
     }
     // Palette colours survive; others are replaced by the colour of the free index they got.
@@ -330,8 +497,8 @@ fn document_round_trips_through_lbrn2() {
 
 #[test]
 fn round_trip_keeps_imported_extras_and_indices() {
-    let (layers, objects, _) = import(SHAPES);
-    let d = Document { layers: layers.clone(), objects: objects.clone(), ..Document::default() };
+    let d = import_document(SHAPES);
+    let (layers, objects) = (d.layers.clone(), d.objects.clone());
     let (p, warnings) = from_document(&d, FIELD).unwrap();
     assert!(warnings.is_empty(), "{warnings:?}");
     let indices: Vec<u32> = p.cut_settings.iter().map(|c| c.index).collect();
@@ -342,7 +509,7 @@ fn round_trip_keeps_imported_extras_and_indices() {
     assert_eq!(p.cut_settings[2].params.hide, Some(true));
     assert_eq!(p.cut_settings[0].params.min_power, Some(12.0));
     assert_eq!(p.cut_settings[0].params.other.get("tabCount").map(String::as_str), Some("1"));
-    let (layers2, objects2, _) = to_document(&parse(&write(&p)).unwrap(), FIELD).unwrap();
+    let (layers2, objects2, _) = tuple(to_document(&parse(&write(&p)).unwrap(), FIELD).unwrap());
     assert_eq!(layers2, layers);
     assert_eq!(objects2.len(), objects.len());
     for (a, b) in objects.iter().zip(&objects2) {
@@ -367,7 +534,7 @@ fn stock_is_exported_on_tool_layer_t1() {
     assert_eq!(tool.xform.translation(), kurbo::Vec2::new(80.0, 70.0));
     let cs = p.cut_setting(30).expect("T1 settings");
     assert_eq!((cs.kind.as_str(), cs.params.name.as_deref()), ("Tool", Some("T1")));
-    let (layers, objects, _) = to_document(&p, FIELD).unwrap();
+    let (layers, objects, _) = tuple(to_document(&p, FIELD).unwrap());
     let t1 = layers.iter().find(|l| l.name == "T1").unwrap();
     assert!(!t1.output);
     let stock_obj = objects.iter().find(|o| o.layer == t1.id).unwrap();
@@ -449,7 +616,7 @@ fn refuses_bad_input() {
     deep.push_str("</LightBurnProject>");
     assert!(matches!(bad(&deep), LbrnError::TooLarge(_)));
     // An empty project imports as one default layer and no objects.
-    let (layers, objects, _) = to_document(&parse("<LightBurnProject/>").unwrap(), FIELD).unwrap();
+    let (layers, objects, _) = tuple(to_document(&parse("<LightBurnProject/>").unwrap(), FIELD).unwrap());
     assert_eq!((layers.len(), objects.len()), (1, 0));
 }
 
@@ -561,7 +728,7 @@ fn many_distinct_warnings_are_capped_and_fast() {
     assert!(start.elapsed().as_secs() < 10, "took {:?}", start.elapsed());
     assert!(objects.is_empty());
     assert_eq!(warnings.len(), 201, "200 distinct warnings and a summary line");
-    assert!(warnings[0].contains("\"t0\" was skipped"), "{}", warnings[0]);
+    assert!(warnings[0].contains("\"t0\" has no saved outline"), "{}", warnings[0]);
     assert!(warnings[200].contains("19800 more warning"), "{}", warnings[200]);
 }
 
@@ -587,7 +754,7 @@ fn hostile_extras_and_names_still_export_valid_xml() {
     assert_eq!(back.shapes.len(), d.objects.len());
     assert_eq!(back.cut_settings[1].params.name.as_deref(), Some("Deep"));
     assert_eq!(back.cut_settings[0].params.other.get("ok").map(String::as_str), Some("ab<&>"));
-    let (layers, _, _) = to_document(&back, FIELD).unwrap();
+    let (layers, _, _) = tuple(to_document(&back, FIELD).unwrap());
     assert_eq!(layers[1].name, "Deep");
     assert!(layers.iter().all(|l| l.extras.keys().all(|k| doc::is_extras_key(k))), "{layers:?}");
 }
@@ -619,10 +786,12 @@ fn overflowing_or_singular_placements_are_skipped() {
         <Shape Type=\"Ellipse\" CutIndex=\"0\" Rx=\"1\" Ry=\"1\"><XForm>1 0 1 0 75 75</XForm></Shape>\
         <Shape Type=\"Rect\" CutIndex=\"0\" W=\"2\" H=\"2\"><XForm>1 0 0 1 75 75</XForm></Shape>\
         </LightBurnProject>";
-    let (_, objects, warnings) = import(text);
+    let imported = to_document(&parse(text).unwrap(), FIELD).unwrap();
+    assert!(imported.groups.is_empty(), "groups left without members are dropped");
+    let (_, objects, warnings) = tuple(imported);
     assert_eq!(objects.len(), 1, "only the sound rectangle is kept");
     assert!(objects[0].bounds().x0.is_finite());
-    let skipped: Vec<_> = warnings.iter().filter(|w| w.contains("a shape was skipped")).collect();
+    let skipped: Vec<_> = warnings.iter().filter(|w| w.contains("kept for LightBurn export but not imported")).collect();
     assert!(!skipped.is_empty() && skipped.iter().any(|w| w.contains("cannot be inverted")), "{warnings:?}");
     let d = Document { objects, ..Document::default() };
     assert_eq!(d.numeric_problem(), None);
@@ -667,7 +836,7 @@ fn a_missing_frequency_stays_missing_until_changed() {
         <speed Value=\"100\"/></CutSetting>\
         <Shape Type=\"Rect\" CutIndex=\"0\" W=\"2\" H=\"2\"><XForm>1 0 0 1 75 75</XForm></Shape></LightBurnProject>";
     let (layers, objects, warnings) = import(text);
-    assert!(warnings.iter().any(|w| w.contains("no frequency")), "{warnings:?}");
+    assert!(!warnings.iter().any(|w| w.contains("frequency")), "LightBurn's default is no cause for a warning: {warnings:?}");
     assert_eq!(layers[0].extras.get(lbrn::FREQUENCY_ABSENT_KEY).map(String::as_str), Some("1"));
     let mut d = Document { layers, objects, ..Document::default() };
     let out = write(&from_document(&d, FIELD).unwrap().0);
@@ -690,4 +859,23 @@ fn shapes_on_layer_indices_lightburn_lacks_are_reported() {
     // T1 and T2 are real LightBurn layers: no such warning.
     let t2 = text.replace("CutIndex=\"40\"", "CutIndex=\"31\"");
     assert!(!import(&t2).2.iter().any(|w| w.contains("not a LightBurn layer")));
+}
+
+#[test]
+fn a_second_image_setting_stays_with_its_layer() {
+    let text = "<LightBurnProject>\
+        <CutSetting type=\"Scan\"><index Value=\"0\"/><name Value=\"C00\"/><maxPower Value=\"20\"/></CutSetting>\
+        <CutSetting_Img type=\"Image\"><index Value=\"0\"/><name Value=\"C00\"/><ditherMode Value=\"stucki\"/></CutSetting_Img>\
+        <Shape Type=\"Rect\" CutIndex=\"0\" W=\"2\" H=\"2\"><XForm>1 0 0 1 75 75</XForm></Shape></LightBurnProject>";
+    let (layers, objects, warnings) = import(text);
+    assert_eq!(layers.len(), 1);
+    assert!(!warnings.iter().any(|w| w.contains("ignored")), "{warnings:?}");
+    assert!(layers[0].extras.get("lbrn2._img").is_some_and(|x| x.contains("stucki")));
+    // Even without the file's own layout (e.g. merged into another document), the image setting follows the layer.
+    let d = Document { layers, objects, ..Document::default() };
+    let out = write(&from_document(&d, FIELD).unwrap().0);
+    let (cs, img, shape) = (out.find("<CutSetting ").unwrap(), out.find("<CutSetting_Img").unwrap(), out.find("<Shape").unwrap());
+    assert!(cs < img && img < shape, "{out}");
+    let p = parse(&out).unwrap();
+    assert_eq!(p.cut_settings.iter().filter(|c| c.image).count(), 1);
 }

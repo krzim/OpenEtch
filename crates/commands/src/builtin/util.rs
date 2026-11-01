@@ -121,19 +121,68 @@ pub fn layer_or_default(doc: &Document, id: Option<&str>) -> Result<String> {
     }
 }
 
-/// Check every id exists and return them de-duplicated in the given order. An empty list is an error.
+/// Check every id exists and return the object ids de-duplicated in the given order. A group id stands for every
+/// object in it and its nested groups (in drawing order). An empty list is an error.
 pub fn object_ids(cmd: &str, doc: &Document, ids: &[ObjectId]) -> Result<Vec<ObjectId>> {
     if ids.is_empty() {
-        return Err(invalid(cmd, "ids must list at least one object id"));
+        return Err(invalid(cmd, "ids must list at least one object or group id"));
     }
-    let mut out: Vec<ObjectId> = Vec::with_capacity(ids.len());
-    for id in ids {
-        object(doc, id)?;
-        if !out.contains(id) {
-            out.push(id.clone());
-        }
+    let out = doc.expand_group_ids(ids);
+    for id in &out {
+        object_or_group(doc, id)?;
     }
     Ok(out)
+}
+
+/// One thing a command moves as a whole: an object, or a group with all its members.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Unit {
+    /// The object or group id as given.
+    pub id: String,
+    /// The objects it moves (one for an object, every member for a group).
+    pub members: Vec<ObjectId>,
+}
+
+impl Unit {
+    /// Field-frame bounds of every member.
+    pub fn bounds(&self, doc: &Document) -> Option<Rect> {
+        doc.bounds_of(&self.members)
+    }
+}
+
+/// `ids` as [`Unit`]s, in the given order: each object id is one object, each group id its members. An object
+/// already covered by an earlier unit is left out of later ones, and units left with nothing are dropped. Unknown
+/// ids fail with close matches; an empty list is an error.
+pub fn units(cmd: &str, doc: &Document, ids: &[String]) -> Result<Vec<Unit>> {
+    if ids.is_empty() {
+        return Err(invalid(cmd, "ids must list at least one object or group id"));
+    }
+    let mut seen: Vec<ObjectId> = Vec::new();
+    let mut out = Vec::new();
+    for id in ids {
+        object_or_group(doc, id)?;
+        let members = if doc.object(id).is_some() { vec![id.clone()] } else { doc.group_members(id) };
+        let members: Vec<ObjectId> = members.into_iter().filter(|m| !seen.contains(m)).collect();
+        if members.is_empty() {
+            continue;
+        }
+        seen.extend(members.iter().cloned());
+        out.push(Unit { id: id.clone(), members });
+    }
+    Ok(out)
+}
+
+/// Look up an object or group by exact id, or fail with close matches among both.
+fn object_or_group(doc: &Document, id: &str) -> Result<()> {
+    if doc.object(id).is_some() || doc.group(id).is_some() {
+        return Ok(());
+    }
+    let items = doc
+        .objects
+        .iter()
+        .map(|o| (o.id.as_str(), o.name.as_str()))
+        .chain(doc.groups.iter().map(|g| (g.id.as_str(), g.name.as_str())));
+    Err(not_found("object or group", id, items))
 }
 
 /// A `NotFound` error naming up to five close matches (by id or by name). Candidates are exact ids.
@@ -191,6 +240,8 @@ mod tests {
                 layer,
                 geometry: Geometry::Ellipse { rx_mm: 1.0, ry_mm: 1.0 },
                 transform: Affine::IDENTITY,
+                group: None,
+                extras: Default::default(),
             });
         }
         d

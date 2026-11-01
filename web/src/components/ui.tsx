@@ -1,9 +1,13 @@
 // Small shared UI pieces: modal dialog, commit-on-blur fields, and the toolbar icon set. Plain CSS, no libraries.
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { evalNumber } from "../editing.ts";
 
-/** Centered modal with a title, body and footer. Escape or a backdrop tap cancels. */
-export function Modal(props: { title: string; onClose: () => void; children: ReactNode; footer?: ReactNode; wide?: boolean }) {
+/**
+ * Centered modal with a title, body and footer. Escape or a backdrop tap cancels; with `onSubmit`, Enter in a text
+ * field submits.
+ */
+export function Modal(props: { title: string; onClose: () => void; children: ReactNode; footer?: ReactNode; wide?: boolean; onSubmit?: () => void }) {
   const { onClose } = props;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -14,7 +18,19 @@ export function Modal(props: { title: string; onClose: () => void; children: Rea
   }, [onClose]);
   return (
     <div className="modal-backdrop" onPointerDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={`modal${props.wide ? " modal-wide" : ""}`} role="dialog" aria-modal="true" aria-label={props.title}>
+      <div
+        className={`modal${props.wide ? " modal-wide" : ""}`}
+        role="dialog"
+        aria-modal="true"
+        aria-label={props.title}
+        onKeyDown={(e) => {
+          const t = e.target as HTMLElement;
+          if (e.key === "Enter" && props.onSubmit && t.tagName === "INPUT" && (t as HTMLInputElement).type !== "checkbox") {
+            e.preventDefault();
+            props.onSubmit();
+          }
+        }}
+      >
         <div className="modal-head">
           <span>{props.title}</span>
           <button className="icon-btn" onClick={onClose} aria-label="Close">
@@ -37,7 +53,8 @@ export function fmt(v: number | null | undefined, digits = 3): string {
 
 /**
  * Numeric input that keeps local text while editing and commits on Enter or blur, only when the parsed value changed.
- * `value` null renders empty; with `allowEmpty`, clearing the field commits null.
+ * Simple maths works (`20/3`, `12.5+2*3`). `value` null renders empty; with `allowEmpty`, clearing the field commits
+ * null. Out-of-range values are clamped and the field briefly says so.
  */
 export function NumberField(props: {
   label: string;
@@ -54,10 +71,16 @@ export function NumberField(props: {
 }) {
   const { value, digits = 3 } = props;
   const [text, setText] = useState(fmt(value, digits));
+  const [clamped, setClamped] = useState<string | null>(null);
   const editing = useRef(false);
   useEffect(() => {
     if (!editing.current) setText(fmt(value, digits));
   }, [value, digits]);
+  useEffect(() => {
+    if (!clamped) return;
+    const t = window.setTimeout(() => setClamped(null), 3000);
+    return () => window.clearTimeout(t);
+  }, [clamped]);
   const commit = () => {
     editing.current = false;
     const t = text.trim();
@@ -66,13 +89,15 @@ export function NumberField(props: {
       else setText(fmt(value, digits));
       return;
     }
-    let v = Number(t);
-    if (!Number.isFinite(v)) {
+    let v = evalNumber(t);
+    if (v === null) {
       setText(fmt(value, digits));
       return;
     }
+    const typed = v;
     if (props.min !== undefined) v = Math.max(props.min, v);
     if (props.max !== undefined) v = Math.min(props.max, v);
+    setClamped(v !== typed ? `Limited to ${fmt(v, digits)}${props.unit ? ` ${props.unit}` : ""}` : null);
     setText(fmt(v, digits));
     if (value === null || Math.abs(v - value) > 1e-9) props.onCommit(v);
   };
@@ -100,7 +125,76 @@ export function NumberField(props: {
         />
         {props.unit && <span className="unit">{props.unit}</span>}
       </span>
+      {clamped && (
+        <span className="field-note" role="status">
+          {clamped}
+        </span>
+      )}
     </label>
+  );
+}
+
+/**
+ * Two numbers edited together (X and Y): one commit, so one undo step, when Enter is pressed or focus leaves the pair.
+ * Values commit rounded to micrometres. Maths works as in NumberField.
+ */
+export function PairField(props: { labels: [string, string]; unit?: string; value: [number, number]; onCommit: (v: [number, number]) => void; digits?: number }) {
+  const { value, digits = 3 } = props;
+  const [text, setText] = useState<[string, string]>([fmt(value[0], digits), fmt(value[1], digits)]);
+  const editing = useRef(false);
+  useEffect(() => {
+    if (!editing.current) setText([fmt(value[0], digits), fmt(value[1], digits)]);
+  }, [value[0], value[1], digits]);
+  const commit = () => {
+    editing.current = false;
+    const a = evalNumber(text[0]);
+    const b = evalNumber(text[1]);
+    if (a === null || b === null) {
+      setText([fmt(value[0], digits), fmt(value[1], digits)]);
+      return;
+    }
+    const r = (v: number) => Math.round(v * 1000) / 1000;
+    const next: [number, number] = [r(a), r(b)];
+    setText([fmt(next[0], digits), fmt(next[1], digits)]);
+    if (Math.abs(next[0] - value[0]) > 5e-4 || Math.abs(next[1] - value[1]) > 5e-4) props.onCommit(next);
+  };
+  const box = (i: 0 | 1) => (
+    <label className="field">
+      <span className="field-label">{props.labels[i]}</span>
+      <span className="field-input">
+        <input
+          type="text"
+          inputMode="decimal"
+          value={text[i]}
+          onFocus={() => (editing.current = true)}
+          onChange={(e) => {
+            const t = e.target.value;
+            setText((p) => (i === 0 ? [t, p[1]] : [p[0], t]));
+          }}
+          onBlur={(e) => {
+            // Moving between X and Y is still one edit.
+            const to = e.relatedTarget as Node | null;
+            if (to && e.currentTarget.closest(".pair-field")?.contains(to)) return;
+            commit();
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commit();
+            if (e.key === "Escape") {
+              editing.current = false;
+              setText([fmt(value[0], digits), fmt(value[1], digits)]);
+              (e.target as HTMLInputElement).blur();
+            }
+          }}
+        />
+        {props.unit && <span className="unit">{props.unit}</span>}
+      </span>
+    </label>
+  );
+  return (
+    <div className="field-grid pair-field">
+      {box(0)}
+      {box(1)}
+    </div>
   );
 }
 
@@ -202,6 +296,30 @@ const ICONS: Record<string, ReactNode> = {
   chevron: <path d="M9 6l6 6-6 6" />,
   chevronDown: <path d="M6 9l6 6 6-6" />,
   upload: <path d="M12 16V4 M7 9l5-5 5 5 M4 17v3h16v-3" />,
+  first: <path d="M6 5v14 M18 6l-8 6 8 6z" />,
+  prev: <path d="M15 6l-6 6 6 6" />,
+  next: <path d="M9 6l6 6-6 6" />,
+  last: <path d="M18 5v14 M6 6l8 6-8 6z" />,
+  play: <path d="M8 5l11 7-11 7z" />,
+  pause: <path d="M8 5v14 M16 5v14" />,
+  alignLeft: <path d="M4 3v18 M7 7h10v4H7z M7 14h6v4H7z" />,
+  alignHCenter: <path d="M12 3v18 M6 7h12v4H6z M8 14h8v4H8z" />,
+  alignRight: <path d="M20 3v18 M7 7h10v4H7z M11 14h6v4h-6z" />,
+  alignTop: <path d="M3 4h18 M7 7v10h4V7z M14 7v6h4V7z" />,
+  alignVCenter: <path d="M3 12h18 M7 6v12h4V6z M14 8v8h4V8z" />,
+  alignBottom: <path d="M3 20h18 M7 7v10h4V7z M14 11v6h4v-6z" />,
+  distH: <path d="M3 4v16 M21 4v16 M9 8h6v8H9z" />,
+  distV: <path d="M4 3h16 M4 21h16 M8 9h8v6H8z" />,
+  centerStock: <path d="M3 6h18v12H3z M12 9v6 M9 12h6" />,
+  centerField: <path d="M4 4h16v16H4z M12 8v8 M8 12h8 M4 4l3 3 M20 4l-3 3 M4 20l3-3 M20 20l-3-3" />,
+  group: <path d="M3 3h4 M3 3v4 M21 3h-4 M21 3v4 M3 21h4 M3 21v-4 M21 21h-4 M21 21v-4 M7 7h5v5H7z M12 12h5v5h-5z" />,
+  ungroup: <path d="M4 4h6v6H4z M14 14h6v6h-6z M14 4l6 6 M20 4l-6 6" />,
+  flipH: <path d="M12 3v18 M9 6L3 18h6z M15 6l6 12h-6z" />,
+  flipV: <path d="M3 12h18 M6 9L18 3v6z M6 15l12 6v-6z" />,
+  magnet: <path d="M6 4v8a6 6 0 0012 0V4 M6 4h4v8a2 2 0 004 0V4h4 M6 8h4 M14 8h4" />,
+  gridSnap: <path d="M4 4h16v16H4z M4 9.3h16 M4 14.6h16 M9.3 4v16 M14.6 4v16" />,
+  filled: <path d="M4 6h10v10H4z M10 10h10v10H10z M4 6l10 10" />,
+  more: <path d="M5 12h.01 M12 12h.01 M19 12h.01" />,
 };
 
 /** Stroke icon, 24x24 viewBox, inherits `currentColor`. */

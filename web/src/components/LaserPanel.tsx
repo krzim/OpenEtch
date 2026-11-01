@@ -6,6 +6,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api/client.ts";
+import { MACHINE_SHOWN_KEYS, formatDuration, previewLayers, segLen, statRows } from "../api/laser.ts";
 import {
   activeRuns,
   approvalErrorText,
@@ -20,12 +21,19 @@ import {
   stateLabel,
   validPin,
 } from "../api/runs.ts";
-import type { MachineStatus, PendingRun, Preview } from "../api/types.ts";
+import type { GDocument, MachineStatus, PendingRun, Preview } from "../api/types.ts";
+import type { PreviewOptions } from "./Viewport.tsx";
+import { Icon } from "./ui.tsx";
 import { originBadge } from "./Timeline.tsx";
 
 export function MachineCard({ machine, httpError }: { machine: MachineStatus | null; httpError: string | null }) {
-  const known = new Set(["connected", "sim", "busy", "field_mm", "pending_runs", "runs", "approval"]);
-  const extra = machine ? Object.entries(machine).filter(([k, v]) => !known.has(k) && (typeof v !== "object" || v === null)) : [];
+  const extra = machine
+    ? Object.entries(machine).filter(([k, v]) => !MACHINE_SHOWN_KEYS.has(k) && v !== null && v !== undefined && typeof v !== "object")
+    : [];
+  const sim = !!(machine?.simulated ?? machine?.sim);
+  const state = typeof machine?.state === "string" ? machine.state : machine?.busy ? "busy" : "idle";
+  const stateText = machine?.framing ? "Framing (red pointer)" : machine?.running ? "Running" : state.charAt(0).toUpperCase() + state.slice(1);
+  const lastError = typeof machine?.last_error === "string" && machine.last_error ? machine.last_error : null;
   return (
     <section className="card">
       <h3>Machine</h3>
@@ -36,14 +44,32 @@ export function MachineCard({ machine, httpError }: { machine: MachineStatus | n
           <dt>Link</dt>
           <dd>
             <span className={`dot ${machine.connected ? "ok" : "bad"}`} /> {machine.connected ? "Connected" : "Not connected"}
-            {machine.sim ? " (simulator)" : ""}
+            {sim ? " (simulator)" : machine.link === "usb" ? " (USB)" : ""}
           </dd>
           <dt>State</dt>
-          <dd>{machine.busy ? "Busy" : "Idle"}</dd>
+          <dd>{stateText}</dd>
+          {typeof machine.profile === "string" && (
+            <>
+              <dt>Profile</dt>
+              <dd>{machine.profile}</dd>
+            </>
+          )}
           {machine.field_mm !== undefined && (
             <>
               <dt>Field</dt>
               <dd>{machine.field_mm} mm</dd>
+            </>
+          )}
+          {typeof machine.max_power_pct === "number" && (
+            <>
+              <dt>Power limit</dt>
+              <dd>{machine.max_power_pct}%</dd>
+            </>
+          )}
+          {lastError && (
+            <>
+              <dt>Last error</dt>
+              <dd className="run-error">{lastError}</dd>
             </>
           )}
           {extra.map(([k, v]) => (
@@ -55,10 +81,10 @@ export function MachineCard({ machine, httpError }: { machine: MachineStatus | n
   );
 }
 
-function FragmentKV({ k, v }: { k: string; v: unknown }) {
+function FragmentKV({ k, v, raw }: { k: string; v: unknown; raw?: boolean }) {
   return (
     <>
-      <dt>{k.replace(/_/g, " ")}</dt>
+      <dt>{raw ? k : k.replace(/_/g, " ")}</dt>
       <dd>{String(v)}</dd>
     </>
   );
@@ -327,34 +353,165 @@ function PendingRunRow(props: {
   );
 }
 
-export function PreviewStatsCard({ preview, enabled }: { preview: Preview | null; enabled: boolean }) {
-  if (!enabled) return null;
+/**
+ * Toolpath card: why there is no preview (the engine's planning error, e.g. objects outside the field), the job time
+ * estimate, marks and travel, and one row per layer with a show toggle and solo (display only; output is unchanged),
+ * plus the shading and travel display options.
+ */
+export function PreviewStatsCard(p: {
+  preview: Preview | null;
+  error: string | null;
+  enabled: boolean;
+  doc: GDocument | null;
+  options: PreviewOptions;
+  onOptions: (o: PreviewOptions) => void;
+}) {
+  const { preview, options, onOptions } = p;
+  if (!p.enabled) return null;
   const segs = preview?.segments ?? [];
-  const marks = segs.filter((s) => s.kind === "mark");
-  const len = (k: "mark" | "jump") =>
-    segs.filter((s) => s.kind === k).reduce((a, s) => a + Math.hypot(s.to[0] - s.from[0], s.to[1] - s.from[1]), 0);
+  let markN = 0;
+  let markLen = 0;
+  let jumpLen = 0;
+  for (const s of segs) {
+    if (s.kind === "mark") {
+      markN++;
+      markLen += segLen(s);
+    } else jumpLen += segLen(s);
+  }
+  const layers = previewLayers(preview, p.doc);
+  const time = typeof preview?.stats?.estimated_time_s === "number" ? preview.stats.estimated_time_s : null;
+  const rows = statRows(preview?.stats, ["estimated_time_s", "mark_length_mm", "jump_length_mm", "segment_count"]);
+  const toggle = (id: string) => {
+    const hidden = new Set(options.hidden);
+    if (hidden.has(id)) hidden.delete(id);
+    else hidden.add(id);
+    onOptions({ ...options, hidden });
+  };
+  const solo = (id: string) => {
+    const only = layers.every((l) => l.id === id || options.hidden.has(l.id)) && !options.hidden.has(id);
+    onOptions({ ...options, hidden: only ? new Set() : new Set(layers.filter((l) => l.id !== id).map((l) => l.id)) });
+  };
   return (
     <section className="card">
       <h3>Toolpath</h3>
-      {!preview ? (
-        <p className="muted">No preview.</p>
+      {p.error ? (
+        <p className="run-error" role="alert">
+          No preview: {p.error}
+        </p>
+      ) : !preview ? (
+        <p className="muted">Nothing to preview yet.</p>
       ) : (
-        <dl className="kv">
-          <dt>Marks</dt>
-          <dd>
-            {marks.length} · {len("mark").toFixed(1)} mm
-          </dd>
-          <dt>Jumps</dt>
-          <dd>
-            {segs.length - marks.length} · {len("jump").toFixed(1)} mm
-          </dd>
-          {Object.entries(preview.stats ?? {})
-            .filter(([, v]) => typeof v !== "object" || v === null)
-            .map(([k, v]) => (
-              <FragmentKV key={k} k={k} v={typeof v === "number" ? Number(v.toFixed(3)) : v} />
+        <>
+          {time !== null && <div className="big-stat">{formatDuration(time)}</div>}
+          <dl className="kv">
+            <dt>Marks</dt>
+            <dd>
+              {markN} · {(typeof preview.stats?.mark_length_mm === "number" ? preview.stats.mark_length_mm : markLen).toFixed(1)} mm
+            </dd>
+            <dt>Travel</dt>
+            <dd>
+              {segs.length - markN} · {(typeof preview.stats?.jump_length_mm === "number" ? preview.stats.jump_length_mm : jumpLen).toFixed(1)} mm
+            </dd>
+            {rows.map(([k, v]) => (
+              <FragmentKV key={k} k={k} v={v} raw />
             ))}
-        </dl>
+          </dl>
+          {(preview.warnings ?? []).map((w, i) => (
+            <p key={i} className="warn-text">
+              {w}
+            </p>
+          ))}
+          {layers.length > 0 && (
+            <div className="pv-layers">
+              {layers.map((l) => (
+                <div key={l.id} className={`pv-layer${options.hidden.has(l.id) ? " off" : ""}`}>
+                  <label title="Show this layer's toolpath (display only)">
+                    <input type="checkbox" checked={!options.hidden.has(l.id)} onChange={() => toggle(l.id)} />
+                    <span className="swatch small" style={{ background: l.color }} />
+                    <span className="pv-name">{l.name}</span>
+                  </label>
+                  <span className="pv-meta">
+                    {l.mode === "fill" ? "Fill" : l.mode === "fill_then_line" ? "Fill+Line" : "Line"} · {l.markLengthMm.toFixed(0)} mm
+                    {l.estimatedTimeS !== null ? ` · ${formatDuration(l.estimatedTimeS)}` : ""}
+                  </span>
+                  <button className="chip" title="Show only this layer" onClick={() => solo(l.id)}>
+                    Solo
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="pv-opts">
+            <label>
+              <input type="checkbox" checked={options.shade} onChange={(e) => onOptions({ ...options, shade: e.target.checked })} /> Shade by energy
+            </label>
+            <label>
+              <input type="checkbox" checked={options.jumps} onChange={(e) => onOptions({ ...options, jumps: e.target.checked })} /> Show travel
+            </label>
+          </div>
+        </>
       )}
     </section>
+  );
+}
+
+/** Draw-order animation: a slider over the job's segments with play/pause, like LightBurn's Preview time slider. */
+export function PreviewPlayer({ preview, options, onOptions }: { preview: Preview; options: PreviewOptions; onOptions: (o: PreviewOptions) => void }) {
+  const total = preview.segments?.length ?? 0;
+  const [playing, setPlaying] = useState(false);
+  const [speed, setSpeed] = useState(1);
+  const at = options.upTo ?? total;
+  const optsRef = useRef(options);
+  optsRef.current = options;
+  useEffect(() => {
+    if (!playing || total === 0) return;
+    let raf = 0;
+    let last = performance.now();
+    // About 8 seconds for the whole job at 1x.
+    const perMs = (total / 8000) * speed;
+    let pos = optsRef.current.upTo === null || optsRef.current.upTo >= total ? 0 : optsRef.current.upTo;
+    const step = (t: number) => {
+      pos += (t - last) * perMs;
+      last = t;
+      if (pos >= total) {
+        onOptions({ ...optsRef.current, upTo: null });
+        setPlaying(false);
+        return;
+      }
+      onOptions({ ...optsRef.current, upTo: Math.floor(pos) });
+      raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [playing, total, speed, onOptions]);
+  if (total === 0) return null;
+  return (
+    <div className="pv-player" role="group" aria-label="Draw order">
+      <button className="icon-btn small" title={playing ? "Pause" : "Play the burn order"} aria-label={playing ? "Pause" : "Play"} onClick={() => setPlaying((v) => !v)}>
+        <Icon name={playing ? "pause" : "play"} size={16} />
+      </button>
+      <input
+        type="range"
+        min={0}
+        max={total}
+        value={at}
+        aria-label="Segments shown"
+        onChange={(e) => {
+          setPlaying(false);
+          const v = Number(e.target.value);
+          onOptions({ ...options, upTo: v >= total ? null : v });
+        }}
+      />
+      <select value={speed} onChange={(e) => setSpeed(Number(e.target.value))} aria-label="Playback speed" title="Playback speed">
+        {[0.25, 0.5, 1, 2, 5, 10, 40].map((s) => (
+          <option key={s} value={s}>
+            {s}x
+          </option>
+        ))}
+      </select>
+      <span className="pv-count">
+        {at}/{total}
+      </span>
+    </div>
   );
 }

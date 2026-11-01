@@ -15,3 +15,8 @@ schemars = { workspace = true }
 kurbo = { workspace = true }
 thiserror = { workspace = true }
 usvg = { workspace = true }
+base64 = { workspace = true }
+
+# DXF reading needs a random source for ids (uuid), which wasm32 lacks; art.import_dxf is native only.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+dxf = { workspace = true }

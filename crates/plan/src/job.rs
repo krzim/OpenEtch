@@ -1,6 +1,6 @@
 //! Document -> [`JobPlan`]: resolve each pass's settings, flatten, hatch, check the field, order travel.
 
-use doc::{CutSettings, Document, FillMode, GalvoTiming, Layer, LayerId, ObjectId};
+use doc::{CutSettings, Document, FillMode, GalvoTiming, Geometry, Layer, LayerId, ObjectId};
 use lmc::PulseDecision;
 use lmc::units::nearest_pulse_width;
 use serde::{Deserialize, Serialize};
@@ -18,11 +18,17 @@ pub const MAX_PASSES: u32 = 1000;
 /// the encoded packets) stays around a couple of hundred MB at most, which a Raspberry Pi can hold.
 pub const MAX_SEGMENTS: usize = 2_000_000;
 
+/// The warning a plan carries when output layers hold images, which are skipped.
+pub const IMAGE_WARNING: &str = "image engraving is not supported yet";
+
 /// A whole job: passes in burn order, every polyline in field-frame mm.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct JobPlan {
     pub passes: Vec<PassPlan>,
     pub stats: Stats,
+    /// Things left out of the job, e.g. [`IMAGE_WARNING`] with the number of images skipped.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 /// One pass of one layer with one set of settings.
@@ -72,6 +78,8 @@ pub struct Stats {
 /// subpaths closed), `Fill` hatches closed subpaths per object with the even-odd rule, `FillThenLine` does both,
 /// hatch first. Travel is ordered greedily per pass, continuing from where the previous pass ended.
 ///
+/// Images are skipped (image engraving is not supported yet), with a warning in [`JobPlan::warnings`].
+///
 /// Refused, never clamped: a point outside the field (naming every offending object), power above the target's
 /// limit, a pulse width not in the table, settings the board cannot encode, more than [`MAX_PASSES`] passes, and
 /// more than [`MAX_SEGMENTS`] mark segments in total (counted while generating; planning stops at the first pass
@@ -88,7 +96,12 @@ pub(crate) fn plan_job_within(doc: &Document, target: &Target, max_segments: usi
     // Flatten every output object once and check the field before any settings work.
     let mut outside: Vec<ObjectId> = Vec::new();
     let mut shapes: Vec<(&str, Vec<Subpath>)> = Vec::new();
+    let mut images = 0usize;
     for obj in doc.objects.iter().filter(|o| layers.iter().any(|l| l.id == o.layer)) {
+        if matches!(obj.geometry, Geometry::Image { .. }) {
+            images += 1;
+            continue;
+        }
         let subs = flatten(&obj.field_path());
         if subs.iter().flat_map(|s| &s.points).any(|&p| !target.contains(p)) {
             outside.push(obj.id.clone());
@@ -100,6 +113,9 @@ pub(crate) fn plan_job_within(doc: &Document, target: &Target, max_segments: usi
     }
 
     let mut plan = JobPlan::default();
+    if images > 0 {
+        plan.warnings.push(format!("{IMAGE_WARNING}: {images} image(s) on output layers were skipped"));
+    }
     let mut pos: Point = [0.0, 0.0];
     let mut segments = 0usize;
     for layer in layers {
@@ -232,28 +248,44 @@ fn plan_stats(plan: &JobPlan, target: &Target) -> Stats {
     let mut pos: Point = [0.0, 0.0];
     let mut time_us = if plan.passes.is_empty() { 0.0 } else { target.open_mo_delay_us };
     for pass in &plan.passes {
-        let t = &pass.settings.timing;
-        for p in &pass.polylines {
-            let (Some(&first), Some(&last)) = (p.first(), p.last()) else { continue };
-            let jump = dist(pos, first);
-            let mark = polyline_length(p);
-            let segments = p.len().saturating_sub(1);
-            s.jump_length_mm += jump;
-            s.mark_length_mm += mark;
-            s.segment_count += segments;
-            s.polyline_count += 1;
-            if jump > 0.0 {
-                time_us += jump / t.jump_speed_mm_s * 1e6 + crate::encode::jump_delay_us(t, jump).max(0.0);
-            }
-            time_us += mark / pass.settings.speed_mm_s * 1e6;
-            time_us += t.laser_on_delay_us.max(0.0) + t.laser_off_delay_us.max(0.0) + t.end_delay_us.max(0.0);
-            #[allow(clippy::cast_precision_loss)]
-            let corners = segments.saturating_sub(1) as f64;
-            // As encoded: whole 10 µs units (`lmc::units::polygon_delay_units`).
-            time_us += corners * (t.polygon_delay_us.max(0.0) / 10.0).trunc() * 10.0;
-            pos = last;
-        }
+        let (p, t, end) = pass_stats(pass, pos);
+        s.jump_length_mm += p.jump_length_mm;
+        s.mark_length_mm += p.mark_length_mm;
+        s.segment_count += p.segment_count;
+        s.polyline_count += p.polyline_count;
+        time_us += t;
+        pos = end;
     }
     s.estimated_time_s = time_us / 1e6;
     s
+}
+
+/// Lengths, counts and time of one pass that starts with the galvo at `pos` (the jump to its first polyline is
+/// counted). Returns the stats, the time in µs (also in the stats, in s) and where the pass ends.
+pub(crate) fn pass_stats(pass: &PassPlan, mut pos: Point) -> (Stats, f64, Point) {
+    let mut s = Stats::default();
+    let mut time_us = 0.0;
+    let t = &pass.settings.timing;
+    for p in &pass.polylines {
+        let (Some(&first), Some(&last)) = (p.first(), p.last()) else { continue };
+        let jump = dist(pos, first);
+        let mark = polyline_length(p);
+        let segments = p.len().saturating_sub(1);
+        s.jump_length_mm += jump;
+        s.mark_length_mm += mark;
+        s.segment_count += segments;
+        s.polyline_count += 1;
+        if jump > 0.0 {
+            time_us += jump / t.jump_speed_mm_s * 1e6 + crate::encode::jump_delay_us(t, jump).max(0.0);
+        }
+        time_us += mark / pass.settings.speed_mm_s * 1e6;
+        time_us += t.laser_on_delay_us.max(0.0) + t.laser_off_delay_us.max(0.0) + t.end_delay_us.max(0.0);
+        #[allow(clippy::cast_precision_loss)]
+        let corners = segments.saturating_sub(1) as f64;
+        // As encoded: whole 10 µs units (`lmc::units::polygon_delay_units`).
+        time_us += corners * (t.polygon_delay_us.max(0.0) / 10.0).trunc() * 10.0;
+        pos = last;
+    }
+    s.estimated_time_s = time_us / 1e6;
+    (s, time_us, pos)
 }

@@ -295,6 +295,8 @@ mod tests {
             layer: "layer-1".into(),
             geometry: Geometry::Rect { width_mm: 10.0, height_mm: 4.0, corner_radius_mm: 0.0 },
             transform: Affine::translate((x, 0.0)),
+            group: None,
+            extras: Default::default(),
         });
         d
     }

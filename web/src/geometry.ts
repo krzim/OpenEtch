@@ -235,6 +235,9 @@ export function geometryCmds(g: Geometry): PathCmd[] {
       return ellipseCmds(g.rx_mm, g.ry_mm);
     case "path":
       return parseBezPath(g.path);
+    case "image":
+      // The image's frame: used for bounds, hit testing and snapping; the bitmap itself is drawn separately.
+      return rectCmds(g.width_mm, g.height_mm, 0);
     default:
       return [];
   }
@@ -331,4 +334,158 @@ export function boxCenter(b: Box): Vec2 {
 
 export function boxSize(b: Box): Vec2 {
   return [b.x1 - b.x0, b.y1 - b.y0];
+}
+
+export function boxArea(b: Box): number {
+  return Math.max(0, b.x1 - b.x0) * Math.max(0, b.y1 - b.y0);
+}
+
+/** `inner` lies entirely inside `outer` (edges may touch). */
+export function boxInside(inner: Box, outer: Box): boolean {
+  return inner.x0 >= outer.x0 && inner.x1 <= outer.x1 && inner.y0 >= outer.y0 && inner.y1 <= outer.y1;
+}
+
+export function boxesIntersect(a: Box, b: Box): boolean {
+  return a.x0 <= b.x1 && a.x1 >= b.x0 && a.y0 <= b.y1 && a.y1 >= b.y0;
+}
+
+/** Box spanned by two points. */
+export function boxFromPoints(a: Vec2, b: Vec2): Box {
+  return { x0: Math.min(a[0], b[0]), y0: Math.min(a[1], b[1]), x1: Math.max(a[0], b[0]), y1: Math.max(a[1], b[1]) };
+}
+
+export function translateBox(b: Box, d: Vec2): Box {
+  return { x0: b.x0 + d[0], y0: b.y0 + d[1], x1: b.x1 + d[0], y1: b.y1 + d[1] };
+}
+
+/** One flattened subpath in the field frame. */
+export interface Polyline {
+  pts: Vec2[];
+  closed: boolean;
+}
+
+/** Flatten commands under `a` into polylines (curves sampled into `n` steps each). */
+export function flattenCmds(cmds: PathCmd[], a: Affine = IDENTITY, n = 12): Polyline[] {
+  const out: Polyline[] = [];
+  let cur: Polyline | null = null;
+  let p: Vec2 = [0, 0];
+  let start: Vec2 = [0, 0];
+  const push = (q: Vec2) => {
+    if (!cur) {
+      cur = { pts: [apply(a, p)], closed: false };
+      out.push(cur);
+    }
+    cur.pts.push(apply(a, q));
+  };
+  for (const k of cmds) {
+    switch (k.c) {
+      case "M":
+        p = start = k.p;
+        cur = { pts: [apply(a, p)], closed: false };
+        out.push(cur);
+        break;
+      case "L":
+        push(k.p);
+        p = k.p;
+        break;
+      case "Q":
+        for (let i = 1; i <= n; i++) {
+          const t = i / n;
+          const u = 1 - t;
+          push([u * u * p[0] + 2 * u * t * k.p1[0] + t * t * k.p[0], u * u * p[1] + 2 * u * t * k.p1[1] + t * t * k.p[1]]);
+        }
+        p = k.p;
+        break;
+      case "C":
+        for (let i = 1; i <= n; i++) {
+          const t = i / n;
+          const u = 1 - t;
+          const w0 = u * u * u;
+          const w1 = 3 * u * u * t;
+          const w2 = 3 * u * t * t;
+          const w3 = t * t * t;
+          push([
+            w0 * p[0] + w1 * k.p1[0] + w2 * k.p2[0] + w3 * k.p[0],
+            w0 * p[1] + w1 * k.p1[1] + w2 * k.p2[1] + w3 * k.p[1],
+          ]);
+        }
+        p = k.p;
+        break;
+      case "Z":
+        if (cur) {
+          (cur as Polyline).closed = true;
+          cur = null;
+        }
+        p = start;
+        break;
+    }
+  }
+  return out.filter((pl) => pl.pts.length > 0);
+}
+
+/** Distance from `p` to segment ab. */
+export function distToSegment(p: Vec2, a: Vec2, b: Vec2): number {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const l2 = dx * dx + dy * dy;
+  const t = l2 > 0 ? Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2)) : 0;
+  return Math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy));
+}
+
+/** Shortest distance from `p` to any line of the polylines (closing segments included). */
+export function distToPolylines(p: Vec2, polys: Polyline[]): number {
+  let best = Infinity;
+  for (const pl of polys) {
+    const n = pl.pts.length;
+    if (n === 1) best = Math.min(best, Math.hypot(p[0] - pl.pts[0][0], p[1] - pl.pts[0][1]));
+    for (let i = 1; i < n; i++) best = Math.min(best, distToSegment(p, pl.pts[i - 1], pl.pts[i]));
+    if (pl.closed && n > 2) best = Math.min(best, distToSegment(p, pl.pts[n - 1], pl.pts[0]));
+  }
+  return best;
+}
+
+/** Even-odd inside test over the closed polylines. */
+export function insideEvenOdd(p: Vec2, polys: Polyline[]): boolean {
+  let inside = false;
+  for (const pl of polys) {
+    if (!pl.closed) continue;
+    const pts = pl.pts;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      const [xi, yi] = pts[i];
+      const [xj, yj] = pts[j];
+      if (yi > p[1] !== yj > p[1] && p[0] < ((xj - xi) * (p[1] - yi)) / (yj - yi) + xi) inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function segIntersectsSeg(a: Vec2, b: Vec2, c: Vec2, d: Vec2): boolean {
+  const o = (p: Vec2, q: Vec2, r: Vec2) => (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
+  const d1 = o(c, d, a);
+  const d2 = o(c, d, b);
+  const d3 = o(a, b, c);
+  const d4 = o(a, b, d);
+  return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+}
+
+const inBox = (p: Vec2, b: Box) => p[0] >= b.x0 && p[0] <= b.x1 && p[1] >= b.y0 && p[1] <= b.y1;
+
+/** Whether any line of the polylines lies in or crosses `box` (a crossing selection box). */
+export function polylinesTouchBox(polys: Polyline[], box: Box): boolean {
+  const edges: [Vec2, Vec2][] = [
+    [[box.x0, box.y0], [box.x1, box.y0]],
+    [[box.x1, box.y0], [box.x1, box.y1]],
+    [[box.x1, box.y1], [box.x0, box.y1]],
+    [[box.x0, box.y1], [box.x0, box.y0]],
+  ];
+  for (const pl of polys) {
+    const n = pl.pts.length;
+    for (let i = 0; i < n; i++) {
+      const a = pl.pts[i];
+      if (inBox(a, box)) return true;
+      const b = i + 1 < n ? pl.pts[i + 1] : pl.closed ? pl.pts[0] : null;
+      if (b && edges.some(([c, d]) => segIntersectsSeg(a, b, c, d))) return true;
+    }
+  }
+  return false;
 }

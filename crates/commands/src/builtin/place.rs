@@ -88,7 +88,7 @@ pub enum Fit {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PlaceInput {
-    /// Exact object ids, placed together as one group.
+    /// Exact object or group ids (a group stands for all its members), placed together as one selection.
     pub ids: Vec<ObjectId>,
     /// Which point of the stock the group's bounding box is aligned to, in the stock's own frame: "center" (default),
     /// "top_left", "top", "top_right", "left", "right", "bottom_left", "bottom", "bottom_right". "top" is the stock's

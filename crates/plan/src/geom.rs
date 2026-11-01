@@ -37,10 +37,15 @@ impl Subpath {
 /// A subpath is closed when it ends with `ClosePath` or its last point equals its first. Repeated points are merged
 /// and single-point subpaths dropped (they have nothing to mark).
 pub fn flatten(path: &BezPath) -> Vec<Subpath> {
+    flatten_within(path, FLATTEN_TOLERANCE_MM)
+}
+
+/// [`flatten`] with another tolerance in mm (coarser for display).
+pub fn flatten_within(path: &BezPath, tolerance_mm: f64) -> Vec<Subpath> {
     let mut out = Vec::new();
     let mut current: Vec<Point> = Vec::new();
     let mut closed_start: Option<Point> = None;
-    kurbo::flatten(path, FLATTEN_TOLERANCE_MM, |el| match el {
+    kurbo::flatten(path, tolerance_mm, |el| match el {
         PathEl::MoveTo(p) => {
             finish(&mut current, false, &mut out);
             closed_start = None;

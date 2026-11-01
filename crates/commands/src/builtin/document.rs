@@ -1,6 +1,6 @@
 //! Whole-document commands: `doc.inspect` and `doc.rename`.
 
-use doc::{Document, Geometry, StockShape};
+use doc::{Document, StockShape};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -74,11 +74,7 @@ fn inspect(doc: &Document) -> Value {
         .iter()
         .map(|o| {
             let b = o.bounds();
-            let kind = match o.geometry {
-                Geometry::Rect { .. } => "rect",
-                Geometry::Ellipse { .. } => "ellipse",
-                Geometry::Path { .. } => "path",
-            };
+            let kind = o.geometry.kind_name();
             json!({
                 "id": o.id,
                 "name": o.name,
@@ -168,7 +164,7 @@ impl Command for Rename {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use doc::{Object, Stock};
+    use doc::{Geometry, Object, Stock};
     use kurbo::Affine;
 
     #[test]
@@ -194,6 +190,8 @@ mod tests {
             layer: layer.into(),
             geometry: Geometry::Rect { width_mm: 4.0, height_mm: 4.0, corner_radius_mm: 0.0 },
             transform: Affine::translate((x, 0.0)),
+            group: None,
+            extras: Default::default(),
         };
         d.objects = vec![mk("obj-a", "layer-1", 0.0), mk("obj-b", "layer-1", 10.0), mk("obj-c", "layer-9", 50.0)];
         let v = inspect(&d);

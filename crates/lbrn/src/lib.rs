@@ -45,19 +45,32 @@
 //! closed or not; 4 such paths in the drawing). A primitive that does not start where the previous ended starts a
 //! new subpath; one ending on its subpath's first vertex closes it (text glyphs: `L0 1..L7 0B8 9..`). `VertID` and
 //! `PrimID` share lists: the first Path with an id and a list defines it, later Paths may give only the id (the
-//! drawing has 84 paths, 79 VertLists, 49 PrimLists). The writer always writes lists inline with fresh ids.
+//! drawing has 84 paths, 79 VertLists, 49 PrimLists). Some 2.2 files repeat a full list under an id already defined.
+//! The parser keeps each path's ids and which lists it carried ([`Encoded`]); the writer writes them back so, and
+//! gives new paths fresh ids above every kept one with their lists inline.
 //!
-//! **Group.** `Type="Group"` (no CutIndex) with `<XForm>` and `<Children>` holding Shapes.
+//! **Group.** `Type="Group"` (usually no CutIndex) with `<XForm>` and `<Children>` holding Shapes, nested up to two
+//! deep in the samples.
 //!
 //! **Text.** `Type="Text" CutIndex Font="Arial,-1,100,5,50,0,0,0,0,0" Str H LS LnS Ah Av Weld HasBackupPath="1"`
 //! (+ `VariableOffset` for numbered text) containing `<BackupPath Type="Path" CutIndex>` (a Path with its own XForm,
 //! VertList, PrimList: the rendered outline in the text's local coordinates) and then the Text's `<XForm>`. In all
-//! 26 Text shapes of the samples the two XForms are identical; openlaser-rs found the backup's copy can be stale after a move, so the
-//! importer applies the Text's own XForm to the backup outline. Text without a backup is skipped with a warning.
+//! 26 Text shapes of the samples the two XForms are identical; openlaser-rs found the backup's copy can be stale after
+//! a move, so the importer applies the Text's own XForm to the backup outline. Text without a backup cannot be drawn
+//! and is only kept for export.
 //!
-//! **Bitmap.** `Type="Bitmap" W H` (mm before the XForm, centred) plus `Gamma Contrast Brightness EnhanceAmount
-//! EnhanceRadius EnhanceDenoise File SourceHash Data=<base64 PNG>`; its settings are a `<CutSetting_Img
-//! type="Image">` (with `dotWidth useDotCorrection halftoneAngle negative ditherMode dpi`). Skipped on import.
+//! **Bitmap.** `Type="Bitmap" W H` (mm before the XForm, centred: `W` is the pixel width at the image's own
+//! resolution, the XForm scales and may mirror it) plus `Gamma Contrast Brightness EnhanceAmount EnhanceRadius
+//! EnhanceDenoise File SourceHash Data=<base64 PNG>`; its settings are a `<CutSetting_Img type="Image">` (with
+//! `dotWidth useDotCorrection halftoneAngle negative ditherMode dpi cleanupPass`). A layer index can have both a
+//! `CutSetting` and a `CutSetting_Img` (`.lbt` templates have both for every index).
+//!
+//! **Root and layout.** Besides the root attributes (`AppVersion`, `DeviceName`, `AskForSendName`, 2.2's
+//! `CurrentPage`/`Page0Name`, ...), the files hold `Thumbnail`, `VariableText`, `UIPrefs` and `Notes`, which OpenEtch
+//! keeps verbatim with the root's child order. LightBurn writes 4-space indentation and `<tag Value="..."/>`;
+//! script-made files use other declarations, `" />"` endings and zero-padded numbers (`15.8750`), all of which are
+//! kept ([`Format`], and each number's source spelling while its value is unchanged). `.lbt` templates have the same
+//! layout as projects.
 //!
 //! **CutSetting.** `<CutSetting type="Cut|Scan|Scan+Cut|...">` with `<tag Value="..."/>` children. Types seen:
 //! `Scan` (fill, 32 project layers + all 37 library settings) and `Cut` (line, 1); `Scan+Cut` and `Tool` are from
@@ -67,7 +80,7 @@
 //! subname priority doOutput hide tabsEnabled tabCount tabCountMax tabSpacing tabSize`. Units: power %, `speed`
 //! mm/s, `frequency` **Hz** (100000 = 100 kHz), `QPulseWidth` ns, `interval` mm, angles degrees, booleans `1`/`0`.
 //! LightBurn omits values at its defaults (no `bidir` means bidirectional; `bidir 0` is written when off), so a
-//! missing value takes OpenEtch's default (with a warning for power, speed and frequency). `priority` is the run
+//! missing value takes OpenEtch's default (with a warning for power and speed). `priority` is the run
 //! order; `doOutput 0` / `hide 1` are the output and visibility switches. `<SubLayer type="Scan" index="1">` children
 //! (seen in the library) hold the same tags for an extra pass, typically `maxPower speed frequency numPasses
 //! crossHatch interval angle subname`.
@@ -80,7 +93,7 @@
 //!
 //! | LightBurn | OpenEtch |
 //! |---|---|
-//! | CutSetting `index` | layer (one per index used or defined, ordered by `priority`); index kept in `extras["lbrn2.index"]` |
+//! | CutSetting `index` | layer (one per index used or defined, ordered by `priority`); index kept in `extras["lbrn2.index"]`; the source tags in order and spelling in `extras["lbrn2._src"]`; a second `CutSetting_Img` of the index in `extras["lbrn2._img"]` |
 //! | `name` (else `subname`, else `C05`) | `Layer.name`; colour from the palette by index |
 //! | `type` Cut / Scan / Scan+Cut | `mode` line / fill / fill_then_line; any other type kept in `extras["lbrn2.type"]` |
 //! | `maxPower` % | `power_pct` (clamped to 0..=100 with a warning) |
@@ -90,21 +103,28 @@
 //! | `numPasses` | `passes` (clamped to 1..=1000) |
 //! | `interval`, `angle`, `anglePerPass`, `crossHatch`, `bidir` | `hatch.interval_mm`, `angle_deg`, `angle_increment_deg`, `cross_hatch`, `bidirectional` |
 //! | `doOutput`, `hide` | `output`, `visible` |
+//! | `priority` | layer order; written back as read while every layer came from LightBurn and the order still agrees, else the position |
 //! | `SubLayer`s | `sub_layers` (their other values in `extras["lbrn2.subN.<tag>"]`) |
 //! | every other child (`minPower`, `PPI`, `tabCount`, ...) | `extras["lbrn2.<tag>"]`, written back verbatim (only tags matching `[A-Za-z_][A-Za-z0-9_.-]*`; others are dropped with a warning) |
-//! | Rect / Ellipse | `Geometry::Rect` / `Ellipse`, transform = shift · XForm |
-//! | Path | `Geometry::Path` (exact lines and cubics), transform = shift · XForm |
-//! | Group | flattened: one object per leaf, transform = shift · group · child, named `Group 3.1` |
-//! | Text | its BackupPath outline as a Path object named after the text (warning) |
-//! | Bitmap, other types | skipped with a warning |
+//! | Rect / Ellipse | `Geometry::Rect` / `Ellipse`, transform = shift · groups · XForm |
+//! | Path | `Geometry::Path` (exact lines and cubics), transform = shift · groups · XForm; ids and the lists it carried in `extras` |
+//! | Group | `doc::Group` (nested through `parent`; members point at their innermost group), its XForm and attributes in its `extras` |
+//! | Text | an object drawn as its BackupPath outline, named after the text; `Str`, `Font`, `H`, ... in `extras["lbrn2.<attr>"]`, exported as `Type="Text"` with a BackupPath of the current outline |
+//! | Bitmap | `Geometry::Image` (`W`x`H`, `Data` byte for byte), the other attributes in `extras` |
+//! | other types, Text without outline, unusable shapes | kept as XML in the extras of the object before them (`lbrn2._after.N`), exported again after it |
+//! | every object | its attribute order (`lbrn2._attrs`), XForm text (`lbrn2._xform`) and unknown children (`lbrn2._child.N`) |
+//! | root attributes and elements, layout | `Document::extras` (`lbrn2._root_attrs`, `lbrn2._root`, `lbrn2._el.N`, `lbrn2._decl`, `lbrn2._format`) |
 //! | T1 tool shape (export) | `Document::stock` outline (import: an object on a non-output layer) |
 //!
-//! shift = translate(-field/2, -field/2) on import and its inverse on export.
+//! shift = translate(-field/2, -field/2) on import and its inverse on export. Export writes what the import kept;
+//! a transform, number or path list that did not change since keeps its exact source text, so an unchanged import
+//! exports byte for byte (all 27 sample projects and templates do, `tests/real_samples.rs`).
 //!
-//! Limits: shared `VertList`/`PrimList`s are copied into every path that uses them, so vertices and segments are
+//! Limits: shared `VertList`/`PrimList`s are resolved into every path that uses them, so vertices and segments are
 //! counted per use ([`MAX_SEGMENTS`]) and [`to_document`] caps the path elements it creates. Shapes whose placement
 //! overflows or cannot be inverted, and layer indices above 31, are reported as warnings. The writer drops characters
-//! XML 1.0 cannot hold.
+//! XML 1.0 cannot hold. Not kept: XML comments; groups are written where their first member is in the drawing order.
+//! Old-format `.lbrn` files are not read: no sample exists to establish their format.
 
 mod convert;
 mod model;
@@ -115,10 +135,11 @@ mod write;
 
 pub use convert::{
     EXTRA_PREFIX, FREQUENCY_ABSENT, FREQUENCY_ABSENT_KEY, Imported, MAX_PASSES, cut_setting_to_layer, from_document,
-    to_document,
+    keys, to_document,
 };
 pub use model::{
-    Backup, CutParams, CutSetting, Element, LbrnProject, PathData, Prim, Prims, Shape, ShapeKind, SubLayer, Vertex,
+    Backup, CutParams, CutSetting, Element, Encoded, Format, LbrnProject, PathData, Prim, Prims, RootItem, Shape,
+    ShapeKind, SubLayer, Vertex,
 };
 pub use parse::{LibraryEntry, MAX_BYTES, MAX_SEGMENTS, parse, parse_library};
 pub use write::write;

@@ -6,12 +6,11 @@ import type {
   CommandSpec,
   ExecuteResponse,
   GDocument,
-  HistoryEntry,
   MachineStatus,
   Preview,
   ProjectInfo,
 } from "./types.ts";
-import { contentDispositionName, type FileFormat, type ImportMode } from "./project.ts";
+import { contentDispositionName, type FileFormat, type ImportMode, type UploadFormat } from "./project.ts";
 import { okError } from "./runs.ts";
 
 const TOKEN_KEY = "openetch.token";
@@ -138,7 +137,12 @@ async function checked(path: string, body: unknown, what: string): Promise<unkno
 export const api = {
   commands: () => request<CommandSpec[]>("GET", "/api/commands"),
   document: () => request<GDocument>("GET", "/api/document"),
-  history: () => request<HistoryEntry[]>("GET", "/api/history"),
+  /** The timeline (`{marker, steps}`), or an older engine's log array; normalise with `normalizeHistory`. */
+  history: () => request<unknown>("GET", "/api/history"),
+  /** Roll the timeline marker to `marker` (the index of the last step to keep applied). */
+  historyGoto: (marker: number) => checked("/api/history/goto", { marker }, "moving the timeline marker failed"),
+  /** Remove one timeline step; the later steps are replayed. */
+  historyDelete: (index: number) => checked("/api/history/delete", { index }, "deleting the step failed"),
   preview: () => request<Preview>("GET", "/api/preview"),
   machine: () => request<MachineStatus>("GET", "/api/machine"),
   /** POST /api/undo. Throws ApiError when there is nothing to undo (200 `{ok:false}`). */
@@ -172,16 +176,17 @@ export const api = {
   openProject: (name: string) => checked("/api/projects/open", { name }, "opening the project failed"),
   /**
    * Upload a file as the raw body: `openetch` runs `doc.load`, `lbrn2` runs `doc.import_lbrn2` in `mode`, laid out
-   * for `fieldMm` (default the document's field size). Resolves to the engine's answer; unwrap it with
-   * `commandResult`.
+   * for `fieldMm` (default the document's field size); `svg`, `dxf` and `image` import large artwork into the
+   * document (always merged, so no mode is sent). Resolves to the engine's answer; unwrap it with `commandResult`.
    */
-  upload: async (file: Blob, format: FileFormat, mode: ImportMode = "replace", fieldMm?: number): Promise<unknown> => {
+  upload: async (file: Blob, format: UploadFormat, mode: ImportMode = "replace", fieldMm?: number): Promise<unknown> => {
     // A bad field size is refused here, never silently dropped (the import would then use the document's size).
     if (format === "lbrn2" && fieldMm !== undefined && !(Number.isFinite(fieldMm) && fieldMm > 0)) {
       throw new ApiError(`field_mm must be a positive number (got ${fieldMm})`, 400, { detail: `field_mm must be a positive number (got ${fieldMm})` });
     }
+    const project = format === "openetch" || format === "lbrn2";
     const field = format === "lbrn2" && fieldMm !== undefined ? `&field_mm=${fieldMm}` : "";
-    const path = `/api/document/upload?format=${format}&mode=${mode}${field}`;
+    const path = `/api/document/upload?format=${format}${project ? `&mode=${mode}` : ""}${field}`;
     const headers = authHeaders("application/json");
     headers["Content-Type"] = "application/octet-stream";
     const res = await send("POST", path, { headers, body: file });

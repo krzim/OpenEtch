@@ -16,7 +16,7 @@ const MAX_CELLS: u32 = 10_000;
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ArrayInput {
-    /// Exact object ids, copied together as one group per cell.
+    /// Exact object or group ids (a group stands for all its members), copied together per cell.
     pub ids: Vec<ObjectId>,
     /// Number of rows (along field Y), >= 1.
     pub rows: u32,

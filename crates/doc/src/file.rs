@@ -94,13 +94,29 @@ fn validate(doc: &mut Document) -> Result<(), FileError> {
         // Below MAX_ID (checked), so this cannot overflow.
         doc.next_id = doc.next_id.max(m + 1);
     }
+    // A hand-edited file may hold groups without members; they mean nothing.
+    doc.prune_groups();
     Ok(())
 }
 
 /// The numeric suffixes of the ids, e.g. 12 for "obj-12".
 fn numbered_ids(doc: &Document) -> impl Iterator<Item = u64> + '_ {
-    let ids = doc.layers.iter().map(|l| &l.id).chain(doc.objects.iter().map(|o| &o.id));
+    let ids = doc.layers.iter().map(|l| &l.id).chain(doc.objects.iter().map(|o| &o.id)).chain(doc.groups.iter().map(|g| &g.id));
     ids.filter_map(|id| id.rsplit_once('-').and_then(|(_, n)| n.parse::<u64>().ok()))
+}
+
+/// Whether `mime` looks like `image/<name>` (e.g. `image/png`, `image/svg+xml`).
+pub fn is_image_mime(mime: &str) -> bool {
+    mime.len() <= 64
+        && mime.strip_prefix("image/").is_some_and(|t| {
+            !t.is_empty() && t.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'+' | b'-'))
+        })
+}
+
+/// Whether `s` uses only the standard base64 alphabet (and `=` padding, at the end). Line breaks are not allowed.
+pub fn is_base64(s: &str) -> bool {
+    let body = s.trim_end_matches('=');
+    s.len() - body.len() <= 2 && body.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/'))
 }
 
 fn invalid(m: impl Into<String>) -> FileError {
@@ -119,7 +135,7 @@ fn check(doc: &Document) -> Result<(), FileError> {
         return Err(invalid("the document has no layers; it needs at least one"));
     }
     let mut seen = BTreeSet::new();
-    for id in doc.layers.iter().map(|l| &l.id).chain(doc.objects.iter().map(|o| &o.id)) {
+    for id in doc.layers.iter().map(|l| &l.id).chain(doc.objects.iter().map(|o| &o.id)).chain(doc.groups.iter().map(|g| &g.id)) {
         if !seen.insert(id.as_str()) {
             return Err(invalid(format!("id '{id}' is used more than once")));
         }
@@ -133,7 +149,8 @@ fn check(doc: &Document) -> Result<(), FileError> {
     let names = std::iter::once(("the document name", &doc.name))
         .chain(doc.layers.iter().map(|l| ("a layer name", &l.name)))
         .chain(doc.objects.iter().map(|o| ("an object name", &o.name)))
-        .chain(doc.stock.iter().map(|s| ("the stock name", &s.name)));
+        .chain(doc.stock.iter().map(|s| ("the stock name", &s.name)))
+        .chain(doc.groups.iter().map(|g| ("a group name", &g.name)));
     for (what, name) in names {
         if name.chars().any(char::is_control) {
             return Err(invalid(format!("{what} contains a control character: {name:?}")));
@@ -155,9 +172,48 @@ fn check(doc: &Document) -> Result<(), FileError> {
             }
             Geometry::Ellipse { rx_mm, ry_mm } => rx_mm > 0.0 && ry_mm > 0.0,
             Geometry::Path { .. } => true,
+            Geometry::Image { width_mm, height_mm, ref mime, ref data_base64 } => {
+                if !is_image_mime(mime) {
+                    return Err(invalid(format!("object {} has an image type {mime:?} that is not image/<name>", o.id)));
+                }
+                if !is_base64(data_base64) {
+                    return Err(invalid(format!("object {} has image data that is not base64", o.id)));
+                }
+                width_mm > 0.0 && height_mm > 0.0
+            }
         };
         if !size_ok {
             return Err(invalid(format!("object {} has a size that is not positive", o.id)));
+        }
+        if let Some(g) = &o.group
+            && doc.group(g).is_none()
+        {
+            return Err(invalid(format!("object {} is in group '{g}', which does not exist", o.id)));
+        }
+    }
+    for g in &doc.groups {
+        if let Some(p) = &g.parent
+            && doc.group(p).is_none()
+        {
+            return Err(invalid(format!("group {} is inside group '{p}', which does not exist", g.id)));
+        }
+        // Walking up from any group must reach the top within as many steps as there are groups.
+        let mut at = g.parent.as_deref();
+        for _ in 0..=doc.groups.len() {
+            at = at.and_then(|p| doc.group(p)).and_then(|p| p.parent.as_deref());
+        }
+        if at.is_some() {
+            return Err(invalid(format!("group {} is (indirectly) inside itself", g.id)));
+        }
+    }
+    let extras = std::iter::once(("the document", &doc.extras))
+        .chain(doc.layers.iter().map(|l| ("a layer", &l.extras)))
+        .chain(doc.objects.iter().map(|o| ("an object", &o.extras)))
+        .chain(doc.groups.iter().map(|g| ("a group", &g.extras)));
+    for (what, map) in extras {
+        if let Some(k) = map.keys().find(|k| !is_extras_key(k)) {
+            let k: String = k.chars().take(80).collect();
+            return Err(invalid(format!("{what} has an invalid extras key {k:?}")));
         }
     }
     match doc.numeric_problem() {
@@ -183,6 +239,8 @@ mod tests {
             layer: "layer-1".into(),
             geometry: Geometry::Ellipse { rx_mm: 10.0, ry_mm: 8.0 },
             transform: Affine::translate((1.0, 2.0)),
+            group: None,
+            extras: Default::default(),
         });
         d
     }
@@ -305,4 +363,57 @@ mod tests {
         d.layers[0].settings.power_pct = f64::NAN;
         assert!(try_to_openetch_json(&d).is_err());
     }
+
+    #[test]
+    fn groups_images_and_extras_round_trip_and_are_checked() {
+        let mut d = sample();
+        let gid = d.alloc_id("group").unwrap();
+        d.groups.push(crate::Group::new(gid.clone(), "Group 1", None));
+        d.groups[0].extras.insert("lbrn2.XForm".into(), "1 0 0 1 0 0".into());
+        d.objects[0].group = Some(gid.clone());
+        d.objects[0].extras.insert("lbrn2.Font".into(), "Arial,-1,100".into());
+        d.extras.insert("lbrn2.Notes".into(), "<Notes/>".into());
+        let id = d.alloc_id("obj").unwrap();
+        let image =
+            Geometry::Image { width_mm: 4.0, height_mm: 3.0, mime: "image/png".into(), data_base64: "iVBORw0KGgo=".into() };
+        d.objects.push(Object::new(id, "photo", "layer-1".into(), image, Affine::IDENTITY));
+        assert_eq!(from_openetch_json(&to_openetch_json(&d)).unwrap(), d);
+
+        let mut bad = d.clone();
+        bad.objects[0].group = Some("group-404".into());
+        refused(&bad, "does not exist");
+        let mut bad = d.clone();
+        bad.groups[0].parent = Some(gid.clone());
+        refused(&bad, "inside itself");
+        let mut bad = d.clone();
+        bad.groups.push(crate::Group::new("obj-2".into(), "clash", None));
+        refused(&bad, "more than once");
+        let mut bad = d.clone();
+        bad.objects[0].extras.insert("bad key".into(), String::new());
+        refused(&bad, "extras key");
+        let mut bad = d.clone();
+        bad.extras.insert("x".into(), String::new());
+        refused(&bad, "extras key");
+        let mut bad = d.clone();
+        bad.groups[0].name = "a\u{7}".into();
+        refused(&bad, "control character");
+        for (mime, data) in [("text/html", "AAAA"), ("image/png", "<svg>"), ("image/png", "AA\nAA")] {
+            let mut bad = d.clone();
+            bad.objects[1].geometry =
+                Geometry::Image { width_mm: 4.0, height_mm: 3.0, mime: mime.into(), data_base64: data.into() };
+            refused(&bad, "image");
+        }
+        let mut bad = d.clone();
+        bad.objects[1].geometry =
+            Geometry::Image { width_mm: 0.0, height_mm: 3.0, mime: "image/png".into(), data_base64: "".into() };
+        refused(&bad, "not positive");
+
+        // An empty group is dropped on load, and group ids count for next_id.
+        let mut d2 = d.clone();
+        d2.groups.push(crate::Group::new("group-40".into(), "empty", None));
+        let back = from_openetch_json(&to_openetch_json(&d2)).unwrap();
+        assert_eq!(back.groups.len(), 1);
+        assert!(back.next_id > 40);
+    }
+
 }

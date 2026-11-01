@@ -3,9 +3,14 @@
 //! resulting field-frame `bounds` (`{min, max, size, center}`, or `null`); lookups by id never guess and fail with
 //! [`CommandError::NotFound`](crate::CommandError::NotFound) listing close matches.
 
+mod arrange;
 mod array;
 mod document;
+#[cfg(not(target_arch = "wasm32"))]
+mod dxf;
 mod file;
+mod group;
+mod image;
 mod layer;
 mod object;
 mod place;
@@ -44,4 +49,14 @@ pub(crate) fn register_all(r: &mut Registry) {
     r.register::<object::Duplicate>();
     r.register::<place::Place>();
     r.register::<array::Array>();
+    r.register::<stock::StockMove>();
+    r.register::<arrange::Move>();
+    r.register::<arrange::Align>();
+    r.register::<arrange::Distribute>();
+    r.register::<group::GroupCreate>();
+    r.register::<group::GroupUngroup>();
+    r.register::<group::GroupRename>();
+    r.register::<image::ImportImage>();
+    #[cfg(not(target_arch = "wasm32"))]
+    r.register::<dxf::ImportDxf>();
 }

@@ -1,4 +1,4 @@
-//! Stock commands: `stock.define` and `stock.clear`.
+//! Stock commands: `stock.define`, `stock.move` and `stock.clear`.
 
 use doc::{Document, Stock, StockShape};
 use schemars::JsonSchema;
@@ -101,6 +101,74 @@ impl Command for StockDefine {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct StockMoveInput {
+    /// New centre [x, y] in field mm. Not together with translate.
+    pub center: Option<[f64; 2]>,
+    /// Move by [dx, dy] mm in the field frame. Not together with center.
+    pub translate: Option<[f64; 2]>,
+    /// New rotation in degrees counter-clockwise (absolute), about the stock's centre. Not together with
+    /// rotate_by_deg.
+    pub rotation_deg: Option<f64>,
+    /// Rotate by this many degrees counter-clockwise (relative), about the stock's centre. Not together with
+    /// rotation_deg.
+    pub rotate_by_deg: Option<f64>,
+}
+
+/// `stock.move`.
+pub struct StockMove;
+
+impl Command for StockMove {
+    type Input = StockMoveInput;
+    const ID: &'static str = "stock.move";
+    const TITLE: &'static str = "Move stock";
+    const DESCRIPTION: &'static str = "Move and/or rotate the stock (e.g. to match where the piece sits in a jig):         center [x, y] or translate [dx, dy] in field mm, rotation_deg (absolute) or rotate_by_deg (relative),         counter-clockwise about the stock's centre. Objects are not moved. Fails if no stock is defined. Returns         the stock's field-frame bounds.";
+    const RISK: Risk = Risk::Edit;
+
+    fn apply(doc: &mut Document, i: StockMoveInput) -> Result<(Value, String)> {
+        let id = Self::ID;
+        let mut stock =
+            doc.stock.clone().ok_or_else(|| CommandError::Failed("no stock is defined; run stock.define first".into()))?;
+        if i.center.is_some() && i.translate.is_some() {
+            return Err(invalid(id, "give center or translate, not both"));
+        }
+        if i.rotation_deg.is_some() && i.rotate_by_deg.is_some() {
+            return Err(invalid(id, "give rotation_deg or rotate_by_deg, not both"));
+        }
+        let mut parts = Vec::new();
+        if let Some(c) = i.center {
+            stock.center = util::finite2(id, "center", c)?;
+            parts.push(format!("centre [{}, {}]", util::r4(c[0]), util::r4(c[1])));
+        }
+        if let Some(t) = i.translate {
+            let [dx, dy] = util::finite2(id, "translate", t)?;
+            stock.center = [stock.center[0] + dx, stock.center[1] + dy];
+            parts.push(format!("move [{}, {}]", util::r4(dx), util::r4(dy)));
+        }
+        if let Some(r) = i.rotation_deg {
+            stock.rotation_deg = util::finite(id, "rotation_deg", r)?;
+            parts.push(format!("rotation {}°", util::r4(r)));
+        }
+        if let Some(r) = i.rotate_by_deg {
+            util::finite(id, "rotate_by_deg", r)?;
+            // Kept in (-360, 360) so repeated nudges do not grow without bound.
+            stock.rotation_deg = (stock.rotation_deg + r) % 360.0;
+            parts.push(format!("rotate {}°", util::r4(r)));
+        }
+        if parts.is_empty() {
+            return Err(invalid(id, "nothing to do: give center, translate, rotation_deg or rotate_by_deg"));
+        }
+        if !stock.center.iter().all(|v| v.is_finite()) {
+            return Err(invalid(id, "the stock would move to a position that is not a finite number"));
+        }
+        let bounds = util::rect_json(stock.bounds());
+        let summary = format!("stock \"{}\": {}", stock.name, parts.join(", "));
+        doc.stock = Some(stock);
+        Ok((json!({ "created": [], "affected": [], "stock_bounds": bounds.clone(), "bounds": bounds }), summary))
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct StockClearInput {}
 
 /// `stock.clear`.
@@ -160,6 +228,30 @@ mod tests {
         assert!(define(&mut d, json!({"shape": {"kind": "rect", "width_mm": 10, "height_mm": 10, "corner_radius_mm": 6}, "thickness_mm": 1})).is_err());
         assert!(define(&mut d, json!({"shape": {"kind": "hexagon"}, "thickness_mm": 1})).is_err());
         assert!(d.stock.is_none());
+    }
+
+    #[test]
+    fn move_stock_by_centre_translate_and_rotation() {
+        let mut d = Document::default();
+        let mv = |d: &mut Document, v: Value| {
+            StockMove::apply(d, serde_json::from_value(v).map_err(|e| invalid("t", e.to_string()))?)
+        };
+        assert!(mv(&mut d, json!({"translate": [1, 0]})).is_err(), "no stock");
+        define(&mut d, json!({"shape": {"kind": "rect", "width_mm": 40, "height_mm": 20}, "thickness_mm": 2})).unwrap();
+        mv(&mut d, json!({"center": [10, 5]})).unwrap();
+        let (r, _) = mv(&mut d, json!({"translate": [1, -1], "rotation_deg": 90})).unwrap();
+        let s = d.stock.as_ref().unwrap();
+        assert_eq!(s.center, [11.0, 4.0]);
+        assert_eq!(s.rotation_deg, 90.0);
+        assert_eq!(r["bounds"]["min"], json!([1.0, -16.0]));
+        mv(&mut d, json!({"rotate_by_deg": 300})).unwrap();
+        assert_eq!(d.stock.as_ref().unwrap().rotation_deg, 30.0);
+        assert!(mv(&mut d, json!({})).is_err());
+        assert!(mv(&mut d, json!({"center": [0, 0], "translate": [1, 1]})).is_err());
+        assert!(mv(&mut d, json!({"rotation_deg": 1, "rotate_by_deg": 1})).is_err());
+        assert!(mv(&mut d, json!({"translate": [1e308, 0]})).is_ok());
+        assert!(mv(&mut d, json!({"translate": [1e308, 0]})).is_err(), "overflow to infinity");
+        assert_eq!(d.stock.as_ref().unwrap().rotation_deg, 30.0, "a failed move changes nothing");
     }
 
     #[test]

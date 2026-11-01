@@ -4,7 +4,8 @@
 //!   anything outside the field or the [`Target`]'s limits.
 //! - [`encode`]: [`JobPlan`] -> `lmc` list packets (layout documented in the `encode` module).
 //! - [`simulate`]: packets -> [`Preview`] (what the board would run); [`preview_plan`]: plan -> [`Preview`]
-//!   without encoding, for the live UI.
+//!   without encoding, for the live UI; [`preview_document`] adds per-layer totals.
+//! - [`fill_regions`]: the even-odd fill areas of fill layers, for display.
 //!
 //! Everything public is in mm, mm/s, kHz, %, µs and degrees in the field frame (ARCHITECTURE.md). Galvo words,
 //! axis swap and negate appear only inside [`Target::to_galvo`] / [`Target::from_galvo`].
@@ -16,13 +17,15 @@ mod hatch;
 mod job;
 mod order;
 mod preview;
+mod regions;
 mod target;
 
 pub use encode::{encode, jump_delay_us};
 pub use geom::{FLATTEN_TOLERANCE_MM, Point};
 pub use hatch::MAX_SCANLINES;
-pub use job::{JobPlan, MAX_PASSES, MAX_SEGMENTS, PassPlan, PassSettings, Stats, plan_job};
-pub use preview::{Preview, PreviewSegment, SegmentKind, preview_plan, simulate};
+pub use job::{IMAGE_WARNING, JobPlan, MAX_PASSES, MAX_SEGMENTS, PassPlan, PassSettings, Stats, plan_job};
+pub use preview::{LayerPreview, Preview, PreviewSegment, SegmentKind, preview_document, preview_plan, simulate};
+pub use regions::{DISPLAY_TOLERANCE_MM, FillRegions, LayerFill, fill_regions};
 pub use target::Target;
 
 use doc::{LayerId, ObjectId};
