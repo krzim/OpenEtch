@@ -83,7 +83,7 @@ export function circleOf(o: Pick<DocObject, "geometry" | "transform">): { center
 }
 
 /** What kind of shape an object is, for labels: "Circle" for a round ellipse. */
-export function shapeKindName(o: Pick<DocObject, "geometry" | "transform">): string {
+export function shapeKindName(o: Pick<DocObject, "geometry" | "transform"> & { extras?: DocObject["extras"] }): string {
   switch (o.geometry.kind) {
     case "ellipse":
       return isRound(o) ? "Circle" : "Ellipse";
@@ -91,8 +91,11 @@ export function shapeKindName(o: Pick<DocObject, "geometry" | "transform">): str
       return "Rectangle";
     case "image":
       return "Image";
+    case "text":
+      return "Text";
     default:
-      return "Path";
+      // A barcode (shape.barcode) is a path that keeps its parameters for editing.
+      return o.extras?.["openetch.barcode"] ? "Barcode" : "Path";
   }
 }
 

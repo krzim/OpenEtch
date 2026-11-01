@@ -4,6 +4,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, batch, eventsUrl, execute, type Invocation } from "./client.ts";
+import { publishEngineEvent, type EngineMessage } from "./events.ts";
 import { EMPTY_TIMELINE, normalizeHistory, type TimelineModel } from "./history.ts";
 import { runFinishedToast, withApprovalLock } from "./runs.ts";
 import type { CommandSpec, EngineEvent, GDocument, MachineStatus, Origin, Preview, ProjectInfo } from "./types.ts";
@@ -267,6 +268,7 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
         } catch {
           return;
         }
+        if (ev && typeof ev === "object") publishEngineEvent(ev as EngineMessage);
         switch (ev.type) {
           case "document_changed":
             if (typeof ev.revision !== "number" || ev.revision !== docRevision.current) void refreshDoc();

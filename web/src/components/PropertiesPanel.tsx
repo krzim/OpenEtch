@@ -17,6 +17,7 @@ import { circleOf, shapeKindName } from "../snapping.ts";
 import { ANCHORS, anchorPoint, useAnchor } from "../workspace/numeric.ts";
 import { usePrefs } from "../workspace/usePrefs.ts";
 import { formatLength, lengthDigits, lengthToDisplay, trimNumber } from "../workspace/units.ts";
+import { CutOptionsSection, ShapeCutProperties } from "./CutOptions.tsx";
 import { ImageSettings } from "./ImageSettings.tsx";
 import type { ArrangeAction } from "./Toolbar.tsx";
 import { CheckField, ColorField, Icon, NumberField, PairField, TextField } from "./ui.tsx";
@@ -44,6 +45,7 @@ export function PropertiesPanel(props: PropertiesPanelProps) {
   return (
     <div className="props">
       {selection.objects.length > 0 && <ObjectSection {...props} doc={doc} />}
+      {selection.objects.length > 0 && <ShapeCutProperties doc={doc} ids={selection.objects} run={props.run} report={props.report} has={props.has} />}
       {selection.stock && doc.stock && <StockSection {...props} doc={doc} />}
       {layer && <LayerSection layer={layer} machine={props.machine} run={props.run} report={props.report} doc={doc} has={props.has} />}
       {nothing && (
@@ -480,7 +482,10 @@ function PassEditor({
       )}
 
       {canEdit ? (
-        <CutSettingsForm key={`${layer.id}#${pass}`} settings={entry.settings} machine={machine} onPatch={patch} />
+        <>
+          <CutSettingsForm key={`${layer.id}#${pass}`} settings={entry.settings} machine={machine} onPatch={patch} />
+          <CutOptionsSection key={`opts-${layer.id}#${pass}`} layer={layer} sub={sub} settings={entry.settings} run={run} report={report} has={has} />
+        </>
       ) : (
         <dl className="kv">
           <dt>Settings</dt>

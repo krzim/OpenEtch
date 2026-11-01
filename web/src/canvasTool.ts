@@ -10,9 +10,10 @@ import type { Mods } from "./editing.ts";
 import type { SnapHit, SnapPart, SnapPoint } from "./snapping.ts";
 
 /** Tools implemented by the canvas tool (the Viewport's own are select, rect, ellipse and circle). */
-export type CanvasToolId = "node" | "line" | "pen" | "polygon" | "measure" | "trim" | "pick";
+export type CanvasToolId = "node" | "line" | "pen" | "polygon" | "measure" | "trim" | "pick" | "text" | "barcode";
 
-export const CANVAS_TOOLS: readonly CanvasToolId[] = ["node", "line", "pen", "polygon", "measure", "trim", "pick"];
+/** "text" and "barcode" are handled by text/useTextTools.tsx, which wraps EditTools' canvas tool. */
+export const CANVAS_TOOLS: readonly CanvasToolId[] = ["node", "line", "pen", "polygon", "measure", "trim", "pick", "text", "barcode"];
 
 export function isCanvasTool(t: string): t is CanvasToolId {
   return (CANVAS_TOOLS as readonly string[]).includes(t);

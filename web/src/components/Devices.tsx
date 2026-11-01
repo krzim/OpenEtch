@@ -9,7 +9,7 @@
 // fields in this browser (api/devices.ts) before they are sent.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, ApiError } from "../api/client.ts";
+import { api, ApiError, type Invocation } from "../api/client.ts";
 import {
   MAX_DEVICE_FILE_BYTES,
   activateBlocker,
@@ -38,8 +38,10 @@ import {
 } from "../api/devices.ts";
 import { diffLabel, formatDiffValue } from "../api/lightburn.ts";
 import { formatBytes } from "../api/project.ts";
-import type { MachineStatus } from "../api/types.ts";
+import type { GDocument, MachineStatus } from "../api/types.ts";
+import { jobApi } from "../api/jobApi.ts";
 import type { LinkState } from "../api/useEngine.ts";
+import { DeviceEditor } from "./DeviceEditor.tsx";
 import { Icon, Modal } from "./ui.tsx";
 
 type Notify = (msg: string, kind?: "info" | "error") => void;
@@ -202,13 +204,18 @@ export function DevicesWindow(p: {
   onSwitched: () => void;
   notify: Notify;
   report: (e: unknown) => void;
+  /** For the device settings editor's lens calibration wizard (the test pattern's layer). */
+  doc?: GDocument | null;
+  run?: (inv: Invocation | Invocation[]) => Promise<unknown>;
 }) {
   const { list } = p.devices;
   const [selected, setSelected] = useState<string | null>(() => (list ? keepSelection(list, null) : null));
   const [details, setDetails] = useState<{ id: string; d: DeviceDetails | null; error: string | null } | null>(null);
   const [ask, setAsk] = useState<Ask | null>(null);
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
   const input = useRef<HTMLInputElement>(null);
+  const markcfgInput = useRef<HTMLInputElement>(null);
 
   // Keep a selection that still exists after the list changes (an import, a removal, a switch elsewhere).
   useEffect(() => {
@@ -281,6 +288,23 @@ export function DevicesWindow(p: {
       await p.devices.refresh();
     });
 
+  const duplicate = (d: DeviceSummary) =>
+    task(async () => {
+      const r = (await jobApi.deviceDuplicate(d.id)) as { device?: { id?: string } };
+      p.notify(`Duplicated ${d.display_name}.`);
+      await p.devices.refresh();
+      if (r?.device?.id) setSelected(r.device.id);
+    });
+
+  const importMarkcfg = (f: File) =>
+    task(async () => {
+      if (f.size > MAX_DEVICE_FILE_BYTES) throw new Error(`${f.name} is too large for an EzCad markcfg file.`);
+      const r = (await jobApi.importMarkcfg(f, f.name.replace(/\.[^.]*$/, ""))) as { device?: { id?: string; display_name?: string } };
+      p.notify(`Added ${r?.device?.display_name ?? "a device"} from ${f.name}.`);
+      await p.devices.refresh();
+      if (r?.device?.id) setSelected(r.device.id);
+    });
+
   const activateBlock = activateBlocker(device, list, p.machine);
   const removeBlock = removeBlocker(device, list);
 
@@ -288,7 +312,8 @@ export function DevicesWindow(p: {
     <Modal
       title="Devices"
       wide
-      onClose={p.onClose}
+      // While the device settings are open, Escape closes only them (every Modal listens on the window).
+      onClose={editing ? noopClose : p.onClose}
       footer={
         ask?.kind === "switch" ? (
           <SwitchConfirm
@@ -350,6 +375,15 @@ export function DevicesWindow(p: {
             </button>
             <button className="btn" disabled={busy} onClick={() => input.current?.click()}>
               <Icon name="upload" /> Import file…
+            </button>
+            <button className="btn" disabled={busy} title="Add a device from an EzCad markcfg file (the laser's own settings)" onClick={() => markcfgInput.current?.click()}>
+              Import EzCad…
+            </button>
+            <button className="btn" disabled={busy || !device} title="Edit a copy of the selected device" onClick={() => device && void duplicate(device)}>
+              Duplicate
+            </button>
+            <button className="btn" disabled={busy || !device} title="Device settings: field, red dot, galvo corrections, timing, ports, axes, lens" onClick={() => setEditing(true)}>
+              Edit…
             </button>
             <button className="btn" disabled={busy || removeBlock !== null} title={removeBlock ?? "Remove the selected device"} onClick={() => device && setAsk({ kind: "remove", device })}>
               Remove
@@ -439,7 +473,32 @@ export function DevicesWindow(p: {
           </table>
         </div>
       )}
+      <input
+        ref={markcfgInput}
+        type="file"
+        hidden
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          e.target.value = "";
+          if (f) void importMarkcfg(f);
+        }}
+      />
       {device && <DeviceSettings device={device} details={details && details.id === device.id ? details : null} />}
+      {editing && device && (
+        <DeviceEditor
+          device={device}
+          active={device.id === list?.active}
+          doc={p.doc ?? null}
+          run={p.run ?? (() => Promise.reject(new Error("unavailable")))}
+          notify={p.notify}
+          report={p.report}
+          onChanged={(id) => {
+            void p.devices.refresh().then(() => id && setSelected(id));
+            if (device.id === list?.active) p.onSwitched();
+          }}
+          onClose={() => setEditing(false)}
+        />
+      )}
       <p className="hint">
         Import from LightBurn reads LightBurn's prefs.ini on the engine computer; Import file takes a .lbdev file or a
         prefs.ini from another computer. Only device settings are read: names, sizes, origin and galvo settings. Nothing
@@ -448,6 +507,8 @@ export function DevicesWindow(p: {
     </Modal>
   );
 }
+
+function noopClose() {}
 
 /** The read-only summary of the selected device (LightBurn 2.x shows one under the list). */
 function DeviceSettings(p: { device: DeviceSummary; details: { d: DeviceDetails | null; error: string | null } | null }) {

@@ -254,6 +254,8 @@ export function geometryCmds(g: Geometry): PathCmd[] {
       return ellipseCmds(g.rx_mm, g.ry_mm);
     case "path":
       return parseBezPath(g.path);
+    case "text":
+      return parseBezPath(g.outline);
     case "image":
       // The image's frame: used for bounds, hit testing and snapping; the bitmap itself is drawn separately.
       return rectCmds(g.width_mm, g.height_mm, 0);

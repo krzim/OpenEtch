@@ -79,7 +79,50 @@ export type Geometry =
   | { kind: "ellipse"; rx_mm: number; ry_mm: number }
   | { kind: "path"; path: BezPathJson }
   /** A bitmap centred on the local origin. Not engraved yet (the planner skips it with a warning). */
-  | { kind: "image"; width_mm: number; height_mm: number; mime: string; data_base64: string };
+  | { kind: "image"; width_mm: number; height_mm: number; mime: string; data_base64: string }
+  /** Live text (`doc::Text`): its settings plus the rendered `outline`, which is what is drawn and burned. */
+  | TextGeometry;
+
+export type FontKind = "system" | "stroke" | "shx" | "jsf";
+export type TextAlignH = "left" | "middle" | "right";
+export type TextAlignV = "top" | "middle" | "bottom";
+export type VarMode = "date_time" | "serial" | "csv" | "cut_setting";
+
+/** A text object's geometry (crates/doc/src/text.rs). Lengths in mm, spacing in % (LightBurn's HSpace/VSpace). */
+export interface TextGeometry {
+  kind: "text";
+  text: string;
+  font: { family: string; kind: FontKind };
+  height_mm: number;
+  h_spacing: number;
+  v_spacing: number;
+  align_h: TextAlignH;
+  align_v: TextAlignV;
+  bold: boolean;
+  italic: boolean;
+  upper: boolean;
+  welded: boolean;
+  bend_deg: number;
+  distort: boolean;
+  path?: { object: string; offset_mm: number } | null;
+  max_width_mm: number;
+  squeeze: boolean;
+  ignore_empty_vars: boolean;
+  variable?: { mode: VarMode; offset: number } | null;
+  outline: BezPathJson;
+  /** What the outline shows (the evaluated variable text) when it differs from `text`. */
+  shown?: string | null;
+}
+
+/** The document's serial number / CSV row counter (LightBurn's Variable Text window). */
+export interface VariableState {
+  start: number;
+  end: number;
+  current: number;
+  advance_by: number;
+  auto_advance: boolean;
+  csv?: { name: string; rows: string[][] } | null;
+}
 
 export interface DocObject {
   id: string;
@@ -130,6 +173,8 @@ export interface GDocument {
   /** Groups (absent on older engines). */
   groups?: Group[];
   extras?: Record<string, string>;
+  /** Variable text state; absent while it is the default (start 0, end 999, current 0, advance by 1). */
+  variables?: VariableState | null;
 }
 
 /**
@@ -193,6 +238,8 @@ export interface PreviewSegment {
   sub_layer?: number;
   from: Vec2;
   to: Vec2;
+  /** Estimated time from the job's start to the end of this segment, s (engines with the preview time slider). */
+  t_s?: number;
 }
 
 /** Per-layer preview data (newer engines). */

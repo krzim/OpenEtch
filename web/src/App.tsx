@@ -35,10 +35,14 @@ import { ContextMenu, type MenuItem } from "./components/ContextMenu.tsx";
 import { ArrayDialog, CommandPalette, PlaceDialog, StockDialog } from "./components/Dialogs.tsx";
 import { DeviceBar, DevicesWindow, useDevices } from "./components/Devices.tsx";
 import { useEditTools } from "./components/EditTools.tsx";
+import { useTextTools } from "./text/useTextTools.tsx";
 import { guideScope } from "./guides.ts";
 import { DropOverlay, useFileDrop } from "./components/FileDrop.tsx";
 import { FileDialogs, FileMenu, useFileActions } from "./components/FileMenu.tsx";
-import { MachineCard, PreviewPlayer, PreviewStatsCard, RunsCard } from "./components/LaserPanel.tsx";
+import { MachineCard, PreviewStatsCard, RunsCard } from "./components/LaserPanel.tsx";
+import { frameWithOptions } from "./components/FramingOptions.tsx";
+import { requestRunWithOptions, togglePause } from "./components/JobControls.tsx";
+import { PreviewTimeline } from "./components/PreviewTimeline.tsx";
 import { LightBurnDevices, useLightBurn } from "./components/LightBurn.tsx";
 import { LayerSection, PropertiesPanel } from "./components/PropertiesPanel.tsx";
 import { Timeline } from "./components/Timeline.tsx";
@@ -263,6 +267,8 @@ export function App() {
     // Guides belong to the project (not the document's name, which projects can share); wait until both are known.
     guideScope: doc && engine.projectKnown ? guideScope(file.projectName, file.openedName) : null,
   });
+  // Text and Barcode tools, text/barcode properties, the Variable Text window (text/useTextTools.tsx).
+  const text = useTextTools({ doc, selection, selectIds, tool, setTool, activeLayer, design: workspace === "design", has, run, notify, report });
 
   // ---- import: drop and picker share one router ------------------------------------------------------------------
 
@@ -901,6 +907,7 @@ export function App() {
     { label: "Ungroup", hint: "Ctrl+U", disabled: !grouped || !has(C.OPT.groupUngroup), action: ungroup },
     { sep: true },
     ...edit.menuItems,
+    ...(text.menuItems.length ? [{ sep: true } as const, ...text.menuItems] : []),
     { sep: true },
     { label: "Align left", hint: "L", disabled: units < 2, action: () => alignTo("left") },
     { label: "Align horizontal centres", hint: "C", disabled: units < 2, action: () => alignTo("center") },
@@ -918,11 +925,12 @@ export function App() {
     { label: "Invert selection", hint: "Ctrl+Shift+I", disabled: !doc, action: () => doc && setSelection(invertSelection(selection, doc)) },
   ];
 
-  // Framing from the Laser dock and the framing hotkeys: the whole job, or only the selection.
-  const frameWith = (o: { mode: "bounds" | "outline"; selection: boolean }) => {
-    const ids = o.selection && selection.objects.length ? { ids: selection.objects } : {};
-    void machineAction(api.frame({ mode: o.mode, ...ids }), "Framing with the red pointer.");
-  };
+  // The framing hotkeys: the Laser window's framing options (components/FramingOptions.tsx), on the selection when
+  // there is one, else the whole job; `style` overrides the frame style.
+  const frameWith = (style?: "bounds" | "outline") =>
+    void machineAction(frameWithOptions(selection.objects, { selectionOnly: selection.objects.length > 0, ...(style ? { style } : {}) }), "Framing with the red pointer.");
+  // Request run (hotkey, toolbar) with the Laser window's run options; it still needs PIN approval.
+  const requestRun = () => void requestRunWithOptions(selection.objects).then(notify).catch(report).finally(() => void engine.refreshMachine());
   const laserDisabled = designOnlyReason(device);
   // Workspace hotkeys (workspace/hotkeys.ts); App's own keys stay in the handler above.
   ws.keymap.current = {
@@ -944,12 +952,14 @@ export function App() {
       "view.zoomOut": () => sendViewCommand("zoomOut"),
       "view.zoomPage": () => sendViewCommand("fit"),
       "view.zoomSelection": () => sendViewCommand("selection"),
-      "laser.frameSelection": () => (laserDisabled ? false : frameWith({ mode: "bounds", selection: true })),
-      "laser.frameSquare": () => (laserDisabled ? false : frameWith({ mode: "bounds", selection: true })),
-      "laser.frameOutline": () => (laserDisabled ? false : frameWith({ mode: "outline", selection: true })),
+      "laser.frameSelection": () => (laserDisabled ? false : frameWith()),
+      "laser.frameSquare": () => (laserDisabled ? false : frameWith("bounds")),
+      "laser.frameOutline": () => (laserDisabled ? false : frameWith("outline")),
       "laser.frameStop": () => void machineAction(api.frameStop(), "Framing stopped. Pending runs are kept."),
-      "laser.requestRun": () => (laserDisabled ? false : void machineAction(api.requestRun(), "Run requested. Approve it in the Machine panel.")),
+      "laser.requestRun": () => (laserDisabled ? false : requestRun()),
+      "laser.pauseResume": () => void togglePause().then(notify).catch(report),
       "laser.stop": stop,
+      ...text.handlers,
     },
   };
 
@@ -1019,13 +1029,18 @@ export function App() {
         onViewStyle={(viewStyle) => setPrefs((p) => ({ ...p, viewStyle }))}
         onCommands={() => setDialog("commands")}
         onTogglePreview={() => setShowPreview((v) => !v)}
-        onFrame={() => void machineAction(api.frame(), "Framing with the red pointer.")}
+        onFrame={() => void machineAction(frameWithOptions(selection.objects), "Framing with the red pointer.")}
         onFrameStop={() => void machineAction(api.frameStop(), "Framing stopped. Pending runs are kept.")}
-        onRequestRun={() => void machineAction(api.requestRun(), "Run requested. Approve it in the Machine panel.")}
+        onRequestRun={requestRun}
         designOnly={designOnlyReason(device)}
         onToggleLeft={() => setLeftOpen((v) => !v)}
         onToggleRight={() => setRightOpen((v) => !v)}
-        extra={edit.toolbar}
+        extra={
+          <>
+            {text.toolbar}
+            {edit.toolbar}
+          </>
+        }
       />
       <div className="main">
         {narrow && (leftOpen || rightOpen) && (
@@ -1083,10 +1098,19 @@ export function App() {
             run={run}
             notify={notify}
             report={report}
-            canvasTool={edit.canvas}
+            canvasTool={text.wrap(edit.canvas)}
           />
           {previewOn && engine.preview && (
-            <PreviewPlayer preview={engine.preview} options={previewOptions} onOptions={setPreviewOptions} />
+            <PreviewTimeline
+              preview={engine.preview}
+              options={previewOptions}
+              onOptions={setPreviewOptions}
+              designOnly={laserDisabled}
+              docName={file.projectName ?? file.openedName ?? doc?.name ?? null}
+              notify={notify}
+              report={report}
+              onRequested={() => void engine.refreshMachine()}
+            />
           )}
           </div>
           {workspace === "design" && <PaletteBar doc={doc} selected={selection.objects} run={run} report={report} notify={notify} />}
@@ -1121,6 +1145,7 @@ export function App() {
                 onEditStock={() => setDialog("stock")}
                 onArrange={arrange}
               />
+              {text.properties}
               </>
             ) : (
               <div className="props">
@@ -1140,11 +1165,15 @@ export function App() {
                     ) : undefined
                   }
                   designOnly={laserDisabled}
-                  selected={selection.objects.length}
+                  link={engine.link}
+                  doc={doc}
+                  selection={selection.objects}
                   pendingRuns={runs.length}
-                  onFrame={frameWith}
-                  onFrameStop={() => void machineAction(api.frameStop(), "Framing stopped. Pending runs are kept.")}
-                  onRequestRun={() => void machineAction(api.requestRun(), "Run requested. Approve it in the Machine panel.")}
+                  has={has}
+                  run={run}
+                  notify={notify}
+                  report={report}
+                  onChanged={() => void engine.refreshMachine()}
                   onStop={stop}
                 />
                 <CutsLayers
@@ -1216,10 +1245,20 @@ export function App() {
       )}
       {dialog === "commands" && <CommandPalette commands={engine.commands} run={run} onClose={closeDialog} />}
       {edit.dialogs}
+      {text.dialogs}
       {ws.dialogs}
       <FileDialogs file={file} docName={doc?.name ?? null} />
       {devicesOpen && (
-        <DevicesWindow devices={devices} machine={machine} onClose={() => setDevicesOpen(false)} onSwitched={onDeviceSwitched} notify={notify} report={report} />
+        <DevicesWindow
+          devices={devices}
+          machine={machine}
+          onClose={() => setDevicesOpen(false)}
+          onSwitched={onDeviceSwitched}
+          notify={notify}
+          report={report}
+          doc={doc}
+          run={run}
+        />
       )}
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />}
       {dropLabel && <DropOverlay label={dropLabel} />}

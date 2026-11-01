@@ -65,6 +65,23 @@ anywhere else.
   browser (the saved project's name, else the opened file, else one unsaved slot; Save carries them to the project
   and New clears the unsaved slot; guides an older version stored by document name are adopted once)
   (`src/guides.ts`) and are snap targets. The Viewport hands presses to these tools through `src/canvasTool.ts`.
+- **Text and barcodes** (`src/text/`, LightBurn's Text tool, Text Options, Variable Text and Create Bar Code; engine
+  commands in ARCHITECTURE.md "Text"). Text tool (T, LightBurn's Ctrl+T where the browser passes it; toolbar): click
+  places a text box at the (snapped) point; Enter starts a line, Esc / Ctrl+Enter / a click elsewhere finishes
+  (`shape.text`; an empty box adds nothing). Clicking a text with the tool, or double-clicking it with Select, edits
+  it in place (`text.update`; emptied text is deleted). While the tool is active the options bar sets font, height,
+  HSpace/VSpace, Align X/Y, bold/italic/upper/welded for new text (kept in this browser) and for the text being edited
+  or selected. Properties of a text: the text or format, a searchable font picker (`font.list`: installed, Hershey
+  single-line, SHX, JSF), every setting above plus bend and distort, max width and squeeze, text on a path (pick the
+  shape, offset, follow again, detach), Text Mode (Normal, Date/Time, Serial Number, Merge CSV, Cut Setting) with the
+  offset and LightBurn's code table, ignore empty vars, refresh and convert to path. A text whose font the engine lacks
+  gets a "Missing font" badge on the canvas and in Properties. Apply Path to Text also works on a text + shape
+  selection and from the context menu. The Variable Text window (docked under Properties while the document uses
+  variable text, or from the context menu) edits Start/End/Current/Advance by/Auto-advance (`var.set_serial`),
+  Previous/Next/Reset (`var.advance`), Test (`var.preview_row`, changes nothing) and the CSV file (`var.load_csv`,
+  `var.clear_csv`). Barcode tool: click to place, the Create Bar Code dialog sets type, data, module/bar size, bar
+  height, invert and quiet zone, error correction, force square, show text and variable data (`shape.barcode`);
+  double-click a barcode, or use its Properties section, to redraw it in place (`shape.barcode {id}`).
 - **Snapping** (`src/snapping.ts`, Fusion 360-style): centres, quadrants, vertices/endpoints, straight-segment
   midpoints, intersections between outlines near the cursor and the nearest point on an outline, plus stock, field and
   grid points, each with its own glyph and a label ("Quadrant · Circle 1"); dotted alignment guides when the point
@@ -89,6 +106,52 @@ anywhere else.
   (`POST /api/machine/frame/stop`) ends it without touching pending runs. **STOP** (`POST /api/machine/stop`) is the
   emergency stop: it sits in the top bar in every workspace, is never gated, aborts any run or frame and cancels
   every run that has not started streaming.
+- **Laser window and machine** (LightBurn's Laser window, Live Framing, Preview, Device Settings, Calibrate Galvo Lens,
+  Rotary Setup and Optimization Settings; `workspace/LaserDock.tsx`, `components/JobControls.tsx`,
+  `FramingOptions.tsx`, `PreviewTimeline.tsx`, `DeviceEditor.tsx`, `LensWizard.tsx`, `RotaryDialog.tsx`,
+  `OptimizationDialog.tsx`, `CutOptions.tsx`; pure logic in `api/job.ts`, `api/deviceProfile.ts`, `api/cutOptions.ts`,
+  HTTP calls in `api/jobApi.ts`):
+  - **Job**: progress bar, state, run n of N, part, elapsed and remaining time from `GET /api/job`, kept current by
+    the `job_progress` events (useEngine publishes every event on `api/events.ts`; the hook refetches on the machine
+    events and polls every 4 s while a job is active). Pause (never gated), Resume (UI only) and "End after this run"
+    for repeating jobs; the Pause / resume hotkey (unbound by default). Count, Reset Count and Stop At (empty = off).
+  - **Run options** for Request run (dock, toolbar and hotkey): Repeat (1-10000), Run continuously, Wait for foot pedal
+    (Start Marking input) with Require Full Pulse, Cut Selected Graphics; kept in this browser (`components/jobStore.ts`,
+    Cut Selected Graphics never restored). Every request is still a pending run that needs the PIN.
+  - **Framing**: Frame with an options popover: Bounds / Hull / Contour, Frame individually, Outside shapes only,
+    Selection only, Tool layers only, once or continuous, frame speed, red dot / focus light / both, blanking (device
+    default, on, off) and Live framing. While live framing runs, arrows move the framed shapes 5 mm (Shift 20, Ctrl 0.5),
+    Page Up/Down scale and `.` / `,` rotate 15° (Shift 1.5°, Ctrl 45°), one `object.transform` each, on the selection or
+    every output shape. The framing hotkeys use the same options.
+  - **Preview timeline** (replaces the segment slider): a slider over the job's estimated time from the segments' `t_s`,
+    play / pause at 0.25x-100x real time, scrubbing sets the Viewport's `upTo` (the WebGL toolpath is drawn up to that
+    time; `toolpathGL.ts` unchanged), "Start here" (`POST /api/runs {from_segment}`, the first segment not shown) and
+    Save preview image (`GET /api/preview.png?width=3200`).
+  - **Device settings** (Devices window > Edit…, also Duplicate and Import EzCad… for a markcfg): pages Galvo and basic
+    (name, field size, offset, angle, red dot offset / scale / rest, galvo 1 is X, reverse X/Y, frame / max / min speed,
+    galvo 1 and galvo 2 scale / bulge / skew / trapezoid mapped to X or Y like LightBurn, jump and delay defaults, the
+    jump-speed and delay limits), Ports and laser (laser and fiber type, Q-pulse width, open MO delay, frequency range,
+    power limit, start / stop marking inputs, focus light output, blanking; the red-dot and laser-enable bits read only;
+    inputs are active high), Z axis / rotary (the extension axis), Lens (load / clear the COR file, the lens wizard,
+    the current corrections) and Controller (`GET /api/machine/info`). Values come from `GET /api/devices/{id}`
+    `profile`, the device's `.lbdev` export and, for the active device, the controller info; a value none of them
+    reports is shown as "not reported" and only sent when typed. Save sends a JSON merge patch of the edited fields to
+    `PUT /api/devices/{id}`; client checks mirror the engine's (limits only go down) and an engine refusal is shown at
+    the field it names (`errorField`). The built-in device is read-only ("Duplicate to edit"); Export .lbdev downloads it.
+  - **Calibrate galvo lens**: add the test pattern (`POST /api/calibration/pattern`), request a run of only it (Cut
+    Selected Graphics; PIN approval in the Runs card), enter the eight measured lengths (lettered on a diagram), solve
+    and compare current and new corrections, Apply to device (`apply: true`, UI only; 409 on the built-in device).
+  - **Rotary setup** (`job.set_rotary`): enable, chuck / roller, steps per rotation, object and roller diameter, split
+    size, cylinder correction, taper; circumference, steps per turn, strips for the design, a warning when the design
+    is taller than the circumference or the active device has no rotary axis, and Test rotate (to the second strip and
+    back, `POST /api/machine/axis`). The engine has no strip overlap.
+  - **Optimization settings** (`job.set_optimization`, the changed keys only): enable, Order By (layer / group /
+    priority, reorderable), inner first, direction order, reduce travel, reduce direction changes, best start and
+    corners, best direction, remove overlaps with the distance, sort cuts last.
+  - **Cut settings** (Properties > a layer's pass > More settings): global passes, the pass's own output toggle, lines
+    per inch, fill grouping, flood fill, auto-rotate, dot width adjust, dot mode, wobble, perforation, tabs, pause
+    before / after, Z offset / step, and Override timings (prefilled from the active device's timing). Shape
+    properties for a selection: Power scale and cut priority (`object.set_cut_properties`).
 - **Approval**: each pending run shows who requested it (You or the agent's name), its revision, estimated time,
   mark/jump length, segment count and packet count (the packet count only while pending). Approving takes two taps ("Approve…", then the operator PIN and "Confirm
   and fire"); the confirm step reverts after 20 s without typing. The PIN is set once on the engine machine with
@@ -145,6 +208,9 @@ src/
   api/project.ts      project names, file names, import/export answers and warnings, dirty state (pure; tested)
   api/passes.ts       a layer's passes (main + sub-layers): pass list, cleanup defaults, per-pass preview (pure; tested)
   api/lightburn.ts    LightBurn devices, .lbrn2 DeviceName, the import field-size rule, prefs.ini device list (pure; tested)
+  api/job.ts, api/deviceProfile.ts, api/cutOptions.ts   job status and run/frame bodies, timeline maths; the device
+                      settings model and merge patch; cut options, optimization, rotary, shape properties (pure; tested)
+  api/jobApi.ts, api/events.ts   job, framing, calibration and device-setting routes; the engine event bus
   api/useEngine.ts    React hook: fetching, WebSocket events, refetch coalescing
   geometry.ts         affine maths, geometry -> SVG path, bounds (pure; tested)
   sceneLayers.ts      canvas layer maths: view matrix, grid spacing, image smoothing, per-frame view coalescing,
@@ -155,6 +221,8 @@ src/
   components/EditTools.tsx, EditMenus.tsx, EditDialogs.tsx, Rulers.tsx, edit.css   editing tools, menus, dialogs, rulers
   api/geomCommands.ts geometry command builders (path.*, node.*, shape.polygon/line, arrays, order, lock...) (tested)
   nodes.ts, drawTools.ts, guides.ts   node model, drawing/measure/ruler maths, guides (pure; tested)
+  text/               Text and Barcode tools, text/barcode properties, Variable Text window, font picker
+                      (useTextTools.tsx wraps EditTools' canvas tool; textModel.ts is pure and tested; text.css)
   workspace/          the workspace layer (styles in workspace/workspace.css):
     prefs.ts, usePrefs.ts       Preferences store (localStorage) and hooks: theme, units, grid, snapping, nudge, wheel,
                                 UI scale, crosshair, language, hotkey overrides

@@ -65,6 +65,11 @@ export const ACTIONS: HotkeyAction[] = [
   app("tool.rect", "tools", "Rectangle", ["R"], ["Ctrl+R"]),
   app("tool.ellipse", "tools", "Ellipse", ["E"], ["Ctrl+E"]),
   app("tool.circle", "tools", "Circle from centre", ["C"]),
+  // LightBurn's Text is Ctrl+T, which browser tabs keep (an installed app window may pass it); T is the web default.
+  // With two or more shapes selected T aligns their tops instead (the handler declines).
+  ws("tool.text", "tools", "Text", ["T", "Ctrl+T"]),
+  ws("tool.barcode", "tools", "Barcode", []),
+  ws("window.variableText", "view", "Variable Text window", []),
   app("tool.line", "tools", "Line / pen", ["Ctrl+L"]),
   app("tool.nodes", "tools", "Edit nodes", ["Ctrl+`"]),
   app("tool.weld", "tools", "Weld", ["Ctrl+W"]),
@@ -117,6 +122,7 @@ export const ACTIONS: HotkeyAction[] = [
   ws("laser.frameOutline", "laser", "Frame outline (rubber band)", ["Alt+Shift+R"]),
   ws("laser.frameStop", "laser", "Stop framing", []),
   ws("laser.requestRun", "laser", "Request run", []),
+  ws("laser.pauseResume", "laser", "Pause / resume the job", []),
   ws("laser.stop", "laser", "Stop", ["Ctrl+Pause", "Ctrl+Cancel"]),
 
   ws("help.hotkeys", "help", "Keyboard shortcuts", ["F1", "Shift+?"]),

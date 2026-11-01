@@ -1,0 +1,418 @@
+/* Text and barcode UI (src/text/): font picker, text properties, Variable Text window, the on-canvas editor and the
+   Text options bar. Colours come from the theme tokens in styles.css, so light and dark follow them. */
+
+.viewport.tool-text {
+  cursor: text;
+}
+.viewport.tool-barcode {
+  cursor: crosshair;
+}
+
+/* ---- badges ---- */
+.tx-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  border-radius: 9px;
+  font-size: calc(10.5px * var(--ui-scale, 1));
+  font-weight: 600;
+  line-height: 17px;
+  white-space: nowrap;
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+}
+.tx-badge.warn {
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  border: 1px solid var(--warn);
+}
+.tx-canvas-badge {
+  transform: translate(0, -100%);
+  pointer-events: auto;
+  cursor: help;
+  opacity: 0.95;
+}
+.tx-missing {
+  margin: 4px 0 8px;
+  font-size: calc(12px * var(--ui-scale, 1));
+  color: var(--warn-text);
+  line-height: 1.4;
+}
+
+/* ---- font picker ---- */
+.tx-font {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+.tx-font.compact {
+  flex: none;
+  width: 190px;
+}
+.tx-font-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 34px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.tx-font.compact .tx-font-btn {
+  min-height: 28px;
+}
+.tx-font-btn:hover {
+  background: var(--surface-hover);
+}
+.tx-font-btn.missing {
+  border-color: var(--warn);
+}
+.tx-font-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: calc(13.5px * var(--ui-scale, 1));
+}
+.tx-kind {
+  color: var(--muted);
+  font-size: calc(11px * var(--ui-scale, 1));
+  white-space: nowrap;
+}
+.tx-caret {
+  color: var(--muted);
+}
+.tx-font-pop {
+  position: absolute;
+  z-index: 60;
+  top: calc(100% + 4px);
+  left: 0;
+  width: max(100%, 260px);
+  max-width: calc(100vw - 32px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px var(--shadow);
+  display: flex;
+  flex-direction: column;
+}
+.tx-font-search {
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.tx-font-search input {
+  flex: 1;
+  min-width: 0;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font-size: calc(13px * var(--ui-scale, 1));
+}
+.tx-font-list {
+  max-height: min(340px, 50vh);
+  overflow-y: auto;
+  padding: 2px 0 6px;
+}
+.tx-font-group {
+  position: sticky;
+  top: 0;
+  padding: 6px 10px 3px;
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: calc(11px * var(--ui-scale, 1));
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.tx-count {
+  color: var(--muted);
+  font-weight: 400;
+}
+.tx-font-item {
+  display: block;
+  width: 100%;
+  padding: 5px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font-size: calc(15px * var(--ui-scale, 1));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.tx-font-item:hover,
+.tx-font-item:focus-visible {
+  background: var(--surface-hover);
+  outline: none;
+}
+.tx-font-item.sel {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.tx-empty {
+  padding: 10px 12px;
+  color: var(--muted);
+}
+
+/* ---- properties ---- */
+.tx-section h4 {
+  margin-top: 12px;
+}
+.tx-stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 4px 0;
+}
+.tx-stack .field-label {
+  width: auto;
+}
+.tx-area {
+  width: 100%;
+  min-height: 52px;
+  resize: vertical;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: calc(14px * var(--ui-scale, 1));
+  box-sizing: border-box;
+}
+.tx-area:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.tx-shown {
+  display: flex;
+  gap: 8px;
+  margin: 2px 0 6px;
+  font-size: calc(12.5px * var(--ui-scale, 1));
+}
+.tx-shown-v {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, "Cascadia Mono", Menlo, monospace;
+}
+.tx-row-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0;
+}
+.tx-foot {
+  margin-top: 12px;
+}
+.tx-checks {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 10px;
+}
+.tx-checks .field-label {
+  width: auto;
+  flex: 1;
+}
+.tx-range {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--accent);
+}
+.tx-seg {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.tx-seg button {
+  min-width: 34px;
+  min-height: 30px;
+  border: 0;
+  border-left: 1px solid var(--border-soft);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 15px;
+  cursor: pointer;
+}
+.tx-seg button:first-child {
+  border-left: 0;
+}
+.tx-seg button:hover {
+  background: var(--surface-hover);
+}
+.tx-seg button.on {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.tx-help {
+  margin: 4px 0 6px;
+  font-size: calc(12px * var(--ui-scale, 1));
+}
+.tx-help summary {
+  cursor: pointer;
+  color: var(--accent);
+  padding: 4px 0;
+}
+.tx-help table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 4px 0;
+}
+.tx-help td {
+  padding: 2px 6px 2px 0;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border-soft);
+}
+.tx-help td:first-child {
+  white-space: nowrap;
+}
+.tx-help code,
+.tx-csv-row code,
+.tx-help .hint code {
+  font-family: ui-monospace, "Cascadia Mono", Menlo, monospace;
+  background: var(--surface-hover);
+  border-radius: 3px;
+  padding: 0 3px;
+}
+.tx-form .field-label {
+  width: 96px;
+}
+
+/* ---- Variable Text window ---- */
+.tx-var {
+  padding: 4px 0 8px;
+}
+.tx-var h4 {
+  margin: 12px 0 4px;
+  font-size: calc(12px * var(--ui-scale, 1));
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-2);
+}
+.tx-var .field-grid .field-label {
+  width: 70px;
+}
+.tx-test-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tx-test-row .field {
+  flex: 1;
+}
+.tx-test {
+  margin: 6px 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-size: calc(12.5px * var(--ui-scale, 1));
+}
+.tx-test-head {
+  color: var(--text-2);
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.tx-test table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.tx-test td {
+  padding: 2px 6px 2px 0;
+  vertical-align: top;
+}
+.tx-csv-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin: 4px 0;
+  font-size: calc(12.5px * var(--ui-scale, 1));
+}
+
+/* ---- canvas: editor and options bar ---- */
+.tx-editor {
+  transform-origin: 0 0;
+  min-width: 3ch;
+  padding: 1px 4px;
+  border: 1px dashed var(--accent);
+  border-radius: 2px;
+  background: var(--overlay-bg);
+  color: var(--text);
+  line-height: 1.15;
+  resize: none;
+  overflow: hidden;
+  white-space: pre;
+  outline: none;
+  pointer-events: auto;
+  box-shadow: 0 1px 6px var(--shadow);
+  z-index: 5;
+}
+.tx-bar {
+  z-index: 6;
+}
+.tx-bar .field {
+  min-height: 0;
+  gap: 4px;
+}
+.tx-bar .field-label {
+  width: auto;
+}
+.tx-bar .tx-seg button {
+  min-width: 28px;
+  min-height: 26px;
+  font-size: 13px;
+}
+.tx-toggles {
+  display: inline-flex;
+  gap: 2px;
+}
+.tx-toggle {
+  min-width: 28px;
+  min-height: 26px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 700;
+  cursor: pointer;
+}
+.tx-toggle.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+.tx-num input {
+  width: 56px;
+  min-height: 26px;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--text);
+}
+.tx-num .unit {
+  padding: 0;
+}
+
+@media (max-width: 600px) {
+  .tx-font.compact {
+    width: 140px;
+  }
+  .tx-checks {
+    grid-template-columns: 1fr;
+  }
+}
