@@ -1,6 +1,6 @@
 //! Layer commands: `layer.add`, `layer.update`, `layer.delete`, and the partial cut-settings patch they share.
 
-use doc::{CutSettings, Document, FillMode, GalvoTiming, Layer, LayerId};
+use doc::{CutSettings, DitherMode, Document, FillMode, GalvoTiming, Layer, LayerId};
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer};
 use serde_json::{Value, json};
@@ -39,6 +39,107 @@ pub struct SettingsPatch {
     #[serde(default, deserialize_with = "double_option")]
     #[schemars(with = "Option<GalvoTiming>")]
     pub timing: Option<Option<GalvoTiming>>,
+    /// Image mode settings, used for the layer's images whatever its mode (partial: only the fields given change).
+    pub image: Option<ImagePatch>,
+}
+
+/// A partial [`doc::ImageSettings`] (LightBurn's Image mode).
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ImagePatch {
+    /// threshold, ordered, atkinson, floyd_steinberg (LightBurn's "Dither"; "dither" is accepted), stucki, jarvis,
+    /// newsprint, halftone, sketch or grayscale (power varies between min_power_pct and the layer's power).
+    pub dither: Option<DitherMode>,
+    /// Scan line spacing and dot size in mm, > 0 (DPI = 25.4 / interval).
+    pub interval_mm: Option<f64>,
+    /// Dots per inch: sets interval_mm to 25.4 / dpi (give one of the two).
+    pub dpi: Option<f64>,
+    /// Scan angle in degrees (0 = along +X, rows from the bottom up).
+    pub angle_deg: Option<f64>,
+    /// Degrees added to the scan angle on every pass.
+    pub angle_increment_deg: Option<f64>,
+    /// Engrave rows in both directions.
+    pub bidirectional: Option<bool>,
+    /// Invert the image so light areas engrave.
+    pub negative: Option<bool>,
+    /// Engrave the image's own pixels as they are (no resampling; interval and scan angle are not used).
+    pub pass_through: Option<bool>,
+    /// Dot width correction in mm, 0..=interval_mm (0 is off).
+    pub dot_width_mm: Option<f64>,
+    /// Grayscale: power of the lightest dot, 0..=100 %.
+    pub min_power_pct: Option<f64>,
+    /// Halftone: screen cells per inch, > 0.
+    pub halftone_cells_per_inch: Option<f64>,
+    /// Halftone: screen angle in degrees.
+    pub halftone_angle_deg: Option<f64>,
+}
+
+impl ImagePatch {
+    fn apply(self, cmd: &str, s: &mut doc::ImageSettings) -> Result<()> {
+        if self.interval_mm.is_some() && self.dpi.is_some() {
+            return Err(invalid(cmd, "give image.interval_mm or image.dpi, not both"));
+        }
+        if let Some(v) = self.dither {
+            s.dither = v;
+        }
+        if let Some(v) = self.interval_mm {
+            s.interval_mm = v;
+        }
+        if let Some(dpi) = self.dpi {
+            s.interval_mm = 25.4 / util::positive(cmd, "image.dpi", dpi)?;
+        }
+        if let Some(v) = self.angle_deg {
+            s.angle_deg = v;
+        }
+        if let Some(v) = self.angle_increment_deg {
+            s.angle_increment_deg = v;
+        }
+        if let Some(v) = self.bidirectional {
+            s.bidirectional = v;
+        }
+        if let Some(v) = self.negative {
+            s.negative = v;
+        }
+        if let Some(v) = self.pass_through {
+            s.pass_through = v;
+        }
+        if let Some(v) = self.dot_width_mm {
+            s.dot_width_mm = v;
+        }
+        if let Some(v) = self.min_power_pct {
+            s.min_power_pct = v;
+        }
+        if let Some(v) = self.halftone_cells_per_inch {
+            s.halftone_cells_per_inch = v;
+        }
+        if let Some(v) = self.halftone_angle_deg {
+            s.halftone_angle_deg = v;
+        }
+        Ok(())
+    }
+}
+
+/// Sanity limits of image settings (LightBurn's ranges where it states them).
+fn validate_image(cmd: &str, s: &doc::ImageSettings) -> Result<()> {
+    util::positive(cmd, "image.interval_mm", s.interval_mm)?;
+    util::finite(cmd, "image.angle_deg", s.angle_deg)?;
+    util::finite(cmd, "image.angle_increment_deg", s.angle_increment_deg)?;
+    util::non_negative(cmd, "image.dot_width_mm", s.dot_width_mm)?;
+    if s.dot_width_mm > s.interval_mm {
+        return Err(invalid(
+            cmd,
+            format!(
+                "image.dot_width_mm must be within 0..=image.interval_mm ({}) (got {})",
+                s.interval_mm, s.dot_width_mm
+            ),
+        ));
+    }
+    if !(0.0..=100.0).contains(&s.min_power_pct) {
+        return Err(invalid(cmd, format!("image.min_power_pct must be within 0..=100 (got {})", s.min_power_pct)));
+    }
+    util::positive(cmd, "image.halftone_cells_per_inch", s.halftone_cells_per_inch)?;
+    util::finite(cmd, "image.halftone_angle_deg", s.halftone_angle_deg)?;
+    Ok(())
 }
 
 /// A partial [`doc::Hatch`].
@@ -103,6 +204,10 @@ impl SettingsPatch {
         }
         if let Some(v) = self.timing {
             n.timing = v;
+        }
+        if let Some(p) = self.image {
+            p.apply(cmd, &mut n.image)?;
+            validate_image(cmd, &n.image)?;
         }
         validate_settings(cmd, &n)?;
         *s = n;
@@ -238,7 +343,10 @@ impl Command for LayerUpdate {
     const TITLE: &'static str = "Update layer";
     const DESCRIPTION: &'static str = "Change a layer's name, colour, visibility, output flag or cut settings. \
         `settings` is merged into the existing settings, so only the fields given change (power %, speed mm/s, \
-        frequency kHz, pulse width ns, hatch interval mm, hatch angle deg).";
+        frequency kHz, pulse width ns, hatch interval mm, hatch angle deg). `settings.image` holds the Image mode \
+        settings the layer's images are engraved with (as in LightBurn, images always use them while vectors keep \
+        the mode): dither, interval_mm or dpi, angle_deg, angle_increment_deg, bidirectional, negative, pass_through, \
+        dot_width_mm, min_power_pct (grayscale), halftone_cells_per_inch, halftone_angle_deg; also partial.";
     const RISK: Risk = Risk::Edit;
 
     fn apply(doc: &mut Document, input: LayerUpdateInput) -> Result<(Value, String)> {
@@ -418,5 +526,35 @@ mod tests {
         assert_eq!(keys(&settings), keys(&schema["properties"]));
         let hatch_schema = serde_json::to_value(schemars::schema_for!(HatchPatch)).unwrap();
         assert_eq!(keys(&settings["hatch"]), keys(&hatch_schema["properties"]));
+        let image_schema = serde_json::to_value(schemars::schema_for!(ImagePatch)).unwrap();
+        let mut image_keys = keys(&settings["image"]);
+        image_keys.push("dpi".into());
+        image_keys.sort();
+        assert_eq!(image_keys, keys(&image_schema["properties"]));
+    }
+
+    #[test]
+    fn image_settings_patch_partially_and_are_checked() {
+        let mut s = CutSettings::default();
+        patch(json!({"image": {"dither": "dither", "negative": true, "dpi": 254}})).apply("t", &mut s).unwrap();
+        assert_eq!(s.image.dither, DitherMode::FloydSteinberg);
+        assert!(s.image.negative && s.image.bidirectional, "other fields keep their values");
+        assert!((s.image.interval_mm - 0.1).abs() < 1e-12);
+        patch(json!({"image": {"dither": "grayscale", "min_power_pct": 12, "dot_width_mm": 0.05}})).apply("t", &mut s).unwrap();
+        assert_eq!((s.image.min_power_pct, s.image.dot_width_mm, s.image.negative), (12.0, 0.05, true));
+        let before = s.clone();
+        for bad in [
+            json!({"image": {"interval_mm": 0}}),
+            json!({"image": {"dot_width_mm": 0.2}}),
+            json!({"image": {"min_power_pct": 101}}),
+            json!({"image": {"halftone_cells_per_inch": -5}}),
+            json!({"image": {"interval_mm": 0.1, "dpi": 254}}),
+            json!({"image": {"dpi": 0}}),
+        ] {
+            assert!(patch(bad.clone()).apply("t", &mut s).is_err(), "{bad}");
+        }
+        assert_eq!(s, before, "a refused patch changes nothing");
+        assert!(serde_json::from_value::<SettingsPatch>(json!({"image": {"dither": "3dslice"}})).is_err());
+        assert!(serde_json::from_value::<SettingsPatch>(json!({"image": {"gamma": 2}})).is_err(), "adjust is per image");
     }
 }

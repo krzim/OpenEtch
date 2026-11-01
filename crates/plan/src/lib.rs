@@ -1,7 +1,7 @@
 //! Document to LMC job: flatten, hatch, order, encode; and simulation. Pure (no I/O), wasm-ok.
 //!
-//! - [`plan_job`]: [`doc::Document`] -> [`JobPlan`] (passes of ordered polylines in field-frame mm), refusing
-//!   anything outside the field or the [`Target`]'s limits.
+//! - [`plan_job`]: [`doc::Document`] -> [`JobPlan`] (passes of ordered polylines in field-frame mm, images as
+//!   dithered scan runs), refusing anything outside the field or the [`Target`]'s limits.
 //! - [`encode`]: [`JobPlan`] -> `lmc` list packets (layout documented in the `encode` module).
 //! - [`simulate`]: packets -> [`Preview`] (what the board would run); [`preview_plan`]: plan -> [`Preview`]
 //!   without encoding, for the live UI; [`preview_document`] adds per-layer totals.
@@ -14,6 +14,7 @@
 mod encode;
 mod geom;
 mod hatch;
+mod image;
 mod job;
 mod order;
 mod preview;
@@ -23,8 +24,9 @@ mod target;
 pub use encode::{encode, jump_delay_us};
 pub use geom::{FLATTEN_TOLERANCE_MM, Point};
 pub use hatch::MAX_SCANLINES;
+pub use image::{MAX_IMAGE_DOTS, MAX_SOURCE_PIXELS};
 pub use job::{
-    IMAGE_WARNING, JobPlan, MAX_LAYER_PASSES, MAX_PASSES, MAX_SEGMENTS, PassPlan, PassSettings, Stats, layer_schedule, plan_job,
+    JobPlan, MAX_LAYER_PASSES, MAX_PASSES, MAX_SEGMENTS, PassPlan, PassSettings, Stats, layer_schedule, plan_job,
 };
 pub use preview::{
     LayerPreview, PassPreview, Preview, PreviewSegment, SegmentKind, SubLayerPreview, preview_document, preview_plan, simulate,
@@ -59,6 +61,21 @@ pub enum PlanError {
     /// The job would have more than [`MAX_SEGMENTS`] mark segments (planning stopped there).
     #[error("the job has more than {max} mark segments; reduce passes, hatch density or detail")]
     TooManySegments { max: usize },
+    /// An image that cannot be decoded or adjusted.
+    #[error("image {object} cannot be engraved: {reason}")]
+    Image { object: ObjectId, reason: String },
+    /// An image that would be sampled into more than [`MAX_IMAGE_DOTS`] dots in one pass.
+    #[error(
+        "image {object} would need {rows} x {cols} dots at this line interval (at most {max}); increase the interval \
+         or make the image smaller"
+    )]
+    ImageTooLarge { object: ObjectId, rows: u64, cols: u64, max: u64 },
+    /// The job's mark segments went over [`MAX_SEGMENTS`] while an image was rastered.
+    #[error(
+        "image {object} would take the job past {max} mark segments; increase the line interval, use fewer passes, \
+         or make the image smaller"
+    )]
+    ImageSegments { object: ObjectId, max: usize },
     /// A setting the board cannot represent (e.g. a speed or delay out of word range).
     #[error("layer {layer}: {source}")]
     Encode { layer: LayerId, source: LmcError },

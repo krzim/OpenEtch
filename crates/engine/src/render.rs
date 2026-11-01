@@ -214,6 +214,7 @@ mod tests {
                 layer: Some("layer-1".into()),
                 pass: Some(0),
                 emits: true,
+                power_pct: None,
             }],
             stats: Stats::default(),
             ..Preview::default()

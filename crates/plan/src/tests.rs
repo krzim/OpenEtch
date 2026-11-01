@@ -293,26 +293,135 @@ fn preview_serialises_with_lowercase_kinds() {
     assert!(json["stats"]["mark_length_mm"].as_f64().is_some());
 }
 
+/// A PNG of `w` x `h` grey pixels (`grey(x, y)`, row 0 at the top) as base64.
+fn png(w: u32, h: u32, grey: impl Fn(u32, u32) -> u8) -> String {
+    use base64::Engine;
+    let img = ::image::GrayImage::from_fn(w, h, |x, y| ::image::Luma([grey(x, y)]));
+    let mut out = Vec::new();
+    img.write_to(&mut std::io::Cursor::new(&mut out), ::image::ImageFormat::Png).unwrap();
+    base64::engine::general_purpose::STANDARD.encode(out)
+}
+
+/// An image object `w` x `h` mm of `data`, placed by `transform`.
+fn image_object(id: &str, w: f64, h: f64, data: String, transform: Affine) -> Object {
+    let g = Geometry::Image { width_mm: w, height_mm: h, mime: "image/png".into(), data_base64: data.into(), adjust: Default::default() };
+    Object::new(id.into(), id, "layer-1".into(), g, transform)
+}
+
+/// Image settings at 1 mm, one-way, threshold: one run per dark stretch of a row.
+fn coarse(dither: doc::DitherMode) -> CutSettings {
+    let image = doc::ImageSettings { dither, interval_mm: 1.0, bidirectional: false, ..doc::ImageSettings::default() };
+    CutSettings { image, ..CutSettings::default() }
+}
+
 #[test]
-fn images_are_skipped_with_a_warning() {
-    // Far outside the field, so planning would refuse it if it were not skipped.
-    let image = Object::new(
-        "obj-7".into(),
-        "photo",
-        "layer-1".into(),
-        Geometry::Image { width_mm: 20.0, height_mm: 10.0, mime: "image/png".into(), data_base64: "iVBORw0KGgo=".into() },
-        Affine::translate((500.0, 0.0)),
-    );
-    let plan = plan_job(&doc_with(vec![image.clone()], CutSettings::default()), &target()).unwrap();
-    assert!(plan.passes.is_empty());
-    assert_eq!(plan.warnings.len(), 1);
-    assert!(plan.warnings[0].starts_with(IMAGE_WARNING), "{:?}", plan.warnings);
-    // Vectors next to it still plan; without images there is no warning.
-    let plan = plan_job(&doc_with(vec![image, rect("obj-1", 10.0, 10.0, (0.0, 0.0))], CutSettings::default()), &target()).unwrap();
-    assert_eq!(plan.passes.len(), 1);
-    let plain = plan_job(&doc_with(vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0))], CutSettings::default()), &target()).unwrap();
-    assert!(plain.warnings.is_empty());
-    assert!(serde_json::to_value(&plain).unwrap().get("warnings").is_none());
+fn images_engrave_in_image_mode_next_to_vectors() {
+    // 4 x 2 px at 1 mm: left half black. Rows burn bottom up, before the layer's vectors (traced as lines).
+    let img = image_object("obj-7", 4.0, 2.0, png(4, 2, |x, _| if x < 2 { 0 } else { 255 }), Affine::IDENTITY);
+    let d = doc_with(vec![img.clone(), rect("obj-1", 10.0, 10.0, (20.0, 0.0))], coarse(doc::DitherMode::Threshold));
+    let plan = plan_job(&d, &target()).unwrap();
+    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
+    let pass = &plan.passes[0];
+    assert_eq!(&pass.polylines[..2], [vec![[-2.0, -0.5], [0.0, -0.5]], vec![[-2.0, 0.5], [0.0, 0.5]]]);
+    assert_eq!(pass.polylines.len(), 3, "two runs and the rectangle");
+    assert!(pass.powers.is_empty(), "every run at the layer's power");
+    // Negative engraves the other half.
+    let mut neg = d.clone();
+    neg.layers[0].settings.image.negative = true;
+    let plan = plan_job(&neg, &target()).unwrap();
+    assert_eq!(plan.passes[0].polylines[0], [[0.0, -0.5], [2.0, -0.5]]);
+    // The scan angle turns per pass with its increment; 90° scans along +Y.
+    let mut turning = doc_with(vec![img.clone()], coarse(doc::DitherMode::Threshold));
+    turning.layers[0].settings.passes = 2;
+    turning.layers[0].settings.image.angle_increment_deg = 90.0;
+    let plan = plan_job(&turning, &target()).unwrap();
+    let first = &plan.passes[1].polylines[0];
+    assert_eq!(first[0][0], first[1][0], "the second pass scans vertically: {first:?}");
+    // Rotated and mirrored with the object: a 90° turn puts the black half at the bottom.
+    let turned = image_object("obj-8", 4.0, 2.0, png(4, 2, |x, _| if x < 2 { 0 } else { 255 }), Affine::rotate(std::f64::consts::FRAC_PI_2));
+    let plan = plan_job(&doc_with(vec![turned], coarse(doc::DitherMode::Threshold)), &target()).unwrap();
+    assert!(plan.passes[0].polylines.iter().flatten().all(|p| p[1] <= 0.0), "{:?}", plan.passes[0].polylines);
+    // An image outside the field is refused like any object.
+    let far = image_object("obj-9", 4.0, 2.0, png(1, 1, |_, _| 0), Affine::translate((60.0, 0.0)));
+    assert!(matches!(plan_job(&doc_with(vec![far], CutSettings::default()), &target()), Err(PlanError::OutOfField { .. })));
+}
+
+#[test]
+fn grayscale_runs_change_power_mid_list() {
+    // Black, mid grey, white: two runs at 60 % and about 35 % (min 10 %), white never fires.
+    let img = image_object("obj-7", 3.0, 1.0, png(3, 1, |x, _| [0, 128, 255][x as usize]), Affine::translate((0.5, 0.5)));
+    let mut s = coarse(doc::DitherMode::Grayscale);
+    s.power_pct = 60.0;
+    s.image.min_power_pct = 10.0;
+    let plan = plan_job(&doc_with(vec![img.clone()], s.clone()), &target()).unwrap();
+    let pass = &plan.passes[0];
+    assert_eq!(pass.polylines.len(), 2);
+    assert_eq!(pass.powers.len(), 2);
+    assert_eq!(pass.powers[0], 60.0);
+    let mid = 10.0 + 50.0 * 127.0 / 255.0;
+    assert!((pass.powers[1] - mid).abs() < 1e-9, "{:?}", pass.powers);
+    let preview = preview_plan(&plan);
+    let marks: Vec<Option<f64>> = preview.segments.iter().filter(|s| s.kind == SegmentKind::Mark).map(|s| s.power_pct).collect();
+    assert_eq!(marks, [None, Some(pass.powers[1])], "only marks off the pass's power carry one");
+    // Encoded: the pass header's MarkCurrent, then one more before the grey run.
+    let cmds: Vec<ListCommand> = decode(&encode(&plan, &target()).unwrap());
+    let currents: Vec<u16> = cmds.iter().filter_map(|c| if let ListCommand::MarkCurrent { current } = c { Some(*current) } else { None }).collect();
+    let mc = |p: f64| lmc::units::power_to_mark_current(p).unwrap();
+    assert_eq!(currents, [mc(60.0), mc(pass.powers[1])]);
+    let grey_at = cmds.iter().position(|c| matches!(c, ListCommand::MarkCurrent { current } if *current == mc(pass.powers[1]))).unwrap();
+    let marks_before = cmds[..grey_at].iter().filter(|c| matches!(c, ListCommand::MarkTo { .. })).count();
+    assert_eq!(marks_before, 1, "the power changes between the two runs");
+    // A minimum power above the machine's limit is refused (the target allows 80 %).
+    s.image.min_power_pct = 85.0;
+    assert!(matches!(plan_job(&doc_with(vec![img.clone()], s.clone()), &target()), Err(PlanError::PowerTooHigh { power_pct, .. }) if power_pct == 85.0));
+    // A plan whose run power was tampered with past the limit is refused by the encoder.
+    let mut bad = plan.clone();
+    bad.passes[0].powers[1] = 95.0;
+    assert!(matches!(encode(&bad, &target()), Err(PlanError::PowerTooHigh { .. })));
+}
+
+#[test]
+fn image_budgets_and_bad_images_are_refused_with_clear_errors() {
+    // A checkerboard at 1 mm: 8 runs per pass of 4 x 4.
+    let checker = image_object("obj-7", 4.0, 4.0, png(4, 4, |x, y| if (x + y) % 2 == 0 { 0 } else { 255 }), Affine::IDENTITY);
+    let d = doc_with(vec![checker], coarse(doc::DitherMode::Threshold));
+    assert_eq!(crate::job::plan_job_within(&d, &target(), 8).unwrap().stats.segment_count, 8);
+    let err = crate::job::plan_job_within(&d, &target(), 7).unwrap_err();
+    assert_eq!(err, PlanError::ImageSegments { object: "obj-7".into(), max: 7 });
+    assert!(err.to_string().contains("image obj-7"), "{err}");
+    // Too many dots: 100 mm at 0.001 mm.
+    let mut fine = doc_with(vec![image_object("obj-7", 100.0, 100.0, png(1, 1, |_, _| 0), Affine::IDENTITY)], CutSettings::default());
+    fine.layers[0].settings.image.interval_mm = 0.001;
+    let target = Target { field_mm: 150.0, ..target() };
+    assert!(matches!(plan_job(&fine, &target), Err(PlanError::ImageTooLarge { .. })));
+    // Data that is not an image.
+    let junk = doc_with(vec![image_object("obj-7", 4.0, 4.0, "iVBORw0KGgo=".into(), Affine::IDENTITY)], CutSettings::default());
+    let err = plan_job(&junk, &target).unwrap_err();
+    assert!(matches!(&err, PlanError::Image { object, .. } if object == "obj-7"), "{err}");
+    // Image settings are checked on layers with images.
+    let mut wide = d.clone();
+    wide.layers[0].settings.image.dot_width_mm = 2.0;
+    assert!(matches!(plan_job(&wide, &target), Err(PlanError::Setting { what: "image.dot_width_mm", .. })));
+    wide.objects.clear();
+    wide.objects.push(rect("obj-1", 10.0, 10.0, (0.0, 0.0)));
+    assert!(plan_job(&wide, &target).is_ok(), "vector-only layers ignore their image settings");
+}
+
+#[test]
+fn every_dither_mode_plans_a_photo_like_ramp() {
+    // A ramp with a hard edge in the middle (for sketch).
+    let ramp = image_object("obj-7", 20.0, 10.0, png(40, 20, |x, y| if x < 20 { (x * 6 + y) as u8 } else { 255 }), Affine::IDENTITY);
+    for m in doc::DitherMode::ALL {
+        let mut s = CutSettings::default();
+        s.image.dither = m;
+        s.image.interval_mm = 0.1;
+        s.image.min_power_pct = 5.0;
+        let plan = plan_job(&doc_with(vec![ramp.clone()], s), &target()).unwrap_or_else(|e| panic!("{m:?}: {e}"));
+        let runs = plan.passes.first().map_or(0, |p| p.polylines.len());
+        assert!(runs > 0, "{m:?} marks something");
+        assert!(plan.passes.iter().flat_map(|p| &p.polylines).flatten().all(|p| p[0].abs() <= 10.0 + 1e-9 && p[1].abs() <= 5.0 + 1e-9), "{m:?} stays inside the image");
+        encode(&plan, &target()).unwrap_or_else(|e| panic!("{m:?}: {e}"));
+    }
 }
 
 /// A main fill of `main` passes with an ordinary sub-layer and a cleanup sub-layer (every `n` main passes).

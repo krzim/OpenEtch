@@ -63,7 +63,11 @@
 //! resolution, the XForm scales and may mirror it) plus `Gamma Contrast Brightness EnhanceAmount EnhanceRadius
 //! EnhanceDenoise File SourceHash Data=<base64 PNG>`; its settings are a `<CutSetting_Img type="Image">` (with
 //! `dotWidth useDotCorrection halftoneAngle negative ditherMode dpi cleanupPass`). A layer index can have both a
-//! `CutSetting` and a `CutSetting_Img` (`.lbt` templates have both for every index).
+//! `CutSetting` and a `CutSetting_Img` (`.lbt` templates have both for every index). The image settings and the
+//! Adjust Image attributes map as the `image` module describes. `Data` holds the pixel rows bottom-up: LightBurn
+//! shows its first row at the shape's lowest y (the namecard photo's `Data` is upside down against its thumbnail
+//! under a positive `XForm`, and the 3D sliced sample's `Data` is its `File` flipped top to bottom), so the import
+//! adds a vertical flip to a bitmap's transform and the export takes it off.
 //!
 //! **Root and layout.** Besides the root attributes (`AppVersion`, `DeviceName`, `AskForSendName`, 2.2's
 //! `CurrentPage`/`Page0Name`, ...), the files hold `Thumbnail`, `VariableText`, `UIPrefs` and `Notes`, which OpenEtch
@@ -94,7 +98,8 @@
 //!
 //! | LightBurn | OpenEtch |
 //! |---|---|
-//! | CutSetting `index` | layer (one per index used or defined, ordered by `priority`); index kept in `extras["lbrn2.index"]`; the source tags in order and spelling in `extras["lbrn2._src"]`; a second `CutSetting_Img` of the index in `extras["lbrn2._img"]` |
+//! | CutSetting `index` | layer (one per index used or defined, ordered by `priority`); index kept in `extras["lbrn2.index"]`; the source tags in order and spelling in `extras["lbrn2._src"]`; a second `CutSetting_Img` of the index in `extras["lbrn2._img"]` (its image tags also read into `settings.image`; rewritten on export only when those changed) |
+//! | `CutSetting_Img` image tags (`ditherMode`, `dpi`, `negative`, `passThrough`, `dotWidth`/`useDotCorrection`, `minPower`, `halftoneAngle`; `interval`, `angle`, `anglePerPass`, `bidir`) | `settings.image` ([`doc::ImageSettings`], see the `image` module); an exported layer that holds images but has no image setting gets a `CutSetting_Img` made from its settings |
 //! | `name` (else `subname`, else `C05`) | `Layer.name`; colour from the palette by index |
 //! | `type` Cut / Scan / Scan+Cut | `mode` line / fill / fill_then_line; any other type kept in `extras["lbrn2.type"]` |
 //! | `maxPower` % | `power_pct` (clamped to 0..=100 with a warning) |
@@ -113,7 +118,7 @@
 //! | Path | `Geometry::Path` (exact lines and cubics), transform = shift · groups · XForm; ids and the lists it carried in `extras` |
 //! | Group | `doc::Group` (nested through `parent`; members point at their innermost group), its XForm and attributes in its `extras` |
 //! | Text | an object drawn as its BackupPath outline, named after the text; `Str`, `Font`, `H`, ... in `extras["lbrn2.<attr>"]`, exported as `Type="Text"` with a BackupPath of the current outline |
-//! | Bitmap | `Geometry::Image` (`W`x`H`, `Data` byte for byte), the other attributes in `extras` |
+//! | Bitmap | `Geometry::Image` (`W`x`H`, `Data` byte for byte; `Gamma Contrast Brightness Enhance*` as its `adjust`), the other attributes in `extras` |
 //! | other types, Text without outline, unusable shapes | kept as XML in the extras of the object before them (`lbrn2._after.N`), exported again after it |
 //! | every object | its attribute order (`lbrn2._attrs`), XForm text (`lbrn2._xform`) and unknown children (`lbrn2._child.N`) |
 //! | root attributes and elements, layout | `Document::extras` (`lbrn2._root_attrs`, `lbrn2._root`, `lbrn2._el.N`, `lbrn2._decl`, `lbrn2._format`) |
@@ -144,6 +149,7 @@
 //! Old-format `.lbrn` files are not read: no sample exists to establish their format.
 
 mod convert;
+mod image;
 mod model;
 pub mod palette;
 mod parse;

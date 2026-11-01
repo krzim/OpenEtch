@@ -127,6 +127,7 @@ fn place(doc: &mut Document, i: PlaceInput) -> Result<(Value, String)> {
     let stock =
         doc.stock.clone().ok_or_else(|| CommandError::Failed("no stock is defined; run stock.define first".into()))?;
     let ids = util::object_ids(id, doc, &i.ids)?;
+    util::check_unlocked(id, doc, &ids)?;
     let anchor = i.anchor.unwrap_or_default();
     let fit = i.fit.unwrap_or(Fit::None);
     let [ox, oy] = util::finite2(id, "offset_mm", i.offset_mm.unwrap_or([0.0, 0.0]))?;

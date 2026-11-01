@@ -35,6 +35,8 @@ i_overlay = "9.1"
 roxmltree = "0.21"
 # DXF reading (art.import_dxf)
 dxf = "0.6.2"
+# image decoding for image engraving (plan; pure Rust decoders, wasm-ok)
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "gif", "webp"] }
 
 # machine I/O
 nusb = "0.2"

@@ -19,8 +19,9 @@ Mac, PC, phone) and Claude are clients of the same live document. The engine is 
 | `corfile` | EzCad lens correction files (`JCZ_COR_2_1`, `LMC1COR_1.0`): parse, produce the WriteCorLine upload sequence, host-side bilinear correction. **Pure.** | – | no |
 | `doc` | Document model: stock, layers with MOPA cut settings, objects (kurbo paths + affine transforms). **Pure data + geometry helpers.** | kurbo | no |
 | `lbrn` | LightBurn `.lbrn2` projects and `.clb` material libraries: parse, write, convert to and from `doc` for a galvo field or a gantry bed (`lbrn::Frame`, see "File formats"). **Pure.** | doc, kurbo, roxmltree | no |
-| `commands` | Command registry: every change to a document goes through a registered command with a JSON Schema. Session with a Fusion-style timeline (see "History timeline"). | doc | no |
-| `plan` | Document → job: flatten paths, hatch fills, order travel, encode to LMC list packets for a `MachineProfile`. Also simulation (decode packets to a preview). | doc, lmc | no |
+| `geom` | 2D geometry on kurbo paths in mm: polygon booleans, weld, cut, offsets (`i_overlay`), curve-preserving path tools (break apart, join, close, optimize, fillet, trim), node editing, generators, path walking, bounding-box nesting. **Pure.** | kurbo, i_overlay | no (wasm-ok) |
+| `commands` | Command registry: every change to a document goes through a registered command with a JSON Schema. Session with a Fusion-style timeline (see "History timeline"). | doc, geom | no |
+| `plan` | Document → job: flatten paths, hatch fills, raster images (decode, adjust, dither; see "Image engraving"), order travel, encode to LMC list packets for a `MachineProfile`. Also simulation (decode packets to a preview). | doc, lmc, image | no |
 | `machine` | Machine profile (TOML, importable from EzCad `markcfg7` and from a LightBurn device, see "LightBurn devices"), devices (`machine::device`: LightBurn-style device model, family, workspace, origin), the `Link` transport trait, `SimLink`, `UsbLink` (nusb, feature `usb`), `Controller` (init, .cor upload, light framing, run, abort). | lmc, corfile | `usb` feature only |
 | `engine` | Binary. axum HTTP + WebSocket API for the web UI, MCP server (rmcp), run approval, serves `web/dist`. | all | yes |
 | `web/` | Fusion-style UI: React + TypeScript + Vite. Talks to the engine over HTTP + WebSocket. | – | – |
@@ -84,7 +85,9 @@ stolen PIN used through the engine's API, not against a process that restarts th
 - Hard limits (max power, field bounds, mark speed) live in the machine profile and cannot be changed by command
   arguments. Layers and sub-layers may have at most 1000 passes (`commands` and `plan` both refuse more), a layer at
   most 64 sub-layers (`commands`) and 100,000 planned passes in all (`plan`, counting cleanup runs), and `plan_job`
-  refuses jobs above 2,000,000 segments, so one edit cannot make planning exhaust the engine's memory. Previews are coalesced: at
+  refuses jobs above 2,000,000 segments (an image's scan runs count, and the error names the image), images that
+  would be sampled into more than 100,000,000 dots in a pass or decode to more than 64,000,000 pixels, so one edit
+  cannot make planning exhaust the engine's memory. Previews are coalesced: at
   most one preview plan runs at a time, and requests queued behind it share one plan of the newest document.
 - `machine::check_job` checks the encoded packets right before they are sent: power, frequency, pulse width, mark
   and jump speed, delays, no in-list `FiberOpenMO` (the MO is opened only by the run prelude), every `WritePort`
@@ -109,7 +112,7 @@ says otherwise. `origin` is `"ui"` (default), `"script"` or `"agent:<name>"`.
 | GET | `/api/history` | `{ "marker": n, "marker_moved_by": "edit"\|"undo"\|"timeline", "undone_steps": n, "steps": [Step] }` (see "History timeline"); string parameters over 512 bytes (file contents) are replaced by `"<n bytes omitted>"` |
 | POST | `/api/history/goto` | `{ "marker": n, "origin"? }` → `{ "ok": true, "marker", "revision" }`: apply steps `1..=marker`, roll back the rest (0 = before the first step); a marker past the end is **200** `{ "ok": false, "error" }` |
 | POST | `/api/history/delete` | `{ "index": n, "origin"? }` → `{ "ok": true, "marker", "revision" }`: remove step `index` (1-based) and replay the steps after it; no such step is **200** `{ "ok": false, "error" }` |
-| GET | `/api/preview` | planned job: `{ segments: [{kind: "jump"|"mark", layer, pass, from: [x,y], to: [x,y], emits}], passes: [{layer_id, sub_layer, repeat, segments, mark_length_mm, jump_length_mm, estimated_time_s}], stats, layers: [{layer_id, name, color, mode, output, visible, passes, segments, mark_length_mm, jump_length_mm, estimated_time_s, sub_layers: [{sub_layer, name, label, cleanup, mode, power_pct, speed_mm_s, frequency_khz, pulse_width_ns, passes, planned_passes, segments, mark_length_mm, jump_length_mm, estimated_time_s}]}], warnings }` in field mm. `pass` indexes `passes`, the job's passes in burn order (a jump belongs to the pass it travels into); `sub_layer` is 0 for a layer's main settings and n for `sub_layers[n - 1]`; `layers` lists every document layer in order (zeros for layers with nothing to mark or output off; layer times leave out the job's start-up delay), each with its main settings and sub-layers (`label` "Main", the name, "Cleanup" or "Sub-layer n"; `passes` asked for, `planned_passes` planned, and their share of the layer's totals); `warnings` are things the plan left out (images). `?layers=id1,id2` keeps only those layers' segments and entries (stats and `passes` stay the whole job's). An empty document is an empty preview; a planning error (out of field, power above the limit, too many passes/segments) is **422** |
+| GET | `/api/preview` | planned job: `{ segments: [{kind: "jump"|"mark", layer, pass, from: [x,y], to: [x,y], emits, power_pct?}], passes: [{layer_id, sub_layer, repeat, segments, mark_length_mm, jump_length_mm, estimated_time_s}], stats, layers: [{layer_id, name, color, mode, output, visible, passes, segments, mark_length_mm, jump_length_mm, estimated_time_s, sub_layers: [{sub_layer, name, label, cleanup, mode, power_pct, speed_mm_s, frequency_khz, pulse_width_ns, passes, planned_passes, segments, mark_length_mm, jump_length_mm, estimated_time_s}]}], warnings }` in field mm. `pass` indexes `passes`, the job's passes in burn order (a jump belongs to the pass it travels into); `sub_layer` is 0 for a layer's main settings and n for `sub_layers[n - 1]`; `layers` lists every document layer in order (zeros for layers with nothing to mark or output off; layer times leave out the job's start-up delay), each with its main settings and sub-layers (`label` "Main", the name, "Cleanup" or "Sub-layer n"; `passes` asked for, `planned_passes` planned, and their share of the layer's totals); `power_pct` is set on marks whose power differs from their pass's (grayscale image runs); `warnings` are things the plan left out (none at present). `?layers=id1,id2` keeps only those layers' segments and entries (stats and `passes` stay the whole job's). An empty document is an empty preview; a planning error (out of field, power above the limit, too many passes/segments) is **422** |
 | GET | `/api/fill_regions` | `{ layers: [{layer_id, name, color, mode, visible, output, paths: [d], object_ids: [id]}] }`: for every layer whose mode is `fill` or `fill_then_line`, one SVG path per object (its closed subpaths, field mm, +Y up, flattened at 0.05 mm) to draw with `fill-rule: evenodd`, which is exactly the area the hatch covers. Display only |
 | GET | `/api/preview.svg` | rendered preview (stock, objects, toolpath; `?jumps=false` hides travel); still renders the document on a planning error |
 | GET | `/api/machine` | `connected`, `simulated`, `busy`, `state`, `running`, `framing`, `field_mm`, `profile`, `device` (the active device's summary, see `GET /api/devices`), `max_power_pct`, `last_error`, `sim_counters`, `approval: { pin_set, pin_changed, locked_until_unix_s: null \| n, physical_confirm: null \| { input_bit, timeout_s } }`, `lightburn: null \| { device, field_mm, diffs: [{field, base_value, lightburn_value, note}] }` (the active profile compared with the matched LightBurn device, see "LightBurn devices"), `pending_runs: [Run]`, `runs: [Run]` |
@@ -207,6 +210,32 @@ it; returns its `index`). Kept data of other software per sub-layer (`extras["<f
 with its sub-layer on add, delete, move and duplicate. The web UI's "Add cleanup pass" uses LightBurn-like defaults:
 the same mode and interval, one fast low-energy pass with the hatch turned 45°, cleaning after the main passes.
 
+**Image engraving** (LightBurn's Image mode, `crates/plan/src/image.rs`). As in LightBurn, a layer's images always
+engrave with its `settings.image` (each sub-layer has its own), while its vectors keep `mode`; power, speed,
+frequency, pulse width, timing and passes are shared, and a pass burns its images first, then its vectors.
+`ImageSettings {dither, interval_mm, angle_deg, angle_increment_deg, bidirectional, negative, pass_through,
+dot_width_mm, min_power_pct, halftone_cells_per_inch, halftone_angle_deg}`; dither is `threshold`, `ordered` (8x8
+Bayer), `atkinson`, `floyd_steinberg` (LightBurn's "Dither", `dithered` in its files), `stucki`, `jarvis`
+(default), `newsprint` (45° clustered dots, 4 dots a cell), `halftone` (round dots at the given cells per inch and
+angle), `sketch` (Sobel edges) or `grayscale`. Planning decodes the image once per job (`image` crate: PNG, JPEG,
+GIF, BMP, WebP; transparent pixels never fire; shrunk on decode when the finest interval spans 4 or more pixels),
+applies the image's `adjust` (enhance as an unsharp mask of three box blurs with the denoise threshold, then
+contrast, brightness, gamma), then per pass samples square dots of the interval in rows along the scan angle (the
+lattice is anchored at the field origin; each dot samples its centre through the inverse object transform, so
+rotation and mirroring follow the object; pass-through uses the image's own pixel grid instead), inverts for
+`negative`, dithers row by row from the lowest row (error diffusion keeps three rows), and merges consecutive "on"
+dots into one two-point mark per run, clipped to the image outline. Dot width correction pulls each run end that
+borders an unmarked dot in by half the width (never below a quarter of a dot); bidirectional alternates the rows
+that mark. Grayscale runs merge equal levels (256) and carry their power, `min + (layer power - min) × level / 255`
+(pure white never fires), in `PassPlan.powers`; the encoder sends a `MarkCurrent` before a run whose power
+differs from the one in force (the list command the pass header uses; that it applies at that point of the list
+on the B6 is unverified), and `machine::check_job` checks every `MarkCurrent` against the cap. Runs are cached per
+image, settings and scan angle, so repeated passes cost no resampling. LightBurn's 3D Sliced mode (`3dslice`) is
+not modelled: it is kept for LightBurn with an import warning and such layers engrave with the default dither.
+Halftone cells per inch have no known LightBurn tag and are not exported (with a warning). `layer.update` takes
+`settings.image` partially (`dpi` sets `interval_mm` to 25.4 / dpi; dot width within 0..=interval, minimum power
+0..=100); the plan refuses a grayscale minimum power above the machine limit.
+
 **Ids and arranging.** Every command that takes object `ids` also takes group ids, which stand for all the group's
 members (nested groups included). `object.duplicate` and `art.array` copy a fully selected group as a new group;
 `object.delete` removes groups left empty. `object.align {ids, reference?, x?, y?, mode?}` follows LightBurn: the
@@ -216,6 +245,45 @@ its bounds; top is +Y. "Centre on stock" is `object.align` with `reference: {kin
 `mode: "group"`. `object.distribute {ids, axis, by: centers|gaps|spacing, spacing_mm?}` keeps the outermost objects
 for centres and gaps. `object.move {ids, from_point, to_point}` is a snapped drag. `stock.move {center? | translate?,
 rotation_deg? | rotate_by_deg?}` moves the stock only.
+
+**Geometry tools** (`crates/geom`, commands in `crates/commands/src/builtin/{boolean,offset,path_tools,node,generate,
+arrays,order}.rs`; LightBurn behaviour from its 2.x docs). All work in field mm and write results back into each
+object's own frame (its transform is kept); every one is one undo step, returns `created`/`affected` (and `deleted`)
+ids with bounds, and refuses locked objects and images. Booleans, weld, cut shapes and offsets run on outlines
+flattened at 0.01 mm, so their results are polylines (an offset circle is a many-sided polygon); the other path tools
+and node edits keep lines and Béziers. Editing a rectangle or ellipse turns it into a path, and editing an object's
+geometry in place drops its `extras` (kept LightBurn shape data no longer describes it).
+- `path.boolean {ids, op: union|subtract|intersect|xor}`: closed shapes as filled areas (each object even-odd, as jobs
+  fill it; a group counts as one shape). Subtract cuts the **last** id out of each other object and deletes it
+  (LightBurn: "the second shape you add ... is subtracted from the first, and deleted"); the others put the result in
+  the first object. `path.weld {ids}`: non-zero fill per object, then union, one outline per island (LightBurn: weld
+  can swallow contained shapes; counters drawn the other way round stay holes). `path.cut_shapes {ids}`: the last id
+  (closed, ungrouped) cuts the others and is deleted; pieces on fill layers are closed, on line layers open; they go
+  into new groups "Cut inside" / "Cut outside".
+- `path.offset {ids, distance_mm, join: round|miter|bevel, miter_limit?, keep_original?, combine?, direction:
+  outward|inward|both}`: open paths offset outward into a band with round ends; inward skips them.
+- `path.break_apart {ids, mode: auto|segments|subpaths|islands}`: `auto` follows LightBurn's docs (several subpaths
+  split into subpaths, a single one into its segments: a rectangle becomes four lines); `islands` keeps holes with
+  their outer contour. `path.auto_join {ids, tolerance_mm = 0.05}` (LightBurn's fixed 0.05 mm; chains whose ends meet
+  close), `path.close {ids, tolerance_mm?, mode: line|move_ends}`, `path.delete_duplicates {ids?, segments?}` (same
+  layer and outline to 1 µm, whole document by default), `path.convert`, `path.optimize {ids, tolerance_mm}` (lines
+  only: collinear nodes, flat curves; no arc fitting or smoothing), `path.fillet {ids, radius_mm, corners: "all" |
+  [node]}` (line-line corners; negative radius bites; a whole rectangle keeps its corner radius), `path.trim {id, at,
+  pick_mm?}`, `path.reverse`.
+- `node.list {id}` (Query) and `node.move/insert/delete/break/join/set_type/segment_type`: nodes and segments numbered
+  across subpaths (see `geom::nodes`); points in field mm, paths stay local under the transform.
+- `shape.polygon`, `shape.line`, `shape.circle` (an ellipse with equal radii); `art.circular_array {ids, count, center,
+  angle_deg = 360, rotate_copies}`, `art.along_path {ids, path_id, count | spacing_mm, rotate_to_path}` (count includes
+  the original), `art.nest {ids, region: stock|field|{min,max}|{object}, spacing_mm, edge_mm, rotations}` (Quick
+  Nest-style bounding-box shelves; boxes never interlock; a round stock uses its inscribed square).
+- `object.order {ids, to: front|back|forward|backward}`: the object list order (front = end, drawn on top). Jobs burn
+  layer by layer and order each layer's shapes by nearest-neighbour travel (`plan::order`), so this only breaks ties
+  there and does not set the cut order. `object.lock {ids, locked}`: `Document.locked` (ids; on the document so
+  `Object` literals elsewhere stay valid); locked objects still select, copy, group, rename and burn, but transform,
+  move, align, distribute, place, set_layer, delete and every path/node edit refuse them (`image.adjust` does not check
+  yet). `object.make_same {ids, dimension, keep_aspect?}` (reference: the last id, or the only locked one),
+  `object.rotate_to` / `object.scale_to {ids, pivot, from, to}` (two-point), and `object.transform` takes `shear_deg`
+  and `mirror_line {a, b}`.
 
 **Projects.** Named projects are `<projects-dir>/<name>.openetch` (`--projects-dir`, default the OS data dir +
 `openetch/projects`, e.g. `%APPDATA%\openetch\projects`, `~/Library/Application Support/openetch/projects`,
@@ -298,7 +366,8 @@ MCP tool can approve a run or touch the operator PIN, and the server instruction
   (then `field_mm` is the smaller side, and `extras["lbrn2._origin"]` the device's origin corner). `Document.groups` (`{id, name, parent?}`, nested through `parent`) and `Object.group`
   (the innermost group) hold LightBurn-style groups; a group with no member objects is removed
   (`Document::prune_groups`, also on load). `Geometry::Image {width_mm, height_mm, mime, data_base64}` is a bitmap
-  centred on the local origin; jobs skip images with the plan warning "image engraving is not supported yet".
+  centred on the local origin, plus `adjust` (LightBurn's Adjust Image, left out while it changes nothing); jobs
+  engrave images in Image mode (see "Image engraving").
   `extras` on the document, layers, objects and groups keep data from other software that OpenEtch does not model
   (`lbrn2.*`) so exports round-trip. All of these are optional, so files from older builds load (still version 1).
   Commands: `doc.new`, `doc.load {content}`, `doc.save` (Query, returns `{content, revision}`).
@@ -310,7 +379,10 @@ MCP tool can approve a run or touch the operator PIN, and the server instruction
   `every_n_passes` ("Clean after # of passes"; the parent's `cleanupPass` is written while a cleanup sub-layer
   exists); everything else in `extras["lbrn2.*"]`), Rect/Ellipse/Path become objects, LightBurn groups become
   groups, Text becomes an object drawn and burned as its saved outline (BackupPath) that keeps its text attributes
-  and is exported as LightBurn text again, bitmaps become images; anything else (unknown shape types, the
+  and is exported as LightBurn text again, bitmaps become images (their `Data` rows are bottom-up in LightBurn, so
+  the import adds a vertical flip to the transform and the export removes it; `CutSetting_Img` tags map to
+  `settings.image` and the Bitmap's `Gamma`, `Contrast`, ... to the image's `adjust`, see `crates/lbrn/src/image.rs`);
+  anything else (unknown shape types, the
   thumbnail, `UIPrefs`, `Notes`, root attributes, layout) is kept in `extras`. Export writes it all back, with the
   source text of every number, transform and path list that did not change, so an unchanged import exports byte for
   byte (the env-gated `crates/lbrn/tests/real_samples.rs` checks every sample file). `.lbt` templates read the same
@@ -334,7 +406,8 @@ MCP tool can approve a run or touch the operator PIN, and the server instruction
   polylines with bulges, circles, arcs, ellipses, splines, block references; units from `$INSUNITS`, else mm with a
   warning; native builds only; `split` defaults to true: one object per entity, all in one group named `name` (default
   "Imported DXF"), as LightBurn imports a DXF, so dropped and uploaded DXF files arrive that way; `split: false` makes one
-  combined object) and `art.import_image {data_base64, mime, width_mm?, layer?, name?}` (PNG, JPEG, GIF,
+  combined object), `image.adjust {ids, adjust: {gamma?, contrast?, brightness?, enhance_radius?, enhance_amount?,
+  denoise?}, reset?}` (partial; images only) and `art.import_image {data_base64, mime, width_mm?, layer?, name?}` (PNG, JPEG, GIF,
   BMP, WebP; size from the file's resolution, else 254 dpi, fitted to 80 % of the field). Groups: `group.create {ids,
   name?}`, `group.ungroup {group}` (one level), `group.rename {group, name}`.
 - **`.clb`** (LightBurn material library): read by `lbrn::parse_library` into layer settings.

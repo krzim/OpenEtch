@@ -20,7 +20,18 @@ mod stock;
 mod sub_layer;
 mod svg_import;
 mod util;
+// Geometry commands (crates/geom): booleans, offsets, path tools, nodes, generators, arrays, arrange.
+mod arrays;
+mod boolean;
+mod generate;
+mod node;
+mod offset;
+mod order;
+mod path_tools;
+mod pathutil;
 
+#[cfg(test)]
+mod geom_tests;
 #[cfg(test)]
 mod tests;
 
@@ -65,6 +76,44 @@ pub(crate) fn register_all(r: &mut Registry) {
     r.register::<group::GroupUngroup>();
     r.register::<group::GroupRename>();
     r.register::<image::ImportImage>();
+    r.register::<image::AdjustImage>();
     #[cfg(not(target_arch = "wasm32"))]
     r.register::<dxf::ImportDxf>();
+    register_geometry(r);
+}
+
+/// The geometry commands (booleans, offsets, path and node tools, generators, arrays, arrange), after the rest.
+fn register_geometry(r: &mut Registry) {
+    r.register::<boolean::PathBoolean>();
+    r.register::<boolean::PathWeld>();
+    r.register::<boolean::PathCutShapes>();
+    r.register::<offset::PathOffset>();
+    r.register::<path_tools::BreakApart>();
+    r.register::<path_tools::AutoJoin>();
+    r.register::<path_tools::ClosePath>();
+    r.register::<path_tools::DeleteDuplicates>();
+    r.register::<path_tools::ConvertToPath>();
+    r.register::<path_tools::Optimize>();
+    r.register::<path_tools::Fillet>();
+    r.register::<path_tools::Trim>();
+    r.register::<path_tools::Reverse>();
+    r.register::<node::NodeList>();
+    r.register::<node::NodeMove>();
+    r.register::<node::NodeInsert>();
+    r.register::<node::NodeDelete>();
+    r.register::<node::NodeBreak>();
+    r.register::<node::NodeJoin>();
+    r.register::<node::NodeSetType>();
+    r.register::<node::NodeSegmentType>();
+    r.register::<generate::ShapePolygon>();
+    r.register::<generate::ShapeLine>();
+    r.register::<generate::ShapeCircle>();
+    r.register::<arrays::CircularArray>();
+    r.register::<arrays::AlongPath>();
+    r.register::<arrays::Nest>();
+    r.register::<order::Order>();
+    r.register::<order::Lock>();
+    r.register::<order::MakeSame>();
+    r.register::<order::RotateTo>();
+    r.register::<order::ScaleTo>();
 }

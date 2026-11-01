@@ -1,12 +1,17 @@
-//! Document -> [`JobPlan`]: resolve each pass's settings, flatten, hatch, check the field, order travel.
+//! Document -> [`JobPlan`]: resolve each pass's settings, flatten, hatch, raster images, check the field, order
+//! travel.
 
-use doc::{CutSettings, Document, FillMode, GalvoTiming, Geometry, Layer, LayerId, ObjectId};
+use std::collections::HashMap;
+use std::rc::Rc;
+
+use doc::{CutSettings, DitherMode, Document, FillMode, GalvoTiming, Geometry, ImageAdjust, Layer, LayerId, Object, ObjectId};
 use lmc::PulseDecision;
 use lmc::units::nearest_pulse_width;
 use serde::{Deserialize, Serialize};
 
 use crate::geom::{Point, Subpath, dist, flatten, polyline_length};
 use crate::hatch::{HatchError, MAX_SCANLINES, hatch};
+use crate::image::{Gray, MAX_IMAGE_DOTS, Placed, RasterError, Run, raster};
 use crate::order::{Chunk, order};
 use crate::{PlanError, Result, Target};
 
@@ -22,15 +27,12 @@ pub const MAX_LAYER_PASSES: u32 = 100_000;
 /// the encoded packets) stays around a couple of hundred MB at most, which a Raspberry Pi can hold.
 pub const MAX_SEGMENTS: usize = 2_000_000;
 
-/// The warning a plan carries when output layers hold images, which are skipped.
-pub const IMAGE_WARNING: &str = "image engraving is not supported yet";
-
 /// A whole job: passes in burn order, every polyline in field-frame mm.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct JobPlan {
     pub passes: Vec<PassPlan>,
     pub stats: Stats,
-    /// Things left out of the job, e.g. [`IMAGE_WARNING`] with the number of images skipped.
+    /// Things the plan left out or changed that a person should know about (none at present).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
 }
@@ -44,8 +46,20 @@ pub struct PassPlan {
     /// Repetition of those settings, `0..passes`.
     pub repeat: u32,
     pub settings: PassSettings,
-    /// Polylines in marking order. A closed shape repeats its first point at the end.
+    /// Polylines in marking order. A closed shape repeats its first point at the end. Image runs come first, one
+    /// two-point polyline each, then the vectors.
     pub polylines: Vec<Vec<Point>>,
+    /// Power in % of each polyline, in step with `polylines`, when they differ (grayscale images); empty when every
+    /// polyline uses `settings.power_pct`. See [`PassPlan::power_of`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub powers: Vec<f64>,
+}
+
+impl PassPlan {
+    /// The power of polyline `i`: its entry in `powers`, else the pass's power.
+    pub fn power_of(&self, i: usize) -> f64 {
+        self.powers.get(i).copied().unwrap_or(self.settings.power_pct)
+    }
 }
 
 /// Fully resolved, already validated settings of one pass.
@@ -84,13 +98,16 @@ pub struct Stats {
 /// in order (see [`layer_schedule`]). `Line` traces outlines (closed subpaths closed), `Fill` hatches closed
 /// subpaths per object with the even-odd rule, `FillThenLine` does both, hatch first. Travel is ordered greedily per pass, continuing from where the previous pass ended.
 ///
-/// Images are skipped (image engraving is not supported yet), with a warning in [`JobPlan::warnings`].
+/// Images are engraved in every pass with that pass's [`doc::ImageSettings`] whatever the mode (LightBurn's Image
+/// mode; see the `image` module), before the pass's vectors, each scan run one two-point polyline; their scan angle
+/// grows by `image.angle_increment_deg` per repeat. Grayscale runs carry their own power ([`PassPlan::powers`]).
 ///
 /// Refused, never clamped: a point outside the field (naming every offending object), power above the target's
-/// limit, a pulse width not in the table, settings the board cannot encode, more than [`MAX_PASSES`] passes, a
-/// cleanup interval of 0, more than [`MAX_LAYER_PASSES`] passes of one layer in all, and more than [`MAX_SEGMENTS`]
-/// mark segments in total (counted while generating; planning stops at the first pass that goes over). Passes with
-/// nothing to mark are left out.
+/// limit (for grayscale also the minimum power), a pulse width not in the table, settings the board cannot encode,
+/// more than [`MAX_PASSES`] passes, a cleanup interval of 0, more than [`MAX_LAYER_PASSES`] passes of one layer in
+/// all, an image that cannot be decoded or would need more than [`MAX_IMAGE_DOTS`] dots, and more than
+/// [`MAX_SEGMENTS`] mark segments in total (counted while generating; planning stops at the first pass that goes
+/// over, naming the image when one did). Passes with nothing to mark are left out.
 pub fn plan_job(doc: &Document, target: &Target) -> Result<JobPlan> {
     plan_job_within(doc, target, MAX_SEGMENTS)
 }
@@ -103,26 +120,23 @@ pub(crate) fn plan_job_within(doc: &Document, target: &Target, max_segments: usi
     // Flatten every output object once and check the field before any settings work.
     let mut outside: Vec<ObjectId> = Vec::new();
     let mut shapes: Vec<(&str, Vec<Subpath>)> = Vec::new();
-    let mut images = 0usize;
+    let mut images: Vec<&Object> = Vec::new();
     for obj in doc.objects.iter().filter(|o| layers.iter().any(|l| l.id == o.layer)) {
-        if matches!(obj.geometry, Geometry::Image { .. }) {
-            images += 1;
-            continue;
-        }
         let subs = flatten(&obj.field_path());
         if subs.iter().flat_map(|s| &s.points).any(|&p| !target.contains(p)) {
             outside.push(obj.id.clone());
         }
-        shapes.push((obj.layer.as_str(), subs));
+        if matches!(obj.geometry, Geometry::Image { .. }) {
+            images.push(obj);
+        } else {
+            shapes.push((obj.layer.as_str(), subs));
+        }
     }
     if !outside.is_empty() {
         return Err(PlanError::OutOfField { objects: outside, field_mm: target.field_mm });
     }
 
     let mut plan = JobPlan::default();
-    if images > 0 {
-        plan.warnings.push(format!("{IMAGE_WARNING}: {images} image(s) on output layers were skipped"));
-    }
     let mut pos: Point = [0.0, 0.0];
     let mut segments = 0usize;
     for layer in layers {
@@ -130,6 +144,12 @@ pub(crate) fn plan_job_within(doc: &Document, target: &Target, max_segments: usi
         // Every set of settings is checked, also on a layer with nothing to mark.
         let cuts: Vec<&CutSettings> = std::iter::once(&layer.settings).chain(&layer.sub_layers).collect();
         let resolved = cuts.iter().map(|cut| resolve(&layer.id, cut, target)).collect::<Result<Vec<_>>>()?;
+        let layer_images: Vec<&Object> = images.iter().copied().filter(|o| o.layer == layer.id).collect();
+        if !layer_images.is_empty() {
+            for cut in &cuts {
+                check_image_settings(&layer.id, cut, target)?;
+            }
+        }
         for c in layer.sub_layers.iter().filter_map(|s| s.cleanup.as_ref()) {
             if c.every_n_passes == 0 {
                 return Err(PlanError::Setting { layer: layer.id.clone(), what: "cleanup.every_n_passes", value: 0.0 });
@@ -143,15 +163,50 @@ pub(crate) fn plan_job_within(doc: &Document, target: &Target, max_segments: usi
                 max: MAX_LAYER_PASSES,
             });
         }
-        if subs.is_empty() {
+        if subs.is_empty() && layer_images.is_empty() {
             continue;
         }
+        let decoded = layer_images.iter().map(|o| decode_image(o, &cuts)).collect::<Result<Vec<_>>>()?;
+        // Image runs per (image, settings, scan angle), so repeated passes reuse them.
+        let mut rasters: Rasters = HashMap::new();
         for (sub_layer, repeat) in layer_schedule(layer) {
             let cut = cuts[sub_layer];
             let angle = cut.hatch.angle_deg + f64::from(repeat) * cut.hatch.angle_increment_deg;
             let settings = PassSettings { hatch_angle_deg: angle, ..resolved[sub_layer].clone() };
-            let (polylines, end) =
-                pass_polylines(&layer.id, cut, angle, &subs, pos, (max_segments - segments, max_segments))?;
+            let image_angle =
+                (cut.image.angle_deg + f64::from(repeat) * cut.image.angle_increment_deg).rem_euclid(360.0);
+            let mut polylines = Vec::new();
+            let mut powers = Vec::new();
+            let mut start = pos;
+            for (k, image) in decoded.iter().enumerate() {
+                let budget = max_segments - segments - polylines.len();
+                let key = (k, sub_layer, image_angle.to_bits());
+                let rows = match rasters.get(&key) {
+                    Some(r) => Rc::clone(r),
+                    None => {
+                        let r = Rc::new(image.raster(&cut.image, image_angle, budget, max_segments)?);
+                        rasters.insert(key, Rc::clone(&r));
+                        r
+                    }
+                };
+                let runs = rows.iter().map(Vec::len).sum::<usize>();
+                if runs > budget {
+                    return Err(PlanError::ImageSegments { object: image.object.id.clone(), max: max_segments });
+                }
+                for run in rows.iter().flatten() {
+                    polylines.push(vec![run.from, run.to]);
+                    powers.push(run_power(cut, &settings, run.level));
+                    start = run.to;
+                }
+            }
+            let (vectors, end) =
+                pass_polylines(&layer.id, cut, angle, &subs, start, (max_segments - segments - polylines.len(), max_segments))?;
+            if powers.iter().any(|p| *p != settings.power_pct) {
+                powers.resize(polylines.len() + vectors.len(), settings.power_pct);
+            } else {
+                powers.clear();
+            }
+            polylines.extend(vectors);
             if polylines.is_empty() {
                 continue;
             }
@@ -160,12 +215,15 @@ pub(crate) fn plan_job_within(doc: &Document, target: &Target, max_segments: usi
                 return Err(PlanError::TooManySegments { max: max_segments });
             }
             pos = end;
-            plan.passes.push(PassPlan { layer_id: layer.id.clone(), sub_layer, repeat, settings, polylines });
+            plan.passes.push(PassPlan { layer_id: layer.id.clone(), sub_layer, repeat, settings, polylines, powers });
         }
     }
     plan.stats = plan_stats(&plan, target);
     Ok(plan)
 }
+
+/// Image runs by (image, settings index, scan angle bits), rows in burn order.
+type Rasters = HashMap<(usize, usize, u64), Rc<Vec<Vec<Run>>>>;
 
 /// The passes of one layer in burn order, as `(sub_layer, repeat)` (`sub_layer` 0 for the main settings, n for
 /// `sub_layers[n - 1]`): each main pass, followed by every cleanup sub-layer due after it ([`doc::Cleanup::runs_after`],
@@ -256,6 +314,108 @@ fn resolve(layer: &str, cut: &CutSettings, target: &Target) -> Result<PassSettin
     crate::encode::PassWords::new(&settings, target)
         .map_err(|e| PlanError::Encode { layer: layer.into(), source: e })?;
     Ok(settings)
+}
+
+/// Refuse image settings that cannot be planned (checked for layers that hold images): a line interval that is not
+/// positive, a dot width that is negative or wider than the interval, halftone cells that are not positive, and for
+/// grayscale a minimum power outside 0..=100 or above the target's limit.
+fn check_image_settings(layer: &str, cut: &CutSettings, target: &Target) -> Result<()> {
+    let s = &cut.image;
+    let invalid = |what: &'static str, value: f64| PlanError::Setting { layer: layer.into(), what, value };
+    if !s.pass_through && !(s.interval_mm.is_finite() && s.interval_mm > 0.0) {
+        return Err(invalid("image.interval_mm", s.interval_mm));
+    }
+    if !s.angle_deg.is_finite() {
+        return Err(invalid("image.angle_deg", s.angle_deg));
+    }
+    if !s.angle_increment_deg.is_finite() {
+        return Err(invalid("image.angle_increment_deg", s.angle_increment_deg));
+    }
+    let widest = if s.pass_through { f64::INFINITY } else { s.interval_mm };
+    if !(s.dot_width_mm.is_finite() && s.dot_width_mm >= 0.0 && s.dot_width_mm <= widest) {
+        return Err(invalid("image.dot_width_mm", s.dot_width_mm));
+    }
+    if matches!(s.dither, DitherMode::Halftone)
+        && !(s.halftone_cells_per_inch.is_finite() && s.halftone_cells_per_inch > 0.0 && s.halftone_angle_deg.is_finite())
+    {
+        return Err(invalid("image.halftone_cells_per_inch", s.halftone_cells_per_inch));
+    }
+    if matches!(s.dither, DitherMode::Grayscale) {
+        if !(s.min_power_pct.is_finite() && (0.0..=100.0).contains(&s.min_power_pct)) {
+            return Err(invalid("image.min_power_pct", s.min_power_pct));
+        }
+        if s.min_power_pct > target.max_power_pct {
+            return Err(PlanError::PowerTooHigh {
+                layer: layer.into(),
+                power_pct: s.min_power_pct,
+                max_pct: target.max_power_pct,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// The power of an image run at `level` (255 = the pass's power): grayscale runs lie between the minimum power
+/// (level 1 is just above it) and the pass's power; every other mode fires at the pass's power.
+fn run_power(cut: &CutSettings, settings: &PassSettings, level: u8) -> f64 {
+    if matches!(cut.image.dither, DitherMode::Grayscale) {
+        let min = cut.image.min_power_pct;
+        min + (settings.power_pct - min) * f64::from(level) / 255.0
+    } else {
+        settings.power_pct
+    }
+}
+
+/// One image object of a layer, decoded and adjusted, ready to raster for any of the layer's settings.
+struct DecodedImage<'a> {
+    object: &'a Object,
+    gray: Gray,
+    width_mm: f64,
+    height_mm: f64,
+}
+
+impl DecodedImage<'_> {
+    fn raster(&self, s: &doc::ImageSettings, angle_deg: f64, budget: usize, max: usize) -> Result<Vec<Vec<Run>>> {
+        let placed =
+            Placed { gray: &self.gray, width_mm: self.width_mm, height_mm: self.height_mm, transform: self.object.transform };
+        raster(&placed, s, angle_deg, budget).map_err(|e| match e {
+            RasterError::TooManyDots { rows, cols } => PlanError::ImageTooLarge {
+                object: self.object.id.clone(),
+                rows,
+                cols,
+                max: MAX_IMAGE_DOTS,
+            },
+            RasterError::OverBudget => PlanError::ImageSegments { object: self.object.id.clone(), max },
+        })
+    }
+}
+
+/// Decode and adjust an image object. When none of the layer's settings uses pass-through and even the finest line
+/// interval spans 4 or more pixels, the image is shrunk right away (by half the pixels per dot, so a dot still spans
+/// two), which keeps a large photo's memory down; the enhance radius is scaled with it.
+fn decode_image<'a>(o: &'a Object, cuts: &[&CutSettings]) -> Result<DecodedImage<'a>> {
+    let Geometry::Image { width_mm, height_mm, data_base64, adjust, .. } = &o.geometry else {
+        unreachable!("only image objects are decoded")
+    };
+    let problem = |reason: String| PlanError::Image { object: o.id.clone(), reason };
+    if let Some(p) = adjust.problem() {
+        return Err(problem(p));
+    }
+    // The finest dot in the image's own (local) millimetres: the interval over the transform's largest stretch.
+    let [a, b, c, d, _, _] = o.transform.as_coeffs();
+    let half = (a * a + b * b + c * c + d * d) / 2.0;
+    let det = a * d - b * c;
+    let stretch = (half + (half * half - det * det).max(0.0).sqrt()).sqrt();
+    let finest = if cuts.iter().any(|c| c.image.pass_through) {
+        None
+    } else {
+        cuts.iter().map(|c| c.image.interval_mm).fold(None, |m: Option<f64>, v| Some(m.map_or(v, |m| m.min(v))))
+    };
+    let dot_local_mm = finest.map(|f| f / stretch).filter(|v| v.is_finite() && *v > 0.0);
+    let (mut gray, factor) = crate::image::decode(data_base64, *width_mm, dot_local_mm).map_err(problem)?;
+    let scaled = ImageAdjust { enhance_radius: adjust.enhance_radius / factor as f64, ..adjust.clone() };
+    crate::image::adjust(&mut gray, &scaled);
+    Ok(DecodedImage { object: o, gray, width_mm: *width_mm, height_mm: *height_mm })
 }
 
 /// Mark segments of `polylines` (each polyline of n points has n - 1).

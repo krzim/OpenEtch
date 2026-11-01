@@ -10,7 +10,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-use doc::{CutSettings, Document, FillMode, Geometry, Group, Layer, Object, StockShape};
+use doc::{CutSettings, Document, FillMode, Geometry, Group, ImageSettings, Layer, Object, StockShape};
 use kurbo::{Affine, BezPath, Rect};
 
 use crate::LbrnError;
@@ -95,6 +95,13 @@ const MAX_WARNINGS: usize = 200;
 /// holds.
 const MAX_ELEMENTS: usize = 4_000_000;
 const FIXED_SHAPE_ELEMENTS: usize = 10;
+
+/// LightBurn draws a bitmap's `Data` with its first pixel row at the bottom (lowest y) of the shape, the reverse of
+/// an image file and of [`Geometry::Image`], so a bitmap's transform is its `XForm` times this flip (on export the
+/// flip is taken off again; it is exact, so unchanged `XForm`s keep their text). Evidence: `photo on namecard.lbrn2`
+/// has a positive `XForm` and `Data` upside down against its upright thumbnail, and the 3D sliced sample's `Data`
+/// is its source file (`File`, beside it) flipped top to bottom, pixel for pixel.
+const BITMAP_ROWS: Affine = Affine::FLIP_Y;
 
 fn key(k: &str) -> String {
     format!("{EXTRA_PREFIX}{k}")
@@ -358,13 +365,8 @@ fn to_settings(kind: &str, p: &CutParams, label: &str, w: &mut Warnings) -> (Cut
     }
     let mode = match mode_of(kind) {
         Some(m) => m,
-        None if kind == "Image" => {
-            w.push(format!(
-                "{label}: image layer: OpenEtch does not engrave images yet; its settings are kept for LightBurn, and \
-                 vectors put on it would be filled with them"
-            ));
-            FillMode::Fill
-        }
+        // An image layer: its images use its image settings; vectors put on it are filled with its interval.
+        None if kind == "Image" => FillMode::Fill,
         None => {
             w.push(format!("{label}: cut type '{kind}' is not supported; imported as a line layer"));
             FillMode::Line
@@ -439,6 +441,7 @@ fn to_settings(kind: &str, p: &CutParams, label: &str, w: &mut Warnings) -> (Cut
         timing: None,
         name: None,
         cleanup: None,
+        image: ImageSettings::default(),
     };
     (s, rest)
 }
@@ -494,7 +497,10 @@ fn layer_from(index: u32, cs: Option<&CutSetting>, id: String, w: &mut Warnings)
         return layer;
     }
     let no_frequency = |p: &CutParams| p.frequency.is_none() && !p.other.contains_key("frequency");
-    let (settings, rest) = to_settings(&cs.kind, p, &label, w);
+    let (mut settings, mut rest) = to_settings(&cs.kind, p, &label, w);
+    if cs.image {
+        settings.image = crate::image::image_from(p, &mut rest, &ImageSettings::default(), &label, &mut |m| w.push(m));
+    }
     layer.settings = settings;
     if no_frequency(p) {
         layer.extras.insert(FREQUENCY_ABSENT_KEY.into(), "1".into());
@@ -509,6 +515,12 @@ fn layer_from(index: u32, cs: Option<&CutSetting>, id: String, w: &mut Warnings)
         let sub_label = format!("{label} sub-layer {}", n + 1);
         let (mut s, mut rest) = to_settings(&sub.kind, &sub.params, &sub_label, w);
         sub_layer_fields(&mut s, &mut rest);
+        s.image = if cs.image {
+            let parent = &layer.settings.image;
+            crate::image::image_from(&sub.params, &mut rest, parent, &sub_label, &mut |m| w.push(m))
+        } else {
+            layer.settings.image.clone()
+        };
         layer.sub_layers.push(s);
         if mode_of(&sub.kind).is_none() {
             layer.extras.insert(format!("{prefix}type"), sub.kind.clone());
@@ -524,6 +536,50 @@ fn layer_from(index: u32, cs: Option<&CutSetting>, id: String, w: &mut Warnings)
         }
     }
     layer
+}
+
+/// The image settings of a `CutSetting_Img` kept beside a layer's vector settings.
+fn image_of_setting(img: &CutSetting, label: &str, w: &mut Warnings) -> ImageSettings {
+    let mut rest: BTreeMap<String, String> = img.params.to_values().into_iter().collect();
+    crate::image::image_from(&img.params, &mut rest, &ImageSettings::default(), label, &mut |m| w.push(m))
+}
+
+/// The `CutSetting_Img` of `xml` (kept beside a layer's vector settings, see [`keys::IMAGE_SETTING`]).
+fn cut_setting_from_xml(xml: &str) -> Option<CutSetting> {
+    let p = crate::parse(&format!("<LightBurnProject>{xml}</LightBurnProject>")).ok()?;
+    p.cut_settings.into_iter().next().filter(|c| c.image)
+}
+
+/// A kept `CutSetting_Img` written for `l`: as kept while its image settings still read as `l`'s, else with them
+/// written in (everything else as kept).
+fn kept_image_xml(xml: &str, l: &Layer, w: &mut Warnings) -> String {
+    let Some(mut cs) = cut_setting_from_xml(xml) else { return xml.to_string() };
+    if image_of_setting(&cs, &l.name, &mut Warnings::default()) == l.settings.image {
+        return xml.to_string();
+    }
+    let source = cs.params.source.clone();
+    let mut values: BTreeMap<String, String> = cs.params.to_values().into_iter().collect();
+    if let Some(m) = crate::image::image_values(&l.settings.image, &mut values, Some(&source), &ImageSettings::default()) {
+        w.push(format!("layer \"{}\": {m}", l.name));
+    }
+    cs.params = params_from(&values, Some(source));
+    fragment(LbrnProject { cut_settings: vec![cs], order: vec![RootItem::CutSetting(0)], ..LbrnProject::default() })
+}
+
+/// A `CutSetting_Img` for a layer that holds images but has no image settings in LightBurn's terms (a layer made in
+/// OpenEtch, or a LightBurn vector layer the images were moved to), from its settings.
+fn generated_image_xml(l: &Layer, index: u32, priority: Option<&String>, w: &mut Warnings) -> String {
+    let mut values = settings_values(&l.settings, BTreeMap::new(), false, None);
+    values.remove("crossHatch");
+    if let Some(m) = crate::image::image_values(&l.settings.image, &mut values, None, &ImageSettings::default()) {
+        w.push(format!("layer \"{}\": {m}", l.name));
+    }
+    values.insert("name".into(), l.name.clone());
+    if let Some(p) = priority {
+        values.insert("priority".into(), p.clone());
+    }
+    let cs = CutSetting { kind: "Image".into(), image: true, index, params: params_from(&values, None), sub_layers: vec![] };
+    fragment(LbrnProject { cut_settings: vec![cs], order: vec![RootItem::CutSetting(0)], ..LbrnProject::default() })
 }
 
 /// A sub-layer's `subname` and `isCleanup` (taken out of `rest`) → [`CutSettings::name`] and
@@ -752,6 +808,21 @@ fn to_document_within(p: &LbrnProject, frame: Frame, max_elements: usize) -> Res
                     ..LbrnProject::default()
                 });
                 layer.extras.insert(key(keys::IMAGE_SETTING), xml);
+                let label = layer.name.clone();
+                layer.settings.image = image_of_setting(img, &label, &mut w);
+                let (v, i) = (&cs.params, &img.params);
+                let differs = |a: Option<f64>, b: Option<f64>| a.is_some() && b.is_some() && a != b;
+                if differs(v.max_power, i.max_power)
+                    || differs(v.speed, i.speed)
+                    || differs(v.frequency, i.frequency)
+                    || differs(v.q_pulse_width, i.q_pulse_width)
+                    || (v.num_passes.is_some() && i.num_passes.is_some() && v.num_passes != i.num_passes)
+                {
+                    w.push(format!(
+                        "{label}: LightBurn's image settings for this layer use their own power, speed, frequency or \
+                         passes; OpenEtch engraves the layer's images with the layer's (they are kept for LightBurn)"
+                    ));
+                }
             }
         }
         layers.push(layer);
@@ -783,12 +854,11 @@ fn to_document_within(p: &LbrnProject, frame: Frame, max_elements: usize) -> Res
         max_elements,
         counts: HashMap::new(),
         texts: 0,
-        images: 0,
     };
     for s in &p.shapes {
         cx.shape(s, Affine::IDENTITY, None)?;
     }
-    let ToDoc { objects, groups, lead, mut w, texts, images, .. } = cx;
+    let ToDoc { objects, groups, lead, mut w, texts, .. } = cx;
     // Groups whose shapes were all left out are dropped.
     let mut tidy = Document { objects, groups, ..Document::default() };
     tidy.prune_groups();
@@ -797,11 +867,6 @@ fn to_document_within(p: &LbrnProject, frame: Frame, max_elements: usize) -> Res
         w.push(format!(
             "{texts} text object(s) are shown and burned as LightBurn's saved outline; their text, font and size are \
              kept for LightBurn but cannot be edited in OpenEtch"
-        ));
-    }
-    if images > 0 {
-        w.push(format!(
-            "{images} image(s) were imported for display and LightBurn export; OpenEtch does not engrave images yet"
         ));
     }
     let outside = objects.iter().filter(|o| !frame.contains(o.bounds())).count();
@@ -887,7 +952,6 @@ struct ToDoc {
     /// Objects made per kind, for names.
     counts: HashMap<&'static str, usize>,
     texts: usize,
-    images: usize,
 }
 
 /// The extras an object or group keeps of its shape: type, attributes in order (all but those in `skip`), `XForm`
@@ -1094,10 +1158,13 @@ impl ToDoc {
                     Some(f) if !f.trim().is_empty() => f.trim().chars().take(100).collect(),
                     _ => self.name("Image"),
                 };
-                let g = Geometry::Image { width_mm: *w, height_mm: *h, mime: mime.into(), data_base64: data.into() };
-                if self.push(s, name, g, xf, &group, e)? {
-                    self.images += 1;
+                let (adjust, problems) = crate::image::adjust_from(&|n| s.attribute(n).map(str::to_string));
+                for p in problems {
+                    self.w.push(format!("image \"{name}\": {p}"));
                 }
+                let g = Geometry::Image { width_mm: *w, height_mm: *h, mime: mime.into(), data_base64: data.into(), adjust };
+                // LightBurn keeps bitmap rows bottom-up (see `BITMAP_ROWS`); OpenEtch's images are top-down files.
+                self.push(s, name, g, xf * BITMAP_ROWS, &group, e)?;
             }
             ShapeKind::Other { type_name } => {
                 self.w.push(format!(
@@ -1229,6 +1296,8 @@ pub fn from_document_in(d: &Document, frame: Frame) -> Result<(LbrnProject, Vec<
             values.insert("hide".into(), "0".into());
         }
         let kind = if tool { "Tool".to_string() } else { export_kind(original, &l.settings.mode) };
+        // A LightBurn image layer (`CutSetting_Img`): its image settings are written into it and its sub-layers.
+        let is_image = kind == "Image" && extra(&l.extras, "image") == Some("1");
         let mut sub_layers = Vec::new();
         if !tool {
             for (n, s) in l.sub_layers.iter().enumerate() {
@@ -1256,6 +1325,12 @@ pub fn from_document_in(d: &Document, frame: Frame) -> Result<(LbrnProject, Vec<
                 let mut values = settings_values(s, base, frequency_absent, sub_source.as_deref());
                 let sub_label = format!("layer \"{}\" sub-layer {}", l.name, n + 1);
                 sub_layer_values(s, &mut values, sub_source.as_deref(), &sub_label, &mut w);
+                if is_image
+                    && let Some(m) =
+                        crate::image::image_values(&s.image, &mut values, sub_source.as_deref(), &l.settings.image)
+                {
+                    w.push(format!("{sub_label}: {m}"));
+                }
                 sub_layers.push(SubLayer {
                     kind: export_kind(sub_kind, &s.mode),
                     index: n as u32 + 1,
@@ -1276,18 +1351,33 @@ pub fn from_document_in(d: &Document, frame: Frame) -> Result<(LbrnProject, Vec<
         } else if !l.sub_layers.is_empty() {
             w.push(format!("layer \"{}\" is a LightBurn tool layer; its sub-layers were not exported", l.name));
         }
-        if let Some(img) = extra(&l.extras, keys::IMAGE_SETTING) {
-            if extra(&l.extras, "index").and_then(|i| i.parse::<u32>().ok()) == Some(index) {
-                kept_images.insert(index, img.to_string());
-            } else {
-                w.push(format!(
-                    "layer \"{}\" moved to another LightBurn index; its image settings were not exported",
-                    l.name
-                ));
+        if is_image
+            && let Some(m) =
+                crate::image::image_values(&l.settings.image, &mut values, source.as_deref(), &ImageSettings::default())
+        {
+            w.push(format!("layer \"{}\": {m}", l.name));
+        }
+        let kept_index = extra(&l.extras, "index").and_then(|i| i.parse::<u32>().ok()) == Some(index);
+        match extra(&l.extras, keys::IMAGE_SETTING) {
+            Some(img) if kept_index => {
+                kept_images.insert(index, kept_image_xml(img, l, &mut w));
+            }
+            kept => {
+                let has_images =
+                    d.objects.iter().any(|o| o.layer == l.id && matches!(o.geometry, Geometry::Image { .. }));
+                if !tool && !is_image && has_images {
+                    // Moved to another index (the kept one names the old index), or never had one.
+                    kept_images.insert(index, generated_image_xml(l, index, values.get("priority"), &mut w));
+                } else if kept.is_some() {
+                    w.push(format!(
+                        "layer \"{}\" moved to another LightBurn index; its image settings were not exported",
+                        l.name
+                    ));
+                }
             }
         }
         cut_settings.push(CutSetting {
-            image: kind == "Image" && extra(&l.extras, "image") == Some("1"),
+            image: is_image,
             kind,
             index,
             params: params_from(&values, source.clone()),
@@ -1623,7 +1713,8 @@ impl<'a> FromDoc<'a> {
             self.outside += 1;
         }
         let e = &o.extras;
-        let (xform, xform_text) = self.local(e, parent, o.transform);
+        let placed = if matches!(o.geometry, Geometry::Image { .. }) { o.transform * BITMAP_ROWS } else { o.transform };
+        let (xform, xform_text) = self.local(e, parent, placed);
         let mut attributes = Self::attributes(e, ex(e, keys::ATTRS), "");
         let kind = match &o.geometry {
             Geometry::Rect { width_mm, height_mm, corner_radius_mm } => {
@@ -1654,7 +1745,7 @@ impl<'a> FromDoc<'a> {
                 }
                 ShapeKind::Path(data)
             }
-            Geometry::Image { width_mm, height_mm, mime, data_base64 } => {
+            Geometry::Image { width_mm, height_mm, mime, data_base64, adjust } => {
                 if ex(e, keys::TYPE) != Some("Bitmap") {
                     if mime != "image/png" {
                         w.push(format!(
@@ -1687,6 +1778,7 @@ impl<'a> FromDoc<'a> {
                 if !attributes.iter().any(|(k, _)| k == "Data") {
                     attributes.push(("Data".into(), data_base64.to_string()));
                 }
+                crate::image::adjust_attributes(adjust, &mut attributes);
                 ShapeKind::Bitmap { w: *width_mm, h: *height_mm }
             }
         };

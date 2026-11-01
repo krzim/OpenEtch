@@ -42,6 +42,7 @@ impl Command for Move {
         transact(doc, |doc| {
             let id = Self::ID;
             let ids = util::object_ids(id, doc, &i.ids)?;
+            util::check_unlocked(id, doc, &ids)?;
             let [fx, fy] = util::finite2(id, "from_point", i.from_point)?;
             let [tx, ty] = util::finite2(id, "to_point", i.to_point)?;
             let (dx, dy) = (tx - fx, ty - fy);
@@ -202,6 +203,9 @@ fn align(doc: &mut Document, i: AlignInput) -> Result<(Value, String)> {
         AlignReference::Field => (field_rect(id, doc)?, None, "the field".into()),
     };
     let moving: Vec<&Unit> = units.iter().filter(|u| fixed.as_deref() != Some(u.id.as_str())).collect();
+    for u in &moving {
+        util::check_unlocked(id, doc, &u.members)?;
+    }
     let delta = |r: Rect| -> (f64, f64) {
         let dx = i.x.map_or(0.0, |x| key_x(target, x) - key_x(r, x));
         let dy = i.y.map_or(0.0, |y| key_y(target, y) - key_y(r, y));
@@ -348,6 +352,9 @@ fn distribute(doc: &mut Document, i: DistributeInput) -> Result<(Value, String)>
     let mut affected: Vec<ObjectId> = Vec::new();
     for ((u, lo, _), t) in items.iter().zip(&targets) {
         let d = t - lo;
+        if d.abs() > 1e-12 {
+            util::check_unlocked(id, doc, &u.members)?;
+        }
         let v = if i.axis == Axis::X { (d, 0.0) } else { (0.0, d) };
         apply_affine(doc, &u.members, Affine::translate(v));
         affected.extend(u.members.iter().cloned());

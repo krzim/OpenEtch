@@ -1,10 +1,10 @@
 //! `art.import_image`: a PNG, JPEG, GIF, BMP or WebP file → an image object (`Geometry::Image`). The file is kept as
-//! it is (base64); only its header is read, for the pixel size and resolution. Images are shown and exported to
-//! LightBurn; planning skips them (image engraving is not supported yet).
+//! it is (base64); only its header is read, for the pixel size and resolution. Jobs engrave images with their
+//! layer's Image mode settings (`plan`). `image.adjust`: LightBurn's Adjust Image values of images.
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use doc::{Document, Geometry};
+use doc::{Document, Geometry, ObjectId};
 use kurbo::Affine;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -159,6 +159,91 @@ pub(crate) fn image_info(b: &[u8]) -> Option<ImageInfo> {
     None
 }
 
+/// A partial [`doc::ImageAdjust`].
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AdjustPatch {
+    /// Mid-tones, 0.01..=10: above 1 darkens them, below 1 lightens them (1 = unchanged).
+    pub gamma: Option<f64>,
+    /// -100..=100 %: light tones lighter and dark tones darker.
+    pub contrast: Option<f64>,
+    /// -100..=100 %: every tone lighter or darker.
+    pub brightness: Option<f64>,
+    /// Enhance (unsharp mask) radius in image pixels, 0..=100 (0 = off).
+    pub enhance_radius: Option<f64>,
+    /// Enhance strength in %, 0..=10000 (0 = off; around 400 is clearly visible).
+    pub enhance_amount: Option<f64>,
+    /// Differences smaller than this many grey levels (0..=255) are not sharpened.
+    pub denoise: Option<f64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AdjustImageInput {
+    /// Exact image object ids or group ids (a group stands for all its members, which must all be images).
+    pub ids: Vec<ObjectId>,
+    /// The values to change; the others keep theirs.
+    #[serde(default)]
+    pub adjust: AdjustPatch,
+    /// Start from the defaults (gamma 1, everything else 0) before applying `adjust`.
+    #[serde(default)]
+    pub reset: bool,
+}
+
+/// `image.adjust`.
+pub struct AdjustImage;
+
+impl Command for AdjustImage {
+    type Input = AdjustImageInput;
+    const ID: &'static str = "image.adjust";
+    const TITLE: &'static str = "Adjust image";
+    const DESCRIPTION: &'static str = "Set LightBurn's Adjust Image values of image objects (each image has its own): \
+        gamma, contrast %, brightness %, enhance_radius px, enhance_amount %, denoise (grey levels). Partial: only \
+        the values given change; reset: true starts from the defaults. They apply before the layer's dither when \
+        the job is planned. Returns {affected, adjust: [per id]}. Undoable.";
+    const RISK: Risk = Risk::Edit;
+
+    fn apply(doc: &mut Document, i: AdjustImageInput) -> Result<(Value, String)> {
+        let id = Self::ID;
+        let ids = util::object_ids(id, doc, &i.ids)?;
+        if let Some(o) = ids.iter().filter_map(|x| doc.object(x)).find(|o| !matches!(o.geometry, Geometry::Image { .. })) {
+            return Err(invalid(id, format!("object {} (\"{}\") is not an image", o.id, o.name)));
+        }
+        let p = i.adjust;
+        let mut out = Vec::new();
+        for oid in &ids {
+            let Some(Geometry::Image { adjust, .. }) = doc.object(oid).map(|o| &o.geometry) else { continue };
+            let mut a = if i.reset { doc::ImageAdjust::default() } else { adjust.clone() };
+            for (field, value) in [
+                (&mut a.gamma, p.gamma),
+                (&mut a.contrast, p.contrast),
+                (&mut a.brightness, p.brightness),
+                (&mut a.enhance_radius, p.enhance_radius),
+                (&mut a.enhance_amount, p.enhance_amount),
+                (&mut a.denoise, p.denoise),
+            ] {
+                if let Some(v) = value {
+                    *field = v;
+                }
+            }
+            if let Some(problem) = a.problem() {
+                return Err(invalid(id, problem));
+            }
+            out.push((oid.clone(), a));
+        }
+        let mut per_id = serde_json::Map::new();
+        for (oid, a) in out {
+            per_id.insert(oid.clone(), serde_json::to_value(&a).unwrap_or(Value::Null));
+            if let Some(Geometry::Image { adjust, .. }) = doc.object_mut(&oid).map(|o| &mut o.geometry) {
+                *adjust = a;
+            }
+        }
+        let mut r = util::edit_result(doc, &[], &ids);
+        r["adjust"] = Value::Object(per_id);
+        Ok((r, format!("adjusted image(s) {}", ids.join(", "))))
+    }
+}
+
 /// The base64 text with an optional `data:` prefix and whitespace removed, and the decoded bytes.
 fn decode(cmd: &str, text: &str) -> Result<Vec<u8>> {
     let body = match text.trim_start().strip_prefix("data:") {
@@ -184,9 +269,9 @@ impl Command for ImportImage {
     const TITLE: &'static str = "Import image";
     const DESCRIPTION: &'static str = "Import a bitmap (PNG, JPEG, GIF, BMP or WebP, as base64) as an image object \
         centred on the field origin. Size: width_mm (height keeps the aspect ratio), else the file's resolution \
-        (else 254 dpi), shrunk to fit 80 % of the field. Images are shown and exported to LightBurn; jobs skip them \
-        (image engraving is not supported yet). Returns {created, bounds, width_px, height_px, dpi, warnings}. \
-        Undoable.";
+        (else 254 dpi), shrunk to fit 80 % of the field. Jobs engrave images with their layer's Image mode settings \
+        (layer.update settings.image: dither, interval, ...); image.adjust sets gamma, contrast, brightness and \
+        enhance. Returns {created, bounds, width_px, height_px, dpi, warnings}. Undoable.";
     const RISK: Risk = Risk::Edit;
 
     fn apply(doc: &mut Document, i: ImportImageInput) -> Result<(Value, String)> {
@@ -228,7 +313,13 @@ impl Command for ImportImage {
         let data = STANDARD.encode(&bytes);
         transact(doc, |doc| {
             let layer = util::layer_or_default(doc, i.layer.as_deref())?;
-            let geometry = Geometry::Image { width_mm, height_mm, mime: info.mime.into(), data_base64: data.into() };
+            let geometry = Geometry::Image {
+                width_mm,
+                height_mm,
+                mime: info.mime.into(),
+                data_base64: data.into(),
+                adjust: doc::ImageAdjust::default(),
+            };
             let obj = add_object(doc, name.clone(), layer, geometry, Affine::IDENTITY)?;
             let mut r = util::edit_result(doc, std::slice::from_ref(&obj), &[]);
             r["width_px"] = json!(info.width_px);
@@ -348,6 +439,40 @@ mod tests {
                 r["warnings"]
             );
         }
+    }
+
+    #[test]
+    fn adjust_sets_per_image_values_partially() {
+        let mut d = Document { field_mm: Some(150.0), ..Document::default() };
+        let data = STANDARD.encode(png(3, 2, None));
+        import(&mut d, json!({"data_base64": data, "mime": "image/png"})).unwrap();
+        import(&mut d, json!({"data_base64": data, "mime": "image/png"})).unwrap();
+        let adjust = |d: &mut Document, v: Value| {
+            AdjustImage::apply(d, serde_json::from_value(v).map_err(|e| invalid("t", e.to_string()))?)
+        };
+        let (r, _) = adjust(&mut d, json!({"ids": ["obj-2"], "adjust": {"gamma": 1.5, "contrast": 20}})).unwrap();
+        assert_eq!(r["adjust"]["obj-2"]["gamma"], 1.5);
+        adjust(&mut d, json!({"ids": ["obj-2"], "adjust": {"brightness": -11}})).unwrap();
+        let get = |d: &Document, id: &str| match &d.object(id).unwrap().geometry {
+            Geometry::Image { adjust, .. } => adjust.clone(),
+            _ => unreachable!(),
+        };
+        let a = get(&d, "obj-2");
+        assert_eq!((a.gamma, a.contrast, a.brightness), (1.5, 20.0, -11.0), "earlier values stay");
+        assert!(get(&d, "obj-3").is_default(), "only the named image changes");
+        let (_, _) = adjust(&mut d, json!({"ids": ["obj-2"], "reset": true, "adjust": {"denoise": 4}})).unwrap();
+        assert_eq!(get(&d, "obj-2"), doc::ImageAdjust { denoise: 4.0, ..Default::default() });
+        // Out of range, unknown ids and non-images are refused without changing anything.
+        let before = d.clone();
+        assert!(adjust(&mut d, json!({"ids": ["obj-2"], "adjust": {"contrast": 150}})).is_err());
+        assert!(adjust(&mut d, json!({"ids": ["obj-9"], "adjust": {"gamma": 2}})).is_err());
+        assert!(adjust(&mut d, json!({"ids": ["obj-2"], "adjust": {"sharpness": 2}})).is_err());
+        let rect = doc::Geometry::Rect { width_mm: 2.0, height_mm: 2.0, corner_radius_mm: 0.0 };
+        d.objects.push(doc::Object::new("obj-50".into(), "r", "layer-1".into(), rect, Affine::IDENTITY));
+        let e = adjust(&mut d, json!({"ids": ["obj-2", "obj-50"], "adjust": {"gamma": 2}})).unwrap_err().to_string();
+        assert!(e.contains("not an image"), "{e}");
+        d.objects.pop();
+        assert_eq!(d, before);
     }
 
     #[test]

@@ -1,0 +1,13 @@
+[package]
+name = "geom"
+description = "Pure 2D geometry for documents: booleans, offsets, path tools, node editing, generators, nesting"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+kurbo = { workspace = true }
+thiserror = { workspace = true }
+# Polygon booleans, offsets and line clipping (MIT OR Apache-2.0).
+i_overlay = { version = "9.1.0", default-features = false }

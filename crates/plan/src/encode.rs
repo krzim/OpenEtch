@@ -46,8 +46,12 @@
 //!    one), `MarkCurrent`, `QSwitchPeriod`, `MarkSpeed`, `LaserOnDelay`, `LaserOffDelay`, `PolygonDelay` (one
 //!    10 µs word, meerk40t's encoding, unverified on hardware: see `lmc::units::polygon_delay_units`).
 //! 4. Per polyline: `JumpDelay` (only when it changes; LightBurn's rule, min..max by distance up to the limit),
-//!    `JumpTo(start)` (skipped when already there), one `MarkTo` per further point (skipped when it rounds to the
-//!    galvo's current word, as galvoplotter does), then `DelayTime(end_delay_us)` when that is >= 10 µs.
+//!    `JumpTo(start)` (skipped when already there), `MarkCurrent` when the polyline's power differs from the one in
+//!    force (grayscale image runs, [`crate::PassPlan::powers`]), one `MarkTo` per further point (skipped when it
+//!    rounds to the galvo's current word, as galvoplotter does), then `DelayTime(end_delay_us)` when that is >= 10 µs.
+//!    The mid-list `MarkCurrent` is the same list command the pass header sends, which the list executes in order
+//!    (as meerk40t's raster output changes power between moves); that it takes effect at that point of the list on
+//!    the B6 is unverified on hardware.
 //! 5. `WritePort(0)`, `EndOfList`.
 //!
 //! - `machine` postlude (singles), once the board is idle: `Fiber_SetMo(0)`, `WritePort(0)`, `GetMarkTime(3)`.
@@ -134,8 +138,18 @@ pub fn encode(plan: &JobPlan, target: &Target) -> Result<Vec<Packet>> {
         list.mark_speed(w.mark_speed)?;
         list.laser_on_delay(w.laser_on).laser_off_delay(w.laser_off).polygon_delay(w.polygon);
 
-        for poly in &pass.polylines {
+        let mut current = w.mark_current;
+        for (i, poly) in pass.polylines.iter().enumerate() {
             let Some((&first, rest)) = poly.split_first() else { continue };
+            // A polyline's own power (grayscale image runs) is checked against the limit like the pass's.
+            let power = pass.power_of(i);
+            let mc = if power == s.power_pct {
+                w.mark_current
+            } else if power.is_finite() && power >= 0.0 && power <= target.max_power_pct {
+                power_to_mark_current(power).map_err(|e| PlanError::Encode { layer: pass.layer_id.clone(), source: e })?
+            } else {
+                return Err(PlanError::PowerTooHigh { layer: pass.layer_id.clone(), power_pct: power, max_pct: target.max_power_pct });
+            };
             let start = to_galvo(target, first, &pass.layer_id)?;
             if start != list.position() {
                 let d = jump_delay_word(&s.timing, crate::geom::dist(pos_mm, first)).map_err(|e| PlanError::Encode { layer: pass.layer_id.clone(), source: e })?;
@@ -144,6 +158,10 @@ pub fn encode(plan: &JobPlan, target: &Target) -> Result<Vec<Packet>> {
                     jump_delay = Some(d);
                 }
                 list.jump_to(start.0, start.1);
+            }
+            if mc != current {
+                list.mark_power(mc)?;
+                current = mc;
             }
             pos_mm = first;
             for &p in rest {

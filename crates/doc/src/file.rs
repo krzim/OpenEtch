@@ -177,12 +177,15 @@ fn check(doc: &Document) -> Result<(), FileError> {
             }
             Geometry::Ellipse { rx_mm, ry_mm } => rx_mm > 0.0 && ry_mm > 0.0,
             Geometry::Path { .. } => true,
-            Geometry::Image { width_mm, height_mm, ref mime, ref data_base64 } => {
+            Geometry::Image { width_mm, height_mm, ref mime, ref data_base64, ref adjust } => {
                 if !is_image_mime(mime) {
                     return Err(invalid(format!("object {} has an image type {mime:?} that is not image/<name>", o.id)));
                 }
                 if !is_base64(data_base64) {
                     return Err(invalid(format!("object {} has image data that is not base64", o.id)));
+                }
+                if let Some(p) = adjust.problem() {
+                    return Err(invalid(format!("object {}: {p}", o.id)));
                 }
                 width_mm > 0.0 && height_mm > 0.0
             }
@@ -385,7 +388,7 @@ mod tests {
         d.extras.insert("lbrn2.Notes".into(), "<Notes/>".into());
         let id = d.alloc_id("obj").unwrap();
         let image =
-            Geometry::Image { width_mm: 4.0, height_mm: 3.0, mime: "image/png".into(), data_base64: "iVBORw0KGgo=".into() };
+            Geometry::Image { width_mm: 4.0, height_mm: 3.0, mime: "image/png".into(), data_base64: "iVBORw0KGgo=".into(), adjust: Default::default() };
         d.objects.push(Object::new(id, "photo", "layer-1".into(), image, Affine::IDENTITY));
         assert_eq!(from_openetch_json(&to_openetch_json(&d)).unwrap(), d);
 
@@ -410,12 +413,12 @@ mod tests {
         for (mime, data) in [("text/html", "AAAA"), ("image/png", "<svg>"), ("image/png", "AA\nAA")] {
             let mut bad = d.clone();
             bad.objects[1].geometry =
-                Geometry::Image { width_mm: 4.0, height_mm: 3.0, mime: mime.into(), data_base64: data.into() };
+                Geometry::Image { width_mm: 4.0, height_mm: 3.0, mime: mime.into(), data_base64: data.into(), adjust: Default::default() };
             refused(&bad, "image");
         }
         let mut bad = d.clone();
         bad.objects[1].geometry =
-            Geometry::Image { width_mm: 0.0, height_mm: 3.0, mime: "image/png".into(), data_base64: "".into() };
+            Geometry::Image { width_mm: 0.0, height_mm: 3.0, mime: "image/png".into(), data_base64: "".into(), adjust: Default::default() };
         refused(&bad, "not positive");
 
         // An empty group is dropped on load, and group ids count for next_id.

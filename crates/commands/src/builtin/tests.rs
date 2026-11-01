@@ -53,7 +53,40 @@ const ALL_IDS: &[&str] = &[
     "group.ungroup",
     "group.rename",
     "art.import_image",
+    "image.adjust",
     "art.import_dxf",
+    "path.boolean",
+    "path.weld",
+    "path.cut_shapes",
+    "path.offset",
+    "path.break_apart",
+    "path.auto_join",
+    "path.close",
+    "path.delete_duplicates",
+    "path.convert",
+    "path.optimize",
+    "path.fillet",
+    "path.trim",
+    "path.reverse",
+    "node.list",
+    "node.move",
+    "node.insert",
+    "node.delete",
+    "node.break",
+    "node.join",
+    "node.set_type",
+    "node.segment_type",
+    "shape.polygon",
+    "shape.line",
+    "shape.circle",
+    "art.circular_array",
+    "art.along_path",
+    "art.nest",
+    "object.order",
+    "object.lock",
+    "object.make_same",
+    "object.rotate_to",
+    "object.scale_to",
 ];
 
 #[test]
@@ -64,7 +97,7 @@ fn registry_lists_every_command_with_documented_schema() {
     for spec in s.registry().specs() {
         assert!(!spec.description.is_empty() && spec.description.len() < 700, "{}", spec.id);
         assert!(!spec.description.contains("  "), "{}: a line continuation lost its backslash", spec.id);
-        let query = matches!(spec.id, "doc.inspect" | "doc.save" | "doc.export_lbrn2");
+        let query = matches!(spec.id, "doc.inspect" | "doc.save" | "doc.export_lbrn2" | "node.list");
         assert_eq!(spec.risk == Risk::Query, query, "{}", spec.id);
         let props = spec.input_schema["properties"].as_object();
         for (name, p) in props.into_iter().flatten() {

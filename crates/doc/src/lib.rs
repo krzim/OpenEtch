@@ -67,6 +67,11 @@ pub struct Document {
     /// attributes as `lbrn2.*`), kept so exports round-trip. Keys pass [`is_extras_key`]. Never used for planning.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub extras: BTreeMap<String, String>,
+    /// Locked objects (LightBurn's Lock Shapes): commands refuse to move, transform, reshape or delete them until
+    /// `object.lock` unlocks them. Kept on the document rather than on [`Object`] so every existing `Object { .. }`
+    /// literal stays valid; ids that no longer name an object mean nothing ([`Document::is_locked`]).
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub locked: BTreeSet<ObjectId>,
 }
 
 impl Default for Document {
@@ -82,6 +87,7 @@ impl Default for Document {
             groups: vec![],
             next_id: 1,
             extras: BTreeMap::new(),
+            locked: BTreeSet::new(),
         };
         let id = doc.alloc_id("layer").expect("a new document has ids to spare");
         doc.layers.push(Layer::new(id, "Layer 1", "#1f77b4"));
@@ -140,6 +146,17 @@ impl Document {
         self.objects
             .iter()
             .find_map(|o| o.placement_problem().map(|p| format!("object {} (\"{}\"): {p}", o.id, o.name)))
+    }
+
+    /// Whether object `id` exists and is locked.
+    pub fn is_locked(&self, id: &str) -> bool {
+        self.locked.contains(id) && self.object(id).is_some()
+    }
+
+    /// Forget locks of objects that no longer exist.
+    pub fn prune_locked(&mut self) {
+        let ids: BTreeSet<&str> = self.objects.iter().map(|o| o.id.as_str()).collect();
+        self.locked.retain(|id| ids.contains(id.as_str()));
     }
 
     pub fn object(&self, id: &str) -> Option<&Object> {
@@ -386,6 +403,10 @@ pub struct CutSettings {
     /// them. Only meaningful on a sub-layer; ignored on a layer's main settings.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cleanup: Option<Cleanup>,
+    /// How the layer's images ([`Geometry::Image`]) are engraved (LightBurn's Image mode). As in LightBurn, images on
+    /// a layer always use these settings while its vectors keep [`CutSettings::mode`]; power, speed, frequency, pulse
+    /// width, timing and passes are shared.
+    pub image: ImageSettings,
 }
 
 /// A cleanup sub-layer: LightBurn's "Enable cleanup pass" (3D Sliced image mode) adds a Cleanup sub-layer that runs
@@ -421,6 +442,13 @@ impl CutSettings {
             ("hatch.interval_mm", self.hatch.interval_mm),
             ("hatch.angle_deg", self.hatch.angle_deg),
             ("hatch.angle_increment_deg", self.hatch.angle_increment_deg),
+            ("image.interval_mm", self.image.interval_mm),
+            ("image.angle_deg", self.image.angle_deg),
+            ("image.angle_increment_deg", self.image.angle_increment_deg),
+            ("image.dot_width_mm", self.image.dot_width_mm),
+            ("image.min_power_pct", self.image.min_power_pct),
+            ("image.halftone_cells_per_inch", self.image.halftone_cells_per_inch),
+            ("image.halftone_angle_deg", self.image.halftone_angle_deg),
         ];
         if let Some(t) = &self.timing {
             fields.extend([
@@ -451,6 +479,7 @@ impl Default for CutSettings {
             timing: None,
             name: None,
             cleanup: None,
+            image: ImageSettings::default(),
         }
     }
 }
@@ -472,6 +501,183 @@ pub struct Hatch {
 impl Default for Hatch {
     fn default() -> Self {
         Hatch { interval_mm: 0.05, angle_deg: 0.0, angle_increment_deg: 0.0, cross_hatch: false, bidirectional: true }
+    }
+}
+
+/// LightBurn's image modes (`ditherMode` in `.lbrn2`): how grey levels become dots. Every mode but `Grayscale` turns
+/// each dot on or off at the layer's power; `Grayscale` varies the power per dot between
+/// [`ImageSettings::min_power_pct`] (lightest) and the layer's power (darkest), never firing on pure white.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DitherMode {
+    /// On where darker than 50 % grey. For two-colour art.
+    Threshold,
+    /// 8 x 8 Bayer matrix: a regular pattern.
+    Ordered,
+    /// Atkinson error diffusion (passes on 6/8 of the error: crisp, loses some highlight and shadow detail).
+    Atkinson,
+    /// Floyd-Steinberg error diffusion (LightBurn's "Dither", `dithered` in its files; `dither` and `dithered` are
+    /// accepted here too).
+    #[serde(alias = "dither", alias = "dithered")]
+    FloydSteinberg,
+    /// Stucki error diffusion.
+    Stucki,
+    /// Jarvis-Judice-Ninke error diffusion (LightBurn: usually the best for photos).
+    #[default]
+    Jarvis,
+    /// A fixed 45° clustered-dot screen with cells 4 dots wide (darker = bigger spots).
+    Newsprint,
+    /// Round dots on a screen of [`ImageSettings::halftone_cells_per_inch`] at [`ImageSettings::halftone_angle_deg`].
+    Halftone,
+    /// Only the edges, where light and dark meet (line drawings, handwriting).
+    Sketch,
+    /// Power varies with darkness (see the type docs).
+    Grayscale,
+}
+
+impl DitherMode {
+    pub const ALL: [DitherMode; 10] = [
+        DitherMode::Threshold,
+        DitherMode::Ordered,
+        DitherMode::Atkinson,
+        DitherMode::FloydSteinberg,
+        DitherMode::Stucki,
+        DitherMode::Jarvis,
+        DitherMode::Newsprint,
+        DitherMode::Halftone,
+        DitherMode::Sketch,
+        DitherMode::Grayscale,
+    ];
+
+    /// The name LightBurn writes for this mode in `.lbrn2` files (`ditherMode`).
+    pub fn lightburn_name(self) -> &'static str {
+        match self {
+            DitherMode::Threshold => "threshold",
+            DitherMode::Ordered => "ordered",
+            DitherMode::Atkinson => "atkinson",
+            DitherMode::FloydSteinberg => "dithered",
+            DitherMode::Stucki => "stucki",
+            DitherMode::Jarvis => "jarvis",
+            DitherMode::Newsprint => "newsprint",
+            DitherMode::Halftone => "halftone",
+            DitherMode::Sketch => "sketch",
+            DitherMode::Grayscale => "grayscale",
+        }
+    }
+
+    /// The mode a LightBurn `ditherMode` names (ignoring case; `dither` reads as `dithered`), if OpenEtch has it.
+    pub fn from_lightburn(name: &str) -> Option<DitherMode> {
+        let n = name.trim().to_ascii_lowercase();
+        let n = if n == "dither" { "dithered" } else { n.as_str() };
+        DitherMode::ALL.into_iter().find(|m| m.lightburn_name() == n)
+    }
+}
+
+/// LightBurn's Image mode settings (Cut Settings Editor, Image mode). Defaults follow LightBurn where its docs state
+/// them (scan angle 0, angle increment 0); the others are OpenEtch's choices. LightBurn leaves values at its defaults
+/// out of its files, which shows only that its default dither is none of `dithered`, `stucki` and `3dslice`, and
+/// its default halftone angle is not 22.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ImageSettings {
+    pub dither: DitherMode,
+    /// Scan line spacing in mm, also the dot pitch along a line: the image is resampled to square dots of this size.
+    /// DPI = 25.4 / interval ([`ImageSettings::dpi`]). Ignored with `pass_through`.
+    pub interval_mm: f64,
+    /// Scan direction in degrees counter-clockwise from +X. 0 scans along +X with rows going from the bottom up
+    /// (LightBurn: "0 = horizontal, bottom to top"; 180 scans top to bottom; 90 vertically, left to right).
+    pub angle_deg: f64,
+    /// Added to the scan angle on every pass (90 reproduces a cross-hatch).
+    pub angle_increment_deg: f64,
+    /// Engrave rows in alternating directions; off engraves every row in the scan direction and travels back.
+    pub bidirectional: bool,
+    /// Invert the image so light areas engrave (dark anodised, painted or slate surfaces).
+    pub negative: bool,
+    /// Engrave the image's own pixels as they are (an image already processed elsewhere): one dot per pixel, rows
+    /// along the image's own rows, no resampling; `interval_mm` and `angle_deg` are then not used.
+    pub pass_through: bool,
+    /// Dot width correction in mm: every run is shortened by this much (half at each end) so dark areas do not
+    /// bloom (LightBurn: about half the beam width, 0..=interval). 0 is off.
+    pub dot_width_mm: f64,
+    /// Grayscale only: the power of the lightest dot that still fires, in % (the layer's power is the darkest).
+    pub min_power_pct: f64,
+    /// Halftone only: screen cells per inch.
+    pub halftone_cells_per_inch: f64,
+    /// Halftone only: screen angle in degrees.
+    pub halftone_angle_deg: f64,
+}
+
+impl Default for ImageSettings {
+    fn default() -> Self {
+        ImageSettings {
+            dither: DitherMode::Jarvis,
+            interval_mm: 0.05,
+            angle_deg: 0.0,
+            angle_increment_deg: 0.0,
+            bidirectional: true,
+            negative: false,
+            pass_through: false,
+            dot_width_mm: 0.0,
+            min_power_pct: 0.0,
+            halftone_cells_per_inch: 50.0,
+            halftone_angle_deg: 22.5,
+        }
+    }
+}
+
+impl ImageSettings {
+    /// Dots per inch of the line interval (25.4 / `interval_mm`).
+    pub fn dpi(&self) -> f64 {
+        25.4 / self.interval_mm
+    }
+}
+
+/// LightBurn's Adjust Image values of one image (Shape Properties, Image; the `Gamma Contrast Brightness
+/// EnhanceRadius EnhanceAmount EnhanceDenoise` attributes of a `.lbrn2` Bitmap). Applied to the image's grey levels
+/// before it is dithered, in this order: enhance, contrast, brightness, gamma. The defaults change nothing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ImageAdjust {
+    /// Mid-tones: grey^gamma, so above 1 darkens them and below 1 lightens them (LightBurn: "lower values lighten the
+    /// mid-tones and higher values darken them"). 0.01..=10.
+    pub gamma: f64,
+    /// -100..=100 %: light tones lighter and dark tones darker (LightBurn's files store a fraction: 0.2 = 20 %).
+    pub contrast: f64,
+    /// -100..=100 %: every tone lighter or darker (stored as a fraction like contrast).
+    pub brightness: f64,
+    /// Enhance (unsharp mask) radius in image pixels, 0..=100; 0 is off.
+    pub enhance_radius: f64,
+    /// Enhance strength in %, 0..=10000 (LightBurn users report around 400 for a clear effect); 0 is off.
+    pub enhance_amount: f64,
+    /// Enhance denoise: differences smaller than this many grey levels (of 255) are not sharpened.
+    pub denoise: f64,
+}
+
+impl Default for ImageAdjust {
+    fn default() -> Self {
+        ImageAdjust { gamma: 1.0, contrast: 0.0, brightness: 0.0, enhance_radius: 0.0, enhance_amount: 0.0, denoise: 0.0 }
+    }
+}
+
+impl ImageAdjust {
+    pub fn is_default(&self) -> bool {
+        *self == ImageAdjust::default()
+    }
+
+    /// Why these values cannot be used (a number that is not finite or out of its range), if so.
+    pub fn problem(&self) -> Option<String> {
+        let fields = [
+            ("gamma", self.gamma, 0.01, 10.0),
+            ("contrast", self.contrast, -100.0, 100.0),
+            ("brightness", self.brightness, -100.0, 100.0),
+            ("enhance_radius", self.enhance_radius, 0.0, 100.0),
+            ("enhance_amount", self.enhance_amount, 0.0, 10_000.0),
+            ("denoise", self.denoise, 0.0, 255.0),
+        ];
+        fields
+            .into_iter()
+            .find(|(_, v, lo, hi)| !(v.is_finite() && (*lo..=*hi).contains(v)))
+            .map(|(f, v, lo, hi)| format!("adjust.{f} must be within {lo}..={hi} (got {v})"))
     }
 }
 
@@ -544,7 +750,13 @@ impl Object {
                 corner_radius_mm.is_finite() && corners(width_mm / 2.0, height_mm / 2.0).into_iter().all(ok)
             }
             Geometry::Ellipse { rx_mm, ry_mm } => corners(*rx_mm, *ry_mm).into_iter().all(ok),
-            Geometry::Image { width_mm, height_mm, .. } => corners(width_mm / 2.0, height_mm / 2.0).into_iter().all(ok),
+            Geometry::Image { width_mm, height_mm, adjust, .. } => {
+                let a = adjust;
+                [a.gamma, a.contrast, a.brightness, a.enhance_radius, a.enhance_amount, a.denoise]
+                    .iter()
+                    .all(|v| v.is_finite())
+                    && corners(width_mm / 2.0, height_mm / 2.0).into_iter().all(ok)
+            }
             Geometry::Path { path } => path.elements().iter().all(|el| match *el {
                 PathEl::MoveTo(p) | PathEl::LineTo(p) => ok(p),
                 PathEl::QuadTo(a, p) => ok(a) && ok(p),
@@ -567,8 +779,16 @@ pub enum Geometry {
     Path { path: BezPath },
     /// A bitmap, `width_mm` x `height_mm` centred on the local origin (the transform may scale, rotate or mirror it).
     /// `data_base64` is the encoded file (of type `mime`, e.g. `image/png`) in standard base64. It is shared, so
-    /// copies of the document (undo steps) do not copy the image. Planning skips images (not supported yet).
-    Image { width_mm: f64, height_mm: f64, mime: String, data_base64: Arc<str> },
+    /// copies of the document (undo steps) do not copy the image. Jobs engrave it with its layer's
+    /// [`ImageSettings`], after `adjust` (LightBurn's Adjust Image; left out of JSON while it changes nothing).
+    Image {
+        width_mm: f64,
+        height_mm: f64,
+        mime: String,
+        data_base64: Arc<str>,
+        #[serde(default, skip_serializing_if = "ImageAdjust::is_default")]
+        adjust: ImageAdjust,
+    },
 }
 
 impl Geometry {
@@ -791,7 +1011,13 @@ mod tests {
             "obj-1".into(),
             "photo",
             "layer-1".into(),
-            Geometry::Image { width_mm: 30.0, height_mm: 20.0, mime: "image/png".into(), data_base64: "AAAA".into() },
+            Geometry::Image {
+                width_mm: 30.0,
+                height_mm: 20.0,
+                mime: "image/png".into(),
+                data_base64: "AAAA".into(),
+                adjust: ImageAdjust::default(),
+            },
             Affine::translate((5.0, 0.0)) * Affine::FLIP_X,
         );
         let b = o.bounds();
@@ -801,10 +1027,71 @@ mod tests {
         let json = serde_json::to_value(&o).unwrap();
         assert_eq!(json["geometry"]["kind"], "image");
         assert_eq!(json["geometry"]["data_base64"], "AAAA");
+        assert!(json["geometry"].get("adjust").is_none(), "an adjust that changes nothing is left out");
         assert_eq!(json["group"], serde_json::Value::Null);
         assert!(json.get("extras").is_none());
         let back: Object = serde_json::from_value(json).unwrap();
         assert_eq!(back, o);
+
+        let mut o = o;
+        let Geometry::Image { adjust, .. } = &mut o.geometry else { unreachable!() };
+        adjust.gamma = 1.5;
+        adjust.contrast = 20.0;
+        let json = serde_json::to_value(&o).unwrap();
+        assert_eq!(json["geometry"]["adjust"]["gamma"], 1.5);
+        assert_eq!(serde_json::from_value::<Object>(json).unwrap(), o);
+        let Geometry::Image { adjust, .. } = &mut o.geometry else { unreachable!() };
+        adjust.brightness = f64::NAN;
+        assert!(o.placement_problem().is_some());
     }
 
+    #[test]
+    fn image_settings_default_and_load_from_older_json() {
+        let mut v = serde_json::to_value(CutSettings::default()).unwrap();
+        assert_eq!(v["image"]["dither"], "jarvis");
+        assert_eq!(v["image"]["bidirectional"], true);
+        v.as_object_mut().unwrap().remove("image");
+        let s: CutSettings = serde_json::from_value(v).unwrap();
+        assert_eq!(s.image, ImageSettings::default());
+        let partial: ImageSettings = serde_json::from_value(serde_json::json!({"dither": "dither", "negative": true})).unwrap();
+        assert_eq!((partial.dither, partial.negative, partial.interval_mm), (DitherMode::FloydSteinberg, true, 0.05));
+        assert!((ImageSettings { interval_mm: 0.0651, ..ImageSettings::default() }.dpi() - 390.17).abs() < 0.01);
+        let mut s = CutSettings::default();
+        s.image.dot_width_mm = f64::INFINITY;
+        assert_eq!(s.non_finite_field(), Some("image.dot_width_mm"));
+    }
+
+    #[test]
+    fn dither_modes_have_lightburn_names() {
+        for m in DitherMode::ALL {
+            assert_eq!(DitherMode::from_lightburn(m.lightburn_name()), Some(m));
+            let json = serde_json::to_value(m).unwrap();
+            assert_eq!(serde_json::from_value::<DitherMode>(json).unwrap(), m);
+        }
+        assert_eq!(DitherMode::from_lightburn("Dither"), Some(DitherMode::FloydSteinberg));
+        assert_eq!(serde_json::to_value(DitherMode::FloydSteinberg).unwrap(), "floyd_steinberg");
+        assert_eq!(DitherMode::from_lightburn("3dslice"), None);
+    }
+
+    #[test]
+    fn locked_objects_round_trip_and_older_files_load() {
+        let mut d = grouped();
+        assert!(serde_json::to_value(&d).unwrap().get("locked").is_none(), "nothing locked: left out");
+        d.locked.insert("obj-2".into());
+        d.locked.insert("obj-99".into());
+        assert!(d.is_locked("obj-2") && !d.is_locked("obj-1") && !d.is_locked("obj-99"));
+        let back: Document = serde_json::from_value(serde_json::to_value(&d).unwrap()).unwrap();
+        assert_eq!(back.locked, d.locked);
+        d.prune_locked();
+        assert_eq!(d.locked.iter().collect::<Vec<_>>(), ["obj-2"]);
+    }
+
+    #[test]
+    fn adjust_ranges_are_checked() {
+        assert_eq!(ImageAdjust::default().problem(), None);
+        let a = ImageAdjust { contrast: 120.0, ..ImageAdjust::default() };
+        assert!(a.problem().unwrap().contains("adjust.contrast"));
+        assert!(ImageAdjust { gamma: 0.0, ..ImageAdjust::default() }.problem().is_some());
+        assert!(ImageAdjust { denoise: f64::NAN, ..ImageAdjust::default() }.problem().is_some());
+    }
 }

@@ -11,6 +11,7 @@ listed here.
 | [tscircuit/lbrnts](https://github.com/tscircuit/lbrnts) | MIT | Format notes only, no code: tool layers T1/T2 (`CutIndex="30"`, `type="Tool"`, never output) | `crates/lbrn` (crate docs) |
 | [jlucaso1/lbrn2-to-svg](https://github.com/jlucaso1/lbrn2-to-svg) | MIT | Format notes only, no code: `XForm` coefficient order, Rect/Ellipse/Bitmap centred on the local origin (cross-checked against real files) | `crates/lbrn` (crate docs) |
 | [ixmilia/dxf-rs](https://github.com/ixmilia/dxf-rs) (`dxf` crate 0.6) | MIT © Brett V. Forsgren | Used as a dependency (not copied) to read DXF files for `art.import_dxf`; native builds only (it needs a random source on wasm32) | `crates/commands` (`builtin/dxf.rs`) |
+| [iShape-Rust/iOverlay](https://github.com/iShape-Rust/iOverlay) (`i_overlay` crate 9.1) | MIT OR Apache-2.0 | Used as a dependency (not copied) for polygon booleans, offsets and line clipping (`path.boolean`, `path.weld`, `path.cut_shapes`, `path.offset`) | `crates/geom` (`region.rs`, `offset.rs`) |
 | [meerk40t/meerk40t](https://github.com/meerk40t/meerk40t) `balormk/` | MIT © 2021 meerk40t | `.cor` file layout and upload order (cross-checked); the list delay sign rule (`>= 0` is positive) and the polygon delay encoding (`list_laser_on_delay`, `list_polygon_delay` in `balormk/controller.py`) | `crates/corfile`, `crates/lmc` (`units.rs` header) |
 
 ## Fixtures

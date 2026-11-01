@@ -99,6 +99,19 @@ pub fn color(cmd: &str, s: &str) -> Result<String> {
     Ok(t.to_string())
 }
 
+/// Fail when any of `ids` is locked (LightBurn: a locked shape cannot be moved, resized, edited or deleted).
+pub fn check_unlocked(cmd: &str, doc: &Document, ids: &[ObjectId]) -> Result<()> {
+    match ids.iter().find(|id| doc.is_locked(id)) {
+        None => Ok(()),
+        Some(id) => {
+            let name = doc.object(id).map_or("", |o| o.name.as_str());
+            Err(CommandError::Failed(format!(
+                "{cmd}: object {id} (\"{name}\") is locked; unlock it first with object.lock {{\"ids\": [\"{id}\"], \"locked\": false}}"
+            )))
+        }
+    }
+}
+
 /// Look up an object by exact id, or fail with close matches.
 pub fn object<'a>(doc: &'a Document, id: &str) -> Result<&'a Object> {
     doc.object(id).ok_or_else(|| not_found("object", id, doc.objects.iter().map(|o| (o.id.as_str(), o.name.as_str()))))

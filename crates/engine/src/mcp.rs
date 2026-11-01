@@ -64,15 +64,19 @@ machine_status.field_mm, about 153.75 mm); every object must lie strictly inside
 
 Workflow:
 1. stock.define - describe the physical piece (shape, size, thickness, where it sits in the field).
-2. Import or draw art: art.import_svg, doc.import_lbrn2 (a LightBurn project), shape.rect / shape.ellipse / \
-shape.path.
+2. Import or draw art: art.import_svg, doc.import_lbrn2 (a LightBurn project), art.import_image (a photo or \
+bitmap), shape.rect / shape.ellipse / shape.path.
 3. art.place - fit and anchor the art on the stock (margins, alignment).
 4. layer.update - set the layer's cut settings (power %, speed, frequency, MOPA pulse width, fill/hatch, passes). \
 Like LightBurn's sub-layers, a layer can run more passes over the same objects with other settings: layer.sub_add \
 (a copy of the main settings with changes), layer.sub_update, layer.sub_delete, layer.sub_move and \
 layer.sub_duplicate (indices are 0-based positions in sub_layers). A sub-layer with cleanup {every_n_passes: n} is a \
 cleanup pass that runs after every n main passes and after the last (typically fast, low power, hatch turned 45 \
-degrees); the other sub-layers run after the main passes, in order.
+degrees); the other sub-layers run after the main passes, in order. Images are engraved in LightBurn's Image mode \
+with their layer's settings.image (dither: threshold, ordered, atkinson, floyd_steinberg, stucki, jarvis, \
+newsprint, halftone, sketch or grayscale; interval_mm or dpi, angle_deg, negative, dot_width_mm, min_power_pct for \
+grayscale) while the layer's vectors keep its mode; image.adjust sets an image's gamma, contrast and brightness. A \
+fine interval on a large image can pass the job's segment limit; planning then names the image.
 5. render_preview - look at the result and the toolpath; inspect_document for exact numbers and warnings.
 6. frame_start - trace the job outline with the red pointer so the person can check placement (no laser), then \
 frame_stop.

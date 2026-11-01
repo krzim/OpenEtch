@@ -178,7 +178,9 @@ fn imports_layers_in_priority_order_with_settings() {
     let photo = &layers[3];
     assert_eq!(photo.settings.mode, FillMode::Fill);
     assert_eq!(photo.extras.get("lbrn2.type").map(String::as_str), Some("Image"));
-    assert_eq!(photo.extras.get("lbrn2.ditherMode").map(String::as_str), Some("dithered"));
+    assert_eq!(photo.extras.get("lbrn2.ditherMode"), None, "mapped, not kept");
+    assert_eq!(photo.settings.image.dither, doc::DitherMode::FloydSteinberg);
+    assert_eq!(photo.settings.image.interval_mm, 0.05);
     let tool = &layers[4];
     assert!(!tool.output);
     assert_eq!(tool.color, "#f36926");
@@ -237,9 +239,9 @@ fn imports_shapes_in_the_field_frame() {
     assert!(tx("lbrn2._after.0").is_some_and(|x| x.contains("Str=\"No outline\"")), "{:?}", t.extras);
     // The bitmap is an image, with its LightBurn attributes and exact data.
     let image = obj(&objects, "dot.png");
-    assert!(matches!(&image.geometry, Geometry::Image { width_mm, height_mm, mime, data_base64 }
+    assert!(matches!(&image.geometry, Geometry::Image { width_mm, height_mm, mime, data_base64, adjust }
         if *width_mm == 10.0 && *height_mm == 10.0 && mime == "image/png" && data_base64.starts_with("iVBOR")
-            && data_base64.ends_with("Jggg==")));
+            && data_base64.ends_with("Jggg==") && adjust.is_default()));
     assert!(rect_close(image.bounds(), Rect::new(-40.0, -40.0, -30.0, -30.0), 1e-9));
     assert_eq!(image.layer, layers[3].id);
     assert_eq!(image.extras.get("lbrn2.Gamma").map(String::as_str), Some("1"));
@@ -249,9 +251,8 @@ fn imports_shapes_in_the_field_frame() {
     let has = |s: &str| warnings.iter().any(|w| w.contains(s));
     assert!(has("1 text object(s) are shown and burned as LightBurn's saved outline"), "{warnings:?}");
     assert!(has("text \"No outline\" has no saved outline"), "{warnings:?}");
-    assert!(has("1 image(s) were imported"), "{warnings:?}");
     assert!(has("'Star' shape was kept for LightBurn export"), "{warnings:?}");
-    assert!(has("C05: image layer"), "{warnings:?}");
+    assert!(!has("image"), "images engrave now: {warnings:?}");
     assert!(!has("outside"), "{warnings:?}");
 }
 
@@ -278,7 +279,13 @@ fn edits_export_with_everything_else_kept() {
     d.objects[r].transform = Affine::translate((0.0, 1.0)) * d.objects[r].transform;
     d.layers[0].settings.power_pct = 31.0;
     let extra = layer(&mut d, "New", "#00a000", |_| {});
-    let image = Geometry::Image { width_mm: 4.0, height_mm: 2.0, mime: "image/png".into(), data_base64: "iVBORw0KGgo=".into() };
+    let image = Geometry::Image {
+        width_mm: 4.0,
+        height_mm: 2.0,
+        mime: "image/png".into(),
+        data_base64: "iVBORw0KGgo=".into(),
+        adjust: Default::default(),
+    };
     object(&mut d, &extra, image, Affine::translate((5.0, 5.0)));
     let (p, warnings) = from_document(&d, FIELD).unwrap();
     assert!(warnings.is_empty(), "{warnings:?}");
@@ -295,7 +302,7 @@ fn edits_export_with_everything_else_kept() {
     let new_setting = out.find("<name Value=\"New\"/>").unwrap();
     assert!(out.find("<CutSetting type=\"Tool\">").unwrap() < new_setting && new_setting < out.find("<Shape").unwrap());
     assert!(out.contains("<Shape Type=\"Bitmap\" CutIndex=\"11\" W=\"4\" H=\"2\" Gamma=\"1\""), "{out}");
-    assert!(out.contains("Data=\"iVBORw0KGgo=\">\n        <XForm>1 0 0 1 80 80</XForm>"), "{out}");
+    assert!(out.contains("Data=\"iVBORw0KGgo=\">\n        <XForm>1 0 0 -1 80 80</XForm>"), "a top-down image is stored bottom-up: {out}");
     // Everything else is untouched: thumbnail, notes, shared lists, the kept Star and text.
     for kept in ["<Thumbnail Source=\"iVBORw0KGgo=\"/>", "Notes=\"hand-written fixture\"", "Type=\"Star\"", "Str=\"No outline\""] {
         assert!(out.contains(kept), "{kept}");
@@ -880,6 +887,64 @@ fn a_second_image_setting_stays_with_its_layer() {
     assert!(cs < img && img < shape, "{out}");
     let p = parse(&out).unwrap();
     assert_eq!(p.cut_settings.iter().filter(|c| c.image).count(), 1);
+}
+
+/// A layer with both vector and image settings (as `.lbt` templates have): the image tags are read into the layer's
+/// image settings, the kept `CutSetting_Img` is written back as it was until they change, then with them.
+#[test]
+fn a_kept_image_setting_follows_image_edits() {
+    let text = "<LightBurnProject>        <CutSetting type=\"Scan\"><index Value=\"0\"/><name Value=\"C00\"/><maxPower Value=\"20\"/></CutSetting>        <CutSetting_Img type=\"Image\"><index Value=\"0\"/><name Value=\"C00\"/><maxPower Value=\"55\"/>        <interval Value=\"0.08\"/><ditherMode Value=\"stucki\"/></CutSetting_Img>        <Shape Type=\"Rect\" CutIndex=\"0\" W=\"2\" H=\"2\"><XForm>1 0 0 1 75 75</XForm></Shape></LightBurnProject>";
+    let (layers, objects, warnings) = import(text);
+    let img = &layers[0].settings.image;
+    assert_eq!((img.dither, img.interval_mm), (doc::DitherMode::Stucki, 0.08));
+    assert_eq!(layers[0].settings.hatch.interval_mm, 0.05, "the vector settings keep their own");
+    assert!(warnings.iter().any(|w| w.contains("own power")), "{warnings:?}");
+    let mut d = Document { layers, objects, ..Document::default() };
+    let out = write(&from_document(&d, FIELD).unwrap().0);
+    assert!(out.contains("<ditherMode Value=\"stucki\"/>") && !out.contains("dpi"), "{out}");
+    d.layers[0].settings.image.dither = doc::DitherMode::Threshold;
+    d.layers[0].settings.image.negative = true;
+    let out = write(&from_document(&d, FIELD).unwrap().0);
+    let p = parse(&out).unwrap();
+    let img = p.cut_settings.iter().find(|c| c.image).unwrap();
+    assert_eq!(img.params.other.get("ditherMode").map(String::as_str), Some("threshold"));
+    assert_eq!(img.params.other.get("negative").map(String::as_str), Some("1"));
+    assert_eq!(img.params.max_power, Some(55.0), "everything else as kept");
+    assert_eq!(img.params.interval, Some(0.08));
+}
+
+/// Image layers and Adjust Image values round-trip through the model; layers made in OpenEtch that hold images get
+/// a `CutSetting_Img` with their image settings.
+#[test]
+fn image_settings_and_adjust_round_trip() {
+    let text = "<LightBurnProject>        <CutSetting_Img type=\"Image\"><index Value=\"0\"/><name Value=\"C00\"/><minPower Value=\"10\"/>        <maxPower Value=\"60\"/><bidir Value=\"0\"/><dotWidth Value=\"0.025\"/><useDotCorrection Value=\"1\"/>        <interval Value=\"0.0651\"/><angle Value=\"180\"/><halftoneAngle Value=\"22\"/><negative Value=\"1\"/>        <ditherMode Value=\"grayscale\"/><dpi Value=\"390\"/></CutSetting_Img>        <Shape Type=\"Bitmap\" CutIndex=\"0\" W=\"4\" H=\"2\" Gamma=\"1.5\" Contrast=\"0.2\" Brightness=\"-0.11\"         EnhanceAmount=\"0\" EnhanceRadius=\"0\" EnhanceDenoise=\"0\" File=\"a.png\" SourceHash=\"0\" Data=\"iVBORw0KGgo=\">        <XForm>1 0 0 1 75 75</XForm></Shape></LightBurnProject>";
+    let mut d = import_document(text);
+    let s = &d.layers[0].settings;
+    assert_eq!((s.image.dither, s.image.min_power_pct, s.image.dot_width_mm), (doc::DitherMode::Grayscale, 10.0, 0.025));
+    assert_eq!((s.image.angle_deg, s.image.bidirectional, s.image.negative), (180.0, false, true));
+    let Geometry::Image { adjust, .. } = &d.objects[0].geometry else { panic!() };
+    assert_eq!((adjust.gamma, adjust.contrast, adjust.brightness), (1.5, 20.0, -11.0));
+    // LightBurn's rows are bottom-up: the object flips them, so the image file's top row is at the top.
+    assert_eq!(d.objects[0].transform, Affine::translate((0.0, 0.0)) * Affine::FLIP_Y);
+    assert_eq!(write(&from_document(&d, FIELD).unwrap().0), write(&parse(text).unwrap()), "unchanged comes back as read");
+    // Edits come back as LightBurn values.
+    d.layers[0].settings.image.interval_mm = 0.1;
+    let Geometry::Image { adjust, .. } = &mut d.objects[0].geometry else { panic!() };
+    adjust.contrast = 35.0;
+    let out = write(&from_document(&d, FIELD).unwrap().0);
+    assert!(out.contains("<interval Value=\"0.1\"/>") && out.contains("<dpi Value=\"254\"/>"), "{out}");
+    assert!(out.contains("Contrast=\"0.35\" Brightness=\"-0.11\""), "{out}");
+    // A layer made in OpenEtch holding an image gets image settings LightBurn reads back the same.
+    let mut fresh = Document::default();
+    fresh.layers[0].settings.image.dither = doc::DitherMode::Atkinson;
+    fresh.layers[0].settings.image.interval_mm = 0.08;
+    fresh.objects.push(d.objects[0].clone());
+    fresh.objects[0].layer = fresh.layers[0].id.clone();
+    let (p, warnings) = from_document(&fresh, FIELD).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let back = import_document(&write(&p));
+    assert_eq!(back.layers[0].settings.image.dither, doc::DitherMode::Atkinson);
+    assert_eq!(back.layers[0].settings.image.interval_mm, 0.08);
 }
 
 /// A 3D-sliced cleanup as LightBurn writes it (synthetic, after the shape of a real sample): the parent's

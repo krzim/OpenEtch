@@ -37,6 +37,10 @@ pub struct PreviewSegment {
     /// A mark that fires: the master oscillator is open and the laser-enable port bit is set. A mark with
     /// `emits == false` moves the galvo at mark speed without light (a list bug if it ever shows up).
     pub emits: bool,
+    /// The mark's own power in %, when it differs from its pass's (grayscale image runs); `None` from
+    /// [`simulate`] and for marks at the pass's power.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub power_pct: Option<f64>,
 }
 
 /// A previewed job (`GET /api/preview`).
@@ -142,14 +146,23 @@ pub fn preview_plan(plan: &JobPlan) -> Preview {
             estimated_time_s: s.estimated_time_s,
         });
         let layer = Some(pass.layer_id.clone());
-        let at = |kind, from, to, emits| PreviewSegment { kind, from, to, layer: layer.clone(), pass: Some(index), emits };
-        for poly in &pass.polylines {
+        let at = |kind, from, to, emits, power_pct| PreviewSegment {
+            kind,
+            from,
+            to,
+            layer: layer.clone(),
+            pass: Some(index),
+            emits,
+            power_pct,
+        };
+        for (i, poly) in pass.polylines.iter().enumerate() {
             let Some(&first) = poly.first() else { continue };
             if first != pos {
-                segments.push(at(SegmentKind::Jump, pos, first, false));
+                segments.push(at(SegmentKind::Jump, pos, first, false, None));
             }
+            let power = Some(pass.power_of(i)).filter(|p| *p != pass.settings.power_pct);
             for w in poly.windows(2) {
-                segments.push(at(SegmentKind::Mark, w[0], w[1], true));
+                segments.push(at(SegmentKind::Mark, w[0], w[1], true, power));
             }
             pos = poly.last().copied().unwrap_or(first);
         }
@@ -256,6 +269,7 @@ pub fn simulate(packets: &[Packet], target: &Target) -> Preview {
             layer: None,
             pass: None,
             emits: s.emits(),
+            power_pct: None,
         })
         .collect();
     let mut stats = Stats::default();

@@ -73,9 +73,31 @@ pub struct TransformInput {
     pub scale: Option<Scale>,
     /// Mirror about the pivot: "x" negates X (left-right flip), "y" negates Y (top-bottom flip).
     pub mirror: Option<Mirror>,
-    /// Pivot for scale, mirror and rotate: "center" (default; the selection's combined bounds centre), "origin" (the
-    /// field origin) or [x, y] in field mm.
+    /// Pivot for scale, shear, mirror and rotate: "center" (default; the selection's combined bounds centre),
+    /// "origin" (the field origin) or [x, y] in field mm.
     pub about: Option<Pivot>,
+    /// Shear (skew) about the pivot by [x, y] degrees, each within ±89: x slants vertical lines (x moves by
+    /// y·tan(x)), y slants horizontal lines (y moves by x·tan(y)).
+    pub shear_deg: Option<[f64; 2]>,
+    /// Mirror across the line through points a and b (field mm), after rotate and before translate.
+    pub mirror_line: Option<MirrorLine>,
+}
+
+/// A mirror line through two distinct field-frame points.
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MirrorLine {
+    /// A point [x, y] on the line, mm.
+    pub a: [f64; 2],
+    /// Another point [x, y] on the line, mm.
+    pub b: [f64; 2],
+}
+
+/// Reflection across the line through `a` and `b` (which must differ).
+pub(super) fn reflection(a: Point, b: Point) -> Affine {
+    let ang = 2.0 * (b - a).atan2();
+    let (s, c) = ang.sin_cos();
+    Affine::translate(a.to_vec2()) * Affine::new([c, s, s, -c, 0.0, 0.0]) * Affine::translate(-a.to_vec2())
 }
 
 /// `object.transform`.
@@ -85,15 +107,17 @@ impl Command for Transform {
     type Input = TransformInput;
     const ID: &'static str = "object.transform";
     const TITLE: &'static str = "Transform objects";
-    const DESCRIPTION: &'static str = "Move, rotate, scale and/or mirror objects as one selection in the field frame \
-        (mm, degrees counter-clockwise). Order: scale, then mirror, then rotate (all about the pivot, default the \
-        selection's bounds centre), then translate. Returns the affected ids and their resulting field-frame bounds.";
+    const DESCRIPTION: &'static str = "Move, rotate, scale, shear and/or mirror objects as one selection in the field \
+        frame (mm, degrees counter-clockwise). Order: scale, shear, mirror, rotate (all about the pivot, default the \
+        selection's bounds centre), then mirror_line (across a line through two points), then translate. Locked \
+        objects are refused. Returns the affected ids and their resulting field-frame bounds.";
     const RISK: Risk = Risk::Edit;
 
     fn apply(doc: &mut Document, i: TransformInput) -> Result<(Value, String)> {
         transact(doc, |doc| {
             let id = Self::ID;
             let ids = util::object_ids(id, doc, &i.ids)?;
+            util::check_unlocked(id, doc, &ids)?;
             let pivot = match i.about.unwrap_or(Pivot::Named(NamedPivot::Center)) {
                 Pivot::Named(NamedPivot::Center) => doc.bounds_of(&ids).map(|b| b.center()).unwrap_or(Point::ORIGIN),
                 Pivot::Named(NamedPivot::Origin) => Point::ORIGIN,
@@ -111,6 +135,14 @@ impl Command for Transform {
                 local = Affine::scale_non_uniform(sx, sy) * local;
                 parts.push(format!("scale {sx}x{sy}"));
             }
+            if let Some(h) = i.shear_deg {
+                let [hx, hy] = util::finite2(id, "shear_deg", h)?;
+                if hx.abs() > 89.0 || hy.abs() > 89.0 {
+                    return Err(invalid(id, "shear_deg values must be within ±89"));
+                }
+                local = Affine::skew(hx.to_radians().tan(), hy.to_radians().tan()) * local;
+                parts.push(format!("shear [{hx}°, {hy}°]"));
+            }
             if let Some(m) = i.mirror {
                 local = match m {
                     Mirror::X => Affine::FLIP_X,
@@ -124,13 +156,26 @@ impl Command for Transform {
                 parts.push(format!("rotate {r}°"));
             }
             let mut t = Affine::translate(pivot.to_vec2()) * local * Affine::translate(-pivot.to_vec2());
+            if let Some(m) = i.mirror_line {
+                let [ax, ay] = util::finite2(id, "mirror_line.a", m.a)?;
+                let [bx, by] = util::finite2(id, "mirror_line.b", m.b)?;
+                let (a, b) = (Point::new(ax, ay), Point::new(bx, by));
+                if a.distance(b) < 1e-9 {
+                    return Err(invalid(id, "mirror_line needs two different points"));
+                }
+                t = reflection(a, b) * t;
+                parts.push(format!("mirror across [{ax}, {ay}]-[{bx}, {by}]"));
+            }
             if let Some(d) = i.translate {
                 let [dx, dy] = util::finite2(id, "translate", d)?;
                 t = Affine::translate((dx, dy)) * t;
                 parts.push(format!("move [{dx}, {dy}]"));
             }
             if parts.is_empty() {
-                return Err(invalid(id, "nothing to do: give at least one of translate, rotate_deg, scale, mirror"));
+                return Err(invalid(
+                    id,
+                    "nothing to do: give at least one of translate, rotate_deg, scale, shear_deg, mirror, mirror_line",
+                ));
             }
             apply_affine(doc, &ids, t);
             Ok((util::edit_result(doc, &[], &ids), format!("{} on {}", parts.join(", "), ids.join(", "))))
@@ -168,6 +213,7 @@ impl Command for SetLayer {
     fn apply(doc: &mut Document, i: SetLayerInput) -> Result<(Value, String)> {
         transact(doc, |doc| {
             let ids = util::object_ids(Self::ID, doc, &i.ids)?;
+            util::check_unlocked(Self::ID, doc, &ids)?;
             let layer = util::layer(doc, &i.layer)?.id.clone();
             for o in doc.objects.iter_mut().filter(|o| ids.contains(&o.id)) {
                 o.layer = layer.clone();
@@ -222,13 +268,15 @@ impl Command for Delete {
     const ID: &'static str = "object.delete";
     const TITLE: &'static str = "Delete objects";
     const DESCRIPTION: &'static str = "Delete objects by exact id (undoable). Fails without deleting anything if any \
-        id does not exist.";
+        id does not exist or is locked.";
     const RISK: Risk = Risk::Edit;
 
     fn apply(doc: &mut Document, i: DeleteInput) -> Result<(Value, String)> {
         let ids = util::object_ids(Self::ID, doc, &i.ids)?;
+        util::check_unlocked(Self::ID, doc, &ids)?;
         let bounds = util::bounds_json(doc, &ids);
         doc.objects.retain(|o| !ids.contains(&o.id));
+        doc.prune_locked();
         // Deleting the last member of a group removes the group.
         let groups = doc.prune_groups();
         let summary = format!("deleted {}", ids.join(", "));
