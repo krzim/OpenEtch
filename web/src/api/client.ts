@@ -149,8 +149,11 @@ export const api = {
   undo: () => checked("/api/undo", { origin: UI_ORIGIN }, "nothing to undo"),
   /** POST /api/redo. Throws ApiError when there is nothing to redo (200 `{ok:false}`). */
   redo: () => checked("/api/redo", { origin: UI_ORIGIN }, "nothing to redo"),
-  /** Red-pointer framing of the current job bounds. Never fires the laser. */
-  frame: () => checked("/api/machine/frame", {}, "framing failed"),
+  /**
+   * Red-pointer framing. Never fires the laser. Default: the bounding box of the whole job; `ids` frames only those
+   * objects, `mode: "outline"` traces their shapes instead of the box (engine `FrameRequest`).
+   */
+  frame: (req: { ids?: string[]; mode?: "bounds" | "outline" } = {}) => checked("/api/machine/frame", req, "framing failed"),
   /** Ends red-pointer framing only; pending runs are kept. */
   frameStop: () => checked("/api/machine/frame/stop", {}, "stopping the frame failed"),
   /** Emergency stop: abort whatever runs and cancel pending runs. Always allowed, never gated. */

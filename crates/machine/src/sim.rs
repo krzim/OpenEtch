@@ -5,6 +5,8 @@
 //! status: `READY` unless a packet was just queued ([`SimBoard::not_ready_polls`]), plus `BUSY` from `ExecuteList`
 //! until [`SimBoard::busy_polls`] `GetVersion` polls have passed (or `StopExecute`). It also tracks the MO state, the
 //! port word and the galvo position set by single commands, so tests can check what a sequence leaves behind.
+//! `StopList` pauses an executing list (its BUSY polls stop counting down) until `RestartList`; `MoveAxisTo` reports
+//! `AXIS` for [`SimBoard::axis_polls`] polls; `ReadPort` answers [`SimLink::set_inputs`] in word 1.
 
 use lmc::{Packet, Single, StatusWord, op};
 
@@ -28,11 +30,19 @@ pub struct SimBoard {
     pub busy_polls: usize,
     /// `GetVersion` polls the board reports not READY after each list packet.
     pub not_ready_polls: usize,
+    /// `GetVersion` polls the board reports AXIS (moving) after `MoveAxisTo`.
+    pub axis_polls: usize,
 }
 
 impl Default for SimBoard {
     fn default() -> Self {
-        SimBoard { serial: [0x5153, 0x494d, 0x0001], version: [0x0001, 0x0000, 0x0000], busy_polls: 3, not_ready_polls: 1 }
+        SimBoard {
+            serial: [0x5153, 0x494d, 0x0001],
+            version: [0x0001, 0x0000, 0x0000],
+            busy_polls: 3,
+            not_ready_polls: 1,
+            axis_polls: 2,
+        }
     }
 }
 
@@ -51,6 +61,10 @@ pub struct SimLink {
     /// Fail the packet with this index (counted from 0 over the link's life) once, with this error.
     packet_failure: Option<(usize, LinkError)>,
     packets_sent: usize,
+    paused: bool,
+    axis_left: usize,
+    axis_position: u16,
+    inputs: u16,
 }
 
 impl SimLink {
@@ -110,6 +124,21 @@ impl SimLink {
         self.executing
     }
 
+    /// Whether `StopList` paused the executing list (until `RestartList`).
+    pub fn paused(&self) -> bool {
+        self.paused
+    }
+
+    /// The last `MoveAxisTo` position (0 at start).
+    pub fn axis_position(&self) -> u16 {
+        self.axis_position
+    }
+
+    /// Set the input port word `ReadPort` reports (word 1).
+    pub fn set_inputs(&mut self, bits: u16) {
+        self.inputs = bits;
+    }
+
     /// From now on every transfer fails with [`LinkError::Disconnected`].
     pub fn disconnect(&mut self) {
         self.disconnected = true;
@@ -128,6 +157,9 @@ impl SimLink {
         if self.executing {
             s |= StatusWord::BUSY;
         }
+        if self.axis_left > 0 {
+            s |= StatusWord::AXIS;
+        }
         s
     }
 
@@ -135,7 +167,8 @@ impl SimLink {
     fn poll(&mut self) -> u16 {
         let s = self.status();
         self.not_ready_left = self.not_ready_left.saturating_sub(1);
-        if self.executing {
+        self.axis_left = self.axis_left.saturating_sub(1);
+        if self.executing && !self.paused {
             self.busy_left = self.busy_left.saturating_sub(1);
             self.executing = self.busy_left > 0;
         }
@@ -165,7 +198,16 @@ impl Link for SimLink {
             op::STOP_EXECUTE => {
                 self.executing = false;
                 self.busy_left = 0;
+                self.paused = false;
             }
+            op::STOP_LIST => self.paused = self.executing,
+            op::RESTART_LIST => self.paused = false,
+            op::MOVE_AXIS_TO => {
+                self.axis_position = a;
+                self.axis_left = self.board.axis_polls;
+            }
+            op::GET_AXIS_POS => words[0] = self.axis_position,
+            op::READ_PORT => words[0] = 0,
             op::RESET_LIST => self.not_ready_left = 0,
             op::FIBER_SET_MO => self.mo_open = a != 0,
             op::WRITE_PORT => self.port = a,
@@ -174,6 +216,9 @@ impl Link for SimLink {
         }
         if !cmd.reads_reply() {
             return Ok(None);
+        }
+        if opcode == op::READ_PORT {
+            words[1] = self.inputs;
         }
         Ok(Some([words[0], words[1], words[2], self.status()]))
     }
@@ -240,5 +285,26 @@ mod tests {
         assert!(l.send_packet(&Packet::empty()).is_ok());
         l.disconnect();
         assert_eq!(l.send_single(Single::get_version()), Err(LinkError::Disconnected));
+    }
+
+    #[test]
+    fn pause_axis_and_inputs() {
+        let mut l = SimLink::with_board(SimBoard { busy_polls: 2, not_ready_polls: 0, ..SimBoard::default() });
+        l.send_single(Single::execute_list()).unwrap();
+        l.send_single(Single::stop_list()).unwrap();
+        assert!(l.paused());
+        for _ in 0..5 {
+            assert!(status(&mut l).busy(), "a paused list stays busy");
+        }
+        l.send_single(Single::restart_list()).unwrap();
+        assert!(status(&mut l).busy());
+        assert!(status(&mut l).idle());
+        l.send_single(Single::move_axis_to(1234, false)).unwrap();
+        assert!(status(&mut l).axis());
+        assert!(status(&mut l).axis());
+        assert!(!status(&mut l).axis());
+        assert_eq!(l.axis_position(), 1234);
+        l.set_inputs(1 << 14);
+        assert_eq!(l.send_single(Single::read_port()).unwrap().unwrap()[1], 1 << 14);
     }
 }

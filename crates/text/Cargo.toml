@@ -1,0 +1,26 @@
+[package]
+name = "text"
+description = "Text like LightBurn: fonts (system TTF/OTF, Hershey, AutoCAD SHX, EzCad JSF), layout, variable text, barcodes"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+# Native font discovery: installed system fonts (fontdb), font folders, and the clock for date/time variable text.
+system = ["dep:fontdb", "chrono/clock"]
+
+[dependencies]
+doc = { workspace = true }
+geom = { path = "../geom" }
+kurbo = { workspace = true }
+thiserror = { workspace = true }
+# Glyph outlines (MIT OR Apache-2.0) and text shaping, a HarfBuzz port (MIT).
+skrifa = "0.44"
+harfrust = "0.12"
+# Date/time variable text (MIT OR Apache-2.0); the clock only with `system`.
+chrono = { version = "0.4", default-features = false, features = ["alloc"] }
+# Barcode encoding, a ZXing port (Apache-2.0): encoders only.
+rxing = { version = "0.9.3", default-features = false, features = ["encoders", "qrcode", "datamatrix", "aztec", "pdf417", "oned"] }
+# Installed fonts (MIT).
+fontdb = { version = "0.24", optional = true }

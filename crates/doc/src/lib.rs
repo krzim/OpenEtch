@@ -11,6 +11,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 pub mod file;
+pub mod text;
+
+pub use text::{AlignH, AlignV, CsvData, FontKind, FontSpec, Text, TextPath, VarMode, VarText, VariableState};
 
 pub type ObjectId = String;
 pub type LayerId = String;
@@ -72,6 +75,10 @@ pub struct Document {
     /// literal stays valid; ids that no longer name an object mean nothing ([`Document::is_locked`]).
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub locked: BTreeSet<ObjectId>,
+    /// Variable text state (LightBurn's Variable Text window: serial counter, CSV rows), shared by every variable
+    /// [`Text`]. Left out of JSON while it is the default.
+    #[serde(default, skip_serializing_if = "VariableState::is_default")]
+    pub variables: VariableState,
 }
 
 impl Default for Document {
@@ -88,6 +95,7 @@ impl Default for Document {
             next_id: 1,
             extras: BTreeMap::new(),
             locked: BTreeSet::new(),
+            variables: VariableState::default(),
         };
         let id = doc.alloc_id("layer").expect("a new document has ids to spare");
         doc.layers.push(Layer::new(id, "Layer 1", "#1f77b4"));
@@ -763,6 +771,15 @@ impl Object {
                 PathEl::CurveTo(a, b, p) => ok(a) && ok(b) && ok(p),
                 PathEl::ClosePath => true,
             }),
+            Geometry::Text(t) => {
+                t.numbers().iter().all(|(_, v)| v.is_finite())
+                    && t.outline.elements().iter().all(|el| match *el {
+                        PathEl::MoveTo(p) | PathEl::LineTo(p) => ok(p),
+                        PathEl::QuadTo(a, p) => ok(a) && ok(p),
+                        PathEl::CurveTo(a, b, p) => ok(a) && ok(b) && ok(p),
+                        PathEl::ClosePath => true,
+                    })
+            }
         };
         (!sound).then_some("its size or outline is not finite in the field frame")
     }
@@ -789,6 +806,9 @@ pub enum Geometry {
         #[serde(default, skip_serializing_if = "ImageAdjust::is_default")]
         adjust: ImageAdjust,
     },
+    /// Live text (LightBurn's text objects): settings plus its rendered outline ([`Text::outline`]), which is what
+    /// [`Geometry::local_path`] returns, so planning never needs fonts.
+    Text(Box<Text>),
 }
 
 impl Geometry {
@@ -799,19 +819,21 @@ impl Geometry {
             }
             Geometry::Ellipse { rx_mm, ry_mm } => kurbo::Ellipse::new((0.0, 0.0), (rx_mm, ry_mm), 0.0).to_path(0.01),
             Geometry::Path { ref path } => path.clone(),
+            Geometry::Text(ref t) => t.outline.clone(),
             Geometry::Image { width_mm, height_mm, .. } => {
                 Rect::from_center_size((0.0, 0.0), (width_mm, height_mm)).to_path(0.01)
             }
         }
     }
 
-    /// A short lowercase name of the kind: `rect`, `ellipse`, `path` or `image`.
+    /// A short lowercase name of the kind: `rect`, `ellipse`, `path`, `image` or `text`.
     pub fn kind_name(&self) -> &'static str {
         match self {
             Geometry::Rect { .. } => "rect",
             Geometry::Ellipse { .. } => "ellipse",
             Geometry::Path { .. } => "path",
             Geometry::Image { .. } => "image",
+            Geometry::Text(_) => "text",
         }
     }
 }

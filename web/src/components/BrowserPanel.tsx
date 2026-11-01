@@ -19,6 +19,8 @@ export interface BrowserPanelProps {
   /** `all`: select every shape on the layer (Shift+click). */
   onSelectLayer: (id: string, all: boolean) => void;
   onSelectStock: () => void;
+  /** Right-click on an object row: the app selects it (unless selected) and shows its object menu at (x, y). */
+  onObjectMenu?: (x: number, y: number, id: string) => void;
   run: (inv: Invocation | Invocation[]) => Promise<unknown>;
   report: (e: unknown) => void;
 }
@@ -181,6 +183,11 @@ export function BrowserPanel(props: BrowserPanelProps) {
                               role="treeitem"
                               className={`tree-row${selection.objects.includes(o.id) ? " selected" : ""}`}
                               onClick={(e) => props.onSelectObject(o.id, selectOpFor({ shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey }))}
+                              onContextMenu={(e) => {
+                                if (!props.onObjectMenu) return;
+                                e.preventDefault();
+                                props.onObjectMenu(e.clientX, e.clientY, o.id);
+                              }}
                             >
                               <Icon
                                 name={o.geometry.kind === "ellipse" ? "ellipse" : o.geometry.kind === "rect" ? "rect" : o.geometry.kind === "image" ? "preview" : "import"}

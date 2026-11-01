@@ -177,6 +177,18 @@ fn check(doc: &Document) -> Result<(), FileError> {
             }
             Geometry::Ellipse { rx_mm, ry_mm } => rx_mm > 0.0 && ry_mm > 0.0,
             Geometry::Path { .. } => true,
+            Geometry::Text(ref t) => {
+                if let Some(p) = t.problem() {
+                    return Err(invalid(format!("object {}: {p}", o.id)));
+                }
+                if t.font.family.chars().any(char::is_control) || t.font.family.len() > 200 {
+                    return Err(invalid(format!("object {} has an unusable font family name", o.id)));
+                }
+                if t.text.chars().any(|c| c.is_control() && !matches!(c, '\n' | '\t')) {
+                    return Err(invalid(format!("object {}: the text holds a control character", o.id)));
+                }
+                true
+            }
             Geometry::Image { width_mm, height_mm, ref mime, ref data_base64, ref adjust } => {
                 if !is_image_mime(mime) {
                     return Err(invalid(format!("object {} has an image type {mime:?} that is not image/<name>", o.id)));

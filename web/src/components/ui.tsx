@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { evalNumber } from "../editing.ts";
+import { useUnitConversion } from "../workspace/usePrefs.ts";
 
 /**
  * Centered modal with a title, body and footer. Escape or a backdrop tap cancels; with `onSubmit`, Enter in a text
@@ -69,7 +70,14 @@ export function NumberField(props: {
   placeholder?: string;
   disabled?: boolean;
 }) {
-  const { value, digits = 3 } = props;
+  // Lengths and speeds show in the display unit chosen in Preferences; the value committed is always the engine's.
+  const conv = useUnitConversion(props.unit);
+  const digits = (props.digits ?? 3) + conv.extraDigits;
+  const value = props.value === null ? null : conv.to(props.value);
+  const min = props.min === undefined ? undefined : conv.to(props.min);
+  const max = props.max === undefined ? undefined : conv.to(props.max);
+  const unit = conv.unit;
+  const onCommit = (v: number | null) => props.onCommit(v === null ? null : conv.from(v));
   const [text, setText] = useState(fmt(value, digits));
   const [clamped, setClamped] = useState<string | null>(null);
   const editing = useRef(false);
@@ -81,11 +89,19 @@ export function NumberField(props: {
     const t = window.setTimeout(() => setClamped(null), 3000);
     return () => window.clearTimeout(t);
   }, [clamped]);
+  // Only text the user typed is committed: a linked field (Lock aspect, Keep round) changed by another field while
+  // this one had focus must not send its stale value back on blur.
+  const dirty = useRef(false);
   const commit = () => {
     editing.current = false;
+    if (!dirty.current) {
+      setText(fmt(value, digits));
+      return;
+    }
+    dirty.current = false;
     const t = text.trim();
     if (t === "") {
-      if (props.allowEmpty && value !== null) props.onCommit(null);
+      if (props.allowEmpty && value !== null) onCommit(null);
       else setText(fmt(value, digits));
       return;
     }
@@ -95,11 +111,11 @@ export function NumberField(props: {
       return;
     }
     const typed = v;
-    if (props.min !== undefined) v = Math.max(props.min, v);
-    if (props.max !== undefined) v = Math.min(props.max, v);
-    setClamped(v !== typed ? `Limited to ${fmt(v, digits)}${props.unit ? ` ${props.unit}` : ""}` : null);
+    if (min !== undefined) v = Math.max(min, v);
+    if (max !== undefined) v = Math.min(max, v);
+    setClamped(v !== typed ? `Limited to ${fmt(v, digits)}${unit ? ` ${unit}` : ""}` : null);
     setText(fmt(v, digits));
-    if (value === null || Math.abs(v - value) > 1e-9) props.onCommit(v);
+    if (value === null || Math.abs(v - value) > 1e-9) onCommit(v);
   };
   return (
     <label className="field">
@@ -111,19 +127,26 @@ export function NumberField(props: {
           value={text}
           placeholder={props.placeholder}
           disabled={props.disabled}
-          onFocus={() => (editing.current = true)}
-          onChange={(e) => setText(e.target.value)}
+          onFocus={() => {
+            editing.current = true;
+            dirty.current = false;
+          }}
+          onChange={(e) => {
+            dirty.current = true;
+            setText(e.target.value);
+          }}
           onBlur={commit}
           onKeyDown={(e) => {
             if (e.key === "Enter") (e.target as HTMLInputElement).blur();
             if (e.key === "Escape") {
               editing.current = false;
+              dirty.current = false;
               setText(fmt(value, digits));
               (e.target as HTMLInputElement).blur();
             }
           }}
         />
-        {props.unit && <span className="unit">{props.unit}</span>}
+        {unit && <span className="unit">{unit}</span>}
       </span>
       {clamped && (
         <span className="field-note" role="status">
@@ -139,7 +162,10 @@ export function NumberField(props: {
  * Values commit rounded to micrometres. Maths works as in NumberField.
  */
 export function PairField(props: { labels: [string, string]; unit?: string; value: [number, number]; onCommit: (v: [number, number]) => void; digits?: number }) {
-  const { value, digits = 3 } = props;
+  const conv = useUnitConversion(props.unit);
+  const digits = (props.digits ?? 3) + conv.extraDigits;
+  const value: [number, number] = [conv.to(props.value[0]), conv.to(props.value[1])];
+  const unit = conv.unit;
   const [text, setText] = useState<[string, string]>([fmt(value[0], digits), fmt(value[1], digits)]);
   const editing = useRef(false);
   useEffect(() => {
@@ -153,10 +179,15 @@ export function PairField(props: { labels: [string, string]; unit?: string; valu
       setText([fmt(value[0], digits), fmt(value[1], digits)]);
       return;
     }
-    const r = (v: number) => Math.round(v * 1000) / 1000;
+    const q = 10 ** digits;
+    const r = (v: number) => Math.round(v * q) / q;
     const next: [number, number] = [r(a), r(b)];
     setText([fmt(next[0], digits), fmt(next[1], digits)]);
-    if (Math.abs(next[0] - value[0]) > 5e-4 || Math.abs(next[1] - value[1]) > 5e-4) props.onCommit(next);
+    if (Math.abs(next[0] - value[0]) > 0.5 / q || Math.abs(next[1] - value[1]) > 0.5 / q) {
+      // Back to engine units, rounded to micrometres.
+      const mm = (v: number) => Math.round(conv.from(v) * 1000) / 1000;
+      props.onCommit([mm(next[0]), mm(next[1])]);
+    }
   };
   const box = (i: 0 | 1) => (
     <label className="field">
@@ -186,7 +217,7 @@ export function PairField(props: { labels: [string, string]; unit?: string; valu
             }
           }}
         />
-        {props.unit && <span className="unit">{props.unit}</span>}
+        {unit && <span className="unit">{unit}</span>}
       </span>
     </label>
   );
@@ -272,6 +303,7 @@ const ICONS: Record<string, ReactNode> = {
   stock: <path d="M3 8l9-4 9 4v8l-9 4-9-4z M3 8l9 4 9-4 M12 12v8" />,
   rect: <rect x="4" y="6" width="16" height="12" rx="1" />,
   ellipse: <ellipse cx="12" cy="12" rx="9" ry="6" />,
+  circle: <path d="M12 4a8 8 0 100 16 8 8 0 000-16z M12 11.2v1.6 M11.2 12h1.6" />,
   import: <path d="M12 3v12 M7 10l5 5 5-5 M4 17v3h16v-3" />,
   place: <path d="M4 4h16v16H4z M9 9h6v6H9z M12 4v5 M12 15v5 M4 12h5 M15 12h5" />,
   array: <path d="M4 4h5v5H4z M15 4h5v5h-5z M4 15h5v5H4z M15 15h5v5h-5z" />,

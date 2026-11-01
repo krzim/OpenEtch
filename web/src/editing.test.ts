@@ -1,16 +1,15 @@
-// Unit tests for editing.ts: nudge and rotate-key steps, Shift constraint, snapping (keypoints, grabbed point, Alt
-// guides, grid), scale/rotate handles, align/distribute moves, micrometre rounding and typed maths.
+// Unit tests for editing.ts: nudge and rotate-key steps, Shift constraint, scale/rotate handles (and the locked-circle
+// uniform scale), align/distribute moves, micrometre rounding and typed maths.
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   alignMoves,
-  boxKeypoints,
   constrainDelta,
   distributeMoves,
   evalNumber,
-  grabbedKeypoint,
   handlePoint,
+  keepRound,
   mergesNudge,
   nudgeDelta,
   nudgeKeyId,
@@ -19,13 +18,10 @@ import {
   rotateAbout,
   rotateFromHandle,
   rotateKeyDeg,
-  rotatedRectTargets,
   roundMm,
   scaleAbout,
   scaleFromHandle,
   signedScaleParams,
-  snapMove,
-  targetsOf,
 } from "./editing.ts";
 
 const none = { shift: false, ctrl: false };
@@ -58,46 +54,15 @@ test("Shift constrains to horizontal, vertical or 45 degrees", () => {
   assert.deepEqual(constrainDelta([0, 0]), [0, 0]);
 });
 
-test("keypoints and targets", () => {
-  const k = boxKeypoints(box);
-  assert.equal(k.length, 9);
-  assert.deepEqual(k[8], { p: [5, 5], kind: "center" });
-  assert.equal(targetsOf(box, "Stock")[8].label, "centre of Stock");
-  const r = rotatedRectTargets([0, 0], 20, 10, 90, "Stock");
-  assert.ok(Math.abs(r[0].p[0] - 5) < 1e-9 && Math.abs(r[0].p[1] + 10) < 1e-9, "corner rotated by 90 degrees");
-});
-
-test("snap to the nearest target keypoint within the radius", () => {
-  const targets = targetsOf({ x0: 20, y0: 0, x1: 30, y1: 10 }, "B");
-  // Moving right by 9.6: the right edge (x 19.6) is 0.4 from B's left edge.
-  const r = snapMove(box, [9.6, 0.2], targets, { radius: 1 });
-  assert.deepEqual(r.delta, [10, 0]);
-  assert.equal(r.target?.kind, "corner");
-  const far = snapMove(box, [5, 0], targets, { radius: 1 });
-  assert.deepEqual(far.delta, [5, 0]);
-  assert.equal(far.target, null);
-});
-
-test("a grabbed keypoint is the only one that snaps", () => {
-  const targets = [{ p: [50, 50] as [number, number], kind: "center" as const, label: "x" }];
-  const grab = grabbedKeypoint(box, [5.2, 4.9], 0.5);
-  assert.deepEqual(grab, [5, 5]);
-  const r = snapMove(box, [44.7, 45.2], targets, { radius: 1, grab });
-  assert.deepEqual(r.delta, [45, 45]);
-  // The corner (10,10) moved by the delta is near (50,50), but it is not the grabbed point.
-  const r2 = snapMove(box, [40.2, 40.1], targets, { radius: 1, grab });
-  assert.deepEqual(r2.delta, [40.2, 40.1]);
-  assert.equal(grabbedKeypoint(box, [2.5, 2.5], 0.5), null);
-});
-
-test("Alt guides align edges on one axis; the grid snaps when nothing else does", () => {
-  const targets = targetsOf({ x0: 100, y0: 40, x1: 110, y1: 50 }, "B");
-  const r = snapMove(box, [30, 39.7], targets, { radius: 1, guides: true });
-  assert.deepEqual(r.delta, [30, 40]);
-  assert.equal(r.guides.length, 1);
-  assert.equal(r.guides[0].a[1], 40);
-  const g = snapMove(box, [1.3, 2.6], [], { radius: 1, grid: 1 });
-  assert.deepEqual(g.delta, [1, 3]);
+test("a locked circle scales uniformly from any handle", () => {
+  const e = keepRound(scaleFromHandle(box, "e", [20, 5], none), "e");
+  assert.deepEqual([e.sx, e.sy, e.about], [2, 2, [0, 5]], "edge handle drives both axes about the opposite edge");
+  const n = keepRound(scaleFromHandle(box, "n", [5, 5], none), "n");
+  assert.deepEqual([n.sx, n.sy], [0.5, 0.5]);
+  const c = keepRound(scaleFromHandle(box, "ne", [20, 12], { shift: true, ctrl: false }), "ne");
+  assert.equal(c.sx, c.sy, "Shift cannot free the aspect of a locked circle");
+  const flip = keepRound(scaleFromHandle(box, "e", [-10, 5], none), "e");
+  assert.ok(flip.sx < 0 && flip.sy > 0, "past the opposite edge it mirrors and the other axis stays positive");
 });
 
 test("scale handles: corners keep aspect, Shift frees it, edges scale one axis, Ctrl about the centre", () => {

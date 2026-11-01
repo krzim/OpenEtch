@@ -28,6 +28,8 @@ export interface TopBarProps {
   /** Unsaved changes; null when the engine reports no project state. */
   dirty: boolean | null;
   pendingRuns: number;
+  /** Extra controls before undo/redo (theme switch, Preferences, Help menu: workspace/HelpMenu.tsx). */
+  extra?: ReactNode;
 }
 
 export function TopBar(p: TopBarProps) {
@@ -58,6 +60,7 @@ export function TopBar(p: TopBarProps) {
         ))}
       </nav>
       <div className="topbar-actions">
+        {p.extra}
         <button className="icon-btn" title="Undo (Ctrl+Z)" aria-label="Undo" onClick={p.onUndo}>
           <Icon name="undo" />
         </button>

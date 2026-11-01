@@ -6,13 +6,18 @@
 // - click an object (its line, or inside a closed shape) to select it; Shift adds, Ctrl toggles, Ctrl+Shift removes;
 //   a group selects as a whole;
 // - drag on empty space draws a selection box: left to right encloses (solid), right to left crosses (dashed green);
-// - drag a selected object to move it (Shift constrains to H/V/45°, Ctrl turns snapping off, Alt shows alignment
-//   guides); drag the corner/edge handles to scale (Shift frees the aspect, Ctrl scales about the centre) and the
-//   round handles outside the corners to rotate (Shift 15°, Ctrl 5°); Esc before release cancels;
+// - drag a selected object to move it (Shift constrains to H/V/45°, Ctrl turns snapping off, Alt snaps to alignment
+//   guides only); drag the corner/edge handles to scale (Shift frees the aspect, Ctrl scales about the centre; a lone
+//   circle stays round while "Keep round" is on) and the round handles outside the corners to rotate (Shift 15°,
+//   Ctrl 5°); Esc before release cancels;
 // - drag the stock to move it while it is selected (click its outline to select it);
 // - middle-drag pans, the wheel zooms (Ctrl+wheel is a trackpad pinch, sideways scrolling pans), touch: one finger on
 //   empty space pans, two fingers pan and pinch;
-// - with the Rectangle or Ellipse tool, drag to draw (a tap places a 20 mm shape).
+// - with the Rectangle or Ellipse tool, drag to draw (Shift: square or circle); the Circle tool draws from the centre
+//   (a tap places a 20 mm shape);
+// - snapping is Fusion 360-style on real geometry (snapping.ts): centres, quadrants, vertices, midpoints,
+//   intersections and the nearest point on outlines, each with its own glyph and a label, plus dotted alignment
+//   guides and the grid. A dragged selection snaps by its own snap point nearest to where it was grabbed.
 // Every edit is a command sent on pointerup; until the engine answers, the change is drawn as a transient transform.
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -22,23 +27,22 @@ import { createdIds } from "../api/drop.ts";
 import { energyOpacity, layerEnergy } from "../api/laser.ts";
 import { markHidden, passColor, passEnergy, passResolver } from "../api/passes.ts";
 import type { Affine, GDocument, Layer, Preview, Vec2 } from "../api/types.ts";
+import type { CanvasCtx, CanvasTool, CanvasToolId, RenderCtx } from "../canvasTool.ts";
+import { circleLocked } from "../circleLock.ts";
+import { dragCorners } from "../drawTools.ts";
 import {
   HANDLES,
   constrainDelta,
-  grabbedKeypoint,
   handlePoint,
+  keepRound,
   rotateAbout,
   rotateFromHandle,
-  rotatedRectTargets,
   roundMm,
   scaleAbout,
   scaleFromHandle,
   signedScaleParams,
-  snapMove,
-  targetsOf,
   type Handle,
   type Mods,
-  type SnapTarget,
 } from "../editing.ts";
 import {
   boxCenter,
@@ -64,9 +68,34 @@ import {
   type SelectOp,
   type Selection,
 } from "../selection.ts";
+import { useDitheredHref } from "./ImageSettings.tsx";
+import {
+  SNAP_TOL_PX,
+  buildSnapIndex,
+  fieldSnaps,
+  findSnap,
+  isRound,
+  objectSnaps,
+  referencePoint,
+  snapLabel,
+  stockSnaps,
+  type SnapHit,
+  type SnapIndex,
+  type SnapKind,
+  type SnapOptions,
+  type SnapPart,
+  type SnapPoint,
+} from "../snapping.ts";
 import { Icon } from "./ui.tsx";
+import { canvasColor } from "../workspace/theme.ts";
+import { usePrefs, useResolvedTheme } from "../workspace/usePrefs.ts";
+import { onViewCommand, publishViewStatus } from "../workspace/viewStatus.ts";
 
-export type Tool = "select" | "rect" | "ellipse";
+export type Tool = "select" | "rect" | "ellipse" | "circle" | CanvasToolId;
+
+/** Tools that draw a shape here (the canvas tools in components/EditTools.tsx draw lines, pens and polygons). */
+type DrawTool = "rect" | "ellipse" | "circle";
+const isDrawTool = (t: Tool): t is DrawTool => t === "rect" || t === "ellipse" || t === "circle";
 
 /** View transform: field point (cx, cy) at the canvas centre, `scale` screen px per mm. */
 interface View {
@@ -108,16 +137,19 @@ type Gesture =
       moved: boolean;
       ids: string[];
       stock: boolean;
-      box: Box;
-      grab: Vec2 | null;
-      targets: SnapTarget[];
+      /** The selection's own snap point that snaps (nearest to the grab position). */
+      ref: SnapPoint;
+      /** Snap candidates without the moving things. */
+      index: SnapIndex;
       /** Selection to narrow to when this turns out to be a click without a drag. */
       tapSelect: string | null;
     }
-  | { kind: "scale"; handle: Handle; box: Box; ids: string[]; start: Vec2 }
+  | { kind: "scale"; handle: Handle; box: Box; ids: string[]; start: Vec2; round: boolean }
   | { kind: "rotate"; center: Vec2; start: Vec2; ids: string[] }
-  | { kind: "draw"; start: Vec2; tool: "rect" | "ellipse"; targets: SnapTarget[] }
+  | { kind: "draw"; start: Vec2; tool: DrawTool; index: SnapIndex }
   | { kind: "pinch"; dist: number; mid: Vec2; view: View }
+  /** A gesture the canvas tool (EditTools) took. */
+  | { kind: "ext" }
   | { kind: "idle" };
 
 /** A transform drawn on top of the document until the engine answers. */
@@ -132,8 +164,8 @@ const MAX_SCALE = 400;
 const TAP_SLOP = 4;
 /** Click tolerance, screen px (LightBurn "Click Selection Tolerance"). */
 const CLICK_TOL_PX = 5;
-/** Object snap distance, screen px (LightBurn "Object Snap Distance"); doubled while Alt is held. */
-const SNAP_PX = 10;
+/** Default size of a shape placed with a tap, mm. */
+const TAP_SIZE_MM = 20;
 
 export interface ViewportProps {
   doc: GDocument | null;
@@ -163,21 +195,28 @@ export interface ViewportProps {
   run: (inv: Invocation | Invocation[]) => Promise<unknown>;
   notify: (msg: string, kind?: "info" | "error") => void;
   report: (e: unknown) => void;
+  /** Node editing, line/pen/polygon, measure, trim, picks, rulers and guides (components/EditTools.tsx). */
+  canvasTool?: CanvasTool | null;
 }
 
 export function Viewport(props: ViewportProps) {
   const { doc, workspaceMm, selection, tool, preview, showPreview, previewOptions, viewStyle, snap, outside } = props;
   const [wsW, wsH] = workspaceMm;
   const galvo = Math.abs(wsW - wsH) < 1e-3;
+  // Display preferences (workspace/prefs.ts): grid, wheel direction, snap distance and kinds, crosshair; and the theme.
+  const uiPrefs = usePrefs();
+  const theme = useResolvedTheme();
+  const wheelSign = useRef(1);
+  wheelSign.current = uiPrefs.invertWheel ? -1 : 1;
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [size, setSize] = useState<Vec2>([1, 1]);
   const [view, setView] = useState<View>({ cx: 0, cy: 0, scale: 3 });
   const [cursor, setCursor] = useState<Vec2 | null>(null);
   const [transient, setTransient] = useState<Transient | null>(null);
-  const [draw, setDraw] = useState<{ a: Vec2; b: Vec2; tool: "rect" | "ellipse" } | null>(null);
+  const [draw, setDraw] = useState<{ a: Vec2; b: Vec2; tool: DrawTool } | null>(null);
   const [marquee, setMarquee] = useState<{ a: Vec2; b: Vec2 } | null>(null);
-  const [snapShown, setSnapShown] = useState<{ target: SnapTarget | null; guides: { a: Vec2; b: Vec2 }[] } | null>(null);
+  const [snapShown, setSnapShown] = useState<SnapHit | null>(null);
   const [readout, setReadout] = useState<string | null>(null);
   /** Transient kept on screen after pointerup until the document revision changes, so nothing snaps back. */
   const [settling, setSettling] = useState<(Transient & { rev: number }) | null>(null);
@@ -257,7 +296,7 @@ export function Viewport(props: ViewportProps) {
         setView((v) => ({ ...v, cx: v.cx + e.deltaX / v.scale, cy: v.cy - e.deltaY / v.scale }));
         return;
       }
-      const dy = pixel ? e.deltaY : e.deltaY * 40;
+      const dy = (pixel ? e.deltaY : e.deltaY * 40) * (e.ctrlKey ? 1 : wheelSign.current);
       const factor = Math.exp(-clamp(dy, -300, 300) * (e.ctrlKey ? 0.01 : 0.0015));
       setView((v) => zoomAtPure(v, size, s, factor));
     };
@@ -280,59 +319,87 @@ export function Viewport(props: ViewportProps) {
   const stock = doc?.stock ? stockCmds(doc.stock) : null;
   const stockBox = stock ? cmdsBounds(stock.cmds, stock.transform) : null;
 
-  /** Snap targets for a drag: other objects (groups as one box), the stock and the field. */
-  const snapTargets = useCallback(
-    (exclude: ReadonlySet<string>, includeStock: boolean): SnapTarget[] => {
-      if (!doc) return [];
-      const out: SnapTarget[] = [];
-      const units = new Map<string, Box[]>();
-      for (const s of shapeIndex) {
-        if (exclude.has(s.id)) continue;
-        const u = unitOf(doc, s.id);
-        units.set(u, [...(units.get(u) ?? []), s.box]);
+  /** Snap data per visible object and the stock, built lazily on the first snap after the document changes. */
+  const extParts = props.canvasTool?.snapParts;
+  const snapCache = useRef<{ doc: GDocument | null; field: Box; ext: unknown; parts: Map<string, SnapPart>; stock: SnapPart | null; all: SnapIndex | null } | null>(null);
+  const snapData = () => {
+    let c = snapCache.current;
+    if (!c || c.doc !== doc || c.field !== fieldBox || c.ext !== extParts) {
+      const parts = new Map<string, SnapPart>();
+      if (doc) {
+        const visible = new Set(shapeIndex.map((s) => s.id));
+        for (const o of doc.objects) if (visible.has(o.id)) parts.set(o.id, objectSnaps(o));
       }
-      for (const [u, boxes] of units) {
-        const b = unionBoxes(boxes);
-        if (!b) continue;
-        const obj = doc.objects.find((o) => o.id === u);
-        out.push(...targetsOf(b, obj ? `"${obj.name || obj.id}"` : "group"));
-      }
-      if (includeStock && doc.stock) {
-        const s = doc.stock;
-        if (s.shape.kind === "rect") out.push(...rotatedRectTargets(s.center, s.shape.width_mm, s.shape.height_mm, s.rotation_deg, "stock"));
-        else out.push(...rotatedRectTargets(s.center, s.shape.diameter_mm, s.shape.diameter_mm, 0, "stock"));
-      }
-      out.push({ p: [0, 0], kind: "center", label: "field centre" });
-      out.push(...targetsOf(fieldBox, "field").filter((t) => t.kind !== "center"));
-      return out;
-    },
-    [doc, shapeIndex, fieldBox],
-  );
+      c = { doc, field: fieldBox, ext: extParts, parts, stock: doc?.stock ? stockSnaps(doc.stock) : null, all: null };
+      snapCache.current = c;
+    }
+    return c;
+  };
+
+  /** Snap index over everything but `exclude` (and the stock unless `includeStock`), plus the field points. */
+  const snapIndexFor = (exclude: ReadonlySet<string>, includeStock: boolean): SnapIndex => {
+    const c = snapData();
+    if (exclude.size === 0 && includeStock && c.all) return c.all;
+    const parts: SnapPart[] = [];
+    for (const [id, p] of c.parts) if (!exclude.has(id)) parts.push(p);
+    if (includeStock && c.stock) parts.push(c.stock);
+    parts.push(fieldSnaps(fieldBox));
+    for (const p of extParts ?? []) parts.push(p);
+    const ix = buildSnapIndex(parts);
+    if (exclude.size === 0 && includeStock) c.all = ix;
+    return ix;
+  };
 
   const snapOn = (m: Mods) => (m.ctrl ? !snap.objects : snap.objects);
   const gridMm = (m: Mods) => (snap.grid && !m.ctrl ? snap.gridMm : 0);
 
-  /** A point snapped for drawing (N6): object/stock/field keypoints, else the grid. */
-  const snapPoint = (p: Vec2, targets: SnapTarget[], m: Mods): { p: Vec2; t: SnapTarget | null } => {
-    const r = (SNAP_PX * (m.alt ? 2 : 1)) / view.scale;
-    if (snapOn(m)) {
-      let best: SnapTarget | null = null;
-      let bd = r;
-      for (const t of targets) {
-        const d = Math.hypot(t.p[0] - p[0], t.p[1] - p[1]);
-        if (d <= bd) {
-          bd = d;
-          best = t;
-        }
-      }
-      if (best) return { p: best.p, t: best };
-    }
-    const g = gridMm(m);
-    return { p: g > 0 ? [Math.round(p[0] / g) * g, Math.round(p[1] / g) * g] : p, t: null };
+  /** Snap options for modifiers `m`: Ctrl turns snapping off (or on, when it is off), Alt snaps to guides only. */
+  const snapOpts = (m: Mods, extra?: SnapPoint[]): SnapOptions => {
+    const objects = snapOn(m);
+    const guidesOnly = !!m.alt;
+    const [x0, y1] = toField(0, 0);
+    const [x1, y0] = toField(size[0], size[1]);
+    return {
+      tol: (uiPrefs.snapTolPx || SNAP_TOL_PX) / view.scale,
+      kinds: uiPrefs.snapKinds,
+      points: objects && !guidesOnly,
+      nearest: objects && !guidesOnly,
+      guides: objects,
+      grid: guidesOnly ? 0 : gridMm(m),
+      view: { x0, y0, x1, y1 },
+      extra,
+    };
   };
 
+  /** A point snapped for drawing: snap points, outlines, guides, else the grid. */
+  const snapPoint = (p: Vec2, index: SnapIndex, m: Mods, extra?: SnapPoint[]): { p: Vec2; hit: SnapHit | null } => {
+    const hit = findSnap(index, p, snapOpts(m, extra));
+    return hit ? { p: hit.p, hit } : { p, hit: null };
+  };
+
+  /** Guide sources while drawing: the circle's centre, so a radius can run level or plumb from it. */
+  const drawExtra = (g: { start: Vec2; tool: DrawTool }): SnapPoint[] | undefined =>
+    g.tool === "circle" ? [{ p: g.start, kind: "center", what: "Center", owner: "new circle", id: "draw" }] : undefined;
+
+  /** Where the drag of a draw tool ends: snapped, and squared with Shift for rectangles and ellipses. */
+  const drawEnd = (g: { start: Vec2; tool: DrawTool; index: SnapIndex }, f: Vec2, m: Mods): { a: Vec2; p: Vec2; hit: SnapHit | null } => {
+    if (g.tool === "circle") return { a: g.start, ...snapPoint(f, g.index, m, drawExtra(g)) };
+    // LightBurn: Ctrl draws from the centre (so it does not turn snapping off here), Shift makes it square.
+    const sp = snapPoint(f, g.index, { ...m, ctrl: false }, drawExtra(g));
+    const c = dragCorners(g.start, sp.p, { shift: m.shift, ctrl: m.ctrl });
+    return { a: c.a, p: c.b, hit: m.shift ? null : sp.hit };
+  };
+
+  // Leaving a draw tool takes its hover snap glyph with it.
+  useEffect(() => {
+    if (tool === "select" && gesture.current.kind === "none") setSnapShown(null);
+  }, [tool]);
+
+  const extRef = useRef<CanvasTool | null | undefined>(null);
+  extRef.current = props.canvasTool;
   const cancelGesture = useCallback(() => {
     const g = gesture.current;
+    if (g.kind === "ext") extRef.current?.cancel();
     gesture.current = pointers.current.size ? { kind: "idle" } : { kind: "none" };
     setTransient(null);
     setDraw(null);
@@ -347,7 +414,7 @@ export function Viewport(props: ViewportProps) {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       const g = gesture.current.kind;
-      if (g === "none" || g === "idle" || g === "pinch" || g === "pan") return;
+      if (g === "none" || g === "idle" || g === "pinch" || g === "pan" || g === "ext") return;
       cancelGesture();
       e.preventDefault();
       e.stopImmediatePropagation();
@@ -409,10 +476,15 @@ export function Viewport(props: ViewportProps) {
       return;
     }
     const f = toField(s[0], s[1]);
-    if (tool !== "select") {
-      const targets = snapTargets(new Set(), true);
-      const sp = snapPoint(f, targets, m).p;
-      gesture.current = { kind: "draw", start: sp, tool, targets };
+    const ext = props.canvasTool;
+    if (ext && ext.down(f, m, { target: e.target as Element, pointerType: e.pointerType, time: e.timeStamp, screen: s }, canvasCtx())) {
+      gesture.current = { kind: "ext" };
+      return;
+    }
+    if (isDrawTool(tool)) {
+      const index = snapIndexFor(new Set(), true);
+      const sp = snapPoint(f, index, m).p;
+      gesture.current = { kind: "draw", start: sp, tool, index };
       setDraw({ a: sp, b: sp, tool });
       return;
     }
@@ -424,7 +496,9 @@ export function Viewport(props: ViewportProps) {
       if (h.startsWith("rot")) {
         gesture.current = { kind: "rotate", center: boxCenter(selBoundsRaw), start: f, ids: selection.objects };
       } else {
-        gesture.current = { kind: "scale", handle: h as Handle, box: selBoundsRaw, ids: selection.objects, start: f };
+        const lone = selection.objects.length === 1 ? doc.objects.find((o) => o.id === selection.objects[0]) : undefined;
+        const round = !!lone && isRound(lone) && circleLocked();
+        gesture.current = { kind: "scale", handle: h as Handle, box: selBoundsRaw, ids: selection.objects, start: f, round };
       }
       return;
     }
@@ -447,8 +521,8 @@ export function Viewport(props: ViewportProps) {
         return;
       }
       const ids = next.objects;
-      const box = unionBoxes(ids.map((id) => boundsById.get(id) ?? null));
-      if (!box) return;
+      const parts = snapData().parts;
+      const own = ids.flatMap((id) => parts.get(id)?.points ?? []);
       gesture.current = {
         kind: "move",
         startField: f,
@@ -456,9 +530,8 @@ export function Viewport(props: ViewportProps) {
         moved: false,
         ids,
         stock: false,
-        box,
-        grab: grabbedKeypoint(box, f, SNAP_PX / view.scale),
-        targets: snapTargets(new Set(ids), true),
+        ref: referencePoint(own, f) ?? grabPoint(f),
+        index: snapIndexFor(new Set(ids), true),
         tapSelect: op === "replace" && isSel && selection.objects.length > 1 ? hit : null,
       };
       return;
@@ -480,9 +553,8 @@ export function Viewport(props: ViewportProps) {
           moved: false,
           ids: [],
           stock: true,
-          box: stockBox ?? { x0: f[0], y0: f[1], x1: f[0], y1: f[1] },
-          grab: stockBox ? grabbedKeypoint(stockBox, f, SNAP_PX / view.scale) : null,
-          targets: snapTargets(new Set(), false),
+          ref: referencePoint(snapData().stock?.points ?? [], f) ?? grabPoint(f),
+          index: snapIndexFor(new Set(), false),
           tapSelect: null,
         };
         return;
@@ -522,26 +594,22 @@ export function Viewport(props: ViewportProps) {
         g.moved = true;
         let d: Vec2 = [f[0] - g.startField[0], f[1] - g.startField[1]];
         if (m.shift) d = constrainDelta(d);
-        let target: SnapTarget | null = null;
-        let guides: { a: Vec2; b: Vec2 }[] = [];
-        if (!m.shift && (snapOn(m) || gridMm(m) > 0)) {
-          const r = snapMove(g.box, d, snapOn(m) ? g.targets : [], {
-            radius: (SNAP_PX * (m.alt ? 2 : 1)) / view.scale,
-            grab: g.grab,
-            guides: !!m.alt && snapOn(m),
-            grid: gridMm(m),
-          });
-          d = r.delta;
-          target = r.target;
-          guides = r.guides;
+        let hit: SnapHit | null = null;
+        if (!m.shift) {
+          // The reference point snaps; the whole selection follows it.
+          const r = g.ref.p;
+          hit = findSnap(g.index, [r[0] + d[0], r[1] + d[1]], snapOpts(m));
+          if (hit) d = [hit.p[0] - r[0], hit.p[1] - r[1]];
         }
-        setSnapShown(target || guides.length ? { target, guides } : null);
+        setSnapShown(hit);
         setTransient({ m: [1, 0, 0, 1, d[0], d[1]], stock: g.stock });
-        setReadout(`Δ ${d[0].toFixed(2)}, ${d[1].toFixed(2)} mm${target ? ` · ${target.label}` : ""}`);
+        const from = g.ref.owner ? snapLabel(g.ref) : "";
+        setReadout(`Δ ${d[0].toFixed(2)}, ${d[1].toFixed(2)} mm${from ? ` · ${from}` : ""}${hit?.label ? ` → ${hit.label}` : ""}`);
         break;
       }
       case "scale": {
-        const sc = scaleFromHandle(g.box, g.handle, handleTarget(g, f), m);
+        const sc0 = scaleFromHandle(g.box, g.handle, handleTarget(g, f), m);
+        const sc = g.round ? keepRound(sc0, g.handle) : sc0;
         setTransient({ m: scaleAbout(sc.sx, sc.sy, sc.about), stock: false });
         const w = (g.box.x1 - g.box.x0) * Math.abs(sc.sx);
         const h = (g.box.y1 - g.box.y0) * Math.abs(sc.sy);
@@ -557,11 +625,14 @@ export function Viewport(props: ViewportProps) {
         break;
       }
       case "draw": {
-        const sp = snapPoint(f, g.targets, m);
-        setSnapShown(sp.t ? { target: sp.t, guides: [] } : null);
-        setDraw({ a: g.start, b: sp.p, tool: g.tool });
+        const sp = drawEnd(g, f, m);
+        setSnapShown(sp.hit);
+        setDraw({ a: sp.a, b: sp.p, tool: g.tool });
         break;
       }
+      case "ext":
+        props.canvasTool?.drag(f, m, canvasCtx());
+        break;
     }
   };
 
@@ -570,7 +641,12 @@ export function Viewport(props: ViewportProps) {
     const f = toField(s[0], s[1]);
     setCursor(f);
     props.onCursor?.(f);
-    if (!pointers.current.has(e.pointerId)) return;
+    if (!pointers.current.has(e.pointerId)) {
+      // Hovering with a draw tool shows where the first click would snap (Fusion shows snaps before the click).
+      if (doc && props.canvasTool?.hover(f, modsOf(e), canvasCtx())) return;
+      if (isDrawTool(tool) && doc && e.pointerType !== "touch") setSnapShown(snapPoint(f, snapIndexFor(new Set(), true), modsOf(e)).hit);
+      return;
+    }
     pointers.current.set(e.pointerId, s);
     const g = gesture.current;
     if (g.kind === "pinch") {
@@ -616,6 +692,7 @@ export function Viewport(props: ViewportProps) {
     setSnapShown(null);
     setReadout(null);
     if (cancelled || !doc) {
+      if (g.kind === "ext") props.canvasTool?.cancel();
       setDraw(null);
       setMarquee(null);
       return;
@@ -658,7 +735,8 @@ export function Viewport(props: ViewportProps) {
       }
       case "scale": {
         if (!t) break;
-        const sc = scaleFromHandle(g.box, g.handle, handleTarget(g, f), modsOf(e));
+        const sc0 = scaleFromHandle(g.box, g.handle, handleTarget(g, f), modsOf(e));
+        const sc = g.round ? keepRound(sc0, g.handle) : sc0;
         if (Math.abs(sc.sx - 1) < 1e-6 && Math.abs(sc.sy - 1) < 1e-6) break;
         const about: Vec2 = [roundMm(sc.about[0]), roundMm(sc.about[1])];
         // Past the opposite side the selection mirrors (LightBurn); the engine takes that as a mirror, not a factor < 0.
@@ -676,32 +754,46 @@ export function Viewport(props: ViewportProps) {
       }
       case "draw": {
         setDraw(null);
-        const end = snapPoint(f, g.targets, modsOf(e)).p;
-        finishDraw(g.start, end, g.tool);
+        const end = drawEnd(g, f, modsOf(e));
+        finishDraw(end.a, end.p, g.tool);
         break;
       }
+      case "ext":
+        props.canvasTool?.up(f, modsOf(e), canvasCtx());
+        break;
     }
   };
 
-  const finishDraw = (a: Vec2, b: Vec2, shape: "rect" | "ellipse") => {
+  const finishDraw = (a: Vec2, b: Vec2, shape: DrawTool) => {
     if (!doc) return;
     const layer = props.activeLayer ?? doc.layers[0]?.id;
     if (!layer) {
       props.notify("No layer to draw on.", "error");
       return;
     }
-    let w = Math.abs(b[0] - a[0]);
-    let h = Math.abs(b[1] - a[1]);
-    let center: Vec2 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
-    if (w * view.scale < TAP_SLOP && h * view.scale < TAP_SLOP) {
-      // A tap: drop a default-size shape centred on it.
-      w = h = 20;
-      center = a;
+    let inv: Invocation;
+    if (shape === "circle") {
+      // Centre and radius (Fusion's centre-diameter circle); stored as an ellipse with equal radii.
+      let r = dist(a, b);
+      if (r * view.scale < TAP_SLOP) r = TAP_SIZE_MM / 2;
+      r = Math.max(roundMm(r), 0.005);
+      inv = C.shapeEllipse(layer, [roundMm(a[0]), roundMm(a[1])], r, r);
+      inv.params.name = "Circle";
+    } else {
+      let w = Math.abs(b[0] - a[0]);
+      let h = Math.abs(b[1] - a[1]);
+      let center: Vec2 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      if (w * view.scale < TAP_SLOP && h * view.scale < TAP_SLOP) {
+        // A tap: drop a default-size shape centred on it.
+        w = h = TAP_SIZE_MM;
+        center = a;
+      }
+      center = [roundMm(center[0]), roundMm(center[1])];
+      w = Math.max(roundMm(w), 0.01);
+      h = Math.max(roundMm(h), 0.01);
+      inv = shape === "ellipse" ? C.shapeEllipse(layer, center, w / 2, h / 2) : C.shapeRect(layer, center, w, h);
+      if (shape === "ellipse" && w === h) inv.params.name = "Circle";
     }
-    center = [roundMm(center[0]), roundMm(center[1])];
-    w = Math.max(roundMm(w), 0.01);
-    h = Math.max(roundMm(h), 0.01);
-    const inv = shape === "ellipse" ? C.shapeEllipse(layer, center, w / 2, h / 2) : C.shapeRect(layer, center, w, h);
     props
       .run(inv)
       .then((r) => {
@@ -712,15 +804,60 @@ export function Viewport(props: ViewportProps) {
     props.onToolDone();
   };
 
+  /** Screen px of a field point. */
+  const toScreen = (p: Vec2): Vec2 => [(p[0] - view.cx) * view.scale + size[0] / 2, -(p[1] - view.cy) * view.scale + size[1] / 2];
+
+  /** The context handed to the canvas tool on each pointer event. */
+  const canvasCtx = (): CanvasCtx => ({
+    doc: doc as GDocument,
+    scale: view.scale,
+    size,
+    toField: (s) => toField(s[0], s[1]),
+    toScreen,
+    snap: (p, m, o) => snapPoint(p, snapIndexFor(new Set(o?.exclude ?? []), true), m, o?.extra),
+    showSnap: setSnapShown,
+    readout: setReadout,
+    hitObject: (p) => hitTest(shapeIndex, p, CLICK_TOL_PX / view.scale),
+  });
+
+  // Hotkeys (zoom in/out, fit) and the status bar talk to the canvas through workspace/viewStatus.ts.
+  useEffect(
+    () =>
+      onViewCommand((cmd) => {
+        if (cmd === "fit") return fitField();
+        autoFit.current = false;
+        if (cmd === "selection") {
+          const b = selBounds ?? stockBox;
+          if (b) fitBox(pad(b, 3));
+        } else setView((v) => zoomAtPure(v, size, [size[0] / 2, size[1] / 2], cmd === "zoomIn" ? 1.25 : 0.8));
+      }),
+    [fitField, fitBox, selBounds, stockBox, size],
+  );
+  useEffect(() => {
+    publishViewStatus({ cursor, snap: snapShown ? { p: snapShown.p, label: snapShown.label, kind: snapShown.kind } : null, scale: view.scale });
+  }, [cursor, snapShown, view.scale]);
+
   // --- rendering -------------------------------------------------------------------------------------------------
   const px = (n: number) => n / view.scale;
+  const renderCtx: RenderCtx = {
+    scale: view.scale,
+    size,
+    px,
+    toField: (s) => toField(s[0], s[1]),
+    toScreen,
+    snap: (p, m, o) => snapPoint(p, snapIndexFor(new Set(o?.exclude ?? []), true), m, o?.extra),
+  };
   const halfX = wsW / 2;
   const halfY = wsH / 2;
   const matrix = `matrix(${view.scale},0,0,${-view.scale},${size[0] / 2 - view.scale * view.cx},${size[1] / 2 + view.scale * view.cy})`;
 
   const grid = useMemo(() => {
-    const minor = [0.5, 1, 2, 5, 10, 20, 50].find((st) => st * view.scale >= 10) ?? 50;
-    const major = minor * (minor === 2 || minor === 20 ? 5 : minor === 0.5 || minor === 5 || minor === 50 ? 2 : 10);
+    if (!uiPrefs.gridVisible) return { dMinor: "", dMajor: "" };
+    // A fixed spacing from Preferences while it is at least 4 px on screen and the line count stays sane.
+    const g = uiPrefs.gridMm;
+    const fixed = g > 0 && g * view.scale >= 4 && Math.max(halfX, halfY) / g <= 2000 ? g : 0;
+    const minor = fixed || ([0.5, 1, 2, 5, 10, 20, 50].find((st) => st * view.scale >= 10) ?? 50);
+    const major = fixed ? fixed * 10 : minor * (minor === 2 || minor === 20 ? 5 : minor === 0.5 || minor === 5 || minor === 50 ? 2 : 10);
     let dMinor = "";
     let dMajor = "";
     // Lines through the origin (the field centre), across the whole workspace.
@@ -740,7 +877,7 @@ export function Viewport(props: ViewportProps) {
       else dMinor += line;
     }
     return { dMinor, dMajor };
-  }, [halfX, halfY, view.scale]);
+  }, [halfX, halfY, view.scale, uiPrefs.gridVisible, uiPrefs.gridMm]);
 
   /** Object path data in the field frame, cached per document. */
   const paths = useMemo(() => {
@@ -833,6 +970,7 @@ export function Viewport(props: ViewportProps) {
         onPointerLeave={() => {
           setCursor(null);
           props.onCursor?.(null);
+          if (gesture.current.kind === "none") setSnapShown(null);
         }}
         onAuxClick={(e) => e.preventDefault()}
       >
@@ -856,7 +994,7 @@ export function Viewport(props: ViewportProps) {
 
           <g className={showPreview ? "objects dimmed" : "objects"}>
             {fills.map(({ layer, d }) => (
-              <path key={`fill-${layer.id}`} className="obj-fill" d={d} fill={layer.color} fillOpacity={layer.output ? 0.35 : 0.15} fillRule="evenodd" />
+              <path key={`fill-${layer.id}`} className="obj-fill" d={d} fill={canvasColor(layer.color, theme)} fillOpacity={layer.output ? 0.35 : 0.15} fillRule="evenodd" />
             ))}
             {doc?.objects.map((o) => {
               const layer = layerById.get(o.layer);
@@ -868,9 +1006,9 @@ export function Viewport(props: ViewportProps) {
               const fillHere = moving && viewStyle === "filled" && layer && layer.settings.mode !== "line" && o.geometry.kind !== "image";
               return (
                 <g key={o.id} data-oid={o.id} transform={moving ? liveM : undefined} className={layer && !layer.output ? "no-output" : undefined}>
-                  {o.geometry.kind === "image" && <ImageObject g={o.geometry} t={o.transform} />}
-                  {fillHere && <path className="obj-fill" d={d} fill={layer.color} fillOpacity={0.35} fillRule="evenodd" />}
-                  <path className="obj" d={d} stroke={layer?.color ?? "#333"} strokeWidth={px(1.3)} />
+                  {o.geometry.kind === "image" && <ImageObject id={o.id} g={o.geometry} t={o.transform} layer={layer} />}
+                  {fillHere && <path className="obj-fill" d={d} fill={canvasColor(layer.color, theme)} fillOpacity={0.35} fillRule="evenodd" />}
+                  <path className="obj" d={d} stroke={canvasColor(layer?.color, theme)} strokeWidth={px(1.3)} />
                   {sel && <path className="obj-selected" d={d} strokeWidth={px(1.6)} strokeDasharray={`${px(5)} ${px(4)}`} />}
                   {out && <path className="obj-outside" d={d} strokeWidth={px(3)} />}
                 </g>
@@ -887,9 +1025,9 @@ export function Viewport(props: ViewportProps) {
                 return (
                   <path
                     key={key}
-                    className="tp-mark"
+                    className={shade ? "tp-mark shade" : "tp-mark"}
                     d={m.d}
-                    stroke={shade ? "#111" : l ? passColor(l.color, m.pass ?? 0) : "#d22"}
+                    stroke={shade ? undefined : canvasColor(l ? passColor(l.color, m.pass ?? 0) : "#dd2222", theme)}
                     strokeOpacity={shade ? energyOpacity(passEnergy(l, m.pass), previewPaths.maxE) : 1}
                     strokeWidth={px(1.2)}
                   />
@@ -951,24 +1089,6 @@ export function Viewport(props: ViewportProps) {
             </g>
           )}
 
-          {snapShown?.guides.map((g, i) => (
-            <path key={`guide-${i}`} className="snap-guide" d={`M${g.a[0]},${g.a[1]}L${g.b[0]},${g.b[1]}`} strokeWidth={px(1)} strokeDasharray={`${px(3)} ${px(3)}`} />
-          ))}
-          {snapShown?.target && (
-            <g className={`snap-marker snap-${snapShown.target.kind}`} pointerEvents="none">
-              {snapShown.target.kind === "center" ? (
-                <circle cx={snapShown.target.p[0]} cy={snapShown.target.p[1]} r={px(6)} strokeWidth={px(1.6)} />
-              ) : snapShown.target.kind === "midpoint" ? (
-                <path
-                  d={`M${snapShown.target.p[0]},${snapShown.target.p[1] + px(7)}L${snapShown.target.p[0] + px(7)},${snapShown.target.p[1] - px(5)}L${snapShown.target.p[0] - px(7)},${snapShown.target.p[1] - px(5)}Z`}
-                  strokeWidth={px(1.6)}
-                />
-              ) : (
-                <rect x={snapShown.target.p[0] - px(6)} y={snapShown.target.p[1] - px(6)} width={px(12)} height={px(12)} strokeWidth={px(1.6)} />
-              )}
-            </g>
-          )}
-
           {marqueeBox && (
             <rect
               className={`marquee ${crossing ? "crossing" : "enclosing"}`}
@@ -981,8 +1101,15 @@ export function Viewport(props: ViewportProps) {
             />
           )}
 
+          {draw && draw.tool === "circle" && (
+            <g className="rubber-circle">
+              <circle className="rubber" cx={draw.a[0]} cy={draw.a[1]} r={dist(draw.a, draw.b)} strokeWidth={px(1.2)} />
+              <path className="rubber-radius" d={`M${draw.a[0]},${draw.a[1]}L${draw.b[0]},${draw.b[1]}`} strokeWidth={px(1)} strokeDasharray={`${px(4)} ${px(3)}`} />
+            </g>
+          )}
           {drawBox &&
             draw &&
+            draw.tool !== "circle" &&
             (draw.tool === "ellipse" ? (
               <ellipse
                 className="rubber"
@@ -995,7 +1122,15 @@ export function Viewport(props: ViewportProps) {
             ) : (
               <rect className="rubber" x={drawBox.x0} y={drawBox.y0} width={drawBox.x1 - drawBox.x0} height={drawBox.y1 - drawBox.y0} strokeWidth={px(1.2)} />
             ))}
+          {props.canvasTool?.render(renderCtx)}
         </g>
+        {snapShown && <SnapOverlay hit={snapShown} at={(p) => [(p[0] - view.cx) * view.scale + size[0] / 2, -(p[1] - view.cy) * view.scale + size[1] / 2]} />}
+        {uiPrefs.crosshair && cursor && (
+          <path
+            className="crosshair"
+            d={`M0,${-(cursor[1] - view.cy) * view.scale + size[1] / 2}H${size[0]}M${(cursor[0] - view.cx) * view.scale + size[0] / 2},0V${size[1]}`}
+          />
+        )}
       </svg>
 
       <div className="vp-overlay vp-top-right">
@@ -1026,25 +1161,86 @@ export function Viewport(props: ViewportProps) {
       )}
       <div className="vp-overlay vp-bottom-left">
         {cursor ? `X ${cursor[0].toFixed(2)}  Y ${cursor[1].toFixed(2)} mm` : galvo ? `Field ${wsW} mm` : `Workspace ${wsW} × ${wsH} mm`}
-        {drawBox && `  ·  ${(drawBox.x1 - drawBox.x0).toFixed(2)} × ${(drawBox.y1 - drawBox.y0).toFixed(2)} mm`}
+        {draw && draw.tool === "circle"
+          ? `  ·  Ø ${(2 * dist(draw.a, draw.b)).toFixed(2)} mm`
+          : drawBox && `  ·  ${(drawBox.x1 - drawBox.x0).toFixed(2)} × ${(drawBox.y1 - drawBox.y0).toFixed(2)} mm`}
         {readout && `  ·  ${readout}`}
       </div>
-      {tool !== "select" && (
+      {props.canvasTool?.overlay(renderCtx)}
+      {isDrawTool(tool) && (
         <div className="vp-overlay vp-top-left hint">
-          Drag to draw {tool === "rect" ? "a rectangle" : "an ellipse"} · tap for 20 mm · Esc to cancel
+          {tool === "circle"
+            ? "Press at the centre and drag the radius"
+            : `Drag to draw ${tool === "rect" ? "a rectangle (Shift: square" : "an ellipse (Shift: circle"}, Ctrl: from the centre)`}{" "}
+          · tap for 20 mm · {tool === "circle" ? "Ctrl: no snap · " : ""}Alt: guides only · Esc to cancel
         </div>
       )}
     </div>
   );
 }
 
+/** A grab position that is not a snap point (a selection with no snap points), as a reference point. */
+function grabPoint(f: Vec2): SnapPoint {
+  return { p: f, kind: "nearest", what: "", owner: "", id: "" };
+}
+
+/** Glyph path for a snap kind at screen point (x, y), Fusion-like: each kind its own shape. */
+function snapGlyph(kind: SnapKind, x: number, y: number): string {
+  const r = 6;
+  switch (kind) {
+    case "center":
+      return `M${x - r},${y}a${r},${r} 0 1,0 ${2 * r},0a${r},${r} 0 1,0 ${-2 * r},0`;
+    case "quadrant":
+      return `M${x},${y - r - 1}L${x + r + 1},${y}L${x},${y + r + 1}L${x - r - 1},${y}Z`;
+    case "endpoint":
+      return `M${x - r},${y - r}h${2 * r}v${2 * r}h${-2 * r}Z`;
+    case "midpoint":
+      return `M${x},${y - r - 1}L${x + r + 1},${y + r - 1}L${x - r - 1},${y + r - 1}Z`;
+    case "intersection":
+      return `M${x - r},${y - r}L${x + r},${y + r}M${x + r},${y - r}L${x - r},${y + r}`;
+    case "nearest":
+      return `M${x - r},${y - r}L${x + r},${y - r}L${x - r},${y + r}L${x + r},${y + r}Z`;
+    case "guide":
+    case "grid":
+      return `M${x - 4},${y}H${x + 4}M${x},${y - 4}V${y + 4}`;
+  }
+}
+
+/** The snap glyph, its label and the dotted alignment guides, drawn in screen pixels on top of the canvas. */
+function SnapOverlay({ hit, at }: { hit: SnapHit; at: (p: Vec2) => Vec2 }) {
+  const [x, y] = at(hit.p);
+  return (
+    <g className={`snap-overlay snap-${hit.kind}`} pointerEvents="none">
+      {hit.guides.map((g, i) => {
+        const a = at(g.from);
+        return (
+          <g key={i}>
+            <path className="snap-guide" d={`M${a[0]},${a[1]}L${x},${y}`} strokeDasharray="2 3" />
+            <path className="snap-guide-source" d={`M${a[0] - 3},${a[1] - 3}h6v6h-6Z`} />
+          </g>
+        );
+      })}
+      <path className="snap-marker" d={snapGlyph(hit.kind, x, y)} />
+      {hit.kind === "center" && <circle className="snap-dot" cx={x} cy={y} r={1.6} />}
+      {hit.label && (
+        <text className="snap-label" x={x + 11} y={y - 9}>
+          {hit.label}
+        </text>
+      )}
+    </g>
+  );
+}
+
 /** A bitmap drawn in its object frame (centred on the local origin; SVG images are y-down, the field is y-up). */
-function ImageObject({ g, t }: { g: { width_mm: number; height_mm: number; mime: string; data_base64: string }; t: Affine }) {
-  const href = useMemo(() => `data:${g.mime};base64,${g.data_base64}`, [g.mime, g.data_base64]);
+function ImageObject({ id, g, t, layer }: { id: string; g: { width_mm: number; height_mm: number; mime: string; data_base64: string }; t: Affine; layer?: Layer }) {
+  const original = useMemo(() => `data:${g.mime};base64,${g.data_base64}`, [g.mime, g.data_base64]);
+  // The layer's dithered preview when the image view is "dithered" (or the Adjust image dialog is open).
+  const dithered = useDitheredHref(id, g, layer);
   return (
     <g transform={`matrix(${t.join(",")})`} pointerEvents="none">
       <image
-        href={href}
+        href={dithered ?? original}
+        style={dithered ? { imageRendering: "pixelated" } : undefined}
         x={-g.width_mm / 2}
         y={-g.height_mm / 2}
         width={g.width_mm}

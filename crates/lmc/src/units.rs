@@ -37,6 +37,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::calibration::Calibration;
 use crate::{LmcError, Result};
 
 /// Galvo word of the field centre.
@@ -105,11 +106,23 @@ pub struct FieldTransform {
     pub negate_x: bool,
     /// Mirror field Y (in the field frame, before any swap).
     pub negate_y: bool,
+    /// Lens corrections (field offset and angle, scale, bulge, skew, trapezoid), applied in field mm after the field
+    /// bound check and before negate and swap. Neutral by default (and then left out of JSON).
+    #[serde(default, skip_serializing_if = "Calibration::is_neutral")]
+    pub calibration: Calibration,
+}
+
+impl FieldTransform {
+    /// A transform without lens corrections.
+    pub fn plain(field_mm: f64, swap_xy: bool, negate_x: bool, negate_y: bool) -> Self {
+        FieldTransform { field_mm, swap_xy, negate_x, negate_y, calibration: Calibration::default() }
+    }
 }
 
 /// Field-frame mm → galvo `(x, y)` words.
 ///
-/// Order: refuse a coordinate that is not finite or not strictly inside `±field_mm / 2`; negate in the **field**
+/// Order: refuse a coordinate that is not finite or not strictly inside `±field_mm / 2`; apply the lens
+/// [`Calibration`] (a corrected point must still encode, else it is refused); negate in the **field**
 /// frame (`negate_x` flips field x, `negate_y` flips field y); then swap (`swap_xy`); then [`mm_to_galvo`] per
 /// axis. The bound is strict on both sides (`-field/2` alone would encode) so the accepted square is the same
 /// whatever the negate settings.
@@ -121,8 +134,9 @@ pub fn field_to_galvo(x_mm: f64, y_mm: f64, t: &FieldTransform) -> Result<(u16, 
             return Err(LmcError::OutOfRange { what: "coordinate", value: v, allowed: "|coordinate| < field/2" });
         }
     }
-    let x = if t.negate_x { -x_mm } else { x_mm };
-    let y = if t.negate_y { -y_mm } else { y_mm };
+    let (cx, cy) = t.calibration.apply(x_mm, y_mm, f);
+    let x = if t.negate_x { -cx } else { cx };
+    let y = if t.negate_y { -cy } else { cy };
     let (gx, gy) = if t.swap_xy { (y, x) } else { (x, y) };
     Ok((mm_to_galvo(gx, f)?, mm_to_galvo(gy, f)?))
 }
@@ -132,7 +146,8 @@ pub fn field_to_galvo(x_mm: f64, y_mm: f64, t: &FieldTransform) -> Result<(u16, 
 pub fn galvo_to_field(gx: u16, gy: u16, t: &FieldTransform) -> (f64, f64) {
     let (ax, ay) = (galvo_to_mm(gx, t.field_mm), galvo_to_mm(gy, t.field_mm));
     let (x, y) = if t.swap_xy { (ay, ax) } else { (ax, ay) };
-    (if t.negate_x { -x } else { x }, if t.negate_y { -y } else { y })
+    let (x, y) = (if t.negate_x { -x } else { x }, if t.negate_y { -y } else { y });
+    t.calibration.invert(x, y, t.field_mm)
 }
 
 /// mm/s → galvo units per ms: `trunc(v × (65535 / field) / 1000)`.
@@ -406,7 +421,7 @@ mod tests {
     }
 
     fn transforms(field_mm: f64) -> impl Iterator<Item = FieldTransform> {
-        (0..8u8).map(move |b| FieldTransform { field_mm, swap_xy: b & 1 != 0, negate_x: b & 2 != 0, negate_y: b & 4 != 0 })
+        (0..8u8).map(move |b| FieldTransform::plain(field_mm, b & 1 != 0, b & 2 != 0, b & 4 != 0))
     }
 
     #[test]
@@ -423,7 +438,7 @@ mod tests {
             assert!((bx - 10.0).abs() < unit && (by - 5.0).abs() < unit, "{t:?}");
         }
         // The case the review found: swap + negate_x sends field (10, 5) to galvo axes (5, -10).
-        let t = FieldTransform { field_mm: 110.0, swap_xy: true, negate_x: true, negate_y: false };
+        let t = FieldTransform::plain(110.0, true, true, false);
         assert_eq!(field_to_galvo(10.0, 5.0, &t), Ok((w(5.0), w(-10.0))));
     }
 
@@ -437,7 +452,7 @@ mod tests {
             assert!(matches!(field_to_galvo(f64::NAN, 0.0, &t), Err(LmcError::NonFinite { .. })));
             assert!(matches!(field_to_galvo(0.0, f64::INFINITY, &t), Err(LmcError::NonFinite { .. })));
         }
-        let bad = FieldTransform { field_mm: 0.0, swap_xy: false, negate_x: false, negate_y: false };
+        let bad = FieldTransform::plain(0.0, false, false, false);
         assert!(field_to_galvo(0.0, 0.0, &bad).is_err());
     }
 
@@ -461,5 +476,24 @@ mod tests {
             let dy = f64::from(b.1) - f64::from(a.1);
             assert_eq!(f64::from(distance_word(a, b)), dx.hypot(dy).trunc());
         }
+    }
+
+    #[test]
+    fn calibration_is_applied_before_negate_and_swap_and_inverted() {
+        let calibration = Calibration { offset_x_mm: 1.0, scale_y: 1.01, angle_deg: 0.5, ..Calibration::default() };
+        for b in 0..8u8 {
+            let plain = FieldTransform::plain(110.0, b & 1 != 0, b & 2 != 0, b & 4 != 0);
+            let t = FieldTransform { calibration, ..plain };
+            let (cx, cy) = calibration.apply(10.0, 5.0, 110.0);
+            assert_eq!(field_to_galvo(10.0, 5.0, &t), field_to_galvo(cx, cy, &plain), "{b:03b}");
+            let (gx, gy) = field_to_galvo(10.0, 5.0, &t).unwrap();
+            let (x, y) = galvo_to_field(gx, gy, &t);
+            assert!((x - 10.0).abs() < 0.01 && (y - 5.0).abs() < 0.01, "{b:03b}");
+        }
+        // A point the correction pushes past the field edge is refused, never clamped.
+        let t = FieldTransform { calibration: Calibration { offset_x_mm: 2.0, ..Calibration::default() }, ..FieldTransform::plain(110.0, false, false, false) };
+        assert!(field_to_galvo(54.0, 0.0, &t).is_err());
+        let json = serde_json::to_value(FieldTransform::plain(110.0, false, false, false)).unwrap();
+        assert!(json.get("calibration").is_none());
     }
 }

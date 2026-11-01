@@ -7,11 +7,14 @@ import { useState } from "react";
 import type { Invocation } from "../api/client.ts";
 import * as C from "../api/commands.ts";
 import { boxOutside, frequencyRange, nearestPulseWidth, pulseWidths } from "../api/laser.ts";
+import { useCircleLock } from "../circleLock.ts";
 import { MAX_SUB_LAYERS, clampPass, cleanupPass, passAfterDelete, passAfterMove, passColor, passEntries, passFromResult, settingsSummary } from "../api/passes.ts";
 import type { Cleanup, CutSettings, FillMode, GDocument, Layer, MachineStatus, Vec2 } from "../api/types.ts";
 import { roundMm } from "../editing.ts";
 import { normDeg, objectBounds, transformParts, unionBoxes, type Box } from "../geometry.ts";
 import { topGroup, unitsOf, type Selection } from "../selection.ts";
+import { circleOf, shapeKindName } from "../snapping.ts";
+import { ImageSettings } from "./ImageSettings.tsx";
 import type { ArrangeAction } from "./Toolbar.tsx";
 import { CheckField, ColorField, Icon, NumberField, PairField, TextField, fmt } from "./ui.tsx";
 
@@ -63,10 +66,13 @@ function anchorPoint(b: Box, a: Anchor): Vec2 {
 function ObjectSection({ doc, selection, run, report, onArrange, workspaceMm }: PropertiesPanelProps & { doc: GDocument }) {
   const [lockAspect, setLockAspect] = useState(true);
   const [anchor, setAnchor] = useState<Anchor>("c");
+  const [keepRound, setKeepRound] = useCircleLock();
   const objs = doc.objects.filter((o) => selection.objects.includes(o.id));
   const bounds = unionBoxes(objs.map(objectBounds));
   if (objs.length === 0 || !bounds) return null;
   const single = objs.length === 1 ? objs[0] : undefined;
+  // A lone round ellipse is a circle: Diameter plus "Keep round" (Fusion's circle has only a diameter).
+  const circle = single ? circleOf(single) : null;
   const ids = objs.map((o) => o.id);
   const units = unitsOf(doc, ids);
   const groupId = units.length === 1 && single === undefined ? topGroup(doc, ids[0]) : null;
@@ -88,7 +94,7 @@ function ObjectSection({ doc, selection, run, report, onArrange, workspaceMm }: 
   const setSize = (nw: number | null, nh: number | null) => {
     let sx = nw !== null && w > 1e-9 ? nw / w : 1;
     let sy = nh !== null && h > 1e-9 ? nh / h : 1;
-    if (lockAspect) {
+    if (lockAspect || (circle && keepRound)) {
       if (nw !== null) sy = sx;
       else sx = sy;
     }
@@ -97,9 +103,16 @@ function ObjectSection({ doc, selection, run, report, onArrange, workspaceMm }: 
     exec(C.transform(ids, { scale: [round6(sx), round6(sy)], about: [roundMm(ax), roundMm(ay)] }));
   };
 
+  /** New circle diameter, about the circle's centre. */
+  const setDiameter = (d: number | null) => {
+    if (!circle || d === null || !(d > 0) || circle.diameter <= 1e-9) return;
+    const f = round6(d / circle.diameter);
+    if (f !== 1) exec(C.transform(ids, { scale: [f, f], about: [roundMm(circle.center[0]), roundMm(circle.center[1])] }));
+  };
+
   return (
     <section className="prop-section">
-      <h3>{single ? "Object" : group ? `Group "${group.name}"` : `${units.length > 1 ? `${units.length} items` : "Group"} · ${objs.length} objects`}</h3>
+      <h3>{single ? shapeKindName(single) : group ? `Group "${group.name}"` : `${units.length > 1 ? `${units.length} items` : "Group"} · ${objs.length} objects`}</h3>
       {outside && <p className="warn-text">Part of the selection is outside the galvo field and cannot be marked.</p>}
       {single && <TextField label="Name" value={single.name} onCommit={(name) => exec(C.rename(single.id, name))} />}
       <label className="field">
@@ -134,6 +147,12 @@ function ObjectSection({ doc, selection, run, report, onArrange, workspaceMm }: 
         <NumberField label="H" unit="mm" value={h} min={0.01} onCommit={(v) => setSize(null, v)} />
       </div>
       <CheckField label="Lock aspect" checked={lockAspect} onChange={setLockAspect} />
+      {circle && (
+        <>
+          <NumberField label="Diameter" unit="mm" value={circle.diameter} min={0.01} onCommit={setDiameter} />
+          <CheckField label="Keep round" checked={keepRound} onChange={setKeepRound} />
+        </>
+      )}
       <NumberField
         label={single ? "Rotation" : "Rotate by"}
         unit="°"
@@ -266,6 +285,7 @@ export function LayerSection({
       <CheckField label="Output" checked={layer.output} onChange={(output) => setL({ output })} />
 
       <PassEditor layer={layer} machine={machine} run={run} report={report} has={has} />
+      <ImageSettings layer={layer} doc={doc} run={run} report={report} has={has} />
 
       {doc && has?.(C.OPT.layerDelete) && others.length > 0 && (
         <div className="btn-row">

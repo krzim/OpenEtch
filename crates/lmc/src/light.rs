@@ -3,12 +3,15 @@
 //! # Invariant
 //!
 //! Every list a `LightList` produces contains only `ReadyMark`, `JumpSpeed`, `JumpDelay`, `JumpTo`, `DelayTime`,
-//! `WritePort(0x0000)`, `WritePort(RED_POINTER_BIT)` and `EndOfList`. It cannot hold `MarkTo`, `LaserOnPoint`,
+//! `WritePort(0x0000)`, `WritePort(bits)` for a [`PointerBits`] (never the laser-enable bit) and `EndOfList`. It
+//! cannot hold `MarkTo`, `LaserOnPoint`,
 //! `FiberOpenMO`, `MarkCurrent` or any port write with the laser-enable bit (bit 0) set, so [`crate::emits_light_only`]
 //! is true for every output. This is enforced by the type, not by convention:
 //!
 //! - the command vector is private and only the methods below push to it, each with a fixed opcode;
-//! - the only port writes are the constants `0x0000` and [`RED_POINTER_BIT`] (`0x0100`), with no bits argument;
+//! - the only port writes are `0x0000` and a [`PointerBits`] value: [`RED_POINTER_BIT`] (`0x0100`) or another
+//!   pointer output such as a focus light, which [`PointerBits::new`] refuses when it includes the laser-enable bit
+//!   (bit 0) or is empty;
 //! - there is no conversion from [`crate::MarkingList`] or from arbitrary [`ListCommand`]s.
 //!
 //! A port write replaces the whole port word, so turning the pointer on or off also clears the laser-enable bit.
@@ -50,6 +53,47 @@ pub const RED_POINTER_BIT: u16 = 1 << 8;
 
 // The invariant depends on these two being different bits.
 const _: () = assert!(RED_POINTER_BIT & crate::LASER_ENABLE_BIT == 0);
+
+/// Output port bits a light list may switch on: a non-empty set without [`crate::LASER_ENABLE_BIT`] (the red
+/// pointer, a second focus pointer, or both). The only way to make one is [`PointerBits::new`] (or
+/// [`PointerBits::RED`]), which refuses the laser-enable bit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PointerBits(u16);
+
+impl PointerBits {
+    /// The red aiming pointer, bit 8.
+    pub const RED: PointerBits = PointerBits(RED_POINTER_BIT);
+
+    /// `bits` as pointer outputs. Refused when empty or when it includes the laser-enable bit.
+    pub fn new(bits: u16) -> Result<Self> {
+        if bits == 0 || bits & crate::LASER_ENABLE_BIT != 0 {
+            return Err(LmcError::OutOfRange {
+                what: "pointer port bits",
+                value: f64::from(bits),
+                allowed: "non-zero, without the laser-enable bit 0",
+            });
+        }
+        Ok(PointerBits(bits))
+    }
+
+    /// One output bit (1..=15) as pointer bits.
+    pub fn bit(bit: u8) -> Result<Self> {
+        if bit > 15 {
+            return Err(LmcError::OutOfRange { what: "pointer port bit", value: f64::from(bit), allowed: "1..=15" });
+        }
+        Self::new(1u16 << bit)
+    }
+
+    /// These bits and `other`'s together.
+    pub fn with(self, other: PointerBits) -> PointerBits {
+        PointerBits(self.0 | other.0)
+    }
+
+    /// The port word.
+    pub fn bits(self) -> u16 {
+        self.0
+    }
+}
 
 /// Builds a red-pointer framing list. See the module docs for the no-emission invariant.
 ///
@@ -109,6 +153,12 @@ impl LightList {
     /// Port word = [`RED_POINTER_BIT`] only (laser-enable bit cleared).
     pub fn red_pointer_on(&mut self) -> &mut Self {
         self.commands.push(ListCommand::WritePort { bits: RED_POINTER_BIT });
+        self
+    }
+
+    /// Port word = `pointer` only (laser-enable bit cleared): the red pointer, a focus pointer, or both.
+    pub fn pointer_on(&mut self, pointer: PointerBits) -> &mut Self {
+        self.commands.push(ListCommand::WritePort { bits: pointer.0 });
         self
     }
 
@@ -186,5 +236,18 @@ mod tests {
     #[test]
     fn zero_jump_speed_refused() {
         assert!(LightList::new().jump_speed(0).is_err());
+    }
+
+    #[test]
+    fn pointer_bits_never_include_laser_enable() {
+        assert!(PointerBits::new(0).is_err());
+        assert!(PointerBits::new(crate::LASER_ENABLE_BIT).is_err());
+        assert!(PointerBits::new(RED_POINTER_BIT | crate::LASER_ENABLE_BIT).is_err());
+        assert!(PointerBits::bit(0).is_err() && PointerBits::bit(16).is_err());
+        let both = PointerBits::RED.with(PointerBits::bit(9).unwrap());
+        assert_eq!(both.bits(), 0x0300);
+        let mut l = LightList::new();
+        l.pointer_on(both).jump_to(1, 2).red_pointer_off();
+        assert!(emits_light_only(&l.finish()));
     }
 }

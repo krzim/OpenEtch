@@ -12,6 +12,11 @@
 //!   drop guard.
 //! - The link is private: nothing outside this crate can send a single command or packet past these rules.
 //!   [`Controller::replace_link`] swaps the link and forgets the init.
+//! - Pause ([`RunControl::request_pause`]) only ever stops the list (`StopList`); resume (`RestartList`) continues
+//!   the run that was armed; an abort request always wins over a pause. A run reports its progress (packets sent of
+//!   the total, paused or not) through the same [`RunControl`].
+//! - The extension axis ([`Controller::move_axis`]) and a run's axis moves between parts never emit: during a run's
+//!   axis move the MO is closed and opened again afterwards (each part's list waits the open-MO delay again).
 //!
 //! Where the init, run and abort sequences differ from the references is listed in one place, the
 //! "Deviations from the reference sequences" section of [`Controller`].
@@ -44,11 +49,11 @@
 // SOFTWARE.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use corfile::CorTable;
-use lmc::{CENTER, LightList, Packet, Single, StatusWord, units};
+use lmc::{CENTER, LightList, Packet, PointerBits, Single, StatusWord, units};
 use serde::{Deserialize, Serialize};
 
 use crate::armed::Armed;
@@ -91,6 +96,12 @@ pub enum ControllerError {
     /// An [`AbortHandle`] was used; the abort sequence has been sent.
     #[error("aborted")]
     Aborted,
+    /// The profile's stop-marking input was seen set while a run streamed; the abort sequence has been sent.
+    #[error("stopped by the stop-marking input (bit {0})")]
+    StopInput(u8),
+    /// The extension axis did not stop moving within the limit.
+    #[error("the extension axis did not stop within {0:?}")]
+    AxisTimeout(Duration),
 }
 
 type Result<T, E = ControllerError> = std::result::Result<T, E>;
@@ -113,6 +124,113 @@ pub enum ControllerState {
 pub struct BoardInfo {
     pub serial: Reply,
     pub version: Reply,
+}
+
+/// Longest wait for the extension axis to stop moving.
+pub const AXIS_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// One part of a run: an optional extension-axis move (rotary step or Z position, as the axis's step word), then
+/// a list. A plain job is one part without a move.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunPart {
+    /// Move the extension axis here (`MoveAxisTo`) before this part's list, with the MO closed.
+    pub axis_position: Option<u16>,
+    pub packets: Vec<Packet>,
+}
+
+impl RunPart {
+    /// A part without an axis move.
+    pub fn list(packets: Vec<Packet>) -> Self {
+        RunPart { axis_position: None, packets }
+    }
+}
+
+/// Where a run is, as [`RunControl::progress`] reports it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunProgress {
+    /// Packets sent to the board so far in this run.
+    pub packets_sent: usize,
+    /// Packets of the whole run.
+    pub packets_total: usize,
+    /// The part being run (0-based) and how many there are.
+    pub part: usize,
+    pub parts: usize,
+    /// The list is paused (`StopList` sent, `RestartList` not yet).
+    pub paused: bool,
+}
+
+#[derive(Debug, Default)]
+struct RunShared {
+    pause_requested: AtomicBool,
+    paused: AtomicBool,
+    packets_sent: AtomicUsize,
+    packets_total: AtomicUsize,
+    part: AtomicUsize,
+    parts: AtomicUsize,
+}
+
+/// Pause, resume and progress of the controller's runs, usable from another thread while [`Controller::run`]
+/// holds the controller (like [`AbortHandle`]). Pausing sends `StopList` at the next packet or status poll and
+/// resuming `RestartList` (galvoplotter's and meerk40t's `pause()` / `resume()`); an abort request ends a paused run
+/// too. A pause requested while no run streams is dropped when the next run starts.
+#[derive(Debug, Clone, Default)]
+pub struct RunControl(Arc<RunShared>);
+
+impl RunControl {
+    pub fn request_pause(&self) {
+        self.0.pause_requested.store(true, Ordering::SeqCst);
+    }
+
+    pub fn request_resume(&self) {
+        self.0.pause_requested.store(false, Ordering::SeqCst);
+    }
+
+    /// Whether a pause is asked for (it takes effect at the next packet or poll).
+    pub fn pause_requested(&self) -> bool {
+        self.0.pause_requested.load(Ordering::SeqCst)
+    }
+
+    /// Whether the board's list is paused right now.
+    pub fn is_paused(&self) -> bool {
+        self.0.paused.load(Ordering::SeqCst)
+    }
+
+    pub fn progress(&self) -> RunProgress {
+        RunProgress {
+            packets_sent: self.0.packets_sent.load(Ordering::SeqCst),
+            packets_total: self.0.packets_total.load(Ordering::SeqCst),
+            part: self.0.part.load(Ordering::SeqCst),
+            parts: self.0.parts.load(Ordering::SeqCst),
+            paused: self.is_paused(),
+        }
+    }
+
+    fn start(&self, parts: &[RunPart]) {
+        self.0.pause_requested.store(false, Ordering::SeqCst);
+        self.0.paused.store(false, Ordering::SeqCst);
+        self.0.packets_sent.store(0, Ordering::SeqCst);
+        self.0.packets_total.store(parts.iter().map(|p| p.packets.len()).sum(), Ordering::SeqCst);
+        self.0.part.store(0, Ordering::SeqCst);
+        self.0.parts.store(parts.len(), Ordering::SeqCst);
+    }
+}
+
+/// How a frame is traced: which pointer outputs light, whether the pointer is off between shapes (blanking), and the
+/// travel speed.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FrameStyle {
+    pub pointer: PointerBits,
+    pub blanking: bool,
+    /// Pointer travel speed, mm/s; `None` uses the profile's `red_light_speed_mm_s`. Refused above the profile's
+    /// `max_jump_speed_mm_s`.
+    pub speed_mm_s: Option<f64>,
+}
+
+impl FrameStyle {
+    /// The red pointer, with the profile's blanking and frame speed.
+    pub fn for_profile(profile: &MachineProfile) -> Self {
+        FrameStyle { pointer: PointerBits::RED, blanking: profile.blanking, speed_mm_s: None }
+    }
 }
 
 /// The result of a completed run.
@@ -208,6 +326,8 @@ pub struct Controller<L: Link> {
     profile: Option<MachineProfile>,
     state: ControllerState,
     abort: AbortHandle,
+    control: RunControl,
+    info: Option<BoardInfo>,
 }
 
 impl<L: Link> Controller<L> {
@@ -217,7 +337,16 @@ impl<L: Link> Controller<L> {
     }
 
     pub fn with_settings(link: L, settings: InitSettings, poll: PollConfig) -> Self {
-        Controller { link, settings, poll, profile: None, state: ControllerState::Uninitialized, abort: AbortHandle::default() }
+        Controller {
+            link,
+            settings,
+            poll,
+            profile: None,
+            state: ControllerState::Uninitialized,
+            abort: AbortHandle::default(),
+            control: RunControl::default(),
+            info: None,
+        }
     }
 
     pub fn link(&self) -> &L {
@@ -255,6 +384,66 @@ impl<L: Link> Controller<L> {
         self.abort.clone()
     }
 
+    /// A handle that pauses and resumes runs and reads their progress from another thread.
+    pub fn run_control(&self) -> RunControl {
+        self.control.clone()
+    }
+
+    /// The board's identification as read by the last successful `init` (or [`Controller::refresh_info`]).
+    pub fn board_info(&self) -> Option<&BoardInfo> {
+        self.info.as_ref()
+    }
+
+    /// Read `GetSerialNo` and `GetVersion` again (LightBurn's Get Controller Info). Refused while running or
+    /// framing; sends nothing that can emit.
+    pub fn refresh_info(&mut self) -> Result<BoardInfo> {
+        if self.state == ControllerState::Uninitialized {
+            return Err(ControllerError::NotInitialized);
+        }
+        if self.state != ControllerState::Idle {
+            return Err(ControllerError::Busy(self.state));
+        }
+        let info = BoardInfo { serial: self.reply(Single::get_serial_no())?, version: self.reply(Single::get_version())? };
+        self.info = Some(info.clone());
+        Ok(info)
+    }
+
+    /// Move the extension axis to step `position` (a Z lift, or a rotary outside a run) and wait until the board
+    /// stops reporting AXIS (at most [`AXIS_TIMEOUT`]). Needs an initialised, idle board (a running frame is stopped
+    /// first) and an axis in the profile; the MO is closed first. Nothing here can emit. An abort request ends the
+    /// wait (and sends the abort sequence).
+    pub fn move_axis(&mut self, position: u16) -> Result<()> {
+        let profile = self.profile.clone().ok_or(ControllerError::NotInitialized)?;
+        let axis = profile.axis.clone().ok_or_else(|| ControllerError::Refused("the profile has no extension axis".into()))?;
+        if self.state == ControllerState::Running {
+            return Err(ControllerError::Busy(self.state));
+        }
+        if self.state == ControllerState::Framing {
+            self.stop_frame()?;
+        }
+        let r = self.single(Single::fiber_set_mo(false)).and_then(|_| self.axis_to(position, axis.invert));
+        if let Err(e) = &r {
+            self.abort_after(e);
+        }
+        r
+    }
+
+    /// `MoveAxisTo` and wait for the AXIS status bit to clear.
+    fn axis_to(&mut self, position: u16, invert: bool) -> Result<()> {
+        self.single(Single::move_axis_to(position, invert))?;
+        let start = Instant::now();
+        loop {
+            self.check_abort()?;
+            if !self.poll_status()?.axis() {
+                return Ok(());
+            }
+            if start.elapsed() >= AXIS_TIMEOUT {
+                return Err(ControllerError::AxisTimeout(AXIS_TIMEOUT));
+            }
+            self.pause();
+        }
+    }
+
     /// Connect-time setup, in galvoplotter's `init_laser` order: `GetSerialNo`, `GetVersion`, then `StopExecute` and
     /// `WritePort(0)` (a deviation, see the type docs: stops a list left running and drops the laser-enable bit),
     /// `Reset`, the correction upload (`WriteCorTable(1)` + one `WriteCorLine` per node, or `WriteCorTable(0)` without
@@ -280,7 +469,9 @@ impl<L: Link> Controller<L> {
         }
         self.profile = Some(profile.clone());
         self.state = ControllerState::Idle;
-        Ok(BoardInfo { serial, version })
+        let info = BoardInfo { serial, version };
+        self.info = Some(info.clone());
+        Ok(info)
     }
 
     /// Poll the board status (`GetVersion`, word 3). A finished frame moves the state back to idle.
@@ -309,10 +500,18 @@ impl<L: Link> Controller<L> {
     /// is sent.
     pub fn frame(&mut self, outline: &[Vec<(f64, f64)>], loops: u32) -> Result<usize> {
         let profile = self.profile.clone().ok_or(ControllerError::NotInitialized)?;
+        self.frame_styled(outline, loops, &FrameStyle::for_profile(&profile))
+    }
+
+    /// [`Controller::frame`] with a [`FrameStyle`]: which pointer outputs light (the red pointer, the profile's focus
+    /// light, or both), blanking between shapes, and the travel speed. Every point first goes through the profile's
+    /// red-dot alignment ([`crate::RedDot`]), then the shared field transform (lens correction included).
+    pub fn frame_styled(&mut self, outline: &[Vec<(f64, f64)>], loops: u32, style: &FrameStyle) -> Result<usize> {
+        let profile = self.profile.clone().ok_or(ControllerError::NotInitialized)?;
         if self.state == ControllerState::Running {
             return Err(ControllerError::Busy(self.state));
         }
-        let packets = light_packets(&profile, outline, loops)?;
+        let packets = light_packets(&profile, outline, loops, style)?;
         if !lmc::emits_light_only(&packets) {
             // Unreachable by LightList's invariant; checked anyway.
             return Err(ControllerError::Refused("frame packets failed the light-only check".into()));
@@ -329,9 +528,16 @@ impl<L: Link> Controller<L> {
         Ok(packets.len())
     }
 
-    /// Stop a running frame: `StopExecute`, `ResetList`, `WritePort(0)` (pointer off). Every step is tried.
+    /// Stop a running frame: `StopExecute`, `ResetList`, `WritePort(0)` (pointer off), then `GotoXY` to the red
+    /// dot's rest position when the profile sets one. Every step is tried.
     pub fn stop_frame(&mut self) -> Result<()> {
-        let result = self.send_all(&[Single::stop_execute(), Single::reset_list(), Single::write_port(0)]);
+        let mut cmds = vec![Single::stop_execute(), Single::reset_list(), Single::write_port(0)];
+        if let Some(p) = self.profile.as_ref().filter(|p| p.red_dot.rest_x_mm != 0.0 || p.red_dot.rest_y_mm != 0.0)
+            && let Ok((x, y)) = field_to_galvo(p, p.red_dot.rest_x_mm, p.red_dot.rest_y_mm)
+        {
+            cmds.push(Single::goto_xy(x, y, 0));
+        }
+        let result = self.send_all(&cmds);
         if self.state == ControllerState::Framing {
             self.state = ControllerState::Idle;
         }
@@ -350,11 +556,27 @@ impl<L: Link> Controller<L> {
     /// abort sequence if this call is left any other way, including a panic unwinding through it (should the link
     /// panic again inside that abort, the process aborts, which also closes the USB handle).
     pub fn run(&mut self, packets: &[Packet], armed: Armed) -> Result<RunReport> {
+        self.run_parts(&[RunPart::list(packets.to_vec())], armed)
+    }
+
+    /// [`Controller::run`] for a job of several parts (rotary strips, Z steps): every part is checked before
+    /// anything is sent; between parts the board is waited idle, the MO closed, the extension axis moved
+    /// (`MoveAxisTo`, waiting for AXIS to clear), the list reset and the MO opened again. A part with an axis move
+    /// needs an axis in the profile.
+    pub fn run_parts(&mut self, parts: &[RunPart], armed: Armed) -> Result<RunReport> {
         let profile = self.profile.clone().ok_or(ControllerError::NotInitialized)?;
         if self.state == ControllerState::Running {
             return Err(ControllerError::Busy(self.state));
         }
-        check_job(&profile, packets)?;
+        if parts.is_empty() {
+            return Err(ControllerError::Job(JobCheckError::Empty));
+        }
+        for part in parts {
+            check_job(&profile, &part.packets)?;
+        }
+        if parts.iter().any(|p| p.axis_position.is_some()) && profile.axis.is_none() {
+            return Err(ControllerError::Refused("the job moves the extension axis but the profile has none".into()));
+        }
         if self.state == ControllerState::Framing {
             self.stop_frame()?;
         }
@@ -362,25 +584,43 @@ impl<L: Link> Controller<L> {
             self.abort_after(&ControllerError::Aborted);
             return Err(ControllerError::Aborted);
         }
-        tracing::info!(run_id = armed.run_id(), packets = packets.len(), "starting armed run");
+        let total: usize = parts.iter().map(|p| p.packets.len()).sum();
+        tracing::info!(run_id = armed.run_id(), packets = total, parts = parts.len(), "starting armed run");
         self.state = ControllerState::Running;
+        self.control.start(parts);
         let mut guard = RunGuard { ctl: self, done: false };
-        let result = guard.ctl.run_inner(&profile, packets);
+        let result = guard.ctl.run_inner(&profile, parts);
+        guard.ctl.control.0.paused.store(false, Ordering::SeqCst);
         if let Err(e) = &result {
             guard.ctl.abort_after(e);
         } else {
             guard.ctl.state = ControllerState::Idle;
         }
         guard.done = true;
-        result.map(|mark_time| RunReport { run_id: armed.run_id().to_owned(), packets: packets.len(), mark_time })
+        result.map(|mark_time| RunReport { run_id: armed.run_id().to_owned(), packets: total, mark_time })
     }
 
-    fn run_inner(&mut self, profile: &MachineProfile, packets: &[Packet]) -> Result<Option<Reply>> {
-        self.single(Single::reset_list())?;
-        self.single(Single::write_port(profile.laser_enable_mask()))?;
-        self.single(Single::fiber_set_mo(true))?;
-        self.stream(packets)?;
-        self.wait_idle()?;
+    fn run_inner(&mut self, profile: &MachineProfile, parts: &[RunPart]) -> Result<Option<Reply>> {
+        let invert = profile.axis.as_ref().is_some_and(|a| a.invert);
+        for (i, part) in parts.iter().enumerate() {
+            self.control.0.part.store(i, Ordering::SeqCst);
+            if let Some(position) = part.axis_position {
+                if i > 0 {
+                    self.single(Single::fiber_set_mo(false))?;
+                }
+                self.check_abort()?;
+                self.axis_to(position, invert)?;
+            }
+            self.single(Single::reset_list())?;
+            if i == 0 {
+                self.single(Single::write_port(profile.laser_enable_mask()))?;
+            }
+            if i == 0 || part.axis_position.is_some() {
+                self.single(Single::fiber_set_mo(true))?;
+            }
+            self.stream(&part.packets)?;
+            self.wait_idle()?;
+        }
         self.single(Single::fiber_set_mo(false))?;
         self.single(Single::write_port(0))?;
         self.single(Single::get_mark_time())
@@ -440,6 +680,45 @@ impl<L: Link> Controller<L> {
         if self.abort.is_requested() { Err(ControllerError::Aborted) } else { Ok(()) }
     }
 
+    /// While running: the stop-marking input (when the profile names one) and a requested pause. A pause sends
+    /// `StopList` and then waits (polling, abort and stop input checked) until resumed, then sends `RestartList`.
+    /// Returns how long it was paused.
+    fn service_run(&mut self) -> Result<Duration> {
+        self.check_abort()?;
+        if self.state != ControllerState::Running {
+            return Ok(Duration::ZERO);
+        }
+        self.check_stop_input()?;
+        if !self.control.pause_requested() {
+            return Ok(Duration::ZERO);
+        }
+        let start = Instant::now();
+        self.single(Single::stop_list())?;
+        self.control.0.paused.store(true, Ordering::SeqCst);
+        tracing::info!("run paused");
+        while self.control.pause_requested() {
+            self.check_abort()?;
+            self.check_stop_input()?;
+            self.poll_status()?;
+            if self.poll.interval.is_zero() {
+                std::thread::sleep(Duration::from_millis(1));
+            } else {
+                self.pause();
+            }
+        }
+        self.check_abort()?;
+        self.single(Single::restart_list())?;
+        self.control.0.paused.store(false, Ordering::SeqCst);
+        tracing::info!("run resumed");
+        Ok(start.elapsed())
+    }
+
+    fn check_stop_input(&mut self) -> Result<()> {
+        let Some(bit) = self.profile.as_ref().and_then(|p| p.stop_mark_input_bit) else { return Ok(()) };
+        let inputs = self.reply(Single::read_port())?[1];
+        if inputs & (1u16 << (bit & 15)) != 0 { Err(ControllerError::StopInput(bit)) } else { Ok(()) }
+    }
+
     fn pause(&self) {
         if !self.poll.interval.is_zero() {
             std::thread::sleep(self.poll.interval);
@@ -447,9 +726,9 @@ impl<L: Link> Controller<L> {
     }
 
     fn wait_ready(&mut self) -> Result<()> {
-        let start = Instant::now();
+        let mut start = Instant::now();
         loop {
-            self.check_abort()?;
+            start += self.service_run()?;
             if self.poll_status()?.ready() {
                 return Ok(());
             }
@@ -461,9 +740,9 @@ impl<L: Link> Controller<L> {
     }
 
     fn wait_idle(&mut self) -> Result<()> {
-        let start = Instant::now();
+        let mut start = Instant::now();
         loop {
-            self.check_abort()?;
+            start += self.service_run()?;
             if self.poll_status()?.idle() {
                 return Ok(());
             }
@@ -484,6 +763,9 @@ impl<L: Link> Controller<L> {
             self.wait_ready()?;
             self.check_abort()?;
             self.link.send_packet(packet)?;
+            if self.state == ControllerState::Running {
+                self.control.0.packets_sent.fetch_add(1, Ordering::SeqCst);
+            }
             self.single(Single::set_end_of_list())?;
             if i + 1 > 2 && !executing {
                 self.single(Single::execute_list())?;
@@ -517,14 +799,21 @@ impl<L: Link> Drop for RunGuard<'_, L> {
     }
 }
 
-/// The frame list for `outline`, `loops` times, as packets. See [`Controller::frame`].
-fn light_packets(profile: &MachineProfile, outline: &[Vec<(f64, f64)>], loops: u32) -> Result<Vec<Packet>> {
+/// The frame list for `outline`, `loops` times, as packets. See [`Controller::frame_styled`].
+fn light_packets(profile: &MachineProfile, outline: &[Vec<(f64, f64)>], loops: u32, style: &FrameStyle) -> Result<Vec<Packet>> {
     if !(1..=MAX_FRAME_LOOPS).contains(&loops) {
         return Err(ControllerError::Refused(format!("loops must be 1..={MAX_FRAME_LOOPS}, got {loops}")));
     }
     let mut polys: Vec<Vec<(u16, u16)>> = Vec::new();
     for poly in outline.iter().filter(|p| !p.is_empty()) {
-        polys.push(poly.iter().map(|&(x, y)| field_to_galvo(profile, x, y)).collect::<Result<_, _>>()?);
+        polys.push(
+            poly.iter()
+                .map(|&(x, y)| {
+                    let (dx, dy) = profile.red_dot.apply(x, y);
+                    field_to_galvo(profile, dx, dy)
+                })
+                .collect::<Result<_, _>>()?,
+        );
     }
     let points: usize = polys.iter().map(|p| p.len() + 2).sum();
     if points == 0 {
@@ -534,20 +823,27 @@ fn light_packets(profile: &MachineProfile, outline: &[Vec<(f64, f64)>], loops: u
     if points.saturating_mul(loops as usize) > budget.saturating_sub(8) {
         return Err(ControllerError::Refused(format!("frame too large: {points} points x {loops} loops")));
     }
+    let speed = style.speed_mm_s.unwrap_or(profile.red_light_speed_mm_s);
+    if !(speed.is_finite() && speed > 0.0 && speed <= profile.max_jump_speed_mm_s) {
+        return Err(ControllerError::Refused(format!(
+            "frame speed {speed} mm/s must be positive and at most the profile's {} mm/s",
+            profile.max_jump_speed_mm_s
+        )));
+    }
     let mut list = LightList::new();
-    list.jump_speed(units::speed_to_units(profile.red_light_speed_mm_s, profile.field_mm)?)?;
+    list.jump_speed(units::speed_to_units(speed, profile.field_mm)?)?;
     list.jump_delay(units::delay_word(profile.timing.jump_delay_max_us)?);
     let mut lit = false;
     for _ in 0..loops {
         for poly in &polys {
             let (&(x0, y0), rest) = poly.split_first().ok_or_else(|| ControllerError::Refused("empty polyline".into()))?;
-            if lit && polys.len() > 1 {
+            if lit && polys.len() > 1 && style.blanking {
                 list.red_pointer_off();
                 lit = false;
             }
             list.jump_to(x0, y0);
             if !lit {
-                list.red_pointer_on();
+                list.pointer_on(style.pointer);
                 lit = true;
             }
             for &(x, y) in rest {
@@ -906,12 +1202,12 @@ mod tests {
         let w = |v: f64| units::mm_to_galvo(v, 153.75).unwrap();
         for bits in 0..8u8 {
             let profile = MachineProfile { swap_xy: bits & 1 != 0, negate_x: bits & 2 != 0, negate_y: bits & 4 != 0, ..b6() };
-            let packets = light_packets(&profile, &[vec![(10.0, 5.0), (-20.0, 7.5)]], 1).unwrap();
+            let packets = light_packets(&profile, &[vec![(10.0, 5.0), (-20.0, 7.5)]], 1, &FrameStyle::for_profile(&profile)).unwrap();
             let jumps: Vec<(u16, u16)> = lmc::decode(&packets)
                 .into_iter()
                 .filter_map(|c| if let ListCommand::JumpTo { x, y, .. } = c { Some((x, y)) } else { None })
                 .collect();
-            let t = lmc::FieldTransform { field_mm: 153.75, swap_xy: profile.swap_xy, negate_x: profile.negate_x, negate_y: profile.negate_y };
+            let t = lmc::FieldTransform::plain(153.75, profile.swap_xy, profile.negate_x, profile.negate_y);
             assert_eq!(profile.field_transform(), t);
             for (i, (x, y)) in [(10.0, 5.0), (-20.0, 7.5)].into_iter().enumerate() {
                 let direct = units::field_to_galvo(x, y, &t).unwrap();
@@ -938,5 +1234,228 @@ mod tests {
         let outline: Vec<(f64, f64)> = (0..300).map(|i| (f64::from(i) * 0.1, 0.0)).collect();
         assert!(matches!(c.frame(&[outline], 1), Err(ControllerError::NotReady(_))));
         assert_eq!(c.link().singles().last(), Some(&Single::goto_xy(CENTER, CENTER, 0)));
+    }
+
+    /// A link that pauses the run (through its [`RunControl`]) when packet `pause_at` is sent and resumes it after
+    /// `resume_after` status polls; it can also raise an input bit after some packets.
+    struct ScriptedLink {
+        inner: SimLink,
+        control: Arc<std::sync::Mutex<Option<RunControl>>>,
+        pause_at: usize,
+        resume_after: usize,
+        input_at: Option<(usize, u16)>,
+        packets: usize,
+        polls_paused: usize,
+    }
+
+    impl Link for ScriptedLink {
+        fn send_single(&mut self, cmd: Single) -> Result<Option<Reply>, LinkError> {
+            if cmd == Single::get_version() && self.inner.paused() {
+                self.polls_paused += 1;
+                if self.polls_paused >= self.resume_after
+                    && let Some(c) = self.control.lock().unwrap().as_ref()
+                {
+                    c.request_resume();
+                }
+            }
+            self.inner.send_single(cmd)
+        }
+
+        fn send_packet(&mut self, packet: &Packet) -> Result<(), LinkError> {
+            self.packets += 1;
+            if self.packets == self.pause_at
+                && let Some(c) = self.control.lock().unwrap().as_ref()
+            {
+                c.request_pause();
+            }
+            if let Some((at, bits)) = self.input_at
+                && self.packets == at
+            {
+                self.inner.set_inputs(bits);
+            }
+            self.inner.send_packet(packet)
+        }
+    }
+
+    fn scripted(pause_at: usize, resume_after: usize, input_at: Option<(usize, u16)>, profile: &MachineProfile) -> Controller<ScriptedLink> {
+        let control = Arc::new(std::sync::Mutex::new(None));
+        let link = ScriptedLink {
+            inner: SimLink::new(),
+            control: control.clone(),
+            pause_at,
+            resume_after,
+            input_at,
+            packets: 0,
+            polls_paused: 0,
+        };
+        let mut c = Controller::with_settings(link, InitSettings::default(), PollConfig::immediate());
+        *control.lock().unwrap() = Some(c.run_control());
+        c.init(profile, None).unwrap();
+        c
+    }
+
+    #[test]
+    fn pause_sends_stop_list_and_resume_restart_list() {
+        let mut c = scripted(2, 5, None, &b6());
+        let packets = job();
+        let control = c.run_control();
+        c.run(&packets, Armed::approved_in_ui("run-p".into())).unwrap();
+        let singles: Vec<u16> = c.link().inner.singles_without_polls().iter().map(Single::opcode).collect();
+        let stop = singles.iter().position(|o| *o == op::STOP_LIST).expect("paused");
+        let restart = singles.iter().position(|o| *o == op::RESTART_LIST).expect("resumed");
+        assert!(stop < restart);
+        assert_eq!(singles.iter().filter(|o| **o == op::STOP_LIST).count(), 1);
+        assert!(c.link().polls_paused >= 5);
+        let progress = control.progress();
+        assert_eq!((progress.packets_sent, progress.packets_total, progress.paused), (packets.len(), packets.len(), false));
+        assert_eq!((progress.part, progress.parts), (0, 1));
+        assert_eq!(c.link().inner.packets(), packets, "every packet was sent once");
+    }
+
+    #[test]
+    fn abort_ends_a_paused_run() {
+        let mut c = scripted(1, usize::MAX, None, &b6());
+        let abort = c.abort_handle();
+        let control = c.run_control();
+        let handle = std::thread::spawn(move || {
+            while !control.is_paused() {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            abort.request();
+        });
+        let r = c.run(&job(), Armed::approved_in_ui("run-a".into()));
+        handle.join().unwrap();
+        assert_eq!(r, Err(ControllerError::Aborted));
+        assert!(!c.link().inner.mo_open() && c.link().inner.port() == 0);
+        assert!(!c.run_control().is_paused());
+    }
+
+    #[test]
+    fn stop_input_aborts_the_run() {
+        let mut p = b6();
+        p.stop_mark_input_bit = Some(13);
+        let mut c = scripted(0, 0, Some((2, 1 << 13)), &p);
+        let r = c.run(&job(), Armed::approved_in_ui("run-s".into()));
+        assert_eq!(r, Err(ControllerError::StopInput(13)));
+        assert!(!c.link().inner.mo_open());
+        // Without the profile bit the same input does nothing.
+        let mut c = scripted(0, 0, Some((2, 1 << 13)), &b6());
+        assert!(c.run(&job(), Armed::approved_in_ui("run-t".into())).is_ok());
+    }
+
+    fn with_axis() -> MachineProfile {
+        let mut p = b6();
+        p.axis = Some(crate::ExtensionAxis {
+            role: crate::AxisRole::Rotary,
+            steps_per_mm: 0.0,
+            min_mm: 0.0,
+            max_mm: 0.0,
+            invert: true,
+        });
+        p
+    }
+
+    #[test]
+    fn parts_move_the_axis_with_the_mo_closed() {
+        let mut c = controller(SimBoard::default());
+        c.init(&with_axis(), None).unwrap();
+        c.link_mut().clear_traffic();
+        let parts = vec![
+            RunPart { axis_position: Some(100), packets: job() },
+            RunPart { axis_position: Some(200), packets: job() },
+        ];
+        let report = c.run_parts(&parts, Armed::approved_in_ui("run-r".into())).unwrap();
+        assert_eq!(report.packets, parts[0].packets.len() * 2);
+        let singles = c.link().singles_without_polls();
+        let moves: Vec<usize> = singles.iter().enumerate().filter(|(_, s)| s.opcode() == op::MOVE_AXIS_TO).map(|(i, _)| i).collect();
+        assert_eq!(moves.len(), 2);
+        assert_eq!(singles[moves[0]], Single::move_axis_to(100, true));
+        assert_eq!(singles[moves[1]], Single::move_axis_to(200, true));
+        // Before the second move the MO is closed; after it, it is opened again.
+        assert_eq!(singles[moves[1] - 1], Single::fiber_set_mo(false));
+        assert!(singles[moves[1]..].contains(&Single::fiber_set_mo(true)));
+        assert_eq!(c.link().axis_position(), 200);
+        assert!(!c.link().mo_open());
+        // Without an axis in the profile, a part with a move is refused before anything is sent.
+        let mut c = ready();
+        let r = c.run_parts(&parts, Armed::approved_in_ui("run-x".into()));
+        assert!(matches!(r, Err(ControllerError::Refused(_))));
+        assert!(c.link().traffic().is_empty());
+    }
+
+    #[test]
+    fn move_axis_needs_an_axis_and_never_emits() {
+        let mut c = ready();
+        assert!(matches!(c.move_axis(10), Err(ControllerError::Refused(_))));
+        let mut c = controller(SimBoard::default());
+        c.init(&with_axis(), None).unwrap();
+        c.link_mut().clear_traffic();
+        c.move_axis(42).unwrap();
+        assert_eq!(c.link().axis_position(), 42);
+        assert!(!singles_can_emit(&c.link().singles()));
+    }
+
+    #[test]
+    fn frame_style_pointer_blanking_speed_and_red_dot() {
+        let mut p = b6();
+        p.focus_light_port_bit = Some(9);
+        p.red_dot.offset_x_mm = 1.0;
+        p.red_dot.rest_x_mm = 10.0;
+        let mut c = controller(SimBoard::default());
+        c.init(&p, None).unwrap();
+        c.link_mut().clear_traffic();
+        let two = [vec![(0.0, 0.0), (5.0, 0.0)], vec![(10.0, 0.0), (15.0, 0.0)]];
+        let focus = PointerBits::bit(9).unwrap();
+        let style = FrameStyle { pointer: focus, blanking: false, speed_mm_s: Some(1000.0) };
+        c.frame_styled(&two, 1, &style).unwrap();
+        let cmds = lmc::decode(&c.link().packets());
+        let ports: Vec<u16> = cmds.iter().filter_map(|c| if let ListCommand::WritePort { bits } = c { Some(*bits) } else { None }).collect();
+        assert_eq!(ports, [0x0200, 0], "focus light on once (no blanking), off at the end");
+        assert!(cmds.contains(&ListCommand::JumpSpeed { units: units::speed_to_units(1000.0, p.field_mm).unwrap() }));
+        // The red-dot offset moves every framed point by +1 mm in X.
+        let first = cmds.iter().find_map(|c| if let ListCommand::JumpTo { x, y, .. } = c { Some((*x, *y)) } else { None }).unwrap();
+        assert_eq!(first, field_to_galvo(&p, 1.0, 0.0).unwrap());
+        assert!(lmc::emits_light_only(&c.link().packets()));
+        // With blanking the pointer goes off between the two shapes.
+        c.link_mut().clear_traffic();
+        c.frame_styled(&two, 1, &FrameStyle { blanking: true, ..style }).unwrap();
+        let cmds = lmc::decode(&c.link().packets());
+        assert_eq!(cmds.iter().filter(|c| matches!(c, ListCommand::WritePort { bits: 0 })).count(), 2);
+        // Too fast is refused; stop parks the dot at its rest position.
+        let fast = FrameStyle { speed_mm_s: Some(p.max_jump_speed_mm_s + 1.0), ..style };
+        assert!(matches!(c.frame_styled(&two, 1, &fast), Err(ControllerError::Refused(_))));
+        c.link_mut().clear_traffic();
+        c.stop_frame().unwrap();
+        let (rx, ry) = field_to_galvo(&p, 10.0, 0.0).unwrap();
+        assert_eq!(c.link().singles().last(), Some(&Single::goto_xy(rx, ry, 0)));
+    }
+
+    #[test]
+    fn controller_info_is_kept_and_refreshed() {
+        let mut c = ready();
+        assert_eq!(c.board_info().unwrap().serial[..3], SimBoard::default().serial);
+        c.link_mut().clear_traffic();
+        let info = c.refresh_info().unwrap();
+        assert_eq!(info.version[..3], SimBoard::default().version);
+        assert_eq!(opcodes(&c.link().singles()), [op::GET_SERIAL_NO, op::GET_VERSION]);
+        let mut fresh = controller(SimBoard::default());
+        assert_eq!(fresh.refresh_info(), Err(ControllerError::NotInitialized));
+    }
+
+    #[test]
+    fn calibration_moves_frame_and_burn_alike() {
+        let mut p = b6();
+        p.calibration.offset_x_mm = 2.0;
+        p.calibration.angle_deg = 1.0;
+        let mut c = controller(SimBoard::default());
+        c.init(&p, None).unwrap();
+        c.link_mut().clear_traffic();
+        c.frame(&[vec![(10.0, 10.0), (20.0, 10.0)]], 1).unwrap();
+        let first = lmc::decode(&c.link().packets())
+            .into_iter()
+            .find_map(|c| if let ListCommand::JumpTo { x, y, .. } = c { Some((x, y)) } else { None })
+            .unwrap();
+        assert_eq!(first, lmc::units::field_to_galvo(10.0, 10.0, &p.field_transform()).unwrap());
+        assert_ne!(first, lmc::units::field_to_galvo(10.0, 10.0, &b6().field_transform()).unwrap());
     }
 }

@@ -3,6 +3,7 @@
 // preview toggle and the machine actions (Frame uses the red pointer only and Stop frame ends it without touching
 // pending runs; Request run never fires by itself). The emergency STOP lives in the top bar.
 
+import type { ReactNode } from "react";
 import type { Workspace } from "./TopBar.tsx";
 import type { SnapSettings, Tool, ViewStyle } from "./Viewport.tsx";
 import { Icon } from "./ui.tsx";
@@ -59,6 +60,8 @@ export interface ToolbarProps {
   designOnly?: string | null;
   onToggleLeft: () => void;
   onToggleRight: () => void;
+  /** Design-only groups after the drawing tools: line/pen/polygon, node editing, Modify and Arrange (EditMenus.tsx). */
+  extra?: ReactNode;
 }
 
 function Btn(props: { icon: string; label: string; onClick: () => void; active?: boolean; disabled?: boolean; title?: string; cls?: string }) {
@@ -110,9 +113,11 @@ export function Toolbar(p: ToolbarProps) {
           </div>
           <div className="tool-group">
             <Btn icon="rect" label="Rectangle" active={p.tool === "rect"} onClick={() => p.onTool(p.tool === "rect" ? "select" : "rect")} title="Rectangle (R)" />
-            <Btn icon="ellipse" label="Ellipse" active={p.tool === "ellipse"} onClick={() => p.onTool(p.tool === "ellipse" ? "select" : "ellipse")} title="Ellipse (E)" />
+            <Btn icon="ellipse" label="Ellipse" active={p.tool === "ellipse"} onClick={() => p.onTool(p.tool === "ellipse" ? "select" : "ellipse")} title="Ellipse (E). Shift draws a circle." />
+            <Btn icon="circle" label="Circle" active={p.tool === "circle"} onClick={() => p.onTool(p.tool === "circle" ? "select" : "circle")} title="Circle from the centre (C)" />
             <Btn icon="import" label="Import" onClick={p.onImport} title="Import SVG, DXF, PNG/JPG, LightBurn or OpenEtch files (Ctrl+I). You can also drop files on the window." />
           </div>
+          {p.extra}
           <div className="tool-group">
             <Btn icon="place" label="Place" onClick={p.onPlace} disabled={!p.hasSelection || !p.hasStock} title={p.hasStock ? "Place on stock" : "Define a stock first"} />
             <Btn icon="array" label="Array" onClick={p.onArray} disabled={!p.hasSelection} />
@@ -141,7 +146,7 @@ export function Toolbar(p: ToolbarProps) {
             <div className="mini-grid two">
               <Mini
                 icon="magnet"
-                title={`Snap to objects ${p.snap.objects ? "on" : "off"} (corners, midpoints, centres of objects, stock and field). Hold Ctrl while dragging to toggle, Alt for guides.`}
+                title={`Snap to objects ${p.snap.objects ? "on" : "off"}: centres, quadrants, vertices, midpoints, intersections and outlines of objects, stock and field, with alignment guides. Hold Ctrl while dragging to toggle, Alt to snap to guides only.`}
                 active={p.snap.objects}
                 onClick={() => p.onSnap({ ...p.snap, objects: !p.snap.objects })}
               />

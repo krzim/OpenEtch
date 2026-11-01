@@ -19,6 +19,7 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_possible_wrap)]
 
+pub mod calibration;
 mod command;
 mod decode;
 mod light;
@@ -28,9 +29,10 @@ mod packet;
 mod single;
 pub mod units;
 
+pub use calibration::{Calibration, CalibrationError, LensMeasurements, lens_test_pattern, solve_lens_calibration};
 pub use command::ListCommand;
 pub use decode::{TraceKind, TraceSegment, TraceState, decode, decode_packet, disassemble, emits_light_only, trace, trace_from};
-pub use light::{LightList, RED_POINTER_BIT};
+pub use light::{LightList, PointerBits, RED_POINTER_BIT};
 pub use list::MarkingList;
 pub use packet::{COMMAND_LEN, PACKET_LEN, Packet, SLOTS};
 pub use single::{REPLY_LEN, Single, StatusWord, parse_reply};

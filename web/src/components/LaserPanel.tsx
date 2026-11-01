@@ -24,6 +24,7 @@ import {
 } from "../api/runs.ts";
 import type { GDocument, MachineStatus, PendingRun, Preview } from "../api/types.ts";
 import type { PreviewOptions } from "./Viewport.tsx";
+import { DitheredImagesOption } from "./ImageSettings.tsx";
 import { Icon } from "./ui.tsx";
 import { originBadge } from "./Timeline.tsx";
 
@@ -484,6 +485,7 @@ export function PreviewStatsCard(p: {
             <label>
               <input type="checkbox" checked={options.jumps} onChange={(e) => onOptions({ ...options, jumps: e.target.checked })} /> Show travel
             </label>
+            <DitheredImagesOption doc={p.doc} />
           </div>
         </>
       )}

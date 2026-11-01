@@ -86,6 +86,131 @@ fn default_true() -> bool {
     true
 }
 
+fn is_true(v: &bool) -> bool {
+    *v
+}
+
+fn is_default<T: Default + PartialEq>(v: &T) -> bool {
+    *v == T::default()
+}
+
+/// LightBurn's Laser Type for a galvo.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LaserKind {
+    #[default]
+    Fiber,
+    Co2,
+    Uv,
+}
+
+/// LightBurn's Fiber Type.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FiberKind {
+    /// A MOPA source: pulse width (Q-pulse) settings apply.
+    #[default]
+    Mopa,
+    /// A Q-switched source: no pulse width.
+    QSwitched,
+}
+
+/// Red-dot alignment, framing only (LightBurn Device Settings > Red Dot): the pointer diode sits off the beam axis,
+/// so a framed point `p` is sent to `(p.x * scale_x + offset_x_mm, p.y * scale_y + offset_y_mm)` before the lens
+/// correction; the burn never uses these. The rest position is where the dot is parked when framing stops.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RedDot {
+    pub offset_x_mm: f64,
+    pub offset_y_mm: f64,
+    pub scale_x: f64,
+    pub scale_y: f64,
+    pub rest_x_mm: f64,
+    pub rest_y_mm: f64,
+}
+
+impl Default for RedDot {
+    fn default() -> Self {
+        RedDot { offset_x_mm: 0.0, offset_y_mm: 0.0, scale_x: 1.0, scale_y: 1.0, rest_x_mm: 0.0, rest_y_mm: 0.0 }
+    }
+}
+
+impl RedDot {
+    pub fn is_neutral(&self) -> bool {
+        *self == RedDot::default()
+    }
+
+    /// Where a framed field point is sent.
+    pub fn apply(&self, x: f64, y: f64) -> (f64, f64) {
+        (x * self.scale_x + self.offset_x_mm, y * self.scale_y + self.offset_y_mm)
+    }
+}
+
+/// What the board's extension axis drives.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AxisRole {
+    /// A motorised Z lift: positions in mm.
+    #[default]
+    Z,
+    /// A rotary (chuck or roller): positions in steps (steps per rotation is a rotary setting of the job).
+    Rotary,
+}
+
+/// The board's extension axis (LMC `MoveAxisTo(position, invert)`, meerk40t's parameters; the position is one
+/// 16-bit word of motor steps, unverified on hardware).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExtensionAxis {
+    pub role: AxisRole,
+    /// Motor steps per mm of Z travel (role `z`).
+    #[serde(default)]
+    pub steps_per_mm: f64,
+    /// Lowest Z position, mm (step 0).
+    #[serde(default)]
+    pub min_mm: f64,
+    /// Highest Z position, mm.
+    #[serde(default)]
+    pub max_mm: f64,
+    /// Reverse the motor direction (the `invert` parameter of `MoveAxisTo`).
+    #[serde(default)]
+    pub invert: bool,
+}
+
+impl ExtensionAxis {
+    /// The step word for Z position `z_mm`: refused outside `min_mm..=max_mm` or for a rotary axis.
+    pub fn z_steps(&self, z_mm: f64) -> Result<u16, String> {
+        if self.role != AxisRole::Z {
+            return Err("the extension axis is a rotary, not a Z lift".into());
+        }
+        if !(z_mm.is_finite() && (self.min_mm..=self.max_mm).contains(&z_mm)) {
+            return Err(format!("Z {z_mm} mm is outside the axis travel {}..={} mm", self.min_mm, self.max_mm));
+        }
+        let steps = ((z_mm - self.min_mm) * self.steps_per_mm).round();
+        if !(0.0..=65535.0).contains(&steps) {
+            return Err(format!("Z {z_mm} mm is {steps} steps, more than one 16-bit word"));
+        }
+        // Whole and within 0..=65535 (checked above).
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        Ok(steps as u16)
+    }
+
+    fn problem(&self) -> Option<String> {
+        if self.role == AxisRole::Z {
+            if !(self.steps_per_mm.is_finite() && self.steps_per_mm > 0.0) {
+                return Some(format!("steps_per_mm {} must be positive", self.steps_per_mm));
+            }
+            if !(self.min_mm.is_finite() && self.max_mm.is_finite() && self.min_mm < self.max_mm) {
+                return Some(format!("travel {}..{} mm is empty", self.min_mm, self.max_mm));
+            }
+            if (self.max_mm - self.min_mm) * self.steps_per_mm > 65535.0 {
+                return Some("the travel is more than 65535 steps (one 16-bit word)".into());
+            }
+        }
+        None
+    }
+}
+
 /// One laser's fixed facts and hard limits. See the module docs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -128,20 +253,55 @@ pub struct MachineProfile {
     /// older profile files: defaults to [`DEFAULT_MAX_DELAY_US`].
     #[serde(default = "default_max_delay")]
     pub max_delay_us: f64,
-    /// The source takes a MOPA pulse width (LightBurn `Laser_QPulseWidthEnabled`). Informational for now: `plan`
-    /// sends each layer's pulse width either way. Missing in older profile files: true.
+    /// The source takes a MOPA pulse width (LightBurn `Laser_QPulseWidthEnabled`). When false (or with a Q-switched
+    /// `fiber_kind`) jobs send no pulse width (the engine's planning target drops it, with a plan warning). Missing in
+    /// older profile files: true.
     #[serde(default = "default_true")]
     pub pulse_width_enabled: bool,
     /// How long the source needs after the master oscillator opens, µs (LightBurn `Laser_OpenMODelay`, EzCad's "open
-    /// MO delay"). Informational for now: the run prelude does not wait. Missing in older profile files:
+    /// MO delay"). Every job list waits this long
+    /// (`DelayTime`) right after the MO opens, before the first motion. Missing in older profile files:
     /// [`DEFAULT_OPEN_MO_DELAY_US`].
     #[serde(default = "default_open_mo_delay")]
     pub open_mo_delay_us: f64,
     /// Input bit of the start-mark signal (a foot pedal or button; LightBurn `StartMarkPortBit`, markcfg
-    /// `STARTMARKPORT`), 0..=15; `None` when there is none. Informational: `--confirm-input` is what makes the engine
-    /// wait for an input. 14 on the B6 (unverified that anything is wired to it).
+    /// `STARTMARKPORT`), 0..=15; `None` when there is none. A run asked to wait for the start input waits for this bit
+    /// before each iteration (LightBurn's Start Marking input); `--confirm-input` is the separate approval
+    /// confirmation. 14 on the B6 (unverified that anything is wired to it).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start_mark_input_bit: Option<u8>,
+    /// Input bit of a stop-marking signal (a button wired to the board), 0..=15; `None` when there is none. While a
+    /// run streams, the controller reads the inputs at every status poll and aborts the run when this bit is set
+    /// (unverified on hardware: nothing is known to be wired to it on the B6).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_mark_input_bit: Option<u8>,
+    /// Output bit of a second pointer used as a focus light (LightBurn's focus light port), 1..=15, never the
+    /// laser-enable or red-pointer bit. Framing can switch it on instead of, or with, the red pointer. `None`: there
+    /// is none (the B6 has none as far as known).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focus_light_port_bit: Option<u8>,
+    /// Blanking: switch the pointer off while travelling between shapes when framing (LightBurn's "Enable
+    /// Blanking"). Missing in older profile files: true.
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub blanking: bool,
+    /// The kind of source (LightBurn's Laser Type). Informational: only fiber sources are driven.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub laser_kind: LaserKind,
+    /// The kind of fiber source (LightBurn's Fiber Type). A Q-switched source takes no pulse width: with
+    /// `q_switched` or `pulse_width_enabled = false` jobs never send one.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub fiber_kind: FiberKind,
+    /// Lens corrections (LightBurn's field offset X/Y, field angle and per-axis scale, bulge, skew and trapezoid),
+    /// applied by `lmc::units::field_to_galvo` to the burn and the frame alike. Neutral by default.
+    #[serde(default, skip_serializing_if = "lmc::Calibration::is_neutral")]
+    pub calibration: lmc::Calibration,
+    /// Red-dot alignment (LightBurn's Red Dot offset, scale and rest position), applied to framing only.
+    #[serde(default, skip_serializing_if = "RedDot::is_neutral")]
+    pub red_dot: RedDot,
+    /// The board's extension axis (LMC `MoveAxisTo`), when a motor is wired to it: a Z lift or a rotary. `None`
+    /// on the B6 (its lift is not driven by the board).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub axis: Option<ExtensionAxis>,
     pub timing: Timing,
     pub mark_speed: MarkSpeedLimits,
     /// Where values came from and what is unverified. Informational.
@@ -173,6 +333,14 @@ impl MachineProfile {
             pulse_width_enabled: true,
             open_mo_delay_us: DEFAULT_OPEN_MO_DELAY_US,
             start_mark_input_bit: None,
+            stop_mark_input_bit: None,
+            focus_light_port_bit: None,
+            blanking: true,
+            laser_kind: LaserKind::Fiber,
+            fiber_kind: FiberKind::Mopa,
+            calibration: lmc::Calibration::default(),
+            red_dot: RedDot::default(),
+            axis: None,
             timing: Timing {
                 laser_on_delay_us: 100.0,
                 laser_off_delay_us: 100.0,
@@ -233,9 +401,16 @@ impl MachineProfile {
         self.field_mm / 2.0
     }
 
-    /// The field size, swap and negate settings as `lmc`'s shared field transform (the one `plan` uses too).
+    /// The field size, swap, negate and lens correction as `lmc`'s shared field transform (the one `plan` uses
+    /// too).
     pub fn field_transform(&self) -> lmc::FieldTransform {
-        lmc::FieldTransform { field_mm: self.field_mm, swap_xy: self.swap_xy, negate_x: self.negate_x, negate_y: self.negate_y }
+        lmc::FieldTransform {
+            field_mm: self.field_mm,
+            swap_xy: self.swap_xy,
+            negate_x: self.negate_x,
+            negate_y: self.negate_y,
+            calibration: self.calibration,
+        }
     }
 
     /// Mask of the laser-enable port bit.
@@ -285,6 +460,38 @@ impl MachineProfile {
         }
         if let Some(bit) = self.start_mark_input_bit.filter(|b| *b > 15) {
             return invalid("start_mark_input_bit", format!("{bit} is not an input bit 0-15"));
+        }
+        if let Some(bit) = self.stop_mark_input_bit.filter(|b| *b > 15) {
+            return invalid("stop_mark_input_bit", format!("{bit} is not an input bit 0-15"));
+        }
+        if let Some(bit) = self.focus_light_port_bit
+            && (bit == 0 || bit > 15 || bit == self.laser_enable_port_bit || bit == self.red_light_port_bit)
+        {
+            return invalid(
+                "focus_light_port_bit",
+                format!("{bit} must be an output bit 1-15 other than the laser-enable and red-pointer bits"),
+            );
+        }
+        if let Some(p) = self.calibration.problem(self.field_mm) {
+            return invalid("calibration", p);
+        }
+        let d = &self.red_dot;
+        let eighth = self.field_mm / 8.0;
+        if [d.offset_x_mm, d.offset_y_mm, d.scale_x, d.scale_y, d.rest_x_mm, d.rest_y_mm].iter().any(|v| !v.is_finite())
+            || d.offset_x_mm.abs() > eighth
+            || d.offset_y_mm.abs() > eighth
+            || !(0.5..=2.0).contains(&d.scale_x)
+            || !(0.5..=2.0).contains(&d.scale_y)
+            || d.rest_x_mm.abs() >= self.half_field_mm()
+            || d.rest_y_mm.abs() >= self.half_field_mm()
+        {
+            return invalid(
+                "red_dot",
+                format!("offsets within ±{eighth} mm, scales 0.5..=2 and a rest position inside the field are needed ({d:?})"),
+            );
+        }
+        if let Some(p) = self.axis.as_ref().and_then(ExtensionAxis::problem) {
+            return invalid("axis", p);
         }
         // The minimum is a UI bound: it may encode to 0 (1 mm/s on a 153.75 mm field); jobs refuse a 0 word.
         positive("mark_speed.min_mm_s", self.mark_speed.min_mm_s)?;
@@ -426,6 +633,18 @@ mod tests {
         refused(|p| p.open_mo_delay_us = f64::NAN);
         refused(|p| p.open_mo_delay_us = 2_000_000.0);
         refused(|p| p.start_mark_input_bit = Some(16));
+        refused(|p| p.stop_mark_input_bit = Some(16));
+        refused(|p| p.focus_light_port_bit = Some(0));
+        refused(|p| p.focus_light_port_bit = Some(8));
+        refused(|p| p.calibration.scale_x = 3.0);
+        refused(|p| p.red_dot.scale_y = 0.1);
+        refused(|p| p.red_dot.rest_x_mm = 500.0);
+        refused(|p| {
+            p.axis = Some(ExtensionAxis { role: AxisRole::Z, steps_per_mm: 0.0, min_mm: 0.0, max_mm: 10.0, invert: false })
+        });
+        refused(|p| {
+            p.axis = Some(ExtensionAxis { role: AxisRole::Z, steps_per_mm: 10000.0, min_mm: 0.0, max_mm: 10.0, invert: false })
+        });
     }
 
     #[test]
@@ -451,5 +670,33 @@ mod tests {
         let path = p.cor_path(Path::new("fixtures/b6-mopa-60w.toml")).unwrap();
         assert_eq!(path, Path::new("fixtures").join("jcz150.cor"));
         assert_eq!(MachineProfile::generic_lmc_fiber().cor_path(Path::new("x.toml")), None);
+    }
+
+    #[test]
+    fn machine_features_round_trip_and_default() {
+        let b6 = MachineProfile::from_toml(B6).unwrap();
+        assert!(b6.blanking && b6.calibration.is_neutral() && b6.red_dot.is_neutral() && b6.axis.is_none());
+        assert_eq!(
+            (b6.laser_kind, b6.fiber_kind, b6.focus_light_port_bit, b6.stop_mark_input_bit),
+            (LaserKind::Fiber, FiberKind::Mopa, None, None)
+        );
+        assert!(!b6.to_toml().unwrap().contains("calibration"), "neutral values are left out");
+        let mut p = b6.clone();
+        p.calibration.angle_deg = 0.5;
+        p.calibration.scale_x = 1.01;
+        p.red_dot = RedDot { offset_x_mm: 0.4, rest_y_mm: -60.0, ..RedDot::default() };
+        p.focus_light_port_bit = Some(9);
+        p.stop_mark_input_bit = Some(13);
+        p.blanking = false;
+        p.fiber_kind = FiberKind::QSwitched;
+        p.axis = Some(ExtensionAxis { role: AxisRole::Z, steps_per_mm: 400.0, min_mm: 0.0, max_mm: 100.0, invert: true });
+        p.validate().unwrap();
+        let again = MachineProfile::from_toml(&p.to_toml().unwrap()).unwrap();
+        assert_eq!(again, p);
+        assert_eq!(p.field_transform().calibration, p.calibration);
+        let axis = p.axis.as_ref().unwrap();
+        assert_eq!(axis.z_steps(2.5), Ok(1000));
+        assert!(axis.z_steps(120.0).is_err() && axis.z_steps(-1.0).is_err());
+        assert_eq!(p.red_dot.apply(10.0, 10.0), (10.4, 10.0));
     }
 }

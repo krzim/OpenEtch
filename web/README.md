@@ -39,7 +39,28 @@ anywhere else.
 - **Viewport** draws in field millimetres with +Y up (one SVG group carries the pan/zoom and the y-flip). The field
   square comes from `GET /api/machine` (`field_mm`), 153.75 mm until the engine reports it. Pointer Events throughout:
   drag empty space to pan, wheel or pinch to zoom, two fingers to pan, tap to select (shift adds), drag a selection to
-  move it (one `object.transform` translate on release). Rectangle/Ellipse tools: drag to draw, tap for 20 mm.
+  move it (one `object.transform` translate on release). Rectangle/Ellipse tools: drag to draw (Shift: square or
+  circle), tap for 20 mm; Circle tool (C): press at the centre and drag the radius. A lone circle shows Diameter and
+  "Keep round" in Properties (stored as an ellipse with equal radii).
+- **Editing tools** (`components/EditTools.tsx`, LightBurn behaviour and hotkeys): Line (Ctrl+L; click points,
+  double-click/Enter finishes, C or the first point closes, Shift 15°), Pen (drag a point for a smooth curve node),
+  Polygon/star (drag from the centre; sides, star ratio and corner radius in the options bar), Rectangle/Ellipse Ctrl
+  from the centre and Shift square. Edit nodes (Ctrl+`) lists the shape's nodes with `node.list`: drag nodes, handles
+  or segments (live preview, `node.move` on release), click a segment to add a node, marquee/Shift selects; keys at
+  the pointer or on the selection: Delete/D, B break, J join, S smooth, C corner, L line, K curve, I/M insert, T trim;
+  rectangles and ellipses offer Convert to path first. Measure (distance, ΔX, ΔY, angle, snapped), Trim (click a
+  piece). Modify and Arrange dropdowns: weld (Ctrl+W), union/subtract/intersect (Alt++ / Alt+- / Alt+*), XOR, cut
+  shapes (Alt+C), offset (Alt+O), fillet, break apart (Alt+B), auto-join (Alt+J), close, delete duplicates (Alt+D),
+  convert (Ctrl+Shift+C), optimize (Alt+Shift+O), reverse; draw order (PgUp/PgDn, Ctrl+PgUp/PgDn), lock, make same
+  size, Transform (scale %, shear, mirror across a picked line, two-point rotate Ctrl+2 / scale), grid and circular
+  arrays (centre pick), copy along path, quick nest. Rulers (mm) run along the top and left; drag a guide out of a
+  ruler (back onto it to remove; guides move with the Select tool). Guides are kept per document in this browser
+  (`src/guides.ts`) and are snap targets. The Viewport hands presses to these tools through `src/canvasTool.ts`.
+- **Snapping** (`src/snapping.ts`, Fusion 360-style): centres, quadrants, vertices/endpoints, straight-segment
+  midpoints, intersections between outlines near the cursor and the nearest point on an outline, plus stock, field and
+  grid points, each with its own glyph and a label ("Quadrant · Circle 1"); dotted alignment guides when the point
+  lines up with another snap point. 8 px tolerance; a dragged selection snaps by its own snap point nearest the grab;
+  Ctrl turns snapping off, Alt snaps to guides only. Candidates sit in a grid hash and the per-move work is capped.
 - **Passes (LightBurn sub-layers)**: with a layer selected, the Properties panel lists its passes in run order: "Main"
   (the layer's own settings, `layer.update`) and each sub-layer (`layer.sub_update`), with its name, a Cleanup badge
   and a settings summary. The open pass is edited with the full cut-settings form; Sub-layer, Cleanup pass (same mode
@@ -119,4 +140,30 @@ src/
   geometry.ts         affine maths, geometry -> SVG path, bounds (pure; tested)
   selection.ts        UI-only selection state (pure; tested)
   components/         TopBar, FileMenu, Toolbar, BrowserPanel, Viewport, PropertiesPanel, LaserPanel, LightBurn, Timeline, Dialogs, ui
+  components/EditTools.tsx, EditMenus.tsx, EditDialogs.tsx, Rulers.tsx, edit.css   editing tools, menus, dialogs, rulers
+  api/geomCommands.ts geometry command builders (path.*, node.*, shape.polygon/line, arrays, order, lock...) (tested)
+  nodes.ts, drawTools.ts, guides.ts   node model, drawing/measure/ruler maths, guides (pure; tested)
+  workspace/          the workspace layer (styles in workspace/workspace.css):
+    prefs.ts, usePrefs.ts       Preferences store (localStorage) and hooks: theme, units, grid, snapping, nudge, wheel,
+                                UI scale, crosshair, language, hotkey overrides
+    theme.ts, units.ts          Light/Dark/Match system, canvas stroke contrast; mm/in and mm/s, mm/min, in/s (display only)
+    i18n.ts, locales/en.ts      message tables with English fallback; add a language with registerLocale or a new table
+    hotkeys.ts, useKeymap.ts    LightBurn default key map, rebinding, cheat sheet data; the key layer in front of App/EditTools
+    CutsLayers.tsx, PaletteBar.tsx, LaserDock.tsx, NumericBar.tsx, StatusBar.tsx, HelpMenu.tsx,
+    PreferencesDialog.tsx, HotkeysDialog.tsx, RecentProjects.tsx, useWorkspace.tsx
 ```
+
+### Workspace layer
+
+- **Themes.** Every colour in `styles.css` is a token on `:root`, redefined for dark under
+  `@media (prefers-color-scheme: dark)` (Match system) and `:root[data-theme="dark"]`. The top-bar button cycles
+  Light, Dark, Match system; Preferences has the same choice. Layer strokes on the canvas go through
+  `canvasColor()` so a black or dark-blue layer stays visible on the dark field.
+- **Units.** `NumberField`/`PairField` (components/ui.tsx) show fields labelled `mm` or `mm/s` in the display unit and
+  convert back on commit, so every command still carries millimetres.
+- **Hotkeys.** `hotkeys.ts` lists every bindable action with LightBurn's defaults. Actions implemented by App.tsx or
+  EditTools.tsx list their `native` chords (keep them in step); a rebound key is re-sent as the native chord, so the
+  handlers stay the single implementation. F1 or `?` opens the cheat sheet; File > Edit hotkeys rebinds.
+- **Docks.** Cuts / Layers (both workspaces) and Laser (Laser workspace) are collapsible docks in the right panel; the
+  colour palette (C00-C29, T1, T2) and the numeric edits bar frame the canvas in the Design workspace; the status bar
+  is the last row. Layer reordering appears once the engine has `layer.move {id, to_index}`.

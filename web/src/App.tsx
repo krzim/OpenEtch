@@ -34,6 +34,7 @@ import { BrowserPanel } from "./components/BrowserPanel.tsx";
 import { ContextMenu, type MenuItem } from "./components/ContextMenu.tsx";
 import { ArrayDialog, CommandPalette, PlaceDialog, StockDialog } from "./components/Dialogs.tsx";
 import { DeviceBar, DevicesWindow, useDevices } from "./components/Devices.tsx";
+import { useEditTools } from "./components/EditTools.tsx";
 import { DropOverlay, useFileDrop } from "./components/FileDrop.tsx";
 import { FileDialogs, FileMenu, useFileActions } from "./components/FileMenu.tsx";
 import { MachineCard, PreviewPlayer, PreviewStatsCard, RunsCard } from "./components/LaserPanel.tsx";
@@ -43,6 +44,16 @@ import { Timeline } from "./components/Timeline.tsx";
 import { Toolbar, type ArrangeAction } from "./components/Toolbar.tsx";
 import { TopBar, type Workspace } from "./components/TopBar.tsx";
 import { Viewport, type PreviewOptions, type SnapSettings, type Tool, type ViewStyle } from "./components/Viewport.tsx";
+import { CutsLayers } from "./workspace/CutsLayers.tsx";
+import { TopActions } from "./workspace/HelpMenu.tsx";
+import { LaserDock, machineState } from "./workspace/LaserDock.tsx";
+import { NumericBar } from "./workspace/NumericBar.tsx";
+import { PaletteBar } from "./workspace/PaletteBar.tsx";
+import { getPrefs } from "./workspace/prefs.ts";
+import { RecentProjects } from "./workspace/RecentProjects.tsx";
+import { StatusBar } from "./workspace/StatusBar.tsx";
+import { sendViewCommand } from "./workspace/viewStatus.ts";
+import { WorkspaceFileItems, useWorkspaceUi } from "./workspace/useWorkspace.tsx";
 import { alignMoves, distributeMoves, nudgeDelta, nudgeKeyId, queueNudge, rotateKeyDeg, roundMm, type AlignX, type AlignY } from "./editing.ts";
 import { boxCenter, objectBounds, toPathData, geometryCmds, unionBoxes, type Box } from "./geometry.ts";
 import {
@@ -227,6 +238,28 @@ export function App() {
 
   const run = engine.run;
   const exec = useCallback((inv: Parameters<typeof run>[0]) => run(inv).catch(report), [run, report]);
+
+  // Workspace layer (workspace/): theme, preferences, the rebindable key map (installed before EditTools' keys).
+  const ws = useWorkspaceUi();
+
+  // Node editing, line/pen/polygon, measure, trim, rulers and guides, the Modify and Arrange menus (EditTools.tsx).
+  const edit = useEditTools({
+    doc,
+    selection,
+    setSelection,
+    selectIds,
+    tool,
+    setTool,
+    activeLayer,
+    workspaceMm,
+    design: workspace === "design",
+    blocked: !!dialog || fileModalOpen || devicesOpen,
+    has,
+    run,
+    notify,
+    report,
+    onGridArray: () => setDialog("array"),
+  });
 
   // ---- import: drop and picker share one router ------------------------------------------------------------------
 
@@ -731,7 +764,7 @@ export function App() {
           return;
         }
       }
-      const nd = !e.altKey ? nudgeDelta(e.key, m) : null;
+      const nd = !e.altKey ? nudgeDelta(e.key, m, getPrefs().nudge) : null;
       if (nd) {
         if (selection.objects.length || selection.stock) {
           e.preventDefault();
@@ -779,6 +812,7 @@ export function App() {
       }
       if (k === "r") setTool("rect");
       else if (k === "e") setTool("ellipse");
+      else if (k === "c") setTool("circle");
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -863,6 +897,8 @@ export function App() {
     { label: "Group", hint: "Ctrl+G", disabled: units < 2 || !has(C.OPT.groupCreate), action: group },
     { label: "Ungroup", hint: "Ctrl+U", disabled: !grouped || !has(C.OPT.groupUngroup), action: ungroup },
     { sep: true },
+    ...edit.menuItems,
+    { sep: true },
     { label: "Align left", hint: "L", disabled: units < 2, action: () => alignTo("left") },
     { label: "Align horizontal centres", hint: "C", disabled: units < 2, action: () => alignTo("center") },
     { label: "Align right", hint: "R", disabled: units < 2, action: () => alignTo("right") },
@@ -879,6 +915,41 @@ export function App() {
     { label: "Invert selection", hint: "Ctrl+Shift+I", disabled: !doc, action: () => doc && setSelection(invertSelection(selection, doc)) },
   ];
 
+  // Framing from the Laser dock and the framing hotkeys: the whole job, or only the selection.
+  const frameWith = (o: { mode: "bounds" | "outline"; selection: boolean }) => {
+    const ids = o.selection && selection.objects.length ? { ids: selection.objects } : {};
+    void machineAction(api.frame({ mode: o.mode, ...ids }), "Framing with the red pointer.");
+  };
+  const laserDisabled = designOnlyReason(device);
+  // Workspace hotkeys (workspace/hotkeys.ts); App's own keys stay in the handler above.
+  ws.keymap.current = {
+    blocked: () => !!dialog || fileModalOpen || devicesOpen,
+    modalOpen: () => ws.dialog !== null,
+    handlers: {
+      "app.preferences": () => ws.open("prefs"),
+      "help.hotkeys": () => ws.open("hotkeys"),
+      // Ctrl+R / Ctrl+E and rebound tool keys pick the tool even when R/E/C would align a multi-selection.
+      "tool.rect": () => (workspace === "design" ? setTool("rect") : false),
+      "tool.ellipse": () => (workspace === "design" ? setTool("ellipse") : false),
+      "tool.circle": () => (workspace === "design" ? setTool("circle") : false),
+      "view.preview": () => {
+        if (workspace === "laser") return switchWorkspace("design");
+        switchWorkspace("laser");
+        setShowPreview(true);
+      },
+      "view.zoomIn": () => sendViewCommand("zoomIn"),
+      "view.zoomOut": () => sendViewCommand("zoomOut"),
+      "view.zoomPage": () => sendViewCommand("fit"),
+      "view.zoomSelection": () => sendViewCommand("selection"),
+      "laser.frameSelection": () => (laserDisabled ? false : frameWith({ mode: "bounds", selection: true })),
+      "laser.frameSquare": () => (laserDisabled ? false : frameWith({ mode: "bounds", selection: true })),
+      "laser.frameOutline": () => (laserDisabled ? false : frameWith({ mode: "outline", selection: true })),
+      "laser.frameStop": () => void machineAction(api.frameStop(), "Framing stopped. Pending runs are kept."),
+      "laser.requestRun": () => (laserDisabled ? false : void machineAction(api.requestRun(), "Run requested. Approve it in the Machine panel.")),
+      "laser.stop": stop,
+    },
+  };
+
   const onSelectObject = (id: string, op: SelectOp | boolean) => {
     if (!doc) return;
     const o: SelectOp = typeof op === "boolean" ? (op ? "toggle" : "replace") : op;
@@ -888,7 +959,25 @@ export function App() {
   return (
     <div className={`app ws-${workspace}${narrow ? " narrow" : ""}`}>
       <TopBar
-        fileMenu={<FileMenu file={file} onImport={openImport} onDevices={canDevices ? () => setDevicesOpen(true) : undefined} />}
+        fileMenu={
+          <FileMenu
+            file={file}
+            onImport={openImport}
+            onDevices={canDevices ? () => setDevicesOpen(true) : undefined}
+            recent={(close) => (
+              <RecentProjects
+                current={file.projectName}
+                disabled={file.busy}
+                onOpen={(name) => {
+                  close();
+                  file.openProject(name);
+                }}
+              />
+            )}
+            extra={(close) => <WorkspaceFileItems close={close} open={ws.open} />}
+          />
+        }
+        extra={<TopActions machine={machine} onHotkeys={() => ws.open("hotkeys")} onPreferences={() => ws.open("prefs")} />}
         workspace={workspace}
         onWorkspace={switchWorkspace}
         onUndo={() => void undo()}
@@ -933,6 +1022,7 @@ export function App() {
         designOnly={designOnlyReason(device)}
         onToggleLeft={() => setLeftOpen((v) => !v)}
         onToggleRight={() => setRightOpen((v) => !v)}
+        extra={edit.toolbar}
       />
       <div className="main">
         {narrow && (leftOpen || rightOpen) && (
@@ -957,6 +1047,10 @@ export function App() {
                 else setSelection({ objects: [], layer: id, stock: false });
               }}
               onSelectStock={() => setSelection({ objects: [], layer: null, stock: true })}
+              onObjectMenu={(x, y, id) => {
+                if (doc && !selection.objects.includes(id)) setSelection(applySelect(selection, doc, [id], "replace"));
+                setMenu({ x, y });
+              }}
               run={run}
               report={report}
             />
@@ -964,6 +1058,8 @@ export function App() {
         </aside>
 
         <section className="center">
+          {workspace === "design" && <NumericBar doc={doc} selection={selection} run={run} report={report} />}
+          <div className="center-stage">
           <Viewport
             doc={doc}
             workspaceMm={workspaceMm}
@@ -984,16 +1080,33 @@ export function App() {
             run={run}
             notify={notify}
             report={report}
+            canvasTool={edit.canvas}
           />
           {previewOn && engine.preview && (
             <PreviewPlayer preview={engine.preview} options={previewOptions} onOptions={setPreviewOptions} />
           )}
+          </div>
+          {workspace === "design" && <PaletteBar doc={doc} selected={selection.objects} run={run} report={report} notify={notify} />}
         </section>
 
         <aside className={`panel panel-right${rightOpen ? " open" : ""}`} aria-label={workspace === "laser" ? "Machine" : "Properties"}>
           <div className="panel-title">{workspace === "laser" ? "Machine" : "Properties"}</div>
           <div className="panel-body">
             {workspace === "design" ? (
+              <>
+              <CutsLayers
+                doc={doc}
+                selection={selection}
+                machine={machine}
+                has={has}
+                run={run}
+                report={report}
+                notify={notify}
+                onSelectLayer={(id, all) => {
+                  if (all && doc) setSelection(selectLayerObjects(doc, id));
+                  else setSelection({ objects: [], layer: id, stock: false });
+                }}
+              />
               <PropertiesPanel
                 doc={doc}
                 selection={selection}
@@ -1005,21 +1118,45 @@ export function App() {
                 onEditStock={() => setDialog("stock")}
                 onArrange={arrange}
               />
+              </>
             ) : (
               <div className="props">
-                {canDevices && (
-                  <section className="card">
-                    <h3>Device</h3>
-                    <DeviceBar
-                      devices={devices}
-                      machine={machine}
-                      onOpenWindow={() => setDevicesOpen(true)}
-                      onSwitched={onDeviceSwitched}
-                      notify={notify}
-                      report={report}
-                    />
-                  </section>
-                )}
+                <LaserDock
+                  machine={machine}
+                  httpError={engine.httpError}
+                  device={
+                    canDevices ? (
+                      <DeviceBar
+                        devices={devices}
+                        machine={machine}
+                        onOpenWindow={() => setDevicesOpen(true)}
+                        onSwitched={onDeviceSwitched}
+                        notify={notify}
+                        report={report}
+                      />
+                    ) : undefined
+                  }
+                  designOnly={laserDisabled}
+                  selected={selection.objects.length}
+                  pendingRuns={runs.length}
+                  onFrame={frameWith}
+                  onFrameStop={() => void machineAction(api.frameStop(), "Framing stopped. Pending runs are kept.")}
+                  onRequestRun={() => void machineAction(api.requestRun(), "Run requested. Approve it in the Machine panel.")}
+                  onStop={stop}
+                />
+                <CutsLayers
+                  doc={doc}
+                  selection={selection}
+                  machine={machine}
+                  has={has}
+                  run={run}
+                  report={report}
+                  notify={notify}
+                  onSelectLayer={(id, all) => {
+                    if (all && doc) setSelection(selectLayerObjects(doc, id));
+                    else setSelection({ objects: [], layer: id, stock: false });
+                  }}
+                />
                 <MachineCard machine={machine} httpError={engine.httpError}>
                   {/* Engines without the device registry: LightBurn's devices and the profile diffs. */}
                   {!canDevices && (
@@ -1058,6 +1195,7 @@ export function App() {
         onGoto={(marker) => void engine.historyGoto(marker).catch(report)}
         onDelete={(index) => void engine.historyDelete(index).catch(report)}
       />
+      <StatusBar doc={doc} selection={selection} snap={prefs.snap} machineText={statusMachineText(machineState(machine))} />
 
       <input ref={fileRef} type="file" accept={IMPORT_ACCEPT} multiple hidden onChange={onPick} />
 
@@ -1074,6 +1212,8 @@ export function App() {
         />
       )}
       {dialog === "commands" && <CommandPalette commands={engine.commands} run={run} onClose={closeDialog} />}
+      {edit.dialogs}
+      {ws.dialogs}
       <FileDialogs file={file} docName={doc?.name ?? null} />
       {devicesOpen && (
         <DevicesWindow devices={devices} machine={machine} onClose={() => setDevicesOpen(false)} onSwitched={onDeviceSwitched} notify={notify} report={report} />
@@ -1090,4 +1230,10 @@ export function App() {
       </div>
     </div>
   );
+}
+
+/** The machine part of the status bar. */
+function statusMachineText(st: ReturnType<typeof machineState>): string {
+  const t = { offline: "Engine offline", framing: "Framing", running: "Running", busy: "Busy", ready: "Ready", noLaser: "No laser" }[st.text];
+  return st.sim && st.text === "ready" ? `${t} (simulator)` : t;
 }

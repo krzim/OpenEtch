@@ -34,7 +34,10 @@ mod usb;
 
 pub use armed::Armed;
 pub use check::{JobCheckError, check_job};
-pub use controller::{AbortHandle, BoardInfo, Controller, ControllerError, ControllerState, PollConfig, RunReport};
+pub use controller::{
+    AXIS_TIMEOUT, AbortHandle, BoardInfo, Controller, ControllerError, ControllerState, FrameStyle, PollConfig, RunControl,
+    RunPart, RunProgress, RunReport,
+};
 pub use geometry::{FieldError, field_to_galvo};
 pub use init::InitSettings;
 pub use link::{Link, LinkError, Reply};
@@ -45,8 +48,8 @@ pub use lightburn::{
 pub use device::{Bases, Device, DeviceKind, DeviceSource, Origin, ProfileBase};
 pub use markcfg::MarkcfgImport;
 pub use profile::{
-    DEFAULT_MAX_DELAY_US, DEFAULT_MAX_JUMP_SPEED_MM_S, DEFAULT_OPEN_MO_DELAY_US, MachineProfile, MarkSpeedLimits,
-    ProfileError, Timing,
+    AxisRole, DEFAULT_MAX_DELAY_US, DEFAULT_MAX_JUMP_SPEED_MM_S, DEFAULT_OPEN_MO_DELAY_US, ExtensionAxis, FiberKind,
+    LaserKind, MachineProfile, MarkSpeedLimits, ProfileError, RedDot, Timing,
 };
 pub use sim::{SimBoard, SimLink, Traffic};
 #[cfg(feature = "usb")]

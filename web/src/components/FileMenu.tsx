@@ -14,7 +14,7 @@
 // The dialog preselects Open (replace) when the design has no objects, Import (merge) otherwise (`defaultImportMode`).
 // The top bar and download names use the opened file's name, which the engine keeps as `display_name` across reloads.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { api, execute } from "../api/client.ts";
 import { createdIds } from "../api/drop.ts";
@@ -483,7 +483,21 @@ function shortcut(key: string, shift = false): string {
  * The File button and its tap-to-open dropdown. `onImport` opens the Import picker (also Ctrl+I or a drop); `onDevices`
  * opens the Devices window (absent on engines without the device registry).
  */
-export function FileMenu({ file, onImport, onDevices }: { file: FileActions; onImport: () => void; onDevices?: () => void }) {
+export function FileMenu({
+  file,
+  onImport,
+  onDevices,
+  recent,
+  extra,
+}: {
+  file: FileActions;
+  onImport: () => void;
+  onDevices?: () => void;
+  /** Recent projects (workspace/RecentProjects.tsx), given a function that closes the menu. */
+  recent?: (close: () => void) => ReactNode;
+  /** More entries at the end (Preferences, Edit hotkeys), given a function that closes the menu. */
+  extra?: (close: () => void) => ReactNode;
+}) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -523,6 +537,13 @@ export function FileMenu({ file, onImport, onDevices }: { file: FileActions; onI
         <div className="menu" role="menu" aria-label="File">
           {item("New", file.newDocument)}
           {item("Open…", () => file.setModal({ kind: "open" }), shortcut("O"))}
+          {recent && (
+            <>
+              <div className="menu-sep" role="separator" />
+              {recent(() => setOpen(false))}
+              <div className="menu-sep" role="separator" />
+            </>
+          )}
           {item("Save", file.save, saveShortcut())}
           {item("Save as…", () => file.setModal({ kind: "saveAs" }), shortcut("S", true))}
           <div className="menu-sep" role="separator" />
@@ -537,6 +558,12 @@ export function FileMenu({ file, onImport, onDevices }: { file: FileActions; onI
           )}
           <div className="menu-sep" role="separator" />
           {item("Download .openetch", file.downloadOpenetch)}
+          {extra && (
+            <>
+              <div className="menu-sep" role="separator" />
+              {extra(() => setOpen(false))}
+            </>
+          )}
         </div>
       )}
     </div>

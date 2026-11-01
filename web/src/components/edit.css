@@ -1,0 +1,327 @@
+/* Editing tools (components/EditTools.tsx, Rulers.tsx, EditMenus.tsx, EditDialogs.tsx): rulers and guides, node
+   editing, line/pen/polygon previews, measure, trim, picks and the tool options bar. Colours come from the theme
+   tokens in styles.css, so dark mode follows. */
+
+:root {
+  --et-node: var(--accent, #0696d7);
+  --et-guide: #00a3c8;
+  --et-measure: #e0007a;
+  --et-ruler-bg: rgba(245, 245, 246, 0.94);
+  --et-ruler-fg: #5d6168;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --et-guide: #3cc6e6;
+    --et-measure: #ff4fa8;
+    --et-ruler-bg: rgba(35, 38, 42, 0.94);
+    --et-ruler-fg: #aab0b7;
+  }
+}
+
+:root[data-theme="dark"] {
+  --et-guide: #3cc6e6;
+  --et-measure: #ff4fa8;
+  --et-ruler-bg: rgba(35, 38, 42, 0.94);
+  --et-ruler-fg: #aab0b7;
+}
+
+/* ---- cursors ---- */
+.viewport.tool-line svg,
+.viewport.tool-pen svg,
+.viewport.tool-polygon svg,
+.viewport.tool-measure svg,
+.viewport.tool-pick svg {
+  cursor: crosshair;
+}
+.viewport.tool-trim svg {
+  cursor: cell;
+}
+.viewport.tool-node svg {
+  cursor: default;
+}
+
+/* The rulers take the top and left 20 px: move the corner overlays out of their way. */
+.viewport .vp-top-left {
+  top: 28px;
+  left: 28px;
+}
+.viewport .vp-top-right {
+  top: 26px;
+}
+
+/* ---- rulers ---- */
+.et-ruler {
+  position: absolute;
+  background: var(--et-ruler-bg);
+  color: var(--et-ruler-fg);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  z-index: 1;
+}
+.et-ruler-top {
+  top: 0;
+  left: 20px;
+  right: 0;
+  height: 20px;
+  border-bottom: 1px solid var(--border, #c9cbcf);
+  cursor: row-resize;
+}
+.et-ruler-left {
+  top: 20px;
+  left: 0;
+  bottom: 0;
+  width: 20px;
+  border-right: 1px solid var(--border, #c9cbcf);
+  cursor: col-resize;
+}
+.et-ruler svg {
+  display: block;
+  overflow: hidden;
+}
+.et-ruler line {
+  stroke: currentColor;
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+.et-ruler line.minor {
+  opacity: 0.55;
+}
+.et-ruler line.guide-mark {
+  stroke: var(--et-guide);
+  stroke-width: 2;
+}
+.et-ruler text {
+  fill: currentColor;
+  font-size: 9.5px;
+  font-family: ui-monospace, "Cascadia Mono", Menlo, monospace;
+}
+.et-ruler-corner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-right: 1px solid var(--border, #c9cbcf);
+  border-bottom: 1px solid var(--border, #c9cbcf);
+  background: var(--et-ruler-bg);
+  color: var(--et-ruler-fg);
+  font-size: 8px;
+  z-index: 1;
+  cursor: pointer;
+}
+.et-ruler-corner:disabled {
+  cursor: default;
+}
+
+/* ---- guides ---- */
+.et-guide {
+  fill: none;
+  stroke: var(--et-guide);
+  stroke-dasharray: none;
+  vector-effect: none;
+  opacity: 0.85;
+  pointer-events: none;
+}
+.et-guide.dragging {
+  opacity: 1;
+}
+.et-guide.remove {
+  stroke: var(--danger, #d32f2f);
+  opacity: 0.5;
+}
+.et-guide-hit {
+  fill: none;
+  stroke: transparent;
+  pointer-events: stroke;
+}
+.et-guide-x .et-guide-hit {
+  cursor: col-resize;
+}
+.et-guide-y .et-guide-hit {
+  cursor: row-resize;
+}
+
+/* ---- node editing ---- */
+.et-node-path {
+  fill: none;
+  stroke: var(--et-node);
+}
+.et-seg-hover {
+  fill: none;
+  stroke: var(--et-node);
+  opacity: 0.45;
+}
+.et-node {
+  fill: var(--field, #fff);
+  stroke: var(--et-node);
+}
+.et-node.sel {
+  fill: var(--et-node);
+}
+.et-node.hot {
+  stroke: var(--et-measure);
+}
+.et-node.first {
+  fill: var(--et-node);
+}
+.et-handle-line {
+  stroke: var(--et-node);
+  opacity: 0.7;
+  fill: none;
+}
+.et-handle {
+  fill: var(--et-node);
+  stroke: var(--field, #fff);
+}
+.et-handle.hot {
+  fill: var(--et-measure);
+}
+.et-node-box {
+  fill: rgba(6, 150, 215, 0.06);
+  stroke: var(--et-node);
+}
+
+/* ---- drawing previews ---- */
+.et-pen {
+  fill: none;
+  stroke: var(--et-node);
+}
+.et-rubber {
+  fill: none;
+  stroke: var(--et-node);
+  opacity: 0.8;
+}
+.et-trim-hover {
+  fill: none;
+  stroke: var(--danger, #d32f2f);
+  opacity: 0.55;
+}
+
+/* ---- measure and picks ---- */
+.et-measure path,
+.et-measure circle {
+  fill: none;
+  stroke: var(--et-measure);
+}
+.et-measure .et-measure-dxdy {
+  opacity: 0.6;
+}
+.et-measure-label {
+  font-family: ui-monospace, "Cascadia Mono", Menlo, monospace;
+  font-size: 11.5px;
+  color: var(--text, #24272b);
+  background: var(--surface, rgba(251, 251, 252, 0.94));
+  border: 1px solid var(--et-measure);
+  border-radius: 4px;
+  padding: 3px 7px;
+  white-space: nowrap;
+}
+.et-pick-line {
+  fill: none;
+  stroke: var(--et-measure);
+  stroke-dasharray: none;
+}
+.et-pick-line.ref {
+  opacity: 0.5;
+}
+.et-pick-pt {
+  fill: none;
+  stroke: var(--et-measure);
+}
+
+/* ---- tool options bar (Fusion's in-canvas command bar) ---- */
+.et-bar {
+  top: 28px;
+  left: 28px;
+  right: 56px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  max-width: max-content;
+  background: var(--surface, rgba(251, 251, 252, 0.96));
+  color: var(--text, #24272b);
+  border: 1px solid var(--border, #c9cbcf);
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 12.5px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  pointer-events: auto;
+}
+.et-bar .btn-small,
+.et-bar .btn {
+  min-height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+.et-bar .et-hint {
+  color: var(--muted, #8a8e95);
+  font-size: 11.5px;
+}
+.et-opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.et-opt input[type="number"] {
+  width: 64px;
+  min-height: 26px;
+  padding: 0 4px;
+  border: 1px solid var(--border, #c9cbcf);
+  border-radius: 3px;
+  background: var(--field, #fff);
+  color: var(--text, #24272b);
+}
+
+/* ---- toolbar dropdowns and dialogs ---- */
+.et-dropdown span {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.et-caret {
+  opacity: 0.7;
+}
+.et-dlg-h {
+  margin: 12px 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2, #5d6168);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.et-dlg-h:first-child {
+  margin-top: 0;
+}
+.et-dlg-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0;
+}
+
+@media (max-width: 600px) {
+  .et-bar {
+    right: 8px;
+    left: 28px;
+    font-size: 12px;
+  }
+  .et-bar .et-hint {
+    display: none;
+  }
+}
+
+/* Long menus (the Modify and Arrange dropdowns) scroll instead of running off the window. */
+.ctx-menu {
+  max-height: calc(100vh - 8px);
+  overflow-y: auto;
+}
+
+/* The bottom-left readout clears the left ruler. */
+.viewport .vp-bottom-left {
+  left: 28px;
+}

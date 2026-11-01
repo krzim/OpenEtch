@@ -124,6 +124,9 @@ impl Single {
     pub const fn stop_execute() -> Self {
         Self::op(op::STOP_EXECUTE)
     }
+    /// Pause the running list: galvoplotter's and meerk40t's `pause()` send exactly this (`StopList`, 0x0020) and
+    /// resume with [`Single::restart_list`]. That the B6 holds its place and keeps the MO state is unverified on
+    /// hardware.
     pub const fn stop_list() -> Self {
         Self::op(op::STOP_LIST)
     }
@@ -131,6 +134,7 @@ impl Single {
     pub const fn reset_list() -> Self {
         Self::op(op::RESET_LIST)
     }
+    /// Resume a list paused with [`Single::stop_list`] (galvoplotter / meerk40t `resume()`: `RestartList`, 0x0013).
     pub const fn restart_list() -> Self {
         Self::op(op::RESTART_LIST)
     }
@@ -197,6 +201,32 @@ impl Single {
     }
     pub const fn get_position_xy() -> Self {
         Self::op(op::GET_POSITION_XY)
+    }
+    /// Move the extension axis (rotary or Z) to `position`; `invert` reverses its direction. meerk40t
+    /// `balormk/controller.py` `move_axis_to(position, invert)`; the unit (motor steps) and range are unverified on
+    /// hardware. The board reports [`StatusWord::AXIS`] while the axis moves.
+    pub const fn move_axis_to(position: u16, invert: bool) -> Self {
+        Single::new(op::MOVE_AXIS_TO, [position, invert as u16, 0, 0, 0])
+    }
+    /// Home the extension axis (meerk40t `axis_go_origin()`, no parameters).
+    pub const fn axis_go_origin() -> Self {
+        Self::op(op::AXIS_GO_ORIGIN)
+    }
+    /// Read the extension axis position (meerk40t `get_axis_pos(index=0)`).
+    pub const fn get_axis_pos(index: u16) -> Self {
+        Self::op1(op::GET_AXIS_POS, index)
+    }
+    /// Extension axis motion parameters (galvoplotter `set_axis_motion_param(p0..p3)`; meanings unverified).
+    pub const fn set_axis_motion_param(p0: u16, p1: u16, p2: u16, p3: u16) -> Self {
+        Single::new(op::SET_AXIS_MOTION_PARAM, [p0, p1, p2, p3, 0])
+    }
+    /// Extension axis homing parameters (galvoplotter `set_axis_origin_param(p0..p3)`; meanings unverified).
+    pub const fn set_axis_origin_param(p0: u16, p1: u16, p2: u16, p3: u16) -> Self {
+        Single::new(op::SET_AXIS_ORIGIN_PARAM, [p0, p1, p2, p3, 0])
+    }
+    /// The board's mark counter (galvoplotter `get_mark_count`; reply layout undecoded).
+    pub const fn get_mark_count() -> Self {
+        Self::op(op::GET_MARK_COUNT)
     }
     /// Mark time of the last list (galvoplotter always sends 3).
     pub const fn get_mark_time() -> Self {
