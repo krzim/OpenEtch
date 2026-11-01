@@ -3,7 +3,7 @@
 // documented keys may be sent). The UI checks these ids against GET /api/commands at startup and reports any missing.
 
 import type { Invocation } from "./client.ts";
-import type { CutSettings, Hatch, StockShape, Vec2 } from "./types.ts";
+import type { Cleanup, CutSettings, Hatch, StockShape, Vec2 } from "./types.ts";
 
 /** Command ids used by the UI. */
 export const CMD = {
@@ -45,6 +45,11 @@ export const OPT = {
   layerDelete: "layer.delete",
   docRename: "doc.rename",
   shapePath: "shape.path",
+  layerSubAdd: "layer.sub_add",
+  layerSubUpdate: "layer.sub_update",
+  layerSubDelete: "layer.sub_delete",
+  layerSubMove: "layer.sub_move",
+  layerSubDuplicate: "layer.sub_duplicate",
 } as const;
 
 /** Define (or replace) the stock. */
@@ -139,8 +144,11 @@ export function layerAdd(name: string, color?: string): Invocation {
   return { id: CMD.layerAdd, params: color ? { name, color } : { name } };
 }
 
-/** Partial cut settings, with partial hatch, as `layer.update` accepts them. */
-export type CutSettingsPatch = Partial<Omit<CutSettings, "hatch">> & { hatch?: Partial<Hatch> };
+/**
+ * Partial cut settings, with partial hatch, as `layer.update` and `layer.sub_update` accept them. A sub-layer's name and
+ * cleanup are separate parameters of the sub-layer commands.
+ */
+export type CutSettingsPatch = Partial<Omit<CutSettings, "hatch" | "name" | "cleanup">> & { hatch?: Partial<Hatch> };
 
 /** Update layer properties. Only the given fields change. */
 export function layerUpdate(
@@ -244,4 +252,44 @@ export function docRename(name: string): Invocation {
 /** Add a path given as SVG path data in field mm (used to paste cut objects). */
 export function shapePath(svg_path_data: string, layer: string, name: string): Invocation {
   return { id: OPT.shapePath, params: { svg_path_data, layer, name } };
+}
+
+/**
+ * Add a sub-layer to `layer` (LightBurn's "add sub-layer"): `settings` are merged over a copy of the layer's main
+ * settings, `index` (into `sub_layers`) defaults to the end. The result is the new sub-layer's index.
+ */
+export function layerSubAdd(
+  layer: string,
+  p: { settings?: CutSettingsPatch; name?: string; cleanup?: Cleanup; index?: number } = {},
+): Invocation {
+  return { id: OPT.layerSubAdd, params: { layer, ...defined(p) } };
+}
+
+/** Change sub-layer `index` of `layer`: `settings` merge like `layer.update`; a null name or cleanup clears it. */
+export function layerSubUpdate(
+  layer: string,
+  index: number,
+  p: { settings?: CutSettingsPatch; name?: string | null; cleanup?: Cleanup | null },
+): Invocation {
+  return { id: OPT.layerSubUpdate, params: { layer, index, ...defined(p) } };
+}
+
+/** Delete sub-layer `index` of `layer`. */
+export function layerSubDelete(layer: string, index: number): Invocation {
+  return { id: OPT.layerSubDelete, params: { layer, index } };
+}
+
+/** Move sub-layer `from` to position `to` (both indices into `sub_layers`); the others keep their order. */
+export function layerSubMove(layer: string, from: number, to: number): Invocation {
+  return { id: OPT.layerSubMove, params: { layer, from, to } };
+}
+
+/** Copy sub-layer `index` of `layer` right after it; the result is the copy's index. */
+export function layerSubDuplicate(layer: string, index: number): Invocation {
+  return { id: OPT.layerSubDuplicate, params: { layer, index } };
+}
+
+/** `p` without its undefined keys (the commands refuse unknown keys, and an absent key means "unchanged"). */
+function defined<T extends object>(p: T): Partial<T> {
+  return Object.fromEntries(Object.entries(p).filter(([, v]) => v !== undefined)) as Partial<T>;
 }

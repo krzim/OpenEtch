@@ -40,6 +40,15 @@ anywhere else.
   square comes from `GET /api/machine` (`field_mm`), 153.75 mm until the engine reports it. Pointer Events throughout:
   drag empty space to pan, wheel or pinch to zoom, two fingers to pan, tap to select (shift adds), drag a selection to
   move it (one `object.transform` translate on release). Rectangle/Ellipse tools: drag to draw, tap for 20 mm.
+- **Passes (LightBurn sub-layers)**: with a layer selected, the Properties panel lists its passes in run order: "Main"
+  (the layer's own settings, `layer.update`) and each sub-layer (`layer.sub_update`), with its name, a Cleanup badge
+  and a settings summary. The open pass is edited with the full cut-settings form; Sub-layer, Cleanup pass (same mode
+  and interval, a quarter of the power, twice the speed, one pass, hatch turned 45°, cleaning after the main passes),
+  Duplicate, Delete and Move up/down are `layer.sub_add`, `layer.sub_duplicate`, `layer.sub_delete` and
+  `layer.sub_move` (each one undo step; hidden on engines without them, where sub-layers are shown read-only). In the
+  Toolpath card a layer with sub-layers gets one row per pass (settings, job passes, mark length, time) with show and
+  solo, and the overlay colours each pass of a layer distinctly. A segment's pass comes from its `sub_layer`, else the
+  preview's `passes[pass].sub_layer`, else by counting the layer's job passes against its settings (`api/passes.ts`).
 - **Laser workspace**: toolpath overlay from `GET /api/preview` (marks coloured by layer, jumps dashed grey), machine
   status (with a "LightBurn devices" section: the devices from `GET /api/lightburn`, the one the engine matched, the
   profile differences from `GET /api/machine` `lightburn.diffs`, and "Load LightBurn settings…", which cuts the device
@@ -104,6 +113,7 @@ src/
   api/commands.ts     every command id + parameter builder the UI uses
   api/runs.ts         run lists, approval gate and error texts, stats rows, toasts (pure; tested)
   api/project.ts      project names, file names, import/export answers and warnings, dirty state (pure; tested)
+  api/passes.ts       a layer's passes (main + sub-layers): pass list, cleanup defaults, per-pass preview (pure; tested)
   api/lightburn.ts    LightBurn devices, .lbrn2 DeviceName, the import field-size rule, prefs.ini device list (pure; tested)
   api/useEngine.ts    React hook: fetching, WebSocket events, refetch coalescing
   geometry.ts         affine maths, geometry -> SVG path, bounds (pure; tested)

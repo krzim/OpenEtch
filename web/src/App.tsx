@@ -132,7 +132,7 @@ export function App() {
   const [showPreview, setShowPreview] = useState(true);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [prefs, setPrefs] = useState<ViewPrefs>(loadPrefs);
-  const [previewOptions, setPreviewOptions] = useState<PreviewOptions>({ hidden: new Set(), upTo: null, shade: true, jumps: true });
+  const [previewOptions, setPreviewOptions] = useState<PreviewOptions>({ hidden: new Set(), hiddenPasses: new Set(), upTo: null, shade: true, jumps: true });
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [devicesOpen, setDevicesOpen] = useState(false);
   const narrow = useMediaQuery(NARROW_QUERY);
@@ -1046,7 +1046,7 @@ export function App() {
                   options={previewOptions}
                   onOptions={setPreviewOptions}
                 />
-                {selectedLayer && <LayerSection layer={selectedLayer} machine={machine} run={run} report={report} />}
+                {selectedLayer && <LayerSection layer={selectedLayer} machine={machine} run={run} report={report} has={has} />}
               </div>
             )}
           </div>

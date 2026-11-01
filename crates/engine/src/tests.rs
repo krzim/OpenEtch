@@ -224,6 +224,24 @@ async fn preview_and_svg() {
     assert!(segs.iter().any(|g| g["kind"] == "mark" && g["layer"] == "layer-1"));
     assert!((v["stats"]["mark_length_mm"].as_f64().unwrap() - 60.0).abs() < 0.1);
 
+    // Sub-layers: every job pass is listed (segments index it) and every layer lists its main settings and sub-layers.
+    let (_, r) = send(
+        &app,
+        exec("layer.sub_add", json!({"layer": "layer-1", "name": "Clean", "settings": {"power_pct": 5}, "cleanup": {"every_n_passes": 1}})),
+    )
+    .await;
+    assert_eq!(r["result"]["index"], 0, "{r}");
+    let (s, v) = send(&app, req("GET", "/api/preview", None)).await;
+    assert_eq!(s, StatusCode::OK);
+    let passes = v["passes"].as_array().unwrap();
+    assert_eq!(passes.iter().map(|p| p["sub_layer"].as_u64().unwrap()).collect::<Vec<_>>(), [0, 1]);
+    assert!(v["segments"].as_array().unwrap().iter().all(|g| g["pass"].as_u64().is_some_and(|p| p < 2)));
+    let subs = v["layers"][0]["sub_layers"].as_array().unwrap();
+    assert_eq!((subs[0]["label"].as_str(), subs[1]["label"].as_str()), (Some("Main"), Some("Clean")));
+    assert_eq!((subs[1]["power_pct"].as_f64(), subs[1]["planned_passes"].as_u64()), (Some(5.0), Some(1)));
+    assert_eq!(subs[1]["cleanup"]["every_n_passes"], 1);
+    send(&app, req("POST", "/api/undo", None)).await;
+
     let res = app.clone().oneshot(req("GET", "/api/preview.svg", None)).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
     assert_eq!(res.headers()["content-type"], "image/svg+xml");

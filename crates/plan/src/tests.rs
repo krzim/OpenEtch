@@ -314,3 +314,73 @@ fn images_are_skipped_with_a_warning() {
     assert!(plain.warnings.is_empty());
     assert!(serde_json::to_value(&plain).unwrap().get("warnings").is_none());
 }
+
+/// A main fill of `main` passes with an ordinary sub-layer and a cleanup sub-layer (every `n` main passes).
+fn with_cleanup(main: u32, n: u32, cleanup_passes: u32) -> Document {
+    let mut d = doc_with(vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0))], CutSettings { passes: main, ..fill(0.5, false) });
+    d.layers[0].sub_layers.push(CutSettings { name: Some("Outline".into()), ..CutSettings::default() });
+    let mut cleanup = CutSettings { passes: cleanup_passes, power_pct: 5.0, cleanup: Some(doc::Cleanup { every_n_passes: n }), ..fill(0.5, false) };
+    cleanup.hatch.angle_deg = 45.0;
+    cleanup.hatch.angle_increment_deg = 10.0;
+    d.layers[0].sub_layers.push(cleanup);
+    d
+}
+
+#[test]
+fn cleanup_sub_layers_run_between_main_passes_then_the_other_sub_layers() {
+    let order = |d: &Document| -> Vec<(usize, u32)> {
+        plan_job(d, &target()).unwrap().passes.iter().map(|p| (p.sub_layer, p.repeat)).collect()
+    };
+    // Every 2 of 5 main passes and after the last; the ordinary sub-layer (1) runs after all of that.
+    assert_eq!(order(&with_cleanup(5, 2, 1)), [(0, 0), (0, 1), (2, 0), (0, 2), (0, 3), (2, 1), (0, 4), (2, 2), (1, 0)]);
+    // A long interval cleans once, after the main passes; each run makes the cleanup's own passes, counted on.
+    assert_eq!(order(&with_cleanup(2, 10, 2)), [(0, 0), (0, 1), (2, 0), (2, 1), (1, 0)]);
+    assert_eq!(layer_schedule(&with_cleanup(3, 1, 2).layers[0]).len(), 3 + 3 * 2 + 1);
+    // The cleanup's hatch keeps turning across runs, from its own angle.
+    let plan = plan_job(&with_cleanup(4, 2, 1), &target()).unwrap();
+    let angles: Vec<f64> = plan.passes.iter().filter(|p| p.sub_layer == 2).map(|p| p.settings.hatch_angle_deg).collect();
+    assert_eq!(angles, [45.0, 55.0]);
+    assert!(plan.passes.iter().filter(|p| p.sub_layer == 2).all(|p| p.settings.power_pct == 5.0));
+}
+
+#[test]
+fn cleanup_and_layer_pass_limits_are_enforced() {
+    let mut zero = with_cleanup(2, 1, 1);
+    zero.layers[0].sub_layers[1].cleanup = Some(doc::Cleanup { every_n_passes: 0 });
+    assert!(matches!(plan_job(&zero, &target()), Err(PlanError::Setting { what: "cleanup.every_n_passes", .. })));
+    // 1000 main passes with a 200-pass cleanup after each: refused before anything is generated.
+    let huge = with_cleanup(MAX_PASSES, 1, 200);
+    let err = plan_job(&huge, &target()).unwrap_err();
+    assert_eq!(err, PlanError::TooManyPasses { layer: "layer-1".into(), passes: 1000 + 1000 * 200 + 1, max: MAX_LAYER_PASSES });
+    // Settings are checked even on a layer with nothing to mark.
+    let mut empty = with_cleanup(1, 1, 1);
+    empty.objects.clear();
+    empty.layers[0].sub_layers[0].power_pct = 95.0;
+    assert!(matches!(plan_job(&empty, &target()), Err(PlanError::PowerTooHigh { .. })));
+}
+
+#[test]
+fn preview_lists_every_pass_and_every_sub_layer_with_its_share() {
+    let d = with_cleanup(2, 1, 1);
+    let plan = plan_job(&d, &target()).unwrap();
+    let p = preview_document(&d, &plan);
+    assert_eq!(p.passes.len(), plan.passes.len());
+    for s in &p.segments {
+        let pass = &p.passes[s.pass.unwrap()];
+        assert_eq!(Some(pass.layer_id.as_str()), s.layer.as_deref());
+    }
+    let layer = &p.layers[0];
+    let labels: Vec<&str> = layer.sub_layers.iter().map(|s| s.label.as_str()).collect();
+    assert_eq!(labels, ["Main", "Outline", "Cleanup"]);
+    let planned: Vec<usize> = layer.sub_layers.iter().map(|s| s.planned_passes).collect();
+    assert_eq!(planned, [2, 1, 2]);
+    assert_eq!(layer.sub_layers[2].cleanup, Some(doc::Cleanup { every_n_passes: 1 }));
+    assert_eq!((layer.sub_layers[2].power_pct, layer.sub_layers[2].passes), (5.0, 1));
+    let sum = |f: fn(&SubLayerPreview) -> f64| layer.sub_layers.iter().map(f).sum::<f64>();
+    assert!((sum(|s| s.mark_length_mm) - layer.mark_length_mm).abs() < 1e-9);
+    assert!((sum(|s| s.estimated_time_s) - layer.estimated_time_s).abs() < 1e-9);
+    assert_eq!(layer.sub_layers.iter().map(|s| s.segments).sum::<usize>(), layer.segments);
+    let v = serde_json::to_value(&p).unwrap();
+    assert_eq!(v["passes"][1]["sub_layer"], 2, "the cleanup right after the first main pass");
+    assert_eq!(v["layers"][0]["sub_layers"][1]["name"], "Outline");
+}

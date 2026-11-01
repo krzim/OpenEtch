@@ -23,8 +23,12 @@ mod target;
 pub use encode::{encode, jump_delay_us};
 pub use geom::{FLATTEN_TOLERANCE_MM, Point};
 pub use hatch::MAX_SCANLINES;
-pub use job::{IMAGE_WARNING, JobPlan, MAX_PASSES, MAX_SEGMENTS, PassPlan, PassSettings, Stats, plan_job};
-pub use preview::{LayerPreview, Preview, PreviewSegment, SegmentKind, preview_document, preview_plan, simulate};
+pub use job::{
+    IMAGE_WARNING, JobPlan, MAX_LAYER_PASSES, MAX_PASSES, MAX_SEGMENTS, PassPlan, PassSettings, Stats, layer_schedule, plan_job,
+};
+pub use preview::{
+    LayerPreview, PassPreview, Preview, PreviewSegment, SegmentKind, SubLayerPreview, preview_document, preview_plan, simulate,
+};
 pub use regions::{DISPLAY_TOLERANCE_MM, FillRegions, LayerFill, fill_regions};
 pub use target::Target;
 

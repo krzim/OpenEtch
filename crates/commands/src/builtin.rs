@@ -17,6 +17,7 @@ mod place;
 mod region;
 mod shape;
 mod stock;
+mod sub_layer;
 mod svg_import;
 mod util;
 
@@ -40,6 +41,11 @@ pub(crate) fn register_all(r: &mut Registry) {
     r.register::<layer::LayerAdd>();
     r.register::<layer::LayerUpdate>();
     r.register::<layer::LayerDelete>();
+    r.register::<sub_layer::SubAdd>();
+    r.register::<sub_layer::SubUpdate>();
+    r.register::<sub_layer::SubDelete>();
+    r.register::<sub_layer::SubMove>();
+    r.register::<sub_layer::SubDuplicate>();
     r.register::<shape::ShapeRect>();
     r.register::<shape::ShapeEllipse>();
     r.register::<shape::ShapePath>();

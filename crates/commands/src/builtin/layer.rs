@@ -126,6 +126,9 @@ pub(super) fn validate_settings(cmd: &str, s: &CutSettings) -> Result<()> {
     util::positive(cmd, "hatch.interval_mm", s.hatch.interval_mm)?;
     util::finite(cmd, "hatch.angle_deg", s.hatch.angle_deg)?;
     util::finite(cmd, "hatch.angle_increment_deg", s.hatch.angle_increment_deg)?;
+    if let Some(c) = &s.cleanup {
+        check_cleanup(cmd, c)?;
+    }
     if let Some(t) = &s.timing {
         let fields = [
             ("laser_on_delay_us", t.laser_on_delay_us),
@@ -140,6 +143,17 @@ pub(super) fn validate_settings(cmd: &str, s: &CutSettings) -> Result<()> {
             util::finite(cmd, &format!("timing.{f}"), v)?;
         }
         util::positive(cmd, "timing.jump_speed_mm_s", t.jump_speed_mm_s)?;
+    }
+    Ok(())
+}
+
+/// A cleanup interval within `1..=MAX_PASSES`.
+pub(super) fn check_cleanup(cmd: &str, c: &doc::Cleanup) -> Result<()> {
+    if !(1..=MAX_PASSES).contains(&c.every_n_passes) {
+        return Err(invalid(
+            cmd,
+            format!("cleanup.every_n_passes must be within 1..={MAX_PASSES} (got {})", c.every_n_passes),
+        ));
     }
     Ok(())
 }

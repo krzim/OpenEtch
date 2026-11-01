@@ -13,6 +13,10 @@ use crate::{PlanError, Result, Target};
 /// Most repetitions (`passes`) one layer or sub-layer may ask for. The commands crate refuses more too.
 pub const MAX_PASSES: u32 = 1000;
 
+/// Most passes (repetitions of the main settings, of cleanups and of sub-layers together) one layer may plan, so a
+/// layer of many sub-layers or a cleanup after every one of many main passes cannot make planning loop without bound.
+pub const MAX_LAYER_PASSES: u32 = 100_000;
+
 /// Most mark segments (straight `MarkTo`s) one job may have. Planning stops as soon as a job passes it, so a
 /// document edit cannot make the engine allocate without bound: at this size a plan (polylines, plus a preview or
 /// the encoded packets) stays around a couple of hundred MB at most, which a Raspberry Pi can hold.
@@ -74,16 +78,19 @@ pub struct Stats {
 /// Plan `doc` for `target`.
 ///
 /// Layers with `output` run in document order; each runs `settings` then every sub-layer, each repeated its own
-/// `passes` times, the hatch angle growing by `angle_increment_deg` per repeat. `Line` traces outlines (closed
-/// subpaths closed), `Fill` hatches closed subpaths per object with the even-odd rule, `FillThenLine` does both,
-/// hatch first. Travel is ordered greedily per pass, continuing from where the previous pass ended.
+/// `passes` times, the hatch angle growing by `angle_increment_deg` per repeat. A cleanup sub-layer
+/// ([`doc::Cleanup`]) runs between the main passes instead: after main passes n, 2n, ... and after the last one, its
+/// own `passes` each time (its repeats count on across runs, so its hatch keeps turning); the other sub-layers follow
+/// in order (see [`layer_schedule`]). `Line` traces outlines (closed subpaths closed), `Fill` hatches closed
+/// subpaths per object with the even-odd rule, `FillThenLine` does both, hatch first. Travel is ordered greedily per pass, continuing from where the previous pass ended.
 ///
 /// Images are skipped (image engraving is not supported yet), with a warning in [`JobPlan::warnings`].
 ///
 /// Refused, never clamped: a point outside the field (naming every offending object), power above the target's
-/// limit, a pulse width not in the table, settings the board cannot encode, more than [`MAX_PASSES`] passes, and
-/// more than [`MAX_SEGMENTS`] mark segments in total (counted while generating; planning stops at the first pass
-/// that goes over). Passes with nothing to mark are left out.
+/// limit, a pulse width not in the table, settings the board cannot encode, more than [`MAX_PASSES`] passes, a
+/// cleanup interval of 0, more than [`MAX_LAYER_PASSES`] passes of one layer in all, and more than [`MAX_SEGMENTS`]
+/// mark segments in total (counted while generating; planning stops at the first pass that goes over). Passes with
+/// nothing to mark are left out.
 pub fn plan_job(doc: &Document, target: &Target) -> Result<JobPlan> {
     plan_job_within(doc, target, MAX_SEGMENTS)
 }
@@ -120,26 +127,81 @@ pub(crate) fn plan_job_within(doc: &Document, target: &Target, max_segments: usi
     let mut segments = 0usize;
     for layer in layers {
         let subs: Vec<&Vec<Subpath>> = shapes.iter().filter(|(l, _)| *l == layer.id).map(|(_, s)| s).collect();
-        for (sub_layer, cut) in std::iter::once(&layer.settings).chain(&layer.sub_layers).enumerate() {
-            let base = resolve(&layer.id, cut, target)?;
-            for repeat in 0..cut.passes {
-                let angle = cut.hatch.angle_deg + f64::from(repeat) * cut.hatch.angle_increment_deg;
-                let settings = PassSettings { hatch_angle_deg: angle, ..base.clone() };
-                let (polylines, end) = pass_polylines(&layer.id, cut, angle, &subs, pos, (max_segments - segments, max_segments))?;
-                if polylines.is_empty() {
-                    continue;
-                }
-                segments += segment_count(&polylines);
-                if segments > max_segments {
-                    return Err(PlanError::TooManySegments { max: max_segments });
-                }
-                pos = end;
-                plan.passes.push(PassPlan { layer_id: layer.id.clone(), sub_layer, repeat, settings, polylines });
+        // Every set of settings is checked, also on a layer with nothing to mark.
+        let cuts: Vec<&CutSettings> = std::iter::once(&layer.settings).chain(&layer.sub_layers).collect();
+        let resolved = cuts.iter().map(|cut| resolve(&layer.id, cut, target)).collect::<Result<Vec<_>>>()?;
+        for c in layer.sub_layers.iter().filter_map(|s| s.cleanup.as_ref()) {
+            if c.every_n_passes == 0 {
+                return Err(PlanError::Setting { layer: layer.id.clone(), what: "cleanup.every_n_passes", value: 0.0 });
             }
+        }
+        let total = layer_pass_count(layer);
+        if total > u64::from(MAX_LAYER_PASSES) {
+            return Err(PlanError::TooManyPasses {
+                layer: layer.id.clone(),
+                passes: u32::try_from(total).unwrap_or(u32::MAX),
+                max: MAX_LAYER_PASSES,
+            });
+        }
+        if subs.is_empty() {
+            continue;
+        }
+        for (sub_layer, repeat) in layer_schedule(layer) {
+            let cut = cuts[sub_layer];
+            let angle = cut.hatch.angle_deg + f64::from(repeat) * cut.hatch.angle_increment_deg;
+            let settings = PassSettings { hatch_angle_deg: angle, ..resolved[sub_layer].clone() };
+            let (polylines, end) =
+                pass_polylines(&layer.id, cut, angle, &subs, pos, (max_segments - segments, max_segments))?;
+            if polylines.is_empty() {
+                continue;
+            }
+            segments += segment_count(&polylines);
+            if segments > max_segments {
+                return Err(PlanError::TooManySegments { max: max_segments });
+            }
+            pos = end;
+            plan.passes.push(PassPlan { layer_id: layer.id.clone(), sub_layer, repeat, settings, polylines });
         }
     }
     plan.stats = plan_stats(&plan, target);
     Ok(plan)
+}
+
+/// The passes of one layer in burn order, as `(sub_layer, repeat)` (`sub_layer` 0 for the main settings, n for
+/// `sub_layers[n - 1]`): each main pass, followed by every cleanup sub-layer due after it ([`doc::Cleanup::runs_after`],
+/// its `passes` each time, `repeat` counting on across its runs), then every other sub-layer `passes` times in order.
+/// The main settings' own `cleanup` means nothing and is ignored.
+pub fn layer_schedule(layer: &Layer) -> Vec<(usize, u32)> {
+    let main = layer.settings.passes;
+    let cleanups: Vec<(usize, &CutSettings, &doc::Cleanup)> =
+        layer.sub_layers.iter().enumerate().filter_map(|(i, s)| s.cleanup.as_ref().map(|c| (i + 1, s, c))).collect();
+    let mut runs = vec![0u32; layer.sub_layers.len() + 1];
+    let mut out = Vec::new();
+    for k in 1..=main {
+        out.push((0, k - 1));
+        for &(n, s, c) in &cleanups {
+            if k % c.every_n_passes.max(1) == 0 || k == main {
+                out.extend((0..s.passes).map(|r| (n, runs[n].saturating_mul(s.passes).saturating_add(r))));
+                runs[n] += 1;
+            }
+        }
+    }
+    for (i, s) in layer.sub_layers.iter().enumerate().filter(|(_, s)| s.cleanup.is_none()) {
+        out.extend((0..s.passes).map(|r| (i + 1, r)));
+    }
+    out
+}
+
+/// How many passes [`layer_schedule`] gives `layer`, without listing them.
+fn layer_pass_count(layer: &Layer) -> u64 {
+    let main = u64::from(layer.settings.passes);
+    layer.sub_layers.iter().fold(main, |total, s| {
+        let runs = match &s.cleanup {
+            Some(c) => main.div_ceil(u64::from(c.every_n_passes.max(1))),
+            None => 1,
+        };
+        total.saturating_add(runs.saturating_mul(u64::from(s.passes)))
+    })
 }
 
 /// Validate one `CutSettings` against the target and resolve its defaults.
@@ -152,7 +214,11 @@ fn resolve(layer: &str, cut: &CutSettings, target: &Target) -> Result<PassSettin
         return Err(invalid("power_pct", cut.power_pct));
     }
     if cut.power_pct > target.max_power_pct {
-        return Err(PlanError::PowerTooHigh { layer: layer.into(), power_pct: cut.power_pct, max_pct: target.max_power_pct });
+        return Err(PlanError::PowerTooHigh {
+            layer: layer.into(),
+            power_pct: cut.power_pct,
+            max_pct: target.max_power_pct,
+        });
     }
     if !(cut.speed_mm_s.is_finite() && cut.speed_mm_s > 0.0) {
         return Err(invalid("speed_mm_s", cut.speed_mm_s));
@@ -160,7 +226,9 @@ fn resolve(layer: &str, cut: &CutSettings, target: &Target) -> Result<PassSettin
     if !(cut.frequency_khz.is_finite() && cut.frequency_khz > 0.0) {
         return Err(invalid("frequency_khz", cut.frequency_khz));
     }
-    if matches!(cut.mode, FillMode::Fill | FillMode::FillThenLine) && !(cut.hatch.interval_mm.is_finite() && cut.hatch.interval_mm > 0.0) {
+    if matches!(cut.mode, FillMode::Fill | FillMode::FillThenLine)
+        && !(cut.hatch.interval_mm.is_finite() && cut.hatch.interval_mm > 0.0)
+    {
         return Err(invalid("hatch.interval_mm", cut.hatch.interval_mm));
     }
     let pulse_width_ns = match cut.pulse_width_ns {
@@ -168,7 +236,11 @@ fn resolve(layer: &str, cut: &CutSettings, target: &Target) -> Result<PassSettin
         Some(ns) => match nearest_pulse_width(ns, &target.pulse_widths_ns) {
             PulseDecision::Exact(w) | PulseDecision::Snapped { to: w, .. } => Some(w),
             PulseDecision::Refused { requested, nearest } => {
-                return Err(PlanError::PulseWidth { layer: layer.into(), requested_ns: requested, nearest_ns: nearest });
+                return Err(PlanError::PulseWidth {
+                    layer: layer.into(),
+                    requested_ns: requested,
+                    nearest_ns: nearest,
+                });
             }
         },
     };
@@ -181,7 +253,8 @@ fn resolve(layer: &str, cut: &CutSettings, target: &Target) -> Result<PassSettin
         hatch_angle_deg: cut.hatch.angle_deg,
     };
     // Everything the encoder will need must convert now, so a plan that exists can be encoded.
-    crate::encode::PassWords::new(&settings, target).map_err(|e| PlanError::Encode { layer: layer.into(), source: e })?;
+    crate::encode::PassWords::new(&settings, target)
+        .map_err(|e| PlanError::Encode { layer: layer.into(), source: e })?;
     Ok(settings)
 }
 
@@ -215,10 +288,13 @@ fn pass_polylines(
                 angles.push(angle + 90.0);
             }
             for a in angles {
-                let lines = hatch(&rings, a, cut.hatch.interval_mm, cut.hatch.bidirectional, budget - lines_made).map_err(|e| match e {
-                    HatchError::TooManyScanlines => PlanError::TooManyHatchLines { layer: layer.into(), max: MAX_SCANLINES },
-                    HatchError::OverBudget => PlanError::TooManySegments { max },
-                })?;
+                let lines = hatch(&rings, a, cut.hatch.interval_mm, cut.hatch.bidirectional, budget - lines_made)
+                    .map_err(|e| match e {
+                        HatchError::TooManyScanlines => {
+                            PlanError::TooManyHatchLines { layer: layer.into(), max: MAX_SCANLINES }
+                        }
+                        HatchError::OverBudget => PlanError::TooManySegments { max },
+                    })?;
                 lines_made += lines.len();
                 if !lines.is_empty() {
                     chunks.push(Chunk::Hatch { lines, bidirectional: cut.hatch.bidirectional });

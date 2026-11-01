@@ -185,6 +185,12 @@ fn real_projects_export_as_they_were_imported() {
             d.groups.len(),
             show(union(&d.objects), FIELD_MM / 2.0)
         );
+        // LightBurn's cleanup sub-layers (3D sliced images) become `cleanup`, one per `isCleanup` element.
+        let cleanups = d.layers.iter().flat_map(|l| &l.sub_layers).filter(|s| s.cleanup.is_some()).count();
+        assert_eq!(cleanups, text.matches("<isCleanup Value=\"1\"").count(), "{name}: cleanup sub-layers");
+        if cleanups > 0 {
+            println!("   {cleanups} cleanup sub-layer(s)");
+        }
         for w in &warnings {
             println!("   import warning: {w}");
         }

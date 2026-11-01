@@ -6,7 +6,7 @@ use lmc::units::units_to_speed;
 use lmc::{LASER_ENABLE_BIT, ListCommand, Packet, TraceKind, TraceState, decode, trace_from};
 use serde::{Deserialize, Serialize};
 
-use doc::{Document, FillMode, LayerId};
+use doc::{Cleanup, Document, FillMode, LayerId};
 
 use crate::geom::{Point, dist};
 use crate::job::{JobPlan, Stats, pass_stats};
@@ -43,6 +43,9 @@ pub struct PreviewSegment {
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Preview {
     pub segments: Vec<PreviewSegment>,
+    /// One entry per job pass in burn order, so [`PreviewSegment::pass`] indexes it; empty from [`simulate`].
+    #[serde(default)]
+    pub passes: Vec<PassPreview>,
     pub stats: Stats,
     /// One entry per document layer, in document order (burn order); empty from [`preview_plan`] and [`simulate`].
     #[serde(default)]
@@ -50,6 +53,49 @@ pub struct Preview {
     /// What the plan left out (e.g. images), from [`JobPlan::warnings`].
     #[serde(default)]
     pub warnings: Vec<String>,
+}
+
+/// One pass of a previewed job ([`crate::PassPlan`] without its polylines, plus its share of the stats).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PassPreview {
+    pub layer_id: LayerId,
+    /// 0 for the layer's main settings, `n` for `sub_layers[n - 1]`.
+    pub sub_layer: usize,
+    /// Repetition of those settings.
+    pub repeat: u32,
+    /// Straight mark segments.
+    pub segments: usize,
+    pub mark_length_mm: f64,
+    /// Travel into and within the pass.
+    pub jump_length_mm: f64,
+    /// Motion and delays of the pass, as [`Stats::estimated_time_s`].
+    pub estimated_time_s: f64,
+}
+
+/// One set of settings of a layer (its main settings or one sub-layer, as LightBurn's sub-layer tabs show them) and
+/// what its passes contribute to the job.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SubLayerPreview {
+    /// 0 for the main settings, `n` for `sub_layers[n - 1]` (as [`PassPreview::sub_layer`]).
+    pub sub_layer: usize,
+    /// The sub-layer's name, if it has one.
+    pub name: Option<String>,
+    /// Display label: "Main", the name, "Cleanup" for an unnamed cleanup, else "Sub-layer n".
+    pub label: String,
+    pub cleanup: Option<Cleanup>,
+    pub mode: FillMode,
+    pub power_pct: f64,
+    pub speed_mm_s: f64,
+    pub frequency_khz: f64,
+    pub pulse_width_ns: Option<f64>,
+    /// Repetitions asked for (per run, for a cleanup).
+    pub passes: u32,
+    /// Job passes planned with these settings (0 when they have nothing to mark or the layer no output).
+    pub planned_passes: usize,
+    pub segments: usize,
+    pub mark_length_mm: f64,
+    pub jump_length_mm: f64,
+    pub estimated_time_s: f64,
 }
 
 /// What one layer contributes to a previewed job.
@@ -73,14 +119,28 @@ pub struct LayerPreview {
     pub jump_length_mm: f64,
     /// Time of its passes (motion and delays, as [`Stats::estimated_time_s`], without the job's start-up delay).
     pub estimated_time_s: f64,
+    /// The main settings and every sub-layer, in list order, with their share of the totals above.
+    #[serde(default)]
+    pub sub_layers: Vec<SubLayerPreview>,
 }
 
 /// Draw `plan` without encoding: a jump from the field centre (or the previous polyline's end) to each polyline's
 /// start, then its marks. Zero-length jumps are left out.
 pub fn preview_plan(plan: &JobPlan) -> Preview {
     let mut segments = Vec::new();
+    let mut passes = Vec::with_capacity(plan.passes.len());
     let mut pos: Point = [0.0, 0.0];
     for (index, pass) in plan.passes.iter().enumerate() {
+        let (s, _, _) = pass_stats(pass, pos);
+        passes.push(PassPreview {
+            layer_id: pass.layer_id.clone(),
+            sub_layer: pass.sub_layer,
+            repeat: pass.repeat,
+            segments: s.segment_count,
+            mark_length_mm: s.mark_length_mm,
+            jump_length_mm: s.jump_length_mm,
+            estimated_time_s: s.estimated_time_s,
+        });
         let layer = Some(pass.layer_id.clone());
         let at = |kind, from, to, emits| PreviewSegment { kind, from, to, layer: layer.clone(), pass: Some(index), emits };
         for poly in &pass.polylines {
@@ -94,7 +154,7 @@ pub fn preview_plan(plan: &JobPlan) -> Preview {
             pos = poly.last().copied().unwrap_or(first);
         }
     }
-    Preview { segments, stats: plan.stats, layers: Vec::new(), warnings: plan.warnings.clone() }
+    Preview { segments, passes, stats: plan.stats, layers: Vec::new(), warnings: plan.warnings.clone() }
 }
 
 /// [`preview_plan`] plus a [`LayerPreview`] for every layer of `doc` (the document `plan` was planned from).
@@ -115,26 +175,62 @@ pub fn preview_document(doc: &Document, plan: &JobPlan) -> Preview {
             mark_length_mm: 0.0,
             jump_length_mm: 0.0,
             estimated_time_s: 0.0,
+            sub_layers: std::iter::once(&l.settings)
+                .chain(&l.sub_layers)
+                .enumerate()
+                .map(|(n, s)| SubLayerPreview {
+                    sub_layer: n,
+                    name: if n == 0 { None } else { s.name.clone() },
+                    label: sub_layer_label(n, s),
+                    cleanup: if n == 0 { None } else { s.cleanup.clone() },
+                    mode: s.mode.clone(),
+                    power_pct: s.power_pct,
+                    speed_mm_s: s.speed_mm_s,
+                    frequency_khz: s.frequency_khz,
+                    pulse_width_ns: s.pulse_width_ns,
+                    passes: s.passes,
+                    planned_passes: 0,
+                    segments: 0,
+                    mark_length_mm: 0.0,
+                    jump_length_mm: 0.0,
+                    estimated_time_s: 0.0,
+                })
+                .collect(),
         })
         .collect();
-    let mut pos: Point = [0.0, 0.0];
-    for pass in &plan.passes {
-        let (s, _, end) = pass_stats(pass, pos);
-        pos = end;
+    for pass in &preview.passes {
         if let Some(l) = layers.iter_mut().find(|l| l.layer_id == pass.layer_id) {
             l.passes += 1;
-            l.segments += s.segment_count;
-            l.mark_length_mm += s.mark_length_mm;
-            l.jump_length_mm += s.jump_length_mm;
-            l.estimated_time_s += s.estimated_time_s;
+            l.segments += pass.segments;
+            l.mark_length_mm += pass.mark_length_mm;
+            l.jump_length_mm += pass.jump_length_mm;
+            l.estimated_time_s += pass.estimated_time_s;
+            if let Some(s) = l.sub_layers.get_mut(pass.sub_layer) {
+                s.planned_passes += 1;
+                s.segments += pass.segments;
+                s.mark_length_mm += pass.mark_length_mm;
+                s.jump_length_mm += pass.jump_length_mm;
+                s.estimated_time_s += pass.estimated_time_s;
+            }
         }
     }
     preview.layers = layers;
     preview
 }
 
+/// "Main" for the main settings (`n` 0); a sub-layer's name, "Cleanup" for an unnamed cleanup, else "Sub-layer n".
+fn sub_layer_label(n: usize, s: &doc::CutSettings) -> String {
+    match (n, &s.name, &s.cleanup) {
+        (0, _, _) => "Main".into(),
+        (_, Some(name), _) => name.clone(),
+        (_, None, Some(_)) => "Cleanup".into(),
+        (_, None, None) => format!("Sub-layer {n}"),
+    }
+}
+
 impl Preview {
-    /// Keep only the segments and layer entries of `layers` (stats stay those of the whole job).
+    /// Keep only the segments and layer entries of `layers` (stats stay those of the whole job, and `passes` stays
+    /// whole so the segments' pass indices still point into it).
     pub fn retain_layers(&mut self, layers: &[&str]) {
         self.segments.retain(|s| s.layer.as_deref().is_some_and(|l| layers.contains(&l)));
         self.layers.retain(|l| layers.contains(&l.layer_id.as_str()));
@@ -182,7 +278,7 @@ pub fn simulate(packets: &[Packet], target: &Target) -> Preview {
         }
     }
     stats.estimated_time_s = list_time_us(&decode(packets), target) / 1e6;
-    Preview { segments, stats, layers: Vec::new(), warnings: Vec::new() }
+    Preview { segments, passes: Vec::new(), stats, layers: Vec::new(), warnings: Vec::new() }
 }
 
 /// Nominal run time of a decoded list in µs, with the same model as the plan's estimate: motion at the set speeds,

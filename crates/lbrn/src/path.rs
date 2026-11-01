@@ -96,6 +96,9 @@ pub(crate) fn parse_vertices(text: &str, max: usize) -> Result<Vec<Vertex>, Lbrn
                 return Err(malformed("duplicate control point component in VertList"));
             }
         }
+        // LightBurn 1.2-2.0 sometimes marks a node as smooth with a bare `S` after its control points
+        // (`...c1y130.8851SV242.3...`). It only affects node editing in LightBurn, not the geometry.
+        s.take("S");
         out.push(Vertex { p, c0: control(c[0], c[1])?, c1: control(c[2], c[3])? });
     }
     Ok(out)
@@ -332,6 +335,15 @@ mod tests {
         assert!(parse_vertices("X1 2", 10).is_err());
         assert!(parse_vertices("V1 nan", 10).is_err());
         assert!(matches!(parse_vertices("V1 2V3 4", 1), Err(LbrnError::TooLarge(_))));
+    }
+
+    #[test]
+    fn accepts_the_smooth_node_marker() {
+        let v = parse_vertices("V1 2c0x3c0y4c1x5c1y6SV7 8c0x1c1x1S", 10).unwrap();
+        assert_eq!(v.len(), 2);
+        assert_eq!(v[0].c1, Some(Point::new(5.0, 6.0)));
+        assert_eq!(v[1].p, Point::new(7.0, 8.0));
+        assert!(parse_vertices("V1 2SS", 10).is_err(), "one marker per node");
     }
 
     #[test]

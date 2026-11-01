@@ -85,6 +85,85 @@ fn rear_right_and_front_right_mirror_x_too() {
     assert_eq!(out, text);
 }
 
+/// A "Γ" (stem on the left, bar at the top pointing right) as the operator sees it on a 400 x 300 bed: mm from the
+/// front-left corner, y toward the rear.
+const GAMMA: [(f64, f64); 6] = [(50.0, 40.0), (52.0, 40.0), (52.0, 48.0), (56.0, 48.0), (56.0, 50.0), (50.0, 50.0)];
+
+/// A bed project holding [`GAMMA`] as LightBurn saves it for the origin corner `(mirror_x, mirror_y)`: each mirrored
+/// axis counts from the far edge, so the stored outline is mirrored (both flags: turned 180°).
+fn gamma_project(mirror_x: bool, mirror_y: bool) -> String {
+    let flag = |b: bool| if b { "True" } else { "False" };
+    let verts: String = GAMMA
+        .iter()
+        .map(|&(x, y)| {
+            let x = if mirror_x { 400.0 - x } else { x };
+            let y = if mirror_y { 300.0 - y } else { y };
+            format!("V{x} {y}c0x1c1x1")
+        })
+        .collect();
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<LightBurnProject AppVersion="2.0.02" FormatVersion="1" MaterialHeight="0" MirrorX="{}" MirrorY="{}">
+    <CutSetting type="Cut">
+        <index Value="0"/>
+        <name Value="C00"/>
+        <priority Value="0"/>
+    </CutSetting>
+    <Shape Type="Path" CutIndex="0" VertID="0" PrimID="0">
+        <XForm>1 0 0 1 0 0</XForm>
+        <VertList>{verts}</VertList>
+        <PrimList>LineClosed</PrimList>
+    </Shape>
+</LightBurnProject>
+"#,
+        flag(mirror_x),
+        flag(mirror_y)
+    )
+}
+
+/// The on-curve points of the first object's outline, rounded to 1e-9 mm.
+fn outline(d: &Document) -> Vec<(f64, f64)> {
+    let r = |v: f64| (v * 1e9).round() / 1e9;
+    d.objects[0].field_path().elements().iter().filter_map(|el| el.end_point()).map(|p| (r(p.x), r(p.y))).collect()
+}
+
+/// [`GAMMA`] in the field frame (centre origin).
+fn gamma_in_field() -> Vec<(f64, f64)> {
+    GAMMA.iter().map(|&(x, y)| (x - 200.0, y - 150.0)).collect()
+}
+
+#[test]
+fn every_origin_corner_shows_the_design_as_lightburn_does() {
+    // Established from public projects saved by LightBurn for gantry devices, comparing each file's embedded thumbnail
+    // (LightBurn's top-down view, front at the bottom) with the outlines: on 5 rear-right (MirrorX + MirrorY) files
+    // from 4 authors (Ruida controllers; LightBurn 1.5 to 2.0) the raw coordinates drawn y-up are turned 180° from the
+    // thumbnail and upright after mirroring both axes; on a rear-left (MirrorY) file the raw text is upside down and
+    // reads correctly after mirroring y; on a front-right (MirrorX) file the layout matches only with x mirrored; on 8
+    // front-left files raw y-up already matches. So a mirrored axis flips the outline itself, not only its position.
+    // Mirroring about the bed (W - x, H - y) rather than about 0 is likely (4 of 5 rear-right files have only positive
+    // raw coordinates) but thumbnails cannot show it. This test builds its data with the rule, so it guards the rule
+    // and the import/export round trip; it is not evidence that LightBurn behaves this way.
+    for (mx, my) in [(false, false), (false, true), (true, false), (true, true)] {
+        let text = gamma_project(mx, my);
+        let d = imported(&text, bed(&text));
+        assert_eq!(outline(&d), gamma_in_field(), "MirrorX={mx} MirrorY={my}: upright Γ, stem left, bar top-right");
+        // Export for each corner writes that corner's stored form, which imports back to the same outline.
+        for (tx, ty) in [(false, false), (false, true), (true, false), (true, true)] {
+            let target = Frame::Bed { width_mm: 400.0, height_mm: 300.0, mirror_x: tx, mirror_y: ty };
+            let (p, warnings) = from_document_in(&d, target).unwrap();
+            assert!(warnings.is_empty(), "{warnings:?}");
+            let back = parse(&write(&p)).unwrap();
+            assert_eq!(back.mirror(), (tx, ty));
+            // Reading the export with both flags off gives its raw coordinates: the corner's stored form.
+            let unmirrored = Frame::Bed { width_mm: 400.0, height_mm: 300.0, mirror_x: false, mirror_y: false };
+            let raw = Document { objects: to_document_in(&back, unmirrored).unwrap().objects, ..Document::default() };
+            let stored = imported(&gamma_project(tx, ty), unmirrored);
+            assert_eq!(outline(&raw), outline(&stored), "{mx},{my} -> {tx},{ty}");
+            assert_eq!(outline(&imported(&write(&p), target)), gamma_in_field());
+        }
+    }
+}
+
 #[test]
 fn galvo_frame_is_the_centred_field_and_ignores_mirror_flags() {
     let text = bed_project("False", "True");

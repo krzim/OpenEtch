@@ -295,6 +295,7 @@ const ICONS: Record<string, ReactNode> = {
   fit: <path d="M4 9V4h5 M15 4h5v5 M20 15v5h-5 M9 20H4v-5 M9 9h6v6H9z" />,
   chevron: <path d="M9 6l6 6-6 6" />,
   chevronDown: <path d="M6 9l6 6 6-6" />,
+  chevronUp: <path d="M6 15l6-6 6 6" />,
   upload: <path d="M12 16V4 M7 9l5-5 5 5 M4 17v3h16v-3" />,
   first: <path d="M6 5v14 M18 6l-8 6 8 6z" />,
   prev: <path d="M15 6l-6 6 6 6" />,

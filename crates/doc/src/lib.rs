@@ -329,7 +329,8 @@ pub struct Layer {
     /// Excluded from jobs when false.
     pub output: bool,
     pub settings: CutSettings,
-    /// Extra passes with their own settings (LightBurn sub-layers), run after `settings`.
+    /// Extra passes with their own settings (LightBurn sub-layers), run after `settings` in order; a sub-layer with
+    /// [`CutSettings::cleanup`] runs between the main passes instead (see [`Cleanup`]).
     pub sub_layers: Vec<CutSettings>,
     /// Settings from other software that OpenEtch does not model (e.g. `lbrn2.minPower`), kept so exports
     /// round-trip. Keys are prefixed with the format they came from. Never used for planning.
@@ -378,6 +379,35 @@ pub struct CutSettings {
     pub hatch: Hatch,
     /// `None` uses the machine profile's defaults.
     pub timing: Option<GalvoTiming>,
+    /// Display name of a sub-layer (LightBurn's `subname`, e.g. "Cleanup"); `None` shows "Sub-layer n".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Makes a sub-layer a cleanup pass (LightBurn's `isCleanup`): it runs between the main passes instead of after
+    /// them. Only meaningful on a sub-layer; ignored on a layer's main settings.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cleanup: Option<Cleanup>,
+}
+
+/// A cleanup sub-layer: LightBurn's "Enable cleanup pass" (3D Sliced image mode) adds a Cleanup sub-layer that runs
+/// after every "Clean after # of passes" passes of the main settings to clear debris, usually with a tighter
+/// interval, higher frequency and lower power. OpenEtch runs it after main passes `n`, `2n`, ... and once more after
+/// the last main pass when that one was not followed by a cleanup already, so the layer always ends cleaned (with
+/// `n` at least the layer's passes it runs once, after all of them, as an ordinary sub-layer would). Each run does
+/// the sub-layer's own `passes`. Cleanup sub-layers run before the layer's other sub-layers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Cleanup {
+    /// Main passes between cleanups, at least 1 (LightBurn's "Clean after # of passes", stored as the cleanup
+    /// sub-layer's `numPasses`).
+    pub every_n_passes: u32,
+}
+
+impl Cleanup {
+    /// After which main passes (1-based, ascending) a cleanup with this interval runs, for a layer of `main_passes`
+    /// passes: every `every_n_passes`-th, plus the last. `every_n_passes == 0` counts as 1.
+    pub fn runs_after(&self, main_passes: u32) -> impl Iterator<Item = u32> {
+        let n = self.every_n_passes.max(1);
+        (1..=main_passes).filter(move |k| k % n == 0 || *k == main_passes)
+    }
 }
 
 impl CutSettings {
@@ -419,6 +449,8 @@ impl Default for CutSettings {
             passes: 1,
             hatch: Hatch::default(),
             timing: None,
+            name: None,
+            cleanup: None,
         }
     }
 }
@@ -682,6 +714,32 @@ mod tests {
         assert_eq!(back.field_mm, None);
         assert!(back.groups.is_empty() && back.extras.is_empty());
         assert!(back.layers[0].extras.is_empty());
+    }
+
+    #[test]
+    fn sub_layer_name_and_cleanup_are_optional_in_json() {
+        let v = serde_json::to_value(CutSettings::default()).unwrap();
+        assert!(v.get("name").is_none() && v.get("cleanup").is_none(), "defaults are left out: {v}");
+        let s = CutSettings {
+            name: Some("Cleanup".into()),
+            cleanup: Some(Cleanup { every_n_passes: 10 }),
+            ..CutSettings::default()
+        };
+        let v = serde_json::to_value(&s).unwrap();
+        assert_eq!(v["name"], "Cleanup");
+        assert_eq!(v["cleanup"]["every_n_passes"], 10);
+        assert_eq!(serde_json::from_value::<CutSettings>(v).unwrap(), s);
+    }
+
+    #[test]
+    fn cleanup_runs_after_every_n_main_passes_and_the_last() {
+        let after = |n, main| Cleanup { every_n_passes: n }.runs_after(main).collect::<Vec<_>>();
+        assert_eq!(after(1, 3), [1, 2, 3]);
+        assert_eq!(after(2, 5), [2, 4, 5]);
+        assert_eq!(after(2, 4), [2, 4]);
+        assert_eq!(after(10, 3), [3], "a long interval runs once, after the main passes");
+        assert_eq!(after(0, 2), [1, 2], "0 counts as 1");
+        assert!(after(3, 0).is_empty());
     }
 
     fn grouped() -> Document {

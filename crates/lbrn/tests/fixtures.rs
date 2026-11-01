@@ -358,7 +358,9 @@ fn imports_sub_layers_and_reports_bad_values() {
     let ex = |k: &str| deep.extras.get(k).map(String::as_str);
     assert_eq!(ex("lbrn2.subname"), Some("deep"));
     assert_eq!(ex("lbrn2.wobbleEnable"), Some("1"));
-    assert_eq!(ex("lbrn2.sub1.subname"), Some("clean"));
+    assert_eq!(s1.name.as_deref(), Some("clean"), "a sub-layer's subname is its name");
+    assert_eq!(ex("lbrn2.sub1.subname"), None);
+    assert_eq!((s1.cleanup.as_ref(), deep.sub_layers[1].name.as_ref()), (None, None));
     assert_eq!(ex("lbrn2.speed"), None, "an unreadable value is dropped with a warning");
     assert_eq!(layers[1].settings.mode, FillMode::Line);
     assert_eq!(layers[1].extras.get("lbrn2.type").map(String::as_str), Some("Offset Fill"));
@@ -878,4 +880,69 @@ fn a_second_image_setting_stays_with_its_layer() {
     assert!(cs < img && img < shape, "{out}");
     let p = parse(&out).unwrap();
     assert_eq!(p.cut_settings.iter().filter(|c| c.image).count(), 1);
+}
+
+/// A 3D-sliced cleanup as LightBurn writes it (synthetic, after the shape of a real sample): the parent's
+/// `cleanupPass` enables it, the sub-layer's `isCleanup` marks it and its `numPasses` is "Clean after # of passes".
+#[test]
+fn cleanup_sub_layers_map_to_cleanup_and_round_trip() {
+    let text = r#"<LightBurnProject>
+    <CutSetting type="Scan">
+        <index Value="1"/>
+        <name Value="C01"/>
+        <maxPower Value="90"/>
+        <speed Value="3000"/>
+        <numPasses Value="25"/>
+        <subname Value="Slice"/>
+        <cleanupPass Value="1"/>
+        <SubLayer type="Scan" index="1">
+            <maxPower Value="30"/>
+            <speed Value="2500"/>
+            <numPasses Value="10"/>
+            <isCleanup Value="1"/>
+            <subname Value="Cleanup"/>
+        </SubLayer>
+    </CutSetting>
+    <Shape Type="Rect" CutIndex="1" W="2" H="2"><XForm>1 0 0 1 75 75</XForm></Shape>
+</LightBurnProject>
+"#;
+    let (layers, objects, _) = import(text);
+    let l = &layers[0];
+    let c = &l.sub_layers[0];
+    assert_eq!(c.name.as_deref(), Some("Cleanup"));
+    assert_eq!(c.cleanup, Some(doc::Cleanup { every_n_passes: 10 }));
+    assert_eq!(c.passes, 1, "each cleanup is one pass");
+    let moved = ["lbrn2.sub1.subname", "lbrn2.sub1.isCleanup", "lbrn2.sub1.numPasses"];
+    assert!(moved.iter().all(|k| !l.extras.contains_key(*k)), "{:?}", l.extras);
+    let d = Document { layers: layers.clone(), objects, ..Document::default() };
+    let (p, warnings) = from_document(&d, FIELD).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let out = write(&p);
+    for tag in ["<numPasses Value=\"10\"/>", "<isCleanup Value=\"1\"/>", "<subname Value=\"Cleanup\"/>", "<cleanupPass Value=\"1\"/>"] {
+        assert!(out.contains(tag), "{tag} in {out}");
+    }
+
+    // Edited: a new interval is written; without a cleanup sub-layer the parent's flag goes too.
+    let mut d2 = d.clone();
+    d2.layers[0].sub_layers[0].cleanup = Some(doc::Cleanup { every_n_passes: 4 });
+    d2.layers[0].sub_layers[0].name = Some("Clean".into());
+    let out = write(&from_document(&d2, FIELD).unwrap().0);
+    assert!(out.contains("<numPasses Value=\"4\"/>") && out.contains("<subname Value=\"Clean\"/>"), "{out}");
+    d2.layers[0].sub_layers[0].cleanup = None;
+    let out = write(&from_document(&d2, FIELD).unwrap().0);
+    assert!(!out.contains("isCleanup") && !out.contains("cleanupPass"), "{out}");
+
+    // Made in OpenEtch: tags in LightBurn's order, `numPasses` left out at 1.
+    let mut fresh = Document::default();
+    let mut s = CutSettings { name: Some("Cleanup".into()), cleanup: Some(doc::Cleanup { every_n_passes: 1 }), ..CutSettings::default() };
+    s.hatch.angle_deg = 45.0;
+    fresh.layers[0].sub_layers.push(s);
+    let out = write(&from_document(&fresh, FIELD).unwrap().0);
+    assert!(out.contains("<cleanupPass Value=\"1\"/>"), "{out}");
+    let sub = &out[out.find("<SubLayer").unwrap()..out.find("</SubLayer>").unwrap()];
+    assert!(!sub.contains("numPasses"), "{sub}");
+    let at = |t: &str| sub.find(t).unwrap_or_else(|| panic!("{t} in {sub}"));
+    assert!(at("isCleanup") < at("angle") && at("angle") < at("subname"), "{sub}");
+    let (back, _, _) = import(&out);
+    assert_eq!(back[0].sub_layers, fresh.layers[0].sub_layers);
 }

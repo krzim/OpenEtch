@@ -83,7 +83,8 @@
 //! missing value takes OpenEtch's default (with a warning for power and speed). `priority` is the run
 //! order; `doOutput 0` / `hide 1` are the output and visibility switches. `<SubLayer type="Scan" index="1">` children
 //! (seen in the library) hold the same tags for an extra pass, typically `maxPower speed frequency numPasses
-//! crossHatch interval angle subname`.
+//! crossHatch interval angle subname`; a 3D sliced image layer's cleanup sub-layer adds `isCleanup 1` (its
+//! `numPasses` is then "Clean after # of passes") and its parent `cleanupPass 1`.
 //!
 //! **Layers.** `CutIndex` 0..=29 are the colour layers C00..C29 with fixed colours ([`palette`]); 30 and 31 are the
 //! tool layers T1 and T2 (`type="Tool"`, never output; from lbrnts' notes: "tool layers have no cut parameters and
@@ -104,7 +105,9 @@
 //! | `interval`, `angle`, `anglePerPass`, `crossHatch`, `bidir` | `hatch.interval_mm`, `angle_deg`, `angle_increment_deg`, `cross_hatch`, `bidirectional` |
 //! | `doOutput`, `hide` | `output`, `visible` |
 //! | `priority` | layer order; written back as read while every layer came from LightBurn and the order still agrees, else the position |
-//! | `SubLayer`s | `sub_layers` (their other values in `extras["lbrn2.subN.<tag>"]`) |
+//! | `SubLayer`s | `sub_layers` (their other values in `extras["lbrn2.subN.<tag>"]`, N the 1-based position) |
+//! | sub-layer `subname` | `sub_layers[i].name` (the main settings' `subname` stays in `extras["lbrn2.subname"]`) |
+//! | sub-layer `isCleanup 1` + `numPasses` | `sub_layers[i].cleanup = {every_n_passes: numPasses}`, `passes` 1 (LightBurn's "Clean after # of passes"; see [`doc::Cleanup`]); the parent's `cleanupPass` ("Enable cleanup pass") stays in `extras` and is written as `1` while a cleanup sub-layer exists and dropped when none does |
 //! | every other child (`minPower`, `PPI`, `tabCount`, ...) | `extras["lbrn2.<tag>"]`, written back verbatim (only tags matching `[A-Za-z_][A-Za-z0-9_.-]*`; others are dropped with a warning) |
 //! | Rect / Ellipse | `Geometry::Rect` / `Ellipse`, transform = shift · groups · XForm |
 //! | Path | `Geometry::Path` (exact lines and cubics), transform = shift · groups · XForm; ids and the lists it carried in `extras` |
@@ -118,10 +121,17 @@
 //!
 //! **Gantry (bed) devices** ([`Frame::Bed`], [`to_document_in`], [`from_document_in`]): coordinates are mm from the
 //! device's origin corner, which the root's `MirrorX` / `MirrorY` record (front-left = neither, rear-left =
-//! `MirrorY`; rear-right = both and front-right = `MirrorX` are inferred, unconfirmed). Import uses the file's flags
-//! and the device's `W x H`: field = S · (LightBurn - [W/2, H/2]) with S negating the mirrored axes; export applies
-//! the inverse for the target device and writes its flags. **Unverified** against a file LightBurn saved for a
-//! top-left-origin device (LightBurn itself reorients designs from another origin on open, since 1.3).
+//! `MirrorY`, rear-right = both, front-right = `MirrorX`). Import uses the file's flags and the device's `W x H`:
+//! field = S · (LightBurn - [W/2, H/2]) with S negating the mirrored axes; export applies the inverse for the target
+//! device and writes its flags. Evidence: public LightBurn 1.2-2.0 projects saved for gantry devices, comparing the
+//! embedded thumbnail (LightBurn's top-down view, front at the bottom) with the outlines: five rear-right (both flags,
+//! Ruida) files from four authors are turned 180° when drawn raw and upright with the rule; a rear-left (`MirrorY`)
+//! file's text is upside down raw and reads correctly with it; a front-right (`MirrorX`) file matches only with x
+//! mirrored; eight front-left files match raw. That confirms the orientation. Mirroring about the bed (W - x) rather
+//! than about 0 is likely but not shown (thumbnails are cropped to the art): four of the five rear-right files have
+//! only positive raw coordinates, i.e. distances from the origin corner, and LightBurn moves and flips a design when
+//! the device origin changes and reorients files from another origin on open since 1.3. `tests/frames.rs` encodes
+//! the rule as a regression test; it is not itself evidence.
 //!
 //! shift = translate(-field/2, -field/2) on import and its inverse on export. Export writes what the import kept;
 //! a transform, number or path list that did not change since keeps its exact source text, so an unchanged import

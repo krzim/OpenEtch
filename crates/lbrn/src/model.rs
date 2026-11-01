@@ -171,6 +171,7 @@ pub(crate) const TAG_ORDER: &[&str] = &[
     "overscanPercent",
     "dotWidth",
     "useDotCorrection",
+    "isCleanup",
     "interval",
     "angle",
     "subname",
@@ -185,6 +186,7 @@ pub(crate) const TAG_ORDER: &[&str] = &[
     "halftoneAngle",
     "negative",
     "ditherMode",
+    "cleanupPass",
     "dpi",
 ];
 

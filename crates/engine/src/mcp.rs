@@ -67,7 +67,12 @@ Workflow:
 2. Import or draw art: art.import_svg, doc.import_lbrn2 (a LightBurn project), shape.rect / shape.ellipse / \
 shape.path.
 3. art.place - fit and anchor the art on the stock (margins, alignment).
-4. layer.update - set the layer's cut settings (power %, speed, frequency, MOPA pulse width, fill/hatch, passes).
+4. layer.update - set the layer's cut settings (power %, speed, frequency, MOPA pulse width, fill/hatch, passes). \
+Like LightBurn's sub-layers, a layer can run more passes over the same objects with other settings: layer.sub_add \
+(a copy of the main settings with changes), layer.sub_update, layer.sub_delete, layer.sub_move and \
+layer.sub_duplicate (indices are 0-based positions in sub_layers). A sub-layer with cleanup {every_n_passes: n} is a \
+cleanup pass that runs after every n main passes and after the last (typically fast, low power, hatch turned 45 \
+degrees); the other sub-layers run after the main passes, in order.
 5. render_preview - look at the result and the toolpath; inspect_document for exact numbers and warnings.
 6. frame_start - trace the job outline with the red pointer so the person can check placement (no laser), then \
 frame_stop.

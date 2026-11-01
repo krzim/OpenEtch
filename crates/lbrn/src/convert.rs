@@ -169,10 +169,11 @@ pub enum Frame {
     /// coordinates; the file's `MirrorX`/`MirrorY` are not applied (a set flag is reported).
     Galvo { field_mm: f64 },
     /// A bed (gantry) of `width_mm` x `height_mm`. LightBurn measures from the device's origin corner, which the
-    /// project root records as `MirrorX` / `MirrorY`: front-left = neither, rear-left = `MirrorY` (an xTool `.lbdev`
-    /// and LightBurn staff), rear-right = both, front-right = `MirrorX` (the last two inferred from the pattern,
-    /// unconfirmed). So field = S · (LightBurn - [w/2, h/2]), S negating the mirrored axes. On import the flags are
-    /// the file's ([`LbrnProject::mirror`]); on export the target device's, and they are written to the root.
+    /// project root records as `MirrorX` / `MirrorY`: front-left = neither, rear-left = `MirrorY`, rear-right = both
+    /// (Ruida), front-right = `MirrorX`. So field = S · (LightBurn - [w/2, h/2]), S negating the mirrored axes: the
+    /// outline itself is mirrored, matching the thumbnails of public projects saved for all four corners (see
+    /// `tests/frames.rs`). On import the flags are the file's ([`LbrnProject::mirror`]); on export the target
+    /// device's, and they are written to the root.
     Bed { width_mm: f64, height_mm: f64, mirror_x: bool, mirror_y: bool },
 }
 
@@ -436,6 +437,8 @@ fn to_settings(kind: &str, p: &CutParams, label: &str, w: &mut Warnings) -> (Cut
             bidirectional: p.bidir.unwrap_or(true),
         },
         timing: None,
+        name: None,
+        cleanup: None,
     };
     (s, rest)
 }
@@ -504,7 +507,8 @@ fn layer_from(index: u32, cs: Option<&CutSetting>, id: String, w: &mut Warnings)
     for (n, sub) in cs.sub_layers.iter().enumerate() {
         let prefix = format!("{EXTRA_PREFIX}sub{}.", n + 1);
         let sub_label = format!("{label} sub-layer {}", n + 1);
-        let (s, rest) = to_settings(&sub.kind, &sub.params, &sub_label, w);
+        let (mut s, mut rest) = to_settings(&sub.kind, &sub.params, &sub_label, w);
+        sub_layer_fields(&mut s, &mut rest);
         layer.sub_layers.push(s);
         if mode_of(&sub.kind).is_none() {
             layer.extras.insert(format!("{prefix}type"), sub.kind.clone());
@@ -520,6 +524,50 @@ fn layer_from(index: u32, cs: Option<&CutSetting>, id: String, w: &mut Warnings)
         }
     }
     layer
+}
+
+/// A sub-layer's `subname` and `isCleanup` (taken out of `rest`) → [`CutSettings::name`] and
+/// [`CutSettings::cleanup`]. A cleanup sub-layer's `numPasses` is LightBurn's "Clean after # of passes" (in the 3D
+/// sliced sample a 250-pass layer has `numPasses` 10 on its cleanup), so it becomes `every_n_passes` and the cleanup
+/// itself makes one pass.
+fn sub_layer_fields(s: &mut CutSettings, rest: &mut BTreeMap<String, String>) {
+    s.name = rest.remove("subname");
+    if rest.get("isCleanup").and_then(|v| crate::model::boolean(v)) == Some(true) {
+        rest.remove("isCleanup");
+        s.cleanup = Some(doc::Cleanup { every_n_passes: s.passes });
+        s.passes = 1;
+    }
+}
+
+/// The export side of [`sub_layer_fields`]: write a sub-layer's name and cleanup into its LightBurn `values`,
+/// keeping the source's spelling (`source`) while it still says the same.
+fn sub_layer_values(
+    s: &CutSettings,
+    values: &mut BTreeMap<String, String>,
+    source: Option<&[(String, String)]>,
+    label: &str,
+    w: &mut Warnings,
+) {
+    let src = |t: &str| source.and_then(|v| v.iter().find(|(k, _)| k == t)).map(|(_, v)| v.as_str());
+    if let Some(n) = &s.name {
+        values.insert("subname".into(), n.clone());
+    }
+    if let Some(c) = &s.cleanup {
+        let on = src("isCleanup").filter(|v| crate::model::boolean(v) == Some(true)).unwrap_or("1");
+        values.insert("isCleanup".into(), on.to_string());
+        let n = c.every_n_passes.max(1);
+        match src("numPasses") {
+            Some(raw) if raw.trim().parse::<u32>().ok() == Some(n) => values.insert("numPasses".into(), raw.into()),
+            None if n == 1 => values.remove("numPasses"),
+            _ => values.insert("numPasses".into(), n.to_string()),
+        };
+        if s.passes != 1 {
+            w.push(format!(
+                "{label}: a cleanup sub-layer makes one pass per cleanup in LightBurn; its {} passes were not exported",
+                s.passes
+            ));
+        }
+    }
 }
 
 /// The OpenEtch name of a LightBurn layer: its `name`, else its `subname`, else LightBurn's default (`C05`).
@@ -1205,12 +1253,25 @@ pub fn from_document_in(d: &Document, frame: Frame) -> Result<(LbrnProject, Vec<
                     }
                 }
                 let sub_source = source_tags(l, &format!("sub{}.", n + 1));
-                let values = settings_values(s, base, frequency_absent, sub_source.as_deref());
+                let mut values = settings_values(s, base, frequency_absent, sub_source.as_deref());
+                let sub_label = format!("layer \"{}\" sub-layer {}", l.name, n + 1);
+                sub_layer_values(s, &mut values, sub_source.as_deref(), &sub_label, &mut w);
                 sub_layers.push(SubLayer {
                     kind: export_kind(sub_kind, &s.mode),
                     index: n as u32 + 1,
                     params: params_from(&values, sub_source),
                 });
+            }
+            // LightBurn's "Enable cleanup pass" on the parent goes with its cleanup sub-layer.
+            let enabled = values.get("cleanupPass").and_then(|v| crate::model::boolean(v)) == Some(true);
+            match l.sub_layers.iter().any(|s| s.cleanup.is_some()) {
+                true if !enabled => {
+                    values.insert("cleanupPass".into(), "1".into());
+                }
+                false if enabled => {
+                    values.remove("cleanupPass");
+                }
+                _ => {}
             }
         } else if !l.sub_layers.is_empty() {
             w.push(format!("layer \"{}\" is a LightBurn tool layer; its sub-layers were not exported", l.name));

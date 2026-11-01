@@ -29,6 +29,20 @@ export interface CutSettings {
   hatch: Hatch;
   /** Galvo timing override; null uses the machine profile. The UI shows but does not edit it. */
   timing: unknown | null;
+  /** LightBurn's sub-layer name (`subname`); absent when unnamed. */
+  name?: string | null;
+  /** Makes this a cleanup sub-layer (LightBurn `isCleanup` / `cleanupPass`); absent for an ordinary pass. */
+  cleanup?: Cleanup | null;
+}
+
+/**
+ * A cleanup sub-layer (LightBurn's "Enable cleanup pass" / "Clean after # of passes"): it runs after main passes n, 2n,
+ * ... and after the last main pass (so with n at least the layer's passes, once after all of them), each time doing
+ * its own `passes`, before the layer's other sub-layers.
+ */
+export interface Cleanup {
+  /** 1..=1000. */
+  every_n_passes: number;
 }
 
 export interface Layer {
@@ -40,6 +54,7 @@ export interface Layer {
   /** Excluded from jobs when false. */
   output: boolean;
   settings: CutSettings;
+  /** Further passes over the same objects (LightBurn sub-layers), each run after the main settings, in order. */
   sub_layers: CutSettings[];
   /** Settings from other software that OpenEtch does not model (e.g. `lbrn2.*`), kept so exports round-trip. */
   extras?: Record<string, string>;
@@ -172,8 +187,10 @@ export interface PreviewSegment {
   kind: "jump" | "mark";
   /** Layer id for marks; may be null for jumps. */
   layer?: string | null;
-  /** Pass index within the layer (newer engines). */
+  /** Index of the job pass it belongs to, in burn order (`plan::JobPlan::passes`); a jump belongs to the pass it travels into. */
   pass?: number;
+  /** 0 for the layer's main settings, n for `sub_layers[n - 1]` (engines that report it). */
+  sub_layer?: number;
   from: Vec2;
   to: Vec2;
 }
@@ -184,13 +201,33 @@ export interface PreviewLayer {
   name?: string;
   color?: string;
   mode?: FillMode | string;
+  /** Job passes planned for the layer (repeats and sub-layers). */
+  passes?: number;
   segments?: number;
   mark_length_mm?: number;
   estimated_time_s?: number;
 }
 
+/**
+ * One job pass (engines that report them), indexed by `PreviewSegment.pass`. Mirrors `plan::PassPlan` without its
+ * polylines; the stats are optional.
+ */
+export interface PreviewPass {
+  layer_id: string;
+  /** 0 for the layer's main settings, n for `sub_layers[n - 1]`. */
+  sub_layer: number;
+  /** Repetition of those settings, `0..passes`. */
+  repeat?: number;
+  segments?: number;
+  mark_length_mm?: number;
+  jump_length_mm?: number;
+  estimated_time_s?: number;
+}
+
 export interface Preview {
   segments: PreviewSegment[];
+  /** The job's passes in burn order (engines that report them). */
+  passes?: PreviewPass[];
   /** Free-form job statistics (time estimate, mark/jump length...). */
   stats?: Record<string, unknown>;
   layers?: PreviewLayer[];

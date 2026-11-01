@@ -1,12 +1,14 @@
-// Right "Properties" panel: the selected object(s), the stock, and the selected layer's cut settings. Every field
-// commits one command (`object.transform`, `object.set_layer`, `stock.move`, `layer.update`) on Enter or when focus
-// leaves it; X and Y commit together as one step. Numbers accept simple maths (`20/3`).
+// Right "Properties" panel: the selected object(s), the stock, and the selected layer's passes (main settings and
+// sub-layers). Every field commits one command (`object.transform`, `object.set_layer`, `stock.move`, `layer.update`,
+// `layer.sub_update`) on Enter or when focus leaves it; X and Y commit together as one step. Numbers accept simple
+// maths (`20/3`).
 
 import { useState } from "react";
 import type { Invocation } from "../api/client.ts";
 import * as C from "../api/commands.ts";
 import { boxOutside, frequencyRange, nearestPulseWidth, pulseWidths } from "../api/laser.ts";
-import type { CutSettings, FillMode, GDocument, Layer, MachineStatus, Vec2 } from "../api/types.ts";
+import { MAX_SUB_LAYERS, clampPass, cleanupPass, passAfterDelete, passAfterMove, passColor, passEntries, passFromResult, settingsSummary } from "../api/passes.ts";
+import type { Cleanup, CutSettings, FillMode, GDocument, Layer, MachineStatus, Vec2 } from "../api/types.ts";
 import { roundMm } from "../editing.ts";
 import { normDeg, objectBounds, transformParts, unionBoxes, type Box } from "../geometry.ts";
 import { topGroup, unitsOf, type Selection } from "../selection.ts";
@@ -229,7 +231,11 @@ const MODES: { value: FillMode; label: string }[] = [
   { value: "fill_then_line", label: "Fill + line" },
 ];
 
-/** Full cut-settings form for one layer. Each field sends a partial `layer.update`. */
+/**
+ * One layer: name, colour, show/output, and its passes like LightBurn's sub-layer tabs: "Main" (the layer's own
+ * settings, `layer.update`) plus each sub-layer (`layer.sub_update`), run in that order. The open pass is edited with
+ * the full cut-settings form; the buttons add, duplicate, delete and reorder sub-layers.
+ */
 export function LayerSection({
   layer,
   machine,
@@ -245,15 +251,7 @@ export function LayerSection({
   doc?: GDocument;
   has?: (cmd: string) => boolean;
 }) {
-  const s: CutSettings = layer.settings;
-  const set = (patch: C.CutSettingsPatch) => run(C.layerUpdate(layer.id, { settings: patch })).catch(report);
   const setL = (patch: { name?: string; color?: string; visible?: boolean; output?: boolean }) => run(C.layerUpdate(layer.id, patch)).catch(report);
-  const num = (f: (v: number) => C.CutSettingsPatch) => (v: number | null) => v !== null && set(f(v));
-  const hatching = s.mode !== "line";
-  const widths = pulseWidths(machine);
-  const freq = frequencyRange(machine);
-  const pw = s.pulse_width_ns;
-  const pwKnown = pw === null || widths.includes(pw);
   const others = doc ? doc.layers.filter((l) => l.id !== layer.id) : [];
   const count = doc ? doc.objects.filter((o) => o.layer === layer.id).length : 0;
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -267,7 +265,222 @@ export function LayerSection({
       <CheckField label="Show" checked={layer.visible} onChange={(visible) => setL({ visible })} />
       <CheckField label="Output" checked={layer.output} onChange={(output) => setL({ output })} />
 
+      <PassEditor layer={layer} machine={machine} run={run} report={report} has={has} />
+
+      {doc && has?.(C.OPT.layerDelete) && others.length > 0 && (
+        <div className="btn-row">
+          {!confirmDelete ? (
+            <button className="btn" onClick={() => setConfirmDelete(true)}>
+              Delete layer…
+            </button>
+          ) : (
+            <>
+              <span className="hint">{count ? `Its ${count} object${count === 1 ? "" : "s"} move to "${others[0].name}".` : "The layer is empty."}</span>
+              <button className="btn" onClick={() => setConfirmDelete(false)}>
+                Cancel
+              </button>
+              <button
+                className="btn btn-warn"
+                onClick={() => {
+                  setConfirmDelete(false);
+                  run(C.layerDelete(layer.id, count ? others[0].id : undefined)).catch(report);
+                }}
+              >
+                Delete
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** The pass list (Main + sub-layers), the sub-layer buttons, and the open pass's settings form. */
+function PassEditor({
+  layer,
+  machine,
+  run,
+  report,
+  has,
+}: {
+  layer: Layer;
+  machine: MachineStatus | null;
+  run: Run;
+  report: (e: unknown) => void;
+  has?: (cmd: string) => boolean;
+}) {
+  // The open pass, per layer: selecting another layer opens its Main tab.
+  const [open, setOpen] = useState<{ layer: string; pass: number }>({ layer: layer.id, pass: 0 });
+  const pass = clampPass(layer, open.layer === layer.id ? open.pass : 0);
+  const select = (p: number) => setOpen({ layer: layer.id, pass: p });
+  const entries = passEntries(layer);
+  const entry = entries[pass];
+  const sub = entry.sub;
+  const subs = layer.sub_layers?.length ?? 0;
+  const can = (id: string) => has?.(id) ?? false;
+  const editSubs = can(C.OPT.layerSubUpdate);
+  const freq = frequencyRange(machine);
+  // Resolves to `{ result }`, or null when the command failed (already reported).
+  const exec = (inv: Invocation): Promise<{ result: unknown } | null> =>
+    run(inv).then(
+      (result) => ({ result }),
+      (e) => {
+        report(e);
+        return null;
+      },
+    );
+
+  const patch = (p: C.CutSettingsPatch) => (sub === null ? exec(C.layerUpdate(layer.id, { settings: p })) : exec(C.layerSubUpdate(layer.id, sub, { settings: p })));
+  const setSub = (p: { name?: string | null; cleanup?: Cleanup | null }) => sub !== null && void exec(C.layerSubUpdate(layer.id, sub, p));
+  const add = async (p: Parameters<typeof C.layerSubAdd>[1], fallback: number) => {
+    const r = await exec(C.layerSubAdd(layer.id, p));
+    if (r) select(passFromResult(r.result, fallback));
+  };
+  const duplicate = async () => {
+    // Duplicating Main adds a copy of it as the first sub-layer (a new sub-layer starts from the main settings).
+    if (sub === null) return add({ index: 0 }, 1);
+    const r = await exec(C.layerSubDuplicate(layer.id, sub));
+    if (r) select(passFromResult(r.result, pass + 1));
+  };
+  const remove = async () => {
+    if (sub === null) return;
+    const r = await exec(C.layerSubDelete(layer.id, sub));
+    if (r) select(passAfterDelete(sub, subs));
+  };
+  const move = async (delta: -1 | 1) => {
+    if (sub === null) return;
+    const to = sub + delta;
+    if (to < 0 || to >= subs) return;
+    const r = await exec(C.layerSubMove(layer.id, sub, to));
+    if (r) select(passAfterMove(pass, sub, to));
+  };
+  const canEdit = sub === null || editSubs;
+  const canAdd = can(C.OPT.layerSubAdd);
+  const full = subs >= MAX_SUB_LAYERS;
+
+  return (
+    <>
       <h4>Cut settings</h4>
+      <div className="pass-tabs" role="tablist" aria-label="Passes of this layer, in run order">
+        {entries.map((e) => (
+          <button
+            key={e.pass}
+            role="tab"
+            aria-selected={e.pass === pass}
+            className={`pass-tab${e.pass === pass ? " active" : ""}`}
+            title={`${e.label}: ${settingsSummary(e.settings)}`}
+            onClick={() => select(e.pass)}
+          >
+            <span className="pass-tab-dot" style={{ background: passColor(layer.color, e.pass) }} />
+            <span className="pass-tab-name">{e.label}</span>
+            {e.cleanup && <span className="badge pass-badge">Cleanup</span>}
+            <span className="pass-tab-meta">{settingsSummary(e.settings)}</span>
+          </button>
+        ))}
+      </div>
+      {(canAdd || (sub !== null && (can(C.OPT.layerSubDuplicate) || can(C.OPT.layerSubMove) || can(C.OPT.layerSubDelete)))) && (
+        <div className="pass-actions">
+          {canAdd && (
+            <>
+              <button
+                className="btn small"
+                title="Add a sub-layer: a further pass over the same objects, starting from the main settings"
+                disabled={full}
+                onClick={() => void add({}, subs + 1)}
+              >
+                <Icon name="plus" size={14} /> Sub-layer
+              </button>
+              <button
+                className="btn small"
+                title="Add a cleanup pass: one fast, low-power pass with the hatch turned 45°, run after the main passes"
+                disabled={full}
+                onClick={() => void add(cleanupPass(layer.settings, freq.max), subs + 1)}
+              >
+                <Icon name="plus" size={14} /> Cleanup pass
+              </button>
+            </>
+          )}
+          {(sub === null ? canAdd : can(C.OPT.layerSubDuplicate)) && (
+            <button
+              className="btn small"
+              title={sub === null ? "Copy the main settings as a new first sub-layer" : "Copy this sub-layer right after it"}
+              disabled={full}
+              onClick={() => void duplicate()}
+            >
+              Duplicate
+            </button>
+          )}
+          {sub !== null && can(C.OPT.layerSubMove) && (
+            <>
+              <button className="icon-btn small" title="Run earlier" aria-label="Move sub-layer up" disabled={sub === 0} onClick={() => void move(-1)}>
+                <Icon name="chevronUp" size={16} />
+              </button>
+              <button className="icon-btn small" title="Run later" aria-label="Move sub-layer down" disabled={sub >= subs - 1} onClick={() => void move(1)}>
+                <Icon name="chevronDown" size={16} />
+              </button>
+            </>
+          )}
+          {sub !== null && can(C.OPT.layerSubDelete) && (
+            <button className="btn small btn-warn" title="Delete this sub-layer" onClick={() => void remove()}>
+              Delete
+            </button>
+          )}
+        </div>
+      )}
+      {subs > 0 && !editSubs && <p className="hint">This engine cannot edit sub-layers: they are shown read-only and still run after the main settings.</p>}
+
+      {sub !== null && editSubs && (
+        <>
+          <TextField label="Sub-layer" value={entry.settings.name ?? ""} onCommit={(name) => setSub({ name: name.trim() || null })} />
+          <CheckField
+            label="Cleanup pass"
+            checked={entry.cleanup !== null}
+            onChange={(on) => setSub({ cleanup: on ? { every_n_passes: Math.max(1, layer.settings.passes) } : null })}
+          />
+          {entry.cleanup && (
+            <>
+              <NumberField
+                label="Clean after"
+                unit="passes"
+                value={entry.cleanup.every_n_passes}
+                min={1}
+                max={1000}
+                digits={0}
+                onCommit={(v) => v !== null && setSub({ cleanup: { every_n_passes: Math.round(v) } })}
+              />
+              <p className="hint">
+                Runs after every {entry.cleanup.every_n_passes === 1 ? "main pass" : `${entry.cleanup.every_n_passes} main passes`} and after the last one,
+                before the other sub-layers.
+              </p>
+            </>
+          )}
+        </>
+      )}
+
+      {canEdit ? (
+        <CutSettingsForm key={`${layer.id}#${pass}`} settings={entry.settings} machine={machine} onPatch={patch} />
+      ) : (
+        <dl className="kv">
+          <dt>Settings</dt>
+          <dd>{settingsSummary(entry.settings)}</dd>
+        </dl>
+      )}
+    </>
+  );
+}
+
+/** Full cut-settings form for one pass. Each field sends one partial settings patch. */
+function CutSettingsForm({ settings: s, machine, onPatch }: { settings: CutSettings; machine: MachineStatus | null; onPatch: (p: C.CutSettingsPatch) => unknown }) {
+  const set = (p: C.CutSettingsPatch) => void onPatch(p);
+  const num = (f: (v: number) => C.CutSettingsPatch) => (v: number | null) => v !== null && set(f(v));
+  const hatching = s.mode !== "line";
+  const widths = pulseWidths(machine);
+  const freq = frequencyRange(machine);
+  const pw = s.pulse_width_ns;
+  const pwKnown = pw === null || widths.includes(pw);
+  return (
+    <>
       <label className="field">
         <span className="field-label">Mode</span>
         <span className="field-input">
@@ -324,33 +537,7 @@ export function LayerSection({
       />
       <CheckField label="Cross hatch" checked={s.hatch.cross_hatch} onChange={(cross_hatch) => set({ hatch: { cross_hatch } })} />
       <CheckField label="Bidirectional" checked={s.hatch.bidirectional} onChange={(bidirectional) => set({ hatch: { bidirectional } })} />
-      {layer.sub_layers.length > 0 && <p className="hint">{layer.sub_layers.length} sub-layer pass(es) not shown.</p>}
-      {doc && has?.(C.OPT.layerDelete) && others.length > 0 && (
-        <div className="btn-row">
-          {!confirmDelete ? (
-            <button className="btn" onClick={() => setConfirmDelete(true)}>
-              Delete layer…
-            </button>
-          ) : (
-            <>
-              <span className="hint">{count ? `Its ${count} object${count === 1 ? "" : "s"} move to "${others[0].name}".` : "The layer is empty."}</span>
-              <button className="btn" onClick={() => setConfirmDelete(false)}>
-                Cancel
-              </button>
-              <button
-                className="btn btn-warn"
-                onClick={() => {
-                  setConfirmDelete(false);
-                  run(C.layerDelete(layer.id, count ? others[0].id : undefined)).catch(report);
-                }}
-              >
-                Delete
-              </button>
-            </>
-          )}
-        </div>
-      )}
-    </section>
+    </>
   );
 }
 

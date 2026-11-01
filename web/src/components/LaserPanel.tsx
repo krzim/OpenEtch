@@ -4,9 +4,10 @@
 // a changed PIN file and a PIN lockout. The PIN lives only in this component's state while the confirm step is open and
 // goes only into the approve request body.
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, ApiError } from "../api/client.ts";
 import { MACHINE_SHOWN_KEYS, formatDuration, previewLayers, segLen, statRows } from "../api/laser.ts";
+import { modeLabel, passResolver, previewPasses, settingsSummary, soloPass, togglePass, type PassPreview } from "../api/passes.ts";
 import {
   activeRuns,
   approvalErrorText,
@@ -358,7 +359,8 @@ function PendingRunRow(props: {
 /**
  * Toolpath card: why there is no preview (the engine's planning error, e.g. objects outside the field), the job time
  * estimate, marks and travel, and one row per layer with a show toggle and solo (display only; output is unchanged),
- * plus the shading and travel display options.
+ * under a layer with sub-layers one row per pass (main settings and each sub-layer, in the pass's preview colour) with
+ * its settings, stats, show toggle and solo, plus the shading and travel display options.
  */
 export function PreviewStatsCard(p: {
   preview: Preview | null;
@@ -369,6 +371,11 @@ export function PreviewStatsCard(p: {
   onOptions: (o: PreviewOptions) => void;
 }) {
   const { preview, options, onOptions } = p;
+  // Per-pass rows of layers with sub-layers (one walk over the segments per preview).
+  const passes = useMemo(
+    () => (p.enabled ? previewPasses(preview, p.doc, passResolver(preview, p.doc)) : new Map<string, PassPreview[]>()),
+    [p.enabled, preview, p.doc],
+  );
   if (!p.enabled) return null;
   const segs = preview?.segments ?? [];
   let markN = 0;
@@ -392,6 +399,12 @@ export function PreviewStatsCard(p: {
   const solo = (id: string) => {
     const only = layers.every((l) => l.id === id || options.hidden.has(l.id)) && !options.hidden.has(id);
     onOptions({ ...options, hidden: only ? new Set() : new Set(layers.filter((l) => l.id !== id).map((l) => l.id)) });
+  };
+  const docLayer = (id: string) => p.doc?.layers.find((l) => l.id === id);
+  const togglePassRow = (r: PassPreview) => onOptions({ ...options, ...togglePass(options, r.layerId, r.pass) });
+  const soloPassRow = (r: PassPreview) => {
+    const l = docLayer(r.layerId);
+    if (l) onOptions({ ...options, ...soloPass(options, layers.map((x) => x.id), l, r.pass) });
   };
   return (
     <section className="card">
@@ -439,6 +452,27 @@ export function PreviewStatsCard(p: {
                   <button className="chip" title="Show only this layer" onClick={() => solo(l.id)}>
                     Solo
                   </button>
+                  {passes.has(l.id) && (
+                    <div className="pv-passes" role="group" aria-label={`Passes of ${l.name}`}>
+                      {passes.get(l.id)!.map((r) => {
+                        const off = options.hidden.has(l.id) || options.hiddenPasses.has(r.key);
+                        return (
+                          <div key={r.key} className={`pv-pass${off ? " off" : ""}`} title={settingsSummary(r.settings)}>
+                            <label title="Show this pass's toolpath (display only)">
+                              <input type="checkbox" checked={!options.hiddenPasses.has(r.key)} onChange={() => togglePassRow(r)} />
+                              <span className="swatch small" style={{ background: r.color }} />
+                              <span className="pv-name">{r.label}</span>
+                              {r.cleanup && <span className="badge pass-badge">Cleanup</span>}
+                            </label>
+                            <span className="pv-meta">{passMeta(r)}</span>
+                            <button className="chip" title="Show only this pass" onClick={() => soloPassRow(r)}>
+                              Solo
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -455,6 +489,20 @@ export function PreviewStatsCard(p: {
       )}
     </section>
   );
+}
+
+/** "Fill · 20% · 1000 mm/s · 30 kHz · 200 ns · 2 passes · 512 mm · ≈12 s" for one pass row. */
+function passMeta(r: PassPreview): string {
+  const st = r.settings;
+  const parts = [modeLabel(st.mode), `${fmtNum(st.power_pct)}%`, `${fmtNum(st.speed_mm_s)} mm/s`, `${fmtNum(st.frequency_khz)} kHz`];
+  if (st.pulse_width_ns !== null && st.pulse_width_ns !== undefined) parts.push(`${st.pulse_width_ns} ns`);
+  parts.push(r.jobPasses === 1 ? "1 pass" : `${r.jobPasses} passes`, `${r.markLengthMm.toFixed(0)} mm`);
+  if (r.estimatedTimeS !== null) parts.push(`${r.approx ? "≈" : ""}${formatDuration(r.estimatedTimeS)}`);
+  return parts.join(" · ");
+}
+
+function fmtNum(v: number): string {
+  return String(Number(v.toFixed(2)));
 }
 
 /** Draw-order animation: a slider over the job's segments with play/pause, like LightBurn's Preview time slider. */

@@ -20,6 +20,7 @@ import type { Invocation } from "../api/client.ts";
 import * as C from "../api/commands.ts";
 import { createdIds } from "../api/drop.ts";
 import { energyOpacity, layerEnergy } from "../api/laser.ts";
+import { markHidden, passColor, passEnergy, passResolver } from "../api/passes.ts";
 import type { Affine, GDocument, Layer, Preview, Vec2 } from "../api/types.ts";
 import {
   HANDLES,
@@ -86,9 +87,11 @@ export type ViewStyle = "filled" | "wireframe";
 export interface PreviewOptions {
   /** Layers hidden from the preview display (display only; output is unchanged). */
   hidden: ReadonlySet<string>;
+  /** Passes (main settings or sub-layers, by `passKey`) hidden from the preview display. */
+  hiddenPasses: ReadonlySet<string>;
   /** Draw only the first N segments (draw-order animation), or null for all. */
   upTo: number | null;
-  /** Shade marks by energy (darker = more) instead of the layer colour. */
+  /** Shade marks by energy (darker = more) instead of the layer colour (each pass of a layer its own shade). */
   shade: boolean;
   /** Show travel moves. */
   jumps: boolean;
@@ -763,21 +766,27 @@ export function Viewport(props: ViewportProps) {
 
   const previewPaths = useMemo(() => {
     if (!preview || !showPreview) return null;
-    const marks = new Map<string, string>();
+    // Marks by layer and pass (main settings or sub-layer), so each pass of a layer gets its own colour.
+    const marks = new Map<string, { layer: string; pass: number | null; d: string }>();
     let jumps = "";
     const segs = preview.segments ?? [];
     const n = previewOptions.upTo === null ? segs.length : Math.min(segs.length, previewOptions.upTo);
+    const resolve = passResolver(preview, doc);
     let head: Vec2 | null = null;
     for (let i = 0; i < n; i++) {
       const s = segs[i];
       head = s.to;
       if (s.kind === "mark") {
-        const k = s.layer ?? "";
-        if (previewOptions.hidden.has(k)) continue;
-        marks.set(k, (marks.get(k) ?? "") + `M${r4(s.from[0])},${r4(s.from[1])}L${r4(s.to[0])},${r4(s.to[1])}`);
+        const layer = s.layer ?? "";
+        const pass = resolve(s);
+        if (markHidden(previewOptions, layer, pass)) continue;
+        const k = `${layer}#${pass ?? ""}`;
+        const m = marks.get(k) ?? { layer, pass, d: "" };
+        m.d += `M${r4(s.from[0])},${r4(s.from[1])}L${r4(s.to[0])},${r4(s.to[1])}`;
+        marks.set(k, m);
       } else if (previewOptions.jumps) jumps += `M${r4(s.from[0])},${r4(s.from[1])}L${r4(s.to[0])},${r4(s.to[1])}`;
     }
-    const maxE = Math.max(0, ...(doc?.layers ?? []).map((l) => layerEnergy(l.settings)));
+    const maxE = Math.max(0, ...(doc?.layers ?? []).flatMap((l) => [l.settings, ...(l.sub_layers ?? [])].map(layerEnergy)));
     return { marks: [...marks.entries()], jumps, head: previewOptions.upTo !== null && n < segs.length ? head : null, maxE };
   }, [preview, showPreview, previewOptions, doc]);
 
@@ -872,16 +881,16 @@ export function Viewport(props: ViewportProps) {
           {previewPaths && (
             <g className="toolpath" pointerEvents="none">
               {previewPaths.jumps && <path className="tp-jump" d={previewPaths.jumps} strokeWidth={px(0.8)} strokeDasharray={`${px(4)} ${px(3)}`} />}
-              {previewPaths.marks.map(([layerId, d]) => {
-                const l = layerById.get(layerId);
+              {previewPaths.marks.map(([key, m]) => {
+                const l = layerById.get(m.layer);
                 const shade = previewOptions.shade;
                 return (
                   <path
-                    key={layerId}
+                    key={key}
                     className="tp-mark"
-                    d={d}
-                    stroke={shade ? "#111" : (l?.color ?? "#d22")}
-                    strokeOpacity={shade ? energyOpacity(layerEnergy(l?.settings), previewPaths.maxE) : 1}
+                    d={m.d}
+                    stroke={shade ? "#111" : l ? passColor(l.color, m.pass ?? 0) : "#d22"}
+                    strokeOpacity={shade ? energyOpacity(passEnergy(l, m.pass), previewPaths.maxE) : 1}
                     strokeWidth={px(1.2)}
                   />
                 );

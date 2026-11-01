@@ -82,8 +82,9 @@ stolen PIN used through the engine's API, not against a process that restarts th
   first. A running job notices the abort request at its next packet or status poll. If a run task panics, the engine
   sends the abort sequence (and `Controller::run` aborts from its own drop guard).
 - Hard limits (max power, field bounds, mark speed) live in the machine profile and cannot be changed by command
-  arguments. Layers may have at most 1000 passes (`commands` and `plan` both refuse more) and `plan_job` refuses jobs
-  above 2,000,000 segments, so one edit cannot make planning exhaust the engine's memory. Previews are coalesced: at
+  arguments. Layers and sub-layers may have at most 1000 passes (`commands` and `plan` both refuse more), a layer at
+  most 64 sub-layers (`commands`) and 100,000 planned passes in all (`plan`, counting cleanup runs), and `plan_job`
+  refuses jobs above 2,000,000 segments, so one edit cannot make planning exhaust the engine's memory. Previews are coalesced: at
   most one preview plan runs at a time, and requests queued behind it share one plan of the newest document.
 - `machine::check_job` checks the encoded packets right before they are sent: power, frequency, pulse width, mark
   and jump speed, delays, no in-list `FiberOpenMO` (the MO is opened only by the run prelude), every `WritePort`
@@ -108,7 +109,7 @@ says otherwise. `origin` is `"ui"` (default), `"script"` or `"agent:<name>"`.
 | GET | `/api/history` | `{ "marker": n, "marker_moved_by": "edit"\|"undo"\|"timeline", "undone_steps": n, "steps": [Step] }` (see "History timeline"); string parameters over 512 bytes (file contents) are replaced by `"<n bytes omitted>"` |
 | POST | `/api/history/goto` | `{ "marker": n, "origin"? }` → `{ "ok": true, "marker", "revision" }`: apply steps `1..=marker`, roll back the rest (0 = before the first step); a marker past the end is **200** `{ "ok": false, "error" }` |
 | POST | `/api/history/delete` | `{ "index": n, "origin"? }` → `{ "ok": true, "marker", "revision" }`: remove step `index` (1-based) and replay the steps after it; no such step is **200** `{ "ok": false, "error" }` |
-| GET | `/api/preview` | planned job: `{ segments: [{kind: "jump"|"mark", layer, pass, from: [x,y], to: [x,y], emits}], stats, layers: [{layer_id, name, color, mode, output, visible, passes, segments, mark_length_mm, jump_length_mm, estimated_time_s}], warnings }` in field mm. `pass` indexes the job's passes in burn order (a jump belongs to the pass it travels into); `layers` lists every document layer in order (zeros for layers with nothing to mark or output off; layer times leave out the job's start-up delay); `warnings` are things the plan left out (images). `?layers=id1,id2` keeps only those layers' segments and entries (stats stay the whole job's). An empty document is an empty preview; a planning error (out of field, power above the limit, too many passes/segments) is **422** |
+| GET | `/api/preview` | planned job: `{ segments: [{kind: "jump"|"mark", layer, pass, from: [x,y], to: [x,y], emits}], passes: [{layer_id, sub_layer, repeat, segments, mark_length_mm, jump_length_mm, estimated_time_s}], stats, layers: [{layer_id, name, color, mode, output, visible, passes, segments, mark_length_mm, jump_length_mm, estimated_time_s, sub_layers: [{sub_layer, name, label, cleanup, mode, power_pct, speed_mm_s, frequency_khz, pulse_width_ns, passes, planned_passes, segments, mark_length_mm, jump_length_mm, estimated_time_s}]}], warnings }` in field mm. `pass` indexes `passes`, the job's passes in burn order (a jump belongs to the pass it travels into); `sub_layer` is 0 for a layer's main settings and n for `sub_layers[n - 1]`; `layers` lists every document layer in order (zeros for layers with nothing to mark or output off; layer times leave out the job's start-up delay), each with its main settings and sub-layers (`label` "Main", the name, "Cleanup" or "Sub-layer n"; `passes` asked for, `planned_passes` planned, and their share of the layer's totals); `warnings` are things the plan left out (images). `?layers=id1,id2` keeps only those layers' segments and entries (stats and `passes` stay the whole job's). An empty document is an empty preview; a planning error (out of field, power above the limit, too many passes/segments) is **422** |
 | GET | `/api/fill_regions` | `{ layers: [{layer_id, name, color, mode, visible, output, paths: [d], object_ids: [id]}] }`: for every layer whose mode is `fill` or `fill_then_line`, one SVG path per object (its closed subpaths, field mm, +Y up, flattened at 0.05 mm) to draw with `fill-rule: evenodd`, which is exactly the area the hatch covers. Display only |
 | GET | `/api/preview.svg` | rendered preview (stock, objects, toolpath; `?jumps=false` hides travel); still renders the document on a planning error |
 | GET | `/api/machine` | `connected`, `simulated`, `busy`, `state`, `running`, `framing`, `field_mm`, `profile`, `device` (the active device's summary, see `GET /api/devices`), `max_power_pct`, `last_error`, `sim_counters`, `approval: { pin_set, pin_changed, locked_until_unix_s: null \| n, physical_confirm: null \| { input_bit, timeout_s } }`, `lightburn: null \| { device, field_mm, diffs: [{field, base_value, lightburn_value, note}] }` (the active profile compared with the matched LightBurn device, see "LightBurn devices"), `pending_runs: [Run]`, `runs: [Run]` |
@@ -186,6 +187,25 @@ the last applied step (0 = none); the document is always the snapshot at the mar
   newest rolled-back steps are dropped instead).
 - The revision always increases (goto, undo, redo and delete each make a new revision), so stale-run checks and
   preview caching keep working.
+
+**Sub-layers** (LightBurn's sub-layer tabs). `Layer.sub_layers` are further `CutSettings` run over the layer's
+objects; a sub-layer's `name` is LightBurn's `subname`, and `cleanup: {every_n_passes}` makes it a cleanup pass.
+Burn order per layer (`plan::layer_schedule`): each main pass, followed by every cleanup sub-layer due after it,
+then the other sub-layers in list order, each `passes` times. A cleanup runs after main passes n, 2n, ... and after
+the last main pass when no cleanup just ran, so a layer always ends cleaned and an interval of at least the main
+passes runs it once, after them, like an ordinary sub-layer; each run makes its own `passes`, and its hatch angle
+keeps adding `angle_increment_deg` across runs. This follows LightBurn's 3D Sliced image-mode cleanup ("Enable
+cleanup pass" adds a Cleanup sub-layer that runs after every "Clean after # of passes" passes, docs 2.0/2.1 Galvo
+Cut Settings); LightBurn has no cleanup for vector layers, where its sub-layers simply run after the main passes,
+and "Clean whole image" (cleaning only recent passes) has no meaning without image slicing and is not modelled.
+Commands (indices are 0-based positions in `sub_layers`; validation and limits as `layer.update`, at most 64
+sub-layers; each one undo step): `layer.sub_add {layer, settings?, name?, cleanup?, index?}` (a copy of the main
+settings with the partial `settings` merged in, like LightBurn's add; returns `index`), `layer.sub_update {layer,
+index, settings?, name?, cleanup?}` (partial merge; `null` clears the name or the cleanup), `layer.sub_delete
+{layer, index}`, `layer.sub_move {layer, from, to}`, `layer.sub_duplicate {layer, index}` (the copy goes right after
+it; returns its `index`). Kept data of other software per sub-layer (`extras["<format>.subN.*"]`, N 1-based) moves
+with its sub-layer on add, delete, move and duplicate. The web UI's "Add cleanup pass" uses LightBurn-like defaults:
+the same mode and interval, one fast low-energy pass with the hatch turned 45°, cleaning after the main passes.
 
 **Ids and arranging.** Every command that takes object `ids` also takes group ids, which stand for all the group's
 members (nested groups included). `object.duplicate` and `art.array` copy a fully selected group as a new group;
@@ -286,7 +306,9 @@ MCP tool can approve a run or touch the operator PIN, and the server instruction
   so field frame = LightBurn - `field_mm / 2`. The file does not record the field size it was laid out for, so
   import and export take `field_mm` (import default: a LightBurn device's field, else the document's; export default the field the last import used,
   see "Field size"); a wrong value shifts everything by half the difference. CutSettings become layers (power, speed, frequency Hz to kHz, QPulseWidth ns, hatch, passes,
-  sub-layers; everything else in `extras["lbrn2.*"]`), Rect/Ellipse/Path become objects, LightBurn groups become
+  sub-layers with their `subname` as `name` and `isCleanup` as `cleanup`, whose `numPasses` is then
+  `every_n_passes` ("Clean after # of passes"; the parent's `cleanupPass` is written while a cleanup sub-layer
+  exists); everything else in `extras["lbrn2.*"]`), Rect/Ellipse/Path become objects, LightBurn groups become
   groups, Text becomes an object drawn and burned as its saved outline (BackupPath) that keeps its text attributes
   and is exported as LightBurn text again, bitmaps become images; anything else (unknown shape types, the
   thumbnail, `UIPrefs`, `Notes`, root attributes, layout) is kept in `extras`. Export writes it all back, with the
@@ -299,7 +321,8 @@ MCP tool can approve a run or touch the operator PIN, and the server instruction
   are in `crates/lbrn/src/lib.rs`.
   **Gantry beds** (`lbrn::Frame::Bed`; `origin` a corner, with `workspace_mm`): LightBurn measures in mm from the
   device's origin corner, which the project root records as `MirrorX` / `MirrorY` (front-left = neither, rear-left =
-  `MirrorY` from an xTool `.lbdev`; rear-right = both and front-right = `MirrorX` inferred, **unconfirmed**). Import
+  `MirrorY`, rear-right = both, front-right = `MirrorX`; orientation checked against the thumbnails of public
+  LightBurn-saved projects, see `crates/lbrn/src/lib.rs`; mirroring about the bed rather than 0 is likely, unshown). Import
   uses the file's own flags: field = S · (LightBurn - [W/2, H/2]), S negating the mirrored axes (a shape saved in a
   mirrored frame gets a mirrored transform, so it looks as LightBurn showed it); export applies the inverse for the
   target origin and writes its flags, so a file saved for another origin is reoriented as LightBurn does since 1.3.
