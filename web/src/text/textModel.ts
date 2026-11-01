@@ -410,7 +410,10 @@ export const BARCODE_KINDS: BarcodeKind[] = [
  * PDF417 Compact / Micro, Micro QR, rMQR, Chinese Sensible, Grid Matrix, AprilTag, ArUco). A kind the engine offers
  * that is in neither list is shown under its id.
  */
-const MORE_KIND_LABELS: Record<string, { label: string; twoD: boolean }> = {
+const HAN_XIN_EC: [string, string][] = [["1", "L1 (~8 %)"], ["2", "L2 (~15 %)"], ["3", "L3 (~23 %)"], ["4", "L4 (~30 %)"]];
+const GRID_MATRIX_EC: [string, string][] = [["1", "L1 (~10 %)"], ["2", "L2 (~20 %)"], ["3", "L3 (~30 %)"], ["4", "L4 (~40 %)"], ["5", "L5 (~50 %)"]];
+
+const MORE_KIND_LABELS: Record<string, { label: string; twoD: boolean; ec?: [string, string][] }> = {
   iata_2of5: { label: "2 of 5 IATA", twoD: false },
   code2of5_iata: { label: "2 of 5 IATA", twoD: false },
   industrial_2of5: { label: "2 of 5 Industrial", twoD: false },
@@ -424,9 +427,9 @@ const MORE_KIND_LABELS: Record<string, { label: string; twoD: boolean }> = {
   micro_qr: { label: "QR Micro", twoD: true },
   qr_micro: { label: "QR Micro", twoD: true },
   rmqr: { label: "QR Micro Rectangular", twoD: true },
-  chinese_sensible: { label: "Chinese Sensible Code", twoD: true },
-  han_xin: { label: "Chinese Sensible Code", twoD: true },
-  grid_matrix: { label: "Grid Matrix", twoD: true },
+  chinese_sensible: { label: "Chinese Sensible Code", twoD: true, ec: HAN_XIN_EC },
+  han_xin: { label: "Chinese Sensible Code", twoD: true, ec: HAN_XIN_EC },
+  grid_matrix: { label: "Grid Matrix", twoD: true, ec: GRID_MATRIX_EC },
   apriltag_16h5: { label: "AprilTag 16h5", twoD: true },
   apriltag_25h9: { label: "AprilTag 25h9", twoD: true },
   apriltag_36h10: { label: "AprilTag 36h10", twoD: true },
@@ -460,7 +463,8 @@ export function barcodeKindsFrom(inputSchema: unknown): BarcodeKind[] {
     .filter((id) => !BARCODE_KINDS.some((b) => b.id === id))
     .map((id): BarcodeKind => {
       const m = MORE_KIND_LABELS[id];
-      return { id, label: m?.label ?? id, twoD: m?.twoD ?? /qr|matrix|aztec|pdf417|tag|aruco|sensible|maxi|dot/.test(id) };
+      const twoD = m?.twoD ?? /qr|matrix|aztec|pdf417|tag|aruco|sensible|maxi|dot/.test(id);
+      return m?.ec ? { id, label: m.label, twoD, ec: m.ec } : { id, label: m?.label ?? id, twoD };
     });
   return [...known, ...more];
 }

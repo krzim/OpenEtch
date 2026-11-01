@@ -244,6 +244,10 @@ test("barcode kinds follow the engine's shape.barcode schema", async () => {
   assert.equal(k.find((x) => x.id === "zz_new")?.label, "zz_new");
   assert.deepEqual(m.barcodeKindsFrom({ properties: { kind: { enum: ["qr", "vin"] } } }).map((x) => x.label), ["QR Code", "VIN"]);
   assert.equal(m.barcodeKindsFrom(null), m.BARCODE_KINDS, "no schema: the built-in list");
+  const ec = m.barcodeKindsFrom({ properties: { kind: { enum: ["qr", "han_xin", "grid_matrix", "vin"] } } });
+  assert.deepEqual(ec.find((x) => x.id === "han_xin")?.ec?.map((e) => e[0]), ["1", "2", "3", "4"]);
+  assert.deepEqual(ec.find((x) => x.id === "grid_matrix")?.ec?.map((e) => e[0]), ["1", "2", "3", "4", "5"]);
+  assert.equal(ec.find((x) => x.id === "vin")?.ec, undefined);
   m.setEngineBarcodeKinds(k);
   assert.equal(m.barcodeKind("plessey")?.label, "Plessey");
   m.setEngineBarcodeKinds(null);
