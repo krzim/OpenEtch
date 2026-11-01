@@ -431,6 +431,9 @@ export function approvalRefusalText(detail: string): string | null {
     const m = /input (\d+)/.exec(detail);
     return `Door Protect: the enclosure is open${m ? ` (input ${m[1]})` : ""}. Close it, then try again.`;
   }
+  if (d.includes("changed since start was clicked")) {
+    return "The job changed just before Start (an edit was still arriving, e.g. an agent's). Nothing was burned: check it and press Start again.";
+  }
   if (d.includes("another run is in progress")) return "Another run holds the machine. Wait for it to end (or STOP it), then try again.";
   if (d.includes("sim_pin_real_link") || d.includes("simulator test pin")) return "The simulator test PIN cannot approve runs on a real laser.";
   return null;

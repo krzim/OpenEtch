@@ -105,19 +105,22 @@ export async function requestRunWithOptions(selection: readonly string[], fromSe
 /**
  * Start (no-PIN engine: plan and burn now, with the Job Checklist ticks when it is on) or Request run (PIN engine: a
  * pending run to approve with the PIN), with the Laser window's options. Resolves to the toast text; a refused Start
- * throws an Error with a readable reason (door open, checklist, Require Framing, ...).
+ * throws an Error with a readable reason (door open, checklist, Require Framing, ...). `revision`: the document
+ * revision this page shows; the engine starts nothing when the document is at another one (an agent's edit came in
+ * just before the click), so Start burns only what the person was looking at.
  */
 export async function runJob(
   noPin: boolean,
   selection: readonly string[],
   fromSegment: number | null = null,
   checklist: boolean[] | null = null,
+  revision: number | null = null,
 ): Promise<string> {
   if (!noPin) return requestRunWithOptions(selection, fromSegment);
   const o = getRunOptions();
   const body = runRequestBody(fromSegment === null && !getPrefs().beginnerMode ? o : { ...o, cutSelected: false }, { selection, fromSegment });
   try {
-    await jobApi.start(checklist ? { ...body, checklist } : body);
+    await jobApi.start({ ...body, ...(checklist ? { checklist } : {}), ...(revision === null ? {} : { revision }) });
   } catch (e) {
     if (!(e instanceof ApiError)) throw e;
     const detail = e.detail || e.message;

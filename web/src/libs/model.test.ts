@@ -188,6 +188,10 @@ test("preferences, the Job Checklist and approval texts", () => {
   assert.equal(checklistComplete({ enabled: false, items: [] }, []), true);
   assert.match(approvalRefusalText("Require Framing Before Start is on: frame the job (since its last edit) before approving it") ?? "", /frame the job/);
   assert.match(approvalRefusalText("the Job Checklist has 2 item(s); tick every one") ?? "", /Tick every item/);
+  assert.match(
+    approvalRefusalText("the document changed since Start was clicked (revision 4 -> 5); nothing was started") ?? "",
+    /Nothing was burned/,
+  );
   assert.match(approvalRefusalText("the door interlock (input 3) is open; close the enclosure") ?? "", /input 3/);
   assert.match(approvalRefusalText("another run is in progress") ?? "", /Another run/);
   assert.equal(approvalRefusalText("something else"), null);

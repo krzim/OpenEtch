@@ -985,7 +985,7 @@ export function App() {
   // Request run (hotkey, toolbar) with the Laser window's run options: it still needs PIN approval, or without a PIN
   // (`--approval click`) it is LightBurn's Start and burns at once (the Job Checklist is ticked in the Laser window).
   const requestRun = () =>
-    void runJob(noPinMode(machine), selection.objects).then(notify).catch(report).finally(() => void engine.refreshMachine());
+    void runJob(noPinMode(machine), selection.objects, null, null, doc?.revision ?? null).then(notify).catch(report).finally(() => void engine.refreshMachine());
   const laserDisabled = designOnlyReason(device);
   // Workspace hotkeys (workspace/hotkeys.ts); App's own keys stay in the handler above.
   ws.keymap.current = {
@@ -1240,6 +1240,7 @@ export function App() {
               report={report}
               onRequested={() => void engine.refreshMachine()}
               noPin={noPinMode(machine)}
+              docRevision={doc?.revision ?? null}
             />
           )}
           </div>

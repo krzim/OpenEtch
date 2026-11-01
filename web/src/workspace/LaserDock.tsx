@@ -98,7 +98,7 @@ export function LaserDock(p: LaserDockProps) {
   const cycleText = footCycleText(p.machine);
   const request = () => {
     setRequesting(true);
-    runJob(noPin, p.selection, null, noPin ? checklistTicks(gates.gates.checklist, gates.ticks) : null)
+    runJob(noPin, p.selection, null, noPin ? checklistTicks(gates.gates.checklist, gates.ticks) : null, p.doc?.revision ?? null)
       .then((msg) => {
         p.notify(msg);
         // The checklist is ticked again for every job.

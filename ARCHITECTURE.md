@@ -94,8 +94,12 @@ computer while nobody watches it; the foot switch is the approval path that need
     additionally require the fetch-metadata headers a browser adds to the page's own `fetch` and page scripts cannot
     set: `Sec-Fetch-Site: same-origin` and an `Origin` the request guard accepts. Without them they answer **403**
     `code: "browser_required"` with what to do instead; MCP client headers and a non-`ui` origin are refused as in
-    the PIN mode, and a `pin` in the body is ignored. A refused one-click Start (door open, Require Framing, the Job
-    Checklist, Stop At, an empty job, a busy board, a Stop while planning) leaves no pending run behind. In the PIN
+    the PIN mode, and a `pin` in the body is ignored. The app sends the document `revision` it shows: when the
+    document is at another revision (an agent's edit landed just before the click), the Start is refused (409) and
+    nothing is planned, so Start burns only the version the person was looking at. A Stop at any moment after the
+    request arrived (while the door is read or the job is planned) cancels the Start. A refused one-click Start (door
+    open, Require Framing, the Job Checklist, Stop At, an empty job, a busy board, a Stop, another revision) leaves
+    no pending run behind. In the PIN
     mode `POST /api/job/start` answers **403** `code: "approval_mode"`. **What this does not prove:** a
     program that is not a browser (curl, a script, an agent with a shell) can send the same two headers: on
     loopback it needs nothing else (no token is required there), off loopback it needs the access token. The access
@@ -115,7 +119,11 @@ computer while nobody watches it; the foot switch is the approval path that need
     - While the cycle frames, a press stops the frame and burns **exactly the document revision being framed**: the
       document is planned into a run with the default run options (the whole job once, no start input) and approved
       as `Approver::FootSwitch`; the cycle is `burning`. When the run finishes, framing starts again on the document
-      as it is then (a serial number advanced by the burn included), and every further press burns again.
+      as it is then (a serial number advanced by the burn included), and every further press burns again. When
+      anything else edited the document during the burn (an agent), the new frame is announced
+      (`foot_cycle_notice`): the next press burns that version only because it is the one being framed.
+    - The cycle records the revision, device and frame loop of its own frame (returned by `AppState::frame_start`),
+      never those of a frame or edit that came in at the same moment; a press burns only while that frame still runs.
     - If the document revision or the device changed since the frame started (an edit in the app or by an agent),
       the press frames the new revision instead of burning and says so; a run planned from another revision is
       discarded and the job re-framed.
@@ -254,7 +262,7 @@ says otherwise. `origin` is `"ui"` (default), `"script"` or `"agent:<name>"`.
 | POST | `/api/devices/{id}/activate` | optional `{ "origin" }` → `{ ok, active: summary, warnings: [text] }`: makes the device active (stored; it is also the one used at the next start). Refused **409** while a run is approved, awaiting confirmation or running, or while framing; MCP headers or a non-`ui` origin **403**. Cancels pending runs, swaps the machine profile (JCZ galvos; the board is initialised again, the simulator gets a fresh `SimLink`), and new documents start at the device's workspace. Emits `device_changed`. A correction file that cannot be found is a warning (output is then uncorrected) |
 | POST | `/api/runs` | optional `{ "origin", "repeat"?: 1..=10000, "continuous"?: bool, "start_input"?: bool, "full_pulse"?: bool, "selection"?: [id], "from_segment"?: n }` → **201** `{ "ok": true, "id", "run": Run, "message" }`; plans, encodes and checks the document (with `selection` only those objects/groups, LightBurn's Cut Selected Graphics; with `from_segment` from that `GET /api/preview` segment on, Start Here, not combined with `selection` (400); the job counter is the run index of auto-rotating fills, and `GET /api/preview` plans with the same index; `start_input` when the profile's start- and stop-marking inputs are the same bit 400); sends nothing to the board; at most 8 pending; unknown keys 400 |
 | POST | `/api/runs/{id}/approve` | `{ "pin": "<operator PIN>" }` (no body needed with `--approval click`) → `{ "ok": true, "id", "state": "approved" \| "awaiting_confirm" }`; the run then starts in the background. PIN refusals are **403** `{ "ok": false, "error", "code": "pin_not_set" \| "pin_changed" \| "pin_required" \| "pin_invalid" \| "pin_locked" }`; with `--approval click` a request with a `Sec-Fetch-Site` other than `same-origin`, or without an accepted `Origin`, is **403** `code: "browser_required"` (see "Safety model"); MCP headers or a non-`ui` origin 403; unknown run 404; not pending, stale revision or another run active 409 |
-| POST | `/api/job/start` | `--approval click` only: one-click Start. Body: the run options of `POST /api/runs`, plus `origin: "ui"` and `checklist: [bool]`. Plans the current document and approves it at once → `{ "ok": true, "id", "state", "run" }`. Same guards as a no-PIN approve (MCP headers or a non-`ui` origin 403, `browser_required` 403); `approval_mode` 403 in the PIN mode; door, Require Framing, checklist, Stop At or another run 409, and nothing is left pending |
+| POST | `/api/job/start` | `--approval click` only: one-click Start. Body: the run options of `POST /api/runs`, plus `origin: "ui"`, `checklist: [bool]` and `revision` (the document revision the app shows; another one now: 409, nothing started). Plans the current document and approves it at once → `{ "ok": true, "id", "state", "run" }`. Same guards as a no-PIN approve (MCP headers or a non-`ui` origin 403, `browser_required` 403); `approval_mode` 403 in the PIN mode; door, Require Framing, checklist, Stop At or another run 409, and nothing is left pending |
 | POST | `/api/machine/frame` | `{ "ids"?: [...], "mode"?: "bounds" \| "hull" \| "outline" (alias "contour"), "individually"?, "outside_only"?, "tool_layers_only"? (objects on layers with output off), "continuous"?: bool (default true), "speed_mm_s"?, "pointer"?: "red" \| "focus" \| "both", "blanking"?, "live"?: bool, "max_seconds"?: 1..=3600 (default 120) }` → red-pointer framing (light only) until frame stop, stop, a run, or the time limit; `live` traces the new outline whenever the document changes (`machine` event `frame_updated`); a focus pointer needs the profile's `focus_light_port_bit` (else 400) |
 | POST | `/api/machine/frame/stop` | ends framing only; pending and approved runs are untouched → `{ "ok": true }`; with no board connected **200** `{ "ok": true, "connected": false }` |
 | POST | `/api/machine/stop` | emergency stop: abort any run or frame, cancel every run not yet streaming (`pending`, `approved`, `awaiting_confirm`; `cancelled_runs` counts them) → `{ "ok": true, "connected": true, "cancelled_runs": n }`; with no board connected **200** `{ "ok": true, "connected": false, ... }`; no token needed |

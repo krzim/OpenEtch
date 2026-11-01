@@ -28,6 +28,8 @@ export function PreviewTimeline(p: {
   onRequested: () => void;
   /** No PIN on the engine: Start Here burns at once instead of requesting a run. */
   noPin?: boolean;
+  /** The document revision this page shows (Start Here burns nothing when the engine's document is at another one). */
+  docRevision?: number | null;
 }) {
   const t = useT();
   const { preview, options, onOptions } = p;
@@ -88,7 +90,7 @@ export function PreviewTimeline(p: {
   const startHere = () => {
     if (startAt === null) return;
     setBusy(true);
-    runJob(!!p.noPin, [], startAt)
+    runJob(!!p.noPin, [], startAt, null, p.docRevision ?? null)
       .then((msg) => p.notify(msg))
       .catch((e: unknown) => (e instanceof Error && !("status" in e) ? p.notify(e.message, "error") : p.report(e)))
       .finally(() => {
