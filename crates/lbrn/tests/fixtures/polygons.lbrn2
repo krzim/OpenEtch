@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<LightBurnProject AppVersion="2.2.00" DeviceName="Synthetic" FormatVersion="1" MaterialHeight="0" MirrorX="False" MirrorY="False" AskForSendName="True" CurrentPage="0" Page0Name="Page 1">
+    <CutSetting type="Cut">
+        <index Value="0"/>
+        <name Value="C00"/>
+        <maxPower Value="20"/>
+        <speed Value="100"/>
+        <priority Value="0"/>
+    </CutSetting>
+    <Shape Type="Polygon" CutIndex="0" Rx="10" Ry="9.5" N="3">
+        <XForm>1 0 0 -1 33 112.5</XForm>
+    </Shape>
+    <Shape Type="Polygon" CutIndex="0" Rx="5" Ry="5" N="6">
+        <XForm>1 0 0 -1 135 20</XForm>
+    </Shape>
+    <Shape Type="Star" CutIndex="0" Rx="7.5" Ry="7.5" N="5" Bu="0" Ra="0.40000001">
+        <XForm>1 0 0 -1 105.5 65.5</XForm>
+    </Shape>
+    <Shape Type="Star" CutIndex="0" Rx="7.5" Ry="7.5" N="5" Bu="0.5" Ra="0.5">
+        <XForm>1 0 0 1 50 50</XForm>
+    </Shape>
+    <Notes ShowOnLoad="0" Notes=""/>
+</LightBurnProject>

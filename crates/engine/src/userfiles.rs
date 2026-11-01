@@ -23,8 +23,8 @@
 //! | POST | `/api/prefs/import_lightburn` | a LightBurn `.lbprefs` / `prefs.ini` as the body (UI only unless `?preview=1`): the keys OpenEtch has (`crate::lbprefs`); autosave and the active device's Optimization defaults are applied (current preferences backed up first), the browser-side ones returned as `browser` for the UI to apply; `{ok, preview, device, engine, browser, used, rejected, other_keys}` |
 //! | GET | `/api/prefs/backups` | `[{file, saved_unix_s, size}]` newest first (at most 50 kept; made at start and before every import) |
 //! | POST | `/api/prefs/backups/restore` | `{file, origin?}` (UI only) |
-//! | GET | `/api/bundle/export` | `?parts=prefs,devices,libraries` (default all): a user bundle `.oebundle` (zip) |
-//! | POST | `/api/bundle/import` | `?parts=` + a bundle (UI only) → `{ok, imported: {prefs, devices: [id], libraries: [name]}, skipped: [text]}`; devices are always added as new devices (an identical one is skipped), a library whose name exists with other content is loaded as "<name> (bundle)", as LightBurn keeps what is there |
+//! | GET | `/api/bundle/export` | `?parts=prefs,devices,libraries` (default all): a user bundle `.oebundle` (zip); `format=lbzip` (parts `devices,presets,art`): a LightBurn bundle (`crate::lbzip`) |
+//! | POST | `/api/bundle/import` | `?parts=` + a bundle (UI only) → `{ok, imported: {prefs, devices: [id], libraries: [name]}, skipped: [text]}`; devices are always added as new devices (an identical one is skipped), a library whose name exists with other content is loaded as "<name> (bundle)", as LightBurn keeps what is there. A LightBurn `.lbzip` (`crate::lbzip`; parts `prefs,devices,presets,art`) → `{ok, lightburn: true, imported: {prefs, devices, libraries, presets, art}, browser, skipped}` (`browser`: the LightBurn settings for the web UI to apply) |
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -919,9 +919,16 @@ async fn prefs_import_lightburn(State(st): State<Arc<AppState>>, headers: Header
     if !preview {
         ui_only(&headers, q.get("origin").map(|o| json!(o)).as_ref(), "LightBurn preferences can be imported")?;
     }
+    Ok(Json(st.blocking(move |st| import_lightburn_prefs(st, &body, preview)).await?))
+}
+
+/// Map a LightBurn `.lbprefs` / `prefs.ini` (`crate::lbprefs`; also from a `.lbzip` bundle) and, unless `preview`,
+/// apply its engine-side values (current preferences backed up first). Returns `{ok, preview, device, engine,
+/// browser, used, rejected, other_keys}`; `browser` is for the web UI to apply.
+pub fn import_lightburn_prefs(st: &AppState, body: &[u8], preview: bool) -> Result<Value, EngineError> {
     let device = st.active_device().id;
     let base = crate::libs::lock(&st.libs.prefs).device(&device).optimization_defaults.unwrap_or_default();
-    let m = crate::lbprefs::map(&body, &base).map_err(EngineError::BadRequest)?;
+    let m = crate::lbprefs::map(body, &base).map_err(EngineError::BadRequest)?;
     if !preview && (m.optimization.is_some() || m.autosave_minutes.is_some()) {
         let mut prefs = crate::libs::lock(&st.libs.prefs).prefs.clone();
         if let Some(o) = &m.optimization {
@@ -929,10 +936,10 @@ async fn prefs_import_lightburn(State(st): State<Arc<AppState>>, headers: Header
         }
         let files = m.autosave_minutes.map(|minutes| FileSettings { autosave_minutes: minutes, ..st.files.settings() });
         let v = serde_json::to_value(&prefs).map_err(|e| EngineError::Internal(e.to_string()))?;
-        st.blocking(move |st| set_prefs(st, v, files)).await?;
+        set_prefs(st, v, files)?;
     }
     let engine = json!({ "autosave_minutes": m.autosave_minutes, "optimization": m.optimization });
-    Ok(Json(json!({
+    Ok(json!({
         "ok": true,
         "preview": preview,
         "device": device,
@@ -941,7 +948,7 @@ async fn prefs_import_lightburn(State(st): State<Arc<AppState>>, headers: Header
         "used": m.used,
         "rejected": m.rejected,
         "other_keys": m.other_keys,
-    })))
+    }))
 }
 
 async fn prefs_backups(State(st): State<Arc<AppState>>) -> Result<Json<Value>, EngineError> {
@@ -969,14 +976,15 @@ async fn prefs_restore(State(st): State<Arc<AppState>>, headers: HeaderMap, body
     Ok(Json(json!({ "ok": true })))
 }
 
-/// Bundle parts.
-const PARTS: [&str; 3] = ["prefs", "devices", "libraries"];
+/// Bundle parts. `presets` (material test presets) and `art` (Art Libraries) are read from and written to LightBurn
+/// `.lbzip` bundles only.
+const PARTS: [&str; 5] = ["prefs", "devices", "libraries", "presets", "art"];
 
 fn parts(q: &HashMap<String, String>) -> Result<Vec<String>, EngineError> {
     let Some(p) = q.get("parts") else { return Ok(PARTS.iter().map(|s| s.to_string()).collect()) };
     let list: Vec<String> = p.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
     if let Some(bad) = list.iter().find(|s| !PARTS.contains(&s.as_str())) {
-        return Err(EngineError::BadRequest(format!("unknown part '{bad}' (prefs, devices, libraries)")));
+        return Err(EngineError::BadRequest(format!("unknown part '{bad}' (prefs, devices, libraries, presets, art)")));
     }
     Ok(list)
 }
@@ -1038,7 +1046,7 @@ pub fn bundle(st: &AppState, parts: &[String]) -> Result<Vec<u8>, EngineError> {
 /// Whether a bundle entry's file name is safe to create in one of our directories: no folders, no drive (`C:x.cor`
 /// on Windows is relative to drive C's current folder, so `dir.join` would leave `dir`), no alternate data stream,
 /// no leading dot, no trailing dot or space, no control characters and no Windows device name.
-fn bundle_file_name(name: &str) -> bool {
+pub(crate) fn bundle_file_name(name: &str) -> bool {
     let stem = name.split('.').next().unwrap_or_default().trim_end().to_ascii_uppercase();
     let device = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
         || (stem.len() == 4 && (stem.starts_with("COM") || stem.starts_with("LPT")) && stem.as_bytes()[3].is_ascii_digit());
@@ -1054,11 +1062,16 @@ fn bundle_file_name(name: &str) -> bool {
 /// Import `parts` of a bundle. Returns `{prefs, devices, libraries}` and what was skipped.
 pub fn unbundle(st: &AppState, bytes: &[u8], parts: &[String]) -> Result<Value, EngineError> {
     let entries = fileio::zip::read(bytes).map_err(|e| EngineError::BadRequest(format!("not a bundle: {e}")))?;
+    if crate::lbzip::is_lbzip(&entries) {
+        return crate::lbzip::import(st, &entries, parts);
+    }
     let manifest: Value = entries
         .iter()
         .find(|e| e.name == "bundle.json")
         .and_then(|e| serde_json::from_slice(&e.data).ok())
-        .ok_or_else(|| EngineError::BadRequest("not an OpenEtch bundle (no bundle.json)".into()))?;
+        .ok_or_else(|| {
+            EngineError::BadRequest("not a user bundle (no bundle.json, and no LightBurnSoftware.json of a LightBurn .lbzip)".into())
+        })?;
     if manifest["format"] != BUNDLE_FORMAT || manifest["version"].as_u64().unwrap_or(99) > 1 {
         return Err(EngineError::BadRequest("not an OpenEtch bundle (or a newer version)".into()));
     }
@@ -1167,8 +1180,16 @@ pub fn unbundle(st: &AppState, bytes: &[u8], parts: &[String]) -> Result<Value, 
 }
 
 async fn bundle_export(State(st): State<Arc<AppState>>, q: Q) -> Result<Response, EngineError> {
-    let q = query(q, &["parts"])?;
+    let q = query(q, &["parts", "format"])?;
     let parts = parts(&q)?;
+    match q.get("format").map(String::as_str) {
+        None | Some("oebundle") => {}
+        Some("lbzip") => {
+            let (bytes, skipped) = st.blocking(move |st| crate::lbzip::export(st, &parts)).await?;
+            return Ok(file_response("attachment", "openetch-bundle", "lbzip", "application/zip", bytes, skipped));
+        }
+        Some(f) => return Err(EngineError::BadRequest(format!("format must be oebundle or lbzip (got '{f}')"))),
+    }
     let bytes = st.blocking(move |st| bundle(st, &parts)).await?;
     Ok(file_response("attachment", "openetch-bundle", "oebundle", "application/zip", bytes, 0))
 }

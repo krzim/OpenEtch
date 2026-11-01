@@ -5,7 +5,12 @@
 //! Code 93, CodaBar, EAN-8, EAN-13, UPC-A, UPC-E, ITF (2 of 5 interleaved) and Telepen; ISBN goes through EAN-13 and
 //! VIN through Code 39 after their checks. OpenEtch's own encoders (`crate::codes`) add Micro QR, rMQR, PDF417 Micro,
 //! Chinese Sensible Code (Han Xin), Grid Matrix, 2 of 5 Industrial, 2 of 5 IATA, Plessey, AprilTag 16h5 / 25h9 /
-//! 36h10 / 36h11 and ArUco 7 x 7 (OpenCV's DICT_7X7_1000; ids 0-49, 0-99 and 0-249 are DICT_7X7_50, _100 and _250).
+//! 36h10 / 36h11, ArUco 7 x 7 (OpenCV's DICT_7X7_1000; ids 0-49, 0-99 and 0-249 are DICT_7X7_50, _100 and _250)
+//! and ArUco MIP 36h11 (the ArUco library's ARUCO_MIP_36h12, ids 0-249).
+//!
+//! LightBurn's files store the type as a number (`<Shape Type="BarCode" ... Content="0" BarCodeType="261">` is
+//! ArUco MIP 36h11 in LightBurn 2.2); no sample shows another type's number, so `.lbrn2` barcodes are not mapped yet
+//! (they are kept for LightBurn export as unknown shapes).
 
 use kurbo::{BezPath, Rect, Shape};
 
@@ -45,10 +50,11 @@ pub enum Kind {
     GridMatrix,
     AprilTag36h10,
     Aruco7x7,
+    ArucoMip36h12,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 30] = [
+    pub const ALL: [Kind; 31] = [
         Kind::Qr,
         Kind::DataMatrix,
         Kind::Aztec,
@@ -79,6 +85,7 @@ impl Kind {
         Kind::GridMatrix,
         Kind::AprilTag36h10,
         Kind::Aruco7x7,
+        Kind::ArucoMip36h12,
     ];
 
     /// The name used in commands (`qr`, `data_matrix`, `code128`, ...).
@@ -114,6 +121,7 @@ impl Kind {
             Kind::GridMatrix => "grid_matrix",
             Kind::AprilTag36h10 => "apriltag_36h10",
             Kind::Aruco7x7 => "aruco_7x7",
+            Kind::ArucoMip36h12 => "aruco_mip_36h12",
         }
     }
 
@@ -134,6 +142,7 @@ impl Kind {
             "pdf417micro" | "micropdf" => Some(Kind::MicroPdf417),
             "chinesesensiblecode" | "chinesesensible" | "csc" => Some(Kind::HanXin),
             "arucoopencv7x7" | "dict7x71000" | "dict7x750" | "dict7x7100" | "dict7x7250" => Some(Kind::Aruco7x7),
+            "arucomip36h11" | "arucomip" | "dictarucomip36h12" => Some(Kind::ArucoMip36h12),
             _ => None,
         })
     }
@@ -157,6 +166,7 @@ impl Kind {
                 | Kind::GridMatrix
                 | Kind::AprilTag36h10
                 | Kind::Aruco7x7
+                | Kind::ArucoMip36h12
         )
     }
 
@@ -164,7 +174,12 @@ impl Kind {
     pub fn is_tag(self) -> bool {
         matches!(
             self,
-            Kind::AprilTag16h5 | Kind::AprilTag25h9 | Kind::AprilTag36h10 | Kind::AprilTag36h11 | Kind::Aruco7x7
+            Kind::AprilTag16h5
+                | Kind::AprilTag25h9
+                | Kind::AprilTag36h10
+                | Kind::AprilTag36h11
+                | Kind::Aruco7x7
+                | Kind::ArucoMip36h12
         )
     }
 
@@ -245,6 +260,7 @@ pub fn encode(kind: Kind, data: &str, o: &Options) -> Result<Vec<Vec<bool>>, Str
         Kind::AprilTag36h11 => return codes::tags::TAG36H11.grid(data),
         Kind::AprilTag36h10 => return codes::tags::TAG36H10.grid(data),
         Kind::Aruco7x7 => return codes::tags::ARUCO_7X7.grid(data),
+        Kind::ArucoMip36h12 => return codes::tags::ARUCO_MIP_36H12.grid(data),
         Kind::MicroPdf417 => return codes::micro_pdf417::micro_pdf417(data),
         Kind::HanXin => return codes::hanxin::han_xin(data, ec),
         Kind::GridMatrix => return codes::grid_matrix::grid_matrix(data, ec),
@@ -410,13 +426,12 @@ mod tests {
         assert_eq!(Kind::from_name("AprilTag 36h11"), Some(Kind::AprilTag36h11));
     }
 
-    /// Every type in LightBurn's Bar Code list (its docs, 2026) by LightBurn's name, except ArUco MIP 36h11 (the docs
-    /// do not say which dictionary that is).
+    /// Every type in LightBurn's Bar Code list (its docs, 2026) by LightBurn's name.
     #[test]
     fn lightburn_types_resolve_and_draw() {
         let names = [
             "2 of 5", "2 of 5 IATA", "2 of 5 Industrial", "AprilTag 16h5", "AprilTag 25h9", "AprilTag 36h10",
-            "AprilTag 36h11", "ArUco OpenCV 7x7", "Aztec", "Chinese Sensible Code", "CodaBar", "Code 128", "Code 93",
+            "AprilTag 36h11", "ArUco MIP 36h11", "ArUco OpenCV 7x7", "Aztec", "Chinese Sensible Code", "CodaBar", "Code 128", "Code 93",
             "Data Matrix", "EAN", "Grid Matrix", "ISBN", "PDF417", "PDF417 Compact", "PDF417 Micro", "Plessey",
             "QR Code", "QR Micro", "QR Micro Rectangular", "UPC A", "UPC E", "VIN",
         ];
@@ -438,7 +453,8 @@ mod tests {
             };
             assert!(draw(k, data, &o).is_ok(), "{n}");
         }
-        assert_eq!(Kind::from_name("ArUco MIP 36h11"), None);
+        assert_eq!(Kind::from_name("ArUco MIP 36h11"), Some(Kind::ArucoMip36h12));
+        assert_eq!(Kind::from_name("aruco_mip_36h12"), Some(Kind::ArucoMip36h12));
     }
 
     #[test]

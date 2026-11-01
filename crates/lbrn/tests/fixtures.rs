@@ -1032,3 +1032,70 @@ fn variable_text_counter_maps_to_the_document() {
     let out = write(&p);
     assert!(out.contains("<Current Value=\"107\"/>") && out.contains("<Start Value=\"100\"/>"), "{out}");
 }
+
+/// LightBurn's parametric Draw Shape polygons and stars (`Type="Polygon" N Rx Ry`, `Type="Star" N Rx Ry Bu Ra`;
+/// structure and sizes as in LightBurn 2.2's own files): imported as parametric polygons with LightBurn's sizes,
+/// exported byte for byte; a bulged star (curve unknown) is kept but not shown.
+#[test]
+fn draw_shape_polygons_import_parametric_and_export_byte_for_byte() {
+    let text = include_str!("fixtures/polygons.lbrn2");
+    let d = import_document(text);
+    let (_, _, warnings) = import(text);
+    assert_eq!(d.objects.len(), 3);
+    assert!(warnings.iter().any(|w| w.contains("Bulge")), "{warnings:?}");
+    let tri = &d.objects[0];
+    assert_eq!(
+        tri.geometry,
+        Geometry::Polygon { sides: 3, radius_mm: 10.0, star_ratio: None, corner_radius_mm: 0.0, ry_mm: Some(9.5), half_step: true }
+    );
+    let b = tri.bounds();
+    assert!(close(b.width(), 17.3205, 1e-3) && close(b.height(), 14.25, 1e-9), "{b:?}");
+    // Standing on its base: the apex is up, at the XForm's y + Ry (in the field frame, -75).
+    assert!(close(b.y1, 112.5 + 9.5 - FIELD / 2.0, 1e-9) && close(b.y0, 112.5 - 4.75 - FIELD / 2.0, 1e-9));
+    let hex = d.objects[1].bounds();
+    assert!(close(hex.width(), 10.0, 1e-9) && close(hex.height(), 8.660254, 1e-6), "{hex:?}");
+    let star = &d.objects[2];
+    assert!(matches!(star.geometry, Geometry::Polygon { star_ratio: Some(r), .. } if r == 0.40000001));
+    let sb = star.bounds();
+    assert!(close(sb.width(), 14.266, 1e-3) && close(sb.height(), 13.568, 1e-3), "{sb:?}");
+    let (p, _) = from_document(&d, FIELD).unwrap();
+    assert_eq!(write(&p), text);
+
+    // An edited star keeps its type; one made a plain polygon drops Bu and Ra.
+    let mut d2 = d.clone();
+    if let Geometry::Polygon { star_ratio, .. } = &mut d2.objects[2].geometry {
+        *star_ratio = None;
+    }
+    let out = write(&from_document(&d2, FIELD).unwrap().0);
+    assert!(out.contains(r#"<Shape Type="Polygon" CutIndex="0" Rx="7.5" Ry="7.5" N="5">"#), "{out}");
+}
+
+/// A polygon drawn in OpenEtch (first corner up) exports as a LightBurn polygon turned to the same corners; one
+/// with rounded corners as a path.
+#[test]
+fn openetch_polygons_export_as_lightburn_polygons() {
+    let layer = Layer::new("l".into(), "Layer", "#000000");
+    let poly = |cr: f64| Geometry::Polygon { sides: 6, radius_mm: 10.0, star_ratio: Some(0.5), corner_radius_mm: cr, ry_mm: None, half_step: false };
+    let d = Document {
+        layers: vec![layer],
+        objects: vec![
+            Object::new("a".into(), "Star", "l".into(), poly(0.0), Affine::translate((5.0, 5.0))),
+            Object::new("b".into(), "Round", "l".into(), poly(1.0), Affine::translate((-5.0, 5.0))),
+        ],
+        field_mm: Some(FIELD),
+        ..Document::default()
+    };
+    let (p, _) = from_document(&d, FIELD).unwrap();
+    assert!(matches!(p.shapes[0].kind, ShapeKind::Polygon { n: 6, star: Some(_), .. }), "{:?}", p.shapes[0].kind);
+    assert!(matches!(p.shapes[1].kind, ShapeKind::Path(_)));
+    let back = to_document(&parse(&write(&p)).unwrap(), FIELD).unwrap();
+    let (a, b) = (d.objects[0].field_path(), back.objects[0].field_path());
+    let corners = |p: &BezPath| {
+        let mut v: Vec<(i64, i64)> =
+            p.elements().iter().filter_map(|e| e.end_point()).map(|q| ((q.x * 1e6).round() as i64, (q.y * 1e6).round() as i64)).collect();
+        v.sort();
+        v.dedup();
+        v
+    };
+    assert_eq!(corners(&a), corners(&b));
+}

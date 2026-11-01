@@ -434,7 +434,8 @@ const MORE_KIND_LABELS: Record<string, { label: string; twoD: boolean; ec?: [str
   apriltag_25h9: { label: "AprilTag 25h9", twoD: true },
   apriltag_36h10: { label: "AprilTag 36h10", twoD: true },
   apriltag_36h11: { label: "AprilTag 36h11", twoD: true },
-  aruco_mip_36h12: { label: "ArUco MIP 36h12", twoD: true },
+  // The ArUco library's ARUCO_MIP_36h12, which LightBurn lists as "ArUco MIP 36h11".
+  aruco_mip_36h12: { label: "ArUco MIP 36h11", twoD: true },
   aruco_mip_36h11: { label: "ArUco MIP 36h11", twoD: true },
   aruco_7x7: { label: "ArUco OpenCV 7x7", twoD: true },
   aruco_opencv_7x7: { label: "ArUco OpenCV 7x7", twoD: true },

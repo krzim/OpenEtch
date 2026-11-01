@@ -206,8 +206,8 @@ fn check(doc: &Document) -> Result<(), FileError> {
                 width_mm > 0.0 && height_mm > 0.0 && corner_radius_mm >= 0.0
             }
             Geometry::Ellipse { rx_mm, ry_mm } => rx_mm > 0.0 && ry_mm > 0.0,
-            Geometry::Polygon { sides, radius_mm, star_ratio, corner_radius_mm } => {
-                if let Some(p) = crate::polygon_problem(sides, radius_mm, star_ratio, corner_radius_mm) {
+            Geometry::Polygon { .. } => {
+                if let Some(p) = o.geometry.polygon().and_then(|p| p.problem()) {
                     return Err(invalid(format!("object {}: {p}", o.id)));
                 }
                 true

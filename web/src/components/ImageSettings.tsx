@@ -234,7 +234,9 @@ const ADJUST_FIELDS: { key: keyof ImageAdjust; label: MsgKey; min: number; max: 
   { key: "contrast", label: "img.contrast", min: -100, max: 100, slider: [-100, 100], step: 1, unit: "%" },
   { key: "brightness", label: "img.brightness", min: -100, max: 100, slider: [-100, 100], step: 1, unit: "%" },
   { key: "enhance_radius", label: "img.enhanceRadius", min: 0, max: 100, slider: [0, 20], step: 1, unit: "px" },
-  { key: "enhance_amount", label: "img.enhanceAmount", min: 0, max: 10000, slider: [0, 1000], step: 10, unit: "%" },
+  // LightBurn's Enhance Amount (its files store 50 as 0.5); the number field still takes larger values.
+  { key: "enhance_amount", label: "img.enhanceAmount", min: 0, max: 10000, slider: [0, 100], step: 1, unit: "%" },
+  // Not in LightBurn 2.2's dialog (its files still carry EnhanceDenoise).
   { key: "denoise", label: "img.denoise", min: 0, max: 255, slider: [0, 64], step: 1 },
 ];
 
@@ -378,7 +380,7 @@ export function AdjustImageDialog({
 /**
  * LightBurn's Adjust Image presets: pick one to load its adjustments (and, when it holds them, the layer's image
  * settings, applied with Apply), Save the current values (optionally with the layer's image settings), Delete, and
- * Import / Export the engine's preset JSON (LightBurn's own preset file is undocumented and not read).
+ * Import (the engine's preset JSON or LightBurn's .lbimg) / Export (either).
  */
 function AdjustPresets(p: { draft: ImageAdjust; layerImage: ImageSettingsT; pendingImage: boolean; onPick: (pr: ImagePreset) => void }) {
   const t = useT();
@@ -441,7 +443,7 @@ function AdjustPresets(p: { draft: ImageAdjust; layerImage: ImageSettingsT; pend
         <FilePick
           className="btn small"
           label={t("img.presetImport")}
-          accept=".json,application/json"
+          accept=".json,.lbimg,application/json"
           disabled={busy}
           onFile={(f) =>
             void act(async () => {
@@ -451,10 +453,12 @@ function AdjustPresets(p: { draft: ImageAdjust; layerImage: ImageSettingsT; pend
               } catch {
                 throw new Error(t("img.presetNotJson"));
               }
-              const r = (await libsApi.imagePresetImport(body)) as { imported?: unknown };
+              const r = (await libsApi.imagePresetImport(body)) as { imported?: unknown; warnings?: unknown };
               await reload();
               const names = Array.isArray(r?.imported) ? r.imported.map(String) : [];
-              return t("img.presetImported", { n: names.length, names: names.slice(0, 5).join(", ") });
+              const warnings = Array.isArray(r?.warnings) ? r.warnings.map(String) : [];
+              const done = t("img.presetImported", { n: names.length, names: names.slice(0, 5).join(", ") });
+              return warnings.length ? `${done} ${warnings.slice(0, 3).join(" · ")}` : done;
             })
           }
         />
@@ -470,6 +474,19 @@ function AdjustPresets(p: { draft: ImageAdjust; layerImage: ImageSettingsT; pend
           }
         >
           {t("img.presetExport")}
+        </button>
+        <button
+          className="btn small"
+          disabled={busy || !list?.length}
+          title={t("img.presetExportLbimgTitle")}
+          onClick={() =>
+            void act(async () => {
+              const name = await saveDownload(libsApi.imagePresetExportLbimg(), "openetch-presets.lbimg");
+              return t("img.presetExported", { name });
+            })
+          }
+        >
+          {t("img.presetExportLbimg")}
         </button>
       </div>
       <CheckField label={t("img.presetIncludeLayer")} checked={withLayer} onChange={setWithLayer} />

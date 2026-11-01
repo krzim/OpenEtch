@@ -66,11 +66,14 @@ test("adjustments: defaults change nothing; contrast, brightness and gamma move 
   assert.ok(bright[1] > 64 && bright[4] === 255);
   const contrast = I.adjustImage(ramp, { ...I.DEFAULT_ADJUST, contrast: 50 }).data;
   assert.ok(contrast[1] < 64 && contrast[3] > 192);
-  assert.deepEqual([...I.adjustImage(ramp, { ...I.DEFAULT_ADJUST, contrast: -100 }).data], [127.5, 127.5, 127.5, 127.5, 127.5]);
-  // Contrast 50 % doubles the slope around mid-grey, brightness 10 % then lifts by 0.1 (the engine's formula).
-  const both = I.adjustImage(ramp, { ...I.DEFAULT_ADJUST, contrast: 50, brightness: 10 }).data;
-  near(both[3], 255 * Math.min(1, (192 / 255 - 0.5) * 2 + 0.6), 1e-3);
-  near(both[1], 255 * Math.max(0, (64 / 255 - 0.5) * 2 + 0.6), 1e-3);
+  const flat = I.adjustImage(ramp, { ...I.DEFAULT_ADJUST, contrast: -100 }).data;
+  assert.ok(flat[0] > 110 && flat[4] < 145, "contrast -100 % leaves a 1/16 slope");
+  // LightBurn's scales (the engine's plan::tone_factors): brightness 10 % lifts by 0.2 first, contrast 25 % then
+  // doubles the slope around mid-grey (as LightBurn 2.2's adjust-image sample).
+  const both = I.adjustImage(ramp, { ...I.DEFAULT_ADJUST, contrast: 25, brightness: 10 }).data;
+  near(both[1], 255 * Math.max(0, (64 / 255 + 0.2 - 0.5) * 2 + 0.5), 1e-3);
+  near(both[2], 255 * Math.min(1, (128 / 255 + 0.2 - 0.5) * 2 + 0.5), 1e-3);
+  assert.deepEqual(I.toneFactors({ contrast: -25, brightness: -10 }), { shift: -0.2, slope: 0.5 });
   const gamma = I.adjustImage(ramp, { ...I.DEFAULT_ADJUST, gamma: 2 }).data;
   assert.ok(gamma[2] < 128, "gamma above 1 darkens the mid-tones (grey^gamma)");
   near(gamma[2], 255 * (128 / 255) ** 2, 1e-3);

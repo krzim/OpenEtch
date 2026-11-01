@@ -21,7 +21,8 @@ import {
 } from "./fileFormats.ts";
 import { filesApi, saveBlob } from "./filesApi.ts";
 import { FilePick, NumBox, Segmented, parseBox } from "./FilesUiParts.tsx";
-import { LightBurnPrefsImport } from "./LightBurnPrefsImport.tsx";
+import { LightBurnPrefsImport, applyLightBurnPrefs } from "./LightBurnPrefsImport.tsx";
+import { planLightBurnPrefs } from "./lightburnPrefs.ts";
 
 type Notify = (msg: string, kind?: "info" | "error") => void;
 
@@ -251,14 +252,22 @@ export function SaveTemplateDialog(p: { initial: string; onSaved: (name: string)
 
 // --- preferences and bundles --------------------------------------------------------------------------------------
 
-const PARTS = ["prefs", "devices", "libraries"] as const;
+/** Bundle parts; material test presets and art libraries travel in LightBurn bundles (.lbzip) only. */
+const PARTS = ["prefs", "devices", "libraries", "presets", "art"] as const;
+const PART_LABELS = {
+  prefs: "files.partPrefs",
+  devices: "files.partDevices",
+  libraries: "files.partLibraries",
+  presets: "files.partPresets",
+  art: "files.partArt",
+} as const;
 
 export function PrefsBundlesDialog(p: { onClose: () => void; notify: Notify; report: (e: unknown) => void }) {
   const t = useT();
   const backups = useLoad(() => filesApi.prefsBackups(), prefsBackupList);
   const prefsPick = useRef<HTMLInputElement>(null);
   const bundlePick = useRef<HTMLInputElement>(null);
-  const [parts, setParts] = useState<Record<(typeof PARTS)[number], boolean>>({ prefs: true, devices: true, libraries: true });
+  const [parts, setParts] = useState<Record<(typeof PARTS)[number], boolean>>({ prefs: true, devices: true, libraries: true, presets: true, art: true });
   const [result, setResult] = useState<ReturnType<typeof bundleResult> | null>(null);
   const [confirm, setConfirm] = useState<{ what: string; go: () => void } | null>(null);
   const chosen = PARTS.filter((k) => parts[k]);
@@ -270,7 +279,7 @@ export function PrefsBundlesDialog(p: { onClose: () => void; notify: Notify; rep
         p.notify(t("files.downloaded", { name }));
       })
       .catch(p.report);
-  const partLabel = (k: (typeof PARTS)[number]) => t(k === "prefs" ? "files.partPrefs" : k === "devices" ? "files.partDevices" : "files.partLibraries");
+  const partLabel = (k: (typeof PARTS)[number]) => t(PART_LABELS[k]);
   return (
     <Modal
       title={t("files.prefsTitle")}
@@ -302,7 +311,7 @@ export function PrefsBundlesDialog(p: { onClose: () => void; notify: Notify; rep
       />
       <FilePick
         ref={bundlePick}
-        accept=".oebundle,.zip"
+        accept=".oebundle,.lbzip,.zip"
         onFiles={([f]) =>
           setConfirm({
             what: t("files.confirmBundleImport", { name: f.name, parts: chosen.map(partLabel).join(", ") }),
@@ -310,7 +319,10 @@ export function PrefsBundlesDialog(p: { onClose: () => void; notify: Notify; rep
               void filesApi
                 .importBundle(chosen, f)
                 .then((r) => {
-                  setResult(bundleResult(r));
+                  const res = bundleResult(r);
+                  // A LightBurn bundle's settings: this browser's part, as Import LightBurn preferences applies it.
+                  if (res.browser) applyLightBurnPrefs(planLightBurnPrefs(res.browser));
+                  setResult(res);
                   p.notify(t("files.bundleImported"));
                   backups.reload();
                 })
@@ -366,6 +378,14 @@ export function PrefsBundlesDialog(p: { onClose: () => void; notify: Notify; rep
         <button className="btn" disabled={chosen.length === 0} onClick={() => dl(filesApi.exportBundle(chosen), "openetch-bundle.oebundle")}>
           {t("files.exportBundle")}
         </button>
+        <button
+          className="btn"
+          disabled={!chosen.some((k) => k === "devices" || k === "presets" || k === "art")}
+          title={t("files.exportLbzipTitle")}
+          onClick={() => dl(filesApi.exportBundle(chosen, "lbzip"), "openetch-bundle.lbzip")}
+        >
+          {t("files.exportLbzip")}
+        </button>
         <button className="btn" disabled={chosen.length === 0} onClick={() => bundlePick.current?.click()}>
           {t("files.importBundle")}
         </button>
@@ -374,6 +394,9 @@ export function PrefsBundlesDialog(p: { onClose: () => void; notify: Notify; rep
       {result && (
         <div className="files-result" role="status">
           <div>{t("files.bundleResult", { prefs: result.prefs ? t("files.yes") : t("files.no"), devices: result.devices.length, libraries: result.libraries.length })}</div>
+          {(result.presets.length > 0 || result.art.length > 0) && (
+            <div>{t("files.bundleResultLb", { presets: result.presets.length, art: result.art.join(", ") || "0" })}</div>
+          )}
           {result.skipped.length > 0 && (
             <ul className="warn-list">
               {result.skipped.map((s) => (

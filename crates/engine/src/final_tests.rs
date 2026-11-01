@@ -256,3 +256,43 @@ async fn integer_import_options_from_the_query_are_integers() {
     let v: Value = serde_json::from_slice(&b).unwrap();
     assert_eq!(v["ok"], true, "{v}");
 }
+
+/// LightBurn's Adjust Image preset file (`.lbimg`, LightBurn 2.2's layout: one object per name, float32 values) reads
+/// into presets with OpenEtch's units and writes back in LightBurn's layout.
+#[tokio::test]
+async fn lightburn_lbimg_presets_import_and_export() {
+    let st = configured().await;
+    let app = app(&st);
+    let lbimg = json!({"OpenEtchSample": {"Brightness": 0.10000000149011612, "Contrast": 0.25, "EnhanceAmount": 0.5, "EnhanceRadius": 3,
+        "Gamma": 1.2000000476837158, "HalftoneAngle": 22.5, "HalftoneCells": 50, "ImgInterval": 0.10000000149011612, "ImgMode": "Stucki",
+        "Negative": false}, "Odd": {"ImgMode": "Mystery", "Gamma": 2}, "Bad": 3});
+    let (s, v) = send(&app, "POST", "/api/image-adjust/presets/import", Some(lbimg), false).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["imported"], json!(["Odd", "OpenEtchSample"]), "{v}");
+    assert_eq!(v["warnings"].as_array().map(Vec::len), Some(2), "{v}");
+    let (_, list) = send(&app, "GET", "/api/image-adjust/presets", None, false).await;
+    let p = list["presets"].as_array().unwrap().iter().find(|p| p["name"] == "OpenEtchSample").unwrap().clone();
+    assert_eq!(p["adjust"], json!({"gamma": 1.2, "contrast": 25.0, "brightness": 10.0, "enhance_radius": 3.0, "enhance_amount": 50.0, "denoise": 0.0}), "{p}");
+    assert_eq!(p["image"], json!({"dither": "stucki", "interval_mm": 0.1, "negative": false, "halftone_angle_deg": 22.5, "halftone_cells_per_inch": 50.0}), "{p}");
+    let r = Request::builder().uri("/api/image-adjust/presets/export?format=lbimg").header("host", "localhost:7878").body(Body::empty()).unwrap();
+    let (s, h, bytes) = raw(&app, r).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(h[axum::http::header::CONTENT_DISPOSITION].to_str().unwrap().contains(".lbimg"));
+    let text = String::from_utf8(bytes).unwrap();
+    assert!(text.starts_with("{\n    \"Odd\": {\n        \"Brightness\": 0.0,"), "{text}");
+    let back: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(back["OpenEtchSample"], json!({"Brightness": 0.1, "Contrast": 0.25, "EnhanceAmount": 0.5, "EnhanceRadius": 3.0, "Gamma": 1.2,
+        "HalftoneAngle": 22.5, "HalftoneCells": 50.0, "ImgInterval": 0.1, "ImgMode": "Stucki", "Negative": false}));
+    // The owner's own export (OPENETCH_LBRN_SAMPLES, see the samples' README) reads the same.
+    if let Some(dirs) = std::env::var_os("OPENETCH_LBRN_SAMPLES")
+        && let Some(f) = std::env::split_paths(&dirs).map(|d| d.join("adjust-preset.lbimg")).find(|p| p.is_file())
+    {
+        let v: Value = serde_json::from_slice(&std::fs::read(f).unwrap()).unwrap();
+        let (presets, warnings) = crate::test_presets::lbimg_to_presets(&v).unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(presets.len(), 1);
+        assert_eq!(serde_json::to_value(&presets[0]).unwrap(), p);
+    }
+    let (s, _) = send(&app, "GET", "/api/image-adjust/presets/export?format=xml", None, false).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+}

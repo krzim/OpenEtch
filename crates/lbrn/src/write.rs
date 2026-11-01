@@ -16,10 +16,19 @@ use crate::path::{write_prims, write_vertices};
 
 /// Write a project as `.lbrn2` XML.
 pub fn write(p: &LbrnProject) -> String {
+    write_root(p, "LightBurnProject")
+}
+
+/// Write shapes XML (`<LightBurnShapes>`, see [`crate::parse_shapes`]): the project's shapes and root attributes.
+pub fn write_shapes(p: &LbrnProject) -> String {
+    write_root(p, "LightBurnShapes")
+}
+
+fn write_root(p: &LbrnProject, root: &str) -> String {
     let mut w = Writer { out: String::with_capacity(4096), next_id: first_free_id(p), format: p.format.clone() };
     w.out.push_str(p.format.declaration.as_deref().unwrap_or("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"));
     w.out.push('\n');
-    w.open(0, "LightBurnProject", &p.attributes, false);
+    w.open(0, root, &p.attributes, false);
     for item in layout(p) {
         match item {
             RootItem::CutSetting(i) => w.cut_setting(1, &p.cut_settings[i]),
@@ -27,7 +36,7 @@ pub fn write(p: &LbrnProject) -> String {
             RootItem::Element(i) => w.element(1, &p.extra_elements[i]),
         }
     }
-    w.out.push_str("</LightBurnProject>");
+    w.out.push_str(&format!("</{root}>"));
     if p.format.final_newline {
         w.out.push('\n');
     }
@@ -322,6 +331,16 @@ impl Writer {
             }
             ShapeKind::Bitmap { w, h } => {
                 model.extend([("W", Some(ModelValue::Num(*w))), ("H", Some(ModelValue::Num(*h)))]);
+            }
+            ShapeKind::Polygon { n, rx, ry, star } => {
+                model.extend([
+                    ("Rx", Some(ModelValue::Num(*rx))),
+                    ("Ry", Some(ModelValue::Num(*ry))),
+                    ("N", Some(ModelValue::Int(u64::from(*n)))),
+                ]);
+                if let Some(st) = star {
+                    model.extend([("Bu", Some(ModelValue::Num(st.bulge))), ("Ra", Some(ModelValue::Num(st.ratio)))]);
+                }
             }
             ShapeKind::Path(d) => {
                 let e = self.encoding(d, true);

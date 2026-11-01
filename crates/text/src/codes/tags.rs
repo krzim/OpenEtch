@@ -1,5 +1,7 @@
-//! Fiducial tags: AprilTag 16h5, 25h9, 36h10 and 36h11 (codes from the AprilTag 3 library, BSD-2-Clause) and ArUco
-//! 7 x 7 (OpenCV's DICT_7X7_1000, Apache-2.0, whose first 50, 100 and 250 markers are DICT_7X7_50, _100 and _250).
+//! Fiducial tags: AprilTag 16h5, 25h9, 36h10 and 36h11 (codes from the AprilTag 3 library, BSD-2-Clause), ArUco
+//! 7 x 7 (OpenCV's DICT_7X7_1000, Apache-2.0, whose first 50, 100 and 250 markers are DICT_7X7_50, _100 and _250) and
+//! the ArUco library's ARUCO_MIP_36h12 (LightBurn's "ArUco MIP 36h11", identified from markers 0-2 of the owner's
+//! LightBurn 2.2: they are not AprilTag 36h11 codes in any rotation or mirror, at least 5 bits off).
 //! The data is the tag id. The symbol is the tag's black-bordered square (LightBurn's quiet zone adds the white border
 //! around it): a dark border ring and the code's bits inside, a 0 bit dark (both libraries draw 1 bits white).
 
@@ -36,6 +38,32 @@ pub const ARUCO_7X7: Family = Family {
     width: 9,
     min_distance: 14,
 };
+
+/// ARUCO_MIP_36h12 (LightBurn's "ArUco MIP 36h11"): a one-module border round 6 x 6 bits, the code's lowest bit at
+/// the top-left, row by row.
+pub const ARUCO_MIP_36H12: Family = Family {
+    name: "ArUco MIP 36h11",
+    codes: &aruco_tables::ARUCO_MIP_36H12,
+    bit_x: &ARUCO_MIP_BITS.0,
+    bit_y: &ARUCO_MIP_BITS.1,
+    width: 8,
+    min_distance: 12,
+};
+
+/// [`row_major`] with the bits in the other order: the code's first (most significant) bit at the bottom-right.
+const fn row_major_lsb_first<const N: usize>(n: u8) -> ([u8; N], [u8; N]) {
+    let (xs, ys) = row_major::<N>(n);
+    let (mut rx, mut ry) = ([0; N], [0; N]);
+    let mut i = 0;
+    while i < N {
+        rx[i] = xs[N - 1 - i];
+        ry[i] = ys[N - 1 - i];
+        i += 1;
+    }
+    (rx, ry)
+}
+
+const ARUCO_MIP_BITS: ([u8; 36], [u8; 36]) = row_major_lsb_first(6);
 
 /// The (x, y) positions of an n x n bit square inside a one-module border, row by row from the top-left.
 const fn row_major<const N: usize>(n: u8) -> ([u8; N], [u8; N]) {
@@ -101,7 +129,7 @@ mod tests {
     /// `min_distance` bits (a mistyped code would almost surely break it).
     #[test]
     fn families_keep_their_hamming_distance() {
-        for f in [TAG16H5, TAG25H9, TAG36H10, TAG36H11, ARUCO_7X7] {
+        for f in [TAG16H5, TAG25H9, TAG36H10, TAG36H11, ARUCO_7X7, ARUCO_MIP_36H12] {
             let rotations: Vec<[u64; 4]> = f
                 .codes
                 .iter()
@@ -151,6 +179,32 @@ mod tests {
             }
         }
         min
+    }
+
+    /// LightBurn 2.2's "ArUco MIP 36h11" markers 0, 1 and 2 (Create Bar Code, exported as SVG; `#` dark), as the
+    /// owner's sample shows them: ARUCO_MIP_36h12's first three codes.
+    #[test]
+    fn aruco_mip_matches_lightburns_markers() {
+        let lightburn = [
+            ["########", "#.#...##", "##.#####", "##.#...#", "####..##", "#..#.#.#", "###.#..#", "########"],
+            ["########", "#.#.##.#", "#..##.##", "#..##.##", "###.####", "########", "####..##", "########"],
+            ["########", "##.##..#", "#.##...#", "#..#...#", "#..#..##", "######.#", "###.####", "########"],
+        ];
+        for (id, rows) in lightburn.iter().enumerate() {
+            let want: Grid = rows.iter().map(|r| r.chars().map(|c| c == '#').collect()).collect();
+            assert_eq!(ARUCO_MIP_36H12.grid(&id.to_string()).unwrap(), want, "marker {id}");
+        }
+        // None of them is an AprilTag 36h11 code, in any rotation.
+        for rows in lightburn {
+            let g: Grid = rows.iter().map(|r| r.chars().map(|c| c == '#').collect()).collect();
+            let mut r = g.clone();
+            for _ in 0..4 {
+                assert!(!TAG36H11.codes.contains(&TAG36H11.read(&r)));
+                r = rotate(&r);
+            }
+        }
+        assert_eq!(ARUCO_MIP_36H12.codes.len(), 250);
+        assert!(ARUCO_MIP_36H12.grid("250").is_err());
     }
 
     #[test]

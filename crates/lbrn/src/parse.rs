@@ -13,6 +13,7 @@ use roxmltree::{Node, ParsingOptions};
 
 use crate::LbrnError;
 use crate::model::{
+    Star,
     Backup, CutParams, CutSetting, Element, Encoded, Format, LbrnProject, PathData, RootItem, Shape, ShapeKind,
     SubLayer,
 };
@@ -68,16 +69,27 @@ fn format_of(doc: &roxmltree::Document<'_>) -> Format {
 
 /// Parse a LightBurn project (`.lbrn2`, or a `.lbt` template, which has the same layout).
 pub fn parse(text: &str) -> Result<LbrnProject, LbrnError> {
+    parse_root(text, "LightBurnProject")
+}
+
+/// Parse LightBurn's shapes XML (`<LightBurnShapes FormatVersion="1" MirrorX="False" MirrorY="False">` holding
+/// `<Shape>`s as in a project, no cut settings): the art of an Art Library item (`.lbart`, see `fileio::lbart`) and
+/// LightBurn's clipboard. Write it back with [`crate::write_shapes`].
+pub fn parse_shapes(text: &str) -> Result<LbrnProject, LbrnError> {
+    parse_root(text, "LightBurnShapes")
+}
+
+fn parse_root(text: &str, want: &str) -> Result<LbrnProject, LbrnError> {
     let doc = xml(text)?;
     let root = doc.root_element();
     match root.tag_name().name() {
-        "LightBurnProject" => {}
+        r if r == want => {}
         "LightBurnLibrary" => {
             return Err(LbrnError::NotProject(
                 "this is a LightBurn material library (.clb), not a project (.lbrn2)".into(),
             ));
         }
-        other => return Err(LbrnError::NotProject(format!("the root element is <{other}>, not <LightBurnProject>"))),
+        other => return Err(LbrnError::NotProject(format!("the root element is <{other}>, not <{want}>"))),
     }
 
     let mut cx = Cx::default();
@@ -173,6 +185,16 @@ fn attr_number(n: Node<'_, '_>, key: &str) -> Result<f64, LbrnError> {
         malformed(format!("<{} Type=\"{}\"> has no {key}", n.tag_name().name(), n.attribute("Type").unwrap_or("")))
     })?;
     number(v, key)
+}
+
+/// A `Polygon` / `Star` shape's parameters, `None` when one is missing or not a finite number (the shape is then
+/// kept as an unknown one).
+fn polygon(n: Node<'_, '_>, star: bool) -> Option<ShapeKind> {
+    let num = |k: &str| n.attribute(k).and_then(|v| number(v, k).ok());
+    let sides = n.attribute("N")?.trim().parse::<u32>().ok()?;
+    let (rx, ry) = (num("Rx")?, num("Ry")?);
+    let star = if star { Some(Star { bulge: num("Bu").unwrap_or(0.0), ratio: num("Ra")? }) } else { None };
+    Some(ShapeKind::Polygon { n: sides, rx, ry, star })
 }
 
 fn index(s: &str, what: &str) -> Result<u32, LbrnError> {
@@ -321,6 +343,7 @@ impl<'a> Cx<'a> {
                 (ShapeKind::Text { backup }, &["BackupPath"])
             }
             "Bitmap" => (ShapeKind::Bitmap { w: attr_number(n, "W")?, h: attr_number(n, "H")? }, &[]),
+            "Polygon" | "Star" => (polygon(n, type_name == "Star").unwrap_or_else(|| ShapeKind::Other { type_name: type_name.to_string() }), &[]),
             other => (ShapeKind::Other { type_name: other.to_string() }, &[]),
         };
         let children = n

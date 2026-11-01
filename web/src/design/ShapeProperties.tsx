@@ -67,7 +67,15 @@ export function ShapeProperties(p: {
         <>
           <div className="field-grid">
             <NumberField label={sp.star_ratio ? t("dz.points") : t("dz.sides")} value={sp.sides} min={3} max={1000} digits={0} onCommit={(v) => n(v, (x) => send({ sides: Math.round(x) }))} />
-            <NumberField label={t("dz.radius")} unit="mm" value={sp.radius_mm} min={0.001} onCommit={(v) => n(v, (x) => send({ radius_mm: x }))} />
+            {sp.ry_mm === null ? (
+              <NumberField label={t("dz.radius")} unit="mm" value={sp.radius_mm} min={0.001} onCommit={(v) => n(v, (x) => send({ radius_mm: x }))} />
+            ) : (
+              <>
+                {/* A LightBurn polygon with separate radii (Rx / Ry). */}
+                <NumberField label={t("dz.radiusX")} unit="mm" value={sp.radius_mm} min={0.001} onCommit={(v) => n(v, (x) => send({ radius_mm: x }))} />
+                <NumberField label={t("dz.radiusY")} unit="mm" value={sp.ry_mm} min={0.001} onCommit={(v) => n(v, (x) => send({ ry_mm: x }))} />
+              </>
+            )}
           </div>
           <CheckField
             label={t("dz.star")}

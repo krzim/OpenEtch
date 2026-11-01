@@ -92,7 +92,7 @@ impl Command for ShapePolygon {
             let name = name_or(cmd, i.name.as_deref(), if star.is_some() { "Star" } else { "Polygon" })?;
             let t = Affine::translate((x, y)) * Affine::rotate(rot.to_radians());
             let geometry = if i.parametric {
-                Geometry::Polygon { sides: i.sides, radius_mm: radius, star_ratio: star, corner_radius_mm: cr }
+                Geometry::Polygon { sides: i.sides, radius_mm: radius, star_ratio: star, corner_radius_mm: cr, ry_mm: None, half_step: false }
             } else {
                 Geometry::Path { path }
             };

@@ -33,7 +33,8 @@ pub struct ShapeUpdateInput {
     pub corner_radius_mm: Option<f64>,
     /// Ellipse: radius along its own X axis, mm.
     pub rx_mm: Option<f64>,
-    /// Ellipse: radius along its own Y axis, mm.
+    /// Ellipse: radius along its own Y axis, mm. Polygon: its vertical radius (LightBurn's Ry; equal to radius_mm makes
+    /// it regular again).
     pub ry_mm: Option<f64>,
     /// Polygon: number of sides (or star points), 3..=1000.
     pub sides: Option<u32>,
@@ -55,7 +56,8 @@ impl Command for ShapeUpdate {
     const TITLE: &'static str = "Shape properties";
     const DESCRIPTION: &'static str = "Edit the parameters of a primitive shape in place (LightBurn's Shape \
         Properties): a rectangle's width_mm, height_mm and corner_radius_mm; an ellipse's rx_mm and ry_mm; a \
-        polygon's sides, radius_mm, star_ratio (null for a plain polygon) and corner_radius_mm. Its centre, rotation \
+        polygon's sides, radius_mm, ry_mm (vertical radius, LightBurn's Ry), star_ratio (null for a plain polygon) and \
+        corner_radius_mm. Its centre, rotation \
         and layer stay. Fields that do not apply to the shape are refused; paths and text cannot be edited this way \
         (text: text.update). Returns the affected id, the new `geometry` and bounds.";
     const RISK: Risk = Risk::Edit;
@@ -118,15 +120,22 @@ impl Command for ShapeUpdate {
                     }
                     Geometry::Ellipse { rx_mm: rx, ry_mm: ry }
                 }
-                Geometry::Polygon { sides, radius_mm, star_ratio, corner_radius_mm } => {
-                    refuse(&["sides", "radius_mm", "star_ratio", "corner_radius_mm"], "polygon")?;
+                Geometry::Polygon { sides, radius_mm, star_ratio, corner_radius_mm, ry_mm, half_step } => {
+                    refuse(&["sides", "radius_mm", "star_ratio", "corner_radius_mm", "ry_mm"], "polygon")?;
                     let (s, r) = (i.sides.unwrap_or(sides), i.radius_mm.unwrap_or(radius_mm));
                     let star = i.star_ratio.unwrap_or(star_ratio);
                     let cr = i.corner_radius_mm.unwrap_or(corner_radius_mm);
-                    if let Some(p) = doc::polygon_problem(s, r, star, cr) {
+                    // An explicit ry_mm equal to the radius makes the polygon regular again.
+                    let ry = match i.ry_mm {
+                        Some(ry) if ry == r => None,
+                        Some(ry) => Some(ry),
+                        None => ry_mm,
+                    };
+                    let p = doc::PolygonParams { sides: s, radius_mm: r, star_ratio: star, corner_radius_mm: cr, ry_mm: ry, half_step };
+                    if let Some(p) = p.problem() {
                         return Err(invalid(cmd, p));
                     }
-                    Geometry::Polygon { sides: s, radius_mm: r, star_ratio: star, corner_radius_mm: cr }
+                    Geometry::Polygon { sides: s, radius_mm: r, star_ratio: star, corner_radius_mm: cr, ry_mm: ry, half_step }
                 }
                 _ => {
                     return Err(invalid(

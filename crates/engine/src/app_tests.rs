@@ -286,7 +286,7 @@ async fn art_library_add_insert_import_and_share() {
     let app = api::router(st.clone(), None);
     let (_, v) = send(&app, req("GET", "/api/art/libraries", None)).await;
     assert_eq!(v["libraries"], json!([]), "{v}");
-    assert!(v["lbart"].as_str().unwrap().contains("binary"));
+    assert_eq!(v["formats"], json!(["oeart", "lbart"]), "{v}");
     let mut events = st.subscribe();
     let (s, v) = send(&app, req("POST", "/api/art/libraries", Some(json!({"name": "Shapes"})))).await;
     assert_eq!(s, StatusCode::CREATED, "{v}");
@@ -351,15 +351,15 @@ async fn art_library_add_insert_import_and_share() {
     assert_eq!(names, ["Other", "Shapes"], "{v}");
     assert!(projects.root().join("art-libraries").join("Shapes.oeart").is_file());
 
-    // Download, Load under another name; .lbart is refused with the reason.
+    // Download, Load under another name; a damaged .lbart is refused with the reason.
     let (s, file) = raw(&app, req("GET", "/api/art/libraries/Shapes/download", None)).await;
     assert_eq!(s, StatusCode::OK);
     let (s, v) = send(&app, raw_req("POST", "/api/art/libraries/load?name=Copy.oeart", file.clone())).await;
     assert_eq!((s, v["items"].as_u64()), (StatusCode::CREATED, Some(1)), "{v}");
     assert_eq!(send(&app, raw_req("POST", "/api/art/libraries/load?name=Copy.oeart", file)).await.0, StatusCode::CONFLICT);
     let (s, v) = send(&app, raw_req("POST", "/api/art/libraries/load?name=Clip.lbart", vec![0, 1, 2, 3, 0xff])).await;
-    assert_eq!(s, StatusCode::UNSUPPORTED_MEDIA_TYPE, "{v}");
-    assert!(v["error"].as_str().unwrap().contains(".lbart"));
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
+    assert!(v["error"].as_str().unwrap().contains(".lbart"), "{v}");
     let (s, _) = send(&app, raw_req("POST", "/api/art/libraries/load?name=Bad.oeart", b"{\"format\":\"x\"}".to_vec())).await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
     let (s, _) = send(&app, raw_req("POST", "/api/art/libraries/Shapes/import?format=lbart", vec![1, 2])).await;
@@ -375,6 +375,127 @@ async fn art_library_add_insert_import_and_share() {
     assert_eq!(send(&app, req("DELETE", &format!("/api/art/libraries/Kept/items/{item}"), None)).await.0, StatusCode::NOT_FOUND);
     assert_eq!(send(&app, req("DELETE", "/api/art/libraries/Kept", None)).await.0, StatusCode::OK);
     assert_eq!(send(&app, req("GET", "/api/art/libraries/Kept", None)).await.0, StatusCode::NOT_FOUND);
+}
+
+/// LightBurn shapes XML as an Art Library item holds it (structure of LightBurn 2.2's `.lbart` art).
+fn lbart_xml(shape: &str) -> String {
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<LightBurnShapes FormatVersion=\"1\" MirrorX=\"False\" \
+         MirrorY=\"False\">\n    {shape}\n</LightBurnShapes>\n"
+    )
+}
+
+#[tokio::test]
+async fn art_library_reads_and_writes_lightburn_lbart() {
+    let projects = test_projects();
+    let st = state_with(MachineProfile::generic_lmc_fiber(), projects.clone()).await;
+    let app = api::router(st.clone(), None);
+    let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 4"><rect width="4" height="4" fill="#fff"/></svg>"##;
+    let png = crate::render::svg_to_png(svg, 256).unwrap();
+    let lib = fileio::lbart::Lbart {
+        items: vec![
+            fileio::lbart::Item::new(
+                "Circle15",
+                png.clone(),
+                lbart_xml("<Shape Type=\"Ellipse\" CutIndex=\"0\" Rx=\"7.5000014\" Ry=\"7.5\">\n        <XForm>1 0 0 1 71 127.5</XForm>\n    </Shape>"),
+                [15.0, 15.0],
+            ),
+            fileio::lbart::Item::new(
+                "Rect20x10",
+                png.clone(),
+                lbart_xml("<Shape Type=\"Rect\" CutIndex=\"2\" W=\"20\" H=\"10\" Cr=\"0\">\n        <XForm>1 0 0 1 34 130</XForm>\n    </Shape>"),
+                [20.0, 10.0],
+            ),
+        ],
+    };
+    let bytes = fileio::lbart::write(&lib).unwrap();
+    let (s, v) = send(&app, raw_req("POST", "/api/art/libraries/load?name=Sample.lbart", bytes.clone())).await;
+    assert_eq!((s, v["items"].as_u64()), (StatusCode::CREATED, Some(2)), "{v}");
+    assert_eq!(v["warnings"], json!([]), "{v}");
+    let (_, view) = send(&app, req("GET", "/api/art/libraries/Sample", None)).await;
+    let names: Vec<&str> = view["items"].as_array().unwrap().iter().map(|i| i["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["Circle15", "Rect20x10"]);
+    assert_eq!(view["items"][1]["size_mm"], json!([20.0, 10.0]));
+    // LightBurn's thumbnail is served as is.
+    let (_, thumb) = raw(&app, req("GET", view["items"][0]["thumbnail"].as_str().unwrap(), None)).await;
+    assert_eq!(thumb, png);
+    // Unchanged, it downloads as the same .lbart; renamed, as one LightBurn reads with the new name.
+    let (s, back) = raw(&app, req("GET", "/api/art/libraries/Sample/download?format=lbart", None)).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(back, bytes, "a loaded .lbart downloads byte for byte");
+    let id = view["items"][1]["id"].as_str().unwrap().to_owned();
+    send(&app, req("PUT", &format!("/api/art/libraries/Sample/items/{id}"), Some(json!({"name": "Box"})))).await;
+    let (_, back) = raw(&app, req("GET", "/api/art/libraries/Sample/download?format=lbart", None)).await;
+    let read = fileio::lbart::read(&back).unwrap();
+    assert_eq!(read.items[1].name, "Box");
+    assert_eq!(read.items[1].shapes_xml, lib.items[1].shapes_xml);
+    // Insert: the rectangle lands as a rectangle.
+    let (_, v) = send(&app, req("POST", &format!("/api/art/libraries/Sample/items/{id}/insert"), Some(json!({"center": [0, 0]})))).await;
+    assert_eq!(v["ok"], true, "{v}");
+    let (_, d) = send(&app, req("GET", "/api/document", None)).await;
+    assert_eq!(d["objects"][0]["geometry"]["kind"], "rect", "{d}");
+
+    // Import adds a library's items to another library.
+    send(&app, req("POST", "/api/art/libraries", Some(json!({"name": "Mine"})))).await;
+    let (s, v) = send(&app, raw_req("POST", "/api/art/libraries/Mine/import?format=lbart&name=Sample.lbart", bytes.clone())).await;
+    assert_eq!((s, v["items"].as_array().map(Vec::len)), (StatusCode::CREATED, Some(2)), "{v}");
+
+    // An OpenEtch-made library downloads as an .lbart in LightBurn's layout: 256 px thumbnails, shapes XML.
+    let a = rect(&app, 0.0).await;
+    send(&app, req("POST", "/api/art/libraries/Mine/items", Some(json!({"ids": [a], "name": "Made here"})))).await;
+    let (_, out) = raw(&app, req("GET", "/api/art/libraries/Mine/download?format=lbart", None)).await;
+    let read = fileio::lbart::read(&out).unwrap();
+    assert_eq!(read.items.len(), 3);
+    let made = &read.items[2];
+    assert_eq!(made.name, "Made here");
+    let img = fileio::image::load_from_memory(&made.thumbnail_png).unwrap();
+    assert_eq!((img.width(), img.height()), (256, 256));
+    let shapes = lbrn::parse_shapes(&made.shapes_xml).unwrap();
+    assert_eq!(shapes.shapes.len(), 1);
+    assert!(made.shapes_xml.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<LightBurnShapes FormatVersion=\"1\""));
+    assert_eq!(send(&app, req("GET", "/api/art/libraries/Mine/download?format=zip", None)).await.0, StatusCode::BAD_REQUEST);
+}
+
+/// The owner's LightBurn libraries (`OPENETCH_LBRN_SAMPLES`; see the samples' README): known contents, and a
+/// byte-for-byte download.
+#[tokio::test]
+async fn real_lbart_samples_load_with_their_contents() {
+    let Some(dirs) = std::env::var_os("OPENETCH_LBRN_SAMPLES") else {
+        println!("OPENETCH_LBRN_SAMPLES is not set; skipping the real-file test");
+        return;
+    };
+    let Some(path) = std::env::split_paths(&dirs).map(|d| d.join("art-sample-1.lbart")).find(|p| p.is_file()) else {
+        println!("no art-sample-1.lbart among the samples; skipping");
+        return;
+    };
+    let bytes = std::fs::read(path).unwrap();
+    let st = state_with(MachineProfile::generic_lmc_fiber(), test_projects()).await;
+    let app = api::router(st.clone(), None);
+    let (s, v) = send(&app, raw_req("POST", "/api/art/libraries/load?name=art-sample-1.lbart", bytes.clone())).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    assert_eq!(v["warnings"], json!([]), "{v}");
+    let (_, view) = send(&app, req("GET", "/api/art/libraries/art-sample-1", None)).await;
+    let rows: Vec<(&str, u64)> =
+        view["items"].as_array().unwrap().iter().map(|i| (i["name"].as_str().unwrap(), i["objects"].as_u64().unwrap())).collect();
+    assert_eq!(rows, [("Circle15", 1), ("Rect20x10", 1), ("TextAB", 5)]);
+    let sizes = [(15.0, 15.0), (20.0, 10.0), (32.057, 17.896)];
+    for (k, (w, h)) in sizes.into_iter().enumerate() {
+        let size = &view["items"][k]["size_mm"];
+        assert!((size[0].as_f64().unwrap() - w).abs() < 1e-3 && (size[1].as_f64().unwrap() - h).abs() < 1e-3, "{size}");
+        // Inserted, each graphic has LightBurn's size.
+        let id = view["items"][k]["id"].as_str().unwrap();
+        let (_, v) = send(&app, req("POST", &format!("/api/art/libraries/art-sample-1/items/{id}/insert"), Some(json!({"center": [0, 0]})))).await;
+        let b = &v["result"]["bounds"];
+        // (LightBurn's stored size of the text is 0.002 mm smaller than its curves' exact extent.)
+        assert!((b["size"][0].as_f64().unwrap() - w).abs() < 3e-3 && (b["size"][1].as_f64().unwrap() - h).abs() < 3e-3, "{v}");
+    }
+    // On the black C00 layer.
+    let (_, d) = send(&app, req("GET", "/api/document", None)).await;
+    let layer = d["objects"][0]["layer"].as_str().unwrap();
+    let l = d["layers"].as_array().unwrap().iter().find(|l| l["id"] == layer).unwrap();
+    assert_eq!((l["name"].as_str(), l["color"].as_str()), (Some("C00"), Some("#000000")), "{l}");
+    let (_, back) = raw(&app, req("GET", "/api/art/libraries/art-sample-1/download?format=lbart", None)).await;
+    assert_eq!(back, bytes, "art-sample-1.lbart does not download byte for byte");
 }
 
 // ---------------------------------------------------------------- JOB-053 / JOB-057: simulator inputs

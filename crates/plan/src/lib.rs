@@ -28,7 +28,7 @@ mod target;
 pub use encode::{EncodedPart, encode, encode_parts, jump_delay_us};
 pub use geom::{FLATTEN_TOLERANCE_MM, Point};
 pub use hatch::MAX_SCANLINES;
-pub use image::{MAX_IMAGE_DOTS, MAX_PROCESSED_DOTS, MAX_SOURCE_PIXELS, ProcessedBitmap, processed_bitmap, processed_png};
+pub use image::{MAX_IMAGE_DOTS, MAX_PROCESSED_DOTS, MAX_SOURCE_PIXELS, ProcessedBitmap, processed_bitmap, processed_png, tone_factors};
 pub use job::{
     JobOptions, JobPlan, MAX_LAYER_PASSES, MAX_PASSES, MAX_SEGMENTS, PartPlan, PassPlan, PassSettings, Stats, layer_schedule,
     plan_job, plan_job_with,

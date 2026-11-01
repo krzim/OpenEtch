@@ -902,11 +902,12 @@ pub struct ImageAdjust {
     pub contrast: f64,
     /// -100..=100 %: every tone lighter or darker (stored as a fraction like contrast).
     pub brightness: f64,
-    /// Enhance (unsharp mask) radius in image pixels, 0..=100; 0 is off.
+    /// Enhance (unsharp mask) radius in image pixels, 0..=100; 0 is off (LightBurn's Enhance Radius, saved as is).
     pub enhance_radius: f64,
-    /// Enhance strength in %, 0..=10000 (LightBurn users report around 400 for a clear effect); 0 is off.
+    /// Enhance strength in %, 0..=10000; 0 is off (LightBurn's Enhance Amount, e.g. 50, saved as a fraction: 0.5).
     pub enhance_amount: f64,
-    /// Enhance denoise: differences smaller than this many grey levels (of 255) are not sharpened.
+    /// Enhance denoise: differences smaller than this many grey levels (of 255) are not sharpened. LightBurn 2.2's
+    /// dialog no longer shows it (its files still carry `EnhanceDenoise`).
     pub denoise: f64,
 }
 
@@ -1007,10 +1008,10 @@ impl Object {
                 corner_radius_mm.is_finite() && corners(width_mm / 2.0, height_mm / 2.0).into_iter().all(ok)
             }
             Geometry::Ellipse { rx_mm, ry_mm } => corners(*rx_mm, *ry_mm).into_iter().all(ok),
-            Geometry::Polygon { radius_mm, corner_radius_mm, star_ratio, .. } => {
+            Geometry::Polygon { radius_mm, corner_radius_mm, star_ratio, ry_mm, .. } => {
                 corner_radius_mm.is_finite()
                     && star_ratio.is_none_or(f64::is_finite)
-                    && corners(*radius_mm, *radius_mm).into_iter().all(ok)
+                    && corners(*radius_mm, ry_mm.unwrap_or(*radius_mm)).into_iter().all(ok)
             }
             Geometry::Image { width_mm, height_mm, adjust, .. } => {
                 let a = adjust;
@@ -1052,8 +1053,11 @@ pub enum Geometry {
     /// it (`shape.update`): `sides` corners (3..=1000) on a circle of `radius_mm` around the local origin, the first
     /// corner straight up (+Y), counter-clockwise; with `star_ratio` (0 < r < 1) a star whose inner corners lie at
     /// `radius_mm * star_ratio`. `corner_radius_mm` rounds every corner where it fits (others stay sharp). The
-    /// outline is [`Geometry::local_path`] (`geom::shapes`); LightBurn has no polygon shape in `.lbrn2`, so exports
-    /// write it as a path.
+    /// outline is [`Geometry::local_path`] (`geom::shapes`). LightBurn's `Type="Polygon"` (`N Rx Ry`) and
+    /// `Type="Star"` (`N Rx Ry Bu Ra`) import as this: `ry_mm` is its vertical radius when it differs from
+    /// `radius_mm` (each corner at `(radius cos a, ry sin a)`), and `half_step` turns the corners half a step
+    /// (`180° / sides`) so an edge (a star's inner corner) is centred on +Y, as LightBurn places them. Exports write
+    /// a LightBurn polygon or star back where LightBurn can hold it (no rounded corners), else the path it draws.
     Polygon {
         sides: u32,
         radius_mm: f64,
@@ -1061,6 +1065,10 @@ pub enum Geometry {
         star_ratio: Option<f64>,
         #[serde(default)]
         corner_radius_mm: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ry_mm: Option<f64>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        half_step: bool,
     },
     /// A bitmap, `width_mm` x `height_mm` centred on the local origin (the transform may scale, rotate or mirror it).
     /// `data_base64` is the encoded file (of type `mime`, e.g. `image/png`) in standard base64. It is shared, so
@@ -1087,9 +1095,7 @@ impl Geometry {
             }
             Geometry::Ellipse { rx_mm, ry_mm } => kurbo::Ellipse::new((0.0, 0.0), (rx_mm, ry_mm), 0.0).to_path(0.01),
             Geometry::Path { ref path } => path.clone(),
-            Geometry::Polygon { sides, radius_mm, star_ratio, corner_radius_mm } => {
-                polygon_outline(sides, radius_mm, star_ratio, corner_radius_mm).unwrap_or_default()
-            }
+            Geometry::Polygon { .. } => self.polygon().and_then(|p| p.outline()).unwrap_or_default(),
             Geometry::Text(ref t) => t.outline.clone(),
             Geometry::Image { width_mm, height_mm, .. } => {
                 Rect::from_center_size((0.0, 0.0), (width_mm, height_mm)).to_path(0.01)
@@ -1108,6 +1114,57 @@ impl Geometry {
             Geometry::Text(_) => "text",
         }
     }
+}
+
+/// The parameters of a [`Geometry::Polygon`], for [`PolygonParams::outline`] and [`PolygonParams::problem`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PolygonParams {
+    pub sides: u32,
+    pub radius_mm: f64,
+    pub star_ratio: Option<f64>,
+    pub corner_radius_mm: f64,
+    pub ry_mm: Option<f64>,
+    pub half_step: bool,
+}
+
+impl PolygonParams {
+    /// Why these parameters cannot describe a shape (`None` when they can): as [`polygon_problem`], plus `ry_mm`
+    /// must be a positive number up to 1e6 mm.
+    pub fn problem(&self) -> Option<String> {
+        if let Some(ry) = self.ry_mm
+            && !(ry.is_finite() && ry > 0.0 && ry <= 1e6)
+        {
+            return Some(format!("ry_mm must be > 0 and at most 1e6 (got {ry})"));
+        }
+        polygon_problem(self.sides, self.radius_mm, self.star_ratio, self.corner_radius_mm)
+    }
+
+    /// The outline in the shape's own frame, `None` when the parameters are unusable.
+    pub fn outline(&self) -> Option<BezPath> {
+        if self.problem().is_some() {
+            return None;
+        }
+        let start = std::f64::consts::FRAC_PI_2 + if self.half_step { std::f64::consts::PI / f64::from(self.sides) } else { 0.0 };
+        let ry = self.ry_mm.unwrap_or(self.radius_mm);
+        let pts = geom::shapes::polygon_points_at(self.sides, self.radius_mm, ry, self.star_ratio, start).ok()?;
+        Some(geom::shapes::polygon_path(&pts, self.corner_radius_mm).0)
+    }
+}
+
+impl Geometry {
+    /// A polygon's parameters (`None` for other kinds).
+    pub fn polygon(&self) -> Option<PolygonParams> {
+        match *self {
+            Geometry::Polygon { sides, radius_mm, star_ratio, corner_radius_mm, ry_mm, half_step } => {
+                Some(PolygonParams { sides, radius_mm, star_ratio, corner_radius_mm, ry_mm, half_step })
+            }
+            _ => None,
+        }
+    }
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 /// Why polygon parameters cannot describe a shape (`None` when they can): sides outside 3..=1000, a radius that is
@@ -1132,11 +1189,7 @@ pub fn polygon_problem(sides: u32, radius_mm: f64, star_ratio: Option<f64>, corn
 
 /// The outline of a [`Geometry::Polygon`] in its own frame, `None` when the parameters are unusable.
 pub fn polygon_outline(sides: u32, radius_mm: f64, star_ratio: Option<f64>, corner_radius_mm: f64) -> Option<BezPath> {
-    if polygon_problem(sides, radius_mm, star_ratio, corner_radius_mm).is_some() {
-        return None;
-    }
-    let pts = geom::shapes::polygon_points(sides, radius_mm, star_ratio).ok()?;
-    Some(geom::shapes::polygon_path(&pts, corner_radius_mm).0)
+    PolygonParams { sides, radius_mm, star_ratio, corner_radius_mm, ry_mm: None, half_step: false }.outline()
 }
 
 #[cfg(test)]
@@ -1145,7 +1198,7 @@ mod tests {
 
     #[test]
     fn polygon_geometry_is_parametric_and_round_trips() {
-        let g = Geometry::Polygon { sides: 6, radius_mm: 10.0, star_ratio: None, corner_radius_mm: 0.0 };
+        let g = Geometry::Polygon { sides: 6, radius_mm: 10.0, star_ratio: None, corner_radius_mm: 0.0, ry_mm: None, half_step: false };
         let p = g.local_path();
         let expect = 1.5 * 3f64.sqrt() * 100.0;
         assert!((p.area() - expect).abs() < 1e-9, "{}", p.area());
@@ -1154,9 +1207,9 @@ mod tests {
         let want = serde_json::json!({"kind": "polygon", "sides": 6, "radius_mm": 10.0, "corner_radius_mm": 0.0});
         assert_eq!(json, want);
         assert_eq!(serde_json::from_value::<Geometry>(json).unwrap(), g);
-        let star = Geometry::Polygon { sides: 5, radius_mm: 10.0, star_ratio: Some(0.5), corner_radius_mm: 1.0 };
+        let star = Geometry::Polygon { sides: 5, radius_mm: 10.0, star_ratio: Some(0.5), corner_radius_mm: 1.0, ry_mm: None, half_step: false };
         assert!(star.local_path().area() > 0.0 && star.local_path().area() < p.area());
-        let bad = Geometry::Polygon { sides: 2, radius_mm: 10.0, star_ratio: None, corner_radius_mm: 0.0 };
+        let bad = Geometry::Polygon { sides: 2, radius_mm: 10.0, star_ratio: None, corner_radius_mm: 0.0, ry_mm: None, half_step: false };
         assert!(bad.local_path().elements().is_empty());
         assert!(polygon_problem(5, 1.0, Some(1.0), 0.0).is_some());
         assert!(polygon_problem(5, f64::NAN, None, 0.0).is_some());

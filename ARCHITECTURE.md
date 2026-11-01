@@ -295,8 +295,12 @@ step). Items read from a file or passed to `art.insert` must pass a project file
 (`doc::file::check_document`: unique ids, sizes, names, image data, groups not inside themselves); a stored thumbnail
 that is not a PNG is rendered again; parsed libraries are kept (checked against the file's size and modification
 time) so a window's thumbnails do not re-read the file each. An item is a `commands::ArtFragment` (objects, their groups, their layers' names and colours; no cut settings,
-as in LightBurn). LightBurn's `.lbart` is a binary format with no public description and no sample was available, so
-it is not read (415 with the reason).
+as in LightBurn). LightBurn's `.lbart` (`fileio::lbart`, decoded from the owner's LightBurn 2.2 libraries) is a
+big-endian container: `u32` index offset, `u32` count, per item a 256 px PNG thumbnail and its art as qCompress'd
+`<LightBurnShapes>` XML (`lbrn::parse_shapes`: `<Shape>`s as in a project, no cut settings), then an index of 136-byte
+records (104-byte zero-padded UTF-16BE name, PNG offset/length, art offset/length, width and height as f64). Load
+reads one into a new library, Import adds its items, `download?format=lbart` writes one; a loaded `.lbart` downloads
+again byte for byte (items keep LightBurn's thumbnail, size and compressed art while the art is unchanged).
 
 **LightBurn settings that will not be executed** (LAY-034, `lbrn::unexecuted_settings`): per layer, the kept
 `lbrn2.*` tags whose LightBurn switch is on but OpenEtch's own option is off (Wobble, Perforation, Tabs, Flood Fill,
@@ -461,7 +465,7 @@ Bayer), `atkinson`, `floyd_steinberg` (LightBurn's "Dither", `dithered` in its f
 angle), `sketch` (Sobel edges) or `grayscale`. Planning decodes the image once per job (`image` crate: PNG, JPEG,
 GIF, BMP, WebP; transparent pixels never fire; shrunk on decode when the finest interval spans 4 or more pixels),
 applies the image's `adjust` (enhance as an unsharp mask of three box blurs with the denoise threshold, then
-contrast, brightness, gamma), then per pass samples square dots of the interval in rows along the scan angle (the
+brightness, contrast, gamma; `plan::tone_factors`), then per pass samples square dots of the interval in rows along the scan angle (the
 lattice is anchored at the field origin; each dot samples its centre through the inverse object transform, so
 rotation and mirroring follow the object; pass-through uses the image's own pixel grid instead), inverts for
 `negative`, dithers row by row from the lowest row (error diffusion keeps three rows), and merges consecutive "on"
@@ -538,10 +542,14 @@ geometry in place drops its `extras` (kept LightBurn shape data no longer descri
   shapes on layers with a Fill, Fill+Line or Offset Fill pass), `select.contained {ids}` (the selection plus every
   shape whose flattened vertices and edge midpoints all lie inside a selected closed outline, even-odd). They return
   `ids`.
-- Shapes: `Geometry::Polygon {sides, radius_mm, star_ratio?, corner_radius_mm}` is a parametric polygon or star
-  (outline from `geom::shapes`, the same as `shape.polygon`'s path; first corner up); `shape.polygon {parametric:
-  true}` makes one (the default stays a path until the web UI draws the `polygon` kind). LightBurn's `.lbrn2` has no
-  polygon shape (none in the owner's 26 sample files), so exports write it as a path and DXF/SVG/PDF use its outline.
+- Shapes: `Geometry::Polygon {sides, radius_mm, star_ratio?, corner_radius_mm, ry_mm?, half_step?}` is a parametric
+  polygon or star (outline from `geom::shapes`, the same as `shape.polygon`'s path; first corner up, or with
+  `half_step` half a step further, an edge centred on +Y, as LightBurn places them; `ry_mm` a separate vertical
+  radius); `shape.polygon {parametric: true}` makes one. LightBurn 2.2's Draw Shape writes `Type="Polygon" N Rx Ry`
+  and `Type="Star" N Rx Ry Bu Ra` (`polygons.lbrn2`: N=3 Rx=10 Ry=9.5 is 17.321 x 14.25 mm); they import as
+  `half_step` polygons and export back byte for byte; an OpenEtch polygon exports as a LightBurn polygon turned by
+  -180°/N, one with rounded corners (or `ry_mm` without `half_step`) as a path. A bulged star (`Bu` ≠ 0) or a dual
+  star is kept for export but not shown (no sample shows their geometry or attributes). DXF/SVG/PDF use the outline.
   `shape.update {id, ...}` is Shape Properties: rectangle `width_mm`/`height_mm`/`corner_radius_mm` (a kept radius
   shrinks to fit), ellipse `rx_mm`/`ry_mm`, polygon `sides`/`radius_mm`/`star_ratio` (null clears)/`corner_radius_mm`;
   centre, rotation and layer stay; fields that do not apply are refused.
@@ -785,12 +793,14 @@ MCP tool can approve a run or touch the operator PIN, and the server instruction
   field's lower-left), MaterialCut/TextCut/BorderCut as LightBurn cut settings}`, `commands::testgen_presets`; spacing,
   label height and title have no place in it). The owner's presets use 30 values a side, so a material test axis takes
   up to 30. Adjust Image presets (OTH-022) are `{name, adjust?, image?}` at `/api/image-adjust/presets` (GET, PUT/DELETE
-  `/{name}`, `POST .../import` of the GET JSON). **Adjust Image unknowns**: LightBurn documents what Gamma, Contrast,
-  Brightness and Enhance (unsharp mask: radius, amount, denoise "in smooth areas") do but no formula, range or unit;
-  OpenEtch's curves (`plan::image::adjust`) follow the documented directions, its file scale (Contrast/Brightness as
-  fractions) rests on the one sample with values (`photo on namecard.lbrn2`: Contrast 0.2, Brightness -0.11), and the
-  file scale of `EnhanceRadius/Amount/Denoise` is unknown (every sample has 0); LightBurn's built-in "Basic" and "Black
-  Paint on White" presets and its preset export file are undocumented, with no sample.
+  `/{name}`, `POST .../import` of the GET JSON or LightBurn's `.lbimg`, `GET .../export?format=lbimg`). **Adjust
+  Image scales** (the owner's LightBurn 2.2 `adjust-image.lbrn2`): the dialog's Contrast 25, Brightness 10, Enhance
+  Amount 50 are saved as fractions (0.25, 0.1, 0.5), Gamma and Enhance Radius as is; 2.2's dialog has no Denoise.
+  Compared with LightBurn's Save Processed Bitmap of that file (Stucki, 254 DPI, 1058 x 928 dots: as many whole dots
+  as fit, the image mirrored as shown), OpenEtch's tone curve is fitted to it (`plan::tone_factors`: brightness shift
+  2 x fraction, then contrast slope 2^(% / 25), then grey^gamma): 78 % of the dots agree, the 9 x 9 density differs by
+  4.8 %, the tone curves by 1.7 % (`crates/commands/tests/adjust_image_vs_lightburn.rs`). One sample fixes one point
+  of each scale. LightBurn's built-in "Basic" and "Black Paint on White" presets are undocumented.
 - **`.clb`** (LightBurn material library, `crates/lbrn/src/library.rs`): `lbrn::parse_clb` / `write_clb` round trip
   byte for byte (BOM, CRLF, two-space indentation, `" />"`, attribute spelling; unchanged entries from their source
   text, changed ones in the file's style). Material → Entry `Thickness` (`-1.0000` = none) / `Desc` / `NoThickTitle`
@@ -915,7 +925,11 @@ Pages, Show Notes, Managing Preferences, User Bundles, Import 3D Model, 3D Slice
   `.oebundle` zip with a `bundle.json` manifest; `POST /api/bundle/import`, UI only): devices are always added as new
   devices with their correction files (an identical device is skipped, a different correction file of the same name
   is kept and reported), a material library whose name exists with other content loads as "<name> (bundle)", as
-  LightBurn keeps what is there. LightBurn's own `.lbzip` and `.lbprefs` layouts are undocumented and not read.
+  LightBurn keeps what is there. LightBurn's own `.lbzip` bundles (`crate::lbzip`: a ZIP of the parts plus a
+  `LightBurnSoftware.json` manifest of `{action, filename, group, icon, name, size, source}` items) import through the
+  same route: `import-settings` through the `.lbprefs` whitelist, `import-device`, `import-materialtestpresets`,
+  `import-artlib`; other actions are listed as skipped. `?format=lbzip` exports devices, material test presets and
+  Art Libraries in that layout (no settings, no material libraries).
   A bundle is a file from elsewhere: entry names must be plain file names (no folders, no drive prefix such as
   `C:x.cor`, which `Path::join` resolves outside the directory on Windows, no device names); an imported device must
   name its correction file by bare name and keep this machine's limits (`machine::edit_profile` against its base,
@@ -1016,8 +1030,8 @@ Origin), the public WAZER `.lbdev`, xTool/Creality `.lbdev` posts and the owner'
 - **Import** (`POST /api/devices/import`, `openetch devices import`): a `prefs.ini` or a `.lbdev` (plain JSON
   `{"DeviceList": [...]}`, the shape of `prefs.ini`'s list, without `DefaultDevice`; `machine::parse_lbdev`), through
   the same typed parser: `.lbdev` files also hold macros, G-code, addresses and paths, none of which is read; the
-  material library path is cut to its file name. `.lbzip` bundles and `.lbvendor` files are not read (their layout is
-  undocumented). A device with the same GUID-free identity (display name, controller, connection, LightBurn size) as
+  material library path is cut to its file name. `.lbzip` bundles import their devices through the bundle import
+  (`crate::lbzip`); `.lbvendor` files are not read (their layout is undocumented). A device with the same GUID-free identity (display name, controller, connection, LightBurn size) as
   an imported one is updated in place.
 - **Active device**: stored in the index; `--device` overrides it for one run. Activation (UI only) is refused while
   a run is approved, awaiting confirmation or running, or while framing; it claims the machine like a run, cancels

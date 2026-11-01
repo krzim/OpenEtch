@@ -245,16 +245,23 @@ function rectCmds(w: number, h: number, r: number): PathCmd[] {
   ];
 }
 
-/** Corner points of a regular polygon (or a star, `starRatio` set) on a circle of `radius`, the first one up (+Y). */
-export function polygonCorners(sides: number, radius: number, starRatio?: number | null): Vec2[] {
+/**
+ * Corner points of a regular polygon (or a star, `starRatio` set) on a circle of `radius`, the first one up (+Y).
+ * `ry` stretches it to an ellipse `radius` x `ry`; `halfStep` turns it by 180° / sides (LightBurn's placement, an edge
+ * centred on +Y), as geom::shapes polygon_points_at.
+ */
+export function polygonCorners(sides: number, radius: number, starRatio?: number | null, ry?: number | null, halfStep = false): Vec2[] {
   const n = Math.round(sides);
   if (!(n >= 3 && n <= 1000) || !(radius > 0) || !Number.isFinite(radius)) return [];
-  const at = (r: number, a: number): Vec2 => [r * Math.cos(a), r * Math.sin(a)];
+  const rY = ry ?? radius;
+  if (!(rY > 0) || !Number.isFinite(rY)) return [];
+  const start = Math.PI / 2 + (halfStep ? Math.PI / n : 0);
+  const at = (k: number, a: number): Vec2 => [radius * k * Math.cos(a), rY * k * Math.sin(a)];
   if (starRatio !== null && starRatio !== undefined) {
     if (!(starRatio > 0 && starRatio < 1)) return [];
-    return Array.from({ length: 2 * n }, (_, i) => at(i % 2 === 0 ? radius : radius * starRatio, Math.PI / 2 + (Math.PI * i) / n));
+    return Array.from({ length: 2 * n }, (_, i) => at(i % 2 === 0 ? 1 : starRatio, start + (Math.PI * i) / n));
   }
-  return Array.from({ length: n }, (_, i) => at(radius, Math.PI / 2 + (2 * Math.PI * i) / n));
+  return Array.from({ length: n }, (_, i) => at(1, start + (2 * Math.PI * i) / n));
 }
 
 /** Cubics of a circular arc from angle `a0` sweeping `sweep` radians about `c` (pieces of at most 90 degrees). */
@@ -281,8 +288,15 @@ function arcCubics(c: Vec2, r: number, a0: number, sweep: number): PathCmd[] {
  * A parametric polygon's outline, as the engine builds it (geom::shapes polygon_path): every corner rounded by
  * `cornerRadius` where the rounding fits in half of each neighbouring side, else left sharp.
  */
-export function polygonCmds(sides: number, radius: number, starRatio?: number | null, cornerRadius = 0): PathCmd[] {
-  const pts = polygonCorners(sides, radius, starRatio);
+export function polygonCmds(
+  sides: number,
+  radius: number,
+  starRatio?: number | null,
+  cornerRadius = 0,
+  ry?: number | null,
+  halfStep = false,
+): PathCmd[] {
+  const pts = polygonCorners(sides, radius, starRatio, ry, halfStep);
   const n = pts.length;
   if (n < 3) return [];
   const r = cornerRadius > 0 && Number.isFinite(cornerRadius) ? cornerRadius : 0;
@@ -320,7 +334,7 @@ export function geometryCmds(g: Geometry): PathCmd[] {
     case "ellipse":
       return ellipseCmds(g.rx_mm, g.ry_mm);
     case "polygon":
-      return polygonCmds(g.sides, g.radius_mm, g.star_ratio, g.corner_radius_mm ?? 0);
+      return polygonCmds(g.sides, g.radius_mm, g.star_ratio, g.corner_radius_mm ?? 0, g.ry_mm, g.half_step ?? false);
     case "path":
       return parseBezPath(g.path);
     case "text":

@@ -149,7 +149,10 @@ export const libsApi = {
   imagePresets: () => call("GET", "/api/image-adjust/presets"),
   imagePresetSave: (name: string, body: { adjust?: object; image?: object }) => call("PUT", `/api/image-adjust/presets/${enc(name)}`, body),
   imagePresetDelete: (name: string) => call("DELETE", `/api/image-adjust/presets/${enc(name)}`),
+  /** OpenEtch's `{presets}` export or LightBurn's `.lbimg` (the engine tells them apart). */
   imagePresetImport: (body: unknown) => call("POST", "/api/image-adjust/presets/import", body),
+  /** Every preset as LightBurn's `.lbimg`. */
+  imagePresetExportLbimg: () => download("/api/image-adjust/presets/export?format=lbimg"),
 
   // ---- machine bits used by the wizards (light only) ----
   pointer: (x: number, y: number) => call("POST", "/api/machine/pointer", { x, y }),

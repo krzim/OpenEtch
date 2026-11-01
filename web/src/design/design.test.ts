@@ -233,7 +233,7 @@ test("Art Library formats and names", () => {
   assert.deepEqual(artImportFormat("a.lbrn2"), { format: "lbrn2" });
   assert.deepEqual(artImportFormat("p.openetch"), { format: "openetch" });
   assert.deepEqual(artImportFormat("photo.jpg"), { format: "image" });
-  assert.ok("error" in artImportFormat("clip.lbart"));
+  assert.deepEqual(artImportFormat("clip.lbart"), { format: "lbart" });
   assert.ok("error" in artImportFormat("readme.txt"));
   assert.equal(libraryNameProblem("Logos", ["Other"]), null);
   assert.ok(libraryNameProblem("logos", ["Logos"]));
@@ -256,7 +256,7 @@ test("Shape Properties parameters and the engine's limits", () => {
   assert.ok(shapePatchProblem(r, { corner_radius_mm: 2.5 }));
   assert.ok(shapePatchProblem(r, { width_mm: 0 }));
   const pg = shapeParams({ kind: "polygon", sides: 6, radius_mm: 5, star_ratio: null, corner_radius_mm: 0 })!;
-  assert.deepEqual(pg, { kind: "polygon", sides: 6, radius_mm: 5, star_ratio: null, corner_radius_mm: 0 });
+  assert.deepEqual(pg, { kind: "polygon", sides: 6, radius_mm: 5, star_ratio: null, corner_radius_mm: 0, ry_mm: null });
   assert.ok(shapePatchProblem(pg, { sides: 2 }));
   assert.ok(shapePatchProblem(pg, { sides: 3.5 }));
   assert.equal(shapePatchProblem(pg, { star_ratio: null }), null);
@@ -290,4 +290,14 @@ test("grid array extras: total size counts, seed, auto-increment, results, virtu
   assert.equal(m.virtualArrayOf(doc, ["o2"]), null);
   const back = m.arrayOptionsOf(doc.virtual_arrays![0]!.settings);
   assert.deepEqual([back.cols, back.rows, back.gapX, back.gapY, back.reverseY, back.rowShift, back.colShift, back.mirrorCols, back.seed, back.autoIncrement], [3, 2, false, true, true, "half", 1.5, "x", 3, 2]);
+});
+
+test("LightBurn polygons: Ry stretches, half_step stands them on an edge (as polygons.lbrn2)", () => {
+  // Triangle N=3 Rx=10 Ry=9.5 with LightBurn's y flip: 17.321 x 14.25; hexagon Rx=Ry=5: 10 wide.
+  const tri = cmdsBounds(geometryCmds({ kind: "polygon", sides: 3, radius_mm: 10, ry_mm: 9.5, half_step: true }));
+  assert.ok(tri && Math.abs(tri.x1 - tri.x0 - 17.3205) < 1e-3 && Math.abs(tri.y1 - tri.y0 - 14.25) < 1e-9);
+  const hex = cmdsBounds(geometryCmds({ kind: "polygon", sides: 6, radius_mm: 5, half_step: true }));
+  assert.ok(hex && Math.abs(hex.x1 - hex.x0 - 10) < 1e-9);
+  const star = cmdsBounds(geometryCmds({ kind: "polygon", sides: 5, radius_mm: 7.5, star_ratio: 0.4, half_step: true }));
+  assert.ok(star && Math.abs(star.x1 - star.x0 - 14.266) < 1e-3 && Math.abs(star.y1 - star.y0 - 13.568) < 1e-3);
 });

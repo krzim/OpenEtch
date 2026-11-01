@@ -85,8 +85,18 @@ export type Geometry =
    * A regular polygon or star (LightBurn's Polygon tool), kept parametric so Shape Properties can edit it: `sides`
    * corners (star points) on a circle of `radius_mm`, the first one up (+Y); a star's inner corners at
    * `star_ratio` of the radius; corners rounded by `corner_radius_mm` where it fits (crates/doc Geometry::Polygon).
+   * LightBurn's Polygon / Star shapes add `ry_mm` (vertical radius, when it differs) and `half_step` (corners turned
+   * by 180° / sides, so an edge or a star's inner corner is centred on +Y).
    */
-  | { kind: "polygon"; sides: number; radius_mm: number; star_ratio?: number | null; corner_radius_mm?: number }
+  | {
+      kind: "polygon";
+      sides: number;
+      radius_mm: number;
+      star_ratio?: number | null;
+      corner_radius_mm?: number;
+      ry_mm?: number | null;
+      half_step?: boolean;
+    }
   /** A bitmap centred on the local origin. Not engraved yet (the planner skips it with a warning). */
   | { kind: "image"; width_mm: number; height_mm: number; mime: string; data_base64: string }
   /** Live text (`doc::Text`): its settings plus the rendered `outline`, which is what is drawn and burned. */

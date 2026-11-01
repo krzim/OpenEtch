@@ -304,3 +304,37 @@ fn real_libraries_round_trip_byte_identical() {
         println!("== {name}: {} materials, {} entries, byte-identical", lib.materials.len(), lib.entry_count());
     }
 }
+
+/// LightBurn 2.2's Draw Shape polygons and star (`polygons.lbrn2`, see the samples' README): parametric shapes whose
+/// outlines must have LightBurn's sizes, and which export byte for byte.
+#[test]
+fn real_draw_shape_polygons_have_lightburn_sizes() {
+    let Some(files) = samples(&["lbrn2"]) else { return };
+    let Some(f) = files.iter().find(|f| f.file_name().is_some_and(|n| n == "polygons.lbrn2")) else {
+        println!("no polygons.lbrn2 among the samples; skipping");
+        return;
+    };
+    let text = std::fs::read_to_string(f).unwrap();
+    let (d, warnings) = import_document("polygons.lbrn2", &text);
+    assert!(warnings.is_empty(), "{warnings:?}");
+    // (sides, width, height) from LightBurn's Shape Properties, in file order.
+    let want = [(3, 17.321, 14.25), (5, 28.532, 27.135), (8, 36.955, 36.955), (5, 14.266, 13.568), (6, 10.0, 8.660)];
+    assert_eq!(d.objects.len(), want.len());
+    for (o, (sides, w, h)) in d.objects.iter().zip(want) {
+        let doc::Geometry::Polygon { sides: s, half_step, .. } = o.geometry else { panic!("{} is not a polygon", o.name) };
+        assert!(half_step);
+        assert_eq!(s, sides, "{}", o.name);
+        let b = o.bounds();
+        println!("{}: {:.3} x {:.3}", o.name, b.width(), b.height());
+        assert!((b.width() - w).abs() < 0.001 && (b.height() - h).abs() < 0.001, "{}: {b:?}", o.name);
+    }
+    // Every shape stands on an edge: the lowest y is a flat bottom (two corners there).
+    for o in &d.objects {
+        let pts: Vec<_> = o.field_path().elements().iter().filter_map(|e| e.end_point()).collect();
+        let low = pts.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+        let at_low = pts.iter().filter(|p| (p.y - low).abs() < 1e-9).count();
+        assert!(at_low >= 2 || matches!(o.geometry, doc::Geometry::Polygon { star_ratio: Some(_), .. }), "{}", o.name);
+    }
+    let (exported, _) = from_document(&d, FIELD_MM).unwrap();
+    assert_eq!(write(&exported), text.trim_start_matches('\u{feff}'), "polygons.lbrn2 does not export byte for byte");
+}

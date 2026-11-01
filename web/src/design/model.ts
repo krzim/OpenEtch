@@ -584,7 +584,7 @@ export function guidesToMigrate(browser: readonly Guide[], inDoc: readonly Guide
 /** The `format=` an Art Library import takes for a file, or a reason it cannot. */
 export function artImportFormat(name: string): { format: string } | { error: string } {
   const ext = extOf(name);
-  if (ext === "lbart") return { error: tr("dz.m.lbart") };
+  if (ext === "lbart") return { format: "lbart" };
   if (ext === "lbrn2") return { format: "lbrn2" };
   if (ext === "openetch") return { format: "openetch" };
   const f = engineFormatOf(name);
@@ -635,7 +635,7 @@ export function nearestCandidate(cands: readonly TangentCandidate[], p: Vec2, to
 export type ShapeParams =
   | { kind: "rect"; width_mm: number; height_mm: number; corner_radius_mm: number }
   | { kind: "ellipse"; rx_mm: number; ry_mm: number }
-  | { kind: "polygon"; sides: number; radius_mm: number; star_ratio: number | null; corner_radius_mm: number };
+  | { kind: "polygon"; sides: number; radius_mm: number; star_ratio: number | null; corner_radius_mm: number; ry_mm: number | null };
 
 /** The editable parameters of a primitive, or null for paths, text and images. */
 export function shapeParams(g: Geometry): ShapeParams | null {
@@ -645,7 +645,14 @@ export function shapeParams(g: Geometry): ShapeParams | null {
     case "ellipse":
       return { kind: "ellipse", rx_mm: g.rx_mm, ry_mm: g.ry_mm };
     case "polygon":
-      return { kind: "polygon", sides: g.sides, radius_mm: g.radius_mm, star_ratio: g.star_ratio ?? null, corner_radius_mm: g.corner_radius_mm ?? 0 };
+      return {
+        kind: "polygon",
+        sides: g.sides,
+        radius_mm: g.radius_mm,
+        star_ratio: g.star_ratio ?? null,
+        corner_radius_mm: g.corner_radius_mm ?? 0,
+        ry_mm: g.ry_mm ?? null,
+      };
     default:
       return null;
   }

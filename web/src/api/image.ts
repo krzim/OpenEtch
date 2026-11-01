@@ -180,9 +180,19 @@ export function grayFromRgba(rgba: ArrayLike<number>, width: number, height: num
 const clamp255 = (v: number) => (v < 0 ? 0 : v > 255 ? 255 : v);
 
 /**
+ * LightBurn's Brightness and Contrast scales (plan::tone_factors, fitted to LightBurn 2.2's processed bitmap):
+ * brightness shifts grey (0..1) by 2 × brightness / 100 (10 % → +0.2), contrast scales around mid-grey by
+ * 2^(contrast / 25) (25 % → ×2, -25 % → ×0.5).
+ */
+export function toneFactors(a: Pick<ImageAdjust, "brightness" | "contrast">): { shift: number; slope: number } {
+  const c = Math.max(-100, Math.min(100, a.contrast || 0));
+  return { shift: (2 * (a.brightness || 0)) / 100, slope: Math.pow(2, c / 25) };
+}
+
+/**
  * Adjust Image as the engine does it: enhance (unsharp mask against three box blurs of the radius, skipping
- * differences below `denoise` grey levels), then contrast (k = contrast / 100: a slope of 1 / (1 - k) above 0, 1 + k
- * below, around mid-grey) plus brightness (shift by brightness / 100), clamped, then gamma (grey^gamma on 0..1).
+ * differences below `denoise` grey levels), then brightness and contrast (toneFactors: shift, then the slope around
+ * mid-grey), clamped, then gamma (grey^gamma on 0..1).
  * `radiusScale` converts the radius from source-image pixels to this image's pixels. Returns a new image.
  */
 export function adjustImage(img: GrayImage, a: ImageAdjust, radiusScale = 1): GrayImage {
@@ -199,13 +209,11 @@ export function adjustImage(img: GrayImage, a: ImageAdjust, radiusScale = 1): Gr
       if (d !== 0 && Math.abs(d) >= th) out[i] = clamp255(out[i] + d * amt);
     }
   }
-  const k = Math.max(-100, Math.min(100, a.contrast || 0)) / 100;
-  const cf = k >= 0 ? 1 / Math.max(1e-3, 1 - k) : 1 + k;
-  const b = (a.brightness || 0) / 100;
+  const { shift: b, slope: cf } = toneFactors(a);
   const g = a.gamma > 0 && Number.isFinite(a.gamma) ? a.gamma : 1;
   if ((a.contrast || 0) !== 0 || b !== 0 || g !== 1) {
     for (let i = 0; i < out.length; i++) {
-      const x = Math.min(1, Math.max(0, (out[i] / 255 - 0.5) * cf + 0.5 + b));
+      const x = Math.min(1, Math.max(0, (out[i] / 255 + b - 0.5) * cf + 0.5));
       out[i] = 255 * Math.pow(x, g);
     }
   }

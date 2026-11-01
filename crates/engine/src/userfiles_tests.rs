@@ -329,3 +329,158 @@ async fn lightburn_prefs_import() {
     let (s, _, _) = raw(&app, req("POST", "/api/prefs/import_lightburn?preview=1", Body::from("[1]"), false)).await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
 }
+
+/// A state with its own config directory (preferences, presets, devices).
+async fn configured_state(tag: &str) -> Arc<AppState> {
+    let st = test_state().await;
+    let dir = crate::pin::temp_dir(tag);
+    st.libs.open(&dir);
+    st.files.open(&dir);
+    st
+}
+
+/// A LightBurn bundle laid out as LightBurn 2.2 writes one: the parts plus `LightBurnSoftware.json`, last.
+fn lightburn_bundle(parts: &[(&str, &str, &str, Vec<u8>)]) -> Vec<u8> {
+    let items: Vec<Value> = parts
+        .iter()
+        .map(|(action, file, name, data)| {
+            json!({"action": action, "filename": file, "group": "Application", "icon": "filetype:x", "name": name, "size": data.len(), "source": file})
+        })
+        .collect();
+    let mut entries: Vec<fileio::zip::Entry> =
+        parts.iter().filter(|(_, f, _, _)| !f.contains("..") && !f.starts_with("missing")).map(|(_, f, _, d)| fileio::zip::Entry { name: (*f).into(), data: d.clone() }).collect();
+    entries.push(fileio::zip::Entry { name: crate::lbzip::MANIFEST.into(), data: crate::lbzip::manifest_text(&items).into_bytes() });
+    fileio::zip::write(&entries).unwrap()
+}
+
+/// LightBurn's `.lbzip` bundles: settings through the whitelist, devices, material test presets and Art Libraries
+/// imported; unknown actions and unsafe names skipped; OpenEtch's own `.lbzip` export reads back.
+#[tokio::test]
+async fn lightburn_bundles_import_and_export() {
+    let st = configured_state("lbzip-a").await;
+    let app = app(&st);
+    // Parts: a preset (made here, exported as LightBurn's .lbmt), a device, settings, an art library.
+    let params = json!({"columns": {"param": "frequency", "min": 100, "max": 400, "count": 4}, "rows": {"param": "power", "min": 10, "max": 40, "count": 4}});
+    let (s, v) = json(&app, "PUT", "/api/material-test/presets/Steel", Some(json!({"params": params}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (_, _, lbmt) = raw(&app, req("GET", "/api/material-test/presets/export", Body::empty(), false)).await;
+    let lbdev = include_str!("../../machine/tests/fixtures/gantry.lbdev").as_bytes().to_vec();
+    let png = crate::render::svg_to_png(r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><rect width="1" height="1" fill="#fff"/></svg>"##, 256).unwrap();
+    let art_xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<LightBurnShapes FormatVersion=\"1\" MirrorX=\"False\" MirrorY=\"False\">\n    <Shape Type=\"Rect\" CutIndex=\"0\" W=\"20\" H=\"10\" Cr=\"0\">\n        <XForm>1 0 0 1 34 130</XForm>\n    </Shape>\n</LightBurnShapes>\n";
+    let lbart = fileio::lbart::write(&fileio::lbart::Lbart { items: vec![fileio::lbart::Item::new("Rect20x10", png, art_xml.into(), [20.0, 10.0])] }).unwrap();
+    let prefs = br#"{"AutoSaveSeconds": 600, "LicenseKey": "never read", "RecentFiles": ["C:/secret.lbrn2"]}"#.to_vec();
+    let bundle = lightburn_bundle(&[
+        ("import-settings", "settings.lbprefs", "Settings", prefs),
+        ("import-materialtestpresets", "material_test_presets.lbmt", "Material Test Presets", lbmt),
+        ("import-device", "aBcD1234.lbdev", "Bed", lbdev),
+        ("import-artlib", "clips.lbart", "clips", lbart),
+        ("import-hotkeys", "hotkeys.lbkeys", "Hotkeys", b"{}".to_vec()),
+        ("import-artlib", "../escape.lbart", "escape", b"x".to_vec()),
+        ("import-artlib", "missing.lbart", "missing", b"x".to_vec()),
+    ]);
+
+    let other = configured_state("lbzip-b").await;
+    let app2 = app_of(&other);
+    let (s, _, b) = raw(&app2, req("POST", "/api/bundle/import", Body::from(bundle.clone()), false)).await;
+    let v: Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["lightburn"], true, "{v}");
+    assert_eq!(v["imported"]["prefs"], true, "{v}");
+    assert_eq!(other.files.settings().autosave_minutes, 10, "AutoSaveSeconds 600 → 10 minutes");
+    assert_eq!(v["imported"]["presets"], json!(["Steel"]), "{v}");
+    assert_eq!(v["imported"]["devices"].as_array().unwrap().len(), 1, "{v}");
+    assert_eq!(v["imported"]["art"], json!(["clips"]), "{v}");
+    let skipped = v["skipped"].to_string();
+    assert!(skipped.contains("import-hotkeys") && skipped.contains("not a plain file name") && skipped.contains("missing from the bundle"), "{v}");
+    assert!(!v.to_string().contains("secret") && !v.to_string().contains("never read"), "other keys are never echoed: {v}");
+    // Again: the art library's name is taken, so it loads as "<name> (bundle)"; parts can be chosen.
+    let (_, _, b) = raw(&app2, req("POST", "/api/bundle/import?parts=art", Body::from(bundle), false)).await;
+    let v: Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!((v["imported"]["art"].clone(), v["imported"]["prefs"].clone()), (json!(["clips (bundle)"]), json!(false)), "{v}");
+
+    // OpenEtch's .lbzip: LightBurn's layout, its manifest last; it imports into a third engine.
+    let (s, h, zip) = raw(&app2, req("GET", "/api/bundle/export?format=lbzip", Body::empty(), false)).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(h["content-disposition"].to_str().unwrap().contains(".lbzip"));
+    let names = fileio::zip::names(&zip).unwrap();
+    assert_eq!(names.last().map(String::as_str), Some("LightBurnSoftware.json"), "{names:?}");
+    assert!(names.contains(&"material_test_presets.lbmt".to_string()) && names.contains(&"clips.lbart".to_string()), "{names:?}");
+    assert!(names.iter().any(|n| n.ends_with(".lbdev")), "{names:?}");
+    let manifest: Value = serde_json::from_slice(&fileio::zip::read_one(&zip, "LightBurnSoftware.json").unwrap().unwrap()).unwrap();
+    let m = &manifest["LightBurnSoftware"];
+    assert_eq!(m["version"], json!({"Bundle": "1.0", "LightBurn": "2.2.00"}));
+    for it in m["manifest"].as_array().unwrap() {
+        let data = fileio::zip::read_one(&zip, it["filename"].as_str().unwrap()).unwrap().unwrap();
+        assert_eq!(it["size"].as_u64(), Some(data.len() as u64), "{it}");
+        assert_eq!(it["source"], it["filename"]);
+    }
+    let actions: Vec<&str> = m["manifest"].as_array().unwrap().iter().map(|i| i["action"].as_str().unwrap()).collect();
+    assert!(actions.contains(&"import-artlib") && actions.contains(&"import-device") && actions.contains(&"import-materialtestpresets"), "{actions:?}");
+    let third = configured_state("lbzip-c").await;
+    let (_, _, b) = raw(&app_of(&third), req("POST", "/api/bundle/import?parts=presets,art", Body::from(zip), false)).await;
+    let v: Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(v["imported"]["presets"], json!(["Steel"]), "{v}");
+    assert_eq!(v["imported"]["art"].as_array().unwrap().len(), 2, "{v}");
+    let (s, _, _) = raw(&app2, req("GET", "/api/bundle/export?format=rar", Body::empty(), false)).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+}
+
+/// The owner's own LightBurn bundle (`OPENETCH_LBRN_SAMPLES`, see the samples' README), imported into a scratch
+/// engine. Only counts are checked; nothing of the user's settings is printed.
+#[tokio::test]
+async fn real_lightburn_bundle_imports() {
+    let Some(dirs) = std::env::var_os("OPENETCH_LBRN_SAMPLES") else {
+        println!("OPENETCH_LBRN_SAMPLES is not set; skipping the real-file test");
+        return;
+    };
+    let Some(path) = std::env::split_paths(&dirs).map(|d| d.join("bundle.lbzip")).find(|p| p.is_file()) else {
+        println!("no bundle.lbzip among the samples; skipping");
+        return;
+    };
+    let bytes = std::fs::read(path).unwrap();
+    let st = configured_state("lbzip-real").await;
+    let app = app(&st);
+    let (s, _, b) = raw(&app, req("POST", "/api/bundle/import", Body::from(bytes), false)).await;
+    let v: Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(v["imported"]["prefs"], true);
+    assert_eq!(v["imported"]["devices"].as_array().map(Vec::len), Some(1));
+    assert!(v["imported"]["presets"].as_array().is_some_and(|p| !p.is_empty()));
+    assert_eq!(v["imported"]["art"], json!(["art-sample-1"]));
+    println!(
+        "imported: {} preset(s), {} device(s), art {}; {} skipped",
+        v["imported"]["presets"].as_array().map_or(0, Vec::len),
+        v["imported"]["devices"].as_array().map_or(0, Vec::len),
+        v["imported"]["art"],
+        v["skipped"].as_array().map_or(0, Vec::len)
+    );
+}
+
+/// A hostile `.lbzip` whose manifest lists one file many times imports it once (the rest are reported as skipped).
+#[tokio::test]
+async fn lightburn_bundle_with_a_repeated_manifest_item_imports_it_once() {
+    let st = configured_state("lbzip-dup-a").await;
+    let app = app(&st);
+    let params = json!({"columns": {"param": "frequency", "min": 100, "max": 400, "count": 4}, "rows": {"param": "power", "min": 10, "max": 40, "count": 4}});
+    let (s, v) = json(&app, "PUT", "/api/material-test/presets/Steel", Some(json!({"params": params}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (_, _, lbmt) = raw(&app, req("GET", "/api/material-test/presets/export", Body::empty(), false)).await;
+    let item = json!({"action": "import-materialtestpresets", "filename": "material_test_presets.lbmt", "name": "Material Test Presets"});
+    let entries = vec![
+        fileio::zip::Entry { name: "material_test_presets.lbmt".into(), data: lbmt },
+        fileio::zip::Entry { name: crate::lbzip::MANIFEST.into(), data: crate::lbzip::manifest_text(&vec![item; 500]).into_bytes() },
+    ];
+    let bundle = fileio::zip::write(&entries).unwrap();
+    let other = configured_state("lbzip-dup-b").await;
+    let (s, _, b) = raw(&app_of(&other), req("POST", "/api/bundle/import?parts=presets", Body::from(bundle), false)).await;
+    let v: Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["imported"]["presets"], json!(["Steel"]), "{v}");
+    let skipped = v["skipped"].as_array().unwrap();
+    assert_eq!(skipped.len(), 499, "{v}");
+    assert!(skipped[0].as_str().unwrap().contains("listed more than once"), "{v}");
+}
+
+fn app_of(st: &Arc<AppState>) -> Router {
+    api::router(st.clone(), None)
+}

@@ -3,7 +3,7 @@
 // array dialogs. Spread into EN (en.ts).
 
 export const EN_DESIGN = {
-  "art.noLbart": "LightBurn's .lbart format cannot be read.",
+  "art.noLbart": "This engine cannot read LightBurn's .lbart files; update it.",
   "art.loaded": "Loaded {name}.",
   "art.addedFile": "Added {name} to {library}.",
   "art.addToProject": "Add to project",
@@ -17,13 +17,15 @@ export const EN_DESIGN = {
   "art.new": "New",
   "art.newTitle": "Create a new, empty library",
   "art.load": "Load",
-  "art.loadTitle": "Load a library file (.oeart)",
+  "art.loadTitle": "Load a library file (.oeart, or LightBurn's .lbart)",
   "art.addSelection": "Add selection",
   "art.addSelectionTitle": "Add the selected shapes as one item (artwork only, no cut settings)",
   "art.import": "Import…",
   "art.importTitle": "Import a file (SVG, DXF, PDF, AI, an image, LightBurn .lbrn2, ...) as an item",
   "art.download": "Download",
   "art.downloadTitle": "Download the library file",
+  "art.downloadLbart": "Download .lbart",
+  "art.downloadLbartTitle": "Download the library as a LightBurn Art Library (.lbart)",
   "art.rename": "Rename",
   "art.deleteTitle": "Delete the library file from the engine's projects folder",
   "art.search": "Search items",
@@ -224,7 +226,6 @@ export const EN_DESIGN = {
   "dz.m.justOriginal": "One column and one row is just the original.",
   "dz.m.spacingNumbers": "Spacing must be numbers.",
   "dz.m.zeroStep": "A zero step would stack the copies on top of each other.",
-  "dz.m.lbart": "LightBurn's .lbart is a binary format without a public description, so it cannot be read. Add the art to a LightBurn project, save it as .lbrn2 and import that.",
   "dz.m.notArt": "{name}: not a file the Art Library can import.",
   "dz.m.enterName": "Enter a name.",
   "dz.m.nameTooLong": "That name is too long.",

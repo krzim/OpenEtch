@@ -507,7 +507,7 @@ fn layer_from(index: u32, cs: Option<&CutSetting>, id: String, w: &mut Warnings)
     let no_frequency = |p: &CutParams| p.frequency.is_none() && !p.other.contains_key("frequency");
     let (mut settings, mut rest) = to_settings(&cs.kind, p, &label, w);
     if cs.image {
-        settings.image = crate::image::image_from(p, &mut rest, &ImageSettings::default(), &label, &mut |m| w.push(m));
+        settings.image = crate::image::image_from(p, &mut rest, &crate::image::lightburn_base(), &label, &mut |m| w.push(m));
     }
     layer.settings = settings;
     if no_frequency(p) {
@@ -549,7 +549,7 @@ fn layer_from(index: u32, cs: Option<&CutSetting>, id: String, w: &mut Warnings)
 /// The image settings of a `CutSetting_Img` kept beside a layer's vector settings.
 fn image_of_setting(img: &CutSetting, label: &str, w: &mut Warnings) -> ImageSettings {
     let mut rest: BTreeMap<String, String> = img.params.to_values().into_iter().collect();
-    crate::image::image_from(&img.params, &mut rest, &ImageSettings::default(), label, &mut |m| w.push(m))
+    crate::image::image_from(&img.params, &mut rest, &crate::image::lightburn_base(), label, &mut |m| w.push(m))
 }
 
 /// The `CutSetting_Img` of `xml` (kept beside a layer's vector settings, see [`keys::IMAGE_SETTING`]).
@@ -567,7 +567,7 @@ fn kept_image_xml(xml: &str, l: &Layer, w: &mut Warnings) -> String {
     }
     let source = cs.params.source.clone();
     let mut values: BTreeMap<String, String> = cs.params.to_values().into_iter().collect();
-    if let Some(m) = crate::image::image_values(&l.settings.image, &mut values, Some(&source), &ImageSettings::default()) {
+    if let Some(m) = crate::image::image_values(&l.settings.image, &mut values, Some(&source), &crate::image::lightburn_base()) {
         w.push(format!("layer \"{}\": {m}", l.name));
     }
     cs.params = params_from(&values, Some(source));
@@ -579,7 +579,7 @@ fn kept_image_xml(xml: &str, l: &Layer, w: &mut Warnings) -> String {
 fn generated_image_xml(l: &Layer, index: u32, priority: Option<&String>, w: &mut Warnings) -> String {
     let mut values = settings_values(&l.settings, BTreeMap::new(), false, None);
     values.remove("crossHatch");
-    if let Some(m) = crate::image::image_values(&l.settings.image, &mut values, None, &ImageSettings::default()) {
+    if let Some(m) = crate::image::image_values(&l.settings.image, &mut values, None, &crate::image::lightburn_base()) {
         w.push(format!("layer \"{}\": {m}", l.name));
     }
     values.insert("name".into(), l.name.clone());
@@ -726,7 +726,11 @@ fn params_from(values: &BTreeMap<String, String>, source: Option<Vec<(String, St
 fn leaf_indices(s: &Shape, out: &mut BTreeSet<u32>) {
     match &s.kind {
         ShapeKind::Group(children) => children.iter().for_each(|c| leaf_indices(c, out)),
-        ShapeKind::Rect { .. } | ShapeKind::Ellipse { .. } | ShapeKind::Path(_) | ShapeKind::Bitmap { .. } => {
+        ShapeKind::Rect { .. }
+        | ShapeKind::Ellipse { .. }
+        | ShapeKind::Path(_)
+        | ShapeKind::Bitmap { .. }
+        | ShapeKind::Polygon { .. } => {
             out.insert(s.cut_index.unwrap_or(0));
         }
         ShapeKind::Text { backup: Some(_) } => {
@@ -1185,6 +1189,45 @@ impl ToDoc {
                 // LightBurn keeps bitmap rows bottom-up (see `BITMAP_ROWS`); OpenEtch's images are top-down files.
                 self.push(s, name, g, xf * BITMAP_ROWS, &group, e)?;
             }
+            ShapeKind::Polygon { n, rx, ry, star } => {
+                let kind = if star.is_some() { "Star" } else { "Polygon" };
+                let ratio = star.map(|st| st.ratio);
+                let params = doc::PolygonParams {
+                    sides: *n,
+                    radius_mm: *rx,
+                    star_ratio: ratio,
+                    corner_radius_mm: 0.0,
+                    ry_mm: (ry != rx).then_some(*ry),
+                    half_step: true,
+                };
+                // Draw Shape's "Dual Star" has a second ratio whose attribute name no sample shows yet.
+                let dual = s.attributes.iter().any(|(k, _)| k.starts_with("Ra") && k != "Ra");
+                let problem = if dual {
+                    Some("it is a dual-radius star, which OpenEtch cannot draw yet".to_string())
+                } else if star.is_some_and(|st| st.bulge != 0.0) {
+                    Some("its Bulge is not 0 (LightBurn's bulge curve is not known yet)".to_string())
+                } else {
+                    params.problem()
+                };
+                if let Some(p) = problem {
+                    self.w.push(format!(
+                        "a LightBurn {kind} (N={n}) was kept for LightBurn export but is not shown or burned: {p}"
+                    ));
+                    self.keep_shape(s);
+                    return Ok(());
+                }
+                let e = shape_extras(s, &["CutIndex"], &mut self.w);
+                let name = self.name(if star.is_some() { "Star" } else { "Polygon" });
+                let g = Geometry::Polygon {
+                    sides: *n,
+                    radius_mm: *rx,
+                    star_ratio: ratio,
+                    corner_radius_mm: 0.0,
+                    ry_mm: params.ry_mm,
+                    half_step: true,
+                };
+                self.push(s, name, g, xf, &group, e)?;
+            }
             ShapeKind::Other { type_name } => {
                 self.w.push(format!(
                     "a '{type_name}' shape was kept for LightBurn export but is not shown or burned (unsupported)"
@@ -1383,7 +1426,7 @@ pub fn from_document_in(d: &Document, frame: Frame) -> Result<(LbrnProject, Vec<
         }
         if is_image
             && let Some(m) =
-                crate::image::image_values(&l.settings.image, &mut values, source.as_deref(), &ImageSettings::default())
+                crate::image::image_values(&l.settings.image, &mut values, source.as_deref(), &crate::image::lightburn_base())
         {
             w.push(format!("layer \"{}\": {m}", l.name));
         }
@@ -1630,6 +1673,26 @@ struct FromDoc<'a> {
     outside: usize,
 }
 
+/// A polygon as LightBurn's `Polygon` / `Star` shape, with the turn that takes LightBurn's corners to the polygon's
+/// (`o.transform * turn` is the LightBurn placement); `None` when LightBurn cannot hold it (rounded corners, or a
+/// vertical radius on a polygon with OpenEtch's own corner placement, which a turn cannot match).
+fn lightburn_polygon(p: doc::PolygonParams) -> Option<(ShapeKind, Affine)> {
+    if p.corner_radius_mm != 0.0 || p.problem().is_some() {
+        return None;
+    }
+    let turn = if p.half_step {
+        Affine::IDENTITY
+    } else if p.ry_mm.is_none() {
+        // OpenEtch's first corner is straight up; LightBurn's half a step further round.
+        Affine::rotate(-std::f64::consts::PI / f64::from(p.sides))
+    } else {
+        return None;
+    };
+    let star = p.star_ratio.map(|ratio| crate::model::Star { bulge: 0.0, ratio });
+    let kind = ShapeKind::Polygon { n: p.sides, rx: p.radius_mm, ry: p.ry_mm.unwrap_or(p.radius_mm), star };
+    Some((kind, turn))
+}
+
 /// `extras` value of an object or group.
 fn ex<'a>(e: &'a BTreeMap<String, String>, k: &str) -> Option<&'a str> {
     e.get(&key(k)).map(String::as_str)
@@ -1776,7 +1839,12 @@ impl<'a> FromDoc<'a> {
             self.outside += 1;
         }
         let e = &o.extras;
-        let placed = if matches!(o.geometry, Geometry::Image { .. }) { o.transform * BITMAP_ROWS } else { o.transform };
+        let lb_polygon = o.geometry.polygon().and_then(lightburn_polygon);
+        let placed = match (&o.geometry, &lb_polygon) {
+            (Geometry::Image { .. }, _) => o.transform * BITMAP_ROWS,
+            (_, Some((_, turn))) => o.transform * *turn,
+            _ => o.transform,
+        };
         let (xform, xform_text) = self.local(e, parent, placed);
         let mut attributes = Self::attributes(e, ex(e, keys::ATTRS), "");
         let kind = match &o.geometry {
@@ -1800,7 +1868,18 @@ impl<'a> FromDoc<'a> {
                 self.text_shape(e, &t.outline, index, &xform, xform_text.as_deref())
             }
             Geometry::Path { path } if ex(e, keys::TYPE) == Some("Text") => self.text_shape(e, path, index, &xform, xform_text.as_deref()),
-            // LightBurn has no polygon shape in .lbrn2: a parametric polygon is written as the path it draws.
+            Geometry::Polygon { .. } if let Some((kind, _)) = lb_polygon => {
+                let was = ex(e, keys::TYPE);
+                if !matches!(was, Some("Polygon" | "Star")) {
+                    attributes.clear();
+                }
+                if !matches!(kind, ShapeKind::Polygon { star: Some(_), .. }) {
+                    // A star made a plain polygon drops the star's attributes.
+                    attributes.retain(|(k, _)| k != "Bu" && k != "Ra");
+                }
+                kind
+            }
+            // LightBurn polygons have no rounded corners: such a polygon is written as the path it draws.
             Geometry::Polygon { .. } => {
                 attributes.clear();
                 let data = self.path_data(&BTreeMap::new(), &o.geometry.local_path(), false);

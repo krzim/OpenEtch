@@ -525,12 +525,32 @@ export function templateNameOf(fileName: string): string {
   return base.replace(/\.lbt$/i, "").replace(/[\\/:*?"<>|\u0000-\u001f]+/g, "_").trim().slice(0, 100) || "Template";
 }
 
-/** POST /api/bundle/import's answer, for the result list. */
-export function bundleResult(res: unknown): { prefs: boolean; devices: string[]; libraries: string[]; skipped: string[] } {
+/**
+ * POST /api/bundle/import's answer, for the result list. A LightBurn `.lbzip` adds `presets` and `art` (names) and
+ * `browser`: its settings' browser part, for applyLightBurnPrefs (null when none).
+ */
+export function bundleResult(res: unknown): {
+  prefs: boolean;
+  devices: string[];
+  libraries: string[];
+  presets: string[];
+  art: string[];
+  skipped: string[];
+  browser: unknown;
+} {
   const o = res && typeof res === "object" ? (res as Record<string, unknown>) : {};
   const imp = o.imported && typeof o.imported === "object" ? (o.imported as Record<string, unknown>) : {};
   const strs = (x: unknown) => (Array.isArray(x) ? x.filter((s): s is string => typeof s === "string") : []);
-  return { prefs: imp.prefs === true, devices: strs(imp.devices), libraries: strs(imp.libraries), skipped: strs(o.skipped) };
+  const browser = o.browser && typeof o.browser === "object" ? o.browser : null;
+  return {
+    prefs: imp.prefs === true,
+    devices: strs(imp.devices),
+    libraries: strs(imp.libraries),
+    presets: strs(imp.presets),
+    art: strs(imp.art),
+    skipped: strs(o.skipped),
+    browser,
+  };
 }
 
 // --- project notes ------------------------------------------------------------------------------------------------

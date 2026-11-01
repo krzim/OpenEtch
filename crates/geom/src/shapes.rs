@@ -15,10 +15,23 @@ pub const MAX_SIDES: u32 = 1000;
 /// straight up (+Y), counter-clockwise. With `star_inner_ratio` (0 < r < 1) it is a star of `sides` points whose
 /// inner corners lie at `radius * r`.
 pub fn polygon_points(sides: u32, radius: f64, star_inner_ratio: Option<f64>) -> Result<Vec<Point>> {
+    polygon_points_at(sides, radius, radius, star_inner_ratio, PI / 2.0)
+}
+
+/// As [`polygon_points`] on an ellipse of radii `rx` x `ry` (each corner `(rx cos a, ry sin a)`), the first corner at
+/// angle `start` (radians, counter-clockwise from +X). LightBurn's Polygon and Star shapes start half a step past +Y
+/// (`PI / 2 + PI / sides`), so an edge (a star's inner corner) is centred on +Y.
+pub fn polygon_points_at(
+    sides: u32,
+    rx: f64,
+    ry: f64,
+    star_inner_ratio: Option<f64>,
+    start: f64,
+) -> Result<Vec<Point>> {
     if !(3..=MAX_SIDES).contains(&sides) {
         return invalid(format!("sides must be 3..={MAX_SIDES} (got {sides})"));
     }
-    if !(radius.is_finite() && radius > 0.0) {
+    if !(rx.is_finite() && rx > 0.0 && ry.is_finite() && ry > 0.0) {
         return invalid("the radius must be > 0");
     }
     if let Some(r) = star_inner_ratio
@@ -26,21 +39,18 @@ pub fn polygon_points(sides: u32, radius: f64, star_inner_ratio: Option<f64>) ->
     {
         return invalid("star_inner_ratio must be between 0 and 1 (exclusive)");
     }
+    if !start.is_finite() {
+        return invalid("the start angle must be finite");
+    }
     let n = sides as usize;
+    let at = |r: f64, a: f64| Point::new(rx * r * a.cos(), ry * r * a.sin());
     let pts = match star_inner_ratio {
-        None => (0..n).map(|i| at(radius, PI / 2.0 + 2.0 * PI * i as f64 / n as f64)).collect(),
+        None => (0..n).map(|i| at(1.0, start + 2.0 * PI * i as f64 / n as f64)).collect(),
         Some(r) => (0..2 * n)
-            .map(|i| {
-                let rad = if i % 2 == 0 { radius } else { radius * r };
-                at(rad, PI / 2.0 + PI * i as f64 / n as f64)
-            })
+            .map(|i| at(if i % 2 == 0 { 1.0 } else { r }, start + PI * i as f64 / n as f64))
             .collect(),
     };
     Ok(pts)
-}
-
-fn at(r: f64, a: f64) -> Point {
-    Point::new(r * a.cos(), r * a.sin())
 }
 
 /// A closed polygon through `points` with every corner rounded by `corner_radius` (corners where it does not fit

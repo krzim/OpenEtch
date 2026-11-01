@@ -6,7 +6,7 @@
 //! | LightBurn tag | `ImageSettings` |
 //! |---|---|
 //! | `ditherMode` (`threshold`, `ordered`, `atkinson`, `dithered`, `stucki`, `jarvis`, `newsprint`, `halftone`, `sketch`, `grayscale`, `3dslice`) | `dither` (`3dslice` is 3D Sliced, `DitherMode::Slice3d`); other modes stay in `extras` with a warning |
-//! | `interval` (else 25.4 / `dpi`) | `interval_mm`; `dpi` is written back as read while the interval is unchanged, else as round(25.4 / interval) |
+//! | `interval` (else 25.4 / `dpi`, else LightBurn's default 0.1 mm) | `interval_mm`; `dpi` is written back as read while the interval is unchanged, else as round(25.4 / interval) |
 //! | `angle`, `anglePerPass`, `bidir` | `angle_deg`, `angle_increment_deg`, `bidirectional` (also the layer's hatch, as for any LightBurn layer) |
 //! | `negative`, `passThrough` | `negative`, `pass_through` |
 //! | `useDotCorrection 1` + `dotWidth` | `dot_width_mm` (with correction off both stay in `extras` and `dot_width_mm` is 0) |
@@ -20,10 +20,13 @@
 //! `dotWidth 0.025`, `interval 0.0651` with `dpi 390`, `halftoneAngle 22`, `minPower 10`), the 3D sliced sample
 //! (`3dslice`, `interval 0.025` with `dpi 1016`) and a template with `stucki` on all 30 layers.
 //!
-//! **Adjust Image** values are attributes of the `Bitmap` shape: `Gamma` (as is), `Contrast` and `Brightness`
-//! (fractions in the file, 0.2 = 20 %; OpenEtch shows %), `EnhanceRadius`, `EnhanceAmount`, `EnhanceDenoise` (as
-//! is; every sample has 0, so their scale is unverified). The attributes also stay in the object's extras, so their
-//! spelling and order are kept while unchanged.
+//! **Adjust Image** values are attributes of the `Bitmap` shape: `Gamma` (as is), `Contrast`, `Brightness` and
+//! `EnhanceAmount` (fractions in the file, 0.25 = 25 %; OpenEtch shows %, as LightBurn's dialog does), `EnhanceRadius`
+//! (as is, pixels) and `EnhanceDenoise` (as is). Evidence: the owner's LightBurn 2.2 `adjust-image.lbrn2`, set in the
+//! dialog to Contrast 25, Brightness 10, Gamma 1.200, Enhance Radius 3, Enhance Amount 50, saves `Contrast="0.25"
+//! Brightness="0.1" Gamma="1.2" EnhanceRadius="3" EnhanceAmount="0.5" EnhanceDenoise="0"`; LightBurn 2.2's dialog no
+//! longer shows Denoise. The attributes also stay in the object's extras, so their spelling and order are kept while
+//! unchanged.
 
 use std::collections::BTreeMap;
 
@@ -33,6 +36,13 @@ use crate::model::{CutParams, boolean, num_like};
 
 fn finite(s: &str) -> Option<f64> {
     s.trim().parse::<f64>().ok().filter(|v| v.is_finite())
+}
+
+/// What LightBurn assumes for a tag a `CutSetting_Img` leaves out (it omits values at their defaults): OpenEtch's
+/// defaults, except the line interval, 0.1 mm (254 DPI): the owner's LightBurn 2.2 `adjust-image.lbrn2` has a
+/// `CutSetting_Img` with neither `interval` nor `dpi`, and its Save Processed Bitmap is 254 DPI.
+pub(crate) fn lightburn_base() -> ImageSettings {
+    ImageSettings { interval_mm: 0.1, ..ImageSettings::default() }
 }
 
 /// The line interval the import gives: `interval` when usable, else 25.4 / `dpi`, else `base`.
@@ -201,7 +211,7 @@ const ADJUST: [(&str, Convert, Convert); 6] = [
     ("Contrast", percent, fraction),
     ("Brightness", percent, fraction),
     ("EnhanceRadius", |x| x, |x| x),
-    ("EnhanceAmount", |x| x, |x| x),
+    ("EnhanceAmount", percent, fraction),
     ("EnhanceDenoise", |x| x, |x| x),
 ];
 
@@ -397,8 +407,9 @@ mod tests {
         adjust_attributes(&a, &mut out);
         assert_eq!(out, attrs, "unchanged values keep their text");
         let mut out = attrs.clone();
-        adjust_attributes(&ImageAdjust { contrast: 35.0, enhance_amount: 400.0, ..a }, &mut out);
-        assert_eq!((out[2].1.as_str(), out[4].1.as_str()), ("0.35", "400"));
+        adjust_attributes(&ImageAdjust { contrast: 35.0, enhance_amount: 50.0, enhance_radius: 3.0, ..a }, &mut out);
+        // LightBurn 2.2 saves Enhance Amount 50 as 0.5 and Enhance Radius 3 as 3.
+        assert_eq!((out[2].1.as_str(), out[4].1.as_str(), out[5].1.as_str()), ("0.35", "0.5", "3"));
         // Missing attributes are added only when they matter; bad ones keep the default.
         let mut bare = vec![("W".to_string(), "4".to_string())];
         adjust_attributes(&ImageAdjust { gamma: 2.0, ..ImageAdjust::default() }, &mut bare);

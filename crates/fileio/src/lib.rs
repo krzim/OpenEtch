@@ -7,7 +7,8 @@
 //!   PostScript-based `.ai`), [`hpgl`] (HPGL/PLT), [`gerber`] (Gerber RS-274X and Excellon drill), [`mesh`] (3D models
 //!   to a depth map image), [`bitmap`] (TIFF/TGA to PNG).
 //! - Image tools: [`trace`] (Trace Image, outline and centre line), [`raster`] (Convert to Bitmap), [`bitmap`] (masks).
-//! - [`zip`]: a small zip reader and writer (3MF, user bundles).
+//! - [`zip`]: a small zip reader and writer (3MF, user bundles, LightBurn `.lbzip` bundles).
+//! - [`lbart`]: LightBurn Art Library files (`.lbart`), the binary container around `<LightBurnShapes>` XML.
 #![forbid(unsafe_code)]
 
 use std::collections::BTreeSet;
@@ -22,6 +23,7 @@ pub mod dxf_out;
 pub mod ezd;
 pub mod gerber;
 pub mod hpgl;
+pub mod lbart;
 pub mod lbrn_legacy;
 pub mod mesh;
 pub mod pdf_out;

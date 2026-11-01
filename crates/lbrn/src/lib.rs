@@ -115,6 +115,7 @@
 //! | sub-layer `isCleanup 1` + `numPasses` | `sub_layers[i].cleanup = {every_n_passes: numPasses}`, `passes` 1 (LightBurn's "Clean after # of passes"; see [`doc::Cleanup`]); the parent's `cleanupPass` ("Enable cleanup pass") stays in `extras` and is written as `1` while a cleanup sub-layer exists and dropped when none does |
 //! | every other child (`minPower`, `PPI`, `tabCount`, ...) | `extras["lbrn2.<tag>"]`, written back verbatim (only tags matching `[A-Za-z_][A-Za-z0-9_.-]*`; others are dropped with a warning) |
 //! | Rect / Ellipse | `Geometry::Rect` / `Ellipse`, transform = shift · groups · XForm |
+//! | Polygon / Star (`N Rx Ry`, `Bu Ra`; see [`ShapeKind::Polygon`]) | `Geometry::Polygon` with `half_step` (and `ry_mm` when Ry ≠ Rx, `star_ratio` = Ra), transform = shift · groups · XForm; a star with `Bu` ≠ 0 or a dual star is kept as an unknown shape |
 //! | Path | `Geometry::Path` (exact lines and cubics), transform = shift · groups · XForm; ids and the lists it carried in `extras` |
 //! | Group | `doc::Group` (nested through `parent`; members point at their innermost group), its XForm and attributes in its `extras` |
 //! | Text | live text ([`doc::Geometry::Text`], named after the text) whose outline is the BackupPath; `Font`, `Str`, `H`, `LS`, `LnS`, `Ah`, `Av`, `Weld` read into its settings (see the [`text`] module) and all attributes kept in `extras["lbrn2.<attr>"]`; exported as `Type="Text"` with the modelled attributes written back (source spelling while unchanged) and a BackupPath of the current outline |
@@ -157,6 +158,7 @@ mod model;
 pub mod palette;
 mod parse;
 mod path;
+pub mod shapes;
 pub mod text;
 // LightBurn settings an imported layer keeps but OpenEtch does not execute (LAY-034).
 pub mod unexecuted;
@@ -168,12 +170,13 @@ pub use convert::{
 };
 pub use model::{
     Backup, CutParams, CutSetting, Element, Encoded, Format, LbrnProject, PathData, Prim, Prims, RootItem, Shape,
-    ShapeKind, SubLayer, Vertex,
+    ShapeKind, Star, SubLayer, Vertex,
 };
-pub use parse::{LibraryEntry, MAX_BYTES, MAX_SEGMENTS, parse, parse_library};
+pub use parse::{LibraryEntry, MAX_BYTES, MAX_SEGMENTS, parse, parse_library, parse_shapes};
 pub use library::{LibEntry, Library, LibraryFormat, Material, cut_setting_from_layer, parse_clb, write_clb};
 pub use unexecuted::{UnexecutedSetting, unexecuted_settings};
-pub use write::write;
+pub use shapes::{shapes_from_document, shapes_to_document};
+pub use write::{write, write_shapes};
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum LbrnError {

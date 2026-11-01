@@ -930,9 +930,9 @@ pub struct BarcodeInput {
     pub id: Option<ObjectId>,
     /// qr, data_matrix, aztec, pdf417, pdf417_compact, micro_pdf417, micro_qr, rmqr, han_xin, grid_matrix, code128,
     /// code39, code93, codabar, ean8, ean13, upc_a, upc_e, itf, industrial_2of5, iata_2of5, isbn, vin, plessey,
-    /// telepen, apriltag_16h5, apriltag_25h9, apriltag_36h10, apriltag_36h11, aruco_7x7. A tag's data is its id
-    /// (aruco_7x7 is OpenCV's DICT_7X7_1000, whose ids 0-49, 0-99 and 0-249 are DICT_7X7_50, _100 and _250); han_xin
-    /// is LightBurn's Chinese Sensible Code.
+    /// telepen, apriltag_16h5, apriltag_25h9, apriltag_36h10, apriltag_36h11, aruco_7x7, aruco_mip_36h12. A tag's data
+    /// is its id (aruco_7x7 is OpenCV's DICT_7X7_1000, whose ids 0-49, 0-99 and 0-249 are DICT_7X7_50, _100 and _250;
+    /// aruco_mip_36h12 is LightBurn's "ArUco MIP 36h11", ids 0-249); han_xin is LightBurn's Chinese Sensible Code.
     pub kind: String,
     /// The content (with `variable`, a variable-text format).
     pub data: String,

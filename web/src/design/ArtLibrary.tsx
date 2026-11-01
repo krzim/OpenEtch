@@ -2,8 +2,9 @@
 // engine in its projects folder, so every browser and agent sees the same ones (crates/engine/src/artlib.rs). Pick a
 // library (New, Load .oeart, Download, Rename, Delete), see its items as thumbnails (searchable), Add Selection,
 // Import a file as an item, drag an item onto the canvas (it lands centred on the drop point) or double-click /
-// "Add to project" (centred on the field), and rename, delete, copy or move items (right-click). LightBurn's .lbart is
-// a binary format without a public description, so it is refused with the reason. Follows `art_library_changed`.
+// "Add to project" (centred on the field), and rename, delete, copy or move items (right-click). LightBurn's .lbart
+// libraries load (Load), import into the current library (Import) and download (Download .lbart) on engines that list
+// "lbart" among their formats. Follows `art_library_changed`.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { onEngineEvent } from "../api/events.ts";
@@ -42,7 +43,7 @@ export function ArtLibraryDock(p: {
   const t = useT();
   const [libs, setLibs] = useState<ArtLibraryRow[] | null>(null);
   const [unsupported, setUnsupported] = useState(false);
-  const [lbartNote, setLbartNote] = useState<string | null>(null);
+  const [lbartOk, setLbartOk] = useState(false);
   const [selected, setSelectedRaw] = useState<string | null>(() => {
     try {
       return localStorage.getItem(SELECTED_KEY);
@@ -75,7 +76,7 @@ export function ArtLibraryDock(p: {
       .then((r) => {
         setUnsupported(false);
         setLibs(r.libraries ?? []);
-        setLbartNote(r.lbart ?? null);
+        setLbartOk((r.formats ?? []).includes("lbart"));
       })
       .catch((e: unknown) => {
         if ((e as { status?: number }).status === 404) setUnsupported(true);
@@ -136,32 +137,36 @@ export function ArtLibraryDock(p: {
   };
 
   const loadFile = (file: File) => {
-    if (/\.lbart$/i.test(file.name)) {
-      notify(lbartNote ?? t("art.noLbart"), "error");
+    if (/\.lbart$/i.test(file.name) && !lbartOk) {
+      notify(t("art.noLbart"), "error");
       return;
     }
     void task(async () => {
       const r = await artApi.load(file);
       if (r.name) setSelected(r.name);
+      for (const w of r.warnings ?? []) notify(w, "info");
     }, t("art.loaded", { name: file.name }));
   };
   const importFile = (file: File) => {
     if (!current) return;
     const f = artImportFormat(file.name);
-    if ("error" in f) {
-      notify(f.error, "error");
+    if ("error" in f || (f.format === "lbart" && !lbartOk)) {
+      notify("error" in f ? f.error : t("art.noLbart"), "error");
       return;
     }
-    void task(() => artApi.importFile(current, file, f.format), t("art.addedFile", { name: file.name, library: current }));
+    void task(async () => {
+      const r = await artApi.importFile(current, file, f.format);
+      for (const w of r.warnings ?? []) notify(w, "info");
+    }, t("art.addedFile", { name: file.name, library: current }));
   };
-  const download = () => {
+  const download = (format: "oeart" | "lbart") => {
     if (!current) return;
     void task(async () => {
-      const blob = await artApi.download(current);
+      const blob = await artApi.download(current, format);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${current}.oeart`;
+      a.download = `${current}.${format}`;
       a.click();
       window.setTimeout(() => URL.revokeObjectURL(url), 10000);
     });
@@ -206,9 +211,14 @@ export function ArtLibraryDock(p: {
             <button className="btn btn-small" onClick={() => importRef.current?.click()} disabled={busy} title={t("art.importTitle")}>
               {t("art.import")}
             </button>
-            <button className="btn btn-small" onClick={download} disabled={busy} title={t("art.downloadTitle")}>
+            <button className="btn btn-small" onClick={() => download("oeart")} disabled={busy} title={t("art.downloadTitle")}>
               {t("art.download")}
             </button>
+            {lbartOk && (
+              <button className="btn btn-small" onClick={() => download("lbart")} disabled={busy} title={t("art.downloadLbartTitle")}>
+                {t("art.downloadLbart")}
+              </button>
+            )}
             <button className="btn btn-small" onClick={() => setDlg({ kind: "rename" })} disabled={busy}>
               {t("art.rename")}
             </button>

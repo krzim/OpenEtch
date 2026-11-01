@@ -151,21 +151,22 @@ async function call<T = unknown>(method: string, path: string, body?: unknown, r
 const lib = (name: string) => `/api/art/libraries/${encodeURIComponent(name)}`;
 
 export const artApi = {
-  list: () => call<{ libraries?: ArtLibraryRow[]; lbart?: string }>("GET", "/api/art/libraries"),
+  /** `formats` lists the library files the engine loads (engines before .lbart support leave it out). */
+  list: () => call<{ libraries?: ArtLibraryRow[]; formats?: string[] }>("GET", "/api/art/libraries"),
   create: (name: string) => call("POST", "/api/art/libraries", { name }),
   load: (file: File, overwrite = false) =>
-    call<{ name?: string; items?: number }>(
+    call<{ name?: string; items?: number; warnings?: string[] }>(
       "POST",
       `/api/art/libraries/load?name=${encodeURIComponent(file.name)}${overwrite ? "&overwrite=true" : ""}`,
       undefined,
-      { body: file, type: "application/json" },
+      { body: file, type: /\.lbart$/i.test(file.name) ? "application/octet-stream" : "application/json" },
     ),
   view: (name: string) => call<{ name: string; items?: ArtItem[] }>("GET", lib(name)),
   rename: (name: string, to: string) => call("POST", `${lib(name)}/rename`, { to }),
   remove: (name: string) => call("DELETE", lib(name)),
   addSelection: (name: string, ids: string[], itemName?: string) => call<{ item?: ArtItem }>("POST", `${lib(name)}/items`, itemName ? { ids, name: itemName } : { ids }),
   importFile: (name: string, file: File, format: string) =>
-    call<{ item?: ArtItem }>("POST", `${lib(name)}/import?format=${encodeURIComponent(format)}&name=${encodeURIComponent(file.name)}`, undefined, {
+    call<{ item?: ArtItem; items?: ArtItem[]; warnings?: string[] }>("POST", `${lib(name)}/import?format=${encodeURIComponent(format)}&name=${encodeURIComponent(file.name)}`, undefined, {
       body: file,
       type: file.type || "application/octet-stream",
     }),
@@ -184,8 +185,9 @@ export const artApi = {
     if (!res.ok) throw new ApiError(`thumbnail: ${res.status}`, res.status);
     return URL.createObjectURL(await res.blob());
   },
-  download: async (name: string): Promise<Blob> => {
-    const res = await fetch(`${lib(name)}/download`, { headers: headers("*/*") });
+  /** The library file: OpenEtch's `.oeart`, or LightBurn's `.lbart`. */
+  download: async (name: string, format: "oeart" | "lbart" = "oeart"): Promise<Blob> => {
+    const res = await fetch(`${lib(name)}/download${format === "lbart" ? "?format=lbart" : ""}`, { headers: headers("*/*") });
     if (!res.ok) throw new ApiError(`download: ${res.status} ${await res.text()}`, res.status);
     return res.blob();
   },

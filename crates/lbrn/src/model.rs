@@ -394,6 +394,8 @@ impl Shape {
             ShapeKind::Group(_) => "Group",
             ShapeKind::Text { .. } => "Text",
             ShapeKind::Bitmap { .. } => "Bitmap",
+            ShapeKind::Polygon { star: None, .. } => "Polygon",
+            ShapeKind::Polygon { star: Some(_), .. } => "Star",
             ShapeKind::Other { type_name } => type_name,
         }
     }
@@ -413,8 +415,22 @@ pub enum ShapeKind {
     Text { backup: Option<Backup> },
     /// Embedded image; `W`/`H` in mm before the XForm, centred. `Data` (base64 PNG) stays in the attributes.
     Bitmap { w: f64, h: f64 },
-    /// Any other type (Polygon, Star, Barcode, ...), kept for writing back but never converted.
+    /// `Type="Polygon" N Rx Ry` (Tools > Draw Shape: Triangle, Pentagon, Octagon, Polygon) or, with `star`,
+    /// `Type="Star" N Rx Ry Bu Ra`: `n` corners (star points) on the ellipse `rx` x `ry` around the local origin,
+    /// the first at `90° + 180° / n` (an edge, or a star's inner corner, centred on local +Y; Draw Shape's XForm
+    /// flips y, so the shapes stand on an edge). LightBurn 2.2's `polygons.lbrn2`: N=3 Rx=10 Ry=9.5 is 17.321 x
+    /// 14.25 mm, N=6 Rx=Ry=5 is 10 mm wide, the star N=5 Rx=Ry=7.5 is 14.266 x 13.568 mm.
+    Polygon { n: u32, rx: f64, ry: f64, star: Option<Star> },
+    /// Any other type (Barcode, ...), kept for writing back but never converted.
     Other { type_name: String },
+}
+
+/// A LightBurn star's `Bu` (bulge, 0..=1: "an arc from the top of each point to its base") and `Ra` (ratio, 0..=1:
+/// the inner corners at `Ra` times the outer radius).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Star {
+    pub bulge: f64,
+    pub ratio: f64,
 }
 
 /// `<BackupPath Type="Path">` inside a Text shape.

@@ -50,7 +50,7 @@ fn parametric_polygon_and_shape_properties() {
         json!({"sides": 6, "radius_mm": 10, "center": [5, 5], "parametric": true}),
     ));
     let g = &s.document().object(&p).unwrap().geometry;
-    assert_eq!(*g, Geometry::Polygon { sides: 6, radius_mm: 10.0, star_ratio: None, corner_radius_mm: 0.0 });
+    assert_eq!(*g, Geometry::Polygon { sides: 6, radius_mm: 10.0, star_ratio: None, corner_radius_mm: 0.0, ry_mm: None, half_step: false });
     let before = s.document().object(&p).unwrap().field_path().area();
     // Edit sides and make it a star; the centre stays.
     let r = ok(&mut s, "shape.update", json!({"id": p, "sides": 5, "star_ratio": 0.5}));
@@ -63,7 +63,7 @@ fn parametric_polygon_and_shape_properties() {
     ok(&mut s, "shape.update", json!({"id": p, "star_ratio": null, "corner_radius_mm": 1}));
     assert_eq!(
         s.document().object(&p).unwrap().geometry,
-        Geometry::Polygon { sides: 5, radius_mm: 10.0, star_ratio: None, corner_radius_mm: 1.0 }
+        Geometry::Polygon { sides: 5, radius_mm: 10.0, star_ratio: None, corner_radius_mm: 1.0, ry_mm: None, half_step: false }
     );
     assert!(err(&mut s, "shape.update", json!({"id": p, "sides": 2})).contains("sides"));
     assert!(err(&mut s, "shape.update", json!({"id": p, "width_mm": 2})).contains("does not apply"));
@@ -94,20 +94,26 @@ fn parametric_polygon_and_shape_properties() {
 }
 
 #[test]
-fn polygon_exports_to_lightburn_as_a_path() {
+fn polygon_exports_to_lightburn_as_a_polygon() {
     let mut doc = Document { field_mm: Some(150.0), ..Document::default() };
     let layer = doc.layers[0].id.clone();
-    let g = Geometry::Polygon { sides: 6, radius_mm: 10.0, star_ratio: None, corner_radius_mm: 0.0 };
-    doc.objects.push(doc::Object::new("obj-9".into(), "hex", layer, g, kurbo::Affine::IDENTITY));
+    let g = Geometry::Polygon { sides: 6, radius_mm: 10.0, star_ratio: None, corner_radius_mm: 0.0, ry_mm: None, half_step: false };
+    doc.objects.push(doc::Object::new("obj-9".into(), "hex", layer.clone(), g, kurbo::Affine::IDENTITY));
+    // Rounded corners: LightBurn's polygon has none, so that one goes as the path it draws.
+    let round = Geometry::Polygon { sides: 5, radius_mm: 10.0, star_ratio: None, corner_radius_mm: 1.0, ry_mm: None, half_step: false };
+    doc.objects.push(doc::Object::new("obj-10".into(), "round", layer, round, kurbo::Affine::IDENTITY));
     let (project, _warnings) = lbrn::from_document(&doc, 150.0).unwrap();
     let text = lbrn::write(&project);
-    assert!(text.contains("Type=\"Path\""), "{text}");
-    assert!(!text.contains("Polygon"));
+    assert!(text.contains("Type=\"Polygon\"") && text.contains("Type=\"Path\""), "{text}");
     let back = lbrn::to_document(&lbrn::parse(&text).unwrap(), 150.0).unwrap();
-    assert_eq!(back.objects.len(), 1);
+    assert_eq!(back.objects.len(), 2);
     let o = &back.objects[0];
-    assert!(matches!(o.geometry, Geometry::Path { .. }));
+    assert!(matches!(o.geometry, Geometry::Polygon { sides: 6, half_step: true, .. }));
     assert!((o.field_path().area() - 1.5 * 3f64.sqrt() * 100.0).abs() < 1e-3);
+    // The same corners: LightBurn's placement turned back by the transform.
+    let b = o.bounds();
+    assert!((b.width() - 2.0 * 10.0 * 30f64.to_radians().cos()).abs() < 1e-6 && (b.height() - 20.0).abs() < 1e-6, "{b:?}");
+    assert!(matches!(back.objects[1].geometry, Geometry::Path { .. }));
 }
 
 #[test]

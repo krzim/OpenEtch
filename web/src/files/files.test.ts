@@ -187,8 +187,14 @@ test("engine lists: backups, prefs backups, templates, settings, bundles", () =>
     prefs: true,
     devices: ["dev-2"],
     libraries: [],
+    presets: [],
+    art: [],
     skipped: ["x"],
+    browser: null,
   });
+  // A LightBurn .lbzip: presets, art libraries and the settings' browser part.
+  const lb = bundleResult({ ok: true, lightburn: true, imported: { prefs: true, devices: [], libraries: [], presets: ["Steel"], art: ["clips"] }, browser: { units: "mm" }, skipped: [] });
+  assert.deepEqual([lb.presets, lb.art, lb.browser], [["Steel"], ["clips"], { units: "mm" }]);
 });
 
 test("recent templates: most recent first, case-insensitive, only existing ones", () => {

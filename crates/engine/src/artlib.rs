@@ -3,25 +3,28 @@
 //! An item is an Art Library fragment ([`commands::ArtFragment`]: objects, their groups, their layers' names and
 //! colours; no cut settings, as in LightBurn) with a name and a 128 px PNG thumbnail rendered when it is added.
 //!
-//! **LightBurn's `.lbart`** is a binary format ("we store the data in the .lbart file in binary format", LightBurn
-//! staff on its forum) with no public description, and no `.lbart` sample was available (none in the owner's files,
-//! and GitHub code search needs a login), so it cannot be read: loading one is refused (415) with that explanation.
+//! **LightBurn's `.lbart`** (decoded from libraries saved by the owner's LightBurn 2.2, see `fileio::lbart`): a
+//! binary container of items, each a name, a 256 px PNG thumbnail, its size and its art as LightBurn shapes XML
+//! (`lbrn::shapes_to_document`). Load reads one into a new library; Import adds its items to the current one;
+//! Download `?format=lbart` writes the library as one. Items keep LightBurn's thumbnail, size and compressed art
+//! (`lbart_art_base64`), so a loaded `.lbart` downloads again byte for byte; art is placed in a fixed
+//! [`LBART_FIELD_MM`] field (LightBurn inserts art where it is dropped, so its position does not matter).
 //! OpenEtch's own `.oeart` is UTF-8 JSON `{format: "openetch-art-library", version: 1, next_id, items: [{id, name,
-//! created_unix_s, size_mm: [w, h], thumbnail_png_base64, content: ArtFragment}]}`.
+//! created_unix_s, size_mm: [w, h], thumbnail_png_base64, lbart_art_base64?, content: ArtFragment}]}`.
 //!
 //! Routes (under `/api`; library names follow the project name rules, see `projects::validate_name`):
 //!
 //! | Method | Path | |
 //! |---|---|---|
-//! | GET | `/art/libraries` | `{libraries: [{name, items, modified_unix_s, size}], lbart: <why .lbart is not read>}` |
+//! | GET | `/art/libraries` | `{libraries: [{name, items, modified_unix_s, size}], formats: ["oeart", "lbart"]}` |
 //! | POST | `/art/libraries` | `{name}` → **201** `{ok, name}` (New; an existing name, also by case, 409) |
-//! | POST | `/art/libraries/load` | `?name=<file name>&overwrite=` with an `.oeart` as the body → **201** `{ok, name, items}` (Load); an `.lbart` 415 |
+//! | POST | `/art/libraries/load` | `?name=<file name>&overwrite=` with an `.oeart` or `.lbart` as the body → **201** `{ok, name, items, warnings}` (Load) |
 //! | GET | `/art/libraries/{name}` | `{name, items: [{id, name, created_unix_s, size_mm, objects, thumbnail}]}` (`thumbnail` the PNG's URL) |
-//! | GET | `/art/libraries/{name}/download` | the `.oeart` file |
+//! | GET | `/art/libraries/{name}/download` | the `.oeart` file; `?format=lbart` LightBurn's `.lbart` |
 //! | POST | `/art/libraries/{name}/rename` | `{to}` → `{ok, name}` |
 //! | DELETE | `/art/libraries/{name}` | deletes the library file → `{ok}` |
 //! | POST | `/art/libraries/{name}/items` | `{ids, name?}`: Add Selection to Library from the active document → **201** `{ok, item}` |
-//! | POST | `/art/libraries/{name}/import` | `?format=svg\|dxf\|image\|lbrn2\|openetch\|...&name=` with the file as the body: Import (each file is one item) → **201** `{ok, item}` |
+//! | POST | `/art/libraries/{name}/import` | `?format=svg\|dxf\|image\|lbrn2\|openetch\|...&name=` with the file as the body: Import (each file is one item) → **201** `{ok, item}`; `format=lbart` adds every item of a LightBurn library → **201** `{ok, item, items, warnings}` |
 //! | GET | `/art/libraries/{name}/items/{id}/thumbnail.png` | the thumbnail |
 //! | PUT | `/art/libraries/{name}/items/{id}` | `{name}` → `{ok, item}` (Rename) |
 //! | DELETE | `/art/libraries/{name}/items/{id}` | `{ok}` (Delete) |
@@ -66,10 +69,10 @@ pub const MAX_LIBRARY_BYTES: usize = projects::MAX_FILE_BYTES;
 pub const MAX_ITEMS: usize = 2000;
 /// The first bytes of every PNG file.
 const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
-/// Why LightBurn's `.lbart` files are not read.
-pub const LBART_NOTE: &str = "LightBurn's .lbart is a binary format without a public description, so OpenEtch \
-    cannot read it; in LightBurn, add the art to a project and save it as .lbrn2, then import that file into an \
-    OpenEtch library";
+/// LightBurn's thumbnail width (`.lbart` downloads render thumbnails this size when an item has none of it).
+pub const LBART_THUMBNAIL_PX: u32 = 256;
+/// The field `.lbart` art is placed in (LightBurn's coordinates are mm from its lower-left corner).
+pub const LBART_FIELD_MM: f64 = 110.0;
 
 /// Serialises the library files (see the module docs) and keeps the last libraries read, parsed: a library window
 /// asks for every item's thumbnail, and reading and checking the whole file again for each of 2000 items would take
@@ -102,6 +105,10 @@ pub struct ArtItem {
     pub size_mm: [f64; 2],
     #[serde(default)]
     pub thumbnail_png_base64: String,
+    /// LightBurn's compressed art of an item loaded from an `.lbart` (written again while it still holds the same
+    /// shapes XML, so the library downloads byte for byte).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lbart_art_base64: Option<String>,
     pub content: ArtFragment,
 }
 
@@ -234,7 +241,15 @@ pub fn fragment_svg(f: &ArtFragment) -> String {
 fn make_item(id: String, name: String, content: ArtFragment) -> Result<ArtItem, EngineError> {
     let size = content.bounds().map_or([0.0, 0.0], |b| [round3(b.width()), round3(b.height())]);
     let png = crate::render::svg_to_png(&fragment_svg(&content), THUMBNAIL_PX)?;
-    Ok(ArtItem { id, name, created_unix_s: now_unix(), size_mm: size, thumbnail_png_base64: STANDARD.encode(png), content })
+    Ok(ArtItem {
+        id,
+        name,
+        created_unix_s: now_unix(),
+        size_mm: size,
+        thumbnail_png_base64: STANDARD.encode(png),
+        lbart_art_base64: None,
+        content,
+    })
 }
 
 fn round3(v: f64) -> f64 {
@@ -373,7 +388,7 @@ impl ArtStore {
             }
         }
         rows.sort_by_key(|r| r["name"].as_str().unwrap_or_default().to_lowercase());
-        Ok(json!({ "libraries": rows, "lbart": LBART_NOTE }))
+        Ok(json!({ "libraries": rows, "formats": ["oeart", "lbart"] }))
     }
 
     /// New library `name` (409 when one exists, also by case).
@@ -416,6 +431,12 @@ impl ArtStore {
             Ok(item)
         })
         .map(|item| item_row(library, &item))
+    }
+
+    /// Library `name`, parsed.
+    pub fn file(st: &AppState, name: &str) -> Result<Arc<ArtLibraryFile>, EngineError> {
+        let _g = lock(&st.art.lock);
+        Self::read(st, name).map(|(_, f)| f)
     }
 
     /// The item (a copy).
@@ -469,7 +490,7 @@ impl ArtStore {
 fn fragment_from_file(st: &AppState, format: &str, bytes: Vec<u8>) -> Result<ArtFragment, EngineError> {
     let mut scratch = Session::new(doc::Document::default());
     if format == "lbart" {
-        return Err(EngineError::BadRequest(LBART_NOTE.into()));
+        return Err(EngineError::BadRequest("an .lbart file holds several items: import it as a library".into()));
     }
     if format == "openetch" {
         let text = String::from_utf8(bytes).map_err(|_| EngineError::BadRequest("an .openetch file must be UTF-8".into()))?;
@@ -491,6 +512,118 @@ fn fragment_from_file(st: &AppState, format: &str, bytes: Vec<u8>) -> Result<Art
         return Err(EngineError::BadRequest("the file holds no art".into()));
     }
     Ok(art_fragment(scratch.document(), &ids)?)
+}
+
+/// The items of a LightBurn `.lbart` file, as library items (ids from `alloc`). Items whose art OpenEtch cannot show
+/// are left out with a warning.
+pub fn items_from_lbart(bytes: &[u8], mut alloc: impl FnMut() -> String) -> Result<(Vec<ArtItem>, Vec<String>), EngineError> {
+    let lib = fileio::lbart::read(bytes).map_err(|e| EngineError::BadRequest(e.to_string()))?;
+    if lib.items.len() > MAX_ITEMS {
+        return Err(EngineError::BadRequest(format!("the .lbart file has {} items (at most {MAX_ITEMS})", lib.items.len())));
+    }
+    let frame = lbrn::Frame::Galvo { field_mm: LBART_FIELD_MM };
+    let (mut items, mut warnings) = (Vec::new(), Vec::new());
+    for (k, it) in lib.items.iter().enumerate() {
+        let name = item_name(&it.name).unwrap_or_else(|_| format!("Art {}", k + 1));
+        let content = (|| -> Result<ArtFragment, String> {
+            let i = lbrn::shapes_to_document(&it.shapes_xml, frame).map_err(|e| e.to_string())?;
+            for w in &i.warnings {
+                warnings.push(format!("{name}: {w}"));
+            }
+            let d = doc::Document {
+                layers: i.layers,
+                objects: i.objects,
+                groups: i.groups,
+                field_mm: Some(LBART_FIELD_MM),
+                ..doc::Document::default()
+            };
+            let ids: Vec<String> = d.objects.iter().map(|o| o.id.clone()).collect();
+            if ids.is_empty() {
+                return Err("it holds nothing OpenEtch can show".into());
+            }
+            let f = art_fragment(&d, &ids).map_err(|e| e.to_string())?;
+            ArtFragment::from_json(&serde_json::to_string(&f).unwrap_or_default())
+        })();
+        let content = match content {
+            Ok(c) => c,
+            Err(e) => {
+                warnings.push(format!("\"{name}\" was left out: {e}"));
+                continue;
+            }
+        };
+        let size = if it.size_mm.iter().all(|v| v.is_finite() && *v >= 0.0) {
+            it.size_mm
+        } else {
+            content.bounds().map_or([0.0, 0.0], |b| [round3(b.width()), round3(b.height())])
+        };
+        items.push(ArtItem {
+            id: alloc(),
+            name,
+            created_unix_s: now_unix(),
+            size_mm: size,
+            thumbnail_png_base64: STANDARD.encode(&it.thumbnail_png),
+            lbart_art_base64: it.art_block.as_ref().map(|b| STANDARD.encode(b)),
+            content,
+        });
+    }
+    Ok((items, warnings))
+}
+
+/// A whole `.lbart` file as a new library file.
+pub fn library_from_lbart(bytes: &[u8]) -> Result<(ArtLibraryFile, Vec<String>), EngineError> {
+    let mut file = ArtLibraryFile::empty();
+    let mut probe = ArtLibraryFile::empty();
+    let (items, warnings) = items_from_lbart(bytes, || probe.alloc())?;
+    file.next_id = probe.next_id;
+    file.items = items;
+    Ok((file, warnings))
+}
+
+/// A PNG's width in pixels (from its header).
+fn png_width(png: &[u8]) -> Option<u32> {
+    (png.starts_with(PNG_SIGNATURE) && png.len() >= 24).then(|| u32::from_be_bytes([png[16], png[17], png[18], png[19]]))
+}
+
+/// A library as LightBurn's `.lbart` (thumbnails LightBurn's size, art as shapes XML). Returns the file and the
+/// export's warnings.
+pub fn library_to_lbart(file: &ArtLibraryFile) -> Result<(Vec<u8>, Vec<String>), EngineError> {
+    let frame = lbrn::Frame::Galvo { field_mm: LBART_FIELD_MM };
+    let mut out = fileio::lbart::Lbart::default();
+    let mut warnings = Vec::new();
+    for it in &file.items {
+        let c = &it.content;
+        let mut layers: Vec<doc::Layer> = Vec::new();
+        for l in &c.layers {
+            if !layers.iter().any(|x| x.id == l.id) {
+                layers.push(doc::Layer::new(l.id.clone(), &l.name, &l.color));
+            }
+        }
+        for o in &c.objects {
+            // An object whose layer the fragment does not list goes on a black one.
+            if !layers.iter().any(|x| x.id == o.layer) {
+                layers.push(doc::Layer::new(o.layer.clone(), "C00", "#000000"));
+            }
+        }
+        let d = doc::Document {
+            layers,
+            objects: c.objects.clone(),
+            groups: c.groups.clone(),
+            field_mm: Some(LBART_FIELD_MM),
+            ..doc::Document::default()
+        };
+        let (xml, w) = lbrn::shapes_from_document(&d, frame).map_err(|e| EngineError::BadRequest(format!("{}: {e}", it.name)))?;
+        warnings.extend(w.into_iter().filter(|w| !w.contains("outside the")).map(|w| format!("{}: {w}", it.name)));
+        let thumb = STANDARD.decode(it.thumbnail_png_base64.as_bytes()).ok().filter(|p| png_width(p) == Some(LBART_THUMBNAIL_PX));
+        let thumb = match thumb {
+            Some(t) => t,
+            None => crate::render::svg_to_png(&fragment_svg(c), LBART_THUMBNAIL_PX)?,
+        };
+        let mut item = fileio::lbart::Item::new(it.name.clone(), thumb, xml, it.size_mm);
+        item.art_block = it.lbart_art_base64.as_ref().and_then(|b| STANDARD.decode(b.as_bytes()).ok());
+        out.items.push(item);
+    }
+    let bytes = fileio::lbart::write(&out).map_err(|e| EngineError::BadRequest(e.to_string()))?;
+    Ok((bytes, warnings))
 }
 
 /// The art routes (merged into `/api`).
@@ -541,14 +674,19 @@ async fn library_load(State(st): State<Arc<AppState>>, Query(q): Q, body: Bytes)
     }
     let raw = q.get("name").cloned().ok_or_else(|| EngineError::BadRequest("name is required".into()))?;
     let (stem, ext) = raw.rsplit_once('.').map_or((raw.as_str(), ""), |(s, e)| (s, e));
-    if ext.eq_ignore_ascii_case("lbart") || body.starts_with(b"LBART") {
-        return Err(EngineError::Unsupported(LBART_NOTE.into()));
-    }
     let name = stem.trim().to_owned();
     let overwrite = q.get("overwrite").is_some_and(|v| v == "true" || v == "1");
-    let text = String::from_utf8(body.to_vec()).map_err(|_| EngineError::Unsupported(LBART_NOTE.into()))?;
-    let file = ArtLibraryFile::parse(&text)?;
-    let v = st.blocking(move |st| ArtStore::create(st, &name, Some(file), overwrite)).await?;
+    let (file, warnings) = if ext.eq_ignore_ascii_case("lbart") || fileio::lbart::is_lbart(&body) {
+        let body = body.to_vec();
+        st.blocking(move |_| library_from_lbart(&body)).await?
+    } else {
+        let text = String::from_utf8(body.to_vec()).map_err(|_| {
+            EngineError::Unsupported("not an art library: expected an OpenEtch .oeart or a LightBurn .lbart file".into())
+        })?;
+        (ArtLibraryFile::parse(&text)?, Vec::new())
+    };
+    let mut v = st.blocking(move |st| ArtStore::create(st, &name, Some(file), overwrite)).await?;
+    v["warnings"] = json!(warnings);
     Ok((StatusCode::CREATED, axum::Json(v)).into_response())
 }
 
@@ -560,7 +698,38 @@ async fn library_delete(State(st): State<Arc<AppState>>, UrlPath(name): UrlPath<
     Ok(axum::Json(st.blocking(move |st| ArtStore::delete_library(st, &name)).await?))
 }
 
-async fn library_download(State(st): State<Arc<AppState>>, UrlPath(name): UrlPath<String>) -> Result<Response, EngineError> {
+async fn library_download(State(st): State<Arc<AppState>>, UrlPath(name): UrlPath<String>, Query(q): Q) -> Result<Response, EngineError> {
+    if let Some(k) = q.keys().find(|k| k.as_str() != "format") {
+        return Err(EngineError::BadRequest(format!("unknown query parameter '{k}' (allowed: format)")));
+    }
+    let lbart = match q.get("format").map(String::as_str) {
+        None | Some("oeart") => false,
+        Some("lbart") => true,
+        Some(f) => return Err(EngineError::BadRequest(format!("format must be oeart or lbart (got '{f}')"))),
+    };
+    if lbart {
+        let (stem, bytes) = st
+            .blocking(move |st| {
+                let (stem, file) = {
+                    let _g = lock(&st.art.lock);
+                    ArtStore::read(st, &name)?
+                };
+                let (bytes, _) = library_to_lbart(&file)?;
+                Ok((stem, bytes))
+            })
+            .await?;
+        let ascii: String = stem.chars().map(|c| if c.is_ascii_alphanumeric() || " -_.()".contains(c) { c } else { '_' }).collect();
+        let disposition = format!("attachment; filename=\"{ascii}.lbart\"");
+        return Ok((
+            [
+                (header::CONTENT_TYPE, "application/octet-stream".to_string()),
+                (header::CONTENT_DISPOSITION, disposition),
+                (header::CACHE_CONTROL, "no-store".to_string()),
+            ],
+            bytes,
+        )
+            .into_response());
+    }
     let (stem, text) = st
         .blocking(move |st| {
             let _g = lock(&st.art.lock);
@@ -623,6 +792,31 @@ async fn item_import(State(st): State<Arc<AppState>>, UrlPath(library): UrlPath<
     }
     let format = q.get("format").cloned().ok_or_else(|| EngineError::BadRequest("format is required".into()))?;
     let name = q.get("name").map(|n| n.rsplit_once('.').map_or(n.as_str(), |(s, _)| s).to_owned()).unwrap_or_else(|| "Imported art".into());
+    if format == "lbart" {
+        // A LightBurn library: every item of it.
+        let v = st
+            .blocking(move |st| {
+                let mut warnings = Vec::new();
+                let rows = ArtStore::update(st, &library, |f| {
+                    let mut probe = f.clone();
+                    let (items, w) = items_from_lbart(&body, || probe.alloc())?;
+                    warnings = w;
+                    if items.is_empty() {
+                        return Err(EngineError::BadRequest("the .lbart file holds no art OpenEtch can show".into()));
+                    }
+                    if f.items.len() + items.len() > MAX_ITEMS {
+                        return Err(EngineError::Conflict(format!("the library would hold more than {MAX_ITEMS} items")));
+                    }
+                    f.next_id = probe.next_id;
+                    let rows: Vec<Value> = items.iter().map(|i| item_row(&library, i)).collect();
+                    f.items.extend(items);
+                    Ok(rows)
+                })?;
+                Ok(json!({ "ok": true, "item": rows[0], "items": rows, "warnings": warnings }))
+            })
+            .await?;
+        return Ok((StatusCode::CREATED, axum::Json(v)).into_response());
+    }
     let v = st
         .blocking(move |st| {
             let frag = fragment_from_file(st, &format, body.to_vec())?;

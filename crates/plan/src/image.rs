@@ -3,7 +3,7 @@
 //! 1. **Decode** the embedded file (PNG, JPEG, GIF, BMP, WebP; `image` crate, pure Rust) into grey levels and alpha.
 //!    Transparent pixels are composited on white and never fire.
 //! 2. **Adjust** ([`doc::ImageAdjust`], per image): enhance (unsharp mask: a box-blurred copy three times over,
-//!    with the denoise threshold), contrast, brightness, gamma; at the image's own resolution.
+//!    with the denoise threshold), brightness, contrast, gamma ([`tone_factors`]); at the image's own resolution.
 //! 3. **Grid**: square dots of the line interval in rows along the scan angle, on a lattice anchored at the field
 //!    origin (so rows of neighbouring images line up), covering the image's field-frame outline. Each dot samples the
 //!    image at its centre through the inverse object transform (so rotation, scaling and mirroring are honoured),
@@ -161,17 +161,27 @@ pub(crate) fn adjust(g: &mut Gray, a: &ImageAdjust) {
             }
         }
     }
-    let k = a.contrast / 100.0;
-    let contrast = if k >= 0.0 { 1.0 / (1.0 - k).max(1e-3) } else { 1.0 + k } as f32;
-    let brightness = (a.brightness / 100.0) as f32;
+    let (brightness, contrast) = tone_factors(a);
     let gamma = a.gamma as f32;
     if a.contrast == 0.0 && a.brightness == 0.0 && a.gamma == 1.0 {
         return;
     }
     for v in &mut g.value {
-        let x = ((*v - 0.5) * contrast + 0.5 + brightness).clamp(0.0, 1.0);
+        let x = ((*v + brightness - 0.5) * contrast + 0.5).clamp(0.0, 1.0);
         *v = x.powf(gamma);
     }
+}
+
+/// The brightness shift (grey 0..=1) and the contrast slope (around mid-grey) of `a`'s Brightness and Contrast,
+/// fitted to LightBurn 2.2's own processed bitmap (`adjust-image.lbrn2`: Contrast 25, Brightness 10, Gamma 1.2 turn
+/// grey v into ((v + 0.2 - 0.5) · 2 + 0.5)^1.2 to within 1-2 % of the dithered density): the shift is twice the
+/// brightness fraction (10 % → +0.2) and the slope 2^(contrast / 25 %) (25 % → 2, -25 % → 0.5, 0 → 1). The
+/// brightness is applied before the contrast and gamma after both. One sample fixes one point of each scale: the
+/// forms between are OpenEtch's choice.
+pub fn tone_factors(a: &ImageAdjust) -> (f32, f32) {
+    let brightness = 2.0 * a.brightness / 100.0;
+    let contrast = 2f64.powf(a.contrast / 25.0);
+    (brightness as f32, contrast as f32)
 }
 
 /// A Gaussian-like blur of radius `r` pixels: three box blurs of that half-width, horizontal then vertical.
@@ -674,7 +684,8 @@ pub struct ProcessedBitmap {
 pub const MAX_PROCESSED_DOTS: u64 = 64_000_000;
 
 /// Process image object `o` with `s` (decode, Adjust Image, negative, dither) on the image's own axis-aligned grid at
-/// the line interval, as [`ProcessedBitmap`]. 3D Sliced shows the grey levels quantised to `passes` slices (a dot of
+/// the line interval (as many whole dots as fit, stretched to the image's size, as LightBurn's Save Processed Bitmap
+/// does), as [`ProcessedBitmap`], mirrored as the object's transform mirrors it (rotation is left out). 3D Sliced shows the grey levels quantised to `passes` slices (a dot of
 /// darkness d is fired by ceil(d · N) of the N passes: level 255 · that / N).
 pub fn processed_bitmap(o: &doc::Object, s: &ImageSettings, passes: u32) -> Result<ProcessedBitmap, String> {
     let doc::Geometry::Image { width_mm, height_mm, data_base64, adjust: a, .. } = &o.geometry else {
@@ -696,13 +707,16 @@ pub fn processed_bitmap(o: &doc::Object, s: &ImageSettings, passes: u32) -> Resu
         let flip = Affine::new([1.0, 0.0, 0.0, -1.0, 0.0, h as f64]);
         (placed.local_to_pixel().inverse() * flip, w, h, w as f64 * factor as f64 / width_mm * 25.4)
     } else {
+        // As LightBurn: whole dots of the interval that fit (its 105.848 x 92.882 mm image at 0.1 mm is 1058 x 928),
+        // stretched to cover the image exactly.
         let d = s.interval_mm;
-        let (cols, rows) = ((width_mm / d).ceil().max(1.0), (height_mm / d).ceil().max(1.0));
+        let (cols, rows) = ((width_mm / d + 1e-9).floor().max(1.0), (height_mm / d + 1e-9).floor().max(1.0));
         if cols * rows > MAX_PROCESSED_DOTS as f64 {
             return Err(format!("{cols} x {rows} dots is more than {MAX_PROCESSED_DOTS}; use a larger interval"));
         }
-        let g = Affine::new([d, 0.0, 0.0, d, -cols * d / 2.0, -rows * d / 2.0]);
-        (g, cols as usize, rows as usize, 25.4 / d)
+        let (px, py) = (width_mm / cols, height_mm / rows);
+        let g = Affine::new([px, 0.0, 0.0, py, -width_mm / 2.0, -height_mm / 2.0]);
+        (g, cols as usize, rows as usize, 25.4 / px)
     };
     let m = placed.local_to_pixel() * grid;
     let [ca, cb, cc, cd, _, _] = m.as_coeffs();
@@ -736,6 +750,16 @@ pub fn processed_bitmap(o: &doc::Object, s: &ImageSettings, passes: u32) -> Resu
             Ok(())
         };
         dither(s, &sampler, &grid, rows, 0.0, &mut emit).map_err(|_| "the image could not be dithered".to_string())?;
+    }
+    // As shown: an object mirrored on an axis (a LightBurn bitmap's rows are stored bottom-up, so its import adds a
+    // vertical flip) is saved mirrored the same way, as LightBurn's own processed bitmap is.
+    let [a, _, _, d, _, _] = o.transform.as_coeffs();
+    if d < 0.0 {
+        let flipped: Vec<u8> = levels.chunks(cols).rev().flatten().copied().collect();
+        levels = flipped;
+    }
+    if a < 0.0 {
+        levels.chunks_mut(cols).for_each(<[u8]>::reverse);
     }
     Ok(ProcessedBitmap { width: cols, height: rows, levels, dpi })
 }
@@ -1014,8 +1038,15 @@ pub(crate) mod tests {
         adjust(&mut g, &ImageAdjust { gamma: 2.0, ..ImageAdjust::default() });
         assert!((g.value[1] - 0.25).abs() < 1e-6, "gamma above 1 darkens mid-tones: {:?}", g.value);
         let mut g = Gray::from_rows(&[&[0.25, 0.5, 0.75]]);
-        adjust(&mut g, &ImageAdjust { contrast: 50.0, brightness: 10.0, ..ImageAdjust::default() });
-        assert!((g.value[0] - 0.1).abs() < 1e-6 && (g.value[2] - 1.0).abs() < 1e-6, "{:?}", g.value);
+        // LightBurn's scales (fitted to its processed bitmap): brightness 10 % shifts by 0.2 first, contrast 25 %
+        // doubles the slope around mid-grey, -25 % halves it.
+        adjust(&mut g, &ImageAdjust { contrast: 25.0, brightness: 10.0, ..ImageAdjust::default() });
+        let near = |a: &[f32], b: [f32; 3]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-6);
+        assert!(near(&g.value, [0.4, 0.9, 1.0]), "{:?}", g.value);
+        let mut g = Gray::from_rows(&[&[0.25, 0.5, 0.75]]);
+        adjust(&mut g, &ImageAdjust { contrast: -25.0, ..ImageAdjust::default() });
+        assert!(near(&g.value, [0.375, 0.5, 0.625]), "{:?}", g.value);
+        assert_eq!(tone_factors(&ImageAdjust::default()), (0.0, 1.0));
         let mut flat = Gray::from_rows(&[&[0.5; 5]]);
         adjust(&mut flat, &ImageAdjust { enhance_radius: 1.0, enhance_amount: 400.0, ..ImageAdjust::default() });
         assert!(flat.value.iter().all(|v| (v - 0.5).abs() < 1e-6), "a flat image has no edges to enhance");
