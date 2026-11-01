@@ -1,7 +1,9 @@
 // English UI strings (the source of truth for message keys; see ../i18n.ts). `{name}` marks a placeholder.
 // Hotkey action labels live in ../hotkeys.ts; a translation can override one with a "hk.<action id>" key.
 
+import { EN_FILES } from "./en-files.ts";
 import { EN_JOB } from "./en-job.ts";
+import { EN_LIBS } from "./en-libs.ts";
 import { EN_TEXT } from "./en-text.ts";
 
 export const EN = {
@@ -9,6 +11,10 @@ export const EN = {
   ...EN_TEXT,
   // Laser window job controls, framing, preview timeline, device settings, calibration, rotary, cut options.
   ...EN_JOB,
+  // Files, project and image tools (src/files/).
+  ...EN_FILES,
+  // Material library, defaults, test generators, approval gates, laser tools, camera, Help additions (src/libs/).
+  ...EN_LIBS,
   "common.cancel": "Cancel",
   "common.close": "Close",
   "common.loading": "Loading…",

@@ -30,6 +30,8 @@ export interface CutOptions {
   tabs?: { count?: number; spacing_mm?: number; size_mm: number } | null;
   z_offset_mm?: number;
   z_step_mm?: number;
+  /** Kerf Offset: closed outlines of line passes traced outward (+) or inward (-), -50..=50 mm. */
+  kerf_offset_mm?: number;
 }
 
 /** The resolved options of a pass (defaults filled in). */
@@ -47,6 +49,7 @@ export interface ResolvedOptions {
   tabs: { count: number; spacing_mm: number; size_mm: number } | null;
   z_offset_mm: number;
   z_step_mm: number;
+  kerf_offset_mm: number;
 }
 
 /** LightBurn-like starting values when an option is switched on. */
@@ -87,6 +90,7 @@ export function resolveOptions(settings: CutSettings | null | undefined): Resolv
     tabs: tabs ? { count: Math.round(n(tabs.count, 0)), spacing_mm: n(tabs.spacing_mm, 0), size_mm: n(tabs.size_mm, 0.5) } : null,
     z_offset_mm: n(r.z_offset_mm, 0),
     z_step_mm: n(r.z_step_mm, 0),
+    kerf_offset_mm: n(r.kerf_offset_mm, 0),
   };
 }
 
@@ -106,6 +110,7 @@ export function activeOptionCount(r: ResolvedOptions): number {
   if (r.tabs) c++;
   if (r.z_offset_mm) c++;
   if (r.z_step_mm) c++;
+  if (r.kerf_offset_mm) c++;
   return c;
 }
 

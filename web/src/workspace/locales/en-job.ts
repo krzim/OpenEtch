@@ -179,7 +179,7 @@ export const EN_JOB = {
   "dev.limitHint": "A hard limit: it can be lowered, never raised above {limit}",
   "dev.none": "None",
   "dev.bit": "Bit {bit}",
-  "dev.polarity": "Inputs are active high. Active-low inputs are not supported: an active-low pedal imported from LightBurn is left unset so it cannot start runs on its own.",
+  "dev.polarity": "Start and stop marking inputs are active high: an active-low pedal imported from LightBurn is left unset so it cannot start runs on its own. Door Protect and Start Framing take either level.",
   "dev.axisHint": "Moves of the extension axis never fire the laser. Unverified on hardware; the B6's lift is not on the board.",
   "dev.corTitle": "Lens correction file",
   "dev.corFile": "Correction file",

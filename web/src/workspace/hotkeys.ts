@@ -47,6 +47,14 @@ export const ACTIONS: HotkeyAction[] = [
   app("file.saveAs", "file", "Save as", ["Ctrl+Shift+S"]),
   app("window.devices", "file", "Devices", ["Alt+Shift+M"]),
   ws("app.preferences", "file", "Preferences", []),
+  // Files and image tools (src/files/useFilesUi.tsx): LightBurn's Export (Alt+X), Notes (Ctrl+Alt+N), Trace Image
+  // (Alt+T); Adjust Image gets Alt+I here.
+  ws("file.export", "file", "Export", ["Alt+X"]),
+  ws("file.print", "file", "Print", []),
+  ws("window.notes", "view", "Notes window", ["Ctrl+Alt+N"]),
+  ws("image.trace", "tools", "Trace image", ["Alt+T"]),
+  ws("image.adjust", "tools", "Adjust image", ["Alt+I"]),
+  ws("image.toBitmap", "tools", "Convert to bitmap", []),
 
   app("edit.undo", "edit", "Undo", ["Ctrl+Z"]),
   app("edit.redo", "edit", "Redo", ["Ctrl+Shift+Z", "Ctrl+Y"]),
@@ -124,6 +132,15 @@ export const ACTIONS: HotkeyAction[] = [
   ws("laser.requestRun", "laser", "Request run", []),
   ws("laser.pauseResume", "laser", "Pause / resume the job", []),
   ws("laser.stop", "laser", "Stop", ["Ctrl+Pause", "Ctrl+Cancel"]),
+  // Library, test generators and laser tools (src/libs/useLibsUi.tsx); LightBurn gives these no default keys.
+  ws("window.library", "view", "Material Library", []),
+  ws("laser.materialTest", "laser", "Material test", []),
+  ws("laser.intervalTest", "laser", "Interval test", []),
+  ws("laser.focusTest", "laser", "Focus test", []),
+  ws("tool.startPoint", "tools", "Set start point", []),
+  ws("laser.printCut", "laser", "Print and Cut", []),
+  ws("window.camera", "view", "Camera", []),
+  ws("laser.jobLog", "laser", "Job log", []),
 
   ws("help.hotkeys", "help", "Keyboard shortcuts", ["F1", "Shift+?"]),
 ];

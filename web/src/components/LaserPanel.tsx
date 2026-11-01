@@ -29,6 +29,9 @@ import { Icon } from "./ui.tsx";
 import { originBadge } from "./Timeline.tsx";
 import type { LengthUnit, SpeedUnit } from "../workspace/prefs.ts";
 import { usePrefs } from "../workspace/usePrefs.ts";
+import { ApprovalChecks, SimPinBadge, useApprovalGates } from "../libs/JobSafety.tsx";
+import { libsApi } from "../libs/api.ts";
+import { approvalRefusalText, checklistTicks } from "../libs/model.ts";
 import { formatSpeed, lengthText } from "../workspace/units.ts";
 
 /** Machine status; `children` (the LightBurn devices section) render at the bottom of the card. */
@@ -135,7 +138,9 @@ export function RunsCard(props: {
         </section>
       )}
       <section className="card">
-        <h3>Pending runs</h3>
+        <h3>
+          Pending runs <SimPinBadge machine={props.machine} />
+        </h3>
         {approval && (
           <p className={notice ? "run-hint" : "muted"} role={notice ? "status" : undefined}>
             {notice ?? `Approval needs the operator PIN${pedal ? `, then the foot pedal (input ${pedal.input_bit})` : ""}.`}
@@ -257,10 +262,15 @@ function PendingRunRow(props: {
   const blocker = approveBlocker(run, machine, { docRevision: props.docRevision, nowUnixS: props.nowUnixS });
   const stale = isStale(run, props.docRevision);
   const hint = pinHint(pin);
+  // Require Framing, Door Protect and the Job Checklist of the active device (src/libs/JobSafety.tsx).
+  const gates = useApprovalGates();
 
   // Leaving the confirm step forgets the PIN.
   useEffect(() => {
-    if (step === "idle") setPin("");
+    if (step === "idle") {
+      setPin("");
+      gates.reset();
+    }
     if (step === "confirm") pinRef.current?.focus();
   }, [step]);
   // Revert after a while without typing.
@@ -274,7 +284,7 @@ function PendingRunRow(props: {
     if (blocker && step === "confirm") setStep("idle");
   }, [blocker, step]);
 
-  const canFire = step === "confirm" && !blocker && validPin(pin);
+  const canFire = step === "confirm" && !blocker && validPin(pin) && gates.complete;
   const approve = async () => {
     if (!canFire) return;
     const sent = pin;
@@ -282,12 +292,13 @@ function PendingRunRow(props: {
     setStep("sending");
     setError(null);
     try {
-      await api.approveRun(run.id, sent);
+      const ticks = checklistTicks(gates.gates.checklist, gates.ticks);
+      await (ticks ? libsApi.approve(run.id, sent, ticks) : api.approveRun(run.id, sent));
       setStep("idle");
     } catch (e) {
       const code = e instanceof ApiError ? e.code : undefined;
       const detail = e instanceof ApiError && e.detail ? e.detail : e instanceof Error ? e.message : String(e);
-      const text = approvalErrorText(code, detail);
+      const text = (code ? null : approvalRefusalText(detail)) ?? approvalErrorText(code, detail);
       setError(text);
       // A mistyped PIN may be retried straight away; anything else goes back to the start.
       setStep(code === "pin_invalid" || code === "pin_required" ? "confirm" : "idle");
@@ -320,6 +331,7 @@ function PendingRunRow(props: {
           <p>
             <strong>This fires the laser.</strong> Enclosure closed, eyewear on, focus and stock checked?
           </p>
+          <ApprovalChecks state={gates} disabled={step === "sending"} />
           <label className="pin-field">
             <span>Operator PIN</span>
             <input

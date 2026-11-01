@@ -33,8 +33,10 @@ test("classify by extension, case-insensitively", () => {
   assert.equal(classifyFile("x.lbrn"), "lbrn-old");
   assert.equal(classifyFile("coin.lbt"), "lbrn-old");
   assert.equal(classifyFile("x.openetch"), "openetch");
-  assert.equal(classifyFile("logo.ai"), "not-yet");
-  assert.equal(classifyFile("logo.pdf"), "not-yet");
+  assert.equal(classifyFile("logo.ai"), "engine");
+  assert.equal(classifyFile("logo.pdf"), "engine");
+  assert.equal(classifyFile("part.STL"), "engine");
+  assert.equal(classifyFile("path.gcode"), "not-yet");
   assert.equal(classifyFile("readme.txt"), "unknown");
   assert.equal(classifyFile("noext"), "unknown");
   assert.equal(classifyFile(".svg"), "unknown");
@@ -68,17 +70,18 @@ test("a project file in a drop of several is refused; LightBurn files are all ke
   assert.deepEqual(p.imports.map((x) => x.file.name), ["a.svg"]);
 });
 
-test("unknown, old LightBurn and not-yet formats are refused with a reason", () => {
-  const p = routeDroppedFiles([f("r.txt"), f("c.lbt"), f("l.ai"), f("t.TIFF"), f("noext")], all);
+test("unknown, old LightBurn and engine-only formats are refused with a reason (older engines)", () => {
+  const p = routeDroppedFiles([f("r.txt"), f("c.lbt"), f("l.ai"), f("t.TIFF"), f("noext"), f("p.gcode")], all);
   assert.ok(planIsEmpty(p));
   assert.deepEqual(
     p.refused.map((r) => r.reason),
     [
       ".txt files cannot be imported",
-      "LightBurn .lbrn/.lbt files are not supported; save as .lbrn2",
-      "Adobe Illustrator (.ai) import is not supported yet",
-      "TIFF (.tiff) import is not supported yet",
+      "LightBurn .lbrn/.lbt files need a newer OpenEtch engine; save as .lbrn2",
+      "Adobe Illustrator (.ai) import needs a newer OpenEtch engine",
+      "TIFF (.tiff) import needs a newer OpenEtch engine",
       "not a file type OpenEtch can import",
+      "G-code (.gcode) import is not supported yet",
     ],
   );
 });

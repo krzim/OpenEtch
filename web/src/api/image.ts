@@ -20,7 +20,9 @@ export type DitherMode =
   | "newsprint"
   | "halftone"
   | "sketch"
-  | "grayscale";
+  | "grayscale"
+  /** LightBurn's 3D Sliced (galvo, `3dslice`): a depth map engraved one grey-level slice per pass, deepest first. */
+  | "slice3d";
 
 /**
  * One image's Adjust Image values (doc::ImageAdjust, `geometry.adjust`, absent while it changes nothing; LightBurn's
@@ -59,6 +61,8 @@ export interface ImageSettings {
   min_power_pct: number;
   halftone_cells_per_inch: number;
   halftone_angle_deg: number;
+  /** 3D Sliced only (LightBurn's "Clean whole image"): cleanup passes clean everything, not only the last slice. */
+  clean_whole_image?: boolean;
 }
 
 export const DEFAULT_ADJUST: ImageAdjust = { gamma: 1, contrast: 0, brightness: 0, enhance_radius: 0, enhance_amount: 0, denoise: 0 };
@@ -89,6 +93,7 @@ export const DITHER_MODES: { value: DitherMode; label: string; hint: string }[] 
   { value: "halftone", label: "Halftone", hint: "Round dots on a screen of the given cells per inch and angle" },
   { value: "sketch", label: "Sketch", hint: "Keeps edges and drops flat areas" },
   { value: "grayscale", label: "Grayscale", hint: "Varies the power per pixel between Min power and the layer's power" },
+  { value: "slice3d", label: "3D Sliced", hint: "Depth map: one grey-level slice per pass, deepest (darkest) first; galvo deep engraving" },
 ];
 
 /** DPI for a line interval in mm (null for an interval that is not a positive number). */
@@ -320,6 +325,14 @@ export function ditherImage(img: GrayImage, mode: string, o: DitherOptions): Uin
       }
       return out;
     }
+    case "slice3d":
+    case "3dslice":
+      // A depth map: shown as its grey levels (how many slices reach each dot); white is never engraved.
+      for (let i = 0; i < out.length; i++) {
+        const d = darkness(i);
+        out[i] = d < 0.5 / 255 ? 255 : Math.round(255 * (1 - d));
+      }
+      return out;
     case "sketch": {
       // Sobel edge strength on darkness, as the engine: fires where |gradient| / 4 >= 0.25; outside dots repeat the
       // centre, so the border is no edge.

@@ -18,6 +18,9 @@ import { LayerSection } from "../components/PropertiesPanel.tsx";
 import { Icon, NumberField } from "../components/ui.tsx";
 import type { Selection } from "../selection.ts";
 import { Dock } from "./Dock.tsx";
+import { layerPresetMenuItems } from "../libs/LayerDefaults.tsx";
+import { LinkIcon } from "../libs/MaterialLibrary.tsx";
+import { layerLink } from "../libs/model.ts";
 import { WsModal } from "./WsModal.tsx";
 import {
   copyLayerSettings,
@@ -143,6 +146,8 @@ export function CutsLayers(p: CutsLayersProps) {
         { label: t("layers.moveDown"), disabled: stepIndex(index, 1, doc.layers.length) === null, action: () => moveLayer(l.id, stepIndex(index, 1, doc.layers.length)) },
       );
     }
+    // Make Default / Reset / Library / Unlink (src/libs/LayerDefaults.tsx).
+    items.push(...layerPresetMenuItems(l, { t, run, notify: p.notify, report }));
     items.push(
       { sep: true },
       { label: t("layers.delete"), disabled: !p.has(C.OPT.layerDelete) || others.length === 0, action: () => setConfirmDelete(l.id) },
@@ -254,6 +259,11 @@ export function CutsLayers(p: CutsLayersProps) {
                       </button>
                     )}
                     <span className="cuts-name">{l.name}</span>
+                    {layerLink(l) && (
+                      <span className="lx-link-badge" title={t("lib.layerLinked", { path: layerLink(l)!.path, library: layerLink(l)!.library })}>
+                        <LinkIcon />
+                      </span>
+                    )}
                   </td>
                   <td>{r.multi ? t("layers.multi") : modeLabel(main.mode)}</td>
                   <td className="c-num-r">{r.multi ? t("layers.multi") : `${trimNumber(speedToDisplay(main.speed_mm_s, prefs.speedUnit), 1)} / ${trimNumber(main.power_pct, 1)}`}</td>
@@ -359,7 +369,7 @@ export function CutsLayers(p: CutsLayersProps) {
               {t("layers.more")}
             </button>
           </div>
-          <div className="field-grid cuts-quick-grid">
+          <div className={`field-grid cuts-quick-grid${layerLink(sel) ? " lx-readonly" : ""}`} aria-disabled={layerLink(sel) ? true : undefined}>
             <NumberField label={t("layers.speed")} unit="mm/s" value={sel.settings.speed_mm_s} min={0.01} onCommit={(v) => v !== null && patch(sel, { speed_mm_s: v })} />
             <NumberField label={t("layers.power")} unit="%" value={sel.settings.power_pct} min={0} max={100} onCommit={(v) => v !== null && patch(sel, { power_pct: v })} />
             <NumberField label={t("layers.passes")} value={sel.settings.passes} min={1} max={1000} digits={0} onCommit={(v) => v !== null && patch(sel, { passes: Math.round(v) })} />

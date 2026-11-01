@@ -194,6 +194,69 @@ anywhere else.
     `document_changed` and `project_saved`). After New, an upload or a replacing import the document is shown as
     unsaved ("Untitled") and Save asks for a name, even if the engine still names the previous project, so the old
     project is never overwritten by accident.
+- **Files, projects and image tools** (`src/files/`, one hook `useFilesUi` for App.tsx; engine side in ARCHITECTURE.md
+  "Files and image tools", routes in crates/engine/src/userfiles.rs; pure logic in `files/fileFormats.ts`, tested;
+  HTTP in `files/filesApi.ts`; strings in `workspace/locales/en-files.ts`; styles in `files/files.css`):
+  - **Export** (File > Export…, Alt+X): SVG, DXF (keep circles, tolerance), AI (PDF-compatible) or PDF of the
+    selection or the whole project, layer colours or black, design bounds or workspace (`GET /api/export`). **Print**:
+    black only / keep colours, line width, selection only; Print opens the browser's print dialog on the print SVG at
+    1:1 in a hidden frame, Save PDF downloads the PDF fitted to A4/A3/Letter/Legal (`GET /api/print`). **Export
+    image** and **Save processed bitmap** for a selected image (File menu and context menu).
+  - **Imports of every further format**: PDF, AI, EPS, HPGL/PLT, Gerber/Excellon, STL/OBJ/OFF/PLY/3MF/AMF, TIFF/TGA,
+    EzCad `.ezd`, legacy `.lbrn` and `.lbt` go to `POST /api/document/import` with the raw file (100 MB). Picked
+    (Ctrl+I) or dropped files reach `intercept` before App's router (on engines with `art.import_pdf` it also takes
+    SVG, DXF and bitmaps, so the import options apply to all); 3D models open the Import 3D model dialog (rotation,
+    width, DPI, depth cutoff, 16-bit, invert, transparent background, equalize, outline) and Gerber files the Gerber
+    dialog (type, invert); File > Open > Upload opens any of them as a new project (`mode=replace`, after the
+    unsaved-changes prompt) and a `.lbt` opens as a new untitled document. **Import options** (File menu and the
+    import dialog, kept in this browser): group, select and centre imported shapes, import hidden AI/PDF layers.
+  - **Projects**: Notes window (Ctrl+Alt+N, `doc.set_notes`, "Show notes when the file opens": shown once when a
+    file is opened, detected by the fresh one-step timeline an open starts); Restore from autosave / backup (lists,
+    restore as an unsaved document, autosave interval and how many are kept) with the autosave status in the File
+    menu; templates (Open template with Upload .lbt, Save as template, Recent templates kept in this browser);
+    Preferences and bundles (export / import `.oeprefs`, the automatic backups, user bundles of preferences, devices
+    and libraries; imports are confirmed first); project thumbnails in the Open dialog.
+  - **Pages** dock (Design panel): switch, add, duplicate, delete, rename (double-click), reorder (drag or Move up /
+    down); the canvas context menu moves the selection to another page.
+  - **Image tools** (context menu, hotkeys): Trace image (Alt+T: live preview over the image, Fade image, Show points,
+    boundary dragged in the preview, Cutoff / Threshold / Ignore less than / Smoothness / Optimize, transparency,
+    centre line, sketch, delete image after), Adjust image (Alt+I), Convert to bitmap, Apply / Remove / Flatten mask
+    and Crop to mask (the canvas clips a masked image to its mask), Replace image / to fit / Refresh (pick the edited
+    file). The Image section's **3D Sliced** dither shows Slices (the layer's passes), Enable cleanup pass, Clean
+    after # of passes and Clean whole image (`files/Slice3d.tsx`).
+- **Libraries, defaults, laser tools and job safety** (`src/libs/`, one hook `useLibsUi` for App.tsx; routes in
+  crates/engine/src/api_libs.rs; pure logic in `libs/model.ts` and `libs/testgen.ts`, tested in `libs/model.test.ts`;
+  HTTP in `libs/api.ts`; shared state in `libs/store.ts`; strings in `workspace/locales/en-libs.ts`; styles in
+  `libs/libs.css`):
+  - **Material Library** dock (both workspaces; File > Material Library, layer menu > Library…): Select Library with
+    Load (.clb) and Manage Library (Save, Save As, Create New, Merge With, Rename, Unload with save / discard,
+    Download .clb), a searchable tree Material > Thickness or Title > Description, the target layer (the selected
+    one), Assign, Link, Edit Cut, Update, Edit Description, Duplicate, Delete (also on the entry's right-click menu)
+    and Create new from layer. A linked layer shows a link badge in Cuts / Layers and the Library tree, its cut
+    settings are read-only (Properties shows Unlink; the quick-edit row is disabled), and Edit Cut starts from a linked
+    layer's full settings when there is one (else only the parameters shown are kept).
+  - **Defaults**: Properties > Defaults and the Cuts / Layers menu: Make Default, Make Default for All, Reset to Default,
+    Reset to OpenEtch defaults, Load default layer settings on New / restart. Optimization Settings: Set as Defaults,
+    Reset to saved, Reset to OpenEtch defaults, Forget saved defaults.
+  - **Laser Tools** (toolbar dropdown and Laser window): Material Test, Interval Test and Focus Test dialogs with
+    LightBurn's options and a live preview numbered in LightBurn's safe burn order (Create, or Create and request run);
+    Set start point (click a node of a closed shape; Shift reverses, Ctrl clears, Esc ends; start points are marked
+    on the canvas; also on the canvas menu); Print and Cut (two targets from the selection, find each with the red dot,
+    Align with optional scale); Camera (shown only when the engine has `/api/camera`: capture from the engine's UVC
+    camera, this browser's camera or an image; lens calibration from checkerboard views; alignment from four burned
+    marks; the camera image on the canvas with an opacity slider).
+  - **Laser window**: Red dot always on (the device's IO setting), Batch (saved projects in order, one approval), Repeat
+    table (Repeat Marking with a linear or rotating table axis), Job log (newest runs, totals, Save as CSV). Framing
+    options gain Image bounds; Cut settings gain Offset Fill and Kerf offset.
+  - **Approval gates**: the confirm step of a pending run lists Require Framing and Door Protect of the active device
+    and the Job Checklist, whose every item must be ticked before Confirm and fire (sent as `checklist`); the engine's
+    refusals get specific texts. A "SIMULATOR TEST PIN" badge shows in the top bar and the Runs card while
+    `approval.sim_pin` is true. Device Settings > Job edits Require Framing, the checklist items, Play sound (plus a
+    per-browser mute and Test sound) and Load defaults on New; Device Settings > Ports has LightBurn's IO ports (Door
+    Protect and Start Framing inputs with their level, Busy / Ready / Done Marking outputs and pulse, Red Dot Always On);
+    the extension axis can be a linear or rotating table. The `job_finished_sound` event plays a short chime.
+  - **File and Help**: Find My Laser / Add galvo (USB scan, markcfg7 + .cor, name, make active), Batch run, Job log;
+    Help > Enable debug log, Report a bug (recent log, Download bug report), Check for updates (opt-in).
 - **Narrow screens** (< 1024 px, e.g. iPad portrait): the Browser and Properties panels become drawers toggled from the
   toolbar.
 
@@ -221,8 +284,12 @@ src/
   components/EditTools.tsx, EditMenus.tsx, EditDialogs.tsx, Rulers.tsx, edit.css   editing tools, menus, dialogs, rulers
   api/geomCommands.ts geometry command builders (path.*, node.*, shape.polygon/line, arrays, order, lock...) (tested)
   nodes.ts, drawTools.ts, guides.ts   node model, drawing/measure/ruler maths, guides (pure; tested)
+  libs/               Library dock, defaults, test generators, approval gates, laser tools, camera, Find My Laser,
+                      Help additions (useLibsUi.tsx for App; model.ts and testgen.ts are pure and tested; libs.css)
   text/               Text and Barcode tools, text/barcode properties, Variable Text window, font picker
                       (useTextTools.tsx wraps EditTools' canvas tool; textModel.ts is pure and tested; text.css)
+  files/              Export / Print, imports of further formats, templates, notes, backups, prefs and bundles, Pages
+                      dock, Trace Image, Convert to Bitmap, masks, 3D Sliced (useFilesUi.tsx; fileFormats.ts pure, tested)
   workspace/          the workspace layer (styles in workspace/workspace.css):
     prefs.ts, usePrefs.ts       Preferences store (localStorage) and hooks: theme, units, grid, snapping, nudge, wheel,
                                 UI scale, crosshair, language, hotkey overrides

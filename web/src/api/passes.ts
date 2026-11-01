@@ -101,7 +101,7 @@ export function cleanupPass(main: CutSettings, frequencyMaxKhz = Infinity): { se
 
 /** "Line", "Fill", "Fill+Line". */
 export function modeLabel(mode: FillMode | string | undefined): string {
-  return mode === "fill" ? "Fill" : mode === "fill_then_line" ? "Fill+Line" : mode === "line" ? "Line" : String(mode ?? "");
+  return mode === "fill" ? "Fill" : mode === "fill_then_line" ? "Fill+Line" : mode === "line" ? "Line" : mode === "offset_fill" ? "Offset Fill" : String(mode ?? "");
 }
 
 /** One-line settings summary: "Fill · 20% · 1000 mm/s · 30 kHz · 200 ns · ×2", the speed in the display unit. */

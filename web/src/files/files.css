@@ -1,0 +1,274 @@
+/* Files, project and image-tool dialogs (src/files/). Colours are the app's tokens from styles.css, so both themes
+   work without overrides here. */
+
+.files-list {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.files-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.files-list-name {
+  overflow-wrap: anywhere;
+  font-weight: 500;
+}
+
+.files-grid3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.files-grid3 .field-label {
+  width: auto;
+  min-width: 0;
+}
+
+@media (max-width: 560px) {
+  .files-grid3 {
+    grid-template-columns: 1fr;
+  }
+}
+
+.files-details {
+  margin: 8px 0;
+}
+
+.files-details summary {
+  cursor: pointer;
+  color: var(--text-2);
+  padding: 4px 0;
+}
+
+.files-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: calc(11px * var(--ui-scale, 1));
+  font-weight: 500;
+}
+
+.files-result {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.files-notes {
+  width: 100%;
+  min-height: 220px;
+  box-sizing: border-box;
+  resize: vertical;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.files-notes:focus {
+  outline: 0;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.files-autosave {
+  font-size: calc(11px * var(--ui-scale, 1));
+  cursor: default;
+  min-height: 0;
+  padding-top: 0;
+}
+
+/* Open dialog thumbnails */
+.files-thumb {
+  flex: none;
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: var(--field);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.files-thumb img {
+  max-width: 100%;
+  max-height: 100%;
+  display: block;
+}
+
+.project-row.with-thumb {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+
+.project-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* Pages dock */
+.pages-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.pages-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 3px 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: var(--surface);
+  cursor: pointer;
+  user-select: none;
+}
+
+.pages-row:hover {
+  background: var(--surface-hover);
+}
+
+.pages-row.active {
+  border-color: var(--accent);
+  background: var(--accent-fill);
+}
+
+.pages-row.drop-target {
+  border-style: dashed;
+}
+
+.pages-thumb {
+  flex: none;
+  width: 26px;
+  height: 20px;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: var(--field);
+  color: var(--muted);
+  font-size: calc(11px * var(--ui-scale, 1));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pages-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pages-meta {
+  color: var(--muted);
+  font-size: calc(11px * var(--ui-scale, 1));
+}
+
+/* Trace Image */
+.trace-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 12px;
+}
+
+@media (max-width: 760px) {
+  .trace-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.trace-preview svg {
+  width: 100%;
+  height: 340px;
+  display: block;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--field);
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.trace-path {
+  stroke: var(--agent);
+}
+
+.trace-point {
+  fill: var(--accent);
+}
+
+.trace-boundary {
+  fill: var(--accent-fill);
+  stroke: var(--accent);
+}
+
+.trace-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.trace-controls .field-label {
+  width: 120px;
+}
+
+.trace-slider {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.trace-slider input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--accent);
+}
+
+.trace-num {
+  width: 64px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.trace-preview .btn.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* 3D Sliced block in the Image section */
+.slice3d {
+  margin-top: 6px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-soft);
+}

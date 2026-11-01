@@ -19,6 +19,8 @@ import { usePrefs } from "../workspace/usePrefs.ts";
 import { formatLength, lengthDigits, lengthToDisplay, trimNumber } from "../workspace/units.ts";
 import { CutOptionsSection, ShapeCutProperties } from "./CutOptions.tsx";
 import { ImageSettings } from "./ImageSettings.tsx";
+import { LayerPresetBar } from "../libs/LayerDefaults.tsx";
+import { layerLink } from "../libs/model.ts";
 import type { ArrangeAction } from "./Toolbar.tsx";
 import { CheckField, ColorField, Icon, NumberField, PairField, TextField } from "./ui.tsx";
 
@@ -250,6 +252,7 @@ const MODES: { value: FillMode; label: string }[] = [
   { value: "line", label: "Line" },
   { value: "fill", label: "Fill" },
   { value: "fill_then_line", label: "Fill + line" },
+  { value: "offset_fill", label: "Offset Fill" },
 ];
 
 /**
@@ -286,6 +289,7 @@ export function LayerSection({
       <CheckField label="Show" checked={layer.visible} onChange={(visible) => setL({ visible })} />
       <CheckField label="Output" checked={layer.output} onChange={(output) => setL({ output })} />
 
+      <LayerPresetBar layer={layer} run={run} report={report} />
       <PassEditor layer={layer} machine={machine} run={run} report={report} has={has} />
       <ImageSettings layer={layer} doc={doc} run={run} report={report} has={has} />
 
@@ -378,8 +382,10 @@ function PassEditor({
     const r = await exec(C.layerSubMove(layer.id, sub, to));
     if (r) select(passAfterMove(pass, sub, to));
   };
-  const canEdit = sub === null || editSubs;
-  const canAdd = can(C.OPT.layerSubAdd);
+  // A layer linked to a library preset follows it and cannot be edited until unlinked (LightBurn's Link).
+  const linked = layerLink(layer) !== null;
+  const canEdit = (sub === null || editSubs) && !linked;
+  const canAdd = can(C.OPT.layerSubAdd) && !linked;
   const full = subs >= MAX_SUB_LAYERS;
 
   return (
@@ -402,7 +408,7 @@ function PassEditor({
           </button>
         ))}
       </div>
-      {(canAdd || (sub !== null && (can(C.OPT.layerSubDuplicate) || can(C.OPT.layerSubMove) || can(C.OPT.layerSubDelete)))) && (
+      {!linked && (canAdd || (sub !== null && (can(C.OPT.layerSubDuplicate) || can(C.OPT.layerSubMove) || can(C.OPT.layerSubDelete)))) && (
         <div className="pass-actions">
           {canAdd && (
             <>
@@ -453,7 +459,7 @@ function PassEditor({
       )}
       {subs > 0 && !editSubs && <p className="hint">This engine cannot edit sub-layers: they are shown read-only and still run after the main settings.</p>}
 
-      {sub !== null && editSubs && (
+      {sub !== null && editSubs && !linked && (
         <>
           <TextField label="Sub-layer" value={entry.settings.name ?? ""} onCommit={(name) => setSub({ name: name.trim() || null })} />
           <CheckField
@@ -553,6 +559,7 @@ function CutSettingsForm({ settings: s, machine, onPatch }: { settings: CutSetti
 
       <h4 className={hatching ? "" : "muted"}>Hatch{hatching ? "" : " (fill modes only)"}</h4>
       <NumberField label="Interval" unit="mm" value={s.hatch.interval_mm} min={0.001} digits={4} onCommit={num((interval_mm) => ({ hatch: { interval_mm } }))} />
+      {s.mode === "offset_fill" && <p className="hint">Offset Fill: concentric inward outlines at the interval; the angle, cross hatch and bidirectional settings below do not apply.</p>}
       <NumberField label="Angle" unit="°" value={s.hatch.angle_deg} digits={2} onCommit={num((angle_deg) => ({ hatch: { angle_deg } }))} />
       <NumberField
         label="Increment"

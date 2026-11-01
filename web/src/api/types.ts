@@ -7,7 +7,8 @@ export type Affine = [number, number, number, number, number, number];
 
 export type Vec2 = [number, number];
 
-export type FillMode = "line" | "fill" | "fill_then_line";
+/** `offset_fill`: LightBurn's Offset Fill (concentric inward outlines at the hatch interval). */
+export type FillMode = "line" | "fill" | "fill_then_line" | "offset_fill";
 
 export interface Hatch {
   interval_mm: number;

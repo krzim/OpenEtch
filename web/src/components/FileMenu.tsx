@@ -64,6 +64,8 @@ import {
 import type { ProjectEntry } from "../api/types.ts";
 import type { Engine } from "../api/useEngine.ts";
 import { carryGuides, clearGuides, guideScope, UNSAVED_SCOPE } from "../guides.ts";
+import { ENGINE_ACCEPT } from "../files/fileFormats.ts";
+import { ProjectThumb } from "../files/ProjectDialogs.tsx";
 import { Icon, Modal, fmt } from "./ui.tsx";
 
 type Notify = (msg: string, kind?: "info" | "error") => void;
@@ -165,8 +167,12 @@ export function useFileActions(p: {
     engineKind?: "default-device" | "active-device";
     active?: DeviceSummary | null;
   };
+  /** Open a file that is no project (PDF, AI, a 3D model, ...) as a new project (src/files/useFilesUi.tsx). */
+  openOther?: (file: File) => void;
 }): FileActions {
   const { engine, notify, report } = p;
+  const openOtherRef = useRef(p.openOther);
+  openOtherRef.current = p.openOther;
   const onImportedRef = useRef(p.onImported);
   onImportedRef.current = p.onImported;
   const { doc, project } = engine;
@@ -330,7 +336,10 @@ export function useFileActions(p: {
     (file: File, lbrn2Mode?: ImportMode) => {
       const format = fileFormat(file.name);
       if (format === null) {
-        notify("Choose a .openetch project or a LightBurn .lbrn2 file.", "error");
+        if (openOtherRef.current) {
+          setModal(null);
+          openOtherRef.current(file);
+        } else notify("Choose a .openetch project or a LightBurn .lbrn2 file.", "error");
         return;
       }
       if (format === "lbrn2") {
@@ -495,6 +504,7 @@ export function FileMenu({
   onDevices,
   recent,
   extra,
+  files,
 }: {
   file: FileActions;
   onImport: () => void;
@@ -503,6 +513,8 @@ export function FileMenu({
   recent?: (close: () => void) => ReactNode;
   /** More entries at the end (Preferences, Edit hotkeys), given a function that closes the menu. */
   extra?: (close: () => void) => ReactNode;
+  /** Export, Print, templates, notes, backups... (src/files/useFilesUi.tsx), after Export to LightBurn. */
+  files?: (close: () => void) => ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
@@ -556,6 +568,7 @@ export function FileMenu({
           {item("Import…", onImport, shortcut("I"))}
           {item("Import LightBurn…", file.openLbrn2Dialog, ".lbrn2")}
           {item("Export to LightBurn…", () => file.setModal({ kind: "export" }), ".lbrn2")}
+          {files?.(() => setOpen(false))}
           {onDevices && (
             <>
               <div className="menu-sep" role="separator" />
@@ -692,7 +705,7 @@ function OpenDialog({ file, onClose }: { file: FileActions; onClose: () => void 
       <input
         ref={input}
         type="file"
-        accept=".openetch,.lbrn2"
+        accept={`.openetch,.lbrn2,${ENGINE_ACCEPT}`}
         hidden
         onChange={(e) => {
           const f = e.target.files?.[0];
@@ -710,19 +723,22 @@ function OpenDialog({ file, onClose }: { file: FileActions; onClose: () => void 
           {list.map((pr) => (
             <button
               key={pr.name}
-              className={`project-row${pr.name === file.projectName ? " current" : ""}`}
+              className={`project-row with-thumb${pr.name === file.projectName ? " current" : ""}`}
               disabled={file.busy}
               onClick={() => file.openProject(pr.name)}
             >
-              <span className="project-row-name">{pr.name}</span>
-              <span className="project-row-meta">
-                {[formatModified(pr.modified_unix_s), formatBytes(pr.size)].filter(Boolean).join(" · ")}
+              <ProjectThumb name={pr.name} modified={pr.modified_unix_s} />
+              <span className="project-row-text">
+                <span className="project-row-name">{pr.name}</span>
+                <span className="project-row-meta">
+                  {[formatModified(pr.modified_unix_s), formatBytes(pr.size)].filter(Boolean).join(" · ")}
+                </span>
               </span>
             </button>
           ))}
         </div>
       )}
-      <p className="hint">Upload opens a .openetch project, or imports a LightBurn .lbrn2 file.</p>
+      <p className="hint">Upload opens a .openetch project, imports a LightBurn .lbrn2 file, or opens a vector, image or 3D model file as a new project.</p>
     </Modal>
   );
 }

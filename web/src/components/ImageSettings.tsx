@@ -31,6 +31,7 @@ import {
 } from "../api/image.ts";
 import type { DocObject, GDocument, Geometry, Layer } from "../api/types.ts";
 import { CheckField, Modal, NumberField, fmt } from "./ui.tsx";
+import { Slice3dSettings } from "../files/Slice3d.tsx";
 
 type Run = (inv: Invocation | Invocation[]) => Promise<unknown>;
 /** An image's geometry as the engine sends it (`adjust` only when it changes something). */
@@ -159,6 +160,7 @@ export function ImageSettings({
           <p className="hint">The lightest engraved dot; the darkest uses the layer's power ({fmt(layer.settings.power_pct, 1)} %). Pure white never fires.</p>
         </>
       )}
+      <Slice3dSettings layer={layer} run={run} report={report} has={has} />
       <div className="btn-row">
         <button className="btn" title="Gamma, contrast, brightness and enhance of this layer's images, with a live preview" onClick={() => setAdjusting(true)}>
           Adjust image…

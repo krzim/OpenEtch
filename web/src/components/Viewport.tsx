@@ -73,6 +73,7 @@ import {
 } from "../selection.ts";
 import { useDitheredHref } from "./ImageSettings.tsx";
 import { CanvasLayer, ToolpathLayer, originalHref, paintImages, useBitmaps, useDpr, type ImageItem, type PaintArgs } from "./SceneCanvas.tsx";
+import { maskClips } from "../files/fileFormats.ts";
 import { buildToolpath, frameCoalescer, gridSpacing, type ToolpathStyle, type View } from "../sceneLayers.ts";
 import {
   SNAP_TOL_PX,
@@ -948,6 +949,8 @@ export function Viewport(props: ViewportProps) {
   );
   const imageHrefs = useMemo(() => [...new Set(imageSources.map((i) => i.href))], [imageSources]);
   const bitmapVersion = useBitmaps(imageHrefs);
+  // Masked images (Apply Mask to Image) show only inside their mask (src/files/fileFormats.ts).
+  const imageClips = useMemo(() => maskClips(doc), [doc]);
   const imageItems = useMemo<ImageItem[]>(
     () =>
       imageSources.map(({ o, g, href }) => ({
@@ -956,8 +959,9 @@ export function Viewport(props: ViewportProps) {
         m: liveObjects && selectedSet.has(o.id) ? mul(liveObjects, o.transform) : o.transform,
         widthMm: g.width_mm,
         heightMm: g.height_mm,
+        clip: imageClips.get(o.id),
       })),
-    [imageSources, liveObjects, selectedSet],
+    [imageSources, liveObjects, selectedSet, imageClips],
   );
   const paintImageLayer = useMemo(
     () => (imageItems.length ? (ctx: CanvasRenderingContext2D, a: PaintArgs) => paintImages(ctx, a, imageItems, showPreview ? 0.3 : 1) : null),

@@ -1,7 +1,7 @@
 // Top bar extras: the Help menu (keyboard shortcuts, documentation links, About with versions and the MCP address),
 // the Preferences button and a quick theme switch (Light / Dark / Match system).
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { MachineStatus } from "../api/types.ts";
 import { Icon } from "../components/ui.tsx";
 import { hintFor } from "./hotkeys.ts";
@@ -49,6 +49,8 @@ export interface TopActionsProps {
   machine: MachineStatus | null;
   onHotkeys: () => void;
   onPreferences: () => void;
+  /** More Help entries (src/libs: debug log, Report a Bug, Check for Updates), above About. */
+  helpExtra?: (close: () => void) => ReactNode;
 }
 
 export function TopActions(p: TopActionsProps) {
@@ -102,6 +104,12 @@ export function TopActions(p: TopActionsProps) {
             {link(DOC_LINKS.lightburn, t("help.lightburn"))}
             {link(DOC_LINKS.issues, t("help.issues"))}
             <div className="menu-sep" role="separator" />
+            {p.helpExtra && (
+              <>
+                {p.helpExtra(() => help.setOpen(false))}
+                <div className="menu-sep" role="separator" />
+              </>
+            )}
             <button
               role="menuitem"
               className="menu-item"

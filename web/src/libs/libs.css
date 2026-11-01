@@ -1,0 +1,535 @@
+/* Library window, layer presets, test generators, approval gates, camera and the other libs windows. Colours come
+   from the theme tokens in styles.css (light and dark). */
+
+.lx-drop {
+  position: relative;
+  display: inline-flex;
+}
+.lx-drop > .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.lx-drop-menu {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  z-index: 60;
+  min-width: 210px;
+}
+.lx-drop-menu.up {
+  top: auto;
+  bottom: calc(100% + 2px);
+}
+.lx-done {
+  align-self: center;
+}
+.lx-drop-menu.menu-right {
+  left: auto;
+  right: 0;
+}
+.lx-tool-menu > .btn {
+  height: auto;
+  min-height: 44px;
+  flex-direction: column;
+  gap: 1px;
+  padding: 3px 8px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 11px;
+}
+.lx-tool-menu > .btn:hover {
+  background: var(--surface-hover);
+}
+.lx-tool-menu > .btn .icon {
+  color: var(--icon);
+}
+.lx-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* ---- Library dock ---- */
+.lx-lib-head {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.lx-lib-head select {
+  min-width: 0;
+  max-width: 100%;
+}
+.lx-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 120px;
+}
+.lx-inline select {
+  flex: 1 1 auto;
+}
+.lx-lib-info {
+  margin: 4px 0;
+}
+.lx-dirty {
+  color: var(--warn-text);
+}
+.lx-search {
+  width: 100%;
+  margin: 4px 0;
+  box-sizing: border-box;
+}
+.lx-tree {
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 2px 0;
+}
+.lx-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  padding: 3px 6px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  min-height: 26px;
+}
+.lx-tree-row:hover {
+  background: var(--surface-hover);
+}
+.lx-tree-mat {
+  font-weight: 600;
+}
+.lx-tree-group {
+  padding-left: 20px;
+  color: var(--text-2);
+}
+.lx-tree-entry {
+  padding-left: 40px;
+}
+.lx-tree-entry.selected {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.lx-tree-row .chevron {
+  display: inline-flex;
+  transition: transform 0.12s;
+}
+.lx-tree-row .chevron.open {
+  transform: rotate(90deg);
+}
+.lx-entry-name {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lx-link-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.lx-link-icon {
+  vertical-align: -2px;
+}
+.lx-lib-layer {
+  margin-top: 6px;
+}
+.lx-entry {
+  margin: 4px 0;
+  padding: 4px 6px;
+  border-left: 3px solid var(--accent);
+  background: var(--accent-fill);
+}
+.lx-entry-path {
+  font-size: 12px;
+  font-weight: 600;
+  word-break: break-word;
+}
+.lx-entry-sum {
+  font-size: 11px;
+}
+.lx-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 6px 0;
+}
+.lx-create {
+  width: 100%;
+}
+
+/* ---- layer presets ---- */
+.lx-preset-bar {
+  margin: 6px 0;
+}
+.lx-linked {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 4px 6px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--accent-fill);
+}
+.lx-linked-path {
+  flex: 1 1 100px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.lx-preset-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+.lx-readonly {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+/* ---- generators ---- */
+.lx-gen {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+@media (max-width: 760px) {
+  .lx-gen {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.lx-gen-preview {
+  position: sticky;
+  top: 0;
+  align-self: start;
+}
+.lx-preview {
+  margin: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: var(--field);
+  padding: 6px;
+}
+.lx-preview svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 420px;
+}
+.lx-preview figcaption {
+  font-size: 11px;
+  text-align: right;
+}
+.lx-pv-box {
+  fill: var(--accent);
+  stroke: var(--field-edge);
+  stroke-width: 0.1;
+}
+.lx-pv-border {
+  fill: none;
+  stroke: var(--text-2);
+  stroke-width: 0.2;
+}
+.lx-pv-line {
+  stroke: var(--text);
+  stroke-width: 0.25;
+}
+.lx-pv-order {
+  fill: var(--text);
+  font-family: system-ui, sans-serif;
+  pointer-events: none;
+}
+.lx-pv-label {
+  fill: var(--text-2);
+  font-family: system-ui, sans-serif;
+}
+.lx-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin: 4px 0;
+}
+
+/* ---- approval gates ---- */
+.lx-sim-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--warn);
+  color: var(--on-accent);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.lx-gates {
+  margin: 6px 0;
+}
+.lx-gate {
+  margin: 2px 0;
+  font-size: 12px;
+  color: var(--warn-text);
+}
+.lx-checklist {
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+  padding: 4px 8px;
+  margin: 6px 0;
+  background: var(--warn-bg);
+}
+.lx-checklist legend {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--warn-text);
+}
+.lx-check-item {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 4px 0;
+  min-height: 28px;
+  font-size: 13px;
+  color: var(--text);
+}
+.lx-check-item input {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  margin-top: 1px;
+}
+.lx-textarea {
+  align-items: flex-start;
+}
+.lx-textarea textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 12px;
+  resize: vertical;
+}
+
+/* ---- lists and tables ---- */
+.lx-two {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+@media (max-width: 640px) {
+  .lx-two {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.lx-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+}
+ol.lx-list {
+  list-style: decimal inside;
+}
+.lx-list li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-bottom: 1px solid var(--border-soft);
+}
+ol.lx-list li {
+  display: list-item;
+}
+ol.lx-list li > * {
+  vertical-align: middle;
+}
+.lx-list-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+  max-width: 60%;
+}
+.lx-table-wrap {
+  max-height: 420px;
+  overflow: auto;
+}
+.lx-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.lx-table th,
+.lx-table td {
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--border-soft);
+  text-align: left;
+  vertical-align: top;
+}
+.lx-table th {
+  position: sticky;
+  top: 0;
+  background: var(--chrome);
+  color: var(--text-2);
+  font-weight: 600;
+}
+.lx-table .num {
+  text-align: right;
+  white-space: nowrap;
+}
+.lx-table .lx-sum {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lx-state-failed td:nth-child(2),
+.lx-state-aborted td:nth-child(2) {
+  color: var(--danger);
+}
+.lx-state-finished td:nth-child(2) {
+  color: var(--ok);
+}
+.lx-num {
+  width: 80px;
+}
+.lx-log {
+  max-height: 320px;
+  overflow: auto;
+  background: var(--chrome-2);
+  color: var(--text);
+  padding: 6px;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  border-radius: var(--radius);
+}
+
+/* ---- print and cut ---- */
+.lx-jog {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  margin: 4px 0;
+}
+.lx-jog > div {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+/* ---- camera ---- */
+.lx-cam-status {
+  margin: 6px 0;
+}
+.lx-cam-src {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.lx-frame {
+  margin-top: 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.lx-frame svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.lx-frame.pick svg {
+  cursor: crosshair;
+}
+.lx-frame-mark circle {
+  fill: none;
+  stroke: var(--snap);
+  stroke-width: 2;
+}
+.lx-frame-mark text {
+  fill: var(--snap);
+}
+.lx-video {
+  width: 100%;
+  max-height: 260px;
+  background: var(--chrome-2);
+}
+.lx-video.hidden {
+  display: none;
+}
+
+/* ---- canvas ---- */
+.lx-start-mark circle {
+  fill: none;
+  stroke: var(--ok);
+}
+.lx-start-mark .lx-start-dot {
+  fill: var(--ok);
+  stroke: none;
+}
+.lx-sp-nodes rect {
+  fill: var(--handle-fill);
+  stroke: var(--accent);
+}
+.lx-sp-nodes rect.hot {
+  fill: var(--ok);
+  stroke: var(--ok);
+}
+.lx-sp-bar {
+  top: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 8px;
+  background: var(--hint-bg);
+  color: var(--hint-fg);
+  border-radius: var(--radius);
+  font-size: 12px;
+  max-width: calc(100% - 32px);
+}
+
+.lx-laser-extras {
+  margin: 6px 0;
+}
+.lx-jobprefs h4 {
+  margin: 10px 0 4px;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}

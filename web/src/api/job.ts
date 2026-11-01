@@ -232,6 +232,8 @@ export interface FrameOptions {
   blanking: boolean | null;
   /** Live framing: the frame follows edits (and the keyboard nudges while framing). */
   live: boolean;
+  /** LightBurn's Image Bounds: images are framed by their content (non-white pixels), not their rectangle. */
+  imageBounds?: boolean;
 }
 
 export const DEFAULT_FRAME_OPTIONS: FrameOptions = {
@@ -265,6 +267,7 @@ export function normalizeFrameOptions(raw: unknown): FrameOptions {
     pointer: POINTERS.includes(o.pointer as FramePointer) ? (o.pointer as FramePointer) : d.pointer,
     blanking: typeof o.blanking === "boolean" ? o.blanking : null,
     live: o.live === true,
+    imageBounds: o.imageBounds === true,
   };
 }
 
@@ -285,6 +288,7 @@ export function frameRequestBody(o: FrameOptions, selection: readonly string[] =
   if (o.pointer !== "red") body.pointer = o.pointer;
   if (o.blanking !== null) body.blanking = o.blanking;
   if (o.live) body.live = true;
+  if (o.imageBounds) body.image_bounds = true;
   return body;
 }
 

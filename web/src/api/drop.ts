@@ -27,20 +27,37 @@ export const IMAGE_TYPES: Record<string, string> = {
 
 /** Formats LightBurn imports that OpenEtch has no importer for yet. */
 const NOT_YET: Record<string, string> = {
+  gc: "G-code",
+  gcode: "G-code",
+  nc: "G-code",
+  clb: "LightBurn library",
+};
+
+/**
+ * Formats only engines with `POST /api/document/import` read (PDF, AI, EPS, HPGL, Gerber, 3D models, TIFF/TGA,
+ * EzCad). On such engines src/files/useFilesUi.tsx takes them before this router; older engines refuse them here.
+ */
+const ENGINE_ONLY: Record<string, string> = {
   ai: "Adobe Illustrator",
   pdf: "PDF",
   eps: "EPS",
   plt: "HPGL",
   hpgl: "HPGL",
-  gc: "G-code",
-  gcode: "G-code",
-  nc: "G-code",
   tif: "TIFF",
   tiff: "TIFF",
-  clb: "LightBurn library",
+  tga: "TGA",
+  ezd: "EzCad",
+  gbr: "Gerber",
+  drl: "Excellon drill",
+  stl: "STL",
+  obj: "OBJ",
+  off: "OFF",
+  ply: "PLY",
+  "3mf": "3MF",
+  amf: "AMF",
 };
 
-export type FileKind = "svg" | "dxf" | "image" | "lbrn2" | "openetch" | "lbrn-old" | "not-yet" | "unknown";
+export type FileKind = "svg" | "dxf" | "image" | "lbrn2" | "openetch" | "lbrn-old" | "engine" | "not-yet" | "unknown";
 
 /** The extension of a file name, lower case, without the dot ("" when there is none). */
 export function fileExt(name: string): string {
@@ -58,6 +75,7 @@ export function classifyFile(name: string): FileKind {
   if (ext === "lbrn2") return "lbrn2";
   if (ext === "openetch") return "openetch";
   if (ext === "lbrn" || ext === "lbt") return "lbrn-old";
+  if (ext in ENGINE_ONLY) return "engine";
   if (ext in NOT_YET) return "not-yet";
   return "unknown";
 }
@@ -112,7 +130,11 @@ export function routeDroppedFiles<F extends { name: string; size: number }>(file
       continue;
     }
     if (kind === "lbrn-old") {
-      refuse("LightBurn .lbrn/.lbt files are not supported; save as .lbrn2");
+      refuse("LightBurn .lbrn/.lbt files need a newer OpenEtch engine; save as .lbrn2");
+      continue;
+    }
+    if (kind === "engine") {
+      refuse(`${ENGINE_ONLY[ext]} (.${ext}) import needs a newer OpenEtch engine`);
       continue;
     }
     if (kind === "not-yet") {
@@ -224,3 +246,9 @@ export function dropSummary(s: { imported: string[]; objects: number; refused: {
 
 /** `accept` for the Import picker: everything the router handles. */
 export const IMPORT_ACCEPT = [".svg", ".dxf", ...Object.keys(IMAGE_TYPES).map((e) => `.${e}`), ".lbrn2", ".openetch"].join(",");
+
+/** `accept` with the formats newer engines import too (src/files/fileFormats.ts ENGINE_ACCEPT). */
+export function importAccept(engineAccept: string | null): string {
+  if (!engineAccept) return IMPORT_ACCEPT;
+  return [...new Set([...IMPORT_ACCEPT.split(","), ...engineAccept.split(",")])].join(",");
+}

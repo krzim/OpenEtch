@@ -178,6 +178,8 @@ export interface ImageItem {
   m: Affine;
   widthMm: number;
   heightMm: number;
+  /** Apply Mask to Image: the mask's outline (SVG path data, field mm); only the inside (even-odd) is drawn. */
+  clip?: string;
 }
 
 /** Draws images centred on their local origin (bitmaps are y-down, the field is y-up). */
@@ -191,8 +193,14 @@ export function paintImages(ctx: CanvasRenderingContext2D, a: PaintArgs, items: 
     const sm = imageSmoothing(devicePxPerImagePx(m, it.widthMm, bmp.width));
     ctx.imageSmoothingEnabled = sm.enabled;
     if (sm.enabled) ctx.imageSmoothingQuality = sm.quality;
+    if (it.clip) {
+      ctx.save();
+      ctx.setTransform(vm[0], vm[1], vm[2], vm[3], vm[4], vm[5]);
+      ctx.clip(new Path2D(it.clip), "evenodd");
+    }
     ctx.setTransform(m[0], m[1], m[2], m[3], m[4], m[5]);
     ctx.drawImage(bmp.src, -it.widthMm / 2, -it.heightMm / 2, it.widthMm, it.heightMm);
+    if (it.clip) ctx.restore();
   }
   ctx.globalAlpha = 1;
 }

@@ -158,6 +158,10 @@ export function FramingControls(p: {
             <input type="checkbox" checked={o.outsideOnly} disabled={o.style !== "outline"} onChange={(e) => setFrameOptions({ outsideOnly: e.target.checked })} />
             {t("frame.outside")}
           </label>
+          <label className="laser-check" title={t("frame.imageBoundsTitle")}>
+            <input type="checkbox" checked={o.imageBounds === true} onChange={(e) => setFrameOptions({ imageBounds: e.target.checked })} />
+            {t("frame.imageBounds")}
+          </label>
           <label className="laser-check" title={t("laser.selectionTitle")}>
             <input type="checkbox" checked={o.selectionOnly} onChange={(e) => setFrameOptions({ selectionOnly: e.target.checked })} />
             {t("laser.selectionOnly")}

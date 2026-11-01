@@ -181,12 +181,29 @@ export function profileGroups(swapXY: boolean): FieldGroup[] {
           options: [
             { value: "z", label: "Z lift" },
             { value: "rotary", label: "Rotary" },
+            { value: "linear_table", label: "Linear table (Repeat Marking)" },
+            { value: "rotary_table", label: "Rotating table (Repeat Marking)" },
           ],
         },
-        { path: "axis.steps_per_mm", label: "Steps per mm", kind: "number", min: 0, digits: 4, hint: "Z lift" },
+        { path: "axis.steps_per_mm", label: "Steps per mm", kind: "number", min: 0, digits: 4, hint: "Z lift and linear table; a rotating table: steps per degree" },
         { path: "axis.min_mm", label: "Lowest Z", kind: "number", unit: "mm", digits: 3 },
         { path: "axis.max_mm", label: "Highest Z", kind: "number", unit: "mm", digits: 3 },
         { path: "axis.invert", label: "Reverse direction", kind: "bool" },
+      ],
+    },
+    {
+      id: "io",
+      title: "IO ports (LightBurn)",
+      fields: [
+        { path: "io.door_protect.bit", label: "Door Protect input", kind: "bit", hint: "Enclosure interlock: no run is approved and a running job aborts while it is active; none when empty" },
+        { path: "io.door_protect.active_low", label: "Door input active low", kind: "bool", hint: "The door counts as open when the input is low" },
+        { path: "io.start_framing.bit", label: "Start Framing input", kind: "bit", hint: "An external switch that starts framing (light only) while the board is idle" },
+        { path: "io.start_framing.active_low", label: "Framing input active low", kind: "bool" },
+        { path: "io.busy_light", label: "Busy output", kind: "bit", minBit: 1, hint: "On while a job runs" },
+        { path: "io.ready_light", label: "Ready output", kind: "bit", minBit: 1, hint: "On while the board is initialised" },
+        { path: "io.done_marking", label: "Done Marking output", kind: "bit", minBit: 1, hint: "Pulsed when a job finishes (laser off)" },
+        { path: "io.done_pulse_ms", label: "Done pulse length", kind: "number", unit: "ms", min: 1, max: 5000, digits: 0 },
+        { path: "io.red_dot_always_on", label: "Red Dot Always On", kind: "bool", hint: "The red pointer lit while the board is idle, never during a job" },
       ],
     },
   ];
@@ -251,6 +268,16 @@ export function profileValues(profileJson: unknown, lbdevText: string | null, in
       const ax = obj(p.axis);
       v["axis.enabled"] = ax !== null;
     }
+    // IO ports the profile leaves out are off: the engine omits `io` while every port is at its default.
+    {
+      for (const k of IO_INPUTS) {
+        v[`io.${k}.bit`] ??= null;
+        v[`io.${k}.active_low`] ??= false;
+      }
+      for (const k of ["io.busy_light", "io.ready_light", "io.done_marking"]) v[k] ??= null;
+      v["io.done_pulse_ms"] ??= 500;
+      v["io.red_dot_always_on"] ??= false;
+    }
   }
   const s = lbdevSettings(lbdevText);
   if (s) {
@@ -301,6 +328,9 @@ export function profileValues(profileJson: unknown, lbdevText: string | null, in
 
 // ---- checks and the patch -------------------------------------------------------------------------------------------
 
+/** The IO inputs (`MachineProfile.io`), each `{bit, active_low}` or absent. */
+const IO_INPUTS = ["door_protect", "start_framing"] as const;
+
 /** Defaults for a newly enabled axis. */
 export const AXIS_DEFAULTS = { role: "z", steps_per_mm: 100, min_mm: 0, max_mm: 50, invert: false };
 
@@ -349,6 +379,24 @@ export function checkValues(v: ProfileValues, limits: ProfileValues = {}): Recor
   const f = v.focus_light_port_bit;
   if (f !== null && f !== undefined && !(Number.isInteger(f) && (f as number) >= 1 && (f as number) <= 15 && f !== 8)) {
     err.focus_light_port_bit = "An output bit 1-15 other than 8";
+  }
+  for (const k of IO_INPUTS) {
+    const b = v[`io.${k}.bit`];
+    if (b !== null && b !== undefined && !(Number.isInteger(b) && (b as number) >= 0 && (b as number) <= 15)) err[`io.${k}.bit`] = "An input bit 0-15";
+  }
+  const outs = ["io.busy_light", "io.ready_light", "io.done_marking"];
+  const reserved = new Set([0, 8, typeof f === "number" ? f : -1]);
+  for (const o of outs) {
+    const b = v[o];
+    if (b === null || b === undefined) continue;
+    if (!(Number.isInteger(b) && (b as number) >= 1 && (b as number) <= 15) || reserved.has(b as number)) err[o] = "An output bit 1-15, not the laser-enable (0), red-dot (8) or focus bit";
+    else if (outs.some((x) => x !== o && v[x] === b)) err[o] = "Each output needs its own bit";
+  }
+  const dp = n("io.done_pulse_ms");
+  if (dp !== undefined && !(dp >= 1 && dp <= 5000)) err["io.done_pulse_ms"] = "1 to 5000 ms";
+  if (v["axis.enabled"] === true && (v["axis.role"] === "linear_table" || v["axis.role"] === "rotary_table")) {
+    const spm = n("axis.steps_per_mm");
+    if (spm !== undefined && !(spm > 0)) err["axis.steps_per_mm"] = "Must be more than 0";
   }
   if (v["axis.enabled"] === true && (v["axis.role"] ?? "z") === "z") {
     const spm = n("axis.steps_per_mm");
@@ -399,6 +447,14 @@ export function profilePatch(values: ProfileValues, edits: ProfileValues): Recor
       continue;
     }
     if (path === "red_light_port_bit" || path === "laser_enable_port_bit") continue;
+    const input = IO_INPUTS.find((k) => path.startsWith(`io.${k}.`));
+    if (input) {
+      // An input is sent whole ({bit, active_low}), or null when its bit is cleared.
+      const m = merged(values, edits);
+      const bit = m[`io.${input}.bit`];
+      setPath(patch, `io.${input}`, typeof bit === "number" ? { bit, active_low: m[`io.${input}.active_low`] === true } : null);
+      continue;
+    }
     setPath(patch, path, val);
   }
   if (axisTouched) {

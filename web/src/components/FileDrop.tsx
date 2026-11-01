@@ -72,7 +72,7 @@ export function DropOverlay({ label }: { label: string }) {
       <div className="drop-card">
         <Icon name="import" size={40} />
         <div className="drop-title">{label}</div>
-        <div className="drop-hint">SVG, DXF, PNG/JPG, LightBurn .lbrn2 or an OpenEtch project</div>
+        <div className="drop-hint">SVG, DXF, PDF, AI, EPS, HPGL, Gerber, 3D models, images, LightBurn or an OpenEtch project</div>
       </div>
     </div>
   );

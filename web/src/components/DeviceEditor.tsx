@@ -23,17 +23,20 @@ import type { DeviceSummary } from "../api/devices.ts";
 import type { GDocument } from "../api/types.ts";
 import { useT } from "../workspace/usePrefs.ts";
 import { LensWizard } from "./LensWizard.tsx";
+import { DeviceJobSettings } from "../libs/JobSafety.tsx";
+import { refreshActiveDevice } from "../libs/store.ts";
 import { Modal, NumberField } from "./ui.tsx";
 import "./job.css";
 
 type Notify = (msg: string, kind?: "info" | "error") => void;
 
-type Tab = "galvo" | "ports" | "axis" | "lens" | "info";
+type Tab = "galvo" | "ports" | "axis" | "job" | "lens" | "info";
 
 const TAB_GROUPS: Record<Tab, string[]> = {
   galvo: ["general", "field", "reddot", "galvo", "galvo1", "galvo2", "jump", "delay"],
-  ports: ["laser", "ports"],
+  ports: ["laser", "ports", "io"],
   axis: ["axis"],
+  job: [],
   lens: [],
   info: [],
 };
@@ -125,6 +128,7 @@ export function DeviceEditor(p: {
       p.notify(warnings.length ? `${t("dev.saved")} ${warnings.join("; ")}` : res?.reactivated ? t("dev.savedReactivated") : t("dev.saved"), warnings.length ? "error" : "info");
       setEdits({});
       setSeq((s) => s + 1);
+      void refreshActiveDevice();
       p.onChanged();
     } catch (e) {
       const msg = e instanceof ApiError ? (e.detail ?? e.message) : String(e);
@@ -178,6 +182,7 @@ export function DeviceEditor(p: {
     { v: "galvo", label: t("dev.tabGalvo") },
     { v: "ports", label: t("dev.tabPorts") },
     { v: "axis", label: t("dev.tabAxis") },
+    { v: "job", label: t("dev.tabJob") },
     { v: "lens", label: t("dev.tabLens") },
     { v: "info", label: t("dev.tabInfo") },
   ];
@@ -277,6 +282,8 @@ export function DeviceEditor(p: {
           </button>
           <Group title={t("dev.currentCorrections")} fields={[...groups.find((g) => g.id === "field")!.fields.slice(1), ...groups.find((g) => g.id === "galvo1")!.fields, ...groups.find((g) => g.id === "galvo2")!.fields]} values={values} readOnly />
         </div>
+      ) : tab === "job" ? (
+        <DeviceJobSettings active={p.active} notify={p.notify} report={p.report} />
       ) : tab === "info" ? (
         <ControllerInfo active={p.active} info={info} onRefresh={() => setSeq((s) => s + 1)} />
       ) : (
@@ -287,7 +294,7 @@ export function DeviceEditor(p: {
               <Group
                 key={g.id}
                 title={g.id === "galvo1" || g.id === "galvo2" ? `${g.title} (${g.fields[0].label.slice(-2, -1)})` : g.title}
-                fields={g.id === "axis" && values["axis.enabled"] !== true ? g.fields.slice(0, 1) : g.id === "axis" && values["axis.role"] === "rotary" ? g.fields.filter((f) => !/min_mm|max_mm|steps_per_mm/.test(f.path)) : g.fields}
+                fields={g.id === "axis" && values["axis.enabled"] !== true ? g.fields.slice(0, 1) : g.id === "axis" && values["axis.role"] === "rotary" ? g.fields.filter((f) => !/min_mm|max_mm|steps_per_mm/.test(f.path)) : g.id === "axis" && String(values["axis.role"]).endsWith("_table") ? g.fields.filter((f) => !/min_mm|max_mm/.test(f.path)) : g.fields}
                 values={values}
                 edited={edits}
                 errors={{ ...clientErrors, ...errors }}

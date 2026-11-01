@@ -13,7 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api/client.ts";
 import * as C from "./api/commands.ts";
 import {
-  IMPORT_ACCEPT,
+  importAccept,
   bytesToBase64,
   createdIds,
   dropSummary,
@@ -39,6 +39,11 @@ import { useTextTools } from "./text/useTextTools.tsx";
 import { guideScope } from "./guides.ts";
 import { DropOverlay, useFileDrop } from "./components/FileDrop.tsx";
 import { FileDialogs, FileMenu, useFileActions } from "./components/FileMenu.tsx";
+import { ENGINE_ACCEPT } from "./files/fileFormats.ts";
+import { useFilesUi } from "./files/useFilesUi.tsx";
+import { SimPinBadge } from "./libs/JobSafety.tsx";
+import { LaserExtras } from "./libs/LaserExtras.tsx";
+import { useLibsUi } from "./libs/useLibsUi.tsx";
 import { MachineCard, PreviewStatsCard, RunsCard } from "./components/LaserPanel.tsx";
 import { frameWithOptions } from "./components/FramingOptions.tsx";
 import { requestRunWithOptions, togglePause } from "./components/JobControls.tsx";
@@ -159,6 +164,7 @@ export function App() {
   const clip = useRef<Clip | null>(null);
   const cursor = useRef<Vec2 | null>(null);
   const importing = useRef(false);
+  const openOtherRef = useRef<(f: File) => void>(() => undefined);
 
   useEffect(() => {
     try {
@@ -234,10 +240,29 @@ export function App() {
     report,
     onImported: selectIds,
     lightburn: lightburnDevices,
+    openOther: (f) => openOtherRef.current(f),
   });
   const fileModalOpen = file.modal !== null;
   const saveFile = file.save;
   const activeLayer = selection.layer ?? doc?.layers[0]?.id ?? null;
+  // Export, Print, further import formats, templates, notes, backups, pages and image tools (src/files/).
+  const filesUi = useFilesUi({ engine, file, selection: selection.objects, selectIds, activeLayer, design: workspace === "design", notify, report });
+  openOtherRef.current = filesUi.openOther;
+  // Material library, defaults, test generators, laser tools, camera, job log, Help additions (src/libs/).
+  const libsUi = useLibsUi({
+    doc,
+    machine,
+    selection: selection.objects,
+    activeLayer,
+    design: workspace === "design",
+    designOnly: designOnlyReason(device),
+    run: engine.run,
+    notify,
+    report,
+    selectIds,
+    refreshMachine: () => void engine.refreshMachine(),
+    onStartPointTool: () => setTool("select"),
+  });
   const runs = pendingRuns(machine);
   const outside = useMemo(() => outsideField(doc, workspaceMm), [doc, workspaceMm]);
 
@@ -258,7 +283,7 @@ export function App() {
     activeLayer,
     workspaceMm,
     design: workspace === "design",
-    blocked: !!dialog || fileModalOpen || devicesOpen,
+    blocked: !!dialog || fileModalOpen || devicesOpen || filesUi.modalOpen || libsUi.modalOpen,
     has,
     run,
     notify,
@@ -313,9 +338,16 @@ export function App() {
       }
       // While another dialog is open or a file task runs, a drop is still kept from the browser but not imported.
       const blocked =
-        importing.current || file.busy ? "An import is still running." : dialog || (m && m.kind !== "open") ? "Finish the open dialog first." : null;
+        importing.current || file.busy ? "An import is still running." : dialog || filesUi.modalOpen || (m && m.kind !== "open") ? "Finish the open dialog first." : null;
       if (blocked) {
         notify(blocked, "error");
+        return;
+      }
+      // PDF, AI, EPS, HPGL, Gerber, 3D models, ... (and SVG/DXF/bitmaps on engines that import them all) go through
+      // the files layer, which applies the import options (src/files/useFilesUi.tsx).
+      files = filesUi.intercept(files);
+      if (files.length === 0) {
+        if (m?.kind === "open") file.setModal(null);
         return;
       }
       const plan = routeDroppedFiles(files, { maxBytes: MAX_UPLOAD_BYTES, has });
@@ -359,7 +391,7 @@ export function App() {
         notify(sum.msg, sum.kind);
       }
     },
-    [file, dialog, has, notify, importOne, activeLayer, selectIds],
+    [file, dialog, has, notify, importOne, activeLayer, selectIds, filesUi],
   );
 
   const dropLabel = useFileDrop((files) => void handleFiles(files));
@@ -670,7 +702,7 @@ export function App() {
         return;
       }
       if (typingIn(e.target)) return;
-      if (dialog || fileModalOpen) return;
+      if (dialog || fileModalOpen || filesUi.modalOpen || libsUi.modalOpen) return;
       const d = docRef.current;
       const design = workspace === "design";
       const m = { shift: e.shiftKey, ctrl: mod, alt: e.altKey };
@@ -828,6 +860,8 @@ export function App() {
   }, [
     dialog,
     fileModalOpen,
+    filesUi.modalOpen,
+    libsUi.modalOpen,
     saveFile,
     file,
     tool,
@@ -907,6 +941,8 @@ export function App() {
     { label: "Ungroup", hint: "Ctrl+U", disabled: !grouped || !has(C.OPT.groupUngroup), action: ungroup },
     { sep: true },
     ...edit.menuItems,
+    ...filesUi.contextItems,
+    ...libsUi.menuItems,
     ...(text.menuItems.length ? [{ sep: true } as const, ...text.menuItems] : []),
     { sep: true },
     { label: "Align left", hint: "L", disabled: units < 2, action: () => alignTo("left") },
@@ -934,7 +970,7 @@ export function App() {
   const laserDisabled = designOnlyReason(device);
   // Workspace hotkeys (workspace/hotkeys.ts); App's own keys stay in the handler above.
   ws.keymap.current = {
-    blocked: () => !!dialog || fileModalOpen || devicesOpen,
+    blocked: () => !!dialog || fileModalOpen || devicesOpen || filesUi.modalOpen || libsUi.modalOpen,
     modalOpen: () => ws.dialog !== null,
     handlers: {
       "app.preferences": () => ws.open("prefs"),
@@ -960,6 +996,8 @@ export function App() {
       "laser.pauseResume": () => void togglePause().then(notify).catch(report),
       "laser.stop": stop,
       ...text.handlers,
+      ...filesUi.handlers,
+      ...libsUi.handlers,
     },
   };
 
@@ -987,10 +1025,21 @@ export function App() {
                 }}
               />
             )}
-            extra={(close) => <WorkspaceFileItems close={close} open={ws.open} />}
+            extra={(close) => (
+              <>
+                <WorkspaceFileItems close={close} open={ws.open} />
+                {libsUi.fileItems(close)}
+              </>
+            )}
+            files={filesUi.menu}
           />
         }
-        extra={<TopActions machine={machine} onHotkeys={() => ws.open("hotkeys")} onPreferences={() => ws.open("prefs")} />}
+        extra={
+          <>
+            <SimPinBadge machine={machine} />
+            <TopActions machine={machine} onHotkeys={() => ws.open("hotkeys")} onPreferences={() => ws.open("prefs")} helpExtra={libsUi.helpItems} />
+          </>
+        }
         workspace={workspace}
         onWorkspace={switchWorkspace}
         onUndo={() => void undo()}
@@ -1039,6 +1088,7 @@ export function App() {
           <>
             {text.toolbar}
             {edit.toolbar}
+            {libsUi.toolbar}
           </>
         }
       />
@@ -1098,7 +1148,7 @@ export function App() {
             run={run}
             notify={notify}
             report={report}
-            canvasTool={text.wrap(edit.canvas)}
+            canvasTool={libsUi.wrap(text.wrap(edit.canvas))}
           />
           {previewOn && engine.preview && (
             <PreviewTimeline
@@ -1121,6 +1171,7 @@ export function App() {
           <div className="panel-body">
             {workspace === "design" ? (
               <>
+              {filesUi.pagesDock}
               <CutsLayers
                 doc={doc}
                 selection={selection}
@@ -1134,6 +1185,7 @@ export function App() {
                   else setSelection({ objects: [], layer: id, stock: false });
                 }}
               />
+              {libsUi.dock}
               <PropertiesPanel
                 doc={doc}
                 selection={selection}
@@ -1175,6 +1227,7 @@ export function App() {
                   report={report}
                   onChanged={() => void engine.refreshMachine()}
                   onStop={stop}
+                  extras={<LaserExtras designOnly={laserDisabled} tools={libsUi.laserTools} notify={notify} report={report} />}
                 />
                 <CutsLayers
                   doc={doc}
@@ -1189,6 +1242,7 @@ export function App() {
                     else setSelection({ objects: [], layer: id, stock: false });
                   }}
                 />
+                {libsUi.dock}
                 <MachineCard machine={machine} httpError={engine.httpError}>
                   {/* Engines without the device registry: LightBurn's devices and the profile diffs. */}
                   {!canDevices && (
@@ -1229,7 +1283,7 @@ export function App() {
       />
       <StatusBar doc={doc} selection={selection} snap={prefs.snap} machineText={statusMachineText(machineState(machine))} />
 
-      <input ref={fileRef} type="file" accept={IMPORT_ACCEPT} multiple hidden onChange={onPick} />
+      <input ref={fileRef} type="file" accept={importAccept(has("art.import_pdf") ? ENGINE_ACCEPT : null)} multiple hidden onChange={onPick} />
 
       {dialog === "stock" && <StockDialog doc={doc} run={run} onClose={closeDialog} />}
       {dialog === "place" && <PlaceDialog ids={selection.objects} run={run} onClose={closeDialog} />}
@@ -1245,6 +1299,8 @@ export function App() {
       )}
       {dialog === "commands" && <CommandPalette commands={engine.commands} run={run} onClose={closeDialog} />}
       {edit.dialogs}
+      {filesUi.dialogs}
+      {libsUi.dialogs}
       {text.dialogs}
       {ws.dialogs}
       <FileDialogs file={file} docName={doc?.name ?? null} />

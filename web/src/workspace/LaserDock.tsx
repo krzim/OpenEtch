@@ -36,6 +36,8 @@ export interface LaserDockProps {
   /** Refetch the machine status (after a frame, a request, a pause). */
   onChanged: () => void;
   onStop: () => void;
+  /** More Laser window controls (src/libs/LaserExtras.tsx: Red Dot Always On, Laser Tools, Batch, Repeat table, Job log). */
+  extras?: ReactNode;
 }
 
 export function machineState(m: MachineStatus | null): { text: "offline" | "framing" | "running" | "busy" | "ready" | "noLaser"; sim: boolean } {
@@ -108,6 +110,7 @@ export function LaserDock(p: LaserDockProps) {
       </div>
 
       <RunOptionsPanel selected={p.selection.length} hasStartInput={null} />
+      {p.extras}
       <JobCounter state={job} report={p.report} />
       <MachineJog designOnly={p.designOnly} notify={p.notify} report={p.report} onChanged={p.onChanged} />
 

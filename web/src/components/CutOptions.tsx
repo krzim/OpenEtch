@@ -183,6 +183,8 @@ export function CutOptionsSection(p: { layer: Layer; sub: number | null; setting
             </div>
           )}
           {(r.dot_mode || r.wobble || r.perforation || r.tabs) && <p className="hint">{t("cut.lineOrder")}</p>}
+          <NumberField label={t("cut.kerf")} unit="mm" value={r.kerf_offset_mm} min={-50} max={50} digits={3} onCommit={num((kerf_offset_mm) => opt({ kerf_offset_mm }))} />
+          {r.kerf_offset_mm !== 0 && <p className="hint">{t("cut.kerfHint")}</p>}
         </fieldset>
       )}
 

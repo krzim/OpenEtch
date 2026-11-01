@@ -9,6 +9,7 @@ import { DEFAULT_OPTIMIZATION, moveOrder, optimizationOf, optimizationPatch, set
 import type { GDocument } from "../api/types.ts";
 import { useT } from "../workspace/usePrefs.ts";
 import { CheckField, Icon, Modal, NumberField } from "./ui.tsx";
+import { OptimizationDefaults } from "../libs/OptimizationDefaults.tsx";
 import "./job.css";
 
 export function OptimizationDialog(p: { doc: GDocument | null; run: (inv: Invocation) => Promise<unknown>; report: (e: unknown) => void; onClose: () => void }) {
@@ -46,6 +47,7 @@ export function OptimizationDialog(p: { doc: GDocument | null; run: (inv: Invoca
           <button className="btn" onClick={() => setO(DEFAULT_OPTIMIZATION)} title={t("opt.defaultsTitle")}>
             {t("opt.defaults")}
           </button>
+          <OptimizationDefaults dirty={optimizationPatch(cur, o) !== null} onApplied={p.onClose} report={p.report} />
           <button className="btn" onClick={p.onClose}>
             {t("common.cancel")}
           </button>
