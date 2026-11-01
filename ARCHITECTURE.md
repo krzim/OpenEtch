@@ -16,6 +16,7 @@ Mac, PC, phone) and Claude are clients of the same live document. The engine is 
 | Crate | Role | Depends on | Native-only? |
 |---|---|---|---|
 | `lmc` | LMC wire protocol: opcodes, 12-byte single commands, 3072-byte list packets, unit conversions, list builders, decoder/disassembler. **Pure, no I/O.** | – | no (wasm-ok) |
+| `ruida` | Ruida DSP controller protocol (see "Ruida protocol"): byte scrambling, UDP/serial framing, commands, 7-bit number encodings, memory registers, `.rd` job files (read/write), controller simulator (feature `sim`). **Pure, no I/O** except a blocking UDP channel (feature `udp`). Not yet used by any other crate. | – | no (wasm-ok) |
 | `corfile` | EzCad lens correction files (`JCZ_COR_2_1`, `LMC1COR_1.0`): parse, produce the WriteCorLine upload sequence, host-side bilinear correction. **Pure.** | – | no |
 | `doc` | Document model: stock, layers with MOPA cut settings, objects (kurbo paths + affine transforms), guides, output curve tolerance. **Pure data + geometry helpers.** | kurbo, geom (polygon outlines) | no |
 | `lbrn` | LightBurn `.lbrn2` projects and `.clb` material libraries: parse, write, convert to and from `doc` for a galvo field or a gantry bed (`lbrn::Frame`, see "File formats"). **Pure.** | doc, kurbo, roxmltree | no |
@@ -1108,6 +1109,29 @@ Origin), the public WAZER `.lbdev`, xTool/Creality `.lbdev` posts and the owner'
   A re-import of the same LightBurn device replaces the edits. Correction files can be loaded and cleared per device;
   `.lbdev` export writes the device back for LightBurn.
 
+## Ruida protocol
+
+`crates/ruida` is the protocol layer for Ruida DSP controllers (gantry CO2 machines driven by RDWorks or LightBurn),
+step 3 of the gantry roadmap (`docs/parity/ROADMAP.md`). It is protocol only: no driver, no engine integration yet
+(the gantry driver interface is built separately). Everything comes from MeerK40t's Ruida module (MIT, facts
+re-written in Rust; the crate docs list every command with its source). **It has never talked to Ruida hardware**:
+the in-crate simulator follows MeerK40t's emulator and client.
+
+- **Scrambling**: every byte is swapped (bit 7 with bit 0), XORed with a key (`0x88` usual, `0x11` RDC634XG) and
+  incremented; `.rd` files, UDP and serial all use it. The reader finds a file's key (histogram guess, then scoring).
+- **UDP**: host port 40200 ↔ controller port 50200; datagram = big-endian 16-bit sum of the scrambled payload, then the
+  scrambled payload (whole commands, ≤ 1470 bytes). Stop-and-wait: ACK `0xCC` (wire `0xC6`) or ERR `0xCD` (wire
+  `0x46`) / NAK `0xCF` → resend; memory reads get a second datagram with `DA 01 addr value`. Keepalive = ENQ `0xCE`.
+  **USB serial** (FTDI 0403:6001): scrambled bytes only, no checksum, no ACK.
+- **Numbers**: 7 bits per byte. Absolute coordinates are 35-bit (µm), relative ones 14-bit signed (±8.191 mm), power
+  14-bit (`0x3FFF` = 100 %), speeds µm/s. Encoders refuse what they cannot represent.
+- **`.rd` files**: `rd::read_rd` gives the command list and polylines per layer with speed, min/max power (lasers 1
+  and 2) and colour; `rd::write_rd` writes polylines per layer in MeerK40t's layout (header with bounds and per-layer
+  settings, layers, file sum, `D7`). Real `.rd` files are read only by the env-gated test `OPENETCH_RD_SAMPLES`.
+- **Simulator** (`ruida::sim`, feature `sim`): ACKs datagrams (ERR on a bad checksum), runs commands, tracks X/Y/Z/U,
+  records every segment and whether the laser would be on, answers memory reads, stores named jobs (controller file
+  list: count, names, run, delete).
+
 ## CAD integrations
 
 `tools/fusion360-addin/OpenEtch` (Autodesk Fusion add-in, Python): "Send to OpenEtch" saves the selected sketch (or a
@@ -1120,4 +1144,5 @@ selection code is tested without Fusion or Inkscape (`python -I tools/tests/test
 ## Licensing and provenance
 
 Code ported from MIT/Apache projects keeps its notice in the file header and is listed in `ATTRIBUTION.md`. Never copy
-from GPL/SSPL/unlicensed sources (Balor, balor-meerk40t, BurnCraft, LaserCraft, lmcv2u-loader).
+from GPL/SSPL/unlicensed sources (Balor, balor-meerk40t, BurnCraft, LaserCraft, lmcv2u-loader, and for Ruida
+jnweiger/ruida-laser (GPL-2.0) and kkaempf/ruida (no licence)).

@@ -44,6 +44,7 @@ listed here.
 | The owner's own LightBurn `material_test_presets.lbmt` (read in place by the env-gated test `OPENETCH_LBMT_SAMPLE`, never copied) and EzCad 2 `.ezd` files | The owner's files | The `.lbmt` JSON layout and its test-parameter codes; the EzCad pen items 4-8 and the hatch and text layouts as found in the files | `crates/commands/src/builtin/testgen_presets.rs`, `crates/fileio/src/ezd.rs` |
 | ArUco square-fiducial layout (S. Garrido-Jurado et al., "Automatic generation and detection of highly reliable fiducial markers under occlusion", Pattern Recognition 2014) | Published method | The 6 x 6 cell layout with a one-cell border and the usual detection steps, re-implemented; OpenEtch's own code dictionary (no OpenCV code or tables) | `crates/engine/src/markers.rs`, `crates/commands/src/builtin/camera_markers.rs` |
 | LightBurn documentation (docs.lightburnsoftware.com: Fill Mode Fill Grouping, Flood Fill and Scan Angle; Galvo-Specific Cut Settings Auto-Rotate and Wobble; Line Mode Perforation and Dot Mode) and the cut-parameter list LightBurn posted on its forum ("Looking for a definitive list of parameters stored in a .clb file") | Documentation | Behaviour and format facts only (no text copied): Fill all shapes at once is the default, the `scanOpt` tag and its three choices, the defaults LightBurn leaves out of files (`wobbleStep` 0.05, `wobbleSize` 0.1, `perfLen`/`perfSkip` 0.1, `dotTime` 0, `dotSpacing` 0.1) | `crates/lbrn/src/{options,unexecuted}.rs`, `crates/doc/src/job.rs` |
+| [meerk40t/meerk40t](https://github.com/meerk40t/meerk40t) @ `d511944` `meerk40t/ruida/` (`rdjob.py`, `emulator.py`, `udp_connection.py`, `ruidasession.py`, `usb_transport.py`) and `test/test_ruida.py` | MIT © 2021 meerk40t | Ruida protocol facts re-written in Rust (no code copied): the byte scrambling and key detection, the 14/35-bit number encodings and units, the command opcodes and parameter layouts, memory register addresses and status bits, UDP framing (ports, checksum, ACK/NAK/ERR, stop-and-wait), USB serial differences, the `.rd` header layout and file sum, the stored-document (`E8`) commands; the scrambled-key test vectors | `crates/ruida` (per-file headers; command table in the crate docs) |
 
 ## Fixtures
 
@@ -58,5 +59,6 @@ listed here.
 
 ## Never copied
 
-GPL, SSPL or unlicensed sources: Balor, balor-meerk40t, BurnCraft, LaserCraft, lmcv2u-loader. No BJJCZ firmware. No
+GPL, SSPL or unlicensed sources: Balor, balor-meerk40t, BurnCraft, LaserCraft, lmcv2u-loader, jnweiger/ruida-laser
+(GPL-2.0), kkaempf/ruida (no licence). No BJJCZ firmware. No
 LightBurn code, assets or text.
