@@ -63,6 +63,8 @@ pub struct Libs {
     pub last_frame: Mutex<Option<FrameRequest>>,
     pub camera: Mutex<CameraState>,
     pub updates: Mutex<Option<UpdateCheck>>,
+    /// The foot switch cycle (module `cycle`).
+    pub foot_cycle: Mutex<crate::cycle::FootCycle>,
 }
 
 pub(crate) fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -220,20 +222,13 @@ impl Edge {
         self.reset();
         true
     }
-
-    /// True when an active read now would begin a press (the input was seen released and has not read pressed since).
-    fn press_begins(&self) -> bool {
-        self.released && self.pressed == 0
-    }
 }
 
-/// The foot switch as [`spawn_io_watch`] sees it: its release-then-press, the port it was seen on, and the runs that
-/// were waiting when the current press began.
+/// The foot switch as [`spawn_io_watch`] sees it: its release-then-press and the port it was seen on.
 #[derive(Debug, Default)]
 struct FootWatch {
     edge: Edge,
     port: Option<machine::InputPort>,
-    at_press: Vec<String>,
 }
 
 impl FootWatch {
@@ -248,31 +243,25 @@ impl FootWatch {
 
     fn reset(&mut self) {
         self.edge.reset();
-        self.at_press.clear();
     }
 
-    /// One read of the port. `waiting` lists the runs a press could approve; it is called when a press begins.
-    /// Returns those runs once the press is complete (`pin::CONFIRM_READS` pressed reads after a release).
-    fn update(&mut self, bits: u16, waiting: impl FnOnce() -> Vec<String>) -> Option<Vec<String>> {
-        let port = self.port?;
-        let active = port.active(bits);
-        if active && self.edge.press_begins() {
-            self.at_press = waiting();
-        }
-        self.edge.update(active, crate::pin::CONFIRM_READS).then(|| std::mem::take(&mut self.at_press))
+    /// One read of the port: true once a press is complete (`pin::CONFIRM_READS` pressed reads after a release).
+    fn update(&mut self, bits: u16) -> bool {
+        let Some(port) = self.port else { return false };
+        self.edge.update(port.active(bits), crate::pin::CONFIRM_READS)
     }
 }
 
 /// Watch the profile's Start Framing input and, in the `click` approval mode, the foot switch (the Start Marking
-/// input, `approve::foot_switch_port`) while the board is idle. Start Framing starts framing (the last frame request,
-/// else the whole job's bounds) when it is pressed after being seen released. The foot switch approves the single
-/// pending run when it is seen released and then pressed for `pin::CONFIRM_READS` reads in a row
-/// (`approve::foot_switch_pressed`), only if that run was already the one waiting when the press began (a run
-/// requested during the press is not approved by it); a changed foot switch port (bit or polarity) needs a fresh
+/// input, `approve::foot_switch_port`). Start Framing starts framing (the last frame request, else the whole job's
+/// bounds) when it is pressed after being seen released, while the board is idle. The foot switch drives the foot
+/// switch cycle (module `cycle`: frame, then burn what was framed, then frame again) when it is seen released and then
+/// pressed for `pin::CONFIRM_READS` reads in a row; a changed foot switch port (bit or polarity) needs a fresh
 /// release. It is read every `pin::CONFIRM_POLL` while watched, else every [`IO_POLL`].
-/// Reads only while the board is initialised, not running (a run claimed by an approval, including one waiting for
-/// its start input or physical confirmation, which then owns the input) and not framing; sends nothing but `ReadPort`
-/// until it starts a frame or approves a run.
+/// Reads only while the board is initialised and not running (a run claimed by an approval, including one waiting
+/// for its start input or physical confirmation, owns the input; a press then is not seen at all), and while
+/// framing only when the foot switch is watched (the cycle's second press comes while it frames); sends nothing but
+/// `ReadPort` until it starts a frame or the cycle acts.
 pub fn spawn_io_watch(st: Arc<AppState>) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let (mut framing, mut foot) = (Edge::default(), FootWatch::default());
@@ -281,11 +270,13 @@ pub fn spawn_io_watch(st: Arc<AppState>) -> tokio::task::JoinHandle<()> {
             tokio::time::sleep(poll).await;
             let frame_port = st.machine.profile().io.start_framing;
             let foot_port = crate::approve::foot_switch_port(&st);
+            crate::cycle::sync(&st, foot_port.is_some());
             if frame_port.is_none() {
                 framing.reset();
             }
             foot.watch(foot_port);
-            if (frame_port.is_none() && foot_port.is_none()) || st.machine.is_running() || st.machine.is_framing() {
+            let frame_now = st.machine.is_framing();
+            if (frame_port.is_none() && foot_port.is_none()) || st.machine.is_running() || (frame_now && foot_port.is_none()) {
                 framing.reset();
                 foot.reset();
                 continue;
@@ -304,9 +295,14 @@ pub fn spawn_io_watch(st: Arc<AppState>) -> tokio::task::JoinHandle<()> {
                 foot.reset();
                 continue;
             };
-            if let Some(at_press) = foot.update(bits, || crate::approve::foot_switch_candidates(&st)) {
+            if foot.update(bits) {
                 framing.reset();
-                crate::approve::foot_switch_pressed(&st, &at_press).await;
+                crate::cycle::pressed(&st).await;
+                continue;
+            }
+            if frame_now {
+                // The Start Framing input starts a frame only while the board is idle.
+                framing.reset();
                 continue;
             }
             if let Some(port) = frame_port
@@ -417,41 +413,36 @@ mod tests {
     const PEDAL: u16 = 1 << 14;
 
     #[test]
-    fn a_foot_press_reports_the_runs_waiting_when_it_began() {
+    fn a_foot_press_needs_a_release_then_three_reads() {
         let mut f = FootWatch::default();
         f.watch(HIGH);
-        assert_eq!(f.update(0, || panic!("no press yet")), None);
-        assert_eq!(f.update(PEDAL, Vec::new), None, "the press begins with nothing waiting");
-        // A run requested during the press is not in what the press reports.
-        assert_eq!(f.update(PEDAL, || panic!("asked only when a press begins")), None);
-        assert_eq!(f.update(PEDAL, || panic!("asked only when a press begins")), Some(vec![]));
-        assert_eq!(f.update(PEDAL, || panic!("held: no new press")), None);
-        assert_eq!(f.update(0, || panic!("released")), None);
-        assert_eq!(f.update(PEDAL, || vec!["r1".into()]), None);
-        assert_eq!(f.update(PEDAL, || unreachable!()), None);
-        assert_eq!(f.update(PEDAL, || unreachable!()), Some(vec!["r1".to_owned()]));
+        assert!(!f.update(PEDAL), "held since the start: never");
+        assert!(!f.update(0));
+        assert!(!f.update(PEDAL) && !f.update(PEDAL));
+        assert!(f.update(PEDAL), "third pressed read");
+        assert!(!f.update(PEDAL), "held: no new press");
+        assert!(!f.update(0) && !f.update(PEDAL) && !f.update(PEDAL));
+        assert!(f.update(PEDAL));
     }
 
     #[test]
     fn a_changed_foot_switch_port_needs_a_fresh_release() {
         let mut f = FootWatch::default();
         f.watch(HIGH);
-        assert_eq!(f.update(0, || unreachable!()), None, "released");
+        assert!(!f.update(0), "released");
         // The polarity is flipped (a device edit): the released pedal now reads pressed. Not a press.
         f.watch(LOW);
         for _ in 0..5 {
-            assert_eq!(f.update(0, || vec!["r1".into()]), None);
+            assert!(!f.update(0));
         }
         // Real press (reads high, inactive for active-low) and release (low, active): a press after the release.
-        assert_eq!(f.update(PEDAL, || unreachable!()), None);
-        assert_eq!(f.update(0, || vec!["r1".into()]), None);
-        assert_eq!(f.update(0, || unreachable!()), None);
-        assert_eq!(f.update(0, || unreachable!()), Some(vec!["r1".to_owned()]));
+        assert!(!f.update(PEDAL));
+        assert!(!f.update(0) && !f.update(0));
+        assert!(f.update(0));
         // Same port again: nothing forgotten; no port: never.
         f.watch(LOW);
         f.watch(None);
-        assert_eq!(f.update(PEDAL, || unreachable!()), None);
-        assert_eq!(f.update(0, || unreachable!()), None);
+        assert!(!f.update(PEDAL) && !f.update(0) && !f.update(0) && !f.update(0));
     }
 
     #[test]

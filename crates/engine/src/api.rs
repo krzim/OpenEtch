@@ -51,6 +51,7 @@ pub fn router(state: Arc<AppState>, web_dir: Option<&Path>) -> Router {
         .route("/machine/stop", post(machine_stop))
         .route("/runs", post(request_run))
         .route("/runs/{id}/approve", post(approve_run))
+        .route("/job/start", post(start_job))
         .route("/events", get(events::events_ws))
         .route("/projects", get(project_list))
         .route("/projects/save", post(project_save))
@@ -621,4 +622,33 @@ async fn approve_run(
         }
     };
     Ok(Json(approve::approve(&st, &id, approver, b.checklist.as_deref()).await?))
+}
+
+/// One-click Start (`--approval click` only), LightBurn's Start: plans the current document with the run options in
+/// the body (as `POST /api/runs`, plus `checklist`: the Job Checklist ticks) and approves it at once
+/// (`approve::start_now`). Guarded like a no-PIN approval: MCP client headers or a non-`ui` origin 403, and the request
+/// must come from the app in a browser (`Sec-Fetch-Site: same-origin` and an accepted `Origin`, else 403 with code
+/// `browser_required`). In the `pin` mode 403 with code `approval_mode` (request the run, then approve it with the PIN).
+async fn start_job(State(st): State<Arc<AppState>>, headers: HeaderMap, body: Bytes) -> Result<Json<Value>, EngineError> {
+    if has_mcp_marker(&headers) {
+        tracing::warn!("refused a one-click Start from an MCP client");
+        return Err(EngineError::Forbidden("jobs can only be started by a person in the OpenEtch UI".into()));
+    }
+    let mut b: serde_json::Map<String, Value> = body_or_default(&body)?;
+    if parse_origin(b.remove("origin").as_ref())? != commands::Origin::Ui {
+        return Err(EngineError::Forbidden("jobs can only be started from the UI".into()));
+    }
+    let checklist: Option<Vec<bool>> = match b.remove("checklist") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(serde_json::from_value(v).map_err(|e| EngineError::BadRequest(format!("bad checklist: {e}")))?),
+    };
+    if st.approval_mode() == ApprovalMode::Click
+        && let Err(message) = security::same_origin_browser_request(&headers, &st.security)
+    {
+        tracing::warn!(%message, "refused a one-click Start that did not come from the app in a browser");
+        return Err(EngineError::Approval { code: "browser_required", message });
+    }
+    let options: crate::runs::RunOptions =
+        serde_json::from_value(Value::Object(b)).map_err(|e| EngineError::BadRequest(format!("bad run options: {e}")))?;
+    Ok(Json(approve::start_now(&st, options, checklist.as_deref()).await?))
 }

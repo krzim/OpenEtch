@@ -8,7 +8,8 @@
 //!   [`security::guard`] (Host/Origin checks against DNS rebinding, bearer token off loopback).
 //! - Safety: framing goes through `machine::Controller::frame` (light only). Nothing fires unless a person approves
 //!   a pending run with `POST /api/runs/{id}/approve` and the operator PIN ([`pin`]) (or, with `--approval click`,
-//!   Start in the app in a browser or the foot switch), plus the physical input when configured; `approve` is the only module that creates a `machine::Armed`, and the endpoint refuses requests that
+//!   Start in the app in a browser (`POST /api/job/start` plans and approves in one action) or the foot switch
+//!   cycle, module `cycle`), plus the physical input when configured; `approve` is the only module that creates a `machine::Armed`, and the endpoint refuses requests that
 //!   look like they came from an MCP client. Stop is never gated and never waits behind a run (stop epoch, see
 //!   `approve`). A local process with the user's OS privileges can defeat these software checks; the hardware
 //!   E-stop/key switch is the real guarantee (the physical input only protects against a guessed or stolen PIN
@@ -18,6 +19,7 @@
 pub mod api;
 mod api_machine;
 mod approve;
+mod cycle;
 pub mod cli;
 pub mod devices;
 pub mod error;

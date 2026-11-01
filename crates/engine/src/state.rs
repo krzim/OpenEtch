@@ -45,8 +45,8 @@ use crate::{EngineError, Event};
 /// The message every pending-run answer carries.
 pub const APPROVAL_MESSAGE: &str = "The run is pending. Nothing fires until a person reviews it and approves it in \
     the OpenEtch UI (Laser workspace) with the operator PIN or, when the engine runs without a PIN, with Start in the \
-    app or the machine's foot switch. Agents cannot and must not approve runs, and must never ask for, handle or set \
-    the PIN.";
+    app (the machine's foot switch never starts a pending run: it frames and burns the person's current document). \
+    Agents cannot and must not approve runs, and must never ask for, handle or set the PIN.";
 
 /// A planned preview and the document it was planned from.
 pub type PreviewResult = Arc<(Document, Result<Preview, PlanError>)>;
@@ -1165,11 +1165,13 @@ impl AppState {
         v["device"] = self.devices().active().summary();
         v["approval"] = self.approval.status_json();
         // `mode`: "pin" or "click" (no PIN: Start in the app or the foot switch); `foot_switch`: the input that
-        // approves the single pending run in the click mode, or null.
+        // drives the foot switch cycle in the click mode, or null.
         v["approval"]["mode"] = json!(self.approval_mode().as_str());
         v["approval"]["foot_switch"] = json!(
             crate::approve::foot_switch_port(self).map(|p| json!({ "input_bit": p.bit, "active_low": p.active_low }))
         );
+        // The foot switch cycle (frame, burn what was framed, frame again; module `cycle`).
+        v["foot_cycle"] = crate::cycle::status_json(self);
         // Whether framing can light a focus pointer (`pointer: focus | both`): a controllable active device whose
         // profile names a usable focus light output.
         v["focus_light"] = json!(
@@ -1280,6 +1282,8 @@ impl AppState {
             self.machine.request_stop();
             runs.cancel_not_streaming("cancelled by stop before streaming")
         };
+        // Stop ends the foot switch cycle too (after the stop epoch moved on, see module `cycle`).
+        crate::cycle::end(self, None, None);
         let result = self.machine.abort().await;
         let detail = match &result {
             Ok(AbortOutcome::Sent) => None,
