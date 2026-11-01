@@ -48,7 +48,7 @@ pub use lightburn::{
 pub use device::{Bases, Device, DeviceKind, DeviceSource, Origin, ProfileBase, edit_profile, merge_patch};
 pub use markcfg::MarkcfgImport;
 pub use profile::{
-    AxisRole, DEFAULT_MAX_DELAY_US, DEFAULT_MAX_JUMP_SPEED_MM_S, DEFAULT_OPEN_MO_DELAY_US, ExtensionAxis, FiberKind,
+    AxisRole, DEFAULT_MAX_DELAY_US, DEFAULT_MAX_JUMP_SPEED_MM_S, DEFAULT_OPEN_MO_DELAY_US, ExtensionAxis, FiberKind, InputPort, IoPorts,
     LaserKind, MachineProfile, MarkSpeedLimits, ProfileError, RedDot, Timing,
 };
 pub use sim::{SimBoard, SimLink, Traffic};

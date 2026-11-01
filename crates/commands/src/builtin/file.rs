@@ -226,6 +226,12 @@ pub struct NewInput {
     pub workspace_mm: Option<[f64; 2]>,
     /// The device's LightBurn origin: "center" (galvo, default) or a bed corner, used by doc.export_lbrn2.
     pub origin: Option<WorkspaceOrigin>,
+    /// Settings for the new document's layer (LightBurn's "Load default layer settings on New"; the engine passes
+    /// the saved default when that option is on). Default: the built-in defaults.
+    pub layer_settings: Option<doc::CutSettings>,
+    /// Optimization settings of the new document (the engine passes the saved defaults, LightBurn's "Set as
+    /// Defaults"). Default: the built-in defaults.
+    pub optimization: Option<doc::Optimization>,
 }
 
 /// `doc.new`.
@@ -261,6 +267,16 @@ impl Command for DocNew {
         }
         if let Some(o) = corner {
             fresh.extras.insert(ORIGIN_KEY.into(), o.name().into());
+        }
+        if let Some(s) = input.layer_settings {
+            super::layer::validate_settings(Self::ID, &s)?;
+            fresh.layers[0].settings = s;
+        }
+        if let Some(o) = input.optimization {
+            if let Some(p) = o.problem() {
+                return Err(invalid(Self::ID, format!("optimization: {p}")));
+            }
+            fresh.optimization = o;
         }
         let summary = format!("new document \"{}\"", fresh.name);
         *doc = fresh;
@@ -470,7 +486,9 @@ impl Command for ImportLbrn2 {
         let id = Self::ID;
         let text = content(id, &input.content)?;
         let lay = layout(id, input.field_mm, input.workspace_mm, input.origin, (None, None), doc)?;
-        let project = lbrn::parse(text).map_err(|e| invalid(id, e.to_string()))?;
+        // A legacy `.lbrn` (vertex elements) reads as `.lbrn2` (crate fileio).
+        let text = super::files::legacy_lbrn(id, text)?;
+        let project = lbrn::parse(&text).map_err(|e| invalid(id, e.to_string()))?;
         let frame = match lay {
             Layout::Galvo(field_mm) => lbrn::Frame::Galvo { field_mm },
             Layout::Bed([width_mm, height_mm], _) => {
@@ -481,6 +499,7 @@ impl Command for ImportLbrn2 {
         };
         let lbrn::Imported { layers, objects, groups, mut extras, variables, warnings } =
             lbrn::to_document_in(&project, frame).map_err(|e| invalid(id, e.to_string()))?;
+        let notes = super::files::notes_from_extras(&extras);
         // A square size for what needs one (the field of a galvo; the bed's smaller side).
         let (field_mm, workspace_mm) = match lay {
             Layout::Galvo(f) => (f, None),
@@ -504,6 +523,7 @@ impl Command for ImportLbrn2 {
                     objects,
                     groups,
                     variables,
+                    notes,
                     extras,
                     ..Document::default()
                 };
@@ -671,7 +691,13 @@ impl Command for ExportLbrn2 {
                 lbrn::Frame::Bed { width_mm, height_mm, mirror_x, mirror_y }
             }
         };
-        let (project, warnings) = lbrn::from_document_in(doc, frame).map_err(|e| invalid(id, e.to_string()))?;
+        let (mut project, mut warnings) = lbrn::from_document_in(doc, frame).map_err(|e| invalid(id, e.to_string()))?;
+        // LightBurn's page storage is unknown: only the active page is written, so say what is left out.
+        let other_pages = doc.pages.iter().filter(|p| Some(&p.id) != doc.active_page.as_ref() && !p.objects.is_empty()).count();
+        if other_pages > 0 {
+            warnings.push(format!("only the active page is written: {other_pages} other page(s) with shapes are left out (save the project as .openetch to keep them)"));
+        }
+        super::files::notes_into_project(&mut project, &doc.notes);
         let mut r = json!({ "content": lbrn::write(&project), "warnings": warnings });
         layout_json(lay, &mut r);
         Ok((r, String::new()))

@@ -64,6 +64,7 @@ pub fn target_from_profile(p: &MachineProfile) -> Target {
         pulse_width_enabled: p.pulse_width_enabled && p.fiber_kind == FiberKind::Mopa,
         z_axis: p.axis.as_ref().is_some_and(|a| a.role == AxisRole::Z),
         rotary_axis: p.axis.as_ref().is_some_and(|a| a.role == AxisRole::Rotary),
+        port_outputs: p.io.run_outputs(),
     }
 }
 

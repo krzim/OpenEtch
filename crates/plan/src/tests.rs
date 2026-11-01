@@ -494,3 +494,43 @@ fn preview_lists_every_pass_and_every_sub_layer_with_its_share() {
     assert_eq!(v["passes"][1]["sub_layer"], 2, "the cleanup right after the first main pass");
     assert_eq!(v["layers"][0]["sub_layers"][1]["name"], "Outline");
 }
+
+#[test]
+fn sliced_3d_passes_engrave_deepest_first_and_cleanup_follows_the_last_slice() {
+    // One row: darkness 1, 0.5, 0 (white) at 1 mm per pixel.
+    let img = image_object("obj-1", 4.0, 1.0, png(4, 1, |x, _| [0u8, 128, 255, 255][x as usize]), Affine::IDENTITY);
+    let mut s = coarse(doc::DitherMode::Slice3d);
+    s.passes = 2;
+    let mut d = doc_with(vec![img], s.clone());
+    let plan = plan_job(&d, &target()).unwrap();
+    let xs: Vec<[f64; 2]> = plan.passes.iter().map(|p| [p.polylines[0][0][0], p.polylines[0][1][0]]).collect();
+    assert_eq!(xs, [[-2.0, -1.0], [-2.0, 0.0]], "slice 1 the black pixel only");
+    // A cleanup after every pass cleans the slice just engraved; "clean whole image" cleans everything.
+    let cleanup = CutSettings { cleanup: Some(doc::Cleanup { every_n_passes: 1 }), passes: 1, ..s.clone() };
+    d.layers[0].sub_layers.push(cleanup);
+    let plan = plan_job(&d, &target()).unwrap();
+    let lens: Vec<f64> = plan.passes.iter().map(|p| p.polylines[0][1][0] - p.polylines[0][0][0]).collect();
+    assert_eq!(lens, [1.0, 1.0, 2.0, 2.0]);
+    d.layers[0].settings.image.clean_whole_image = true;
+    let plan = plan_job(&d, &target()).unwrap();
+    let lens: Vec<f64> = plan.passes.iter().map(|p| p.polylines[0][1][0] - p.polylines[0][0][0]).collect();
+    assert_eq!(lens, [1.0, 2.0, 2.0, 2.0]);
+}
+
+#[test]
+fn masked_images_engrave_only_inside_the_mask() {
+    let img = image_object("obj-1", 10.0, 1.0, png(10, 1, |_, _| 0), Affine::IDENTITY);
+    let mask = rect("obj-2", 4.0, 4.0, (0.0, 0.0));
+    let mut d = doc_with(vec![img, mask], coarse(doc::DitherMode::Threshold));
+    d.layers.push(doc::Layer { output: false, ..doc::Layer::new("layer-9".into(), "Tool", "#000000") });
+    d.objects[1].layer = "layer-9".into();
+    d.image_masks.insert("obj-1".into(), "obj-2".into());
+    let plan = plan_job(&d, &target()).unwrap();
+    let xs: Vec<[f64; 2]> = plan.passes[0].polylines.iter().map(|l| [l[0][0], l[1][0]]).collect();
+    assert_eq!(xs, [[-2.0, 2.0]]);
+    // A mask that no longer exists means nothing.
+    d.objects.pop();
+    let plan = plan_job(&d, &target()).unwrap();
+    let xs: Vec<[f64; 2]> = plan.passes[0].polylines.iter().map(|l| [l[0][0], l[1][0]]).collect();
+    assert_eq!(xs, [[-5.0, 5.0]]);
+}

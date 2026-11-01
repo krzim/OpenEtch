@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 
 use doc::{Document, Object};
 use kurbo::Rect;
-use lbrn::{cut_setting_to_layer, from_document, parse, parse_library, to_document, write};
+use lbrn::{cut_setting_to_layer, from_document, parse, parse_clb, parse_library, to_document, write, write_clb};
 
 /// Field size the real files are imported with. Round-trip comparisons do not depend on it.
 const FIELD_MM: f64 = 150.0;
@@ -280,5 +280,27 @@ fn real_libraries_parse() {
         for w in warnings {
             println!("   warning: {w}");
         }
+    }
+}
+
+/// Every real library is written back byte for byte (`lbrn::parse_clb` / `write_clb`), and again after a forced
+/// structural rewrite of every entry (the writer without the kept source text).
+#[test]
+fn real_libraries_round_trip_byte_identical() {
+    let Some(files) = samples(&["clb"]) else { return };
+    for f in files {
+        let name = display_name(&f);
+        let bytes = std::fs::read(&f).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let text = String::from_utf8(bytes.clone()).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let lib = parse_clb(&text).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(write_clb(&lib).as_bytes(), &bytes[..], "{name}: not byte-identical");
+        let mut rebuilt = lib.clone();
+        for m in &mut rebuilt.materials {
+            for e in &mut m.entries {
+                *e = e.detached();
+            }
+        }
+        assert_eq!(write_clb(&rebuilt), text, "{name}: the structural writer differs");
+        println!("== {name}: {} materials, {} entries, byte-identical", lib.materials.len(), lib.entry_count());
     }
 }

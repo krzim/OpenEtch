@@ -33,6 +33,17 @@ pub mod render;
 pub mod runs;
 pub mod security;
 pub mod state;
+// Libraries, preferences, job log, diagnostics, camera, updates (see `libs`).
+mod api_libs;
+pub mod camera;
+mod camera_capture;
+pub mod diagnostics;
+pub mod joblog;
+pub mod libs;
+pub mod library;
+pub mod prefs;
+pub mod updates;
+pub mod userfiles;
 
 pub use error::EngineError;
 pub use events::Event;
@@ -42,3 +53,7 @@ pub use state::AppState;
 mod tests;
 #[cfg(test)]
 mod job_tests;
+#[cfg(test)]
+mod libs_tests;
+#[cfg(test)]
+mod userfiles_tests;

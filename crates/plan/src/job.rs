@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::geom::{Point, Subpath, dist, flatten, polyline_length};
 use crate::hatch::{HatchError, MAX_SCANLINES, hatch};
-use crate::image::{Gray, MAX_IMAGE_DOTS, Placed, RasterError, Run, raster};
+use crate::image::{Gray, MAX_IMAGE_DOTS, Placed, RasterError, Run, clip_runs, raster_slice};
 use crate::cutopts;
 use crate::order::{Chunk, OrderOpts, order_with};
 use crate::{PlanError, Result, Target};
@@ -193,6 +193,8 @@ struct ShapeIn<'a> {
     key: Vec<u64>,
     /// Power scale, 0..=1.
     scale: f64,
+    /// The user start point (field mm) and reverse flag of the shape's closed outlines (Set Start Point).
+    start: Option<(Point, bool)>,
 }
 
 /// [`plan_job`] with a segment budget of `max_segments` (tests use a small one).
@@ -267,7 +269,11 @@ pub(crate) fn plan_job_within(doc: &Document, target: &Target, max_segments: usi
                 })
                 .collect();
             let scale = options.map_or(1.0, |o| o.power_scale_pct / 100.0);
-            shapes.push(ShapeIn { object: obj, subs, group, key, scale });
+            let start = options.and_then(|o| o.start.as_ref()).map(|s| {
+                let p = obj.transform * kurbo::Point::new(s.local[0], s.local[1]);
+                ([p.x, p.y], s.reverse)
+            });
+            shapes.push(ShapeIn { object: obj, subs, group, key, scale, start });
         }
     }
     if !outside.is_empty() {
@@ -327,7 +333,10 @@ pub(crate) fn plan_job_within(doc: &Document, target: &Target, max_segments: usi
         if layer_shapes.is_empty() && layer_images.is_empty() {
             continue;
         }
-        let decoded = layer_images.iter().map(|o| decode_image(o, &cuts)).collect::<Result<Vec<_>>>()?;
+        let decoded = layer_images
+            .iter()
+            .map(|o| decode_image(o, &cuts).map(|d| DecodedImage { mask: mask_polygons(doc, o), ..d }))
+            .collect::<Result<Vec<_>>>()?;
         // Image runs per (image, settings, scan angle), so repeated passes reuse them.
         let mut rasters: Rasters = HashMap::new();
         let schedule = layer_schedule(layer);
@@ -361,16 +370,17 @@ pub(crate) fn plan_job_within(doc: &Document, target: &Target, max_segments: usi
             };
             let image_angle =
                 (cut.image.angle_deg + f64::from(repeat) * cut.image.angle_increment_deg).rem_euclid(360.0);
+            let slice = slice_level(layer, cut, repeat, done[0]);
             let mut polylines = Vec::new();
             let mut powers = Vec::new();
             let mut start = pos;
             for (k, image) in decoded.iter().enumerate() {
                 let budget = max_segments - segments - polylines.len();
-                let key = (k, sub_layer, image_angle.to_bits());
+                let key = (k, sub_layer, image_angle.to_bits(), slice.to_bits());
                 let rows = match rasters.get(&key) {
                     Some(r) => Rc::clone(r),
                     None => {
-                        let r = Rc::new(image.raster(&cut.image, image_angle, budget, max_segments)?);
+                        let r = Rc::new(image.raster(&cut.image, image_angle, budget, max_segments, slice)?);
                         rasters.insert(key, Rc::clone(&r));
                         r
                     }
@@ -461,7 +471,7 @@ struct PassCtx {
 }
 
 /// Image runs by (image, settings index, scan angle bits), rows in burn order.
-type Rasters = HashMap<(usize, usize, u64), Rc<Vec<Vec<Run>>>>;
+type Rasters = HashMap<(usize, usize, u64, u32), Rc<Vec<Vec<Run>>>>;
 
 /// The passes of one layer in burn order, as `(sub_layer, repeat)` (`sub_layer` 0 for the main settings, n for
 /// `sub_layers[n - 1]`): each main pass, followed by every cleanup sub-layer due after it ([`doc::Cleanup::runs_after`],
@@ -486,6 +496,28 @@ pub fn layer_schedule(layer: &Layer) -> Vec<(usize, u32)> {
         out.extend((0..s.passes).map(|r| (i + 1, r)));
     }
     out
+}
+
+/// The darkness level (0..1) above which a 3D Sliced pass fires (LightBurn's 3D Sliced mode; 0 for every other
+/// mode). Main pass `repeat` (0-based, counted on across global passes) of N slices at (N - 1 - repeat mod N) / N,
+/// so the first pass engraves only the deepest (darkest) areas and the last everything not white. A cleanup
+/// sub-layer cleans the slice of the last main pass (`main_done` main passes so far), or everything with
+/// "Clean whole image" (on the main settings or the cleanup's own); another sub-layer slices over its own passes.
+pub(crate) fn slice_level(layer: &Layer, cut: &CutSettings, repeat: u32, main_done: u32) -> f32 {
+    if cut.image.dither != doc::DitherMode::Slice3d {
+        return 0.0;
+    }
+    let level = |n: u32, k: u32| {
+        let n = n.max(1);
+        (n - 1 - k % n) as f32 / n as f32
+    };
+    if cut.cleanup.is_some() {
+        if layer.settings.image.clean_whole_image || cut.image.clean_whole_image {
+            return 0.0;
+        }
+        return level(layer.settings.passes, main_done.saturating_sub(1));
+    }
+    level(cut.passes, repeat)
 }
 
 /// How many passes [`layer_schedule`] gives `layer`, without listing them.
@@ -610,13 +642,30 @@ struct DecodedImage<'a> {
     gray: Gray,
     width_mm: f64,
     height_mm: f64,
+    /// Apply Mask to Image: the mask's closed outlines in the field frame (even-odd); runs are clipped to them.
+    mask: Option<Vec<Vec<Point>>>,
+}
+
+/// The outlines of image `o`'s mask ([`doc::Document::image_mask`]; a group stands for its members), flattened.
+fn mask_polygons(doc: &doc::Document, o: &Object) -> Option<Vec<Vec<Point>>> {
+    let m = doc.image_mask(&o.id)?;
+    let ids = doc.expand_group_ids(std::slice::from_ref(m));
+    let polys = ids
+        .iter()
+        .filter_map(|id| doc.object(id))
+        .filter(|m| !matches!(m.geometry, Geometry::Image { .. }))
+        .flat_map(|m| crate::geom::flatten(&m.field_path()))
+        .filter(|s| s.points.len() >= 3)
+        .map(|s| s.points)
+        .collect();
+    Some(polys)
 }
 
 impl DecodedImage<'_> {
-    fn raster(&self, s: &doc::ImageSettings, angle_deg: f64, budget: usize, max: usize) -> Result<Vec<Vec<Run>>> {
+    fn raster(&self, s: &doc::ImageSettings, angle_deg: f64, budget: usize, max: usize, slice: f32) -> Result<Vec<Vec<Run>>> {
         let placed =
             Placed { gray: &self.gray, width_mm: self.width_mm, height_mm: self.height_mm, transform: self.object.transform };
-        raster(&placed, s, angle_deg, budget).map_err(|e| match e {
+        let rows = raster_slice(&placed, s, angle_deg, budget, slice).map_err(|e| match e {
             RasterError::TooManyDots { rows, cols } => PlanError::ImageTooLarge {
                 object: self.object.id.clone(),
                 rows,
@@ -624,6 +673,10 @@ impl DecodedImage<'_> {
                 max: MAX_IMAGE_DOTS,
             },
             RasterError::OverBudget => PlanError::ImageSegments { object: self.object.id.clone(), max },
+        })?;
+        Ok(match &self.mask {
+            Some(mask) => clip_runs(&rows, mask),
+            None => rows,
         })
     }
 }
@@ -653,7 +706,7 @@ fn decode_image<'a>(o: &'a Object, cuts: &[&CutSettings]) -> Result<DecodedImage
     let (mut gray, factor) = crate::image::decode(data_base64, *width_mm, dot_local_mm).map_err(problem)?;
     let scaled = ImageAdjust { enhance_radius: adjust.enhance_radius / factor as f64, ..adjust.clone() };
     crate::image::adjust(&mut gray, &scaled);
-    Ok(DecodedImage { object: o, gray, width_mm: *width_mm, height_mm: *height_mm })
+    Ok(DecodedImage { object: o, gray, width_mm: *width_mm, height_mm: *height_mm, mask: None })
 }
 
 /// Mark segments of `polylines` (each polyline of n points has n - 1; a one-point dot counts as one).
@@ -673,7 +726,7 @@ fn pass_polylines(
     (budget, max): (usize, usize),
     ctx: &PassCtx,
 ) -> Result<(Vec<Vec<Point>>, Vec<f64>, Point)> {
-    let fill = matches!(cut.mode, FillMode::Fill | FillMode::FillThenLine);
+    let fill = matches!(cut.mode, FillMode::Fill | FillMode::FillThenLine | FillMode::OffsetFill);
     let line = matches!(cut.mode, FillMode::Line | FillMode::FillThenLine);
     let o = &cut.options;
     let mut out = Vec::new();
@@ -702,6 +755,14 @@ fn pass_polylines(
                 let rings: Vec<Vec<Point>> =
                     group.iter().flat_map(|s| s.subs.iter()).filter(|s| s.closed).map(|s| s.points.clone()).collect();
                 let scale = group.first().map_or(1.0, |s| s.scale);
+                if cut.mode == FillMode::OffsetFill {
+                    // LightBurn's Offset Fill: concentric inward offsets at the line interval (no scan angle).
+                    let made = crate::offsets::offset_fill(&rings, cut.hatch.interval_mm, budget.saturating_sub(lines_made))
+                        .map_err(|e| offset_error(layer, "offset fill", e, max))?;
+                    lines_made += made.iter().map(Vec::len).sum::<usize>();
+                    chunks.extend(made.into_iter().map(|r| (Chunk::Closed(r), scale)));
+                    continue;
+                }
                 let mut angles = vec![angle];
                 if cut.hatch.cross_hatch {
                     angles.push(angle + 90.0);
@@ -736,11 +797,11 @@ fn pass_polylines(
             pos = end;
         }
         if line {
-            let mut chunks: Vec<(Chunk, f64)> = bucket
-                .iter()
-                .flat_map(|s| s.subs.iter().map(move |sub| (sub, s.scale)))
-                .map(|(s, k)| (if s.closed { Chunk::Closed(s.points.clone()) } else { Chunk::Open(s.points.clone()) }, k))
-                .collect();
+            let user_start = !(ctx.order.enabled && ctx.order.best_start);
+            let mut chunks: Vec<(Chunk, f64)> = Vec::new();
+            for s in bucket {
+                chunks.extend(line_chunks(layer, s, o.kerf_offset_mm, user_start, max)?.into_iter().map(|c| (c, s.scale)));
+            }
             if let Some(tol) = ctx.remove_overlaps {
                 chunks = cutopts::remove_overlaps(chunks, tol);
             }
@@ -755,6 +816,33 @@ fn pass_polylines(
         }
     }
     Ok((out, scales, pos))
+}
+
+/// A shape's outlines as line chunks: closed outlines offset by the kerf (LightBurn's Kerf Offset; open ones stay
+/// as they are) and, with `user_start`, started at the shape's start point (Set Start Point; the outline nearest
+/// it starts at its nearest vertex, reversed when asked).
+fn line_chunks(layer: &str, s: &ShapeIn, kerf_mm: f64, user_start: bool, max: usize) -> Result<Vec<Chunk>> {
+    let open = s.subs.iter().filter(|p| !p.closed).map(|p| Chunk::Open(p.points.clone()));
+    let mut closed: Vec<Vec<Point>> = s.subs.iter().filter(|p| p.closed).map(|p| p.points.clone()).collect();
+    if kerf_mm != 0.0 && !closed.is_empty() {
+        closed = crate::offsets::kerf(&closed, kerf_mm).map_err(|e| offset_error(layer, "kerf offset", e, max))?;
+    }
+    if user_start
+        && let Some((at, reverse)) = s.start
+        && let Some(i) = (0..closed.len()).min_by(|a, b| {
+            crate::offsets::ring_distance(&closed[*a], at).total_cmp(&crate::offsets::ring_distance(&closed[*b], at))
+        })
+    {
+        crate::offsets::start_at(&mut closed[i], at, reverse);
+    }
+    Ok(closed.into_iter().map(Chunk::Closed).chain(open).collect())
+}
+
+fn offset_error(layer: &str, what: &str, e: crate::offsets::OffsetError, max: usize) -> PlanError {
+    match e {
+        crate::offsets::OffsetError::OverBudget => PlanError::TooManySegments { max },
+        crate::offsets::OffsetError::Geometry(m) => PlanError::Target(format!("layer {layer}: {what}: {m}")),
+    }
 }
 
 /// The line options of one ordered outline, in order: tabs (closed outlines), perforation, wobble, dot mode.

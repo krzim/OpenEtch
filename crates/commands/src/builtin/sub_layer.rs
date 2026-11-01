@@ -99,7 +99,10 @@ fn result(doc: &Document, layer: &LayerId, index: Option<usize>) -> Value {
     })
 }
 
-fn layer_mut<'a>(doc: &'a mut Document, id: &str) -> Result<&'a mut doc::Layer> {
+/// The layer to edit; a layer linked to a library preset is refused (its sub-layers are part of the preset, as its
+/// main settings are: LightBurn's linked layers are edited through the library).
+fn layer_mut<'a>(cmd: &str, doc: &'a mut Document, id: &str) -> Result<&'a mut doc::Layer> {
+    super::preset::check_not_linked(cmd, doc, id)?;
     doc.layer_mut(id).ok_or_else(|| CommandError::Failed(format!("layer {id} vanished")))
 }
 
@@ -140,7 +143,7 @@ impl Command for SubAdd {
             if let Some(c) = &input.cleanup {
                 check_cleanup(Self::ID, c)?;
             }
-            let layer = layer_mut(doc, &id)?;
+            let layer = layer_mut(Self::ID, doc, &id)?;
             let count = layer.sub_layers.len();
             if count >= MAX_SUB_LAYERS {
                 return Err(invalid(
@@ -211,7 +214,7 @@ impl Command for SubUpdate {
             if let Some(Some(c)) = &input.cleanup {
                 check_cleanup(Self::ID, c)?;
             }
-            let layer = layer_mut(doc, &id)?;
+            let layer = layer_mut(Self::ID, doc, &id)?;
             let s = &mut layer.sub_layers[input.index];
             let mut changed = Vec::new();
             if let Some(p) = input.settings {
@@ -270,7 +273,7 @@ impl Command for SubDelete {
         transact(doc, |doc| {
             let id = util::layer(doc, &input.layer)?.id.clone();
             check_index(Self::ID, "index", util::layer(doc, &id)?, input.index)?;
-            let layer = layer_mut(doc, &id)?;
+            let layer = layer_mut(Self::ID, doc, &id)?;
             let removed = layer.sub_layers.remove(input.index);
             let gone = input.index + 1;
             remap_sub_extras(&mut layer.extras, |n| match n.cmp(&gone) {
@@ -315,7 +318,7 @@ impl Command for SubMove {
             if input.from == input.to {
                 return Err(invalid(Self::ID, format!("sub-layer {} is already at position {}", input.from, input.to)));
             }
-            let layer = layer_mut(doc, &id)?;
+            let layer = layer_mut(Self::ID, doc, &id)?;
             let s = layer.sub_layers.remove(input.from);
             let summary = format!("moved sub-layer {} of layer {id} to position {}", label(input.from, &s), input.to);
             layer.sub_layers.insert(input.to, s);
@@ -360,7 +363,7 @@ impl Command for SubDuplicate {
         transact(doc, |doc| {
             let id = util::layer(doc, &input.layer)?.id.clone();
             check_index(Self::ID, "index", util::layer(doc, &id)?, input.index)?;
-            let layer = layer_mut(doc, &id)?;
+            let layer = layer_mut(Self::ID, doc, &id)?;
             if layer.sub_layers.len() >= MAX_SUB_LAYERS {
                 return Err(invalid(
                     Self::ID,

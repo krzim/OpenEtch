@@ -1,0 +1,27 @@
+[package]
+name = "fileio"
+description = "File formats and image tools: SVG/DXF/PDF/AI export, PDF/AI/EPS/HPGL/Gerber/3D model import, zip, trace, rasterise"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+doc = { workspace = true }
+geom = { path = "../geom" }
+kurbo = { workspace = true }
+thiserror = { workspace = true }
+roxmltree = { workspace = true }
+# TIFF and TGA decoding on import (converted to PNG); the rest as plan uses it.
+image = { workspace = true, features = ["tiff", "tga"] }
+# Deflate for zip archives (3MF, bundles) and PDF streams (MIT OR Zlib OR Apache-2.0).
+miniz_oxide = { version = "0.8", features = ["with-alloc"] }
+base64 = { workspace = true }
+
+# PDF parsing (PDF and PDF-based Adobe Illustrator import; MIT). Its encryption support needs a random source that
+# wasm32 lacks, so PDF import is native only.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+lopdf = { version = "0.46", default-features = false }
+
+[dev-dependencies]
+dxf = { workspace = true }

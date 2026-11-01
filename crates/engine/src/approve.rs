@@ -33,7 +33,14 @@ pub const START_INPUT_TIMEOUT: Duration = Duration::from_secs(3600);
 /// Check the operator PIN, then arm and start pending run `id` in a background task. Refused unless the PIN is
 /// right, the run is pending, made from the current document revision, no other run holds the machine, and the job
 /// counter has not reached Stop At.
-pub(crate) async fn approve(state: &Arc<AppState>, id: &str, pin: Option<&str>) -> Result<Value, EngineError> {
+///
+/// `checklist`: the Job Checklist items the operator ticked (module `libs`: Require Framing Before Start, the Job
+/// Checklist and the door interlock are checked before the machine is claimed).
+pub(crate) async fn approve(state: &Arc<AppState>, id: &str, pin: Option<&str>, checklist: Option<&[bool]>) -> Result<Value, EngineError> {
+    // The simulator test PIN (`--sim-pin`) never approves anything on a real laser, whatever started the engine.
+    if state.approval.pin.is_sim() && state.machine.kind() != crate::hw::LinkKind::Simulated {
+        return Err(crate::pin::sim_pin_on_real_link());
+    }
     if let Err((e, locked_until)) = state.approval.pin.verify_reporting(pin) {
         if let Some(until_unix_s) = locked_until {
             state.emit(Event::ApprovalLocked { until_unix_s });
@@ -41,6 +48,10 @@ pub(crate) async fn approve(state: &Arc<AppState>, id: &str, pin: Option<&str>) 
         return Err(state.approval.pin.error(e));
     }
     let confirm = state.approval.confirm;
+    let pending_revision = state.runs().get(id).filter(|r| r.state == RunState::Pending).map(|r| r.revision);
+    if let Some(rev) = pending_revision {
+        crate::libs::check_before_approve(state, rev, checklist).await?;
+    }
     let current = state.revision();
     let device = state.active_device().id;
     if state.job.at_stop(&device) {
@@ -89,10 +100,19 @@ pub(crate) async fn approve(state: &Arc<AppState>, id: &str, pin: Option<&str>) 
 
     let st = state.clone();
     let run_id = id.to_owned();
+    let started = Instant::now();
     tokio::spawn(progress_ticker(state.clone(), id.to_owned()));
     tokio::spawn(async move {
+        let table = options.table.clone();
         let job = Job { id: &run_id, device: &device, parts, epoch, confirm, options };
         let (final_state, report, error) = execute(&st, job).await;
+        // Repeat Marking: back to the table's start once the job finished (not after a stop).
+        if final_state == RunState::Finished
+            && table.is_some_and(|t| t.return_to_start)
+            && let Err(e) = move_table(&st, epoch, 0.0).await
+        {
+            tracing::warn!(run_id = %run_id, error = %e, "table: could not return to the start position");
+        }
         // The job's progress is cleared before the machine is released, so a job approved right after this one
         // never has its progress wiped by this task.
         st.job.end(&run_id);
@@ -104,6 +124,7 @@ pub(crate) async fn approve(state: &Arc<AppState>, id: &str, pin: Option<&str>) 
             }
         }
         st.runs().finish(&run_id, final_state, report, error.clone());
+        crate::libs::after_run(&st, &run_id, &device, final_state, started, error.clone());
         let ok = final_state == RunState::Finished;
         if ok {
             // Serial numbers / CSV rows move on once per finished job (the job's packets were rendered at request
@@ -216,6 +237,14 @@ async fn execute(st: &Arc<AppState>, job: Job<'_>) -> Outcome {
                 if iterations.is_some_and(|n| completed >= n) {
                     return (RunState::Finished, last, None);
                 }
+                // Repeat Marking: the table moves on by the increment, then settles.
+                if let Some(t) = &job.options.table {
+                    match move_table(st, job.epoch, t.increment * f64::from(completed)).await {
+                        Ok(true) => tokio::time::sleep(Duration::from_millis(u64::from(t.settle_ms))).await,
+                        Ok(false) => return (RunState::Aborted, last, Some(format!("stopped after {completed} run(s)"))),
+                        Err(e) => return (RunState::Failed, last, Some(format!("table: {e}"))),
+                    }
+                }
             }
             Once::NotStarted if completed == 0 => {
                 return (RunState::Cancelled, None, Some("cancelled by stop before streaming".into()));
@@ -266,10 +295,33 @@ async fn run_once(st: &Arc<AppState>, id: &str, parts: &Arc<Vec<RunPart>>, epoch
         Ok(None) => Once::NotStarted,
         Ok(Some(Ok(report))) => Once::Done(report),
         Ok(Some(Err(ControllerError::Aborted))) => Once::Ended((RunState::Aborted, None, Some("aborted by stop".into()))),
-        Ok(Some(Err(e @ ControllerError::StopInput(_)))) => Once::Ended((RunState::Aborted, None, Some(e.to_string()))),
+        Ok(Some(Err(e @ (ControllerError::StopInput(_) | ControllerError::DoorOpen(_))))) => {
+            Once::Ended((RunState::Aborted, None, Some(e.to_string())))
+        }
         Ok(Some(Err(e))) => Once::Ended((RunState::Failed, None, Some(e.to_string()))),
         // The blocking task panicked: the controller may have left the MO open or the laser-enable bit set.
         Err(e) => Once::Ended(panicked(st, e.to_string()).await),
+    }
+}
+
+/// Move the Repeat Marking table to `units` (mm or degrees from its start). `Ok(false)`: a stop came in first.
+async fn move_table(st: &Arc<AppState>, epoch: u64, units: f64) -> Result<bool, String> {
+    let r = st
+        .machine
+        .blocking(move |m, ctl| -> Result<bool, String> {
+            if m.stop_epoch() != epoch {
+                return Ok(false);
+            }
+            let axis = m.profile().axis.ok_or("the profile has no table axis")?;
+            let position = axis.table_steps(units)?;
+            m.ensure_ready(ctl).map_err(|e| e.to_string())?;
+            ctl.move_axis(position).map_err(|e| e.to_string())?;
+            Ok(true)
+        })
+        .await;
+    match r {
+        Ok(v) => v,
+        Err(e) => Err(e.to_string()),
     }
 }
 

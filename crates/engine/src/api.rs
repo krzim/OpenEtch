@@ -72,6 +72,8 @@ pub fn router(state: Arc<AppState>, web_dir: Option<&Path>) -> Router {
         .route("/devices/{id}", get(device_details).delete(device_remove).put(crate::api_machine::device_edit))
         .route("/devices/{id}/activate", post(device_activate))
         .merge(crate::api_machine::routes())
+        .merge(crate::api_libs::routes())
+        .merge(crate::userfiles::routes())
         .fallback(api_not_found)
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES));
     let mut app = Router::new().nest("/api", api).nest_service("/mcp", mcp::service(state.clone()));
@@ -565,6 +567,9 @@ struct ApproveBody {
     pin: Option<String>,
     #[serde(default)]
     origin: Option<Value>,
+    /// The Job Checklist items ticked, in order (required while the device's checklist is on).
+    #[serde(default)]
+    checklist: Option<Vec<bool>>,
 }
 
 /// Approval by a person: `{"pin": "<operator PIN>"}`. Refuses anything that looks like an MCP client or names a
@@ -583,5 +588,5 @@ async fn approve_run(
     if parse_origin(b.origin.as_ref())? != commands::Origin::Ui {
         return Err(EngineError::Forbidden("runs can only be approved from the UI".into()));
     }
-    Ok(Json(approve::approve(&st, &id, b.pin.as_deref()).await?))
+    Ok(Json(approve::approve(&st, &id, b.pin.as_deref(), b.checklist.as_deref()).await?))
 }

@@ -245,7 +245,7 @@ impl Command for AdjustImage {
 }
 
 /// The base64 text with an optional `data:` prefix and whitespace removed, and the decoded bytes.
-fn decode(cmd: &str, text: &str) -> Result<Vec<u8>> {
+pub(super) fn decode(cmd: &str, text: &str) -> Result<Vec<u8>> {
     let body = match text.trim_start().strip_prefix("data:") {
         Some(rest) => rest.split_once(',').map(|(_, b)| b).ok_or_else(|| invalid(cmd, "the data: URL has no ','"))?,
         None => text,
@@ -267,7 +267,8 @@ impl Command for ImportImage {
     type Input = ImportImageInput;
     const ID: &'static str = "art.import_image";
     const TITLE: &'static str = "Import image";
-    const DESCRIPTION: &'static str = "Import a bitmap (PNG, JPEG, GIF, BMP or WebP, as base64) as an image object \
+    const DESCRIPTION: &'static str = "Import a bitmap (PNG, JPEG, GIF, BMP, WebP, TIFF or TGA, as base64; TIFF and TGA \
+        are converted to PNG, keeping a TIFF's resolution) as an image object \
         centred on the field origin. Size: width_mm (height keeps the aspect ratio), else the file's resolution \
         (else 254 dpi), shrunk to fit 80 % of the field. Jobs engrave images with their layer's Image mode settings \
         (layer.update settings.image: dither, interval, ...); image.adjust sets gamma, contrast, brightness and \
@@ -276,14 +277,14 @@ impl Command for ImportImage {
 
     fn apply(doc: &mut Document, i: ImportImageInput) -> Result<(Value, String)> {
         let id = Self::ID;
-        let bytes = decode(id, &i.data_base64)?;
+        let (bytes, converted) = super::files::browser_bitmap(id, decode(id, &i.data_base64)?, &i.mime)?;
         let info = image_info(&bytes)
             .ok_or_else(|| invalid(id, "the data is not a PNG, JPEG, GIF, BMP or WebP image (or its header is damaged)"))?;
         if info.width_px == 0 || info.height_px == 0 || info.width_px > MAX_PIXELS || info.height_px > MAX_PIXELS {
             return Err(invalid(id, format!("the image is {} x {} pixels; 1..={MAX_PIXELS} are supported", info.width_px, info.height_px)));
         }
-        let mut warnings = Vec::new();
-        let given = i.mime.trim().to_ascii_lowercase();
+        let mut warnings: Vec<String> = converted.into_iter().collect();
+        let given = if warnings.is_empty() { i.mime.trim().to_ascii_lowercase() } else { "image/png".into() };
         let given = if given == "image/jpg" { "image/jpeg".to_string() } else { given };
         if given != info.mime {
             warnings.push(format!("the file is {}, not {}; imported as {}", info.mime, i.mime.trim(), info.mime));

@@ -96,7 +96,7 @@ fn xml_char(c: char) -> bool {
 
 /// Whether `name` can be written as an element or attribute name without changing the markup around it. Names come
 /// from parsed XML or from [`doc::is_plain_name`]-checked extras; this guards the public model against anything else.
-fn safe_name(name: &str) -> bool {
+pub(crate) fn safe_name(name: &str) -> bool {
     name.chars().next().is_some_and(|c| !c.is_ascii_digit() && !matches!(c, '-' | '.'))
         && name.chars().all(|c| {
             xml_char(c) && !c.is_whitespace() && !matches!(c, '<' | '>' | '&' | '"' | '\'' | '/' | '=' | '?' | '!')

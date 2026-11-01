@@ -102,6 +102,9 @@ pub enum ControllerError {
     /// The extension axis did not stop moving within the limit.
     #[error("the extension axis did not stop within {0:?}")]
     AxisTimeout(Duration),
+    /// The profile's Door Protect input is active (the enclosure is open): the run did not start, or was aborted.
+    #[error("the door interlock (input {0}) is open")]
+    DoorOpen(u8),
 }
 
 type Result<T, E = ControllerError> = std::result::Result<T, E>;
@@ -481,6 +484,10 @@ impl<L: Link> Controller<L> {
         }
         self.profile = Some(profile.clone());
         self.state = ControllerState::Idle;
+        let idle = profile.io.idle_outputs();
+        if idle != 0 {
+            self.single(Single::write_port(idle))?;
+        }
         let info = BoardInfo { serial, version };
         self.info = Some(info.clone());
         Ok(info)
@@ -493,6 +500,25 @@ impl<L: Link> Controller<L> {
             self.state = ControllerState::Idle;
         }
         Ok(status)
+    }
+
+    /// The output word while idle (ready light, Red Dot Always On; never the laser-enable bit): 0 without a profile.
+    pub fn idle_outputs(&self) -> u16 {
+        self.profile.as_ref().map_or(0, |p| p.io.idle_outputs())
+    }
+
+    /// Write the idle output word (after a stop, or when Red Dot Always On changes). Never sets the laser-enable bit.
+    /// Refused while a job runs or a frame is on (they own the port).
+    pub fn apply_idle_outputs(&mut self) -> Result<()> {
+        if self.state == ControllerState::Uninitialized {
+            return Err(ControllerError::NotInitialized);
+        }
+        if matches!(self.state, ControllerState::Running | ControllerState::Framing) {
+            return Err(ControllerError::Busy(self.state));
+        }
+        let idle = self.idle_outputs();
+        debug_assert_eq!(idle & lmc::LASER_ENABLE_BIT, 0);
+        self.single(Single::write_port(idle & !lmc::LASER_ENABLE_BIT)).map(|_| ())
     }
 
     /// Read the board's input port: `ReadPort`, reply word 1 (as galvoplotter's `wait_for_input` reads it). Used for
@@ -543,7 +569,7 @@ impl<L: Link> Controller<L> {
     /// Stop a running frame: `StopExecute`, `ResetList`, `WritePort(0)` (pointer off), then `GotoXY` to the red
     /// dot's rest position when the profile sets one. Every step is tried.
     pub fn stop_frame(&mut self) -> Result<()> {
-        let mut cmds = vec![Single::stop_execute(), Single::reset_list(), Single::write_port(0)];
+        let mut cmds = vec![Single::stop_execute(), Single::reset_list(), Single::write_port(self.idle_outputs())];
         if let Some(p) = self.profile.as_ref().filter(|p| p.red_dot.rest_x_mm != 0.0 || p.red_dot.rest_y_mm != 0.0)
             && let Ok((x, y)) = field_to_galvo(p, p.red_dot.rest_x_mm, p.red_dot.rest_y_mm)
         {
@@ -596,6 +622,12 @@ impl<L: Link> Controller<L> {
             self.abort_after(&ControllerError::Aborted);
             return Err(ControllerError::Aborted);
         }
+        // Door Protect: an open enclosure refuses the run before anything that can emit is sent.
+        if let Some(door) = profile.io.door_protect
+            && door.active(self.read_port()?)
+        {
+            return Err(ControllerError::DoorOpen(door.bit));
+        }
         let total: usize = parts.iter().map(|p| p.packets.len()).sum();
         tracing::info!(run_id = armed.run_id(), packets = total, parts = parts.len(), "starting armed run");
         self.state = ControllerState::Running;
@@ -614,6 +646,8 @@ impl<L: Link> Controller<L> {
 
     fn run_inner(&mut self, profile: &MachineProfile, parts: &[RunPart]) -> Result<Option<Reply>> {
         let invert = profile.axis.as_ref().is_some_and(|a| a.invert);
+        // Laser enable plus the busy / ready lights while the job runs.
+        let enable = profile.laser_enable_mask() | profile.io.run_outputs();
         let mut mo_open = false;
         for (i, part) in parts.iter().enumerate() {
             self.control.0.part.store(i, Ordering::SeqCst);
@@ -631,11 +665,11 @@ impl<L: Link> Controller<L> {
             }
             self.single(Single::reset_list())?;
             if i == 0 {
-                self.single(Single::write_port(profile.laser_enable_mask()))?;
+                self.single(Single::write_port(enable))?;
             }
             if !mo_open {
                 if i > 0 {
-                    self.single(Single::write_port(profile.laser_enable_mask()))?;
+                    self.single(Single::write_port(enable))?;
                 }
                 self.single(Single::fiber_set_mo(true))?;
                 mo_open = true;
@@ -644,8 +678,17 @@ impl<L: Link> Controller<L> {
             self.wait_idle()?;
         }
         self.single(Single::fiber_set_mo(false))?;
-        self.single(Single::write_port(0))?;
-        self.single(Single::get_mark_time())
+        let idle = profile.io.idle_outputs();
+        self.single(Single::write_port(idle))?;
+        let mark_time = self.single(Single::get_mark_time())?;
+        // Done Marking: pulse the output (never with the laser-enable bit; the MO is closed).
+        let done = profile.io.done_output();
+        if done != 0 {
+            self.single(Single::write_port(idle | done))?;
+            std::thread::sleep(Duration::from_millis(u64::from(profile.io.done_pulse_ms)));
+            self.single(Single::write_port(idle))?;
+        }
+        Ok(mark_time)
     }
 
     /// Emergency stop, always callable (no init needed): `StopExecute`, `Fiber_SetMo(0)`, `ResetList`,
@@ -654,13 +697,19 @@ impl<L: Link> Controller<L> {
     /// (no run state survives it: an [`Armed`] token is consumed by the run it was given to). Not gated by anything;
     /// the engine's stop epoch, which keeps an approved run from starting after a stop, lives in the engine.
     pub fn abort(&mut self) -> Result<()> {
-        let result = self.send_all(&[
+        let mut cmds = vec![
             Single::stop_execute(),
             Single::fiber_set_mo(false),
             Single::reset_list(),
             Single::write_port(0),
             Single::goto_xy(CENTER, CENTER, 0),
-        ]);
+        ];
+        // Ready light / Red Dot Always On come back after the port was cleared (never the laser-enable bit).
+        let idle = self.idle_outputs() & !lmc::LASER_ENABLE_BIT;
+        if idle != 0 {
+            cmds.push(Single::write_port(idle));
+        }
+        let result = self.send_all(&cmds);
         self.abort.clear();
         // A stop ends a pause too; a request left over would pause the next run.
         self.control.clear_pause();
@@ -738,9 +787,21 @@ impl<L: Link> Controller<L> {
     }
 
     fn check_stop_input(&mut self) -> Result<()> {
-        let Some(bit) = self.profile.as_ref().and_then(|p| p.stop_mark_input_bit) else { return Ok(()) };
+        let stop = self.profile.as_ref().and_then(|p| p.stop_mark_input_bit);
+        let door = self.profile.as_ref().and_then(|p| p.io.door_protect);
+        if stop.is_none() && door.is_none() {
+            return Ok(());
+        }
         let inputs = self.reply(Single::read_port())?[1];
-        if inputs & (1u16 << (bit & 15)) != 0 { Err(ControllerError::StopInput(bit)) } else { Ok(()) }
+        if let Some(bit) = stop
+            && inputs & (1u16 << (bit & 15)) != 0
+        {
+            return Err(ControllerError::StopInput(bit));
+        }
+        match door {
+            Some(d) if d.active(inputs) => Err(ControllerError::DoorOpen(d.bit)),
+            _ => Ok(()),
+        }
     }
 
     fn pause(&self) {
@@ -1095,6 +1156,79 @@ mod tests {
                 assert_eq!(traffic[i - 1], Traffic::Single(Single::get_version()));
             }
         }
+    }
+
+    fn io_profile() -> MachineProfile {
+        let mut p = b6();
+        p.io = crate::IoPorts {
+            door_protect: Some(crate::InputPort { bit: 5, active_low: false }),
+            busy_light: Some(3),
+            ready_light: Some(4),
+            done_marking: Some(6),
+            done_pulse_ms: 1,
+            red_dot_always_on: true,
+            ..crate::IoPorts::default()
+        };
+        p.validate().unwrap();
+        p
+    }
+
+    #[test]
+    fn io_ports_drive_status_lights_and_done_pulse() {
+        let mut c = controller(SimBoard::default());
+        c.init(&io_profile(), None).unwrap();
+        let idle = 0x10 | lmc::RED_POINTER_BIT;
+        assert_eq!(c.link().port(), idle, "ready light and red dot on after init");
+        c.link_mut().clear_traffic();
+        c.run(&job(), Armed::approved_in_ui("run-1".into())).unwrap();
+        let ports: Vec<u16> =
+            c.link().singles_without_polls().iter().filter(|s| s.opcode() == op::WRITE_PORT).map(|s| s.0[1]).collect();
+        assert_eq!(ports, [0x01 | 0x08 | 0x10, idle, idle | 0x40, idle], "enable + busy + ready, idle, done pulse, idle");
+        assert!(ports.iter().skip(1).all(|b| b & lmc::LASER_ENABLE_BIT == 0));
+        // Abort clears the port, then restores the idle lights (never the laser-enable bit).
+        c.abort().unwrap();
+        assert_eq!(c.link().port(), idle);
+        c.link_mut().clear_traffic();
+        c.apply_idle_outputs().unwrap();
+        assert_eq!(c.link().singles_without_polls(), [Single::write_port(idle)]);
+    }
+
+    #[test]
+    fn door_protect_refuses_and_aborts_runs() {
+        let mut c = controller(SimBoard::default());
+        c.init(&io_profile(), None).unwrap();
+        c.link_mut().set_inputs(1 << 5);
+        c.link_mut().clear_traffic();
+        let e = c.run(&job(), Armed::approved_in_ui("run-1".into())).unwrap_err();
+        assert!(matches!(e, ControllerError::DoorOpen(5)), "{e}");
+        assert!(!singles_can_emit(&c.link().singles()), "nothing that can emit was sent");
+        assert!(c.link().packets().is_empty());
+        // Active low: open when the input reads 0.
+        let mut low = io_profile();
+        low.io.door_protect = Some(crate::InputPort { bit: 5, active_low: true });
+        let mut c = controller(SimBoard::default());
+        c.init(&low, None).unwrap();
+        assert!(matches!(c.run(&job(), Armed::approved_in_ui("run-2".into())), Err(ControllerError::DoorOpen(5))));
+        c.link_mut().set_inputs(1 << 5);
+        c.run(&job(), Armed::approved_in_ui("run-3".into())).unwrap();
+    }
+
+    #[test]
+    fn io_port_validation() {
+        let mut p = b6();
+        for bad in [0u8, 8, 16] {
+            p.io.busy_light = Some(bad);
+            assert!(p.validate().is_err(), "bit {bad}");
+        }
+        p.io.busy_light = Some(3);
+        p.io.ready_light = Some(3);
+        assert!(p.validate().is_err(), "shared bit");
+        p.io.ready_light = None;
+        p.io.done_pulse_ms = 6000;
+        assert!(p.validate().is_err());
+        p.io.done_pulse_ms = 500;
+        p.io.door_protect = Some(crate::InputPort { bit: 16, active_low: false });
+        assert!(p.validate().is_err());
     }
 
     #[test]

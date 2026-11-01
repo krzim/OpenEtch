@@ -33,7 +33,7 @@ fn malformed(m: impl Into<String>) -> LbrnError {
     LbrnError::Malformed(m.into())
 }
 
-fn xml(text: &str) -> Result<roxmltree::Document<'_>, LbrnError> {
+pub(crate) fn xml(text: &str) -> Result<roxmltree::Document<'_>, LbrnError> {
     if text.len() > MAX_BYTES {
         return Err(LbrnError::TooLarge(format!("the file is larger than {} MB", MAX_BYTES / (1024 * 1024))));
     }
@@ -43,7 +43,7 @@ fn xml(text: &str) -> Result<roxmltree::Document<'_>, LbrnError> {
 }
 
 /// The source text of `n`, line breaks normalised to `\n`.
-fn raw(n: Node<'_, '_>) -> String {
+pub(crate) fn raw(n: Node<'_, '_>) -> String {
     let text = &n.document().input_text()[n.range()];
     if text.contains('\r') { text.replace("\r\n", "\n").replace('\r', "\n") } else { text.to_string() }
 }
@@ -198,7 +198,7 @@ fn attributes(n: Node<'_, '_>) -> Vec<(String, String)> {
     n.attributes().filter(|a| a.name() != "Type").map(|a| (a.name().to_string(), a.value().to_string())).collect()
 }
 
-fn cut_setting(n: Node<'_, '_>) -> Result<CutSetting, LbrnError> {
+pub(crate) fn cut_setting(n: Node<'_, '_>) -> Result<CutSetting, LbrnError> {
     let kind = n.attribute("type").unwrap_or_default().to_string();
     let mut values = Vec::new();
     let mut idx = None;

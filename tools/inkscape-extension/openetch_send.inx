@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<inkscape-extension xmlns="http://www.inkscape.org/namespace/inkscape/extension">
+    <name>Save selection to OpenEtch</name>
+    <id>org.openetch.send</id>
+    <param name="engine" type="string" gui-text="Engine URL">http://127.0.0.1:7878</param>
+    <param name="token" type="string" gui-text="Token (only off loopback)"></param>
+    <param name="name" type="string" gui-text="Name in OpenEtch">Inkscape selection</param>
+    <effect needs-live-preview="false">
+        <object-type>all</object-type>
+        <effects-menu>
+            <submenu name="OpenEtch"/>
+        </effects-menu>
+    </effect>
+    <script>
+        <command location="inx" interpreter="python">openetch_send.py</command>
+    </script>
+</inkscape-extension>

@@ -5,7 +5,7 @@
 //!
 //! | LightBurn tag | `ImageSettings` |
 //! |---|---|
-//! | `ditherMode` (`threshold`, `ordered`, `atkinson`, `dithered`, `stucki`, `jarvis`, `newsprint`, `halftone`, `sketch`, `grayscale`) | `dither`; other modes (`3dslice`) stay in `extras` with a warning |
+//! | `ditherMode` (`threshold`, `ordered`, `atkinson`, `dithered`, `stucki`, `jarvis`, `newsprint`, `halftone`, `sketch`, `grayscale`, `3dslice`) | `dither` (`3dslice` is 3D Sliced, `DitherMode::Slice3d`); other modes stay in `extras` with a warning |
 //! | `interval` (else 25.4 / `dpi`) | `interval_mm`; `dpi` is written back as read while the interval is unchanged, else as round(25.4 / interval) |
 //! | `angle`, `anglePerPass`, `bidir` | `angle_deg`, `angle_increment_deg`, `bidirectional` (also the layer's hatch, as for any LightBurn layer) |
 //! | `negative`, `passThrough` | `negative`, `pass_through` |
@@ -315,16 +315,25 @@ mod tests {
 
     #[test]
     fn defaults_stay_out_and_unknown_modes_are_kept() {
+        // 3D Sliced (the owner's sample) is read as Slice3d and written back as it was.
         let (p, mut rest) = params(&[("ditherMode", "3dslice"), ("interval", "0.025"), ("dpi", "1016")]);
-        let mut warnings = Vec::new();
-        let s = image_from(&p, &mut rest, &ImageSettings::default(), "C29", &mut |w| warnings.push(w));
-        assert_eq!(s.dither, DitherMode::Jarvis);
-        assert!(warnings[0].contains("'3dslice' is not supported"), "{warnings:?}");
-        assert_eq!(rest.get("ditherMode").map(String::as_str), Some("3dslice"), "kept for export");
+        let s = image_from(&p, &mut rest, &ImageSettings::default(), "C29", &mut |_| {});
+        assert_eq!(s.dither, DitherMode::Slice3d);
         let source = vec![("ditherMode".to_string(), "3dslice".to_string()), ("interval".into(), "0.025".into()), ("dpi".into(), "1016".into())];
         let mut v: BTreeMap<String, String> = rest.clone();
         image_values(&s, &mut v, Some(&source), &ImageSettings::default());
         assert_eq!(v.get("ditherMode").map(String::as_str), Some("3dslice"));
+        // A mode OpenEtch does not know stays in extras with a warning.
+        let (p, mut rest) = params(&[("ditherMode", "futuremode"), ("interval", "0.025"), ("dpi", "1016")]);
+        let mut warnings = Vec::new();
+        let s = image_from(&p, &mut rest, &ImageSettings::default(), "C29", &mut |w| warnings.push(w));
+        assert_eq!(s.dither, DitherMode::Jarvis);
+        assert!(warnings[0].contains("'futuremode' is not supported"), "{warnings:?}");
+        assert_eq!(rest.get("ditherMode").map(String::as_str), Some("futuremode"), "kept for export");
+        let source = vec![("ditherMode".to_string(), "futuremode".to_string()), ("interval".into(), "0.025".into()), ("dpi".into(), "1016".into())];
+        let mut v: BTreeMap<String, String> = rest.clone();
+        image_values(&s, &mut v, Some(&source), &ImageSettings::default());
+        assert_eq!(v.get("ditherMode").map(String::as_str), Some("futuremode"));
         assert!(!v.contains_key("negative") && !v.contains_key("minPower") && !v.contains_key("halftoneAngle"));
         // Only dpi given: the interval follows it, and stays out on export.
         let (p, mut rest) = params(&[("dpi", "254")]);

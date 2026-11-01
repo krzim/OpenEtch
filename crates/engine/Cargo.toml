@@ -17,6 +17,8 @@ path = "src/main.rs"
 [features]
 # Real hardware over USB (nusb). Without it the engine always drives the simulated board.
 usb = ["machine/usb"]
+# UVC camera capture on the engine's computer (nokhwa); without it the camera takes frames uploaded by a browser.
+camera = ["dep:nokhwa"]
 
 [dependencies]
 doc = { workspace = true }
@@ -38,6 +40,14 @@ rmcp = { workspace = true }
 resvg = { workspace = true }
 base64 = { workspace = true }
 schemars = { workspace = true }
+# Material libraries (.clb) and LightBurn conversions.
+lbrn = { workspace = true }
+# Exports, imports, user bundles (zip) and image tools.
+fileio = { path = "../fileio" }
+# Camera frames and overlays, image bounds framing (pure Rust decoders).
+image = { workspace = true }
+# UVC capture (Apache-2.0), feature `camera`.
+nokhwa = { version = "0.10", default-features = false, features = ["input-native"], optional = true }
 # Bearer token generation (not in [workspace.dependencies]).
 getrandom = "0.3"
 # Operator PIN hash (not in [workspace.dependencies]).

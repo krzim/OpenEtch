@@ -64,6 +64,9 @@ OPTIONS:
   --device <id or name> The OpenEtch device to use for this run (default: the active device, set in the UI's Devices
                         window). Its profile drives the machine; a design-only device (not a JCZ galvo) only sets
                         the workspace.
+  --sim-pin <digits>    Simulator only: a test operator PIN (6-12 digits) for this run, held in memory and never
+                        written to disk. Refused with --usb (or any real USB link), and in release builds unless
+                        OPENETCH_ALLOW_SIM_PIN=1 is set. Never use it on a machine that drives a laser.
   -h, --help            Show this help.";
 
 /// Parsed options.
@@ -89,6 +92,8 @@ pub struct Config {
     pub lightburn_device: Option<String>,
     /// `--device`: the OpenEtch device for this run (id or name).
     pub device: Option<String>,
+    /// `--sim-pin`: the simulator test PIN (simulator only; see `pin::PinStore::simulator`).
+    pub sim_pin: Option<String>,
 }
 
 /// What the command line asked for.
@@ -164,6 +169,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Parsed, String> 
     let mut lightburn_prefs = None;
     let mut lightburn_device = None;
     let mut device = None;
+    let mut sim_pin = None;
     let mut it = args;
     while let Some(arg) = it.next() {
         let (flag, inline) = match arg.split_once('=') {
@@ -211,11 +217,19 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Parsed, String> 
                 }
                 device = Some(v);
             }
+            "--sim-pin" => {
+                let v = value("--sim-pin")?;
+                crate::pin::validate_pin(&v).map_err(|e| format!("--sim-pin: {e}"))?;
+                sim_pin = Some(v);
+            }
             "set-pin" | "profile" | "devices" => {
                 return Err(format!("{flag} is a command of its own and comes first (see --help)"));
             }
             other => return Err(format!("unknown option '{other}' (see --help)")),
         }
+    }
+    if usb && sim_pin.is_some() {
+        return Err("--sim-pin is only accepted with the simulator; it cannot be combined with --usb".into());
     }
     let listen_text = listen.unwrap_or_else(|| DEFAULT_LISTEN.to_owned());
     let listen: SocketAddr = listen_text.parse().map_err(|e| format!("--listen {listen_text}: {e}"))?;
@@ -236,6 +250,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Parsed, String> 
         lightburn_prefs,
         lightburn_device,
         device,
+        sim_pin,
     }))
 }
 
@@ -432,6 +447,21 @@ mod tests {
         assert!(p(&["devices", "list", "--add", "x"]).is_err());
         assert!(p(&["devices", "remove", "x"]).is_err());
         assert!(p(&["--usb", "devices"]).is_err());
+    }
+
+    #[test]
+    fn sim_pin_option() {
+        assert_eq!(run(&[]).sim_pin, None);
+        assert_eq!(run(&["--sim-pin", "123456"]).sim_pin.as_deref(), Some("123456"));
+        assert_eq!(run(&["--sim-pin=000000000000"]).sim_pin.as_deref(), Some("000000000000"));
+        let p = |a: &[&str]| parse(a.iter().map(|s| s.to_string()));
+        for bad in ["12345", "1234567890123", "12a456", ""] {
+            assert!(p(&["--sim-pin", bad]).unwrap_err().contains("--sim-pin"), "{bad}");
+        }
+        assert!(p(&["--sim-pin"]).is_err());
+        // Never with the real laser, in either order.
+        assert!(p(&["--usb", "--sim-pin", "123456"]).unwrap_err().contains("--usb"));
+        assert!(p(&["--sim-pin", "123456", "--usb"]).unwrap_err().contains("--usb"));
     }
 
     #[test]

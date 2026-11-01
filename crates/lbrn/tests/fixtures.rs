@@ -373,8 +373,12 @@ fn imports_sub_layers_and_reports_bad_values() {
     assert_eq!(ex("lbrn2.sub1.subname"), None);
     assert_eq!((s1.cleanup.as_ref(), deep.sub_layers[1].name.as_ref()), (None, None));
     assert_eq!(ex("lbrn2.speed"), None, "an unreadable value is dropped with a warning");
-    assert_eq!(layers[1].settings.mode, FillMode::Line);
-    assert_eq!(layers[1].extras.get("lbrn2.type").map(String::as_str), Some("Offset Fill"));
+    assert_eq!(layers[1].settings.mode, FillMode::OffsetFill, "LightBurn's Offset Fill");
+    assert_eq!(layers[1].extras.get("lbrn2.type"), None, "a mapped type is not kept as an extra");
+    let mut back = Document { layers: vec![layers[1].clone()], ..Document::default() };
+    back.field_mm = Some(150.0);
+    let (p, _) = lbrn::from_document(&back, 150.0).unwrap();
+    assert_eq!(p.cut_settings[0].kind, "Offset Fill", "exported as LightBurn's Offset Fill");
     assert_eq!(objects.len(), 2);
     let r = objects.iter().find(|o| matches!(o.geometry, Geometry::Rect { .. })).unwrap();
     assert!(matches!(r.geometry, Geometry::Rect { corner_radius_mm, .. } if corner_radius_mm == 2.5));
@@ -386,7 +390,6 @@ fn imports_sub_layers_and_reports_bad_values() {
         "speed value 'fast' could not be read",
         "frequency 0 Hz is not usable",
         "5000 passes clamped to 1000",
-        "cut type 'Offset Fill' is not supported",
         "C07: used by shapes but has no cut settings",
         "corner radius 9 mm was clamped to 2.5 mm",
         "1 object(s) are partly or wholly outside the 150 mm field",

@@ -52,11 +52,15 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info,rmcp=warn".into()),
-        )
-        .init();
+    {
+        use tracing_subscriber::prelude::*;
+        let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info,rmcp=warn".into());
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_filter(filter))
+            // The diagnostics log (bug reports, debug log toggle).
+            .with(engine::diagnostics::RingLayer.with_filter(engine::diagnostics::ring_filter()))
+            .init();
+    }
     let runtime = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
         Err(e) => {
@@ -113,7 +117,18 @@ fn set_pin(dir: &Path, reset: bool) -> ExitCode {
     }
 }
 
+/// `--sim-pin` is refused unless the engine drives the simulator (and, in a release build, unless
+/// `OPENETCH_ALLOW_SIM_PIN=1`).
+fn check_sim_pin(config: &Config, simulated: bool) -> Result<(), String> {
+    if config.sim_pin.is_none() {
+        return Ok(());
+    }
+    let env = std::env::var(pin::ALLOW_SIM_PIN_ENV).ok();
+    pin::check_sim_pin_allowed(simulated && !config.usb, cfg!(debug_assertions), env.as_deref())
+}
+
 async fn run(config: Config) -> Result<(), String> {
+    check_sim_pin(&config, !config.usb)?;
     let (builtin, builtin_cor) = devices::load_profile(&config.profile, config.profile_is_default)?;
     tracing::info!(profile = %builtin.name, field_mm = builtin.field_mm, correction = builtin_cor.is_some(), "machine profile loaded");
 
@@ -170,6 +185,8 @@ async fn run(config: Config) -> Result<(), String> {
         Machine::simulated(profile, cor, PollConfig::default())
     };
     let machine = Arc::new(machine);
+    // Again against the machine actually built: never a simulator PIN on a USB link.
+    check_sim_pin(&config, machine.kind() == engine::hw::LinkKind::Simulated)?;
     match machine.connect().await {
         Ok(()) => tracing::info!(simulated = !config.usb, "board ready"),
         Err(e) => tracing::warn!(error = %e, "board not ready; framing and runs will retry the connection"),
@@ -185,11 +202,18 @@ async fn run(config: Config) -> Result<(), String> {
     if let Err(e) = pin::create_config_dir(&config.config_dir) {
         tracing::warn!(path = %config.config_dir.display(), error = %e, "cannot set up the config directory");
     }
-    let approval = ApprovalConfig {
-        pin: PinStore::new(&config.config_dir),
-        confirm: config.confirm_input.map(PhysicalConfirm::new),
+    let pin_store = match &config.sim_pin {
+        Some(p) => PinStore::simulator(&config.config_dir, p)?,
+        None => PinStore::new(&config.config_dir),
     };
-    if !approval.pin.is_set() {
+    let approval = ApprovalConfig { pin: pin_store, confirm: config.confirm_input.map(PhysicalConfirm::new) };
+    if approval.pin.is_sim() {
+        let banner = "SIMULATOR TEST PIN ACTIVE (--sim-pin): runs on this engine are approved with a PIN given on the \
+                      command line, held in memory only. The engine drives the simulator; nothing reaches a laser. \
+                      Never use --sim-pin on an engine that drives a laser.";
+        tracing::warn!("{banner}");
+        eprintln!("openetch: WARNING: {banner}");
+    } else if !approval.pin.is_set() {
         println!(
             "openetch: no operator PIN is set ({}); runs cannot be approved until you run `openetch set-pin` and \
              restart the engine",
@@ -210,6 +234,17 @@ async fn run(config: Config) -> Result<(), String> {
     let state = AppState::new(Session::new(document), machine.clone(), security, approval, projects);
     state.install_devices(registry);
     state.job.open(config.config_dir.join(engine::job::COUNTERS_FILE));
+    // Libraries, preferences, job log, camera calibrations (module `libs`).
+    for note in state.libs.open(&config.config_dir) {
+        println!("openetch: {note}");
+    }
+    engine::libs::select_device_library(&state);
+    engine::libs::apply_startup_defaults(&state);
+    engine::libs::spawn_io_watch(state.clone());
+    for note in state.files.open(&config.config_dir) {
+        println!("openetch: {note}");
+    }
+    engine::userfiles::spawn_autosave(state.clone());
     let lightburn = engine::lightburn::LightBurnConfig {
         prefs_paths: match &config.lightburn_prefs {
             Some(p) => vec![p.clone()],

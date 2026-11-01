@@ -101,7 +101,14 @@ fn validate(doc: &mut Document) -> Result<(), FileError> {
 
 /// The numeric suffixes of the ids, e.g. 12 for "obj-12".
 fn numbered_ids(doc: &Document) -> impl Iterator<Item = u64> + '_ {
-    let ids = doc.layers.iter().map(|l| &l.id).chain(doc.objects.iter().map(|o| &o.id)).chain(doc.groups.iter().map(|g| &g.id));
+    let pages = doc.pages.iter().flat_map(|p| p.objects.iter().map(|o| &o.id).chain(p.groups.iter().map(|g| &g.id)));
+    let ids = doc
+        .layers
+        .iter()
+        .map(|l| &l.id)
+        .chain(doc.objects.iter().map(|o| &o.id))
+        .chain(doc.groups.iter().map(|g| &g.id))
+        .chain(pages);
     ids.filter_map(|id| id.rsplit_once('-').and_then(|(_, n)| n.parse::<u64>().ok()))
 }
 
@@ -236,10 +243,51 @@ fn check(doc: &Document) -> Result<(), FileError> {
             return Err(invalid(format!("{what} has an invalid extras key {k:?}")));
         }
     }
-    match doc.numeric_problem() {
-        Some(p) => Err(invalid(p)),
-        None => Ok(()),
+    if let Some(p) = doc.numeric_problem() {
+        return Err(invalid(p));
     }
+    check_pages(doc, seen)
+}
+
+/// Pages (LightBurn 2.2): the shapes of every other page become the document's own when that page is shown, so they
+/// meet the same rules; ids stay unique across all pages; the active page exists and its own entry is empty (its
+/// shapes are the document's).
+fn check_pages<'a>(doc: &'a Document, mut seen: BTreeSet<&'a str>) -> Result<(), FileError> {
+    if doc.pages.is_empty() {
+        return Ok(());
+    }
+    let mut page_ids = BTreeSet::new();
+    for p in &doc.pages {
+        if !page_ids.insert(p.id.as_str()) || seen.contains(p.id.as_str()) {
+            return Err(invalid(format!("page id '{}' is used more than once", p.id)));
+        }
+        if p.name.chars().any(char::is_control) {
+            return Err(invalid(format!("a page name contains a control character: {:?}", p.name)));
+        }
+    }
+    let active = doc.active_page.as_deref().and_then(|a| doc.pages.iter().find(|p| p.id == a));
+    let Some(active) = active else {
+        return Err(invalid("active_page does not name one of the pages"));
+    };
+    if !(active.objects.is_empty() && active.groups.is_empty()) {
+        return Err(invalid(format!("the active page \"{}\" holds shapes of its own; they belong in the document", active.name)));
+    }
+    for p in &doc.pages {
+        for id in p.objects.iter().map(|o| &o.id).chain(p.groups.iter().map(|g| &g.id)) {
+            if !seen.insert(id.as_str()) {
+                return Err(invalid(format!("id '{id}' is used more than once (page \"{}\")", p.name)));
+            }
+        }
+        let view = Document {
+            layers: doc.layers.clone(),
+            objects: p.objects.clone(),
+            groups: p.groups.clone(),
+            next_id: doc.next_id,
+            ..Document::default()
+        };
+        check(&view).map_err(|e| invalid(format!("page \"{}\": {e}", p.name)))?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -322,6 +370,61 @@ mod tests {
     fn refused(d: &Document, what: &str) {
         let e = from_openetch_json(&to_openetch_json(d)).unwrap_err();
         assert!(matches!(e, FileError::InvalidDocument(_)) && e.to_string().contains(what), "{what}: {e}");
+    }
+
+    /// A hand-edited or hostile file cannot hide broken shapes on a page that is not shown: showing it would make
+    /// them the document's own (a group inside itself hung the group walk; a missing layer broke every command).
+    #[test]
+    fn pages_meet_the_same_rules() {
+        let page = |id: &str, objects: Vec<Object>, groups: Vec<crate::Group>| crate::Page {
+            id: id.into(),
+            name: id.into(),
+            objects,
+            groups,
+            locked: Default::default(),
+            object_options: Default::default(),
+            image_masks: Default::default(),
+        };
+        let other = |id: &str, layer: &str| Object {
+            id: id.into(),
+            name: "o".into(),
+            layer: layer.into(),
+            geometry: Geometry::Rect { width_mm: 1.0, height_mm: 1.0, corner_radius_mm: 0.0 },
+            transform: Affine::IDENTITY,
+            group: None,
+            extras: Default::default(),
+        };
+        let mut d = sample();
+        d.pages = vec![page("page-7", vec![], vec![]), page("page-8", vec![other("obj-9", "layer-1")], vec![])];
+        d.active_page = Some("page-7".into());
+        let back = from_openetch_json(&to_openetch_json(&d)).unwrap();
+        assert!(back.next_id > 9, "ids on pages count");
+        let mut bad = d.clone();
+        bad.pages[1].objects[0].layer = "layer-404".into();
+        refused(&bad, "layer-404");
+        let mut bad = d.clone();
+        bad.pages[1].objects[0].id = d.objects[0].id.clone();
+        refused(&bad, "more than once");
+        let mut bad = d.clone();
+        let mut g = crate::Group::new("group-20".into(), "loop", Some("group-21".into()));
+        let mut h = crate::Group::new("group-21".into(), "loop", Some("group-20".into()));
+        g.extras.clear();
+        h.extras.clear();
+        bad.pages[1].objects[0].group = Some("group-20".into());
+        bad.pages[1].groups = vec![g, h];
+        refused(&bad, "inside itself");
+        let mut bad = d.clone();
+        bad.pages[1].objects[0].geometry = Geometry::Rect { width_mm: -1.0, height_mm: 1.0, corner_radius_mm: 0.0 };
+        refused(&bad, "not positive");
+        let mut bad = d.clone();
+        bad.active_page = Some("page-404".into());
+        refused(&bad, "active_page");
+        let mut bad = d.clone();
+        bad.pages[0].objects.push(other("obj-12", "layer-1"));
+        refused(&bad, "holds shapes");
+        let mut bad = d;
+        bad.pages[1].id = "page-7".into();
+        refused(&bad, "page id");
     }
 
     #[test]

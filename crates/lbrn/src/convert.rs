@@ -333,6 +333,7 @@ fn mode_of(kind: &str) -> Option<FillMode> {
         "Cut" => Some(FillMode::Line),
         "Scan" => Some(FillMode::Fill),
         "Scan+Cut" => Some(FillMode::FillThenLine),
+        "Offset Fill" => Some(FillMode::OffsetFill),
         _ => None,
     }
 }
@@ -347,6 +348,7 @@ fn kind_of(mode: &FillMode) -> &'static str {
         FillMode::Line => "Cut",
         FillMode::Fill => "Scan",
         FillMode::FillThenLine => "Scan+Cut",
+        FillMode::OffsetFill => "Offset Fill",
     }
 }
 

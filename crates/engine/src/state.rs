@@ -106,6 +106,10 @@ pub struct AppState {
     devices: Mutex<DeviceRegistry>,
     /// Job counter, Stop At and the progress of the job holding the machine (module `job`).
     pub job: JobTracker,
+    /// Material libraries, preferences, job log, framing record, camera (module `libs`).
+    pub libs: crate::libs::Libs,
+    /// Autosave, backups, templates, preference export and bundles (module `userfiles`).
+    pub files: crate::userfiles::UserFiles,
 }
 
 /// How an invocation changes which project the document belongs to.
@@ -325,6 +329,8 @@ impl AppState {
             lightburn: LightBurn::default(),
             devices: Mutex::new(devices),
             job: JobTracker::default(),
+            libs: crate::libs::Libs::default(),
+            files: crate::userfiles::UserFiles::default(),
         })
     }
 
@@ -462,6 +468,8 @@ impl AppState {
         // Runs planned while the profile changed belong to the previous device.
         self.runs().cancel_pending("cancelled: the device changed");
         tracing::info!(device = %device.id, controllable = device.controllable, "device activated");
+        // The device's material library, when it is loaded (module `libs`).
+        crate::libs::select_device_library(self);
         self.emit(Event::DeviceChanged { id: device.id.clone() });
         Ok(json!({ "ok": true, "active": self.devices().active().summary(), "warnings": warnings }))
     }
@@ -598,7 +606,7 @@ impl AppState {
     /// Field sizes: `doc.new` without `field_mm` gets the machine profile's; `doc.import_lbrn2` without one gets the
     /// LightBurn device's ([`LightBurn::field_for_import`]), else the document's, else the machine profile's, and
     /// its result's `field_source` says which.
-    fn batch_opening(
+    pub(crate) fn batch_opening(
         &self,
         mut invs: Vec<Invocation>,
         origin: Origin,
@@ -608,6 +616,8 @@ impl AppState {
         if invs.is_empty() {
             return Err(EngineError::BadRequest("batch has no commands".into()));
         }
+        // Saved layer / optimization defaults of the active device (module `libs`).
+        crate::libs::fill_defaults(self, &mut invs);
         let profile_field = self.machine.profile().field_mm;
         // Filled in before the session lock: the LightBurn lookup may read prefs.ini.
         let mut field_sources: Vec<(usize, String, Option<String>)> = Vec::new();
@@ -758,10 +768,13 @@ impl AppState {
         let dir = self.projects.clone();
         let current = self.project_name();
         let owned = name.to_owned();
+        let keep = self.files.settings().backups_keep;
         let path = tokio::task::spawn_blocking(move || {
             if !overwrite {
                 refuse_clobber(&dir, &owned, PROJECT_EXT, current.as_deref())?;
             }
+            // The file being replaced goes to <projects-dir>/.backups first (module `userfiles`).
+            crate::userfiles::backup_before_save(&dir, &owned, keep);
             dir.write(&owned, PROJECT_EXT, &content)
         })
         .await??;
@@ -1061,7 +1074,15 @@ impl AppState {
         let config = self.machine.config();
         let generation = config.generation;
         let run_index = self.job.count(&self.active_device().id);
+        // Batch: the queued projects are read now and planned on their own (module `runs`).
+        let queue = match &options.queue {
+            Some(names) => Some(self.read_queue(names).await?),
+            None => None,
+        };
         let mut prepared = tokio::task::spawn_blocking(move || {
+            if let Some(docs) = queue {
+                return runs::prepare_queue(&docs, &config.target, &config.profile, &options, run_index);
+            }
             // Variable text (serial numbers, CSV rows, dates, cut settings) and text on paths as of now.
             let doc = commands::prepare_output(&doc).map_err(|e| EngineError::BadRequest(format!("text: {e}")))?;
             runs::prepare_job_with(&doc, &config.target, &config.profile, &options, run_index)
@@ -1081,12 +1102,36 @@ impl AppState {
         Ok(view)
     }
 
+    /// The saved projects of a queued run, read and parsed (unknown names 404, unusable files 400).
+    async fn read_queue(&self, names: &[String]) -> Result<Vec<(String, Document)>, EngineError> {
+        let dir = self.projects.clone();
+        let names = names.to_vec();
+        tokio::task::spawn_blocking(move || {
+            names
+                .iter()
+                .map(|n| {
+                    let (name, text) = dir.read(n)?;
+                    let doc = doc::file::from_openetch_json(&text)
+                        .map_err(|e| EngineError::BadRequest(format!("project \"{name}\": {e}")))?;
+                    Ok((name, doc))
+                })
+                .collect()
+        })
+        .await?
+    }
+
     /// `GET /api/machine`: machine status, how runs are approved, and pending and recent runs.
     pub fn machine_status(&self) -> Value {
         let rev = self.revision();
         let mut v = self.machine.status_json();
         v["device"] = self.devices().active().summary();
         v["approval"] = self.approval.status_json();
+        // Whether framing can light a focus pointer (`pointer: focus | both`): a controllable active device whose
+        // profile names a usable focus light output.
+        v["focus_light"] = json!(
+            self.devices().active().not_controllable_reason().is_none()
+                && self.machine.profile().focus_light_port_bit.is_some_and(|b| lmc::PointerBits::bit(b).is_ok())
+        );
         v["lightburn"] = self.lightburn.machine_json(&self.machine.profile());
         let store = self.runs();
         v["pending_runs"] = json!(store.pending(rev));
@@ -1122,7 +1167,10 @@ impl AppState {
             (doc.revision, source)
         });
         let run = self.frame_run(&req, live)?;
-        frame::start(&self.machine, &self.events, outline, run).await
+        let started = frame::start(&self.machine, &self.events, outline, run).await?;
+        // Require Framing Before Start: this revision has been framed.
+        self.libs.framed(self.machine.generation(), doc.revision, &req);
+        Ok(started)
     }
 
     /// How a frame request runs: pointer outputs, blanking, speed, once or looping, time limit.

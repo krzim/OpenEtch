@@ -16,7 +16,7 @@ pub mod text;
 
 pub use job::{
     CutDirection, CutOptions, DotMode, FillGrouping, ObjectOptions, Optimization, OrderBy, Perforation, Rotary, RotaryKind,
-    Tabs, Taper, Wobble,
+    StartPoint, Tabs, Taper, Wobble,
 };
 pub use text::{AlignH, AlignV, CsvData, FontKind, FontSpec, Text, TextPath, VarMode, VarText, VariableState};
 
@@ -94,6 +94,57 @@ pub struct Document {
     /// Galvo rotary setup saved with the project (LightBurn's "Save/Load Rotary Settings with Project Files").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rotary: Option<Rotary>,
+    /// Project notes (LightBurn's Notes window, `<Notes ShowOnLoad Notes>` in `.lbrn2`). Left out while empty.
+    #[serde(default, skip_serializing_if = "Notes::is_default")]
+    pub notes: Notes,
+    /// LightBurn 2.2's Pages: the document's pages in order. Empty means one implicit page. The **active** page's
+    /// shapes are the document's own `objects`/`groups` (so every command, preview and job works on it); every other
+    /// page keeps its shapes in its [`Page`] entry, and the active entry's own lists stay empty. Layers, cut
+    /// settings and every other document setting are shared by all pages, as in LightBurn.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pages: Vec<Page>,
+    /// Id of the active page in `pages` (ignored while `pages` is empty).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_page: Option<String>,
+    /// LightBurn's Apply Mask to Image: image object id → the closed vector object (or group) that masks it. The
+    /// mask stays a live, editable shape; deleting it (or `image.remove_mask`) shows the whole image again. Jobs
+    /// engrave only the part of the image inside the mask (even-odd). Ids that no longer name an image and an
+    /// existing mask mean nothing ([`Document::image_mask`]).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub image_masks: BTreeMap<ObjectId, ObjectId>,
+}
+
+/// Project notes (LightBurn's File > Show Notes, Ctrl+Alt+N).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct Notes {
+    pub text: String,
+    /// Show the notes when the project is opened (LightBurn's "Show on File Open").
+    pub show_on_load: bool,
+}
+
+impl Notes {
+    pub fn is_default(&self) -> bool {
+        self.text.is_empty() && !self.show_on_load
+    }
+}
+
+/// One page of a multi-page document (see [`Document::pages`]).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Page {
+    pub id: String,
+    pub name: String,
+    /// The page's shapes while it is not the active page (empty for the active page).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub objects: Vec<Object>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub groups: Vec<Group>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub locked: BTreeSet<ObjectId>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub object_options: BTreeMap<ObjectId, ObjectOptions>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub image_masks: BTreeMap<ObjectId, ObjectId>,
 }
 
 impl Default for Document {
@@ -114,6 +165,10 @@ impl Default for Document {
             optimization: Optimization::default(),
             object_options: BTreeMap::new(),
             rotary: None,
+            notes: Notes::default(),
+            pages: Vec::new(),
+            active_page: None,
+            image_masks: BTreeMap::new(),
         };
         let id = doc.alloc_id("layer").expect("a new document has ids to spare");
         doc.layers.push(Layer::new(id, "Layer 1", "#1f77b4"));
@@ -122,6 +177,13 @@ impl Default for Document {
 }
 
 impl Document {
+    /// The mask object of image `image` ([`Document::image_masks`]), when both still exist.
+    pub fn image_mask(&self, image: &str) -> Option<&ObjectId> {
+        let m = self.image_masks.get(image)?;
+        let is_image = self.object(image).is_some_and(|o| matches!(o.geometry, Geometry::Image { .. }));
+        (is_image && (self.object(m).is_some() || self.group(m).is_some())).then_some(m)
+    }
+
     /// The workspace `[width, height]` in mm: `workspace_mm`, else the square `field_mm`, else `None`.
     pub fn workspace(&self) -> Option<[f64; 2]> {
         self.workspace_mm.or(self.field_mm.map(|f| [f, f]))
@@ -383,6 +445,19 @@ pub struct Layer {
     /// round-trip. Keys are prefixed with the format they came from. Never used for planning.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub extras: BTreeMap<String, String>,
+    /// The material library preset this layer is linked to (LightBurn's Link): its settings follow the preset and
+    /// are not edited directly. `None` (left out of JSON): not linked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link: Option<PresetLink>,
+}
+
+/// A layer's link to a material library preset (LightBurn's `LinkPath`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PresetLink {
+    /// The library's name in the engine's library store (its file name without `.clb`).
+    pub library: String,
+    /// `material/thickness or title/description`, LightBurn's `LinkPath`.
+    pub path: String,
 }
 
 fn one() -> u32 {
@@ -405,6 +480,7 @@ impl Layer {
             global_passes: 1,
             sub_layers: vec![],
             extras: BTreeMap::new(),
+            link: None,
         }
     }
 }
@@ -418,6 +494,10 @@ pub enum FillMode {
     Fill,
     /// Hatch, then trace outlines.
     FillThenLine,
+    /// Concentric inward offsets of closed outlines at the hatch interval (LightBurn's Offset Fill): the outline
+    /// itself, then copies shrunk by one interval at a time until nothing is left. Scan angle, cross-hatch and
+    /// bidirectional do not apply.
+    OffsetFill,
 }
 
 /// Per-layer laser parameters. Mirrors LightBurn's galvo cut settings.
@@ -577,10 +657,17 @@ pub enum DitherMode {
     Sketch,
     /// Power varies with darkness (see the type docs).
     Grayscale,
+    /// LightBurn's 3D Sliced mode (galvo only, `3dslice` in its files): the image is a depth map, darker = deeper.
+    /// The main passes engrave one grey-level slice each: pass k of N fires where the darkness is above
+    /// (N - k) / N, so the first pass marks only the deepest areas and every later pass a larger area, and a dot
+    /// of darkness d gets ceil(d · N) passes (pure white none). A cleanup sub-layer cleans the area of the last
+    /// main pass, or all of it with [`ImageSettings::clean_whole_image`].
+    #[serde(alias = "3dslice")]
+    Slice3d,
 }
 
 impl DitherMode {
-    pub const ALL: [DitherMode; 10] = [
+    pub const ALL: [DitherMode; 11] = [
         DitherMode::Threshold,
         DitherMode::Ordered,
         DitherMode::Atkinson,
@@ -591,6 +678,7 @@ impl DitherMode {
         DitherMode::Halftone,
         DitherMode::Sketch,
         DitherMode::Grayscale,
+        DitherMode::Slice3d,
     ];
 
     /// The name LightBurn writes for this mode in `.lbrn2` files (`ditherMode`).
@@ -606,6 +694,7 @@ impl DitherMode {
             DitherMode::Halftone => "halftone",
             DitherMode::Sketch => "sketch",
             DitherMode::Grayscale => "grayscale",
+            DitherMode::Slice3d => "3dslice",
         }
     }
 
@@ -649,6 +738,9 @@ pub struct ImageSettings {
     pub halftone_cells_per_inch: f64,
     /// Halftone only: screen angle in degrees.
     pub halftone_angle_deg: f64,
+    /// 3D Sliced only (LightBurn's "Clean whole image"): a cleanup sub-layer cleans every engraved area instead of
+    /// only the slice of the main pass just before it.
+    pub clean_whole_image: bool,
 }
 
 impl Default for ImageSettings {
@@ -665,6 +757,7 @@ impl Default for ImageSettings {
             min_power_pct: 0.0,
             halftone_cells_per_inch: 50.0,
             halftone_angle_deg: 22.5,
+            clean_whole_image: false,
         }
     }
 }
@@ -1128,7 +1221,8 @@ mod tests {
         }
         assert_eq!(DitherMode::from_lightburn("Dither"), Some(DitherMode::FloydSteinberg));
         assert_eq!(serde_json::to_value(DitherMode::FloydSteinberg).unwrap(), "floyd_steinberg");
-        assert_eq!(DitherMode::from_lightburn("3dslice"), None);
+        assert_eq!(DitherMode::from_lightburn("3dslice"), Some(DitherMode::Slice3d));
+        assert_eq!(serde_json::from_value::<DitherMode>(serde_json::json!("3dslice")).unwrap(), DitherMode::Slice3d);
     }
 
     #[test]

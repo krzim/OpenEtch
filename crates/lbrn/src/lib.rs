@@ -147,10 +147,12 @@
 //! counted per use ([`MAX_SEGMENTS`]) and [`to_document`] caps the path elements it creates. Shapes whose placement
 //! overflows or cannot be inverted, and layer indices above 31, are reported as warnings. The writer drops characters
 //! XML 1.0 cannot hold. Not kept: XML comments; groups are written where their first member is in the drawing order.
-//! Old-format `.lbrn` files are not read: no sample exists to establish their format.
+//! Old-format `.lbrn` files (vertex and primitive elements instead of `VertList`/`PrimList`) are rewritten to this
+//! format by `fileio::lbrn_legacy` before parsing (in `doc.import_lbrn2`); no sample exists, see that module.
 
 mod convert;
 mod image;
+pub mod library;
 mod model;
 pub mod palette;
 mod parse;
@@ -167,6 +169,7 @@ pub use model::{
     ShapeKind, SubLayer, Vertex,
 };
 pub use parse::{LibraryEntry, MAX_BYTES, MAX_SEGMENTS, parse, parse_library};
+pub use library::{LibEntry, Library, LibraryFormat, Material, cut_setting_from_layer, parse_clb, write_clb};
 pub use write::write;
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]

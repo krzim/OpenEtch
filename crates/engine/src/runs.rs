@@ -50,6 +50,36 @@ pub struct RunOptions {
     /// Start Here: begin at this preview segment (`GET /api/preview` `segments` index).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from_segment: Option<usize>,
+    /// Batch: run these saved projects one after another (instead of the open document), in this order, as one job
+    /// with one approval (each project planned on its own; at most 50). Not combined with selection or from_segment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue: Option<Vec<String>>,
+    /// Repeat Marking with an external axis table (LightBurn's Repeat Marking): after each iteration the profile's
+    /// table axis (role linear_table or rotary_table) moves on by `increment` and waits `settle_ms`; give `repeat`
+    /// for the count. Unverified on hardware.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub table: Option<TableRepeat>,
+}
+
+/// Most projects one queued run may hold.
+pub const MAX_QUEUE: usize = 50;
+
+/// Repeat Marking's table step (see [`RunOptions::table`]).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TableRepeat {
+    /// Table movement between repeats: mm for a linear table, degrees for a rotating one (> 0).
+    pub increment: f64,
+    /// Wait after each move before marking, ms (LightBurn's Pause After Move; at most 60000).
+    #[serde(default)]
+    pub settle_ms: u32,
+    /// Move the table back to its start (position 0) when the job ends (LightBurn's Return to Start Position).
+    #[serde(default = "yes")]
+    pub return_to_start: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 impl RunOptions {
@@ -78,6 +108,22 @@ impl RunOptions {
         // would point into a different job.
         if self.selection.is_some() && self.from_segment.is_some() {
             return Err(EngineError::BadRequest("give selection or from_segment, not both".into()));
+        }
+        if let Some(q) = &self.queue {
+            if q.is_empty() || q.len() > MAX_QUEUE {
+                return Err(EngineError::BadRequest(format!("queue must list 1..={MAX_QUEUE} projects")));
+            }
+            if self.selection.is_some() || self.from_segment.is_some() {
+                return Err(EngineError::BadRequest("a queue runs whole projects: no selection or from_segment".into()));
+            }
+        }
+        if let Some(t) = &self.table {
+            if !(t.increment.is_finite() && t.increment > 0.0) {
+                return Err(EngineError::BadRequest(format!("table.increment must be > 0 (got {})", t.increment)));
+            }
+            if t.settle_ms > 60_000 {
+                return Err(EngineError::BadRequest("table.settle_ms must be at most 60000".into()));
+            }
         }
         Ok(())
     }
@@ -364,6 +410,11 @@ pub fn prepare_job_with(
     run_index: u64,
 ) -> Result<PreparedJob, EngineError> {
     options.check()?;
+    if options.table.is_some() && profile.axis.as_ref().is_none_or(|a| !matches!(a.role, AxisRole::LinearTable | AxisRole::RotaryTable)) {
+        return Err(EngineError::BadRequest(
+            "table: Repeat Marking needs a table axis in the profile (axis role linear_table or rotary_table)".into(),
+        ));
+    }
     if options.start_input && profile.start_mark_input_bit.is_none() {
         return Err(EngineError::BadRequest("start_input: the machine profile names no start-marking input bit".into()));
     }
@@ -431,6 +482,51 @@ pub fn prepare_job_with(
     }
     if let Some(n) = options.from_segment {
         summary.push_str(&format!(" (from segment {n})"));
+    }
+    Ok(PreparedJob { parts, stats, summary, generation: 0, options: options.clone() })
+}
+
+/// Batch / run multiple files: plan every `(name, document)` on its own (as [`prepare_job_with`] does, without
+/// repeats) and join their parts into one job, in order, so one approval runs them one after another. The summary
+/// names the projects. Refused when any of them cannot be planned (the error names it).
+pub fn prepare_queue(
+    docs: &[(String, Document)],
+    target: &Target,
+    profile: &MachineProfile,
+    options: &RunOptions,
+    run_index: u64,
+) -> Result<PreparedJob, EngineError> {
+    options.check()?;
+    let single = RunOptions { queue: None, repeat: None, continuous: false, table: None, ..options.clone() };
+    let mut parts = Vec::new();
+    let mut stats = Stats::default();
+    for (name, doc) in docs {
+        let doc = commands::prepare_output(doc).map_err(|e| EngineError::BadRequest(format!("project \"{name}\": text: {e}")))?;
+        let p = prepare_job_with(&doc, target, profile, &single, run_index).map_err(|e| match e {
+            EngineError::Plan(pe) => EngineError::BadRequest(format!("project \"{name}\": {pe}")),
+            EngineError::BadRequest(m) => EngineError::BadRequest(format!("project \"{name}\": {m}")),
+            other => other,
+        })?;
+        parts.extend(p.parts);
+        stats.polyline_count += p.stats.polyline_count;
+        stats.mark_length_mm += p.stats.mark_length_mm;
+        stats.jump_length_mm += p.stats.jump_length_mm;
+        stats.estimated_time_s += p.stats.estimated_time_s;
+        stats.segment_count += p.stats.segment_count;
+    }
+    let names: Vec<String> = docs.iter().map(|(n, _)| format!("\"{n}\"")).collect();
+    let mut summary = format!(
+        "queue of {} projects ({}), {} polylines, {:.1} mm marked, about {:.1} s",
+        docs.len(),
+        names.join(", "),
+        stats.polyline_count,
+        stats.mark_length_mm,
+        stats.estimated_time_s
+    );
+    match options.iterations() {
+        None => summary.push_str(", continuously"),
+        Some(n) if n > 1 => summary.push_str(&format!(", {n} times")),
+        _ => {}
     }
     Ok(PreparedJob { parts, stats, summary, generation: 0, options: options.clone() })
 }

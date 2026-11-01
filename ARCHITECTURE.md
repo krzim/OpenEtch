@@ -22,8 +22,9 @@ Mac, PC, phone) and Claude are clients of the same live document. The engine is 
 | `geom` | 2D geometry on kurbo paths in mm: polygon booleans, weld, cut, offsets (`i_overlay`), curve-preserving path tools (break apart, join, close, optimize, fillet, trim), node editing, generators, path walking, bounding-box nesting. **Pure.** | kurbo, i_overlay | no (wasm-ok) |
 | `text` | Text like LightBurn (see "Text"): fonts (installed TrueType/OpenType via fontdb + harfrust shaping + skrifa outlines, the bundled single-line Hershey fonts, AutoCAD `.shx`, EzCad `.jsf`), layout, variable text, barcodes (rxing). **Pure** except font discovery and the clock (feature `system`). | doc, geom, kurbo | `system` feature only (wasm-ok without) |
 | `commands` | Command registry: every change to a document goes through a registered command with a JSON Schema. Session with a Fusion-style timeline (see "History timeline"). | doc, geom, text | no |
-| `plan` | Document → job: flatten paths, hatch fills, raster images (decode, adjust, dither; see "Image engraving"), order travel, encode to LMC list packets for a `MachineProfile`. Also simulation (decode packets to a preview). | doc, lmc, image | no |
+| `plan` | Document → job: flatten paths, hatch fills, Offset Fill and kerf offsets (through `geom`), raster images (decode, adjust, dither; see "Image engraving"), order travel, encode to LMC list packets for a `MachineProfile`. Also simulation (decode packets to a preview). | doc, lmc, geom, image | no |
 | `machine` | Machine profile (TOML, importable from EzCad `markcfg7` and from a LightBurn device, see "LightBurn devices"), devices (`machine::device`: LightBurn-style device model, family, workspace, origin), the `Link` transport trait, `SimLink`, `UsbLink` (nusb, feature `usb`), `Controller` (init, .cor upload, light framing, run, abort). | lmc, corfile | `usb` feature only |
+| `fileio` | File formats and image tools (see "Files and image tools"): SVG/DXF/PDF/AI export and print, PDF/AI/EPS/HPGL/Gerber/Excellon/EzCad/legacy `.lbrn` import, 3D models to depth maps, TIFF/TGA, zip, trace, rasterise, masks. **Pure** except PDF reading (native only). | doc, geom, kurbo, image, roxmltree, miniz_oxide, lopdf | no (wasm-ok without PDF reading) |
 | `engine` | Binary. axum HTTP + WebSocket API for the web UI, MCP server (rmcp), run approval, serves `web/dist`. | all | yes |
 | `web/` | Fusion-style UI: React + TypeScript + Vite. Talks to the engine over HTTP + WebSocket. | – | – |
 
@@ -80,6 +81,19 @@ stolen PIN used through the engine's API, not against a process that restarts th
   only the right PIN or an engine restart resets the escalation, which is in memory); the engine emits `approval_locked` and reports
   `approval.locked_until_unix_s`. MCP never receives or handles PINs, and the MCP instructions tell agents they
   cannot and must not approve runs or set PINs.
+- **Simulator test PIN** (`--sim-pin <6-12 digits>`, for testing the approval flow without a laser). It becomes the
+  operator PIN for that engine run, held in memory as a salted hash and never written to disk (the PIN file is
+  neither read, watched nor touched). It is refused at startup with `--usb`, and again after the machine is built
+  unless it is the simulator (`LinkKind::Simulated`); a release build also refuses it unless
+  `OPENETCH_ALLOW_SIM_PIN=1` is set. `approve` re-checks on every attempt and answers `sim_pin_real_link` (403) when
+  the machine is not the simulator, before the PIN is even looked at. The engine logs a loud warning, and
+  `GET /api/machine` reports `approval.sim_pin: true` (the UI shows a "SIMULATOR TEST PIN" badge). Why it cannot
+  weaken real-laser safety: the link kind is fixed when the engine starts (device changes swap the profile, never
+  the link), so an engine that drives the laser can never hold a simulator PIN, and an engine that holds one can
+  only arm runs on `CountingSimLink`, which never leaves the process. Everything else about approval (lockouts,
+  UI-only origin, Require Framing, checklist, physical confirmation) applies unchanged. Putting a PIN on the command
+  line only needs the same OS access that could already restart the engine or open USB, which the PIN never held
+  against (see above).
 - **Physical confirmation (optional).** With `--confirm-input <bit 0-15>` an approved run waits (state
   `awaiting_confirm`) up to 30 s, polling `ReadPort` (reply word 1, as galvoplotter reads it), until that input is
   seen released and then pressed for 3 reads in a row; a stuck, held or inverted input therefore never confirms. Stop
@@ -99,6 +113,20 @@ stolen PIN used through the engine's API, not against a process that restarts th
   its place and MO state while paused is unverified on hardware.
 - **Stop-marking input.** With `stop_mark_input_bit` in the profile, a running job reads the inputs at every status
   poll and aborts (`ControllerError::StopInput`) when that bit is set.
+- **IO ports** (`MachineProfile.io`, LightBurn's galvo IO Ports; all unverified on hardware): `door_protect` (an
+  input with its level, `active_low`): approval reads it and refuses while the door is open, `Controller::run_parts`
+  reads it before anything that can emit, and a running job aborts (`ControllerError::DoorOpen`) when it opens;
+  `start_framing` (input): the engine reads it every 150 ms while the board is idle and starts the last frame
+  request (else the job's bounds) when it is pressed after being seen released; `busy_light`, `ready_light`
+  (outputs held during a job: they ride along with every `WritePort` of the prelude and of the list, `plan::Target.
+  port_outputs`; `check_job` allows exactly those extra bits), `done_marking` (pulsed `done_pulse_ms` after a job,
+  with the MO closed), `red_dot_always_on` (the red pointer in the idle output word, written after init, a frame
+  stop, a run and the abort sequence; never during a job). No output may be the laser-enable, red-pointer or focus
+  bit, and none is ever written together with the laser-enable bit outside a job.
+- **Require Framing Before Start, Job Checklist** (per device, `PUT /api/prefs`, UI only): with Require Framing on,
+  approval is refused until a frame was started on the document revision the run was planned from; with the
+  checklist on, the approval must tick every item (`checklist: [true, ...]`). Both are checked before the machine is
+  claimed.
 - **Extension axis** (Z lift or rotary, `MachineProfile.axis`, LMC `MoveAxisTo(position, invert)` after meerk40t):
   moves never emit; a run moves the axis between its parts with the MO closed and opens it again afterwards (each
   part's list waits the open-MO delay); `POST /api/machine/axis` is UI-only. The B6's lift is not on the board
@@ -141,12 +169,12 @@ says otherwise. `origin` is `"ui"` (default), `"script"` or `"agent:<name>"`.
 | GET | `/api/preview` | planned job: `{ segments: [{kind: "jump"|"mark", layer, pass, from: [x,y], to: [x,y], emits, power_pct?}], passes: [{layer_id, sub_layer, repeat, segments, mark_length_mm, jump_length_mm, estimated_time_s}], stats, layers: [{layer_id, name, color, mode, output, visible, passes, segments, mark_length_mm, jump_length_mm, estimated_time_s, sub_layers: [{sub_layer, name, label, cleanup, mode, power_pct, speed_mm_s, frequency_khz, pulse_width_ns, passes, planned_passes, segments, mark_length_mm, jump_length_mm, estimated_time_s}]}], warnings }` in field mm. `pass` indexes `passes`, the job's passes in burn order (a jump belongs to the pass it travels into); `sub_layer` is 0 for a layer's main settings and n for `sub_layers[n - 1]`; `layers` lists every document layer in order (zeros for layers with nothing to mark or output off; layer times leave out the job's start-up delay), each with its main settings and sub-layers (`label` "Main", the name, "Cleanup" or "Sub-layer n"; `passes` asked for, `planned_passes` planned, and their share of the layer's totals); `power_pct` is set on marks whose power differs from their pass's (grayscale image runs); `warnings` are things the plan left out (none at present). `?layers=id1,id2` keeps only those layers' segments and entries (stats and `passes` stay the whole job's). An empty document is an empty preview; a planning error (out of field, power above the limit, too many passes/segments) is **422** |
 | GET | `/api/fill_regions` | `{ layers: [{layer_id, name, color, mode, visible, output, paths: [d], object_ids: [id]}] }`: for every layer whose mode is `fill` or `fill_then_line`, one SVG path per object (its closed subpaths, field mm, +Y up, flattened at 0.05 mm) to draw with `fill-rule: evenodd`, which is exactly the area the hatch covers. Display only |
 | GET | `/api/preview.svg` | rendered preview (stock, objects, toolpath; `?jumps=false` hides travel); still renders the document on a planning error |
-| GET | `/api/machine` | `connected`, `simulated`, `busy`, `state`, `running`, `framing`, `field_mm`, `profile`, `device` (the active device's summary, see `GET /api/devices`), `max_power_pct`, `last_error`, `sim_counters`, `approval: { pin_set, pin_changed, locked_until_unix_s: null \| n, physical_confirm: null \| { input_bit, timeout_s } }`, `lightburn: null \| { device, field_mm, diffs: [{field, base_value, lightburn_value, note}] }` (the active profile compared with the matched LightBurn device, see "LightBurn devices"), `pending_runs: [Run]`, `runs: [Run]` |
+| GET | `/api/machine` | `connected`, `simulated`, `busy`, `state`, `running`, `framing`, `field_mm`, `profile`, `device` (the active device's summary, see `GET /api/devices`), `max_power_pct`, `last_error`, `sim_counters`, `approval: { pin_set, pin_changed, locked_until_unix_s: null \| n, sim_pin (the simulator test PIN is in use, see "Safety model"), physical_confirm: null \| { input_bit, timeout_s } }`, `focus_light` (the active device can light a focus pointer: framing's `pointer: focus \| both` work), `lightburn: null \| { device, field_mm, diffs: [{field, base_value, lightburn_value, note}] }` (the active profile compared with the matched LightBurn device, see "LightBurn devices"), `pending_runs: [Run]`, `runs: [Run]` |
 | GET | `/api/lightburn` | `{ available, source: "file" \| "uploaded" \| null, default_device: name \| null, devices: [{name, display_name, field_mm, width_mm, height_mm}] }` (only these fields); `default_device` is the device used when a LightBurn file names none |
 | POST | `/api/lightburn/prefs` | LightBurn's `prefs.ini` as the raw body (at most 2 MB, else **413**): parses `DeviceList` in memory and stores only the parsed devices (`<config-dir>/lightburn-devices.json`), for an engine on a Pi without LightBurn; answers like `GET /api/lightburn`; no devices, not JSON or not UTF-8 is 400. Emits `machine` event `lightburn` |
 | DELETE | `/api/lightburn/prefs` | forgets the uploaded devices (the local `prefs.ini` is used again, if any); answers like `GET /api/lightburn`; emits `machine` event `lightburn` |
 | GET | `/api/devices` | `{ active: id, devices: [{id, name, display_name, source: "builtin" \| "lightburn-prefs" \| "lbdev" \| "manual", kind: "jcz_galvo" \| "gantry" \| "galvo_other" \| "unknown", lightburn_type, workspace_mm: [w, h], lightburn_field_mm: n \| null (galvos: the field LightBurn files are laid out for, LightBurn's Width, e.g. 153.8 on the B6 whose profile field is 153.75), origin: "center" \| "bottom_left" \| "top_left" \| "bottom_right" \| "top_right", controllable, reason: string \| null, active}] }` in list order (the built-in device first); `reason` says why a design-only device cannot be driven. See "Devices" |
-| GET | `/api/devices/{id}` | the summary plus `settings` (LightBurn's Device Settings, read-only: `[{title, rows: [{label, key, value}]}]`, `key` the LightBurn key), `profile` (JCZ galvos: name, field, swap/negate, cor file, frequency range, limits, timing), `base` (the profile it was built on) and `diffs` (`[{field, base_value, lightburn_value, note}]`, the profile against that base); unknown id 404 |
+| GET | `/api/devices/{id}` | the summary plus `settings` (LightBurn's Device Settings, read-only: `[{title, rows: [{label, key, value}]}]`, `key` the LightBurn key), `profile` (JCZ galvos: name, field, swap/negate, cor file, frequency range, limits, timing, `calibration` (field offset X/Y, angle, scale, bulge, skew, trapezoid), `red_dot` (offset, scale, rest), `blanking`, `red_light_port_bit`, `red_light_speed_mm_s`, `focus_light_port_bit`), `base` (the profile it was built on) and `diffs` (`[{field, base_value, lightburn_value, note}]`, the profile against that base); unknown id 404 |
 | POST | `/api/devices/import` | `?add=all\|<name>` (default all) with a LightBurn `.lbdev` or `prefs.ini` as the raw body (at most 2 MB, else **413**), or `?from=lightburn` and no body: the devices of LightBurn's `prefs.ini` on the engine's computer (or the uploaded one) → `{ ok, added: [id], updated: [id], skipped: [{name, reason}] }`. Parsed with the typed, privacy-safe parser; a device with the same display name, controller, connection and size as an imported one is updated (same id). Not UTF-8, not JSON or no devices 400; `add=<name>` naming no device of the file 404. Emits `devices_changed` |
 | DELETE | `/api/devices/{id}` | → `{ ok, id }`; the built-in or the active device 409; unknown 404. Emits `devices_changed` |
 | POST | `/api/devices/{id}/activate` | optional `{ "origin" }` → `{ ok, active: summary, warnings: [text] }`: makes the device active (stored; it is also the one used at the next start). Refused **409** while a run is approved, awaiting confirmation or running, or while framing; MCP headers or a non-`ui` origin **403**. Cancels pending runs, swaps the machine profile (JCZ galvos; the board is initialised again, the simulator gets a fresh `SimLink`), and new documents start at the device's workspace. Emits `device_changed`. A correction file that cannot be found is a warning (output is then uncorrected) |
@@ -189,6 +217,13 @@ says otherwise. `origin` is `"ui"` (default), `"script"` or `"agent:<name>"`.
 `GET /api/preview` segments carry `t_s`, the estimated time from the job's start to the end of the segment (the plan's
 time model including pauses and dots), for a time slider; a dot (dot mode) is a zero-length mark.
 
+`RunOptions` also take `queue: [project names]` (Batch: the saved projects are read and planned one by one and
+joined into one job with one approval, at most 50; not with `selection` or `from_segment`) and `table: {increment,
+settle_ms?, return_to_start?}` (Repeat Marking with an external axis table: the profile's `axis` with role
+`linear_table` or `rotary_table`, `steps_per_mm` steps per mm or per degree; after each iteration the table moves
+to `increment x completed` and waits `settle_ms`, and returns to 0 when the job finishes; unverified on hardware).
+`POST /api/runs/{id}/approve` takes `checklist: [bool]` (see "Safety model").
+
 `Run` = `{ id, state, origin, revision, stale, summary, stats, packet_count, created_unix_s, error?, report?, options, parts, completed }`
 (`options` the run's `RunOptions`, `parts` the lists it is split into, `completed` the iterations run to the end); `summary` reads like `12 polylines on "Fill", "Outline", 340.2 mm marked, about 8.1 s` (layer names, each once, in burn order).
 `state` is `"pending"` → `"approved"` → (`"awaiting_confirm"` →) `"running"` → `"finished"` \| `"failed"` \|
@@ -201,7 +236,7 @@ Events on `/api/events`:
   behind gets `revision: -1, origin: null` and should refetch everything)
 - `{ "type": "machine", "event": "framing" | "frame_stopped" | "frame_updated" | "run_approved" | "awaiting_confirm" |
   "awaiting_start_input" | "run_started" | "run_finished" | "paused" | "resumed" | "job_count" | "axis_moved" |
-  "stopped" | "error" | "lagged" | "lightburn", "detail"?: "..." }` (refetch `GET /api/machine`; after `lightburn`
+  "stopped" | "error" | "lagged" | "lightburn" | "job_finished_sound" | "prefs", "detail"?: "..." }` (refetch `GET /api/machine`; after `lightburn`
   also `GET /api/lightburn`; after `job_count` also `GET /api/job`)
 - `{ "type": "job_progress", "status": <GET /api/job> }` every 500 ms while a job holds the machine
 - `{ "type": "run_pending", "run_id", "origin", "summary" }`
@@ -212,6 +247,50 @@ Events on `/api/events`:
   `GET /api/machine`) and `{ "type": "devices_changed" }` (devices imported or removed; refetch `GET /api/devices`)
 - `{ "type": "history_changed", "marker": n, "steps": n, "revision": n }` (after every edit, undo, redo, goto or step
   delete, right after `document_changed`; refetch `GET /api/history`)
+
+**Libraries, defaults, logs, diagnostics, camera** (`crates/engine/src/{api_libs,libs,library,prefs,joblog,
+diagnostics,updates,camera}.rs`; the module docs of `api_libs` list every route):
+
+- **Material library** (LightBurn's Library window): `.clb` files in `<config-dir>/libraries/` (`lbrn::Library`:
+  every real library is written back byte for byte, also by the structural writer), the loaded ones and the
+  selected one in `libraries/index.json`; `GET /api/library` gives the tree material → thickness or title →
+  description with each entry's `LinkPath` and a settings summary. Load (the body stored byte for byte), New, Select,
+  Unload (unsaved changes need `discard`), Save / Save As, Rename, Merge; entries: Create new from layer, Update (from
+  a layer), Edit Cut (complete CutSettings, checked like `layer.apply_preset`), Edit Description (material,
+  thickness or title, description), Duplicate, Delete, Download. Entry edits stay in memory until saved. Applying:
+  `POST /api/library/{name}/entries/{id}/apply {layer, link?}` runs `layer.apply_preset` (Assign copies; Link sets
+  `Layer.link {library, path}` and `lbrn2.LinkPath`, and `layer.update` then refuses settings changes until
+  `layer.unlink_preset`). Linked layers follow their preset: an edited entry updates them, an edited description
+  relinks them to the new path, a deleted entry unlinks them, selecting or loading a library relinks every layer
+  whose path it has (LightBurn), a renamed library carries its links along (each as one `script` undo step). A
+  library saved, loaded or created while a device is active is that device's library and is selected with it.
+- **Defaults** (per device, `<config-dir>/preferences.json`): `POST /api/layers/{id}/default` saves the layer's
+  settings and sub-layers for its colour (`{all: true}`: Make Default for All, one default for every colour);
+  `layer.add` without settings starts from them (the engine passes `defaults` into the recorded invocation); `POST
+  /api/layers/{id}/reset` applies the saved default (`builtin`: OpenEtch's); `load_defaults_on_new` gives `doc.new`
+  (and the first document at start) the default of the new layer's colour (`layer_settings`). Optimization: `POST
+  /api/optimization/default` (Set as Defaults; new documents start with them through `doc.new`'s `optimization`),
+  `DELETE` forgets them, `POST /api/optimization/reset {builtin?}`.
+- **Job log**: one JSON line per ended run (time, run, state, origin, device, project, summary, duration,
+  iterations, error) appended to `<config-dir>/job-log.jsonl`; `GET /api/job-log?limit=&format=csv`.
+- **Play Sound on Job Finished** (per device): a finished run sends `machine` event `job_finished_sound`; the UI
+  plays it.
+- **Diagnostics**: a tracing layer keeps the last 2000 log lines (info and up; debug of OpenEtch's crates while
+  `debug_log` is on), masking `token=`, `Bearer` and `pin=` values; `GET /api/diagnostics/report` is the bug report
+  bundle (versions, machine status without run summaries, job log tail, the document's counts, the log lines; no
+  document content, token or PIN).
+- **Update check** (opt-in `check_for_updates`): `POST /api/updates/check` asks GitHub's releases API for
+  `krzim/OpenEtch` through the system `curl` (no TLS stack in the engine) and compares versions.
+- **Find My Laser / Add Galvo**: `GET /api/devices/scan` lists BJJCZ USB boards (`machine::detect`, builds with
+  `usb`); `POST /api/devices/wizard {name?, markcfg_base64, cor_name?, cor_base64?, activate?}` (UI only) makes the
+  device from EzCad's `markcfg7`, stores its correction file (the device is taken back if that fails) and can
+  activate it.
+- **Camera** (unverified on hardware): frames from a browser (`POST /api/camera/frame`) or, with feature `camera`
+  (`nokhwa`, Apache-2.0), a UVC camera on the engine's computer (`POST /api/camera/capture`); a checkerboard detector
+  (`POST /api/camera/detect`); lens calibration (two radial terms about the image centre, fitted so each view's
+  corners are a perspective image of a flat grid); field alignment from at least four image points with known field
+  positions (homography); `GET /api/camera/overlay.png?px_per_mm=` resamples the frame into the field square, +Y
+  up. Calibrations per device in `<config-dir>/camera.json`. Marker (ArUco/AprilTag) detection is not implemented.
 
 **History timeline** (`commands::Session`, like Fusion 360's design timeline). Every successful edit (one execute or
 one batch) is a step `{ index, revision, command, invocations: [{id, params}], origin, summary, state, error? }`:
@@ -254,7 +333,8 @@ passes runs it once, after them, like an ordinary sub-layer; each run makes its 
 keeps adding `angle_increment_deg` across runs. This follows LightBurn's 3D Sliced image-mode cleanup ("Enable
 cleanup pass" adds a Cleanup sub-layer that runs after every "Clean after # of passes" passes, docs 2.0/2.1 Galvo
 Cut Settings); LightBurn has no cleanup for vector layers, where its sub-layers simply run after the main passes,
-and "Clean whole image" (cleaning only recent passes) has no meaning without image slicing and is not modelled.
+and "Clean whole image" applies to 3D Sliced images (`settings.image.clean_whole_image`, see "Files and image
+tools").
 Commands (indices are 0-based positions in `sub_layers`; validation and limits as `layer.update`, at most 64
 sub-layers; each one undo step): `layer.sub_add {layer, settings?, name?, cleanup?, index?}` (a copy of the main
 settings with the partial `settings` merged in, like LightBurn's add; returns `index`), `layer.sub_update {layer,
@@ -273,7 +353,14 @@ sorted by group rank, ungrouped objects together, then by `Document.object_optio
 `best_start` / `corners` (closed shapes start at the nearest point, or the nearest corner of 30° or more),
 `best_direction`, `remove_overlaps` with `overlap_distance_mm` (line segments within the distance of an earlier one
 are cut once; a trimmed loop becomes open lines) and `cuts_last` (line-mode layers after fill and image layers).
-`Layer.global_passes` repeats the whole layer schedule (hatch angles keep turning). Each `CutSettings.options`
+`Layer.global_passes` repeats the whole layer schedule (hatch angles keep turning). Mode `offset_fill` (LightBurn's
+Offset Fill, `crates/plan/src/offsets.rs`): each fill group's closed outlines (even-odd) and their inward offsets
+every line interval until nothing is left (round joins, so concave corners stay true), as closed loops ordered like
+outlines; scan angle, cross-hatch and bidirectional do not apply. `options.kerf_offset_mm` (Kerf Offset, -50..=50):
+line passes trace closed outlines offset outward (+) or inward (-), holes the opposite way (miter joins); open paths
+are not offset. `ObjectOptions.start` (`object.set_start_point {id, node, reverse?}` / `object.clear_start_point`,
+LightBurn's Set Start Point): the closed outline through that node starts at its nearest vertex (reversed when
+asked) when "best start point" is off or optimization is off; as in LightBurn, best start overrides it. Each `CutSettings.options`
 (`doc::CutOptions`, `layer.update` `settings.options`, partial): `output` (a sub-layer's own output toggle), Pause
 Before / After (DelayTime words), `dot_mode` {dot_time_ms, dot_spacing_mm} (line passes become dots: JumpTo +
 LaserOnPoint), `wobble` {step_mm, size_mm} (a circle per step, centred on the path), `fill_dot_width_mm` (both ends of
@@ -322,8 +409,8 @@ that mark. Grayscale runs merge equal levels (256) and carry their power, `min +
 (pure white never fires), in `PassPlan.powers`; the encoder sends a `MarkCurrent` before a run whose power
 differs from the one in force (the list command the pass header uses; that it applies at that point of the list
 on the B6 is unverified), and `machine::check_job` checks every `MarkCurrent` against the cap. Runs are cached per
-image, settings and scan angle, so repeated passes cost no resampling. LightBurn's 3D Sliced mode (`3dslice`) is
-not modelled: it is kept for LightBurn with an import warning and such layers engrave with the default dither.
+image, settings and scan angle, so repeated passes cost no resampling. LightBurn's 3D Sliced mode (`3dslice`,
+`slice3d`) engraves a depth map one grey-level slice per pass (see "Files and image tools").
 Halftone cells per inch have no known LightBurn tag and are not exported (with a warning). `layer.update` takes
 `settings.image` partially (`dpi` sets `interval_mm` to 25.4 / dpi; dot width within 0..=interval, minimum power
 0..=100); the plan refuses a grayscale minimum power above the machine limit.
@@ -399,7 +486,10 @@ described in `jsf.rs` / `shx.rs`; the owner's 162 EzCad fonts all parse; no real
 on synthetic files only; Asian big fonts and GB2312 JSF codes are not mapped. LightBurn's own single-line font format is
 undocumented and not read.
 - Commands: `shape.text {text, font?, height_mm? (5), ...the settings, center, rotation_deg, layer, name}`,
-  `text.update {id, ...partial settings}` (`variable: {mode: normal}` turns variable text off),
+  `text.update {id, ...partial settings}` (`variable: {mode: normal}` turns variable text off; an update that changes
+  nothing is refused, so it leaves no empty undo step; a name still equal to the auto name of the old text follows
+  the new text; `shape.barcode {id, ...}` likewise refuses a no-op redraw and renames a "<kind> barcode" name when the
+  kind changes),
   `text.apply_path {id, path, offset_mm?}` (the text takes the path object's transform; Align X from the path's start
   / centred / to its end, Align Y baseline / cap middle / cap top on the path), `text.detach_path {id}`,
   `text.convert_to_path {ids}` (also `path.convert`; permanent), `text.refresh {ids?}` (after a path moved, fonts were
@@ -480,7 +570,8 @@ Default listen address `127.0.0.1:7878`. Other options: `--profile`, `--web-dir`
 `--allow-host`, `--config-dir`, `--confirm-input`, `--projects-dir`, `--lightburn-prefs <path>` (default the OS
 location, a missing file is fine), `--lightburn-device <name>` (the LightBurn device `GET /api/lightburn` and the
 machine status compare with), `--device <id or name>` (the OpenEtch device for this run, overriding the stored active
-one without changing it); `openetch devices list` and `openetch devices import <file> [--add all|<name>]` (both
+one without changing it), `--sim-pin <digits>` (simulator only: a test operator PIN held in memory, see "Safety
+model"); `openetch devices list` and `openetch devices import <file> [--add all|<name>]` (both
 `[--config-dir P] [--profile P]`; see "Devices"); `openetch set-pin [--reset] [--config-dir <path>]` sets, changes
 or deletes the operator PIN (restart the engine afterwards); `openetch profile from-lightburn [--prefs P] [--device
 NAME] [--base PROFILE] --out FILE [--force]` prints the diff table and writes a profile TOML for a LightBurn device
@@ -557,7 +648,137 @@ MCP tool can approve a run or touch the operator PIN, and the server instruction
   denoise?}, reset?}` (partial; images only) and `art.import_image {data_base64, mime, width_mm?, layer?, name?}` (PNG, JPEG, GIF,
   BMP, WebP; size from the file's resolution, else 254 dpi, fitted to 80 % of the field). Groups: `group.create {ids,
   name?}`, `group.ungroup {group}` (one level), `group.rename {group, name}`.
-- **`.clb`** (LightBurn material library): read by `lbrn::parse_library` into layer settings.
+- **`.clb`** (LightBurn material library, `crates/lbrn/src/library.rs`): `lbrn::parse_clb` / `write_clb` round trip
+  byte for byte (BOM, CRLF, two-space indentation, `" />"`, attribute spelling; unchanged entries from their source
+  text, changed ones in the file's style). Material → Entry `Thickness` (`-1.0000` = none) / `Desc` / `NoThickTitle`
+  → `CutSetting` (the project tags) with `LinkPath` `material/title/description`. `cut_setting_from_layer` and
+  `LibEntry::to_layer` convert. `lbrn::parse_library` (flat entries) stays for the older callers. LightBurn's
+  `Offset Fill` cut type maps to mode `offset_fill`.
+
+## Files and image tools
+
+Crate `fileio` (pure and wasm-ok except PDF reading), commands in `crates/commands/src/builtin/{files,image_tools,
+pages}.rs`, routes in `crates/engine/src/userfiles.rs` (its module docs list them). LightBurn behaviour from its docs
+(File Management, Trace Image, Convert to Bitmap, Apply Mask to Image, Image Options, Save Processed Bitmap, Print,
+Pages, Show Notes, Managing Preferences, User Bundles, Import 3D Model, 3D Sliced Engravings).
+
+- **Exports** (`doc.export {format: svg|dxf|ai|pdf, ids?, colors: layers|black, stroke_mm?, images?, tolerance_mm?,
+  keep_circles?, area: bounds|workspace}`, Query; `GET /api/export` downloads it named after the project). The
+  selection (`ids`, groups expanded) or everything, as LightBurn. SVG: mm, one Inkscape layer group per layer in its
+  colour, fill layers filled even-odd, output-off layers written hidden (as LightBurn), text as outlines, images
+  embedded with their transform. DXF: R12 ASCII (`AC1009`, `$INSUNITS 4`), one DXF layer per layer with the nearest
+  AutoCAD colour index (hidden layers off), POLYLINE per subpath (curves flattened to `tolerance_mm`), CIRCLE for
+  circles unless `keep_circles: false`; no images (warning). AI: an Illustrator 9+ file is PDF-compatible, so the AI
+  export is the PDF. PDF: one page of the area, paths in the layer colours (filled for fill layers), images as RGB +
+  alpha soft mask. `doc.print {format: pdf|svg, colors: black (default)|layers, line_width_mm (0.25), paper_mm?,
+  margin_mm (10), area: workspace (default)|bounds}` (`GET /api/print`, inline): LightBurn's Print (black only / keep
+  colors); with a paper size the design is centred and scaled down to fit (a warning gives the scale); hidden and
+  output-off layers are left out. `image.export {id}` (the file as imported) and `image.processed {id, sub_layer?}`
+  (Save Processed Bitmap: `plan::processed_bitmap` decodes, adjusts, applies negative and the layer's dither on the
+  image's own grid at the line interval; PNG with its dpi; `GET /api/images/{id}/file`, `.../processed.png`).
+- **Imports** (each Edit, one undo step; placement as `art.import_dxf`: `layer`, `name`, `width_mm`,
+  `keep_position` (default centred), `split` (default one object per path in a group named after the file)).
+  `art.import_pdf {data_base64, page?, hidden_layers?}` (native only; lopdf): the page's paths, rectangles and form
+  XObjects with the CTM, in mm; optional content that is off (hidden Illustrator layers) unless `hidden_layers`; text,
+  images and shadings left out with a warning. `art.import_ai`: PDF-based AI through the PDF reader (an AI without PDF
+  content is refused with LightBurn's advice, "Create PDF Compatible File"), older PostScript AI through the EPS reader.
+  `art.import_eps`: no permissive PostScript interpreter exists in Rust (Ghostscript is AGPL), so `fileio::postscript`
+  interprets the subset vector art uses (path, arc, rect, transform, gsave/grestore, colour operators, `def`/`bind`/
+  `load`/`exec`, `if`/`ifelse`/`repeat`/`for`, stack and arithmetic operators; Illustrator's one-letter operators when
+  the file is Illustrator's, with its procsets skipped; DOS EPS preview headers); fonts, text, images and `loop` are
+  not run (warning). LightBurn's current import list no longer has EPS. `art.import_hpgl {content, units_per_mm = 40}`:
+  `IN DF SP PU PD PA PR CI AA AR EA ER RA RR` (one path set per pen); `LB`, `SC`, `IP`, `PE` skipped with a warning.
+  `art.import_gerber {content, kind: auto|gerber|excellon, invert?}` (LightBurn 2.2): RS-274X copper as closed
+  outlines (`FS`, `MO`, apertures C/R/O/P with holes, `LP` clear polarity cut out, G01/G02/G03 in G74/G75, D01/D02/D03,
+  regions G36/G37; draws stroked with round ends through `geom` offsets, everything unioned), `invert` gives the board
+  area outside the copper; Excellon drill files as circles of the tool diameter. Aperture macros and step-and-repeat
+  are skipped with a warning. `art.import_model {data_base64, format?, rotation_deg?, width_mm?, dpi = 254,
+  sixteen_bit?, invert?, transparent_background?, depth_cutoff_mm?, equalize?, outline?}` (LightBurn 2.2's Import 3D
+  Model): STL (binary/ASCII), OBJ, OFF, PLY (ASCII and binary), 3MF (with the production extension's part
+  references and item transforms) and AMF, rotated X then Y then Z, seen from above and z-buffered into a grey depth
+  map image (top white, floor black: black engraves deepest, LightBurn's convention; background black or transparent;
+  `depth_cutoff_mm` below the top is the floor, else the lowest point); `outline` also adds the silhouette as a path
+  (Generate Outline). `art.import_ezd {data_base64}` (not in LightBurn): EzCad 2 `.ezd` vector objects (layout from
+  meerk40t's MIT reader, checked on the owner's files: header offsets, pens, the Huffman-coded vector stream, curves,
+  rectangles, circles, ellipses, polygons, groups, combines and hatch outlines; the generated hatch lines are dropped
+  so a fill layer hatches the outlines again; text, images and pen settings are not read). `art.import_image` also
+  takes TIFF and TGA, converted to PNG (a TIFF's resolution kept) so browsers show them and plans decode them. Legacy
+  `.lbrn` projects (`<V vx vy c0x c0y c1x c1y/>` / `<P T p0 p1/>` path elements instead of `VertList`/`PrimList`; from
+  LightBurn's forum, no sample file) are rewritten to `.lbrn2` text by `fileio::lbrn_legacy` inside
+  `doc.import_lbrn2`, so `.lbrn` uploads and imports work like `.lbrn2`. `POST /api/document/import?format=...&mode=
+  merge|replace` takes every format; `mode=replace` is LightBurn's Open of a vector or image file: a new, unsaved
+  document (`doc.new` then the import, one step) named after the file.
+- **Trace Image** (`image.trace`, `image.trace_preview` (Query, the dialog's live preview as SVG path data)):
+  `fileio::trace`, written for OpenEtch (no potrace, which is GPL): pixels in `cutoff..=threshold` (0..128 default),
+  or `sketch` (darker than the local mean) or `transparency` (opaque), limited to a `boundary` field rectangle;
+  areas and holes under `ignore_less_than` pixels dropped; boundaries between traced and untraced pixels joined into
+  loops (diagonal pixels connect), reduced to a polygon within 0.5 + `optimize` px (0.2 default), corners sharper than
+  `smoothness` (0 lines only .. 1.33 curves only, default 1) kept, the others Bézier curves through the edge
+  midpoints. `centerline` (LightBurn 2.2): Zhang-Suen thinning, the skeleton walked into open polylines between ends
+  and junctions, spurs shorter than `ignore_less_than` pruned. The result is one path object on the image's layer
+  (`layer`, `name`), following the image's transform; `delete_image`.
+- **Convert to Bitmap** (`art.convert_to_bitmap {ids, dpi = 254, render: cut_settings|fill_all|outlines, gray = 128,
+  line_width_mm?, keep_original?}`): an anti-aliased grey PNG of the vectors' bounds (drawn pixels at LightBurn's 50 %
+  grey by default, white never fires); the vectors are deleted unless `keep_original`, as LightBurn.
+- **Apply Mask to Image** (`image.apply_mask {image, mask}`, `image.remove_mask {ids}`, `image.flatten_mask {ids,
+  crop?}`): non-destructive as in LightBurn: `Document.image_masks` links the image to a closed vector object or a
+  group on one layer (even-odd, so an inner shape cuts a hole); the mask stays editable (put it on a tool layer);
+  planning clips the image's scan runs to the mask (`plan::image::clip_runs`); deleting the mask or `remove_mask` shows
+  the whole image again; `flatten_mask` bakes it into the PNG's alpha (and `crop` cuts the image to the masked
+  pixels, LightBurn's Crop Image). Display of the mask in the canvas: UI pending.
+- **Image Options** (`image.replace {id, data_base64, mime?, fit: file_size|fit|stretch}`): Replace Image (the file's
+  own size), Replace Image to Fit (inside the old size) or stretch, keeping place, rotation, layer, adjustments and
+  mask. Refresh Image is a replace with the edited file: the engine never reads the user's disk, so the UI sends the
+  file again.
+- **3D Sliced** (`settings.image.dither: slice3d`, LightBurn's `3dslice`; `plan::job::slice_level`): main pass k of N
+  fires where the darkness is above (N - k) / N, so the first pass engraves only the deepest (darkest) areas and every
+  pass a larger area, and a dot of darkness d gets ceil(d · N) passes (pure white none), matching LightBurn's preview
+  ("black marks the engraved area of each layer, travel expands with each pass"). A cleanup sub-layer cleans the
+  slice of the main pass just before it, or everything with `settings.image.clean_whole_image` (LightBurn's "Clean
+  whole image"; no LightBurn tag for it was seen, so it is not exported). Depth on the B6 is unverified on hardware.
+- **Projects**: `Document.notes {text, show_on_load}` (`doc.set_notes`; LightBurn's `Notes ShowOnLoad Notes` element
+  is read into it and written from it; showing them on open is the UI's job). Saving over a project first copies the
+  old file to `<projects-dir>/.backups/<name>.<unix>.openetch` (newest `backups_keep`, default 5); autosave writes a
+  changed document every `autosave_minutes` (default 5, 0 off) to `<projects-dir>/.autosave/<name or
+  Untitled>.<unix>.openetch`, newest `autosave_keep` (10) per name (`/api/backups`, `/api/backups/restore` opens one
+  as an unsaved document; settings in `<config-dir>/files.json`, `/api/files/settings`). Thumbnails:
+  `GET /api/projects/{name}/thumbnail.png` renders the saved project (`render.rs`). Templates: `<projects-dir>/
+  templates/` holds `.openetch` templates (Save As Template, `/api/templates/save`) and LightBurn `.lbt` files
+  (`/api/templates/upload`); `/api/templates/open` opens one as a new untitled document, so a template is never
+  overwritten.
+- **Pages** (LightBurn 2.2's Pages window; `page.list`, `page.add`, `page.duplicate`, `page.delete`, `page.rename`,
+  `page.activate`, `page.move`, `page.send_objects`): `Document.pages` in order and `active_page`; the active page's
+  shapes are the document's own `objects`/`groups` (so previews, jobs and every command work on it) and the others'
+  live in their `Page` entries with their locks, cut properties and masks; layers and settings are shared, as in
+  LightBurn. How LightBurn stores pages in `.lbrn2` is unknown (only `CurrentPage`/`Page0Name` root attributes were
+  seen), so LightBurn exports carry the active page.
+- **Preferences and bundles**: `GET /api/prefs/export` writes the engine's preferences (`prefs.rs`) and the file
+  settings as an `.oeprefs` JSON file; `POST /api/prefs/import` (UI only) replaces them after backing the current ones
+  up in `<config-dir>/prefs-backups/` (newest 50, also made at start when they changed; `/api/prefs/backups`,
+  `/api/prefs/backups/restore`). User bundles (`GET /api/bundle/export?parts=prefs,devices,libraries`, an
+  `.oebundle` zip with a `bundle.json` manifest; `POST /api/bundle/import`, UI only): devices are always added as new
+  devices with their correction files (an identical device is skipped, a different correction file of the same name
+  is kept and reported), a material library whose name exists with other content loads as "<name> (bundle)", as
+  LightBurn keeps what is there. LightBurn's own `.lbzip` and `.lbprefs` layouts are undocumented and not read.
+  A bundle is a file from elsewhere: entry names must be plain file names (no folders, no drive prefix such as
+  `C:x.cor`, which `Path::join` resolves outside the directory on Windows, no device names); an imported device must
+  name its correction file by bare name and keep this machine's limits (`machine::edit_profile` against its base,
+  else the built-in profile), or it is skipped; an unloaded library's file is never overwritten; preferences are
+  checked whole (Job Checklist, file settings) before anything changes.
+- **Hostile files**: every importer bounds its work, not only its input size. The zip reader refuses overlapping
+  entries before unpacking (a few kilobytes pointing hundreds of entries at one block); the PostScript interpreter
+  charges a step per procedure call (empty procedures in nested loops), caps the operand stack, `{` nesting, array
+  nesting and path elements, shares strings and arrays instead of copying them, and computes `arc` turns with
+  `rem_euclid`; the PDF reader loads with lopdf's decompression limit and decodes at most 32 MB per content stream
+  and 256 MB in total (forms that draw themselves); Gerber/Excellon and EzCad refuse non-finite or huge coordinates
+  and sizes before curve flattening (a 1e300 circle at 0.001 mm never finishes); the model readers trust no header
+  count, cap 3MF component expansion and refuse depth maps needing over 2e9 pixel tests up front; placed art must
+  lie within 100 m of the origin; thinning follows the shrinking boundary and Douglas-Peucker is iterative and
+  chunked (a long diagonal edge recursed past the stack). Inactive pages are validated like the document on load,
+  and `doc.export_lbrn2` warns when other pages are left out. Flatten Image Mask deletes the mask shapes, as
+  LightBurn does.
+- Not done: several open documents (LightBurn's New Window; the engine holds one live document), saving to arbitrary
+  folders (the engine writes only inside its projects directory; the browser downloads anywhere).
 
 ## LightBurn devices
 
@@ -657,6 +878,15 @@ Origin), the public WAZER `.lbdev`, xTool/Creality `.lbdev` posts and the owner'
   can be changed with a JSON merge patch; hard limits can only go down; the built-in device is read-only (duplicate it).
   A re-import of the same LightBurn device replaces the edits. Correction files can be loaded and cleared per device;
   `.lbdev` export writes the device back for LightBurn.
+
+## CAD integrations
+
+`tools/fusion360-addin/OpenEtch` (Autodesk Fusion add-in, Python): "Send to OpenEtch" saves the selected sketch (or a
+selected planar face's outline, or the sketch being edited) as DXF and posts it to `POST /api/document/upload
+?format=dxf&mode=merge&name=...` with the engine's bearer token when one is set. `tools/inkscape-extension`
+(`openetch_send.inx` + `.py`, Inkscape 1.x): "Save selection to OpenEtch" posts the selection (with its groups'
+transforms and the document's size, so it keeps its place) as SVG. Neither can fire the laser. Their request and
+selection code is tested without Fusion or Inkscape (`python -I tools/tests/test_integrations.py`).
 
 ## Licensing and provenance
 

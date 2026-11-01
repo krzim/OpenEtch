@@ -171,7 +171,9 @@ fn encode_passes<'a>(passes: impl Iterator<Item = &'a PassPlan>, target: &Target
     target.validate()?;
     let open_mo = delay_time_units(target.open_mo_delay_us)?;
     let mut list = MarkingList::new();
-    list.delay_time(open_mo).write_port(LASER_ENABLE_BIT);
+    // The status lights (busy / ready) ride along with every port write; never more than the laser-enable bit else.
+    let held = target.port_outputs & !LASER_ENABLE_BIT;
+    list.delay_time(open_mo).write_port(LASER_ENABLE_BIT | held);
 
     let mut marks = 0usize;
     let mut pos_mm = [0.0, 0.0];
@@ -249,7 +251,7 @@ fn encode_passes<'a>(passes: impl Iterator<Item = &'a PassPlan>, target: &Target
     if marks == 0 {
         return Err(PlanError::Empty);
     }
-    list.write_port(0).end_of_list();
+    list.write_port(held).end_of_list();
     Ok(list.finish())
 }
 

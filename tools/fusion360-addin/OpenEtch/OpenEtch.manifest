@@ -1,0 +1,13 @@
+{
+    "autodeskProduct": "Fusion360",
+    "type": "addin",
+    "id": "6f0e9a41-0d55-4a8e-9a63-5d6e0e1f2a77",
+    "author": "OpenEtch",
+    "description": {
+        "": "Send the selected sketch or planar face to a running OpenEtch engine as DXF."
+    },
+    "version": "0.1.0",
+    "runOnStartup": false,
+    "supportedOS": "windows|mac",
+    "editEnabled": true
+}

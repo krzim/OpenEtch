@@ -32,6 +32,14 @@ mod offset;
 mod order;
 mod path_tools;
 mod pathutil;
+// Libraries and generators: material library presets, test generators, start points, registration targets.
+mod preset;
+mod targets;
+mod testgen;
+// Files and image tools (crate fileio): exports, further imports, trace, masks, pages, notes.
+pub(crate) mod files;
+mod image_tools;
+mod pages;
 
 #[cfg(test)]
 mod geom_tests;
@@ -88,6 +96,52 @@ pub(crate) fn register_all(r: &mut Registry) {
     r.register::<dxf::ImportDxf>();
     register_geometry(r);
     register_text(r);
+    register_libs(r);
+    register_files(r);
+}
+
+/// Exports, imports, image tools, pages and notes (`files`, `image_tools`, `pages`).
+fn register_files(r: &mut Registry) {
+    r.register::<files::DocExport>();
+    r.register::<files::DocPrint>();
+    #[cfg(not(target_arch = "wasm32"))]
+    r.register::<files::ImportPdf>();
+    r.register::<files::ImportAi>();
+    r.register::<files::ImportEps>();
+    r.register::<files::ImportEzd>();
+    r.register::<files::ImportHpgl>();
+    r.register::<files::ImportGerber>();
+    r.register::<files::ImportModel>();
+    r.register::<image_tools::TraceImage>();
+    r.register::<image_tools::TracePreview>();
+    r.register::<image_tools::ConvertToBitmap>();
+    r.register::<image_tools::ApplyMask>();
+    r.register::<image_tools::RemoveMask>();
+    r.register::<image_tools::FlattenMask>();
+    r.register::<image_tools::ReplaceImage>();
+    r.register::<image_tools::ExportImage>();
+    r.register::<image_tools::ProcessedImage>();
+    r.register::<pages::PageList>();
+    r.register::<pages::PageAdd>();
+    r.register::<pages::PageDuplicate>();
+    r.register::<pages::PageDelete>();
+    r.register::<pages::PageRename>();
+    r.register::<pages::PageActivate>();
+    r.register::<pages::PageMove>();
+    r.register::<pages::PageSendObjects>();
+    r.register::<pages::SetNotes>();
+}
+
+/// Library presets, test generators, start points and registration targets.
+fn register_libs(r: &mut Registry) {
+    r.register::<preset::ApplyPreset>();
+    r.register::<preset::UnlinkPreset>();
+    r.register::<testgen::MaterialTest>();
+    r.register::<testgen::IntervalTest>();
+    r.register::<testgen::FocusTest>();
+    r.register::<targets::SetStartPoint>();
+    r.register::<targets::ClearStartPoint>();
+    r.register::<targets::AlignTargets>();
 }
 
 /// The geometry commands (booleans, offsets, path and node tools, generators, arrays, arrange), after the rest.

@@ -43,6 +43,10 @@ pub struct Target {
     /// The board drives a rotary: rotary jobs are split into strips. Without one they are refused (except previews).
     #[serde(default)]
     pub rotary_axis: bool,
+    /// Output port bits held high while the job's lists run (the profile's busy / ready lights): every in-list
+    /// `WritePort` carries them. Never the laser-enable bit. 0 by default.
+    #[serde(default)]
+    pub port_outputs: u16,
 }
 
 fn yes() -> bool {
@@ -137,6 +141,7 @@ pub(crate) mod tests {
             pulse_width_enabled: true,
             z_axis: false,
             rotary_axis: false,
+            port_outputs: 0,
         }
     }
 

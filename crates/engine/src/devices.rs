@@ -408,6 +408,12 @@ impl DeviceRegistry {
         }
     }
 
+    /// The limits a device brought in from a file (a user bundle) must keep: its base's, else the built-in
+    /// profile's. Never its own: a file must not raise the limits a device on this machine can have.
+    pub(crate) fn import_limits(&self, d: &Device) -> MachineProfile {
+        self.bases.get(d.base.unwrap_or(ProfileBase::Builtin)).clone()
+    }
+
     /// Edit a device's profile with a JSON merge patch (`PUT /api/devices/{id}`, see `machine::edit_profile`) and
     /// optionally rename it. The built-in device is read-only (duplicate it first).
     pub fn edit(&mut self, id: &str, patch: Option<&Value>, display_name: Option<&str>) -> Result<Device, EngineError> {
@@ -588,6 +594,15 @@ fn profile_summary(p: &MachineProfile) -> Value {
         "max_jump_speed_mm_s": p.max_jump_speed_mm_s,
         "pulse_width_enabled": p.pulse_width_enabled,
         "timing": p.timing,
+        // What the device editor shows and edits (`PUT /api/devices/{id}` takes the same shapes): the lens
+        // correction (field offset and angle, per-axis scale, bulge, skew, trapezoid), the red-dot alignment (offset,
+        // scale, rest position), framing blanking, and the pointer outputs.
+        "calibration": p.calibration,
+        "red_dot": p.red_dot,
+        "blanking": p.blanking,
+        "red_light_port_bit": p.red_light_port_bit,
+        "red_light_speed_mm_s": p.red_light_speed_mm_s,
+        "focus_light_port_bit": p.focus_light_port_bit,
     })
 }
 
@@ -951,6 +966,15 @@ mod tests {
         // Stored: a reopened registry has the edit.
         let (again, _) = open(&dir, None);
         assert_eq!(again.get(&copy.id).unwrap().profile.as_ref().unwrap().calibration.angle_deg, 0.5);
+        // The details carry what the device editor edits: calibration, red dot, blanking, pointer outputs.
+        r.edit(&copy.id, Some(&serde_json::json!({"red_dot": {"offset_x_mm": 0.25, "rest_y_mm": -3.0}, "blanking": false})), None)
+            .unwrap();
+        let p = &r.details(&copy.id).unwrap()["profile"];
+        assert_eq!((p["calibration"]["angle_deg"].clone(), p["calibration"]["scale_x"].clone()), (json!(0.5), json!(1.0)));
+        assert_eq!((p["red_dot"]["offset_x_mm"].clone(), p["red_dot"]["rest_y_mm"].clone()), (json!(0.25), json!(-3.0)));
+        assert_eq!(p["red_dot"]["scale_y"], json!(1.0));
+        assert_eq!((p["blanking"].clone(), p["focus_light_port_bit"].clone()), (json!(false), Value::Null));
+        assert!(p["red_light_port_bit"].is_u64() && p["red_light_speed_mm_s"].is_number());
         let (name, text) = r.lbdev(&copy.id).unwrap();
         assert!(name.ends_with(".lbdev") && text.contains("\"FieldAngle\": 0.5"), "{text}");
         let markcfg = include_bytes!("../../../fixtures/markcfg7.ini");

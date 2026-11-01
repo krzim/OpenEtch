@@ -105,6 +105,42 @@ const ALL_IDS: &[&str] = &[
     "var.preview_row",
     "shape.barcode",
     "font.list",
+    "layer.apply_preset",
+    "layer.unlink_preset",
+    "generate.material_test",
+    "generate.interval_test",
+    "generate.focus_test",
+    "object.set_start_point",
+    "object.clear_start_point",
+    "object.align_to_targets",
+    // Files and image tools.
+    "doc.export",
+    "doc.print",
+    "art.import_pdf",
+    "art.import_ai",
+    "art.import_eps",
+    "art.import_ezd",
+    "art.import_hpgl",
+    "art.import_gerber",
+    "art.import_model",
+    "image.trace",
+    "image.trace_preview",
+    "art.convert_to_bitmap",
+    "image.apply_mask",
+    "image.remove_mask",
+    "image.flatten_mask",
+    "image.replace",
+    "image.export",
+    "image.processed",
+    "page.list",
+    "page.add",
+    "page.duplicate",
+    "page.delete",
+    "page.rename",
+    "page.activate",
+    "page.move",
+    "page.send_objects",
+    "doc.set_notes",
 ];
 
 #[test]
@@ -118,6 +154,7 @@ fn registry_lists_every_command_with_documented_schema() {
         let query = matches!(
             spec.id,
             "doc.inspect" | "doc.save" | "doc.export_lbrn2" | "node.list" | "var.preview_row" | "font.list"
+                | "doc.export" | "doc.print" | "image.trace_preview" | "image.export" | "image.processed" | "page.list"
         );
         assert_eq!(spec.risk == Risk::Query, query, "{}", spec.id);
         let props = spec.input_schema["properties"].as_object();

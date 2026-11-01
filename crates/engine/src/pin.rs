@@ -13,6 +13,12 @@
 //! Every [`MAX_FAILURES`] wrong PINs in a row lock approvals; each lockout is twice the previous one ([`LOCKOUT`],
 //! then 120 s, 240 s, ... up to [`MAX_LOCKOUT`]); only the right PIN resets the escalation.
 //!
+//! **Simulator test PIN** (`--sim-pin`, [`PinStore::simulator`]): for testing the approval flow without a laser, the
+//! engine can take a PIN on its command line instead. It is accepted only when the engine drives the simulator
+//! ([`check_sim_pin_allowed`]: never with `--usb`, and in release builds only with [`ALLOW_SIM_PIN_ENV`]` = 1`), is
+//! kept in memory as a salted hash and never written to disk, and `approve` refuses it again on every attempt when
+//! the machine is not the simulator. `GET /api/machine` reports `approval.sim_pin: true`.
+//!
 //! The MCP server never sees, asks for or handles a PIN. This keeps an agent that only has MCP from approving; it
 //! does **not** stop a local process running with the user's OS privileges (it could read the hash file and guess
 //! offline, restart the engine, or open the USB device itself). The hardware E-stop/key switch is the real
@@ -48,6 +54,9 @@ pub const CONFIRM_TIMEOUT: Duration = Duration::from_secs(30);
 pub const CONFIRM_POLL: Duration = Duration::from_millis(50);
 /// Consecutive reads the input must be seen pressed (galvoplotter's `input_passes_required` is 3).
 pub const CONFIRM_READS: u32 = 3;
+
+/// Environment variable a release build needs (set to `1`) to accept `--sim-pin`.
+pub const ALLOW_SIM_PIN_ENV: &str = "OPENETCH_ALLOW_SIM_PIN";
 
 /// Domain prefix hashed before the salt, so the hash is useless for anything but this file.
 const HASH_DOMAIN: &[u8] = b"openetch-operator-pin-v1";
@@ -369,6 +378,8 @@ pub struct PinStore {
     at_load: FileState,
     /// Set (for good) once the file is seen to differ from `at_load`.
     changed: AtomicBool,
+    /// The PIN is the simulator test PIN (`--sim-pin`), held in memory only; the PIN file is not used.
+    sim: bool,
     lockout: Duration,
     max_lockout: Duration,
     attempts: Mutex<Attempts>,
@@ -390,10 +401,37 @@ impl PinStore {
             loaded,
             at_load,
             changed: AtomicBool::new(false),
+            sim: false,
             lockout,
             max_lockout,
             attempts: Mutex::new(Attempts::default()),
         }
+    }
+
+    /// The simulator test PIN (`--sim-pin`): `pin` (6-12 digits) becomes the operator PIN for this engine run. It is
+    /// held in memory as a salted hash and never written to disk; the PIN file in `dir` is neither read nor written.
+    /// The caller checks [`check_sim_pin_allowed`] first, and `approve` refuses it unless the machine is the
+    /// simulator.
+    pub fn simulator(dir: &Path, pin: &str) -> Result<Self, String> {
+        validate_pin(pin).map_err(|e| format!("--sim-pin: {e}"))?;
+        let mut salt = vec![0u8; 16];
+        getrandom::fill(&mut salt).map_err(|e| format!("no random source for the salt: {e}"))?;
+        let digest = hash(&salt, pin).to_vec();
+        Ok(PinStore {
+            path: dir.join(PIN_FILE),
+            loaded: Some(PinHash { salt, digest }),
+            at_load: FileState::Missing,
+            changed: AtomicBool::new(false),
+            sim: true,
+            lockout: LOCKOUT,
+            max_lockout: MAX_LOCKOUT,
+            attempts: Mutex::new(Attempts::default()),
+        })
+    }
+
+    /// True when the PIN is the simulator test PIN (`--sim-pin`).
+    pub fn is_sim(&self) -> bool {
+        self.sim
     }
 
     pub fn path(&self) -> &Path {
@@ -407,6 +445,10 @@ impl PinStore {
 
     /// True once the PIN file differs from what was loaded at startup (it stays true until the engine restarts).
     pub fn has_changed(&self) -> bool {
+        if self.sim {
+            // The simulator test PIN does not come from the file.
+            return false;
+        }
         if self.changed.load(Ordering::SeqCst) {
             return true;
         }
@@ -526,11 +568,34 @@ impl ApprovalConfig {
             "pin_set": self.pin.is_set(),
             "pin_changed": self.pin.has_changed(),
             "locked_until_unix_s": self.pin.locked_until_unix_s(),
+            "sim_pin": self.pin.is_sim(),
             "physical_confirm": self.confirm.map(|c| json!({
                 "input_bit": c.input_bit,
                 "timeout_s": c.timeout.as_secs(),
             })),
         })
+    }
+}
+
+/// Whether `--sim-pin` may be used: only when the engine drives the simulator (`simulated`: no `--usb`, no USB
+/// link), and in a release build only when [`ALLOW_SIM_PIN_ENV`] is `1` (`allow_env`: its value).
+pub fn check_sim_pin_allowed(simulated: bool, debug_build: bool, allow_env: Option<&str>) -> Result<(), String> {
+    if !simulated {
+        return Err("--sim-pin is only accepted with the simulator; it is refused with --usb or any real USB link".into());
+    }
+    if !debug_build && allow_env.map(str::trim) != Some("1") {
+        return Err(format!("--sim-pin is refused in release builds unless {ALLOW_SIM_PIN_ENV}=1 is also set"));
+    }
+    Ok(())
+}
+
+/// The error `approve` answers with when the simulator test PIN meets a machine that is not the simulator.
+pub fn sim_pin_on_real_link() -> EngineError {
+    EngineError::Approval {
+        code: "sim_pin_real_link",
+        message: "the simulator test PIN (--sim-pin) cannot approve runs on a real laser; restart the engine without \
+                  --sim-pin and set an operator PIN with `openetch set-pin`"
+            .into(),
     }
 }
 
@@ -749,14 +814,15 @@ mod tests {
         let cfg = ApprovalConfig { pin: PinStore::new(&dir), confirm: Some(PhysicalConfirm::new(14)) };
         assert_eq!(
             cfg.status_json(),
-            json!({"pin_set": false, "pin_changed": false, "locked_until_unix_s": null,
+            json!({"pin_set": false, "pin_changed": false, "locked_until_unix_s": null, "sim_pin": false,
                    "physical_confirm": {"input_bit": 14, "timeout_s": 30}})
         );
         set_pin(&dir, "123456").unwrap();
         let cfg = ApprovalConfig { pin: PinStore::new(&dir), confirm: None };
         assert_eq!(
             cfg.status_json(),
-            json!({"pin_set": true, "pin_changed": false, "locked_until_unix_s": null, "physical_confirm": null})
+            json!({"pin_set": true, "pin_changed": false, "locked_until_unix_s": null, "sim_pin": false,
+                   "physical_confirm": null})
         );
         for _ in 0..MAX_FAILURES {
             let _ = cfg.pin.verify(Some("000000"));
@@ -774,5 +840,39 @@ mod tests {
         assert_eq!(e.body()["code"], "pin_locked");
         assert_eq!(e.body()["ok"], false);
         assert_eq!(EngineError::from(PinError::Changed).body()["code"], "pin_changed");
+    }
+
+    #[test]
+    fn the_sim_pin_needs_the_simulator_and_a_debug_build_or_the_env_var() {
+        assert!(check_sim_pin_allowed(true, true, None).is_ok());
+        assert!(check_sim_pin_allowed(false, true, None).unwrap_err().contains("--usb"));
+        assert!(check_sim_pin_allowed(false, false, Some("1")).is_err(), "never on USB, whatever the env");
+        assert!(check_sim_pin_allowed(true, false, None).unwrap_err().contains(ALLOW_SIM_PIN_ENV));
+        assert!(check_sim_pin_allowed(true, false, Some("0")).is_err());
+        assert!(check_sim_pin_allowed(true, false, Some("1")).is_ok());
+    }
+
+    #[test]
+    fn the_sim_pin_approves_from_memory_and_is_never_written() {
+        let dir = temp_dir("simpin");
+        assert!(PinStore::simulator(&dir, "12345").is_err(), "6-12 digits");
+        assert!(PinStore::simulator(&dir, "12a456").is_err());
+        let store = PinStore::simulator(&dir, "424242").unwrap();
+        assert!(store.is_set() && store.is_sim() && !store.has_changed());
+        assert_eq!(store.verify(Some("000000")), Err(PinError::Invalid));
+        assert_eq!(store.verify(None), Err(PinError::Required));
+        assert_eq!(store.verify(Some("424242")), Ok(()));
+        // Nothing reaches the disk: no config directory, no PIN file.
+        assert!(!dir.exists(), "the sim PIN created {}", dir.display());
+        assert!(!store.path().exists());
+        // A PIN file on disk is neither used nor watched.
+        set_pin(&dir, "111111").unwrap();
+        assert!(!store.has_changed());
+        assert_eq!(store.verify(Some("111111")), Err(PinError::Invalid));
+        assert_eq!(store.verify(Some("424242")), Ok(()));
+        let cfg = ApprovalConfig { pin: store, confirm: None };
+        assert_eq!(cfg.status_json()["sim_pin"], true);
+        assert_eq!(cfg.status_json()["pin_set"], true);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

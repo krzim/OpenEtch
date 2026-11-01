@@ -486,7 +486,7 @@ async fn approval_pin_errors_have_codes() {
     let (_, m) = send(&app, req("GET", "/api/machine", None)).await;
     assert_eq!(
         m["approval"],
-        json!({"pin_set": false, "pin_changed": false, "locked_until_unix_s": null,
+        json!({"pin_set": false, "pin_changed": false, "locked_until_unix_s": null, "sim_pin": false,
                "physical_confirm": {"input_bit": 14, "timeout_s": 30}})
     );
     let (s, v) = send(&app, approve(pin_body())).await;
@@ -1874,4 +1874,73 @@ async fn runs_render_variable_text_and_auto_advance() {
     let (s, v) = send(&app, req("POST", "/api/runs", None)).await;
     assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
     assert!(v["error"].as_str().unwrap().contains("not installed"), "{v}");
+}
+
+/// The simulator test PIN (`--sim-pin`).
+const SIM_PIN: &str = "135797";
+
+fn sim_approval() -> (std::path::PathBuf, ApprovalConfig) {
+    let dir = pin::temp_dir("simpin-engine");
+    let store = PinStore::simulator(&dir, SIM_PIN).expect("sim PIN");
+    (dir, ApprovalConfig { pin: store, confirm: None })
+}
+
+#[tokio::test]
+async fn the_sim_pin_approves_runs_on_the_simulator_and_is_reported() {
+    let (dir, approval) = sim_approval();
+    let machine = Arc::new(Machine::simulated(MachineProfile::generic_lmc_fiber(), None, PollConfig::immediate()));
+    let st = state_on(machine, SecurityConfig::default(), approval).await;
+    let app = app(&st);
+    let (s, v) = send(&app, req("GET", "/api/machine", None)).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!((v["approval"]["sim_pin"].clone(), v["approval"]["pin_set"].clone()), (json!(true), json!(true)));
+    assert_eq!(v["approval"]["pin_changed"], false);
+    let id = pending_run(&app).await;
+    let (s, v) = send(&app, req("POST", &format!("/api/runs/{id}/approve"), Some(json!({ "pin": "000000" })))).await;
+    assert_eq!((s, v["code"].clone()), (StatusCode::FORBIDDEN, json!("pin_invalid")));
+    let (s, v) = send(&app, req("POST", &format!("/api/runs/{id}/approve"), Some(json!({ "pin": SIM_PIN })))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let run = wait_final(&st, &id).await;
+    assert_eq!(run.state, RunState::Finished, "{:?}", run.error);
+    assert!(st.machine.sim_counters().unwrap().laser_singles() > 0, "the simulator ran it");
+    // Never persisted: no PIN file, not even the config directory.
+    assert!(!dir.join(pin::PIN_FILE).exists() && !dir.exists());
+}
+
+#[tokio::test]
+async fn the_sim_pin_is_refused_when_a_usb_device_is_active() {
+    // A machine on a USB link (a SimLink stands in for the board, so nothing real is opened).
+    let machine = Arc::new(Machine::with_link(
+        Box::new(SimLink::new()),
+        LinkKind::Usb,
+        None,
+        MachineProfile::generic_lmc_fiber(),
+        None,
+        PollConfig::immediate(),
+    ));
+    // Startup refuses it outright...
+    assert!(pin::check_sim_pin_allowed(machine.kind() == LinkKind::Simulated, true, Some("1")).is_err());
+    // ...and an engine set up with one anyway never approves with it.
+    let (dir, approval) = sim_approval();
+    let st = AppState::new(Session::new(doc::Document::default()), machine, SecurityConfig::default(), approval, test_projects());
+    let app = app(&st);
+    let id = pending_run(&app).await;
+    let (s, v) = send(&app, req("POST", &format!("/api/runs/{id}/approve"), Some(json!({ "pin": SIM_PIN })))).await;
+    assert_eq!((s, v["code"].clone()), (StatusCode::FORBIDDEN, json!("sim_pin_real_link")), "{v}");
+    assert_eq!(st.runs().get(&id).unwrap().state, RunState::Pending, "nothing was armed");
+    assert!(!st.machine.is_running());
+    assert!(!dir.exists(), "nothing written");
+}
+
+#[tokio::test]
+async fn machine_status_reports_the_focus_light_and_a_file_pin_is_not_a_sim_pin() {
+    let st = test_state().await;
+    let (_, v) = send(&app(&st), req("GET", "/api/machine", None)).await;
+    assert_eq!((v["focus_light"].clone(), v["approval"]["sim_pin"].clone()), (json!(false), json!(false)));
+    let mut profile = MachineProfile::generic_lmc_fiber();
+    profile.focus_light_port_bit = Some(9);
+    let machine = Arc::new(Machine::simulated(profile, None, PollConfig::immediate()));
+    let st = state_on(machine, SecurityConfig::default(), approval(None)).await;
+    let (_, v) = send(&app(&st), req("GET", "/api/machine", None)).await;
+    assert_eq!(v["focus_light"], true);
 }

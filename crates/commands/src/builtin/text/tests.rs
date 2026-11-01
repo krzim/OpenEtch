@@ -357,3 +357,36 @@ fn lightburn_export_names_lost_text_settings() {
     assert!(w.contains("bend, its single-line font not written"), "{w}");
     assert!(w.contains("its saved outline shows them"), "one space between the words: {w}");
 }
+
+#[test]
+fn text_and_barcode_updates_refuse_no_ops_and_follow_auto_names() {
+    let mut s = session();
+    let r = exec(&mut s, "shape.text", json!({ "text": "Hello\nworld", "font": hershey(), "height_mm": 10 }));
+    let id = r["created"][0].as_str().unwrap().to_string();
+    let name = |s: &Session, id: &str| s.document().object(id).unwrap().name.clone();
+    assert_eq!(name(&s, &id), "Hello");
+    // Nothing changes: refused, and no undo step is recorded.
+    let steps = s.history().len();
+    assert!(fails(&mut s, "text.update", json!({ "id": id, "text": "Hello\nworld", "height_mm": 10 })).contains("nothing changed"));
+    assert!(fails(&mut s, "text.update", json!({ "id": id })).contains("nothing changed"));
+    assert_eq!(s.history().len(), steps, "no empty undo step");
+    // The auto name follows the text.
+    exec(&mut s, "text.update", json!({ "id": id, "text": "  Bye\nall" }));
+    assert_eq!(name(&s, &id), "Bye");
+    // A name the user chose stays.
+    exec(&mut s, "object.rename", json!({ "id": id, "name": "Mine" }));
+    exec(&mut s, "text.update", json!({ "id": id, "text": "Again" }));
+    assert_eq!(name(&s, &id), "Mine");
+
+    let r = exec(&mut s, "shape.barcode", json!({ "kind": "qr", "data": "A", "center": [5, 5] }));
+    let bc = r["created"][0].as_str().unwrap().to_string();
+    assert_eq!(name(&s, &bc), "qr barcode");
+    let steps = s.history().len();
+    assert!(fails(&mut s, "shape.barcode", json!({ "id": bc, "kind": "qr", "data": "A" })).contains("nothing changed"));
+    assert_eq!(s.history().len(), steps, "no empty undo step");
+    exec(&mut s, "shape.barcode", json!({ "id": bc, "kind": "data_matrix", "data": "A" }));
+    assert_eq!(name(&s, &bc), "data_matrix barcode");
+    exec(&mut s, "shape.barcode", json!({ "id": bc, "kind": "data_matrix", "data": "B", "name": "Label" }));
+    exec(&mut s, "shape.barcode", json!({ "id": bc, "kind": "aztec", "data": "B" }));
+    assert_eq!(name(&s, &bc), "Label");
+}

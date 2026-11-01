@@ -127,7 +127,7 @@ fn tabs_perforation_and_wobble_shape_the_lines() {
 #[test]
 fn power_scale_lowers_a_shapes_power() {
     let mut d = doc_with(vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0)), rect("obj-2", 10.0, 10.0, (20.0, 0.0))], CutSettings { power_pct: 40.0, ..CutSettings::default() });
-    d.object_options.insert("obj-2".into(), ObjectOptions { priority: None, power_scale_pct: 50.0 });
+    d.object_options.insert("obj-2".into(), ObjectOptions { priority: None, power_scale_pct: 50.0, ..ObjectOptions::default() });
     let plan = plan_job(&d, &target()).unwrap();
     let pass = &plan.passes[0];
     let powers: Vec<f64> = (0..pass.polylines.len()).map(|i| pass.power_of(i)).collect();
@@ -178,8 +178,8 @@ fn auto_rotate_turns_with_the_job_counter() {
 #[test]
 fn optimization_orders_by_priority_and_cuts_last() {
     let mut d = doc_with(vec![rect("obj-1", 4.0, 4.0, (0.0, 0.0)), rect("obj-2", 4.0, 4.0, (40.0, 0.0))], CutSettings::default());
-    d.object_options.insert("obj-2".into(), ObjectOptions { priority: Some(0), power_scale_pct: 100.0 });
-    d.object_options.insert("obj-1".into(), ObjectOptions { priority: Some(1), power_scale_pct: 100.0 });
+    d.object_options.insert("obj-2".into(), ObjectOptions { priority: Some(0), power_scale_pct: 100.0, ..ObjectOptions::default() });
+    d.object_options.insert("obj-1".into(), ObjectOptions { priority: Some(1), power_scale_pct: 100.0, ..ObjectOptions::default() });
     let plan = plan_job(&d, &target()).unwrap();
     assert!(plan.passes[0].polylines[0][0][0] < 10.0, "nearest first by default");
     d.optimization.order_by = vec![OrderBy::Priority];

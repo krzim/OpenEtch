@@ -66,6 +66,7 @@ fn target(field_mm: f64) -> Target {
         pulse_width_enabled: true,
         z_axis: false,
         rotary_axis: false,
+        port_outputs: 0,
     }
 }
 

@@ -267,6 +267,16 @@ impl TextFields {
     }
 }
 
+/// The name `shape.text` gives a text when none is given: its first non-blank line (at most 100 characters).
+fn auto_name(text: &str) -> String {
+    text.lines().find(|l| !l.trim().is_empty()).unwrap_or("Text").trim().chars().take(100).collect()
+}
+
+/// The name `shape.barcode` gives a barcode of `kind` when none is given.
+fn barcode_auto_name(kind: &str) -> String {
+    format!("{} barcode", kind.trim())
+}
+
 /// The default font for new text: the first of a few common families that is installed, else the bundled
 /// single-line Hershey Sans.
 fn default_font() -> FontSpec {
@@ -353,7 +363,7 @@ impl Command for ShapeText {
             let rot = util::finite(cmd, "rotation_deg", i.rotation_deg)?;
             let name = match &i.name {
                 Some(n) => util::name(cmd, "name", n)?,
-                None => s.lines().find(|l| !l.trim().is_empty()).unwrap_or("Text").trim().chars().take(100).collect(),
+                None => auto_name(&s),
             };
             let transform = Affine::translate((x, y)) * Affine::rotate(rot.to_radians());
             let id = add_object(doc, name, layer, Geometry::Text(Box::new(t)), transform)?;
@@ -393,12 +403,23 @@ impl Command for TextUpdate {
             let Geometry::Text(t) = &o.geometry else {
                 return Err(invalid(cmd, format!("{} (\"{}\") is not a text object", o.id, o.name)));
             };
-            let mut t = (**t).clone();
+            let before = (**t).clone();
+            let mut t = before.clone();
             i.fields.apply_to(cmd, &mut t)?;
             if t.text.trim().is_empty() {
                 return Err(invalid(cmd, "text must not be empty (delete the object instead)"));
             }
-            doc.object_mut(&i.id).expect("looked up").geometry = Geometry::Text(Box::new(t));
+            // An update that changes nothing is refused, so it does not leave an empty undo step.
+            if t == before {
+                return Err(invalid(cmd, format!("{}: these settings are already set; nothing changed", i.id)));
+            }
+            // A name still derived from the old text follows the new text.
+            let rename = (t.text != before.text && o.name == auto_name(&before.text)).then(|| auto_name(&t.text));
+            let o = doc.object_mut(&i.id).expect("looked up");
+            o.geometry = Geometry::Text(Box::new(t));
+            if let Some(name) = rename {
+                o.name = name;
+            }
             let warnings = rerender(cmd, doc, &i.id, now().as_ref())?;
             Ok((text_result(doc, &[], std::slice::from_ref(&i.id), warnings), format!("edited text {}", i.id)))
         })
@@ -880,6 +901,17 @@ pub struct BarcodeInput {
     pub name: Option<String>,
 }
 
+/// What a barcode's drawing depends on: its kept settings without the placement (unused by a redraw) and name.
+fn barcode_settings(b: &BarcodeInput) -> Value {
+    let mut v = serde_json::to_value(b).unwrap_or(Value::Null);
+    if let Some(m) = v.as_object_mut() {
+        for k in ["center", "rotation_deg", "layer", "name"] {
+            m.remove(k);
+        }
+    }
+    v
+}
+
 fn barcode_data(doc: &Document, layer: &str, b: &BarcodeInput, moment: Option<&text::Moment>) -> String {
     match b.variable.as_ref().and_then(var_of) {
         Some(v) => text::vars::evaluate(doc, layer, &b.data, &v, moment, &laser_name(doc)),
@@ -953,11 +985,28 @@ impl Command for ShapeBarcode {
                 Some(id) => {
                     util::check_unlocked(cmd, doc, std::slice::from_ref(id))?;
                     let o = doc.object_mut(id).expect("looked up");
-                    if !o.extras.contains_key(BARCODE_KEY) {
+                    let Some(old) = o.extras.get(BARCODE_KEY).cloned() else {
                         return Err(invalid(cmd, format!("{id} is not a barcode")));
+                    };
+                    let old: Option<BarcodeInput> = serde_json::from_str(&old).ok();
+                    let name = match (&i.name, &old) {
+                        (Some(n), _) => Some(util::name(cmd, "name", n)?),
+                        // A name still derived from the old kind follows the new kind.
+                        (None, Some(old)) if o.name == barcode_auto_name(&old.kind) => Some(barcode_auto_name(&i.kind)),
+                        _ => None,
+                    };
+                    // A redraw that changes nothing is refused, so it does not leave an empty undo step.
+                    let unchanged = old.as_ref().is_some_and(|old| barcode_settings(old) == barcode_settings(&i))
+                        && o.layer == layer
+                        && name.as_ref().is_none_or(|n| *n == o.name);
+                    if unchanged {
+                        return Err(invalid(cmd, format!("{id}: this barcode already has these settings; nothing changed")));
                     }
                     o.geometry = geometry;
                     o.layer = layer;
+                    if let Some(n) = name {
+                        o.name = n;
+                    }
                     o.extras.clear();
                     (vec![], vec![id.clone()], id.clone())
                 }
@@ -966,7 +1015,7 @@ impl Command for ShapeBarcode {
                     let rot = util::finite(cmd, "rotation_deg", i.rotation_deg)?;
                     let name = match &i.name {
                         Some(n) => util::name(cmd, "name", n)?,
-                        None => format!("{} barcode", i.kind.trim()),
+                        None => barcode_auto_name(&i.kind),
                     };
                     let t = Affine::translate((x, y)) * Affine::rotate(rot.to_radians());
                     let id = add_object(doc, name, layer, geometry, t)?;

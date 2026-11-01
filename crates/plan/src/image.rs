@@ -239,7 +239,20 @@ impl Placed<'_> {
 
 /// The rows of runs of one image for one pass with settings `s` at scan angle `angle_deg`, rows in burn order, at
 /// most `budget` runs in all.
+#[cfg(test)]
 pub(crate) fn raster(p: &Placed, s: &ImageSettings, angle_deg: f64, budget: usize) -> Result<Vec<Vec<Run>>, RasterError> {
+    raster_slice(p, s, angle_deg, budget, 0.0)
+}
+
+/// [`raster`] for one slice of a 3D Sliced pass: dots fire where the darkness is above `slice` (0..1); other dither
+/// modes ignore it.
+pub(crate) fn raster_slice(
+    p: &Placed,
+    s: &ImageSettings,
+    angle_deg: f64,
+    budget: usize,
+    slice: f32,
+) -> Result<Vec<Vec<Run>>, RasterError> {
     let to_pixel = p.local_to_pixel() * p.transform.inverse();
     // Grid (column, row) → field mm, with the dot pitch, and the grid size.
     let (grid, cols, rows, pitch) = if s.pass_through {
@@ -299,7 +312,7 @@ pub(crate) fn raster(p: &Placed, s: &ImageSettings, angle_deg: f64, budget: usiz
         }
         Ok(())
     };
-    dither(s, &sampler, &grid, rows, &mut emit)?;
+    dither(s, &sampler, &grid, rows, slice, &mut emit)?;
     // Rows burn in alternating directions when bidirectional (counting only rows that mark).
     if s.bidirectional {
         for row in rows_out.iter_mut().skip(1).step_by(2) {
@@ -406,6 +419,7 @@ fn dither(
     sampler: &Sampler,
     grid: &Affine,
     rows: usize,
+    slice: f32,
     emit: &mut RowSink,
 ) -> Result<(), RasterError> {
     let cols = sampler.cols;
@@ -490,6 +504,8 @@ fn dither(
                             DitherMode::Threshold => on(v >= 0.5),
                             DitherMode::Ordered => on(v > (f32::from(BAYER[r % 8][c % 8]) + 0.5) / 64.0),
                             DitherMode::Grayscale => (v.clamp(0.0, 1.0) * 255.0).round() as u8,
+                            // Above the slice level; a dot of pure white never fires.
+                            DitherMode::Slice3d => on(v > slice.max(1.0 / 512.0)),
                             _ => {
                                 // Round spot: the area of a disc through this dot, as a share of the cell.
                                 let q = screen.expect("a screen mode") * KPoint::new(c as f64 + 0.5, r as f64 + 0.5);
@@ -569,6 +585,257 @@ fn clip(a: KPoint, b: KPoint, hw: f64, hh: f64) -> Option<(f64, f64)> {
         }
     }
     (t0 <= t1).then_some((t0, t1))
+}
+
+/// Clip runs to a mask (LightBurn's Apply Mask to Image): closed polygons in the field frame, even-odd. Each run keeps
+/// the pieces inside; rows that end up empty are dropped.
+pub(crate) fn clip_runs(rows: &[Vec<Run>], mask: &[Vec<Point>]) -> Vec<Vec<Run>> {
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        let mut kept = Vec::new();
+        for run in row {
+            for (t0, t1) in inside_spans(run.from, run.to, mask) {
+                let at = |t: f64| [run.from[0] + (run.to[0] - run.from[0]) * t, run.from[1] + (run.to[1] - run.from[1]) * t];
+                kept.push(Run { from: at(t0), to: at(t1), level: run.level });
+            }
+        }
+        if !kept.is_empty() {
+            out.push(kept);
+        }
+    }
+    out
+}
+
+/// The parameter spans (0..=1) of segment `a`-`b` inside the even-odd region of `polys`.
+fn inside_spans(a: Point, b: Point, polys: &[Vec<Point>]) -> Vec<(f64, f64)> {
+    let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+    let mut ts = vec![0.0, 1.0];
+    for poly in polys {
+        for (i, p) in poly.iter().enumerate() {
+            let q = poly[(i + 1) % poly.len()];
+            let (ex, ey) = (q[0] - p[0], q[1] - p[1]);
+            let den = dx * ey - dy * ex;
+            if den.abs() < 1e-15 {
+                continue;
+            }
+            let t = ((p[0] - a[0]) * ey - (p[1] - a[1]) * ex) / den;
+            let u = ((p[0] - a[0]) * dy - (p[1] - a[1]) * dx) / den;
+            if (0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u) {
+                ts.push(t);
+            }
+        }
+    }
+    ts.sort_by(f64::total_cmp);
+    ts.dedup_by(|x, y| (*x - *y).abs() < 1e-12);
+    let mut spans: Vec<(f64, f64)> = Vec::new();
+    for w in ts.windows(2) {
+        let m = (w[0] + w[1]) / 2.0;
+        if w[1] - w[0] > 1e-12 && point_inside([a[0] + dx * m, a[1] + dy * m], polys) {
+            match spans.last_mut() {
+                Some(last) if (last.1 - w[0]).abs() < 1e-12 => last.1 = w[1],
+                _ => spans.push((w[0], w[1])),
+            }
+        }
+    }
+    spans
+}
+
+/// Even-odd point in polygons (each implicitly closed).
+pub(crate) fn point_inside(pt: Point, polys: &[Vec<Point>]) -> bool {
+    let mut inside = false;
+    for poly in polys {
+        let n = poly.len();
+        for i in 0..n {
+            let (p, q) = (poly[i], poly[(i + 1) % n]);
+            if (p[1] > pt[1]) != (q[1] > pt[1]) {
+                let x = p[0] + (pt[1] - p[1]) / (q[1] - p[1]) * (q[0] - p[0]);
+                if pt[0] < x {
+                    inside = !inside;
+                }
+            }
+        }
+    }
+    inside
+}
+
+/// An image as it will be engraved (LightBurn's Save Processed Bitmap): `levels` row-major from the top, one value per
+/// dot of the line interval (pass-through: per pixel), 0 = not fired (white), 255 = fired (grayscale and 3D Sliced:
+/// the grey level, 255 darkest).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProcessedBitmap {
+    pub width: usize,
+    pub height: usize,
+    pub levels: Vec<u8>,
+    /// Dots per inch of the grid (25.4 / interval; pass-through: the image's own).
+    pub dpi: f64,
+}
+
+/// Most dots [`processed_bitmap`] produces.
+pub const MAX_PROCESSED_DOTS: u64 = 64_000_000;
+
+/// Process image object `o` with `s` (decode, Adjust Image, negative, dither) on the image's own axis-aligned grid at
+/// the line interval, as [`ProcessedBitmap`]. 3D Sliced shows the grey levels quantised to `passes` slices (a dot of
+/// darkness d is fired by ceil(d · N) of the N passes: level 255 · that / N).
+pub fn processed_bitmap(o: &doc::Object, s: &ImageSettings, passes: u32) -> Result<ProcessedBitmap, String> {
+    let doc::Geometry::Image { width_mm, height_mm, data_base64, adjust: a, .. } = &o.geometry else {
+        return Err(format!("{} is not an image", o.id));
+    };
+    if let Some(p) = a.problem() {
+        return Err(p);
+    }
+    let dot = (!s.pass_through).then_some(s.interval_mm).filter(|d| d.is_finite() && *d > 0.0);
+    if !s.pass_through && dot.is_none() {
+        return Err("the line interval must be positive".into());
+    }
+    let (mut gray, factor) = decode(data_base64, *width_mm, dot)?;
+    let scaled = ImageAdjust { enhance_radius: a.enhance_radius / factor as f64, ..a.clone() };
+    adjust(&mut gray, &scaled);
+    let placed = Placed { gray: &gray, width_mm: *width_mm, height_mm: *height_mm, transform: Affine::IDENTITY };
+    let (grid, cols, rows, dpi) = if s.pass_through {
+        let (w, h) = (gray.width, gray.height);
+        let flip = Affine::new([1.0, 0.0, 0.0, -1.0, 0.0, h as f64]);
+        (placed.local_to_pixel().inverse() * flip, w, h, w as f64 * factor as f64 / width_mm * 25.4)
+    } else {
+        let d = s.interval_mm;
+        let (cols, rows) = ((width_mm / d).ceil().max(1.0), (height_mm / d).ceil().max(1.0));
+        if cols * rows > MAX_PROCESSED_DOTS as f64 {
+            return Err(format!("{cols} x {rows} dots is more than {MAX_PROCESSED_DOTS}; use a larger interval"));
+        }
+        let g = Affine::new([d, 0.0, 0.0, d, -cols * d / 2.0, -rows * d / 2.0]);
+        (g, cols as usize, rows as usize, 25.4 / d)
+    };
+    let m = placed.local_to_pixel() * grid;
+    let [ca, cb, cc, cd, _, _] = m.as_coeffs();
+    let span = (ca.hypot(cb)).min(cc.hypot(cd));
+    let shrink = if s.pass_through { 1 } else { span.floor().clamp(1.0, 1024.0) as usize };
+    let shrunk;
+    let (src, m) = if shrink >= 2 {
+        shrunk = gray.shrink(shrink);
+        (&shrunk, Affine::scale(1.0 / shrink as f64) * m)
+    } else {
+        (&gray, m)
+    };
+    let span_px = if s.pass_through { 1.0 } else { span / shrink as f64 };
+    let sampler = Sampler { src, m, pass_through: s.pass_through, negative: s.negative, cols, span_px };
+    let mut levels = vec![0u8; cols * rows];
+    if s.dither == DitherMode::Slice3d {
+        let n = passes.max(1);
+        let mut row = Vec::with_capacity(cols);
+        for r in 0..rows {
+            sampler.row(r, &mut row);
+            let top = rows - 1 - r;
+            for (c, v) in row.iter().enumerate() {
+                let fired = v.map_or(0, |v| (f64::from(v.clamp(0.0, 1.0)) * f64::from(n) - 1e-6).ceil().max(0.0) as u32);
+                levels[top * cols + c] = (255 * fired.min(n) / n) as u8;
+            }
+        }
+    } else {
+        let mut emit = |r: usize, row: &[u8]| -> Result<(), RasterError> {
+            let top = rows - 1 - r;
+            levels[top * cols..(top + 1) * cols].copy_from_slice(row);
+            Ok(())
+        };
+        dither(s, &sampler, &grid, rows, 0.0, &mut emit).map_err(|_| "the image could not be dithered".to_string())?;
+    }
+    Ok(ProcessedBitmap { width: cols, height: rows, levels, dpi })
+}
+
+/// [`ProcessedBitmap`] as a PNG: fired dots black, the rest white (grey levels as greys), with its dpi in `pHYs`.
+pub fn processed_png(b: &ProcessedBitmap) -> Result<Vec<u8>, String> {
+    let pixels: Vec<u8> = b.levels.iter().map(|l| 255 - l).collect();
+    let (w, h) = (u32::try_from(b.width).map_err(|e| e.to_string())?, u32::try_from(b.height).map_err(|e| e.to_string())?);
+    let mut out = Vec::new();
+    let enc = image::codecs::png::PngEncoder::new(&mut out);
+    image::ImageEncoder::write_image(enc, &pixels, w, h, image::ExtendedColorType::L8).map_err(|e| e.to_string())?;
+    let ppm = (b.dpi / 0.0254).round();
+    if ppm.is_finite() && ppm >= 1.0 && ppm < f64::from(u32::MAX) {
+        insert_phys(&mut out, ppm as u32);
+    }
+    Ok(out)
+}
+
+/// Insert a `pHYs` chunk (pixels per metre on both axes) right after a PNG's IHDR.
+fn insert_phys(png: &mut Vec<u8>, ppm: u32) {
+    // Signature (8) + IHDR chunk (length 4 + type 4 + data 13 + CRC 4).
+    let at = 8 + 25;
+    if png.len() < at {
+        return;
+    }
+    let mut body = b"pHYs".to_vec();
+    body.extend_from_slice(&ppm.to_be_bytes());
+    body.extend_from_slice(&ppm.to_be_bytes());
+    body.push(1);
+    let mut chunk = 9u32.to_be_bytes().to_vec();
+    chunk.extend_from_slice(&body);
+    chunk.extend_from_slice(&crc32(&body).to_be_bytes());
+    png.splice(at..at, chunk);
+}
+
+/// CRC-32 (IEEE), as PNG chunks use.
+fn crc32(data: &[u8]) -> u32 {
+    let mut crc = 0xFFFF_FFFFu32;
+    for &b in data {
+        crc ^= u32::from(b);
+        for _ in 0..8 {
+            crc = if crc & 1 != 0 { (crc >> 1) ^ 0xEDB8_8320 } else { crc >> 1 };
+        }
+    }
+    !crc
+}
+
+#[cfg(test)]
+mod slice_tests {
+    use super::*;
+    use base64::Engine;
+
+    fn png(w: u32, h: u32, f: impl Fn(u32, u32) -> u8) -> String {
+        let img = image::GrayImage::from_fn(w, h, |x, y| image::Luma([f(x, y)]));
+        let mut out = Vec::new();
+        img.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).unwrap();
+        base64::engine::general_purpose::STANDARD.encode(out)
+    }
+
+    fn object(data: String, w: f64, h: f64) -> doc::Object {
+        let g = doc::Geometry::Image { width_mm: w, height_mm: h, mime: "image/png".into(), data_base64: data.into(), adjust: Default::default() };
+        doc::Object::new("obj-1".into(), "i", "layer-1".into(), g, Affine::IDENTITY)
+    }
+
+    #[test]
+    fn processed_bitmap_thresholds_and_flips_rows_to_the_top() {
+        // Left half black, right half white, top row black only on the right.
+        let data = png(4, 2, |x, y| if (x < 2) != (y == 0) { 0 } else { 255 });
+        let s = ImageSettings { dither: DitherMode::Threshold, interval_mm: 1.0, ..ImageSettings::default() };
+        let b = processed_bitmap(&object(data, 4.0, 2.0), &s, 1).unwrap();
+        assert_eq!((b.width, b.height), (4, 2));
+        assert_eq!(b.levels, [0, 0, 255, 255, 255, 255, 0, 0]);
+        assert!((b.dpi - 25.4).abs() < 1e-9);
+        let png = processed_png(&b).unwrap();
+        let back = image::load_from_memory(&png).unwrap().into_luma8();
+        assert_eq!(back.get_pixel(0, 0).0, [255]);
+        assert_eq!(back.get_pixel(3, 0).0, [0]);
+        assert!(png.windows(4).any(|w| w == b"pHYs"));
+    }
+
+    #[test]
+    fn sliced_levels_count_passes() {
+        // Darkness 0, 1/4, 1/2, 1 across.
+        let data = png(4, 1, |x, _| [255u8, 192, 128, 0][x as usize]);
+        let s = ImageSettings { dither: DitherMode::Slice3d, interval_mm: 1.0, ..ImageSettings::default() };
+        let b = processed_bitmap(&object(data, 4.0, 1.0), &s, 4).unwrap();
+        assert_eq!(b.levels, [0, 63, 127, 255]);
+    }
+
+    #[test]
+    fn runs_are_clipped_to_the_mask() {
+        let rows = vec![vec![Run { from: [-10.0, 0.0], to: [10.0, 0.0], level: 255 }], vec![Run { from: [-10.0, 9.0], to: [10.0, 9.0], level: 255 }]];
+        // A square ring: outer ±5, hole ±2.
+        let outer = vec![[-5.0, -5.0], [5.0, -5.0], [5.0, 5.0], [-5.0, 5.0]];
+        let hole = vec![[-2.0, -2.0], [2.0, -2.0], [2.0, 2.0], [-2.0, 2.0]];
+        let out = clip_runs(&rows, &[outer, hole]);
+        assert_eq!(out.len(), 1, "the row at y 9 is outside");
+        let spans: Vec<(f64, f64)> = out[0].iter().map(|r| (r.from[0], r.to[0])).collect();
+        assert_eq!(spans, [(-5.0, -2.0), (2.0, 5.0)]);
+    }
 }
 
 #[cfg(test)]

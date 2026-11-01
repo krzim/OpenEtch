@@ -116,6 +116,10 @@ pub struct FrameRequest {
     /// Stop on its own after this many seconds (default 120, at most 3600).
     #[serde(default)]
     pub max_seconds: Option<u64>,
+    /// Frame images by their content (LightBurn's Image Bounds): the outline of their non-transparent, non-white
+    /// pixels (a convex hull) instead of their rectangle.
+    #[serde(default)]
+    pub image_bounds: bool,
 }
 
 /// The polylines (field mm) a frame request traces. Unknown ids and empty selections are refused.
@@ -137,12 +141,18 @@ pub fn outline_for(doc: &Document, req: &FrameRequest) -> Result<Vec<Vec<(f64, f
         return Err(EngineError::BadRequest(format!("nothing to frame: {what}")));
     }
     let rect = |b: kurbo::Rect| vec![(b.x0, b.y0), (b.x1, b.y0), (b.x1, b.y1), (b.x0, b.y1), (b.x0, b.y0)];
+    let flattened = |o: &doc::Object| frame_polys(o, req.image_bounds);
+    let bounds = |o: &doc::Object| -> Option<kurbo::Rect> {
+        let pts: Vec<(f64, f64)> = flattened(o).into_iter().flatten().collect();
+        let first = *pts.first()?;
+        Some(pts.iter().fold(kurbo::Rect::from_points(first, first), |r, p| r.union_pt(*p)))
+    };
     let polys = match req.mode {
-        FrameMode::Bounds if req.individually => objects.iter().map(|o| rect(o.bounds())).collect(),
-        FrameMode::Bounds => {
-            let b = objects.iter().map(|o| o.bounds()).reduce(|a, b| a.union(b)).expect("non-empty");
-            vec![rect(b)]
-        }
+        FrameMode::Bounds if req.individually => objects.iter().filter_map(|o| bounds(o)).map(rect).collect(),
+        FrameMode::Bounds => match objects.iter().filter_map(|o| bounds(o)).reduce(|a, b| a.union(b)) {
+            Some(b) => vec![rect(b)],
+            None => Vec::new(),
+        },
         FrameMode::Hull => {
             let groups: Vec<Vec<&doc::Object>> =
                 if req.individually { objects.iter().map(|o| vec![*o]).collect() } else { vec![objects.clone()] };
@@ -182,6 +192,56 @@ pub fn outline_for(doc: &Document, req: &FrameRequest) -> Result<Vec<Vec<(f64, f
 /// A red-dot jog: the dot held at `(x, y)` (field mm).
 pub fn point_outline(x: f64, y: f64) -> Vec<Vec<(f64, f64)>> {
     vec![vec![(x, y)]]
+}
+
+/// What framing traces for an object: its outline, or with `image_bounds` an image's content outline (when it has
+/// any content; else its rectangle).
+fn frame_polys(o: &doc::Object, image_bounds: bool) -> Vec<Vec<(f64, f64)>> {
+    if image_bounds
+        && let Some(hull) = image_content_outline(o)
+    {
+        return vec![hull];
+    }
+    flattened(o)
+}
+
+/// Largest side an image is reduced to before its content is measured.
+const IMAGE_BOUNDS_PX: u32 = 512;
+
+/// The convex hull (closed, field mm) of an image's "ink": pixels that are not transparent (alpha above 16) and not
+/// white (luma below 245), as LightBurn estimates Image Bounds from transparency and whitespace. `None` for a
+/// non-image, an image that cannot be decoded, or one with no ink.
+pub fn image_content_outline(o: &doc::Object) -> Option<Vec<(f64, f64)>> {
+    use base64::Engine as _;
+    let doc::Geometry::Image { width_mm, height_mm, data_base64, .. } = &o.geometry else { return None };
+    let bytes = base64::engine::general_purpose::STANDARD.decode(data_base64.as_bytes()).ok()?;
+    let img = image::load_from_memory(&bytes).ok()?;
+    let img = if img.width().max(img.height()) > IMAGE_BOUNDS_PX { img.thumbnail(IMAGE_BOUNDS_PX, IMAGE_BOUNDS_PX) } else { img };
+    let rgba = img.to_rgba8();
+    let (w, h) = (rgba.width(), rgba.height());
+    if w == 0 || h == 0 {
+        return None;
+    }
+    let (sx, sy) = (width_mm / f64::from(w), height_mm / f64::from(h));
+    let mut pts: Vec<(f64, f64)> = Vec::new();
+    for (x, y, p) in rgba.enumerate_pixels() {
+        let [r, g, b, a] = p.0;
+        let luma = 0.299 * f64::from(r) + 0.587 * f64::from(g) + 0.114 * f64::from(b);
+        if a <= 16 || luma >= 245.0 {
+            continue;
+        }
+        // Pixel corners in the image's local frame: centred, +Y up (row 0 at the top).
+        let (x0, x1) = (f64::from(x) * sx - width_mm / 2.0, f64::from(x + 1) * sx - width_mm / 2.0);
+        let (y0, y1) = (height_mm / 2.0 - f64::from(y) * sy, height_mm / 2.0 - f64::from(y + 1) * sy);
+        for (lx, ly) in [(x0, y0), (x1, y0), (x0, y1), (x1, y1)] {
+            let q = o.transform * kurbo::Point::new(lx, ly);
+            pts.push((q.x, q.y));
+        }
+    }
+    let mut hull = convex_hull(pts);
+    let first = *hull.first()?;
+    hull.push(first);
+    Some(hull)
 }
 
 /// An object's outline flattened to polylines (closed subpaths end where they start).

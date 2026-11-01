@@ -55,7 +55,8 @@ pub struct SettingsPatch {
 #[serde(deny_unknown_fields)]
 pub struct ImagePatch {
     /// threshold, ordered, atkinson, floyd_steinberg (LightBurn's "Dither"; "dither" is accepted), stucki, jarvis,
-    /// newsprint, halftone, sketch or grayscale (power varies between min_power_pct and the layer's power).
+    /// newsprint, halftone, sketch, grayscale (power varies between min_power_pct and the layer's power) or slice3d
+    /// (LightBurn's 3D Sliced, "3dslice": a depth map engraved one grey-level slice per pass, darkest first).
     pub dither: Option<DitherMode>,
     /// Scan line spacing and dot size in mm, > 0 (DPI = 25.4 / interval).
     pub interval_mm: Option<f64>,
@@ -79,6 +80,9 @@ pub struct ImagePatch {
     pub halftone_cells_per_inch: Option<f64>,
     /// Halftone: screen angle in degrees.
     pub halftone_angle_deg: Option<f64>,
+    /// 3D Sliced: cleanup sub-layers clean the whole image instead of the last slice (LightBurn's "Clean whole
+    /// image").
+    pub clean_whole_image: Option<bool>,
 }
 
 impl ImagePatch {
@@ -121,6 +125,9 @@ impl ImagePatch {
         }
         if let Some(v) = self.halftone_angle_deg {
             s.halftone_angle_deg = v;
+        }
+        if let Some(v) = self.clean_whole_image {
+            s.clean_whole_image = v;
         }
         Ok(())
     }
@@ -326,6 +333,10 @@ pub struct LayerAddInput {
     pub color: Option<String>,
     /// Cut settings to change from the defaults (power 20 %, 1000 mm/s, 30 kHz, 1 pass, line mode).
     pub settings: Option<SettingsPatch>,
+    /// Saved layer defaults by display colour, "*" for every colour (LightBurn's Make Default; the engine passes the
+    /// active device's): the new layer starts from the one for its colour instead of the built-in defaults, then
+    /// `settings` applies.
+    pub defaults: Option<std::collections::BTreeMap<String, CutSettings>>,
 }
 
 /// `layer.add`.
@@ -349,6 +360,10 @@ impl Command for LayerAdd {
             };
             let id = doc.alloc_id("layer")?;
             let mut layer = Layer::new(id.clone(), &name, &color);
+            if let Some(d) = input.defaults.as_ref().and_then(|d| d.get(&color.to_ascii_lowercase()).or_else(|| d.get("*"))) {
+                validate_settings(Self::ID, d)?;
+                layer.settings = d.clone();
+            }
             if let Some(p) = input.settings {
                 p.apply(Self::ID, &mut layer.settings)?;
             }
@@ -392,7 +407,8 @@ impl Command for LayerUpdate {
         frequency kHz, pulse width ns, hatch interval mm, hatch angle deg). `settings.image` holds the Image mode \
         settings the layer's images are engraved with (as in LightBurn, images always use them while vectors keep \
         the mode): dither, interval_mm or dpi, angle_deg, angle_increment_deg, bidirectional, negative, pass_through, \
-        dot_width_mm, min_power_pct (grayscale), halftone_cells_per_inch, halftone_angle_deg; also partial.";
+        dot_width_mm, min_power_pct (grayscale), halftone_cells_per_inch, halftone_angle_deg, clean_whole_image (3D \
+        Sliced); also partial.";
     const RISK: Risk = Risk::Edit;
 
     fn apply(doc: &mut Document, input: LayerUpdateInput) -> Result<(Value, String)> {
@@ -426,6 +442,8 @@ impl Command for LayerUpdate {
                 changed.push("global_passes");
             }
             if let Some(p) = input.settings {
+                super::preset::check_not_linked(Self::ID, doc, &id)?;
+                let layer = doc.layer_mut(&id).ok_or_else(|| CommandError::Failed(format!("layer {id} vanished")))?;
                 let sets_frequency = p.frequency_khz.is_some();
                 p.apply(Self::ID, &mut layer.settings)?;
                 if sets_frequency {
@@ -682,7 +700,7 @@ mod tests {
             assert!(patch(bad.clone()).apply("t", &mut s).is_err(), "{bad}");
         }
         assert_eq!(s, before, "a refused patch changes nothing");
-        assert!(serde_json::from_value::<SettingsPatch>(json!({"image": {"dither": "3dslice"}})).is_err());
+        assert!(serde_json::from_value::<SettingsPatch>(json!({"image": {"dither": "3dslice"}})).is_ok(), "3D Sliced");
         assert!(serde_json::from_value::<SettingsPatch>(json!({"image": {"gamma": 2}})).is_err(), "adjust is per image");
     }
 

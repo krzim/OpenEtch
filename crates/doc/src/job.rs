@@ -123,6 +123,10 @@ pub struct CutOptions {
     /// Z change per pass, mm (LightBurn's Z step per pass).
     #[serde(skip_serializing_if = "is_zero")]
     pub z_step_mm: f64,
+    /// Line passes: offset closed outlines outward (positive) or inward (negative) by this much, mm (LightBurn's
+    /// Kerf Offset, to make up for the beam width when cutting parts). Open paths are not offset.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub kerf_offset_mm: f64,
 }
 
 impl Default for CutOptions {
@@ -141,6 +145,7 @@ impl Default for CutOptions {
             tabs: None,
             z_offset_mm: 0.0,
             z_step_mm: 0.0,
+            kerf_offset_mm: 0.0,
         }
     }
 }
@@ -164,6 +169,7 @@ impl CutOptions {
             .or_else(|| range("fill_dot_width_mm", self.fill_dot_width_mm, 0.0, 10.0))
             .or_else(|| range("z_offset_mm", self.z_offset_mm, -1000.0, 1000.0))
             .or_else(|| range("z_step_mm", self.z_step_mm, -100.0, 100.0))
+            .or_else(|| range("kerf_offset_mm", self.kerf_offset_mm, -50.0, 50.0))
             .or_else(|| {
                 self.dot_mode.as_ref().and_then(|d| {
                     range("dot_mode.dot_time_ms", d.dot_time_ms, 0.01, 1000.0)
@@ -291,11 +297,30 @@ pub struct ObjectOptions {
     pub priority: Option<u32>,
     /// Power Scale: this shape marks at this percentage of its layer's power, 0..=100.
     pub power_scale_pct: f64,
+    /// Where (and in which direction) the shape's closed outlines start (LightBurn's Set Start Point). Used when
+    /// the optimization's best start point (and, for the direction, best direction) is off, as in LightBurn, where
+    /// those options may override it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start: Option<StartPoint>,
+}
+
+/// A user-defined start point of a shape (LightBurn's Set Start Point).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct StartPoint {
+    /// The node the start point was set on (numbered across subpaths, as `node.list` numbers them).
+    pub node: usize,
+    /// That node's position in the object's own (local) coordinates, mm: the burn starts at the nearest point of
+    /// the outline through it.
+    pub local: [f64; 2],
+    /// Run the outline the other way (LightBurn: Shift+click).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub reverse: bool,
 }
 
 impl Default for ObjectOptions {
     fn default() -> Self {
-        ObjectOptions { priority: None, power_scale_pct: 100.0 }
+        ObjectOptions { priority: None, power_scale_pct: 100.0, start: None }
     }
 }
 

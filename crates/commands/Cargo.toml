@@ -18,9 +18,16 @@ thiserror = { workspace = true }
 usvg = { workspace = true }
 base64 = { workspace = true }
 text = { workspace = true }
+# Files and image tools: exports, further imports, trace, rasterise; Save Processed Bitmap uses plan's dither.
+fileio = { path = "../fileio" }
+plan = { workspace = true }
+roxmltree = { workspace = true }
 
 # DXF reading needs a random source for ids (uuid), which wasm32 lacks; art.import_dxf is native only.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 dxf = { workspace = true }
 # Installed fonts, font folders and the clock for date/time variable text.
 text = { workspace = true, features = ["system"] }
+
+[dev-dependencies]
+image = { workspace = true }

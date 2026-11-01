@@ -40,7 +40,7 @@ pub enum JobCheckError {
 /// mark current <= the `max_power_pct` cap, Q-switch period within the frequency range, pulse width in the table,
 /// mark speed in 1..=the max mark speed, jump speed in 1..=`max_jump_speed_mm_s`, |laser-on|, |laser-off|,
 /// polygon and |jump| delays <= `max_delay_us`, no in-list `FiberOpenMO`, every `WritePort` either 0 or exactly
-/// the profile's laser-enable mask, and no `ListCommand::Other`. The list must also end with an end-of-list.
+/// the profile's laser-enable mask (each possibly with the profile's busy / ready light bits), and no `ListCommand::Other`. The list must also end with an end-of-list.
 pub fn check_job(profile: &MachineProfile, packets: &[Packet]) -> Result<(), JobCheckError> {
     if packets.is_empty() {
         return Err(JobCheckError::Empty);
@@ -56,6 +56,8 @@ pub fn check_job(profile: &MachineProfile, packets: &[Packet]) -> Result<(), Job
     let max_jump_units = units::speed_to_units(profile.max_jump_speed_mm_s, profile.field_mm).unwrap_or(0);
     let max_us = profile.max_delay_us;
     let mask = profile.laser_enable_mask();
+    // The busy / ready lights ride along with every port write of a job (`MachineProfile::io`).
+    let held = profile.io.run_outputs();
     let delay = |slot: usize, what: &'static str, us: f64| {
         if us.abs() > max_us { Err(JobCheckError::Delay { slot, what, us, max_us }) } else { Ok(()) }
     };
@@ -81,7 +83,7 @@ pub fn check_job(profile: &MachineProfile, packets: &[Packet]) -> Result<(), Job
             ListCommand::JumpDelay(d) => delay(slot, "jump delay", d.micros())?,
             ListCommand::PolygonDelay { time_10us } => delay(slot, "polygon delay", f64::from(time_10us) * 10.0)?,
             ListCommand::FiberOpenMo { open } => return Err(JobCheckError::InListMo { slot, open }),
-            ListCommand::WritePort { bits } if bits != 0 && bits != mask => {
+            ListCommand::WritePort { bits } if bits & !held != 0 && bits & !held != mask => {
                 return Err(JobCheckError::PortBits { slot, bits, mask });
             }
             ListCommand::Other { words } => return Err(JobCheckError::UnsupportedCommand { slot, opcode: words[0] }),
@@ -151,6 +153,13 @@ mod tests {
             assert!(matches!(refused, Err(JobCheckError::PortBits { bits: b, .. }) if b == bits), "{bits:#x}: {refused:?}");
         }
         assert_eq!(check_job(&p, &job(|l| _ = l.write_port(mask).write_port(0))), Ok(()));
+        // Status lights ride along; the red pointer or a stray bit still does not.
+        let mut io = p.clone();
+        io.io.busy_light = Some(3);
+        io.io.ready_light = Some(4);
+        assert_eq!(check_job(&io, &job(|l| _ = l.write_port(mask | 0x18).write_port(0x18))), Ok(()));
+        assert!(check_job(&io, &job(|l| _ = l.write_port(mask | 0x18 | 0x100))).is_err());
+        assert!(check_job(&p, &job(|l| _ = l.write_port(mask | 0x18))).is_err(), "not configured: refused");
         let raw = job(|l| _ = l.push(ListCommand::Other { words: [lmc::op::LIST_MARK_POWER_RATIO, 9, 0, 0, 0, 0] }));
         assert!(matches!(check_job(&p, &raw), Err(JobCheckError::UnsupportedCommand { .. })));
         assert_eq!(check_job(&p, &[]), Err(JobCheckError::Empty));

@@ -17,6 +17,8 @@ mod geom;
 mod hatch;
 mod image;
 mod job;
+// Offset Fill, kerf offset and start points (crates/geom offsets).
+pub mod offsets;
 mod order;
 mod preview;
 mod regions;
@@ -26,7 +28,7 @@ mod target;
 pub use encode::{EncodedPart, encode, encode_parts, jump_delay_us};
 pub use geom::{FLATTEN_TOLERANCE_MM, Point};
 pub use hatch::MAX_SCANLINES;
-pub use image::{MAX_IMAGE_DOTS, MAX_SOURCE_PIXELS};
+pub use image::{MAX_IMAGE_DOTS, MAX_PROCESSED_DOTS, MAX_SOURCE_PIXELS, ProcessedBitmap, processed_bitmap, processed_png};
 pub use job::{
     JobOptions, JobPlan, MAX_LAYER_PASSES, MAX_PASSES, MAX_SEGMENTS, PartPlan, PassPlan, PassSettings, Stats, layer_schedule,
     plan_job, plan_job_with,
@@ -100,3 +102,5 @@ pub type Result<T, E = PlanError> = std::result::Result<T, E>;
 mod tests;
 #[cfg(test)]
 mod options_tests;
+#[cfg(test)]
+mod offsets_tests;

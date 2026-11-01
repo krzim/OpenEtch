@@ -155,6 +155,12 @@ pub enum AxisRole {
     Z,
     /// A rotary (chuck or roller): positions in steps (steps per rotation is a rotary setting of the job).
     Rotary,
+    /// A linear table for Repeat Marking (LightBurn's external axis, Linear): `steps_per_mm` motor steps per mm,
+    /// positions from step 0.
+    LinearTable,
+    /// A rotating table for Repeat Marking (LightBurn's external axis, Rotating): `steps_per_mm` holds motor steps
+    /// per degree of table rotation (LightBurn's Steps Per / Unit Count / 360), positions from step 0.
+    RotaryTable,
 }
 
 /// The board's extension axis (LMC `MoveAxisTo(position, invert)`, meerk40t's parameters; the position is one
@@ -195,7 +201,26 @@ impl ExtensionAxis {
         Ok(steps as u16)
     }
 
+    /// The step word for a table position (`units`: mm for a linear table, degrees for a rotating one), refused
+    /// for another role or outside one 16-bit word.
+    pub fn table_steps(&self, units: f64) -> Result<u16, String> {
+        if !matches!(self.role, AxisRole::LinearTable | AxisRole::RotaryTable) {
+            return Err("the extension axis is not a Repeat Marking table (role linear_table or rotary_table)".into());
+        }
+        let steps = (units * self.steps_per_mm).round();
+        if !(steps.is_finite() && (0.0..=65535.0).contains(&steps)) {
+            return Err(format!("table position {units} is {steps} steps, outside one 16-bit word (0..=65535)"));
+        }
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        Ok(steps as u16)
+    }
+
     fn problem(&self) -> Option<String> {
+        if matches!(self.role, AxisRole::LinearTable | AxisRole::RotaryTable)
+            && !(self.steps_per_mm.is_finite() && self.steps_per_mm > 0.0)
+        {
+            return Some(format!("a table's steps_per_mm {} must be positive", self.steps_per_mm));
+        }
         if self.role == AxisRole::Z {
             if !(self.steps_per_mm.is_finite() && self.steps_per_mm > 0.0) {
                 return Some(format!("steps_per_mm {} must be positive", self.steps_per_mm));
@@ -206,6 +231,118 @@ impl ExtensionAxis {
             if (self.max_mm - self.min_mm) * self.steps_per_mm > 65535.0 {
                 return Some("the travel is more than 65535 steps (one 16-bit word)".into());
             }
+        }
+        None
+    }
+}
+
+/// An input of the board's port with its trigger level (LightBurn's IO Ports High/Low button).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InputPort {
+    /// Input bit 0..=15.
+    pub bit: u8,
+    /// The input is active when low (LightBurn "Low"); default active high.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub active_low: bool,
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
+}
+
+impl InputPort {
+    /// Whether this input is active in the port word `inputs` (`ReadPort` reply word 1).
+    pub fn active(&self, inputs: u16) -> bool {
+        ((inputs >> (self.bit & 15)) & 1 == 1) != self.active_low
+    }
+}
+
+/// LightBurn's galvo IO Ports beyond the start/stop marking inputs and the focus light (all unverified on hardware:
+/// nothing is known to be wired to them on the B6). Outputs are active high.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct IoPorts {
+    /// Door Protect: an enclosure interlock. While it is active no run starts and a running job aborts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub door_protect: Option<InputPort>,
+    /// Start Framing: pressing it starts framing (the last frame request, else the job's bounds).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_framing: Option<InputPort>,
+    /// Busy Light output bit: on while a job runs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub busy_light: Option<u8>,
+    /// Ready Light output bit (the LEDs on the galvo head): on while the board is initialised.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ready_light: Option<u8>,
+    /// Done Marking output bit: pulsed when a job finishes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub done_marking: Option<u8>,
+    /// Length of the Done Marking pulse, ms (LightBurn gives none; default 500, at most 5000).
+    pub done_pulse_ms: u32,
+    /// Red Dot Always On: the red pointer is lit whenever the board is idle (never while a job runs).
+    #[serde(skip_serializing_if = "is_false")]
+    pub red_dot_always_on: bool,
+}
+
+impl Default for IoPorts {
+    fn default() -> Self {
+        IoPorts {
+            door_protect: None,
+            start_framing: None,
+            busy_light: None,
+            ready_light: None,
+            done_marking: None,
+            done_pulse_ms: 500,
+            red_dot_always_on: false,
+        }
+    }
+}
+
+impl IoPorts {
+    pub fn is_default(&self) -> bool {
+        *self == IoPorts::default()
+    }
+
+    fn mask(bit: Option<u8>) -> u16 {
+        bit.map_or(0, |b| 1u16 << (b & 15))
+    }
+
+    /// Output bits held while a job's lists run (busy and ready lights); they go with every `WritePort`.
+    pub fn run_outputs(&self) -> u16 {
+        Self::mask(self.busy_light) | Self::mask(self.ready_light)
+    }
+
+    /// Output word while the board is idle: the ready light and, with Red Dot Always On, the red pointer.
+    pub fn idle_outputs(&self) -> u16 {
+        Self::mask(self.ready_light) | if self.red_dot_always_on { lmc::RED_POINTER_BIT } else { 0 }
+    }
+
+    /// The Done Marking pulse bit, if any.
+    pub fn done_output(&self) -> u16 {
+        Self::mask(self.done_marking)
+    }
+
+    fn problem(&self, laser_bit: u8, red_bit: u8, focus: Option<u8>) -> Option<String> {
+        for (name, port) in [("door_protect", self.door_protect), ("start_framing", self.start_framing)] {
+            if let Some(p) = port.filter(|p| p.bit > 15) {
+                return Some(format!("{name}: {} is not an input bit 0-15", p.bit));
+            }
+        }
+        let outs = [("busy_light", self.busy_light), ("ready_light", self.ready_light), ("done_marking", self.done_marking)];
+        for (i, (name, bit)) in outs.iter().enumerate() {
+            let Some(b) = *bit else { continue };
+            if b == 0 || b > 15 || b == laser_bit || b == red_bit || Some(b) == focus {
+                return Some(format!(
+                    "{name}: {b} must be an output bit 1-15 other than the laser-enable, red-pointer and focus-light bits"
+                ));
+            }
+            if outs[..i].iter().any(|(_, o)| *o == Some(b)) {
+                return Some(format!("{name}: bit {b} is used by another output"));
+            }
+        }
+        if self.done_pulse_ms > 5000 {
+            return Some(format!("done_pulse_ms {} must be at most 5000", self.done_pulse_ms));
         }
         None
     }
@@ -302,6 +439,9 @@ pub struct MachineProfile {
     /// on the B6 (its lift is not driven by the board).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub axis: Option<ExtensionAxis>,
+    /// LightBurn's IO Ports: door interlock, framing switch, busy / ready / done outputs, Red Dot Always On.
+    #[serde(default, skip_serializing_if = "IoPorts::is_default")]
+    pub io: IoPorts,
     pub timing: Timing,
     pub mark_speed: MarkSpeedLimits,
     /// Where values came from and what is unverified. Informational.
@@ -341,6 +481,7 @@ impl MachineProfile {
             calibration: lmc::Calibration::default(),
             red_dot: RedDot::default(),
             axis: None,
+            io: IoPorts::default(),
             timing: Timing {
                 laser_on_delay_us: 100.0,
                 laser_off_delay_us: 100.0,
@@ -492,6 +633,9 @@ impl MachineProfile {
         }
         if let Some(p) = self.axis.as_ref().and_then(ExtensionAxis::problem) {
             return invalid("axis", p);
+        }
+        if let Some(p) = self.io.problem(self.laser_enable_port_bit, self.red_light_port_bit, self.focus_light_port_bit) {
+            return invalid("io", p);
         }
         // The minimum is a UI bound: it may encode to 0 (1 mm/s on a 153.75 mm field); jobs refuse a 0 word.
         positive("mark_speed.min_mm_s", self.mark_speed.min_mm_s)?;
