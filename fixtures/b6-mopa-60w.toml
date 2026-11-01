@@ -21,7 +21,7 @@
 name = "ComMarker B6 MOPA 60W"
 laser_source = "JPT M7 MOPA 60W"
 field_mm = 153.75
-swap_xy = false
+swap_xy = true             # owner's B6, 2026-11-01: with false the red frame of an "F" came out transposed
 negate_x = false
 negate_y = false
 cor_file = "jcz150.cor"
