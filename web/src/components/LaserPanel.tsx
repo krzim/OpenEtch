@@ -33,51 +33,53 @@ import { ApprovalChecks, SimPinBadge, useApprovalGates } from "../libs/JobSafety
 import { libsApi } from "../libs/api.ts";
 import { approvalRefusalText, checklistTicks } from "../libs/model.ts";
 import { formatSpeed, lengthText } from "../workspace/units.ts";
+import { useT } from "../workspace/usePrefs.ts";
 
 /** Machine status; `children` (the LightBurn devices section) render at the bottom of the card. */
 export function MachineCard({ machine, httpError, children }: { machine: MachineStatus | null; httpError: string | null; children?: ReactNode }) {
+  const t = useT();
   const extra = machine
     ? Object.entries(machine).filter(([k, v]) => !MACHINE_SHOWN_KEYS.has(k) && v !== null && v !== undefined && typeof v !== "object")
     : [];
   const sim = !!(machine?.simulated ?? machine?.sim);
   const state = typeof machine?.state === "string" ? machine.state : machine?.busy ? "busy" : "idle";
-  const stateText = machine?.framing ? "Framing (red pointer)" : machine?.running ? "Running" : state.charAt(0).toUpperCase() + state.slice(1);
+  const stateText = machine?.framing ? t("lp.framingRedPointer") : machine?.running ? "Running" : state.charAt(0).toUpperCase() + state.slice(1);
   const lastError = typeof machine?.last_error === "string" && machine.last_error ? machine.last_error : null;
   return (
     <section className="card">
-      <h3>Machine</h3>
+      <h3>{t("lp.machine")}</h3>
       {!machine ? (
-        <p className="muted">{httpError ? "Engine unreachable." : "Loading…"}</p>
+        <p className="muted">{httpError ? t("lp.engineUnreachable") : "Loading…"}</p>
       ) : (
         <dl className="kv">
-          <dt>Link</dt>
+          <dt>{t("lp.link")}</dt>
           <dd>
-            <span className={`dot ${machine.connected ? "ok" : "bad"}`} /> {machine.connected ? "Connected" : "Not connected"}
+            <span className={`dot ${machine.connected ? "ok" : "bad"}`} /> {machine.connected ? "Connected" : t("lp.notConnected")}
             {sim ? " (simulator)" : machine.link === "usb" ? " (USB)" : ""}
           </dd>
-          <dt>State</dt>
+          <dt>{t("lp.state")}</dt>
           <dd>{stateText}</dd>
           {typeof machine.profile === "string" && (
             <>
-              <dt>Profile</dt>
+              <dt>{t("lp.profile")}</dt>
               <dd>{machine.profile}</dd>
             </>
           )}
           {machine.field_mm !== undefined && (
             <>
-              <dt>Field</dt>
+              <dt>{t("lp.field")}</dt>
               <dd>{machine.field_mm} mm</dd>
             </>
           )}
           {typeof machine.max_power_pct === "number" && (
             <>
-              <dt>Power limit</dt>
+              <dt>{t("lp.powerLimit")}</dt>
               <dd>{machine.max_power_pct}%</dd>
             </>
           )}
           {lastError && (
             <>
-              <dt>Last error</dt>
+              <dt>{t("lp.lastError")}</dt>
               <dd className="run-error">{lastError}</dd>
             </>
           )}
@@ -120,6 +122,7 @@ export function RunsCard(props: {
   onChanged: () => void;
   report: (e: unknown) => void;
 }) {
+  const t = useT();
   const pending = pendingRuns(props.machine);
   const active = activeRuns(props.machine);
   const recent = recentRuns(props.machine);
@@ -131,7 +134,7 @@ export function RunsCard(props: {
     <>
       {active.length > 0 && (
         <section className="card">
-          <h3>Active run</h3>
+          <h3>{t("lp.activeRun")}</h3>
           {active.map((r) => (
             <ActiveRunRow key={r.id} run={r} machine={props.machine} />
           ))}
@@ -143,11 +146,11 @@ export function RunsCard(props: {
         </h3>
         {approval && (
           <p className={notice ? "run-hint" : "muted"} role={notice ? "status" : undefined}>
-            {notice ?? `Approval needs the operator PIN${pedal ? `, then the foot pedal (input ${pedal.input_bit})` : ""}.`}
+            {notice ?? `Approval needs the operator PIN${pedal ? t("lp.thenTheFootPedalInputV1", { v1: pedal.input_bit }) : ""}.`}
           </p>
         )}
         {pending.length === 0 ? (
-          <p className="muted">None. “Request run” creates one; nothing fires until it is approved here.</p>
+          <p className="muted">{t("lp.noneRequestRunCreatesOneNothing")}</p>
         ) : (
           pending.map((r) => (
             <PendingRunRow
@@ -165,7 +168,7 @@ export function RunsCard(props: {
       </section>
       {recent.length > 0 && (
         <section className="card">
-          <h3>Recent runs</h3>
+          <h3>{t("lp.recentRuns")}</h3>
           {recent.map((r) => (
             <EndedRunRow key={r.id} run={r} />
           ))}
@@ -197,12 +200,13 @@ function RunFacts({ run }: { run: PendingRun }) {
 
 /** Run id plus who requested it ("You" or the AI agent's name). */
 function RunHead({ run }: { run: PendingRun }) {
-  const by = run.origin !== undefined ? originBadge(run.origin) : null;
+  const t = useT();
+  const by = run.origin !== undefined ? originBadge(run.origin, t) : null;
   return (
     <div className="run-head">
       <span className="run-id">{run.id}</span>
       {by && (
-        <span className={`badge ${by.cls}`} title={by.cls === "origin-agent" ? "Requested by an AI agent" : undefined}>
+        <span className={`badge ${by.cls}`} title={by.cls === "origin-agent" ? t("lp.requestedByAnAiAgent") : undefined}>
           {by.label}
         </span>
       )}
@@ -211,6 +215,7 @@ function RunHead({ run }: { run: PendingRun }) {
 }
 
 function ActiveRunRow({ run, machine }: { run: PendingRun; machine: MachineStatus | null }) {
+  const t = useT();
   const pedal = machine?.approval?.physical_confirm ?? null;
   return (
     <div className="run-row active">
@@ -219,8 +224,8 @@ function ActiveRunRow({ run, machine }: { run: PendingRun; machine: MachineStatu
       {run.state === "awaiting_confirm" && (
         <p className="pedal">
           {pedal
-            ? `Press the foot pedal (input ${pedal.input_bit}) within ${pedal.timeout_s} s to start. STOP cancels.`
-            : "Waiting for the physical confirmation. STOP cancels."}
+            ? t("lp.pressTheFootPedalInputV1", { v1: pedal.input_bit, v2: pedal.timeout_s })
+            : t("lp.waitingForThePhysicalConfirmationStop")}
         </p>
       )}
       <RunFacts run={run} />
@@ -254,6 +259,7 @@ function PendingRunRow(props: {
   onChanged: () => void;
   report: (e: unknown) => void;
 }) {
+  const t = useT();
   const { run, machine, onChanged, report } = props;
   const [step, setStep] = useState<"idle" | "confirm" | "sending">("idle");
   const [pin, setPin] = useState("");
@@ -302,7 +308,7 @@ function PendingRunRow(props: {
       setError(text);
       // A mistyped PIN may be retried straight away; anything else goes back to the start.
       setStep(code === "pin_invalid" || code === "pin_required" ? "confirm" : "idle");
-      report(new Error(`Approval refused: ${text}`));
+      report(new Error(t("lp.approvalRefusedV1", { v1: text })));
     } finally {
       onChanged();
     }
@@ -323,17 +329,17 @@ function PendingRunRow(props: {
           }}
           disabled={!!blocker}
         >
-          Approve…
+          {t("lp.approve")}
         </button>
       )}
       {step !== "idle" && (
         <div className="confirm">
           <p>
-            <strong>This fires the laser.</strong> Enclosure closed, eyewear on, focus and stock checked?
+            <strong>{t("lp.thisFiresTheLaser")}</strong> Enclosure closed, eyewear on, focus and stock checked?
           </p>
           <ApprovalChecks state={gates} disabled={step === "sending"} />
           <label className="pin-field">
-            <span>Operator PIN</span>
+            <span>{t("lp.operatorPin")}</span>
             <input
               ref={pinRef}
               type="password"
@@ -341,7 +347,7 @@ function PendingRunRow(props: {
               pattern="[0-9]*"
               minLength={6}
               maxLength={12}
-              placeholder="6-12 digits"
+              placeholder={t("lp.612Digits")}
               aria-describedby={hint ? `pin-hint-${run.id}` : undefined}
               autoComplete="off"
               value={pin}
@@ -360,10 +366,10 @@ function PendingRunRow(props: {
           )}
           <div className="btn-row">
             <button className="btn" onClick={() => setStep("idle")} disabled={step === "sending"}>
-              Cancel
+              {t("lp.cancel")}
             </button>
             <button className="btn btn-danger" onClick={() => void approve()} disabled={!canFire}>
-              {step === "sending" ? "Approving…" : "Confirm and fire"}
+              {step === "sending" ? "Approving…" : t("lp.confirmAndFire")}
             </button>
           </div>
         </div>
@@ -386,6 +392,7 @@ export function PreviewStatsCard(p: {
   options: PreviewOptions;
   onOptions: (o: PreviewOptions) => void;
 }) {
+  const t = useT();
   const { preview, options, onOptions } = p;
   const { units: lu, speedUnit } = usePrefs();
   // Per-pass rows of layers with sub-layers (one walk over the segments per preview).
@@ -425,22 +432,22 @@ export function PreviewStatsCard(p: {
   };
   return (
     <section className="card">
-      <h3>Toolpath</h3>
+      <h3>{t("lp.toolpath")}</h3>
       {p.error ? (
         <p className="run-error" role="alert">
           No preview: {p.error}
         </p>
       ) : !preview ? (
-        <p className="muted">Nothing to preview yet.</p>
+        <p className="muted">{t("lp.nothingToPreviewYet")}</p>
       ) : (
         <>
           {time !== null && <div className="big-stat">{formatDuration(time)}</div>}
           <dl className="kv">
-            <dt>Marks</dt>
+            <dt>{t("lp.marks")}</dt>
             <dd>
               {markN} · {lengthText(typeof preview.stats?.mark_length_mm === "number" ? preview.stats.mark_length_mm : markLen, lu, 1)}
             </dd>
-            <dt>Travel</dt>
+            <dt>{t("lp.travel")}</dt>
             <dd>
               {segs.length - markN} · {lengthText(typeof preview.stats?.jump_length_mm === "number" ? preview.stats.jump_length_mm : jumpLen, lu, 1)}
             </dd>
@@ -457,7 +464,7 @@ export function PreviewStatsCard(p: {
             <div className="pv-layers">
               {layers.map((l) => (
                 <div key={l.id} className={`pv-layer${options.hidden.has(l.id) ? " off" : ""}`}>
-                  <label title="Show this layer's toolpath (display only)">
+                  <label title={t("lp.showThisLayerSToolpathDisplay")}>
                     <input type="checkbox" checked={!options.hidden.has(l.id)} onChange={() => toggle(l.id)} />
                     <span className="swatch small" style={{ background: l.color }} />
                     <span className="pv-name">{l.name}</span>
@@ -466,24 +473,24 @@ export function PreviewStatsCard(p: {
                     {l.mode === "fill" ? "Fill" : l.mode === "fill_then_line" ? "Fill+Line" : "Line"} · {lengthText(l.markLengthMm, lu, 0)}
                     {l.estimatedTimeS !== null ? ` · ${formatDuration(l.estimatedTimeS)}` : ""}
                   </span>
-                  <button className="chip" title="Show only this layer" onClick={() => solo(l.id)}>
-                    Solo
+                  <button className="chip" title={t("lp.showOnlyThisLayer")} onClick={() => solo(l.id)}>
+                    {t("lp.solo")}
                   </button>
                   {passes.has(l.id) && (
-                    <div className="pv-passes" role="group" aria-label={`Passes of ${l.name}`}>
+                    <div className="pv-passes" role="group" aria-label={t("lp.passesOfV1", { v1: l.name })}>
                       {passes.get(l.id)!.map((r) => {
                         const off = options.hidden.has(l.id) || options.hiddenPasses.has(r.key);
                         return (
                           <div key={r.key} className={`pv-pass${off ? " off" : ""}`} title={settingsSummary(r.settings, speedUnit)}>
-                            <label title="Show this pass's toolpath (display only)">
+                            <label title={t("lp.showThisPassSToolpathDisplay")}>
                               <input type="checkbox" checked={!options.hiddenPasses.has(r.key)} onChange={() => togglePassRow(r)} />
                               <span className="swatch small" style={{ background: r.color }} />
                               <span className="pv-name">{r.label}</span>
-                              {r.cleanup && <span className="badge pass-badge">Cleanup</span>}
+                              {r.cleanup && <span className="badge pass-badge">{t("lp.cleanup")}</span>}
                             </label>
                             <span className="pv-meta">{passMeta(r, lu, speedUnit)}</span>
-                            <button className="chip" title="Show only this pass" onClick={() => soloPassRow(r)}>
-                              Solo
+                            <button className="chip" title={t("lp.showOnlyThisPass")} onClick={() => soloPassRow(r)}>
+                              {t("lp.solo")}
                             </button>
                           </div>
                         );
@@ -526,6 +533,7 @@ function fmtNum(v: number): string {
 
 /** Draw-order animation: a slider over the job's segments with play/pause, like LightBurn's Preview time slider. */
 export function PreviewPlayer({ preview, options, onOptions }: { preview: Preview; options: PreviewOptions; onOptions: (o: PreviewOptions) => void }) {
+  const t = useT();
   const total = preview.segments?.length ?? 0;
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
@@ -555,8 +563,8 @@ export function PreviewPlayer({ preview, options, onOptions }: { preview: Previe
   }, [playing, total, speed, onOptions]);
   if (total === 0) return null;
   return (
-    <div className="pv-player" role="group" aria-label="Draw order">
-      <button className="icon-btn small" title={playing ? "Pause" : "Play the burn order"} aria-label={playing ? "Pause" : "Play"} onClick={() => setPlaying((v) => !v)}>
+    <div className="pv-player" role="group" aria-label={t("lp.drawOrder")}>
+      <button className="icon-btn small" title={playing ? "Pause" : t("lp.playTheBurnOrder")} aria-label={playing ? "Pause" : "Play"} onClick={() => setPlaying((v) => !v)}>
         <Icon name={playing ? "pause" : "play"} size={16} />
       </button>
       <input
@@ -564,14 +572,14 @@ export function PreviewPlayer({ preview, options, onOptions }: { preview: Previe
         min={0}
         max={total}
         value={at}
-        aria-label="Segments shown"
+        aria-label={t("lp.segmentsShown")}
         onChange={(e) => {
           setPlaying(false);
           const v = Number(e.target.value);
           onOptions({ ...options, upTo: v >= total ? null : v });
         }}
       />
-      <select value={speed} onChange={(e) => setSpeed(Number(e.target.value))} aria-label="Playback speed" title="Playback speed">
+      <select value={speed} onChange={(e) => setSpeed(Number(e.target.value))} aria-label={t("lp.playbackSpeed")} title={t("lp.playbackSpeed")}>
         {[0.25, 0.5, 1, 2, 5, 10, 40].map((s) => (
           <option key={s} value={s}>
             {s}x

@@ -211,17 +211,25 @@ test("resolveKey: defaults pass, extras translate, workspace keys run", () => {
   assert.deepEqual(resolveKey("Ctrl+R", {}), { kind: "translate", action: "tool.rect", to: "R" });
   assert.deepEqual(resolveKey("F1", {}), { kind: "ws", action: "help.hotkeys" });
   assert.deepEqual(resolveKey("Ctrl+0", {}), { kind: "ws", action: "view.zoomPage" });
-  assert.deepEqual(resolveKey("Ctrl+K", {}), { kind: "pass" }, "unbound keys are left alone");
+  assert.deepEqual(resolveKey("Ctrl+J", {}), { kind: "pass" }, "unbound keys are left alone");
+  // LightBurn 2.0 defaults (UX-041).
+  assert.deepEqual(resolveKey("Ctrl+K", {}), { kind: "ws", action: "tool.trim" });
+  assert.deepEqual(resolveKey("Alt+M", {}), { kind: "ws", action: "tool.measure" });
+  assert.deepEqual(resolveKey("Ctrl+P", {}), { kind: "ws", action: "file.print" });
+  assert.deepEqual(resolveKey("Ctrl+Shift+P", {}), { kind: "ws", action: "file.printColors" });
+  assert.deepEqual(resolveKey("Alt+Shift+C", {}), { kind: "translate", action: "tool.cutShapes", to: "Alt+C" });
+  assert.deepEqual(resolveKey("Alt+L", {}), { kind: "ws", action: "laser.position" });
+  assert.deepEqual(resolveKey("Pause", {}), { kind: "ws", action: "laser.pauseResume" });
 });
 
 test("rebinding moves keys, translates, and swallows the old native key", () => {
-  let o = bindChord({}, "arrange.group", "Ctrl+K");
+  let o = bindChord({}, "arrange.group", "Ctrl+J");
   assert.ok(o);
   o = unbindChord(o, "arrange.group", "Ctrl+G");
-  assert.deepEqual(chordsFor(ACTIONS.find((a) => a.id === "arrange.group")!, o), ["Ctrl+K"]);
-  assert.deepEqual(resolveKey("Ctrl+K", o), { kind: "translate", action: "arrange.group", to: "Ctrl+G" });
+  assert.deepEqual(chordsFor(ACTIONS.find((a) => a.id === "arrange.group")!, o), ["Ctrl+J"]);
+  assert.deepEqual(resolveKey("Ctrl+J", o), { kind: "translate", action: "arrange.group", to: "Ctrl+G" });
   assert.deepEqual(resolveKey("Ctrl+G", o), { kind: "block" });
-  assert.equal(hintFor("arrange.group", o), "Ctrl+K");
+  assert.equal(hintFor("arrange.group", o), "Ctrl+J");
   // Taking a key from another action.
   const o2 = bindChord({}, "edit.duplicate", "Ctrl+G");
   assert.ok(o2);
@@ -287,6 +295,22 @@ test("palette swatches find, reuse or create layers", () => {
   assert.deepEqual(assignPlan(layers, objects, ["a", "b"], PALETTE[1]), { kind: "existing", layer: "l1" });
   assert.deepEqual(assignPlan(layers, objects, ["a"], PALETTE[5]), { kind: "create", name: "C05", color: "#ff8000", output: true });
   assert.deepEqual(assignPlan(layers, objects, ["a"], PALETTE[30]), { kind: "create", name: "T1", color: "#f36926", output: false });
+});
+
+test("T1 / T2 swatches stand for the document's tool layers (LAY-042)", () => {
+  const t2 = { ...layer("t2", "Marks", "#123456"), tool: "T2" as const };
+  const layers = [layer("l1", "C00", "#000000"), t2, layer("x", "T1 lookalike", "#f36926")];
+  const objects = [{ id: "a", layer: "l1" }];
+  // T2 is the tool layer whatever its colour; T1 is missing, so a same-coloured ordinary layer does not stand for it.
+  assert.equal(layerForEntry(layers, PALETTE[31])?.id, "t2");
+  assert.equal(layerForEntry(layers, PALETTE[30]), null);
+  assert.deepEqual(assignPlan(layers, objects, ["a"], PALETTE[30], true), { kind: "tool", tool: "T1" });
+  assert.deepEqual(assignPlan(layers, objects, ["a"], PALETTE[31], true), { kind: "existing", layer: "t2" });
+  // A colour swatch never picks a tool layer of its colour.
+  const toolBlack = { ...layer("tb", "C00", "#000000"), tool: "T1" as const };
+  assert.equal(layerForEntry([toolBlack], PALETTE[0]), null);
+  // Without the engine command, a missing tool layer is an ordinary layer with output off (older engines).
+  assert.deepEqual(assignPlan([], objects, ["a"], PALETTE[31]), { kind: "create", name: "T2", color: "#0c96d9", output: false });
 });
 
 // --- Cuts / Layers --------------------------------------------------------------------------------------------------------

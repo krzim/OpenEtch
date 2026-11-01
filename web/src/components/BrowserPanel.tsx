@@ -13,6 +13,7 @@ import { objectIconName } from "../snapping.ts";
 import { dropIndex, stepIndex } from "../workspace/layersTable.ts";
 import { ContextMenu, type MenuItem } from "./ContextMenu.tsx";
 import { Icon } from "./ui.tsx";
+import { useT } from "../workspace/usePrefs.ts";
 
 export interface BrowserPanelProps {
   doc: GDocument | null;
@@ -29,6 +30,7 @@ export interface BrowserPanelProps {
 }
 
 export function BrowserPanel(props: BrowserPanelProps) {
+  const t = useT();
   const { doc, selection, run, report } = props;
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -38,7 +40,7 @@ export function BrowserPanel(props: BrowserPanelProps) {
   const toggle = (k: string) => setCollapsed((c) => ({ ...c, [k]: !c[k] }));
   const open = (k: string) => !collapsed[k];
 
-  if (!doc) return <div className="panel-empty">Waiting for the engine…</div>;
+  if (!doc) return <div className="panel-empty">{t("br.waitingForTheEngine")}</div>;
 
   const addLayer = () => {
     // The engine picks the next palette colour.
@@ -76,23 +78,23 @@ export function BrowserPanel(props: BrowserPanelProps) {
     const order: MenuItem[] = canMove
       ? [
           { sep: true },
-          { label: "Move up (burns earlier)", disabled: up === null, action: () => moveLayer(layer, up) },
-          { label: "Move down (burns later)", disabled: down === null, action: () => moveLayer(layer, down) },
+          { label: t("br.moveUpBurnsEarlier"), disabled: up === null, action: () => moveLayer(layer, up) },
+          { label: t("br.moveDownBurnsLater"), disabled: down === null, action: () => moveLayer(layer, down) },
         ]
       : [];
     return [
-      { label: "Select all shapes in this layer", action: () => props.onSelectLayer(layer, true) },
+      { label: t("br.selectAllShapesInThisLayer"), action: () => props.onSelectLayer(layer, true) },
       { sep: true },
       {
-        label: "Hide all layers but this one",
+        label: t("br.hideAllLayersButThisOne"),
         action: () => batch([C.layerUpdate(layer, { visible: true }), ...others.filter((l) => l.visible).map((l) => C.layerUpdate(l.id, { visible: false }))]),
       },
-      { label: "Show all layers", action: () => batch(doc.layers.filter((l) => !l.visible).map((l) => C.layerUpdate(l.id, { visible: true }))) },
+      { label: t("br.showAllLayers"), action: () => batch(doc.layers.filter((l) => !l.visible).map((l) => C.layerUpdate(l.id, { visible: true }))) },
       {
-        label: "Disable output for all layers but this one",
+        label: t("br.disableOutputForAllLayersBut"),
         action: () => batch([C.layerUpdate(layer, { output: true }), ...others.filter((l) => l.output).map((l) => C.layerUpdate(l.id, { output: false }))]),
       },
-      { label: "Enable output for all layers", action: () => batch(doc.layers.filter((l) => !l.output).map((l) => C.layerUpdate(l.id, { output: true }))) },
+      { label: t("br.enableOutputForAllLayers"), action: () => batch(doc.layers.filter((l) => !l.output).map((l) => C.layerUpdate(l.id, { output: true }))) },
       ...order,
     ];
   };
@@ -120,7 +122,7 @@ export function BrowserPanel(props: BrowserPanelProps) {
           open={open("doc")}
           onToggle={() => toggle("doc")}
           onDoubleClick={canRename ? () => setRenaming(doc.name) : undefined}
-          title={canRename ? "Double-click to rename the document" : undefined}
+          title={canRename ? t("br.doubleClickToRenameTheDocument") : undefined}
           strong
         />
       )}
@@ -133,7 +135,7 @@ export function BrowserPanel(props: BrowserPanelProps) {
             onClick={() => props.onSelectStock()}
           >
             <Icon name="stock" size={18} />
-            <span className="tree-label">{doc.stock ? doc.stock.name || "Stock" : "Stock (none)"}</span>
+            <span className="tree-label">{doc.stock ? doc.stock.name || "Stock" : t("br.stockNone")}</span>
             {doc.stock?.material && <span className="tree-meta">{doc.stock.material}</span>}
           </div>
 
@@ -142,7 +144,7 @@ export function BrowserPanel(props: BrowserPanelProps) {
             open={open("layers")}
             onToggle={() => toggle("layers")}
             action={
-              <button className="icon-btn small" title="Add layer" aria-label="Add layer" onClick={addLayer}>
+              <button className="icon-btn small" title={t("br.addLayer")} aria-label={t("br.addLayer")} onClick={addLayer}>
                 <Icon name="plus" size={18} />
               </button>
             }
@@ -189,8 +191,8 @@ export function BrowserPanel(props: BrowserPanelProps) {
                   <span className="tree-meta">{l.settings.mode === "line" ? "Line" : l.settings.mode === "fill" ? "Fill" : "Fill+Line"}</span>
                   <button
                     className={`icon-btn small${l.visible ? "" : " off"}`}
-                    title={l.visible ? "Hide layer (display only)" : "Show layer"}
-                    aria-label={l.visible ? "Hide layer" : "Show layer"}
+                    title={l.visible ? t("br.hideLayerDisplayOnly") : t("br.showLayer")}
+                    aria-label={l.visible ? t("br.hideLayer") : t("br.showLayer")}
                     onClick={(e) => {
                       e.stopPropagation();
                       run(C.layerUpdate(l.id, { visible: !l.visible })).catch(report);
@@ -200,8 +202,8 @@ export function BrowserPanel(props: BrowserPanelProps) {
                   </button>
                   <button
                     className={`icon-btn small${l.output ? " on-laser" : " off"}`}
-                    title={l.output ? "Output on (included in jobs)" : "Output off (excluded from jobs)"}
-                    aria-label={l.output ? "Disable output" : "Enable output"}
+                    title={l.output ? t("br.outputOnIncludedInJobs") : t("br.outputOffExcludedFromJobs")}
+                    aria-label={l.output ? t("br.disableOutput") : t("br.enableOutput")}
                     onClick={(e) => {
                       e.stopPropagation();
                       run(C.layerUpdate(l.id, { output: !l.output })).catch(report);
@@ -243,7 +245,7 @@ export function BrowserPanel(props: BrowserPanelProps) {
                               <Icon name={objectIconName(o)} size={16} />
                               <span className="tree-label">{o.name || o.id}</span>
                               {g && (
-                                <span className="tree-meta" title="Group">
+                                <span className="tree-meta" title={t("br.group")}>
                                   {g}
                                 </span>
                               )}

@@ -178,7 +178,7 @@ async fn execute(st: &Arc<AppState>, job: Job<'_>) -> Outcome {
     let id = job.id;
     if let Some(c) = job.confirm {
         st.emit(Event::machine("awaiting_confirm", Some(id.to_owned())));
-        match wait_for_input(&st.machine, job.epoch, c.input_bit, true, c.timeout, c.poll).await {
+        match wait_for_input(&st.machine, job.epoch, c.input_bit, false, true, c.timeout, c.poll).await {
             InputEnd::Confirmed => {}
             InputEnd::Stopped => {
                 return (RunState::Cancelled, None, Some("stopped while waiting for the physical confirmation".into()));
@@ -196,7 +196,10 @@ async fn execute(st: &Arc<AppState>, job: Job<'_>) -> Outcome {
         }
     }
     let iterations = job.options.iterations();
-    let start_bit = if job.options.start_input { st.machine.profile().start_mark_input_bit } else { None };
+    let profile = st.machine.profile();
+    let start_bit = if job.options.start_input { profile.start_mark_input_bit } else { None };
+    // LightBurn's StartMarkBitHigh = false: the pedal pulls the input low.
+    let start_low = profile.start_mark_active_low;
     let mut completed = 0u32;
     let mut last: Option<RunReport> = None;
     loop {
@@ -220,7 +223,7 @@ async fn execute(st: &Arc<AppState>, job: Job<'_>) -> Outcome {
             st.emit(Event::machine("waiting_for_start_input", Some(id.to_owned())));
             st.emit(Event::machine("awaiting_start_input", Some(id.to_owned())));
             let full = job.options.full_pulse.unwrap_or(true);
-            match wait_for_input(&st.machine, job.epoch, bit, full, START_INPUT_TIMEOUT, CONFIRM_POLL).await {
+            match wait_for_input(&st.machine, job.epoch, bit, start_low, full, START_INPUT_TIMEOUT, CONFIRM_POLL).await {
                 InputEnd::Confirmed => {}
                 InputEnd::Stopped if completed == 0 => {
                     return (RunState::Cancelled, None, Some("stopped while waiting for the start input".into()));
@@ -356,12 +359,21 @@ enum InputEnd {
     Panicked(String),
 }
 
-/// Poll `ReadPort` until input `bit` is pressed for [`CONFIRM_READS`] reads in a row; with `full_pulse` it must
+/// Poll `ReadPort` until input `bit` is pressed (high, or low when `active_low`) for [`CONFIRM_READS`] reads in a
+/// row; with `full_pulse` it must
 /// first be seen released (so a stuck, held or inverted input never starts anything). Ends early on a stop (epoch
 /// change), a read error or the timeout.
-async fn wait_for_input(machine: &Arc<Machine>, epoch: u64, bit: u8, full_pulse: bool, timeout: Duration, poll: Duration) -> InputEnd {
+async fn wait_for_input(
+    machine: &Arc<Machine>,
+    epoch: u64,
+    bit: u8,
+    active_low: bool,
+    full_pulse: bool,
+    timeout: Duration,
+    poll: Duration,
+) -> InputEnd {
     let deadline = Instant::now() + timeout;
-    let mask = 1u16 << (bit & 15);
+    let port = machine::InputPort { bit, active_low };
     let (mut released, mut pressed) = (!full_pulse, 0);
     loop {
         if machine.stop_epoch() != epoch {
@@ -380,7 +392,7 @@ async fn wait_for_input(machine: &Arc<Machine>, epoch: u64, bit: u8, full_pulse:
             })
             .await;
         match read {
-            Ok(Ok(Some(bits))) if bits & mask == 0 => (released, pressed) = (true, 0),
+            Ok(Ok(Some(bits))) if !port.active(bits) => (released, pressed) = (true, 0),
             Ok(Ok(Some(_))) if released => {
                 pressed += 1;
                 if pressed >= CONFIRM_READS {

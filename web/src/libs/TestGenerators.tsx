@@ -427,7 +427,9 @@ export function FocusTestDialog(p: GenProps) {
   const preview = useMemo(() => focusTestPreview(m), [m]);
   const freq = frequencyRange(p.machine);
   const dev = useActiveDevice();
-  const zAxis = !!dev?.profile && typeof dev.profile.axis === "object" && dev.profile.axis !== null;
+  // Only a Z lift moves the focus; a linear or rotating table axis (role "linear" / "rotary") does not.
+  const axis = dev?.profile && typeof dev.profile.axis === "object" && dev.profile.axis !== null ? (dev.profile.axis as { role?: unknown }) : null;
+  const zAxis = !!axis && (axis.role === undefined || axis.role === null || axis.role === "z");
   return (
     <GenDialog
       title={t("ltest.focusTitle")}
@@ -435,7 +437,11 @@ export function FocusTestDialog(p: GenProps) {
       problem={focusTestProblem(m)}
       preview={preview}
       onReset={() => upd(DEFAULT_FOCUS_TEST)}
-      onCreate={(req) => create(p, t, "generate.focus_test", focusTestParams(m), req, t("ltest.focusWhat", { lines: m.steps + 1 }))}
+      onCreate={(req) => {
+        // Without a Z lift the planner ignores the Z offsets: say so when the test is made, not only in the dialog.
+        if (!zAxis) p.notify(t("ltest.focusNoZWarn"));
+        return create(p, t, "generate.focus_test", focusTestParams(m), req, t("ltest.focusWhat", { lines: m.steps + 1 }));
+      }}
     >
       <fieldset className="job-fieldset">
         <legend>{t("ltest.zRange")}</legend>

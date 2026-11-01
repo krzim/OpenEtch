@@ -70,6 +70,8 @@ export interface CanvasTool {
   hover: (f: Vec2, m: Mods, ctx: CanvasCtx) => boolean;
   /** Drawn inside the field-frame group (mm, +Y up), above the objects. */
   render: (r: RenderCtx) => ReactNode;
+  /** Drawn in the field frame under the images and objects (above the field and grid): the camera overlay. */
+  underlay?: (r: RenderCtx) => ReactNode;
   /** Drawn over the canvas in screen space (HTML): rulers, the tool options bar. */
   overlay: (r: RenderCtx) => ReactNode;
   /** Extra snap targets (manual guides). */

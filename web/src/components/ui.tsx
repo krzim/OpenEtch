@@ -11,6 +11,17 @@ import { trimNumber } from "../workspace/units.ts";
  */
 export function Modal(props: { title: string; onClose: () => void; children: ReactNode; footer?: ReactNode; wide?: boolean; onSubmit?: () => void }) {
   const { onClose } = props;
+  // Enter first blurs the field so a commit-on-blur field (NumberField, TextField) sets its value, then submits on the
+  // next tick with the re-rendered dialog's `onSubmit`, which sees that value (calling the old one sent stale state).
+  const submitRef = useRef(props.onSubmit);
+  submitRef.current = props.onSubmit;
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -29,7 +40,10 @@ export function Modal(props: { title: string; onClose: () => void; children: Rea
           const t = e.target as HTMLElement;
           if (e.key === "Enter" && props.onSubmit && t.tagName === "INPUT" && (t as HTMLInputElement).type !== "checkbox") {
             e.preventDefault();
-            props.onSubmit();
+            t.blur();
+            window.setTimeout(() => {
+              if (alive.current) submitRef.current?.();
+            }, 0);
           }
         }}
       >
@@ -393,11 +407,14 @@ const ICONS: Record<string, ReactNode> = {
 
 /** Stroke icon, 24x24 viewBox, inherits `currentColor`. */
 export function Icon({ name, size = 20 }: { name: keyof typeof ICONS | string; size?: number }) {
+  // Preferences > Icon size scales every icon through --icon-scale (workspace/usePrefs.ts).
+  const scaled = `calc(${size}px * var(--icon-scale, 1))`;
   return (
     <svg
       className="icon"
       width={size}
       height={size}
+      style={{ width: scaled, height: scaled }}
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"

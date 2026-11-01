@@ -100,8 +100,12 @@ export function convertToPath(ids: string[]): Invocation {
   return { id: GEO.convert, params: { ids } };
 }
 
-export function optimize(ids: string[], tolerance_mm: number): Invocation {
-  return { id: GEO.optimize, params: { ids, tolerance_mm } };
+/**
+ * Optimize Selected Shapes: fit to lines within `tolerance_mm`, to arcs within `arcs_mm`, smooth within `smooth_mm`
+ * (each optional, at least one; older engines take only `tolerance_mm`).
+ */
+export function optimize(ids: string[], p: number | { tolerance_mm?: number; arcs_mm?: number; smooth_mm?: number }): Invocation {
+  return { id: GEO.optimize, params: typeof p === "number" ? { ids, tolerance_mm: p } : { ids, ...defined(p) } };
 }
 
 /** Round corners: all of them, or node indices from node.list (one object only). Negative radius: concave bite. */
@@ -164,12 +168,15 @@ export function polygon(p: {
   corner_radius_mm?: number;
   layer?: string | null;
   name?: string;
+  /** Keep it a parametric polygon (Shape Properties can change it); engines with `shape.update`. */
+  parametric?: boolean;
 }): Invocation {
   const { layer, ...rest } = p;
   const params: Record<string, unknown> = defined(rest);
   if (layer) params.layer = layer;
   if (params.corner_radius_mm === 0) delete params.corner_radius_mm;
   if (params.rotation_deg === 0) delete params.rotation_deg;
+  if (!params.parametric) delete params.parametric;
   return { id: GEO.polygon, params };
 }
 
@@ -207,7 +214,11 @@ export function alongPath(ids: string[], path_id: string, p: { count?: number; s
 
 export type NestRegion = "stock" | "field" | { min: Vec2; max: Vec2 } | { object: string };
 
-export function nest(ids: string[], region: NestRegion, p: { spacing_mm?: number; edge_mm?: number; rotations?: number[] } = {}): Invocation {
+export function nest(
+  ids: string[],
+  region: NestRegion,
+  p: { spacing_mm?: number; edge_mm?: number; rotations?: number[]; mode?: "boxes" | "shapes"; resolution_mm?: number } = {},
+): Invocation {
   return { id: GEO.nest, params: { ids, region, ...defined(p) } };
 }
 
@@ -240,7 +251,7 @@ export function scaleTo(ids: string[], pivot: Vec2, from: Vec2, to: Vec2, rotate
 /** object.transform with the newer parts (shear, mirror across a line) and scale. */
 export function transformEx(
   ids: string[],
-  t: { scale?: number | Vec2; shear_deg?: Vec2; mirror_line?: { a: Vec2; b: Vec2 }; rotate_deg?: number; about?: "center" | "origin" | Vec2 },
+  t: { scale?: number | Vec2; shear_deg?: Vec2; mirror_line?: { a: Vec2; b: Vec2 }; rotate_deg?: number; about?: "center" | "origin" | Vec2; keep_copy?: boolean },
 ): Invocation {
   return { id: GEO.transform, params: { ids, ...defined(t) } };
 }

@@ -506,6 +506,7 @@ impl Machine {
             "running": running,
             "framing": framing,
             "field_mm": config.profile.field_mm,
+            "field_height_mm": config.profile.field_height_mm.unwrap_or(config.profile.field_mm),
             "profile": config.profile.name,
             "laser_source": config.profile.laser_source,
             "max_power_pct": config.profile.max_power_pct,

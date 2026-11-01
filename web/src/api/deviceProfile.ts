@@ -7,6 +7,8 @@
 // A value the engine does not report stays unknown (`undefined`): the editor shows it empty and never sends it unless
 // the user types one, so a save can never overwrite a setting it could not read.
 
+import { tr } from "../workspace/tr.ts";
+
 export type FieldKind = "number" | "bool" | "text" | "select" | "bit";
 
 export interface FieldSpec {
@@ -28,6 +30,8 @@ export interface FieldSpec {
   limit?: boolean;
   /** For bits: the lowest bit allowed. */
   minBit?: number;
+  /** A number that may be cleared: an empty field sends null (the profile key is removed). */
+  nullable?: boolean;
 }
 
 export interface FieldGroup {
@@ -70,7 +74,19 @@ export function profileGroups(swapXY: boolean): FieldGroup[] {
       id: "field",
       title: "Field",
       fields: [
-        { path: "field_mm", label: "Field size", kind: "number", unit: "mm", min: 1, max: 1000, digits: 3, lb: "Width / Height", hint: "The lens's field; sets the workspace" },
+        { path: "field_mm", label: "Field width", kind: "number", unit: "mm", min: 1, max: 1000, digits: 3, lb: "Width", hint: "The lens's field (field X); sets the workspace" },
+        {
+          path: "field_height_mm",
+          label: "Field height",
+          kind: "number",
+          unit: "mm",
+          min: 1,
+          max: 1000,
+          digits: 3,
+          lb: "Height",
+          nullable: true,
+          hint: "Field Y of a non-square field; empty = square (the width)",
+        },
         { path: "calibration.offset_x_mm", label: "Offset X", kind: "number", unit: "mm", digits: 3, lb: "FieldOffsetX" },
         { path: "calibration.offset_y_mm", label: "Offset Y", kind: "number", unit: "mm", digits: 3, lb: "FieldOffsetY" },
         { path: "calibration.angle_deg", label: "Angle", kind: "number", unit: "°", min: -45, max: 45, digits: 3, lb: "FieldAngle", hint: "Counter-clockwise" },
@@ -268,6 +284,8 @@ export function profileValues(profileJson: unknown, lbdevText: string | null, in
       const ax = obj(p.axis);
       v["axis.enabled"] = ax !== null;
     }
+    // A square field leaves `field_height_mm` out of the profile.
+    v.field_height_mm ??= null;
     // IO ports the profile leaves out are off: the engine omits `io` while every port is at its default.
     {
       for (const k of IO_INPUTS) {
@@ -348,6 +366,7 @@ export function checkValues(v: ProfileValues, limits: ProfileValues = {}): Recor
     if (x !== undefined && !(x > 0)) err[p] = "Must be more than 0";
   };
   pos("field_mm");
+  pos("field_height_mm");
   pos("red_light_speed_mm_s");
   pos("timing.jump_speed_mm_s");
   pos("max_jump_speed_mm_s");
@@ -361,9 +380,9 @@ export function checkValues(v: ProfileValues, limits: ProfileValues = {}): Recor
   if (pw !== undefined && (pw < 0 || pw > 100)) err.max_power_pct = "0 to 100 %";
   const js = n("timing.jump_speed_mm_s");
   const jl = n("max_jump_speed_mm_s");
-  if (js !== undefined && jl !== undefined && js > jl) err["timing.jump_speed_mm_s"] = `Above the jump speed limit (${jl} mm/s)`;
+  if (js !== undefined && jl !== undefined && js > jl) err["timing.jump_speed_mm_s"] = tr("apidp.aboveTheJumpSpeedLimitV1", { v1: jl });
   const fs = n("red_light_speed_mm_s");
-  if (fs !== undefined && jl !== undefined && fs > jl) err.red_light_speed_mm_s = `Above the jump speed limit (${jl} mm/s)`;
+  if (fs !== undefined && jl !== undefined && fs > jl) err.red_light_speed_mm_s = tr("apidp.aboveTheJumpSpeedLimitV1", { v1: jl });
   const ang = n("calibration.angle_deg");
   if (ang !== undefined && Math.abs(ang) > 45) err["calibration.angle_deg"] = "Within ±45°";
   for (const a of ["x", "y"]) {
@@ -410,7 +429,7 @@ export function checkValues(v: ProfileValues, limits: ProfileValues = {}): Recor
   for (const [p, cap] of Object.entries(limits)) {
     const x = n(p);
     if (typeof cap === "number" && x !== undefined) {
-      if (p === "frequency_khz_min" ? x < cap : x > cap) err[p] = p === "frequency_khz_min" ? `Not below ${cap} (limits are never widened)` : `Not above ${cap} (limits are never raised)`;
+      if (p === "frequency_khz_min" ? x < cap : x > cap) err[p] = p === "frequency_khz_min" ? tr("apidp.notBelowV1LimitsAreNever", { v1: cap }) : tr("apidp.notAboveV1LimitsAreNever", { v1: cap });
     }
   }
   return err;

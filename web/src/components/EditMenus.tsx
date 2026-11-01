@@ -5,6 +5,7 @@ import { useRef, useState } from "react";
 import type { CanvasToolId } from "../canvasTool.ts";
 import { ContextMenu, type MenuItem } from "./ContextMenu.tsx";
 import type { Tool } from "./Viewport.tsx";
+import { useT } from "../workspace/usePrefs.ts";
 
 const ICONS: Record<string, string> = {
   line: "M4 18L10 8l5 7 5-10 M4 18h.01 M10 8h.01 M15 15h.01 M20 5h.01",
@@ -15,6 +16,8 @@ const ICONS: Record<string, string> = {
   measure: "M3 17L17 3l4 4L7 21z M7 13l2 2 M10 10l2 2 M13 7l2 2",
   modify: "M4 12h6 M14 12h6 M12 4v6 M12 14v6 M7 7h10v10H7z",
   arrange: "M4 4h10v10H4z M10 10h10v10H10z",
+  edit: "M8 4h8v3H8z M6 6H4v14h16V6h-2 M8 12h8 M8 16h5",
+  tools: "M14.7 6.3a4 4 0 00-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 005.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z",
   chevronDown: "M8 10l4 4 4-4",
 };
 
@@ -35,8 +38,8 @@ function ToolBtn(props: { icon: string; label: string; active?: boolean; disable
   );
 }
 
-/** A toolbar button that opens a menu under itself (Fusion's dropdown panels). */
-function Dropdown(props: { icon: string; label: string; title: string; items: MenuItem[] }) {
+/** A toolbar button that opens a menu under itself (Fusion's dropdown panels). Also used by src/design/. */
+export function Dropdown(props: { icon: string; label: string; title: string; items: MenuItem[] }) {
   const ref = useRef<HTMLButtonElement>(null);
   const [at, setAt] = useState<{ x: number; y: number } | null>(null);
   const justClosed = useRef(0);
@@ -85,23 +88,24 @@ export function EditToolbar(props: {
   modify: MenuItem[];
   arrange: MenuItem[];
 }) {
+  const tr = useT();
   const t = props.tool;
-  const missing = " (this engine does not have it yet)";
+  const missing = ` ${tr("em.missing")}`;
   return (
     <>
-      <div className="tool-group" role="group" aria-label="Draw">
-        <ToolBtn icon="line" label="Line" active={t === "line"} disabled={!props.can.line} onClick={() => props.onTool("line")} title={`Line / polyline (Ctrl+L): click points, double-click or Enter to finish, C closes, Shift 15°${props.can.line ? "" : missing}`} />
-        <ToolBtn icon="pen" label="Pen" active={t === "pen"} disabled={!props.can.pen} onClick={() => props.onTool("pen")} title={`Bézier pen: click for corners, drag for smooth curves${props.can.pen ? "" : missing}`} />
-        <ToolBtn icon="polygon" label="Polygon" active={t === "polygon"} disabled={!props.can.polygon} onClick={() => props.onTool("polygon")} title={`Polygon or star: drag from the centre; sides and star in the options bar${props.can.polygon ? "" : missing}`} />
+      <div className="tool-group" role="group" aria-label={tr("em.draw")}>
+        <ToolBtn icon="line" label={tr("em.line")} active={t === "line"} disabled={!props.can.line} onClick={() => props.onTool("line")} title={`${tr("em.lineTitle")}${props.can.line ? "" : missing}`} />
+        <ToolBtn icon="pen" label={tr("em.pen")} active={t === "pen"} disabled={!props.can.pen} onClick={() => props.onTool("pen")} title={`${tr("em.penTitle")}${props.can.pen ? "" : missing}`} />
+        <ToolBtn icon="polygon" label={tr("em.polygon")} active={t === "polygon"} disabled={!props.can.polygon} onClick={() => props.onTool("polygon")} title={`${tr("em.polygonTitle")}${props.can.polygon ? "" : missing}`} />
       </div>
-      <div className="tool-group" role="group" aria-label="Edit">
-        <ToolBtn icon="node" label="Edit nodes" active={t === "node"} disabled={!props.can.node} onClick={() => props.onTool("node")} title={`Edit nodes (Ctrl+\`): drag nodes and handles, click a segment to add a node${props.can.node ? "" : missing}`} />
-        <ToolBtn icon="trim" label="Trim" active={t === "trim"} disabled={!props.can.trim} onClick={() => props.onTool("trim")} title={`Trim: click a piece of a shape to remove it up to the nearest crossings${props.can.trim ? "" : missing}`} />
-        <ToolBtn icon="measure" label="Measure" active={t === "measure"} onClick={() => props.onTool("measure")} title="Measure: click two points or drag; distance, ΔX, ΔY and angle (snaps)" />
+      <div className="tool-group" role="group" aria-label={tr("em.edit")}>
+        <ToolBtn icon="node" label={tr("em.editNodes")} active={t === "node"} disabled={!props.can.node} onClick={() => props.onTool("node")} title={`${tr("em.nodesTitle")}${props.can.node ? "" : missing}`} />
+        <ToolBtn icon="trim" label={tr("em.trim")} active={t === "trim"} disabled={!props.can.trim} onClick={() => props.onTool("trim")} title={`${tr("em.trimTitle")}${props.can.trim ? "" : missing}`} />
+        <ToolBtn icon="measure" label={tr("em.measure")} active={t === "measure"} onClick={() => props.onTool("measure")} title={tr("em.measureTitle")} />
       </div>
-      <div className="tool-group" role="group" aria-label="Modify and arrange">
-        <Dropdown icon="modify" label="Modify" title="Booleans, weld, offset, fillet and path tools" items={props.modify} />
-        <Dropdown icon="arrange" label="Arrange" title="Draw order, lock, make same size, transform, arrays and nesting" items={props.arrange} />
+      <div className="tool-group" role="group" aria-label={tr("em.modifyArrange")}>
+        <Dropdown icon="modify" label={tr("em.modify")} title={tr("em.modifyTitle")} items={props.modify} />
+        <Dropdown icon="arrange" label={tr("em.arrange")} title={tr("em.arrangeTitle")} items={props.arrange} />
       </div>
     </>
   );

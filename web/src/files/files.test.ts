@@ -23,6 +23,7 @@ import {
   fileSettingsProblem,
   importPrefsFrom,
   importQuery,
+  importTargetLayer,
   liveRecent,
   maskClips,
   maskOf,
@@ -70,6 +71,20 @@ test("extensions route to the engine's import formats", () => {
   assert.equal(engineFormatOf("notes.txt"), null);
   assert.ok(needsOptions("model") && needsOptions("gerber") && needsOptions("drill") && !needsOptions("pdf"));
   for (const e of [".pdf", ".ai", ".stl", ".3mf", ".gbr", ".drl", ".tif", ".lbrn", ".lbt", ".ezd"]) assert.ok(ENGINE_ACCEPT.split(",").includes(e), e);
+});
+
+test("import to tool layers (LightBurn's Allow Importing to Tool Layers, UX-034)", () => {
+  const base = { mode: "merge" as const, layer: "t1", format: "svg" as const, fileName: "a.svg" };
+  assert.equal(q(importQuery({ ...base, prefs: DEFAULT_IMPORT_PREFS })).tool_layers, undefined);
+  assert.equal(q(importQuery({ ...base, prefs: { ...DEFAULT_IMPORT_PREFS, toolLayers: true } })).tool_layers, "true");
+  assert.equal(importPrefsFrom({ toolLayers: true }).toolLayers, true);
+  assert.equal(importPrefsFrom({}).toolLayers, false, "off by default, as in LightBurn");
+  const layers = [{ id: "t1", tool: "T1" }, { id: "l1" }, { id: "l2", tool: null }];
+  assert.equal(importTargetLayer(layers, "t1", false), "l1", "off: never onto a tool layer");
+  assert.equal(importTargetLayer(layers, "t1", true), "t1");
+  assert.equal(importTargetLayer(layers, "l2", false), "l2");
+  assert.equal(importTargetLayer([{ id: "t1", tool: "T1" }], "t1", false), null, "only tool layers: the engine picks");
+  assert.equal(importTargetLayer(layers, null, false), null);
 });
 
 test("import query: only the options each format takes", () => {

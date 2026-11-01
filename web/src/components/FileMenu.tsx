@@ -67,6 +67,8 @@ import { carryGuides, clearGuides, guideScope, UNSAVED_SCOPE } from "../guides.t
 import { ENGINE_ACCEPT } from "../files/fileFormats.ts";
 import { ProjectThumb } from "../files/ProjectDialogs.tsx";
 import { Icon, Modal, fmt } from "./ui.tsx";
+import { useT } from "../workspace/usePrefs.ts";
+import type { T } from "../workspace/i18n.ts";
 
 type Notify = (msg: string, kind?: "info" | "error") => void;
 
@@ -210,6 +212,7 @@ export function useFileActions(p: {
   const openedFile = openedFileName(project, openedName);
 
   // Latest values for callbacks that run after a confirmation.
+  const t = useT();
   const live = useRef({ project, doc, dirty, projectName, openedName: openedFile, active: p.lightburn?.active ?? null });
   live.current = { project, doc, dirty, projectName, openedName: openedFile, active: p.lightburn?.active ?? null };
 
@@ -234,16 +237,16 @@ export function useFileActions(p: {
       action();
       return;
     }
-    const subject = n ? `"${n}" has unsaved changes.` : "This document has not been saved.";
+    const subject = n ? t("fm.unsavedNamed", { name: n }) : t("fm.notSaved");
     setModal({
       kind: "confirm",
-      title: "Unsaved changes",
-      message: `${subject} ${what} replaces it. You can still get it back with Undo.`,
+      title: t("fm.unsavedTitle"),
+      message: t("fm.replaces", { subject, what }),
       confirmLabel,
       action,
       back,
     });
-  }, []);
+  }, [t]);
 
   /** After this UI replaced the document: Save must ask for a name, offering `suggest`. */
   const detach = useCallback((suggest: string) => {
@@ -256,7 +259,7 @@ export function useFileActions(p: {
   }, []);
 
   const newDocument = useCallback(() => {
-    guard("A new document", "Discard and start new", () => {
+    guard(t("fm.aNewDocument"), t("fm.discardNew"), () => {
       setModal(null);
       void task(async () => {
         await engine.run(C.docNew());
@@ -266,10 +269,10 @@ export function useFileActions(p: {
         setLoadedUnsaved(false);
         setImportedFieldMm(null);
         setOpenedName(null);
-        notify("New document.");
+        notify(t("fm.newDone"));
       });
     }, null);
-  }, [guard, task, engine, detach, notify]);
+  }, [guard, task, engine, detach, notify, t]);
 
   const saveAs = useCallback(
     async (name: string, overwrite?: boolean): Promise<SaveOutcome> => {
@@ -291,7 +294,7 @@ export function useFileActions(p: {
         setSuggestedName("");
         setLoadedUnsaved(false);
         setOpenedName(null);
-        notify(`Saved "${name}".`);
+        notify(t("fm.saved", { name }));
         return "saved";
       } catch (e) {
         if (overwrite === false && isSaveConflict(e)) return "exists";
@@ -302,7 +305,7 @@ export function useFileActions(p: {
         void engine.refreshProject();
       }
     },
-    [engine, notify, report],
+    [engine, notify, report, t],
   );
 
   const save = useCallback(() => {
@@ -313,7 +316,7 @@ export function useFileActions(p: {
 
   const openProject = useCallback(
     (name: string) => {
-      guard(`Opening "${name}"`, "Discard and open", () => {
+      guard(t("fm.openingNamed", { name }), t("fm.discardOpen"), () => {
         setModal(null);
         void task(async () => {
           await api.openProject(name);
@@ -322,12 +325,12 @@ export function useFileActions(p: {
           setLoadedUnsaved(false);
           setImportedFieldMm(null);
           setOpenedName(null);
-          notify(`Opened "${name}".`);
+          notify(t("fm.opened", { name }));
           await engine.refreshDoc();
         });
       }, { kind: "open" });
     },
-    [guard, task, engine, notify],
+    [guard, task, engine, notify, t],
   );
 
   const openLbrn2Dialog = useCallback(() => setModal({ kind: "import", files: [], mode: defaultImportMode(live.current.doc) }), []);
@@ -339,7 +342,7 @@ export function useFileActions(p: {
         if (openOtherRef.current) {
           setModal(null);
           openOtherRef.current(file);
-        } else notify("Choose a .openetch project or a LightBurn .lbrn2 file.", "error");
+        } else notify(t("fm.chooseProject"), "error");
         return;
       }
       if (format === "lbrn2") {
@@ -348,10 +351,10 @@ export function useFileActions(p: {
         return;
       }
       if (file.size > MAX_UPLOAD_BYTES) {
-        notify(`${file.name} is larger than ${formatBytes(MAX_UPLOAD_BYTES)}.`, "error");
+        notify(t("fm.tooLarge", { name: file.name, size: formatBytes(MAX_UPLOAD_BYTES) }), "error");
         return;
       }
-      guard(`Opening ${file.name}`, "Discard and open", () => {
+      guard(t("fm.opening", { name: file.name }), t("fm.discardOpen"), () => {
         setModal(null);
         void task(async () => {
           const result = commandResult(await api.upload(file, "openetch", "replace", undefined, { name: file.name }).catch((e: unknown) => Promise.reject(fileError(e, file.name))));
@@ -359,13 +362,13 @@ export function useFileActions(p: {
           setLoadedUnsaved(true);
           setImportedFieldMm(null);
           setOpenedName(fileStem(file.name));
-          notify(`Opened ${file.name}. Save it to keep it on the engine.`);
-          showWarnings(`Opening ${file.name}`, warningList(result));
+          notify(t("fm.openedFile", { name: file.name }));
+          showWarnings(t("fm.opening", { name: file.name }), warningList(result));
           await engine.refreshDoc();
         });
       }, { kind: "open" });
     },
-    [guard, task, engine, detach, notify, showWarnings],
+    [guard, task, engine, detach, notify, showWarnings, t],
   );
 
   const importLbrn2 = useCallback(
@@ -383,7 +386,7 @@ export function useFileActions(p: {
           for (const file of files) {
             try {
               // The upload route takes the raw file (up to 50 MB) and the field size it was laid out for.
-              if (file.size > MAX_UPLOAD_BYTES) throw new Error(`${file.name} is larger than ${formatBytes(MAX_UPLOAD_BYTES)}.`);
+              if (file.size > MAX_UPLOAD_BYTES) throw new Error(t("fm.tooLarge", { name: file.name, size: formatBytes(MAX_UPLOAD_BYTES) }));
               // No size: the engine picks it (the file's LightBurn device first) and reports it with `field_source`.
               const result = commandResult(await api.upload(file, "lbrn2", mode, fieldMm, { name: fileStem(file.name) }).catch((e: unknown) => Promise.reject(fileError(e, file.name))));
               const outcome = importOutcome(result);
@@ -407,17 +410,17 @@ export function useFileActions(p: {
           if (files.length === 1 && last) notify(importMessage(last, mode));
           else
             notify(
-              `Merged ${files.length - failed.length} of ${files.length} LightBurn files (${objects} object${objects === 1 ? "" : "s"}).`,
+              t(objects === 1 ? "fm.merged1" : "fm.mergedN", { done: files.length - failed.length, total: files.length, objects }),
               failed.length ? "error" : "info",
             );
           for (const f of failed) notify(f, "error");
-          showWarnings(files.length > 1 ? `Import of ${files.length} LightBurn files` : `Import of ${files[0].name}`, warnings);
+          showWarnings(files.length > 1 ? t("fm.importOfN", { n: files.length }) : t("fm.importOf", { name: files[0].name }), warnings);
         });
       };
-      if (mode === "replace") guard(`Importing ${files[0].name}`, "Discard and import", go, { kind: "import", files, mode });
+      if (mode === "replace") guard(t("fm.importing", { name: files[0].name }), t("fm.discardImport"), go, { kind: "import", files, mode });
       else go();
     },
-    [guard, task, engine, detach, notify, showWarnings],
+    [guard, task, engine, detach, notify, showWarnings, t],
   );
 
   const baseName = () => exportBaseName(live.current.projectName, live.current.openedName, live.current.doc?.name);
@@ -429,26 +432,28 @@ export function useFileActions(p: {
       // gantry device, whose workspace and origin the engine applies.
       const res = await execute(C.exportLbrn2(fieldMm));
       const r = res.result as { content?: unknown } | null;
-      if (!r || typeof r.content !== "string") throw new Error("the engine returned no LightBurn content");
+      if (!r || typeof r.content !== "string") throw new Error(t("fm.noLbContent"));
       const name = downloadName(baseName(), "lbrn2");
       saveBlob(new Blob([r.content], { type: "application/xml" }), name);
       const w = warningList(r);
       const dev = live.current.active;
-      const what = fieldMm !== undefined ? `a ${fmt(fieldMm, 3)} mm field` : dev ? `${dev.display_name} (${workspaceText(dev.workspace_mm)})` : "the active device";
-      notify(`Exported ${name} for ${what}.${w.length ? ` ${w.length} warning${w.length === 1 ? "" : "s"}.` : ""}`);
-      showWarnings(`Export of ${name}`, w);
+      const what =
+        fieldMm !== undefined ? t("fm.aField", { mm: fmt(fieldMm, 3) }) : dev ? `${dev.display_name} (${workspaceText(dev.workspace_mm)})` : t("fm.theActiveDevice");
+      const warn = w.length ? ` ${t(w.length === 1 ? "fm.warn1" : "fm.warnN", { n: w.length })}` : "";
+      notify(t("fm.exported", { name, what, warn }));
+      showWarnings(t("fm.exportOf", { name }), w);
     });
-  }, [task, notify, showWarnings]);
+  }, [task, notify, showWarnings, t]);
 
   const downloadOpenetch = useCallback(() => {
     void task(async () => {
-      const { blob, filename } = await api.download("openetch").catch((e: unknown) => Promise.reject(fileError(e, "Download")));
+      const { blob, filename } = await api.download("openetch").catch((e: unknown) => Promise.reject(fileError(e, t("fm.download"))));
       // The engine names the file after its project, which this UI may have replaced (see `currentProjectName`).
       const name = (live.current.projectName !== null ? filename : null) ?? downloadName(baseName(), "openetch");
       saveBlob(blob, name);
-      notify(`Downloaded ${name}.`);
+      notify(t("fm.downloaded", { name }));
     });
-  }, [task, notify]);
+  }, [task, notify, t]);
 
   return {
     projectName,
@@ -516,6 +521,7 @@ export function FileMenu({
   /** Export, Print, templates, notes, backups... (src/files/useFilesUi.tsx), after Export to LightBurn. */
   files?: (close: () => void) => ReactNode;
 }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -548,13 +554,13 @@ export function FileMenu({
   return (
     <div className="file-menu" ref={root}>
       <button className={`file-btn${open ? " open" : ""}`} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
-        File
+        {t("fm.file")}
         <Icon name="chevronDown" size={16} />
       </button>
       {open && (
-        <div className="menu" role="menu" aria-label="File">
-          {item("New", file.newDocument)}
-          {item("Open…", () => file.setModal({ kind: "open" }), shortcut("O"))}
+        <div className="menu" role="menu" aria-label={t("fm.file")}>
+          {item(t("fm.new"), file.newDocument)}
+          {item(t("fm.open"), () => file.setModal({ kind: "open" }), shortcut("O"))}
           {recent && (
             <>
               <div className="menu-sep" role="separator" />
@@ -562,21 +568,21 @@ export function FileMenu({
               <div className="menu-sep" role="separator" />
             </>
           )}
-          {item("Save", file.save, saveShortcut())}
-          {item("Save as…", () => file.setModal({ kind: "saveAs" }), shortcut("S", true))}
+          {item(t("fm.save"), file.save, saveShortcut())}
+          {item(t("fm.saveAs"), () => file.setModal({ kind: "saveAs" }), shortcut("S", true))}
           <div className="menu-sep" role="separator" />
-          {item("Import…", onImport, shortcut("I"))}
-          {item("Import LightBurn…", file.openLbrn2Dialog, ".lbrn2")}
-          {item("Export to LightBurn…", () => file.setModal({ kind: "export" }), ".lbrn2")}
+          {item(t("fm.import"), onImport, shortcut("I"))}
+          {item(t("fm.importLb"), file.openLbrn2Dialog, ".lbrn2")}
+          {item(t("fm.exportLb"), () => file.setModal({ kind: "export" }), ".lbrn2")}
           {files?.(() => setOpen(false))}
           {onDevices && (
             <>
               <div className="menu-sep" role="separator" />
-              {item("Devices…", onDevices)}
+              {item(t("fm.devices"), onDevices)}
             </>
           )}
           <div className="menu-sep" role="separator" />
-          {item("Download .openetch", file.downloadOpenetch)}
+          {item(t("fm.downloadOpenetch"), file.downloadOpenetch)}
           {extra && (
             <>
               <div className="menu-sep" role="separator" />
@@ -591,21 +597,23 @@ export function FileMenu({
 
 /** Project name and unsaved-changes dot for the top bar. */
 export function ProjectIndicator({ name, docName, dirty }: { name: string | null; docName: string | null; dirty: boolean | null }) {
+  const t = useT();
   const label = name ?? docName;
-  const title = [name ? `Project "${name}"` : "Not saved as a project yet", dirty ? "Unsaved changes" : dirty === false ? "All changes saved" : ""]
+  const title = [name ? t("fm.projectNamed", { name }) : t("fm.notProject"), dirty ? t("fm.unsavedTitle") : dirty === false ? t("fm.allSaved") : ""]
     .filter(Boolean)
     .join("\n");
   if (!label && !dirty) return null;
   return (
     <span className="project" title={title}>
       {label && <span className={`doc-name${name ? "" : " unsaved"}`}>{label}</span>}
-      {dirty && <span className="dirty-dot" role="img" aria-label="Unsaved changes" />}
+      {dirty && <span className="dirty-dot" role="img" aria-label={t("fm.unsavedTitle")} />}
     </span>
   );
 }
 
 /** Every File dialog plus the warnings panel, rendered into <body> so they do not inherit the top bar's styles. */
 export function FileDialogs({ file, docName }: { file: FileActions; docName: string | null }) {
+  const t = useT();
   const { setModal } = file;
   const close = useCallback(() => setModal(null), [setModal]);
   const m = file.modal;
@@ -622,7 +630,7 @@ export function FileDialogs({ file, docName }: { file: FileActions; docName: str
           footer={
             <>
               <button className="btn" onClick={() => file.setModal(m.back)}>
-                Cancel
+                {t("common.cancel")}
               </button>
               <button className="btn btn-warn" onClick={m.action}>
                 {m.confirmLabel}
@@ -640,14 +648,15 @@ export function FileDialogs({ file, docName }: { file: FileActions; docName: str
 }
 
 function WarningsPanel(p: { title: string; items: string[]; onClose: () => void }) {
+  const t = useT();
   const rows = groupWarnings(p.items);
   return (
     <div className="warn-panel" role="status" aria-live="polite">
       <div className="warn-panel-head">
         <span>
-          {p.title}: {p.items.length} warning{p.items.length === 1 ? "" : "s"}
+          {p.title}: {t(p.items.length === 1 ? "fm.warning1" : "fm.warningN", { n: p.items.length })}
         </span>
-        <button className="icon-btn small" onClick={p.onClose} aria-label="Dismiss warnings">
+        <button className="icon-btn small" onClick={p.onClose} aria-label={t("fm.dismissWarnings")}>
           <Icon name="close" />
         </button>
       </div>
@@ -685,19 +694,20 @@ function useProjectList(): { list: ProjectEntry[] | null; error: string | null }
 }
 
 function OpenDialog({ file, onClose }: { file: FileActions; onClose: () => void }) {
+  const t = useT();
   const { list, error } = useProjectList();
   const input = useRef<HTMLInputElement>(null);
   return (
     <Modal
-      title="Open"
+      title={t("fm.openTitle")}
       onClose={onClose}
       footer={
         <>
           <button className="btn" onClick={() => input.current?.click()} disabled={file.busy}>
-            <Icon name="upload" /> Upload from this device
+            <Icon name="upload" /> {t("fm.upload")}
           </button>
           <button className="btn" onClick={onClose}>
-            Cancel
+            {t("common.cancel")}
           </button>
         </>
       }
@@ -714,10 +724,10 @@ function OpenDialog({ file, onClose }: { file: FileActions; onClose: () => void 
           if (f) file.uploadFile(f, "replace");
         }}
       />
-      <div className="section-label">Projects on the engine</div>
-      {list === null && <p className="muted">Loading…</p>}
+      <div className="section-label">{t("fm.projectsOnEngine")}</div>
+      {list === null && <p className="muted">{t("common.loading")}</p>}
       {error && <p className="form-error">{error}</p>}
-      {list !== null && !error && list.length === 0 && <p className="muted">No saved projects yet. Use Save to keep one here.</p>}
+      {list !== null && !error && list.length === 0 && <p className="muted">{t("fm.noProjects")}</p>}
       {list !== null && list.length > 0 && (
         <div className="project-list">
           {list.map((pr) => (
@@ -738,12 +748,13 @@ function OpenDialog({ file, onClose }: { file: FileActions; onClose: () => void 
           ))}
         </div>
       )}
-      <p className="hint">Upload opens a .openetch project, imports a LightBurn .lbrn2 file, or opens a vector, image or 3D model file as a new project.</p>
+      <p className="hint">{t("fm.uploadHint")}</p>
     </Modal>
   );
 }
 
 function SaveAsDialog({ file, docName, onClose }: { file: FileActions; docName: string | null; onClose: () => void }) {
+  const t = useT();
   const initial = file.suggestedName || file.projectName || (docName && docName !== "Untitled" ? suggestProjectName(docName) : "");
   const [name, setName] = useState(initial);
   const [confirmReplace, setConfirmReplace] = useState(false);
@@ -771,29 +782,29 @@ function SaveAsDialog({ file, docName, onClose }: { file: FileActions; docName: 
   };
   return (
     <Modal
-      title="Save as"
+      title={t("fm.saveAsTitle")}
       onClose={onClose}
       footer={
         <>
           {problem && <span className="form-error">{problem}</span>}
           <button className="btn" onClick={onClose}>
-            Cancel
+            {t("common.cancel")}
           </button>
           <button className={`btn ${confirmReplace ? "btn-warn" : "btn-primary"}`} disabled={!trimmed || !!problem || file.busy} onClick={() => void submit()}>
-            {confirmReplace ? "Replace" : "Save"}
+            {confirmReplace ? t("fm.replace") : t("fm.save")}
           </button>
         </>
       }
     >
       <label className="field">
-        <span className="field-label">Project name</span>
+        <span className="field-label">{t("fm.projectName")}</span>
         <span className="field-input">
           <input
             type="text"
             autoFocus
             value={name}
             maxLength={200}
-            placeholder="e.g. Namecards (brass)"
+            placeholder={t("fm.namePlaceholder")}
             onChange={(e) => {
               setName(e.target.value);
               setConfirmReplace(false);
@@ -802,8 +813,8 @@ function SaveAsDialog({ file, docName, onClose }: { file: FileActions; docName: 
           />
         </span>
       </label>
-      {existing !== null && <p className="hint warn-text">A project named "{existing}" exists. Saving replaces it.</p>}
-      <p className="hint">Saved on the engine as {trimmed && !problem ? `"${trimmed}.openetch"` : "<name>.openetch"}.</p>
+      {existing !== null && <p className="hint warn-text">{t("fm.exists", { name: existing })}</p>}
+      <p className="hint">{t("fm.savedAs", { file: trimmed && !problem ? `"${trimmed}.openetch"` : t("fm.nameFile") })}</p>
     </Modal>
   );
 }
@@ -816,11 +827,12 @@ function parseField(text: string): number | null {
 
 /** Field size text box plus one-tap sizes, shown once the user chooses to edit the size. */
 function FieldEditor(p: { value: string; onChange: (v: string) => void; onEnter: () => void; choices: FieldChoice[]; autoFocus?: boolean }) {
+  const t = useT();
   const n = parseField(p.value);
   return (
     <>
       <label className="field">
-        <span className="field-label">Field size</span>
+        <span className="field-label">{t("fm.fieldSize")}</span>
         <span className="field-input">
           <input
             type="text"
@@ -851,25 +863,26 @@ function FieldEditor(p: { value: string; onChange: (v: string) => void; onEnter:
  */
 function FieldSummary(p: { mm: number; source: string; onEdit?: () => void; workspaceMm?: [number, number] | null; machineMm?: number | null }) {
   // LightBurn stores the field to 0.1 mm (153.8 for a 153.75 mm lens): say so instead of showing two unexplained numbers.
+  const t = useT();
   const rounded = p.machineMm != null && !p.workspaceMm && sameField(p.mm, p.machineMm) && Math.abs(p.mm - p.machineMm) >= 1e-3;
   return (
     <p className="field-summary">
       <span>
         {p.workspaceMm ? (
           <>
-            Workspace <strong>{workspaceText(p.workspaceMm)}</strong>
+            {t("fm.workspace")} <strong>{workspaceText(p.workspaceMm)}</strong>
           </>
         ) : (
           <>
-            Field size <strong>{fmt(p.mm, 3)} mm</strong>
+            {t("fm.fieldSize")} <strong>{fmt(p.mm, 3)} mm</strong>
           </>
         )}{" "}
         — {p.source}
-        {rounded && <span className="muted"> (LightBurn's rounding of this laser's {fmt(p.machineMm as number, 3)} mm field)</span>}
+        {rounded && <span className="muted"> {t("fm.rounding", { mm: fmt(p.machineMm as number, 3) })}</span>}
       </span>
       {p.onEdit && !p.workspaceMm && (
         <button className="link-btn" onClick={p.onEdit}>
-          Edit
+          {t("fm.edit")}
         </button>
       )}
     </p>
@@ -882,13 +895,13 @@ function sameField(a: number, b: number): boolean {
 }
 
 /** One-tap sizes: every LightBurn device's, the design's, the machine's, 110 and 150. */
-function fieldChoiceList(file: FileActions, first: { mm: number | null; label: string | null }[] = []): FieldChoice[] {
+function fieldChoiceList(t: T, file: FileActions, first: { mm: number | null; label: string | null }[] = []): FieldChoice[] {
   return labelledFieldChoices([
     ...first,
     // Galvo fields only: a gantry workspace is not a field size.
     ...file.lightburnDevices.filter((d) => d.kind === undefined || isGalvo(d.kind)).map((d) => ({ mm: d.field_mm, label: d.name })),
-    { mm: file.docFieldMm, label: "current design" },
-    { mm: file.machineFieldMm, label: "this laser" },
+    { mm: file.docFieldMm, label: t("fm.currentDesign") },
+    { mm: file.machineFieldMm, label: t("fm.thisLaser") },
     { mm: 110, label: null },
     { mm: 150, label: null },
   ]);
@@ -908,6 +921,7 @@ function useDeviceNames(files: File[]): (string | null)[] | null {
 }
 
 function ImportDialog(p: { file: FileActions; initialFiles: File[]; initialMode: ImportMode; onClose: () => void }) {
+  const t = useT();
   const { file } = p;
   const [picked, setPicked] = useState<File[]>(p.initialFiles);
   const [mode, setMode] = useState<ImportMode>(p.initialMode);
@@ -932,7 +946,7 @@ function ImportDialog(p: { file: FileActions; initialFiles: File[]; initialMode:
   const unknown = [...new Set(defaults.map((d) => d.unknownFileDevice).filter((d): d is string => d !== null))];
   const typed = field === null ? null : parseField(field);
   const reading = picked.length > 0 && names === null;
-  const error = field !== null && typed === null ? "Field size must be a number between 0 and 2000 mm." : null;
+  const error = field !== null && typed === null ? t("fm.fieldError") : null;
   const ready = picked.length > 0 && !reading && error === null && !file.busy;
   const submit = () => {
     if (ready) file.importLbrn2(picked, effective, typed ?? undefined);
@@ -940,16 +954,16 @@ function ImportDialog(p: { file: FileActions; initialFiles: File[]; initialMode:
   const edit = () => setField(fmt((shared ?? defaults[0]).fieldMm, 3));
   return (
     <Modal
-      title="Open or import LightBurn project"
+      title={t("fm.lbTitle")}
       onClose={p.onClose}
       footer={
         <>
           {error && <span className="form-error">{error}</span>}
           <button className="btn" onClick={p.onClose}>
-            Cancel
+            {t("common.cancel")}
           </button>
           <button className="btn btn-primary" disabled={!ready} onClick={submit}>
-            {effective === "replace" ? "Open" : "Import"}
+            {effective === "replace" ? t("fm.openBtn") : t("fm.importBtn")}
           </button>
         </>
       }
@@ -967,55 +981,55 @@ function ImportDialog(p: { file: FileActions; initialFiles: File[]; initialMode:
         }}
       />
       <div className="field">
-        <span className="field-label">{several ? "Files" : "File"}</span>
+        <span className="field-label">{several ? t("fm.files") : t("fm.fileLabel")}</span>
         <button className="btn file-pick" onClick={() => input.current?.click()}>
           <Icon name="upload" />
           <span className="file-pick-name">
             {picked.length === 0
-              ? "Choose or drop a .lbrn2 file…"
+              ? t("fm.chooseLb")
               : several
-                ? `${picked.length} files (${formatBytes(picked.reduce((a, f) => a + f.size, 0))})`
+                ? t("fm.nFiles", { n: picked.length, size: formatBytes(picked.reduce((a, f) => a + f.size, 0)) })
                 : `${picked[0].name} (${formatBytes(picked[0].size)})`}
           </span>
         </button>
       </div>
       {several && <p className="hint">{picked.map((f) => f.name).join(", ")}</p>}
-      <div className="segmented" role="radiogroup" aria-label="Open or import">
+      <div className="segmented" role="radiogroup" aria-label={t("fm.openOrImport")}>
         <button
           role="radio"
           aria-checked={effective === "replace"}
           className={effective === "replace" ? "active" : ""}
           disabled={several}
-          title={several ? "Several files are always imported into your design" : "Replace your current design with this file"}
+          title={several ? t("fm.severalTitle") : t("fm.replaceTitle")}
           onClick={() => setMode("replace")}
         >
-          Open (replace)
+          {t("fm.openReplace")}
         </button>
         <button
           role="radio"
           aria-checked={effective === "merge"}
           className={effective === "merge" ? "active" : ""}
-          title="Add this file's shapes and layers to your current design"
+          title={t("fm.mergeTitle")}
           onClick={() => setMode("merge")}
         >
-          Import (merge)
+          {t("fm.importMerge")}
         </button>
       </div>
       <p className="hint">
-        Open replaces your current design. Import adds this file's shapes and layers to it.
-        {several ? " Several files are always imported." : ""}
+        {t("fm.openImportHint")}
+        {several ? ` ${t("fm.severalHint")}` : ""}
       </p>
       {field === null ? (
         reading ? (
-          <p className="field-summary muted">Reading the file…</p>
+          <p className="field-summary muted">{t("fm.reading")}</p>
         ) : shared ? (
           <FieldSummary mm={shared.fieldMm} source={fieldSourceText(shared)} onEdit={edit} workspaceMm={shared.workspaceMm} machineMm={p.file.machineFieldMm} />
         ) : (
           <>
             <p className="field-summary">
-              <span>Field size: each file uses its own</span>
+              <span>{t("fm.eachOwn")}</span>
               <button className="link-btn" onClick={edit}>
-                Edit
+                {t("fm.edit")}
               </button>
             </p>
             <ul className="field-per-file">
@@ -1035,23 +1049,20 @@ function ImportDialog(p: { file: FileActions; initialFiles: File[]; initialMode:
             onChange={setField}
             onEnter={submit}
             autoFocus
-            choices={fieldChoiceList(file, defaults.map((d) => ({ mm: d.fieldMm, label: d.device })))}
+            choices={fieldChoiceList(t, file, defaults.map((d) => ({ mm: d.fieldMm, label: d.device })))}
           />
           <p className="hint">
-            LightBurn files don't store the field size. Use the Field Size from LightBurn's Device Settings when this file
-            was made.
+            {t("fm.noFieldInFile")}
           </p>
           <button className="link-btn" onClick={() => setField(null)}>
-            Use the automatic size
+            {t("fm.autoSize")}
           </button>
         </>
       )}
       {field === null && !reading && unknown.length > 0 && (
         <p className="hint">
-          {unknown.length === 1 ? `This file was made for the LightBurn device "${unknown[0]}"` : `These files were made for LightBurn devices ${unknown.map((u) => `"${u}"`).join(", ")}`}
-          {file.lightburnDeviceKind === "active-device"
-            ? ", which is not one of your devices. To use that device's size, import it in File > Devices."
-            : ", which the engine doesn't know. To use that device's field size, load your LightBurn settings in the Laser workspace (Machine card)."}
+          {unknown.length === 1 ? t("fm.madeFor1", { name: unknown[0] }) : t("fm.madeForN", { names: unknown.map((u) => `"${u}"`).join(", ") })}
+          {file.lightburnDeviceKind === "active-device" ? t("fm.notYourDevice") : t("fm.engineUnknown")}
         </p>
       )}
     </Modal>
@@ -1060,9 +1071,10 @@ function ImportDialog(p: { file: FileActions; initialFiles: File[]; initialMode:
 
 /** Export to LightBurn: shows the field size the project will be laid out for, and lets it be changed. */
 function ExportDialog({ file, onClose }: { file: FileActions; onClose: () => void }) {
+  const t = useT();
   const [field, setField] = useState<string | null>(null);
   const typed = field === null ? null : parseField(field);
-  const error = field !== null && typed === null ? "Field size must be a number between 0 and 2000 mm." : null;
+  const error = field !== null && typed === null ? t("fm.fieldError") : null;
   const fieldMm = field === null ? file.exportFieldMm : typed;
   const origin = exportFieldOrigin(file.importedFieldMm, file.docFieldMm, file.machineFieldMm);
   const device = file.lightburnDevices.find((d) => d.name === file.lightburnDevice) ?? (file.lightburnDevices.length === 1 ? file.lightburnDevices[0] : null);
@@ -1077,38 +1089,36 @@ function ExportDialog({ file, onClose }: { file: FileActions; onClose: () => voi
   };
   return (
     <Modal
-      title="Export to LightBurn"
+      title={t("fm.exportTitle")}
       onClose={onClose}
       footer={
         <>
           {error && <span className="form-error">{error}</span>}
           <button className="btn" onClick={onClose}>
-            Cancel
+            {t("common.cancel")}
           </button>
           <button className="btn btn-primary" autoFocus={field === null} disabled={(!gantry && fieldMm === null) || file.busy} onClick={submit}>
-            Export
+            {t("fm.export")}
           </button>
         </>
       }
     >
       {gantry && active ? (
         <>
-          <FieldSummary mm={active.workspace_mm[0]} source={`from your active device ${active.display_name}`} workspaceMm={active.workspace_mm} />
+          <FieldSummary mm={active.workspace_mm[0]} source={t("fm.fromActive", { name: active.display_name })} workspaceMm={active.workspace_mm} />
           <p className="hint">
-            Laid out for {active.display_name} ({active.name}, origin {originLabel(active.origin).toLowerCase()}), as LightBurn
-            places it on that device. To export for another device, make it active in File &gt; Devices.
+            {t("fm.laidOut", { display: active.display_name, name: active.name, origin: originLabel(active.origin).toLowerCase() })}
           </p>
         </>
       ) : field === null ? (
         <>
           <FieldSummary mm={file.exportFieldMm} source={exportFieldOriginText(origin)} onEdit={() => setField(fmt(file.exportFieldMm, 3))} machineMm={file.machineFieldMm} />
           {active && !sameField(active.workspace_mm[0], file.exportFieldMm) && (
-            <p className="hint">Active device: {active.display_name} ({workspaceText([active.workspace_mm[0], active.workspace_mm[0]])} field).</p>
+            <p className="hint">{t("fm.activeDevice", { name: active.display_name, size: workspaceText([active.workspace_mm[0], active.workspace_mm[0]]) })}</p>
           )}
           {deviceDiffers && device && (
             <p className="hint">
-              Your {active ? "active" : "LightBurn"} device {device.name} uses {fmt(device.field_mm, 3)} mm. If the file will be opened with that device,
-              edit the size.
+              {t(active ? "fm.activeUses" : "fm.lbUses", { name: device.name, mm: fmt(device.field_mm, 3) })}
             </p>
           )}
         </>
@@ -1119,14 +1129,13 @@ function ExportDialog({ file, onClose }: { file: FileActions; onClose: () => voi
             onChange={setField}
             onEnter={submit}
             autoFocus
-            choices={fieldChoiceList(file, [{ mm: file.importedFieldMm, label: "opened with" }])}
+            choices={fieldChoiceList(t, file, [{ mm: file.importedFieldMm, label: t("fm.openedWith") }])}
           />
           <p className="hint">
-            LightBurn files don't store the field size. Use the Field Size from LightBurn's Device Settings on the computer
-            that will open this file.
+            {t("fm.noFieldExport")}
           </p>
           <button className="link-btn" onClick={() => setField(null)}>
-            Use the automatic size
+            {t("fm.autoSize")}
           </button>
         </>
       )}

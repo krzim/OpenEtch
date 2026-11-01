@@ -11,6 +11,7 @@ import type { CommandSpec, GDocument, StockShape, Vec2 } from "../api/types.ts";
 import { evalNumber } from "../editing.ts";
 import { boxSize, objectBounds, unionBoxes } from "../geometry.ts";
 import { Modal, UnitTextField } from "./ui.tsx";
+import { useT } from "../workspace/usePrefs.ts";
 
 type Run = (inv: Invocation) => Promise<unknown>;
 
@@ -48,6 +49,7 @@ function useSubmit(run: Run, onClose: () => void, onDone?: (result: unknown) => 
 }
 
 export function StockDialog({ doc, run, onClose }: { doc: GDocument | null; run: Run; onClose: () => void }) {
+  const t = useT();
   const s = doc?.stock;
   const [kind, setKind] = useState<StockShape["kind"]>(s?.shape.kind ?? "rect");
   const [name, setName] = useState(s?.name ?? "Stock");
@@ -63,36 +65,36 @@ export function StockDialog({ doc, run, onClose }: { doc: GDocument | null; run:
   const { busy, error, submit } = useSubmit(run, onClose);
 
   const build = (): Invocation | string => {
-    const t = parse(thick);
+    const thickMm = parse(thick);
     const center: Vec2 = [parse(cx) ?? NaN, parse(cy) ?? NaN];
     const rotation = parse(rot);
-    if (t === null || t < 0) return "Thickness must be a number ≥ 0.";
-    if (!Number.isFinite(center[0]) || !Number.isFinite(center[1]) || rotation === null) return "Centre and rotation must be numbers.";
+    if (thickMm === null || thickMm < 0) return t("dlg.thicknessMustBeANumber0");
+    if (!Number.isFinite(center[0]) || !Number.isFinite(center[1]) || rotation === null) return t("dlg.centreAndRotationMustBeNumbers");
     let shape: StockShape;
     if (kind === "rect") {
       const W = parse(w);
       const H = parse(h);
       const R = parse(r) ?? 0;
-      if (W === null || H === null || W <= 0 || H <= 0) return "Width and height must be > 0.";
+      if (W === null || H === null || W <= 0 || H <= 0) return t("dlg.widthAndHeightMustBe0");
       shape = { kind: "rect", width_mm: W, height_mm: H, corner_radius_mm: Math.max(0, R) };
     } else {
       const D = parse(dia);
-      if (D === null || D <= 0) return "Diameter must be > 0.";
+      if (D === null || D <= 0) return t("dlg.diameterMustBe0");
       shape = { kind: "circle", diameter_mm: D };
     }
-    return C.stockDefine({ name: name.trim() || "Stock", shape, thickness_mm: t, material: material.trim() || null, center, rotation_deg: rotation });
+    return C.stockDefine({ name: name.trim() || "Stock", shape, thickness_mm: thickMm, material: material.trim() || null, center, rotation_deg: rotation });
   };
 
   return (
     <Modal
-      title={s ? "Edit stock" : "Stock"}
+      title={s ? t("dlg.editStock") : "Stock"}
       onClose={onClose}
       onSubmit={() => submit(build())}
       footer={
         <>
           {error && <span className="form-error">{error}</span>}
           <button className="btn" onClick={onClose}>
-            Cancel
+            {t("dlg.cancel")}
           </button>
           <button className="btn btn-primary" disabled={busy} onClick={() => submit(build())}>
             OK
@@ -102,40 +104,40 @@ export function StockDialog({ doc, run, onClose }: { doc: GDocument | null; run:
     >
       <div className="segmented">
         <button className={kind === "rect" ? "active" : ""} onClick={() => setKind("rect")}>
-          Rectangle
+          {t("dlg.rectangle")}
         </button>
         <button className={kind === "circle" ? "active" : ""} onClick={() => setKind("circle")}>
-          Circle
+          {t("dlg.circle")}
         </button>
       </div>
       <label className="field">
-        <span className="field-label">Name</span>
+        <span className="field-label">{t("dlg.name")}</span>
         <span className="field-input">
           <input type="text" value={name} onChange={(e) => setName(e.target.value)} />
         </span>
       </label>
       {kind === "rect" ? (
         <div className="field-grid">
-          <Num label="Width" unit="mm" value={w} onChange={setW} />
-          <Num label="Height" unit="mm" value={h} onChange={setH} />
-          <Num label="Corner r" unit="mm" value={r} onChange={setR} />
+          <Num label={t("dlg.width")} unit="mm" value={w} onChange={setW} />
+          <Num label={t("dlg.height")} unit="mm" value={h} onChange={setH} />
+          <Num label={t("dlg.cornerR")} unit="mm" value={r} onChange={setR} />
         </div>
       ) : (
-        <Num label="Diameter" unit="mm" value={dia} onChange={setDia} />
+        <Num label={t("dlg.diameter")} unit="mm" value={dia} onChange={setDia} />
       )}
-      <Num label="Thickness" unit="mm" value={thick} onChange={setThick} />
+      <Num label={t("dlg.thickness")} unit="mm" value={thick} onChange={setThick} />
       <label className="field">
-        <span className="field-label">Material</span>
+        <span className="field-label">{t("dlg.material")}</span>
         <span className="field-input">
-          <input type="text" value={material} placeholder="e.g. stainless 304" onChange={(e) => setMaterial(e.target.value)} />
+          <input type="text" value={material} placeholder={t("dlg.eGStainless304")} onChange={(e) => setMaterial(e.target.value)} />
         </span>
       </label>
       <div className="field-grid">
-        <Num label="Centre X" unit="mm" value={cx} onChange={setCx} />
-        <Num label="Centre Y" unit="mm" value={cy} onChange={setCy} />
-        <Num label="Rotation" unit="°" value={rot} onChange={setRot} />
+        <Num label={t("dlg.centreX")} unit="mm" value={cx} onChange={setCx} />
+        <Num label={t("dlg.centreY")} unit="mm" value={cy} onChange={setCy} />
+        <Num label={t("dlg.rotation")} unit="°" value={rot} onChange={setRot} />
       </div>
-      <p className="hint">The B6's Z height is not readable over USB; thickness is used for focus notes only.</p>
+      <p className="hint">{t("dlg.theB6SZHeightIs")}</p>
     </Modal>
   );
 }
@@ -145,6 +147,7 @@ const ANCHORS: C.Anchor[] = ["top_left", "top", "top_right", "left", "center", "
 type FitMode = C.Fit["mode"];
 
 export function PlaceDialog({ ids, run, onClose }: { ids: string[]; run: Run; onClose: () => void }) {
+  const t = useT();
   const [anchor, setAnchor] = useState<C.Anchor>("center");
   const [mode, setMode] = useState<FitMode>("none");
   const [margin, setMargin] = useState("2");
@@ -156,10 +159,10 @@ export function PlaceDialog({ ids, run, onClose }: { ids: string[]; run: Run; on
   const { busy, error, submit } = useSubmit(run, onClose);
   const build = (): Invocation | string => {
     const offset: Vec2 = [parse(ox) ?? NaN, parse(oy) ?? NaN];
-    if (!Number.isFinite(offset[0]) || !Number.isFinite(offset[1])) return "Offset must be numbers.";
+    if (!Number.isFinite(offset[0]) || !Number.isFinite(offset[1])) return t("dlg.offsetMustBeNumbers");
     const pos = (v: string, what: string): number | string => {
       const n = parse(v);
-      return n === null || n <= 0 ? `${what} must be > 0.` : n;
+      return n === null || n <= 0 ? t("dlg.v1MustBe0", { v1: what }) : n;
     };
     let fit: C.Fit;
     switch (mode) {
@@ -168,7 +171,7 @@ export function PlaceDialog({ ids, run, onClose }: { ids: string[]; run: Run; on
         break;
       case "contain": {
         const m = parse(margin);
-        if (m === null || m < 0) return "Margin must be a number ≥ 0.";
+        if (m === null || m < 0) return t("dlg.marginMustBeANumber0");
         fit = { mode: "contain", margin_mm: m };
         break;
       }
@@ -204,16 +207,16 @@ export function PlaceDialog({ ids, run, onClose }: { ids: string[]; run: Run; on
         <>
           {error && <span className="form-error">{error}</span>}
           <button className="btn" onClick={onClose}>
-            Cancel
+            {t("dlg.cancel")}
           </button>
           <button className="btn btn-primary" disabled={busy} onClick={() => submit(build())}>
-            Place
+            {t("dlg.place")}
           </button>
         </>
       }
     >
       <div className="field">
-        <span className="field-label">Anchor</span>
+        <span className="field-label">{t("dlg.anchor")}</span>
         <div className="anchor-grid">
           {ANCHORS.map((a) => (
             <button key={a} className={a === anchor ? "active" : ""} title={a.replace("_", " ")} aria-label={a.replace("_", " ")} onClick={() => setAnchor(a)}>
@@ -223,31 +226,31 @@ export function PlaceDialog({ ids, run, onClose }: { ids: string[]; run: Run; on
         </div>
       </div>
       <label className="field">
-        <span className="field-label">Fit</span>
+        <span className="field-label">{t("dlg.fit")}</span>
         <span className="field-input">
           <select value={mode} onChange={(e) => setMode(e.target.value as FitMode)}>
-            <option value="none">Keep size</option>
-            <option value="contain">Scale to fit inside stock</option>
-            <option value="width">Scale to width</option>
-            <option value="height">Scale to height</option>
-            <option value="exact">Exact size</option>
+            <option value="none">{t("dlg.keepSize")}</option>
+            <option value="contain">{t("dlg.scaleToFitInsideStock")}</option>
+            <option value="width">{t("dlg.scaleToWidth")}</option>
+            <option value="height">{t("dlg.scaleToHeight")}</option>
+            <option value="exact">{t("dlg.exactSize")}</option>
           </select>
         </span>
       </label>
-      {mode === "contain" && <Num label="Margin" unit="mm" value={margin} onChange={setMargin} />}
-      {(mode === "width" || mode === "exact") && <Num label="Width" unit="mm" value={width} onChange={setWidth} />}
-      {(mode === "height" || mode === "exact") && <Num label="Height" unit="mm" value={height} onChange={setHeight} />}
+      {mode === "contain" && <Num label={t("dlg.margin")} unit="mm" value={margin} onChange={setMargin} />}
+      {(mode === "width" || mode === "exact") && <Num label={t("dlg.width")} unit="mm" value={width} onChange={setWidth} />}
+      {(mode === "height" || mode === "exact") && <Num label={t("dlg.height")} unit="mm" value={height} onChange={setHeight} />}
       {mode === "exact" && (
         <label className="field field-check">
-          <span className="field-label">Keep aspect</span>
+          <span className="field-label">{t("dlg.keepAspect")}</span>
           <input type="checkbox" checked={keepAspect} onChange={(e) => setKeepAspect(e.target.checked)} />
         </label>
       )}
       <div className="field-grid">
-        <Num label="Offset X" unit="mm" value={ox} onChange={setOx} />
-        <Num label="Offset Y" unit="mm" value={oy} onChange={setOy} />
+        <Num label={t("dlg.offsetX")} unit="mm" value={ox} onChange={setOx} />
+        <Num label={t("dlg.offsetY")} unit="mm" value={oy} onChange={setOy} />
       </div>
-      <p className="hint">Anchor and offset are in the stock's own frame; "top" is the stock's +Y side.</p>
+      <p className="hint">{t("dlg.anchorAndOffsetAreInThe")}</p>
     </Modal>
   );
 }
@@ -269,6 +272,7 @@ export function ArrayDialog({
   /** The copies' ids, to select them with the originals (LightBurn selects the result). */
   onCreated?: (ids: string[]) => void;
 }) {
+  const t = useT();
   const b = unionBoxes(doc.objects.filter((o) => ids.includes(o.id)).map(objectBounds));
   const [bw, bh] = b ? boxSize(b) : [10, 10];
   const [cols, setCols] = useState("3");
@@ -296,33 +300,33 @@ export function ArrayDialog({
     const r = parse(rows);
     const x = parse(dx);
     const y = parse(dy);
-    if (c === null || r === null || c < 1 || r < 1 || !Number.isInteger(c) || !Number.isInteger(r)) return "Columns and rows must be whole numbers ≥ 1.";
-    if (c * r > 2500) return "That is more than 2500 copies.";
-    if (x === null || y === null) return "Spacing must be numbers.";
+    if (c === null || r === null || c < 1 || r < 1 || !Number.isInteger(c) || !Number.isInteger(r)) return t("dlg.columnsAndRowsMustBeWhole");
+    if (c * r > 2500) return t("dlg.thatIsMoreThan2500Copies");
+    if (x === null || y === null) return t("dlg.spacingMustBeNumbers");
     return C.arrayGrid(ids, c, r, [x, y]);
   };
   return (
     <Modal
-      title="Rectangular array"
+      title={t("dlg.rectangularArray")}
       onClose={onClose}
       onSubmit={() => submit(build())}
       footer={
         <>
           {error && <span className="form-error">{error}</span>}
           <button className="btn" onClick={onClose}>
-            Cancel
+            {t("dlg.cancel")}
           </button>
           <button className="btn btn-primary" disabled={busy} onClick={() => submit(build())}>
-            Create
+            {t("dlg.create")}
           </button>
         </>
       }
     >
       <div className="field-grid">
-        <Num label="Columns" value={cols} onChange={setCols} />
-        <Num label="Rows" value={rows} onChange={setRows} />
-        <Num label="Pitch X" unit="mm" value={dx} onChange={setDx} />
-        <Num label="Pitch Y" unit="mm" value={dy} onChange={setDy} />
+        <Num label={t("dlg.columns")} value={cols} onChange={setCols} />
+        <Num label={t("dlg.rows")} value={rows} onChange={setRows} />
+        <Num label={t("dlg.pitchX")} unit="mm" value={dx} onChange={setDx} />
+        <Num label={t("dlg.pitchY")} unit="mm" value={dy} onChange={setDy} />
       </div>
       {outside > 0 && (
         <p className="warn-text" role="status">
@@ -331,12 +335,13 @@ export function ArrayDialog({
           negative pitch, or move the original first.
         </p>
       )}
-      <p className="hint">Counts include the original. Pitch is centre-to-centre; negative pitch goes left/down.</p>
+      <p className="hint">{t("dlg.countsIncludeTheOriginalPitchIs")}</p>
     </Modal>
   );
 }
 
 export function CommandPalette({ commands, run, onClose }: { commands: CommandSpec[] | null; run: Run; onClose: () => void }) {
+  const t = useT();
   const [q, setQ] = useState("");
   const [picked, setPicked] = useState<CommandSpec | null>(null);
   const [params, setParams] = useState("{}");
@@ -359,7 +364,7 @@ export function CommandPalette({ commands, run, onClose }: { commands: CommandSp
       return;
     }
     if (typeof p !== "object" || p === null || Array.isArray(p)) {
-      setResult("Parameters must be a JSON object.");
+      setResult(t("dlg.parametersMustBeAJsonObject"));
       return;
     }
     setBusy(true);
@@ -373,11 +378,11 @@ export function CommandPalette({ commands, run, onClose }: { commands: CommandSp
     }
   };
   return (
-    <Modal title="Commands" onClose={onClose} wide>
+    <Modal title={t("dlg.commands")} onClose={onClose} wide>
       <div className="palette">
         <div className="palette-list">
-          <input type="search" placeholder="Filter commands" value={q} onChange={(e) => setQ(e.target.value)} />
-          {commands === null && <p className="muted">Loading…</p>}
+          <input type="search" placeholder={t("dlg.filterCommands")} value={q} onChange={(e) => setQ(e.target.value)} />
+          {commands === null && <p className="muted">{t("dlg.loading")}</p>}
           {list.map((c) => (
             <button
               key={c.id}
@@ -395,7 +400,7 @@ export function CommandPalette({ commands, run, onClose }: { commands: CommandSp
         </div>
         <div className="palette-detail">
           {!picked ? (
-            <p className="muted">Pick a command. This runs exactly what an AI agent can run over MCP, tagged as your edit.</p>
+            <p className="muted">{t("dlg.pickACommandThisRunsExactly")}</p>
           ) : (
             <>
               <h3>
@@ -403,13 +408,13 @@ export function CommandPalette({ commands, run, onClose }: { commands: CommandSp
               </h3>
               <p className="desc">{picked.description}</p>
               <details>
-                <summary>Input schema</summary>
+                <summary>{t("dlg.inputSchema")}</summary>
                 <pre>{JSON.stringify(picked.input_schema, null, 2)}</pre>
               </details>
               <textarea spellCheck={false} value={params} onChange={(e) => setParams(e.target.value)} rows={8} />
               <div className="btn-row">
                 <button className="btn btn-primary" disabled={busy} onClick={go}>
-                  Run
+                  {t("dlg.run")}
                 </button>
               </div>
               {result && <pre className="palette-result">{result}</pre>}

@@ -29,6 +29,7 @@
 //! | `Laser_QPulseWidthEnabled` | `pulse_width_enabled` | |
 //! | `Laser_OpenMODelay` | `open_mo_delay_us` | |
 //! | `StartMarkPortBit` | `start_mark_input_bit` (-1 = none) | |
+//! | `StartMarkBitHigh` | `start_mark_active_low` (= not the flag) | false: the pedal is pressed while the input reads low. Written back from the profile. |
 //! | `FrameSpeed` | `red_light_speed_mm_s` | Clamped to `max_jump_speed_mm_s`. |
 //! | `RedLightPortBit` | `red_light_port_bit` | -1 is LightBurn's default; any other bit than 8 is reported and not applied (`lmc` drives bit 8). |
 //! | `FieldOffsetX/Y`, `FieldAngle` | `calibration.offset_*_mm`, `calibration.angle_deg` | |
@@ -47,7 +48,7 @@
 //! out mirrored across the diagonal, both mappings are wrong together; the signs are 1 on the B6, so their
 //! assignment is untested.
 //!
-//! Not modelled (reported when not at their defaults): `CorScaleOverride`, `Laser_PWMEnabled`, `StartMarkBitHigh`,
+//! Not modelled (reported when not at their defaults): `CorScaleOverride`, `Laser_PWMEnabled`,
 //! `StartMarkPulseMode`, `RedLightJumpDelay`. Written from scratch from the owner's own prefs files.
 //!
 //! **Export** ([`to_lbdev`]): a device back as a LightBurn `.lbdev` (`{"DeviceList": [...]}`) with the same keys,
@@ -856,24 +857,22 @@ pub fn profile_from_lightburn(dev: &LightBurnDevice, base: &MachineProfile) -> (
         let base_v = j(base.start_mark_input_bit);
         match v {
             -1 => im.set("start_mark_input_bit", base_v, j(v), "", |p| p.start_mark_input_bit = None),
-            // An active-low input reads "pressed" while the pedal is up: taken as active high it would start a run
-            // that does not wait for the full pulse with nobody pressing anything. Polarity is not modelled, so such
-            // an input is not used at all.
-            0..=15 if s.start_mark_bit_high == Some(false) => im.set(
-                "start_mark_input_bit",
-                base_v,
-                j(v),
-                "StartMarkBitHigh is false (active low), which OpenEtch does not model; no start input",
-                |p| p.start_mark_input_bit = None,
-            ),
             0..=15 => {
                 let bit = v as u8;
                 im.set("start_mark_input_bit", base_v, j(v), "", |p| p.start_mark_input_bit = Some(bit));
             }
             _ => im.diff("start_mark_input_bit", base_v, j(v), "not an input bit 0-15; not applied"),
         }
-    } else if s.start_mark_bit_high == Some(false) {
-        im.diff("start_mark_input_bit", Value::Null, j(false), "StartMarkBitHigh is false (active low); not modelled");
+    }
+    // The start input's level (LightBurn's IO Ports High/Low): false = active low, pressed while the input reads 0.
+    if let Some(high) = s.start_mark_bit_high {
+        im.set(
+            "start_mark_active_low",
+            j(base.start_mark_active_low),
+            j(!high),
+            if high { "" } else { "StartMarkBitHigh is false: the start input is active low (pressed = input low)" },
+            |p| p.start_mark_active_low = !high,
+        );
     }
 
     // Red pointer.
@@ -1022,7 +1021,7 @@ pub fn to_lbdev(display_name: &str, lightburn: Option<&LightBurnDevice>, profile
     put("Laser_PWMEnabled", json!(st.pwm_enabled));
     put("RedLightPortBit", json!(st.red_light_port_bit));
     put("RedLightJumpDelay", json!(st.red_light_jump_delay_us));
-    put("StartMarkBitHigh", json!(st.start_mark_bit_high));
+    put("StartMarkBitHigh", json!(profile.map_or(st.start_mark_bit_high, |p| Some(!p.start_mark_active_low))));
     put("StartMarkPulseMode", json!(st.start_mark_pulse_mode));
     put("CorScaleOverride", json!(st.cor_scale_override));
     put("CutOrigin", json!(st.cut_origin));
@@ -1214,16 +1213,22 @@ mod tests {
     }
 
     #[test]
-    fn an_active_low_start_input_is_not_used() {
+    fn an_active_low_start_input_keeps_its_level() {
         let mut d = LightBurnDevice { name: "JCZFiber".into(), width_mm: Some(150.0), ..Default::default() };
         d.settings.start_mark_port_bit = Some(14);
         d.settings.start_mark_bit_high = Some(false);
         let mut base = MachineProfile::generic_jcz_galvo();
         base.start_mark_input_bit = Some(14);
         let (p, diffs) = profile_from_lightburn(&d, &base);
-        assert_eq!(p.start_mark_input_bit, None);
-        assert!(diffs.iter().any(|d| d.field == "start_mark_input_bit" && d.note.contains("active low")), "{diffs:?}");
+        assert_eq!((p.start_mark_input_bit, p.start_mark_active_low), (Some(14), true));
+        assert!(diffs.iter().any(|d| d.field == "start_mark_active_low" && d.note.contains("active low")), "{diffs:?}");
+        // Written back as LightBurn has it, also when the profile changed the level.
+        let lbdev = to_lbdev("x", Some(&d), Some(&p));
+        assert!(lbdev.contains("\"StartMarkBitHigh\": false"), "{lbdev}");
+        let high = MachineProfile { start_mark_active_low: false, ..p.clone() };
+        assert!(to_lbdev("x", Some(&d), Some(&high)).contains("\"StartMarkBitHigh\": true"));
         d.settings.start_mark_bit_high = Some(true);
-        assert_eq!(profile_from_lightburn(&d, &MachineProfile::generic_jcz_galvo()).0.start_mark_input_bit, Some(14));
+        let p = profile_from_lightburn(&d, &MachineProfile::generic_jcz_galvo()).0;
+        assert_eq!((p.start_mark_input_bit, p.start_mark_active_low), (Some(14), false));
     }
 }

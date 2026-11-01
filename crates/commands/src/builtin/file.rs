@@ -122,12 +122,47 @@ fn bed(cmd: &str, [w, h]: [f64; 2]) -> Result<[f64; 2]> {
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Layout {
     Galvo(f64),
+    /// A non-square galvo field `[width, height]` (LightBurn's separate field Width and Height): LightBurn measures
+    /// from its lower-left corner with y up, as for a square field, so it converts like a front-left bed.
+    Field([f64; 2]),
     Bed([f64; 2], WorkspaceOrigin),
+}
+
+/// A galvo field `[width, height]`, checked: [`Layout::Galvo`] when square, else [`Layout::Field`].
+fn galvo_field(cmd: &str, [w, h]: [f64; 2]) -> Result<Layout> {
+    for (name, v) in [("workspace_mm[0]", w), ("workspace_mm[1]", h)] {
+        util::positive(cmd, name, v)?;
+        if v > MAX_FIELD_MM {
+            return Err(invalid(cmd, format!("a galvo field side must be at most {MAX_FIELD_MM} mm (got {v})")));
+        }
+    }
+    Ok(if (w - h).abs() < 1e-9 { Layout::Galvo(w) } else { Layout::Field([w, h]) })
+}
+
+/// The non-square galvo field a document was made or imported for: its `workspace_mm` with a centre origin.
+fn doc_galvo_field(doc: &Document) -> Option<[f64; 2]> {
+    (doc_origin(doc) == Some(WorkspaceOrigin::Center)).then_some(doc.workspace_mm).flatten()
+}
+
+impl Layout {
+    /// The LightBurn frame for this layout; a bed's mirror flags are `mirror` (the file's or the target's).
+    fn frame(self, mirror: (bool, bool)) -> lbrn::Frame {
+        match self {
+            Layout::Galvo(field_mm) => lbrn::Frame::Galvo { field_mm },
+            Layout::Field([width_mm, height_mm]) => {
+                lbrn::Frame::Bed { width_mm, height_mm, mirror_x: false, mirror_y: false }
+            }
+            Layout::Bed([width_mm, height_mm], _) => {
+                lbrn::Frame::Bed { width_mm, height_mm, mirror_x: mirror.0, mirror_y: mirror.1 }
+            }
+        }
+    }
 }
 
 /// The layout from the caller's `field_mm` / `workspace_mm` / `origin`, else the document's. A corner origin is a
 /// bed (its size: `workspace_mm`, else `remembered`, else the document's workspace); otherwise a galvo field
-/// (`field_mm`, else `remembered_field`, else the document's).
+/// (`field_mm`; a non-square one from `workspace_mm`; else the remembered field, else for a document made for a
+/// non-square galvo field its workspace, else the document's `field_mm`).
 fn layout(
     cmd: &str,
     field_mm: Option<f64>,
@@ -147,12 +182,21 @@ fn layout(
             Ok(Layout::Bed(bed(cmd, size)?, o))
         }
         _ => {
-            if workspace_mm.is_some() {
-                return Err(invalid(
-                    cmd,
-                    "workspace_mm is for gantry layouts and needs a corner origin (bottom_left, top_left, bottom_right \
-                     or top_right); a galvo layout takes field_mm",
-                ));
+            if let Some(size) = workspace_mm {
+                // A galvo with separate field Width and Height.
+                if field_mm.is_some() {
+                    return Err(invalid(
+                        cmd,
+                        "pass field_mm (a square galvo field) or workspace_mm (a non-square one), not both",
+                    ));
+                }
+                return galvo_field(cmd, size);
+            }
+            if field_mm.is_none() && remembered.0.is_none() {
+                let galvo = doc_galvo_field(doc);
+                if let Some(size) = remembered.1.filter(|_| galvo.is_some()).or(galvo) {
+                    return galvo_field(cmd, size);
+                }
             }
             Ok(Layout::Galvo(field(cmd, field_mm.or(remembered.0), doc)?))
         }
@@ -165,6 +209,11 @@ fn layout_json(l: Layout, r: &mut Value) {
         Layout::Galvo(f) => {
             r["field_mm"] = json!(f);
             r["workspace_mm"] = Value::Null;
+            r["origin"] = json!(WorkspaceOrigin::Center.name());
+        }
+        Layout::Field([w, h]) => {
+            r["field_mm"] = json!(w);
+            r["workspace_mm"] = json!([w, h]);
             r["origin"] = json!(WorkspaceOrigin::Center.name());
         }
         Layout::Bed(size, o) => {
@@ -222,7 +271,8 @@ pub struct NewInput {
     /// engine passes the active device's, so New always starts at the machine's field).
     pub field_mm: Option<f64>,
     /// Bed [width, height] in mm, for a gantry device (with a corner `origin`); the engine passes the active
-    /// device's. Then field_mm defaults to the smaller side.
+    /// device's. Then field_mm defaults to the smaller side. With the centre origin it is a galvo's separate field
+    /// Width and Height (LightBurn's non-square galvo field): the document's workspace, field_mm its width.
     pub workspace_mm: Option<[f64; 2]>,
     /// The device's LightBurn origin: "center" (galvo, default) or a bed corner, used by doc.export_lbrn2.
     pub origin: Option<WorkspaceOrigin>,
@@ -249,19 +299,25 @@ impl Command for DocNew {
     fn apply(doc: &mut Document, input: NewInput) -> Result<(Value, String)> {
         let name = input.name.as_deref().map(|n| util::name(Self::ID, "name", n)).transpose()?;
         let corner = input.origin.filter(|o| *o != WorkspaceOrigin::Center);
-        let workspace_mm = match (input.workspace_mm, corner) {
-            (Some(size), Some(_)) => Some(bed(Self::ID, size)?),
-            (Some(_), None) => {
-                return Err(invalid(Self::ID, "workspace_mm is for gantry devices and needs a corner origin"));
+        // With a centre origin, workspace_mm is a galvo's separate field Width and Height: a square one is just
+        // field_mm; a non-square one is the workspace, its width the field_mm, and the centre origin recorded.
+        let (field_mm, workspace_mm) = match (input.workspace_mm, corner) {
+            (Some(size), Some(_)) => {
+                let [w, h] = bed(Self::ID, size)?;
+                let f = input.field_mm.map(|f| field(Self::ID, Some(f), doc)).transpose()?;
+                (Some(f.unwrap_or(w.min(h))), Some([w, h]))
             }
-            (None, _) => None,
-        };
-        let field_mm = match (input.field_mm, workspace_mm) {
-            (Some(f), _) => Some(field(Self::ID, Some(f), doc)?),
-            (None, Some([w, h])) => Some(w.min(h)),
-            (None, None) => doc.field_mm,
+            (Some(size), None) => match layout(Self::ID, input.field_mm, Some(size), None, (None, None), doc)? {
+                Layout::Field([w, h]) => (Some(w), Some([w, h])),
+                Layout::Galvo(f) => (Some(f), None),
+                Layout::Bed(..) => return Err(invalid(Self::ID, "a centre origin is not a bed")),
+            },
+            (None, _) => (input.field_mm.map(|f| field(Self::ID, Some(f), doc)).transpose()?.or(doc.field_mm), None),
         };
         let mut fresh = Document { revision: doc.revision, field_mm, workspace_mm, ..Document::default() };
+        if corner.is_none() && workspace_mm.is_some() {
+            fresh.extras.insert(ORIGIN_KEY.into(), WorkspaceOrigin::Center.name().into());
+        }
         if let Some(n) = name {
             fresh.name = n;
         }
@@ -489,20 +545,18 @@ impl Command for ImportLbrn2 {
         // A legacy `.lbrn` (vertex elements) reads as `.lbrn2` (crate fileio).
         let text = super::files::legacy_lbrn(id, text)?;
         let project = lbrn::parse(&text).map_err(|e| invalid(id, e.to_string()))?;
-        let frame = match lay {
-            Layout::Galvo(field_mm) => lbrn::Frame::Galvo { field_mm },
-            Layout::Bed([width_mm, height_mm], _) => {
-                // The file's own origin corner, so the art lands where LightBurn showed it.
-                let (mirror_x, mirror_y) = project.mirror();
-                lbrn::Frame::Bed { width_mm, height_mm, mirror_x, mirror_y }
-            }
-        };
+        // A bed uses the file's own origin corner, so the art lands where LightBurn showed it.
+        let frame = lay.frame(project.mirror());
         let lbrn::Imported { layers, objects, groups, mut extras, variables, warnings } =
             lbrn::to_document_in(&project, frame).map_err(|e| invalid(id, e.to_string()))?;
         let notes = super::files::notes_from_extras(&extras);
         // A square size for what needs one (the field of a galvo; the bed's smaller side).
         let (field_mm, workspace_mm) = match lay {
             Layout::Galvo(f) => (f, None),
+            Layout::Field([w, h]) => {
+                extras.insert(ORIGIN_KEY.into(), WorkspaceOrigin::Center.name().into());
+                (w, Some([w, h]))
+            }
             Layout::Bed([w, h], o) => {
                 extras.insert(ORIGIN_KEY.into(), o.name().into());
                 (w.min(h), Some([w, h]))
@@ -700,11 +754,8 @@ impl Command for ExportLbrn2 {
         let remembered = (import_field(doc), import_workspace(doc));
         let lay = layout(id, input.field_mm, input.workspace_mm, Some(origin), remembered, doc)?;
         let frame = match lay {
-            Layout::Galvo(field_mm) => lbrn::Frame::Galvo { field_mm },
-            Layout::Bed([width_mm, height_mm], o) => {
-                let (mirror_x, mirror_y) = o.mirror().unwrap_or_default();
-                lbrn::Frame::Bed { width_mm, height_mm, mirror_x, mirror_y }
-            }
+            Layout::Bed(_, o) => lay.frame(o.mirror().unwrap_or_default()),
+            _ => lay.frame((false, false)),
         };
         let (mut project, mut warnings) = lbrn::from_document_in(doc, frame).map_err(|e| invalid(id, e.to_string()))?;
         // LightBurn's page storage is unknown: only the active page is written, so say what is left out.
@@ -1164,7 +1215,6 @@ mod tests {
         assert_eq!((r["workspace_mm"].clone(), r["field_mm"].clone()), (json!([400.0, 300.0]), json!(300.0)));
         assert_eq!(s.document().workspace(), Some([400.0, 300.0]));
         assert_eq!(s.document().extras.get("lbrn2._origin").map(String::as_str), Some("top_left"));
-        assert!(run(&mut s, "doc.new", json!({"workspace_mm": [400, 300]})).is_err(), "a bed needs its corner");
         assert!(run(&mut s, "doc.new", json!({"workspace_mm": [400, 0], "origin": "bottom_left"})).is_err());
         assert!(run(&mut s, "doc.new", json!({"origin": "middle"})).is_err());
 
@@ -1185,8 +1235,8 @@ mod tests {
         let text = ok(&mut s, "doc.export_lbrn2", json!({"origin": "bottom_left", "workspace_mm": [400, 300]}))["content"].clone();
         assert!(text.as_str().unwrap().contains("<XForm>1 0 0 1 80 75</XForm>"));
         assert!(run(&mut s, "doc.export_lbrn2", json!({"origin": "bottom_left", "field_mm": 150})).is_err());
-        assert!(run(&mut s, "doc.export_lbrn2", json!({"workspace_mm": [400, 300], "origin": "center"})).is_err());
-        assert!(run(&mut s, "doc.import_lbrn2", json!({"content": LBRN, "workspace_mm": [400, 300]})).is_err());
+        assert!(run(&mut s, "doc.export_lbrn2", json!({"workspace_mm": [400, 300], "field_mm": 150})).is_err());
+        assert!(run(&mut s, "doc.export_lbrn2", json!({"workspace_mm": [4000, 300], "origin": "center"})).is_err());
 
         // Merging a bed file into a galvo document remembers the bed for export.
         let mut s = session(Some(150.0));
@@ -1199,6 +1249,50 @@ mod tests {
         ok(&mut s, "doc.import_lbrn2", json!({"content": LBRN, "mode": "merge", "field_mm": 110}));
         let r = ok(&mut s, "doc.export_lbrn2", json!({"origin": "center"}));
         assert_eq!((r["origin"].clone(), r["field_mm"].clone()), (json!("center"), json!(110.0)));
+    }
+
+    /// A galvo with LightBurn's separate field Width and Height: the document gets the field as its workspace with a
+    /// centre origin, and LightBurn files measure from the field's lower-left corner on both axes.
+    #[test]
+    fn non_square_galvo_fields_are_the_documents_workspace() {
+        let mut s = session(Some(150.0));
+        let r = ok(&mut s, "doc.new", json!({"workspace_mm": [200, 120], "origin": "center"}));
+        assert_eq!((r["field_mm"].clone(), r["workspace_mm"].clone()), (json!(200.0), json!([200.0, 120.0])));
+        let d = s.document();
+        assert_eq!((d.field_mm, d.workspace(), d.extras.get(super::ORIGIN_KEY).map(String::as_str)), (Some(200.0), Some([200.0, 120.0]), Some("center")));
+        // No origin means the centre too; a square "workspace" is just a field.
+        ok(&mut s, "doc.new", json!({"workspace_mm": [200, 120]}));
+        assert_eq!(s.document().workspace_mm, Some([200.0, 120.0]));
+        ok(&mut s, "doc.new", json!({"workspace_mm": [110, 110]}));
+        assert_eq!((s.document().field_mm, s.document().workspace_mm), (Some(110.0), None));
+        assert!(run(&mut s, "doc.new", json!({"workspace_mm": [200, 120], "field_mm": 200})).is_err(), "one or the other");
+        assert!(run(&mut s, "doc.new", json!({"workspace_mm": [2500, 120]})).is_err(), "a field is at most 2000 mm");
+
+        // LBRN's rect centre at LightBurn (80, 75) lands at (80 - 100, 75 - 60) in a 200 x 120 field.
+        ok(&mut s, "doc.new", json!({"workspace_mm": [200, 120]}));
+        let r = ok(&mut s, "doc.import_lbrn2", json!({"content": LBRN}));
+        assert_eq!((r["origin"].clone(), r["workspace_mm"].clone(), r["field_mm"].clone()), (json!("center"), json!([200.0, 120.0]), json!(200.0)));
+        let d = s.document();
+        assert_eq!(d.workspace_mm, Some([200.0, 120.0]));
+        assert_eq!(d.objects[0].bounds().center(), kurbo::Point::new(-20.0, 15.0));
+        // Export goes back to the same LightBurn coordinates, without mirror flags.
+        let r = ok(&mut s, "doc.export_lbrn2", json!({}));
+        assert_eq!((r["origin"].clone(), r["workspace_mm"].clone()), (json!("center"), json!([200.0, 120.0])));
+        let text = r["content"].as_str().unwrap();
+        assert!(text.contains("MirrorY=\"False\"") && text.contains("<XForm>1 0 0 1 80 75</XForm>"), "{text}");
+        // An explicit square field still wins, and saving keeps the layout.
+        assert_eq!(exported_positions(&mut s, json!({"field_mm": 150}))[0], (55.0, 90.0));
+        let saved = ok(&mut s, "doc.save", json!({}))["content"].as_str().unwrap().to_string();
+        ok(&mut s, "doc.load", json!({"content": saved}));
+        assert_eq!(exported_positions(&mut s, json!({}))[0], (80.0, 75.0));
+
+        // Merging a non-square galvo file into a square document remembers it for export.
+        let mut s = session(Some(150.0));
+        ok(&mut s, "doc.import_lbrn2", json!({"content": LBRN, "mode": "merge", "workspace_mm": [200, 120], "origin": "center"}));
+        let d = s.document();
+        assert_eq!((d.field_mm, d.workspace_mm), (Some(150.0), Some([200.0, 120.0])));
+        let r = ok(&mut s, "doc.export_lbrn2", json!({}));
+        assert_eq!((r["origin"].clone(), r["workspace_mm"].clone()), (json!("center"), json!([200.0, 120.0])));
     }
 
     #[test]

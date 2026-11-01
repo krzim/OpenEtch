@@ -76,6 +76,8 @@ pub fn router(state: Arc<AppState>, web_dir: Option<&Path>) -> Router {
         .merge(crate::userfiles::routes())
         .merge(crate::documents::routes())
         .merge(crate::artlib::routes())
+        .merge(crate::folders::routes())
+        .merge(crate::test_presets::routes())
         .fallback(api_not_found)
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES));
     let mut app = Router::new().nest("/api", api).nest_service("/mcp", mcp::service(state.clone()));

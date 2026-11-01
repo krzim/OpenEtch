@@ -19,6 +19,7 @@ import {
   deviceImportBody,
   deviceList,
   deviceOptionText,
+  deviceSizeText,
   importAddParam,
   importMessage,
   importResult,
@@ -30,7 +31,6 @@ import {
   sourceLabel,
   switchBlocker,
   switchMessage,
-  workspaceText,
   type DeviceDetails,
   type DeviceImportBody,
   type DeviceList,
@@ -43,6 +43,8 @@ import { jobApi } from "../api/jobApi.ts";
 import type { LinkState } from "../api/useEngine.ts";
 import { DeviceEditor } from "./DeviceEditor.tsx";
 import { Icon, Modal } from "./ui.tsx";
+import { useT } from "../workspace/usePrefs.ts";
+import { tr } from "../workspace/tr.ts";
 
 type Notify = (msg: string, kind?: "info" | "error") => void;
 
@@ -90,7 +92,7 @@ export function useDevices(link: LinkState, seq: number): DevicesState {
 async function activate(device: DeviceSummary, p: { devices: DevicesState; onSwitched: () => void; notify: Notify; report: (e: unknown) => void }): Promise<boolean> {
   try {
     await api.deviceActivate(device.id);
-    p.notify(`Active device: ${device.display_name}.`);
+    p.notify(tr("dv.activeDeviceV1", { v1: device.display_name }));
     return true;
   } catch (e) {
     p.report(e);
@@ -103,16 +105,17 @@ async function activate(device: DeviceSummary, p: { devices: DevicesState; onSwi
 
 /** The confirmation shown before switching devices (inline in the Devices window, as a dialog from the dropdown). */
 function SwitchConfirm(p: { next: DeviceSummary; current: DeviceSummary | null; blocker: string | null; busy: boolean; onCancel: () => void; onConfirm: () => void }) {
+  const t = useT();
   return (
-    <div className="dev-confirm" role="alertdialog" aria-label={`Switch to ${p.next.display_name}`}>
+    <div className="dev-confirm" role="alertdialog" aria-label={t("dv.switchToV1", { v1: p.next.display_name })}>
       <p>{switchMessage(p.next, p.current)}</p>
       {p.blocker && <p className="form-error">{p.blocker}</p>}
       <div className="dev-confirm-actions">
         <button className="btn" onClick={p.onCancel}>
-          Cancel
+          {t("dv.cancel")}
         </button>
         <button className="btn btn-primary" disabled={p.busy || p.blocker !== null} onClick={p.onConfirm}>
-          Switch device
+          {t("dv.switchDevice")}
         </button>
       </div>
     </div>
@@ -129,6 +132,7 @@ export function DeviceBar(p: {
   notify: Notify;
   report: (e: unknown) => void;
 }) {
+  const t = useT();
   const { list } = p.devices;
   const [pending, setPending] = useState<DeviceSummary | null>(null);
   const [busy, setBusy] = useState(false);
@@ -140,16 +144,16 @@ export function DeviceBar(p: {
       <div className="dev-bar-row">
         <label className="dev-select dev-select-bar">
           <select
-            aria-label="Active device"
+            aria-label={t("dv.activeDevice")}
             value={active?.id ?? ""}
             disabled={!list || list.devices.length === 0 || blocker !== null || busy}
-            title={blocker ?? "The device you are working with"}
+            title={blocker ?? t("dv.theDeviceYouAreWorkingWith")}
             onChange={(e) => {
               const next = list?.devices.find((d) => d.id === e.target.value) ?? null;
               if (next && next.id !== active?.id) setPending(next);
             }}
           >
-            {!active && <option value="">{list ? "No active device" : "Loading…"}</option>}
+            {!active && <option value="">{list ? t("dv.noActiveDevice") : "Loading…"}</option>}
             {list?.devices.map((d) => (
               <option key={d.id} value={d.id}>
                 {deviceOptionText(d)}
@@ -157,8 +161,8 @@ export function DeviceBar(p: {
             ))}
           </select>
         </label>
-        <button className="btn" onClick={p.onOpenWindow} title="Add, remove and inspect devices">
-          Devices…
+        <button className="btn" onClick={p.onOpenWindow} title={t("dv.addRemoveAndInspectDevices")}>
+          {t("dv.devices")}
         </button>
       </div>
       {blocker && <p className="hint">Switching devices waits: {blocker}</p>}
@@ -168,7 +172,7 @@ export function DeviceBar(p: {
         </p>
       )}
       {pending && (
-        <Modal title="Switch device" onClose={() => setPending(null)}>
+        <Modal title={t("dv.switchDevice")} onClose={() => setPending(null)}>
           <SwitchConfirm
             next={pending}
             current={active}
@@ -208,6 +212,7 @@ export function DevicesWindow(p: {
   doc?: GDocument | null;
   run?: (inv: Invocation | Invocation[]) => Promise<unknown>;
 }) {
+  const t = useT();
   const { list } = p.devices;
   const [selected, setSelected] = useState<string | null>(() => (list ? keepSelection(list, null) : null));
   const [details, setDetails] = useState<{ id: string; d: DeviceDetails | null; error: string | null } | null>(null);
@@ -267,7 +272,7 @@ export function DevicesWindow(p: {
 
   const pickFile = async (f: File) => {
     if (f.size > MAX_DEVICE_FILE_BYTES) {
-      p.notify(`${f.name} is larger than ${formatBytes(MAX_DEVICE_FILE_BYTES)}; pick a .lbdev file or LightBurn's prefs.ini.`, "error");
+      p.notify(t("dv.v1IsLargerThanV2Pick", { v1: f.name, v2: formatBytes(MAX_DEVICE_FILE_BYTES) }), "error");
       return;
     }
     try {
@@ -298,9 +303,9 @@ export function DevicesWindow(p: {
 
   const importMarkcfg = (f: File) =>
     task(async () => {
-      if (f.size > MAX_DEVICE_FILE_BYTES) throw new Error(`${f.name} is too large for an EzCad markcfg file.`);
+      if (f.size > MAX_DEVICE_FILE_BYTES) throw new Error(t("dv.v1IsTooLargeForAn", { v1: f.name }));
       const r = (await jobApi.importMarkcfg(f, f.name.replace(/\.[^.]*$/, ""))) as { device?: { id?: string; display_name?: string } };
-      p.notify(`Added ${r?.device?.display_name ?? "a device"} from ${f.name}.`);
+      p.notify(`Added ${r?.device?.display_name ?? t("dv.aDevice")} from ${f.name}.`);
       await p.devices.refresh();
       if (r?.device?.id) setSelected(r.device.id);
     });
@@ -310,7 +315,7 @@ export function DevicesWindow(p: {
 
   return (
     <Modal
-      title="Devices"
+      title={t("dv.devices")}
       wide
       // While the device settings are open, Escape closes only them (every Modal listens on the window).
       onClose={editing ? noopClose : p.onClose}
@@ -338,10 +343,10 @@ export function DevicesWindow(p: {
             </p>
             <div className="dev-confirm-actions">
               <button className="btn" onClick={() => setAsk(null)}>
-                Cancel
+                {t("dv.cancel")}
               </button>
               <button className="btn btn-warn" disabled={busy} onClick={() => void removeIt(ask.device)}>
-                Remove
+                {t("dv.remove")}
               </button>
             </div>
           </div>
@@ -361,43 +366,43 @@ export function DevicesWindow(p: {
             </label>
             <div className="dev-confirm-actions">
               <button className="btn" onClick={() => setAsk(null)}>
-                Cancel
+                {t("dv.cancel")}
               </button>
               <button className="btn btn-primary" disabled={busy} onClick={() => void runImport(ask.parsed.body, importAddParam(ask.choice), ask.file)}>
-                Import
+                {t("dv.import")}
               </button>
             </div>
           </div>
         ) : (
           <>
-            <button className="btn" disabled={busy} onClick={() => void runImport(null, "all", "LightBurn on the engine computer")}>
-              Import from LightBurn on this computer
+            <button className="btn" disabled={busy} onClick={() => void runImport(null, "all", t("dv.lightburnOnTheEngineComputer"))}>
+              {t("dv.importFromLightburnOnThisComputer")}
             </button>
             <button className="btn" disabled={busy} onClick={() => input.current?.click()}>
               <Icon name="upload" /> Import file…
             </button>
-            <button className="btn" disabled={busy} title="Add a device from an EzCad markcfg file (the laser's own settings)" onClick={() => markcfgInput.current?.click()}>
-              Import EzCad…
+            <button className="btn" disabled={busy} title={t("dv.addADeviceFromAnEzcad")} onClick={() => markcfgInput.current?.click()}>
+              {t("dv.importEzcad")}
             </button>
-            <button className="btn" disabled={busy || !device} title="Edit a copy of the selected device" onClick={() => device && void duplicate(device)}>
-              Duplicate
+            <button className="btn" disabled={busy || !device} title={t("dv.editACopyOfTheSelected")} onClick={() => device && void duplicate(device)}>
+              {t("dv.duplicate")}
             </button>
-            <button className="btn" disabled={busy || !device} title="Device settings: field, red dot, galvo corrections, timing, ports, axes, lens" onClick={() => setEditing(true)}>
-              Edit…
+            <button className="btn" disabled={busy || !device} title={t("dv.deviceSettingsFieldRedDotGalvo")} onClick={() => setEditing(true)}>
+              {t("dv.edit")}
             </button>
-            <button className="btn" disabled={busy || removeBlock !== null} title={removeBlock ?? "Remove the selected device"} onClick={() => device && setAsk({ kind: "remove", device })}>
-              Remove
+            <button className="btn" disabled={busy || removeBlock !== null} title={removeBlock ?? t("dv.removeTheSelectedDevice")} onClick={() => device && setAsk({ kind: "remove", device })}>
+              {t("dv.remove")}
             </button>
             <button
               className="btn btn-primary"
               disabled={busy || activateBlock !== null}
-              title={activateBlock ?? "Work with the selected device"}
+              title={activateBlock ?? t("dv.workWithTheSelectedDevice")}
               onClick={() => device && setAsk({ kind: "switch", device })}
             >
-              Make active
+              {t("dv.makeActive")}
             </button>
             <button className="btn" onClick={p.onClose}>
-              Close
+              {t("dv.close")}
             </button>
           </>
         )
@@ -415,19 +420,19 @@ export function DevicesWindow(p: {
         }}
       />
       {list === null ? (
-        <p className="muted">Loading…</p>
+        <p className="muted">{t("dv.loading")}</p>
       ) : list.devices.length === 0 ? (
-        <p className="muted">No devices yet. Import them from LightBurn.</p>
+        <p className="muted">{t("dv.noDevicesYetImportThemFrom")}</p>
       ) : (
         <div className="dev-table-wrap">
-          <table className="dev-table" role="grid" aria-label="Devices">
+          <table className="dev-table" role="grid" aria-label={t("dv.devices")}>
             <thead>
               <tr>
-                <th scope="col">Name</th>
-                <th scope="col">Controller</th>
-                <th scope="col">Size</th>
-                <th scope="col">Origin</th>
-                <th scope="col">Source</th>
+                <th scope="col">{t("dv.name")}</th>
+                <th scope="col">{t("dv.controller")}</th>
+                <th scope="col">{t("dv.size")}</th>
+                <th scope="col">{t("dv.origin")}</th>
+                <th scope="col">{t("dv.source")}</th>
               </tr>
             </thead>
             <tbody>
@@ -452,7 +457,7 @@ export function DevicesWindow(p: {
                   <td>
                     <span className="dev-name">
                       {d.id === list.active && (
-                        <span className="dev-star" title="Active device" aria-label="Active device">
+                        <span className="dev-star" title={t("dv.activeDevice")} aria-label={t("dv.activeDevice")}>
                           *
                         </span>
                       )}
@@ -464,7 +469,7 @@ export function DevicesWindow(p: {
                     {d.name}
                     {d.lightburn_type ? <span className="dev-sub"> · {d.lightburn_type}</span> : null}
                   </td>
-                  <td>{workspaceText(isGalvo(d.kind) ? [d.workspace_mm[0], d.workspace_mm[0]] : d.workspace_mm)}</td>
+                  <td>{deviceSizeText(d)}</td>
                   <td>{originLabel(d.origin)}</td>
                   <td>{sourceLabel(d.source)}</td>
                 </tr>
@@ -512,6 +517,7 @@ function noopClose() {}
 
 /** The read-only summary of the selected device (LightBurn 2.x shows one under the list). */
 function DeviceSettings(p: { device: DeviceSummary; details: { d: DeviceDetails | null; error: string | null } | null }) {
+  const t = useT();
   const { device } = p;
   const d = p.details?.d ?? null;
   const groups = new Map<string, { label: string; value: unknown }[]>();
@@ -525,30 +531,30 @@ function DeviceSettings(p: { device: DeviceSummary; details: { d: DeviceDetails 
     <section className="dev-settings" aria-label={`${device.display_name} settings`}>
       <h4>{device.display_name}</h4>
       <dl className="kv">
-        <dt>Controller</dt>
+        <dt>{t("dv.controller")}</dt>
         <dd>{device.name}</dd>
-        <dt>Connection</dt>
+        <dt>{t("dv.connection")}</dt>
         <dd>{device.lightburn_type ?? "–"}</dd>
-        <dt>Kind</dt>
+        <dt>{t("dv.kind")}</dt>
         <dd>{kindLabel(device.kind)}</dd>
         <dt>{isGalvo(device.kind) ? "Field" : "Workspace"}</dt>
-        <dd>{workspaceText(isGalvo(device.kind) ? [device.workspace_mm[0], device.workspace_mm[0]] : device.workspace_mm)}</dd>
-        <dt>Origin</dt>
+        <dd>{deviceSizeText(device)}</dd>
+        <dt>{t("dv.origin")}</dt>
         <dd>{originLabel(device.origin)}</dd>
-        <dt>Source</dt>
+        <dt>{t("dv.source")}</dt>
         <dd>{sourceLabel(device.source)}</dd>
-        <dt>Runs jobs</dt>
-        <dd>{device.controllable ? "Yes" : "No (design only)"}</dd>
+        <dt>{t("dv.runsJobs")}</dt>
+        <dd>{device.controllable ? "Yes" : t("dv.noDesignOnly")}</dd>
         {d?.base && (
           <>
-            <dt>Profile base</dt>
+            <dt>{t("dv.profileBase")}</dt>
             <dd>{d.base}</dd>
           </>
         )}
       </dl>
       {designOnly && <p className="run-hint">{designOnly}</p>}
       {p.details === null ? (
-        <p className="muted">Loading settings…</p>
+        <p className="muted">{t("dv.loadingSettings")}</p>
       ) : p.details.error ? (
         <p className="form-error">{p.details.error}</p>
       ) : (
@@ -556,7 +562,7 @@ function DeviceSettings(p: { device: DeviceSummary; details: { d: DeviceDetails 
           <>
             {d.profile.length > 0 && (
               <details className="dev-group">
-                <summary>OpenEtch profile</summary>
+                <summary>{t("dv.openetchProfile")}</summary>
                 <dl className="kv">
                   {d.profile.map((r) => (
                     <SettingRow key={r.label} label={r.label} value={r.value} />
@@ -577,14 +583,14 @@ function DeviceSettings(p: { device: DeviceSummary; details: { d: DeviceDetails 
             {d.diffs.length > 0 ? (
               <details className="lb-diffs">
                 <summary>
-                  {d.diffs.length} difference{d.diffs.length === 1 ? "" : "s"} from {d.base ?? "the base profile"}
+                  {d.diffs.length} difference{d.diffs.length === 1 ? "" : "s"} from {d.base ?? t("dv.theBaseProfile")}
                 </summary>
                 <table className="lb-diff-table">
                   <thead>
                     <tr>
-                      <th scope="col">Setting</th>
-                      <th scope="col">Base</th>
-                      <th scope="col">This device</th>
+                      <th scope="col">{t("dv.setting")}</th>
+                      <th scope="col">{t("dv.base")}</th>
+                      <th scope="col">{t("dv.thisDevice")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -602,7 +608,7 @@ function DeviceSettings(p: { device: DeviceSummary; details: { d: DeviceDetails 
                 </table>
               </details>
             ) : (
-              device.controllable && <p className="hint">The profile matches {d.base ?? "its base"}.</p>
+              device.controllable && <p className="hint">The profile matches {d.base ?? t("dv.itsBase")}.</p>
             )}
           </>
         )

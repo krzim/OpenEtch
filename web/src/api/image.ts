@@ -8,6 +8,7 @@
 import { CMD } from "./commands.ts";
 import type { Invocation } from "./client.ts";
 import type { CutSettings } from "./types.ts";
+import { tr } from "../workspace/tr.ts";
 
 /** doc::DitherMode (LightBurn's `ditherMode`; LightBurn's "Dither" is `floyd_steinberg`). */
 export type DitherMode =
@@ -83,17 +84,17 @@ export const DEFAULT_IMAGE_SETTINGS: ImageSettings = {
 
 /** The dither modes in LightBurn's order, with their LightBurn names. */
 export const DITHER_MODES: { value: DitherMode; label: string; hint: string }[] = [
-  { value: "threshold", label: "Threshold", hint: "Black or white at 50 % grey; for logos and line art" },
-  { value: "ordered", label: "Ordered", hint: "Regular 8x8 pattern; fast, visible texture" },
-  { value: "atkinson", label: "Atkinson", hint: "Error diffusion that keeps highlights and shadows crisp" },
-  { value: "floyd_steinberg", label: "Dither", hint: "Floyd-Steinberg error diffusion" },
-  { value: "stucki", label: "Stucki", hint: "Wide error diffusion; smooth photos" },
-  { value: "jarvis", label: "Jarvis", hint: "Wide error diffusion; the usual choice for photos" },
-  { value: "newsprint", label: "Newsprint", hint: "Clustered 45° dots, like newspaper print" },
-  { value: "halftone", label: "Halftone", hint: "Round dots on a screen of the given cells per inch and angle" },
-  { value: "sketch", label: "Sketch", hint: "Keeps edges and drops flat areas" },
-  { value: "grayscale", label: "Grayscale", hint: "Varies the power per pixel between Min power and the layer's power" },
-  { value: "slice3d", label: "3D Sliced", hint: "Depth map: one grey-level slice per pass, deepest (darkest) first; galvo deep engraving" },
+  { value: "threshold", label: "Threshold", hint: tr("apii.blackOrWhiteAt50Grey") },
+  { value: "ordered", label: "Ordered", hint: tr("apii.regular8x8PatternFastVisibleTexture") },
+  { value: "atkinson", label: "Atkinson", hint: tr("apii.errorDiffusionThatKeepsHighlightsAnd") },
+  { value: "floyd_steinberg", label: "Dither", hint: tr("apii.floydSteinbergErrorDiffusion") },
+  { value: "stucki", label: "Stucki", hint: tr("apii.wideErrorDiffusionSmoothPhotos") },
+  { value: "jarvis", label: "Jarvis", hint: tr("apii.wideErrorDiffusionTheUsualChoice") },
+  { value: "newsprint", label: "Newsprint", hint: tr("apii.clustered45DotsLikeNewspaperPrint") },
+  { value: "halftone", label: "Halftone", hint: tr("apii.roundDotsOnAScreenOf") },
+  { value: "sketch", label: "Sketch", hint: tr("apii.keepsEdgesAndDropsFlatAreas") },
+  { value: "grayscale", label: "Grayscale", hint: tr("apii.variesThePowerPerPixelBetween") },
+  { value: "slice3d", label: "3D Sliced", hint: tr("apii.depthMapOneGreyLevelSlice") },
 ];
 
 /** DPI for a line interval in mm (null for an interval that is not a positive number). */

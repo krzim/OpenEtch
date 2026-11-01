@@ -32,18 +32,20 @@ import type { Vec2 } from "./api/types.ts";
 import { useEngine } from "./api/useEngine.ts";
 import { BrowserPanel } from "./components/BrowserPanel.tsx";
 import { ContextMenu, type MenuItem } from "./components/ContextMenu.tsx";
-import { ArrayDialog, CommandPalette, PlaceDialog, StockDialog } from "./components/Dialogs.tsx";
+import { CommandPalette, PlaceDialog, StockDialog } from "./components/Dialogs.tsx";
 import { DeviceBar, DevicesWindow, useDevices } from "./components/Devices.tsx";
 import { useEditTools } from "./components/EditTools.tsx";
 import { useTextTools } from "./text/useTextTools.tsx";
 import { guideScope } from "./guides.ts";
 import { DropOverlay, useFileDrop } from "./components/FileDrop.tsx";
 import { FileDialogs, FileMenu, useFileActions } from "./components/FileMenu.tsx";
-import { ENGINE_ACCEPT } from "./files/fileFormats.ts";
+import { ENGINE_ACCEPT, importTargetLayer } from "./files/fileFormats.ts";
+import { filesState } from "./files/filesStore.ts";
 import { useFilesUi } from "./files/useFilesUi.tsx";
 import { SimPinBadge } from "./libs/JobSafety.tsx";
 import { LaserExtras } from "./libs/LaserExtras.tsx";
 import { useLibsUi } from "./libs/useLibsUi.tsx";
+import { useDesignUi } from "./design/useDesignUi.tsx";
 import { MachineCard, PreviewStatsCard, RunsCard } from "./components/LaserPanel.tsx";
 import { frameWithOptions } from "./components/FramingOptions.tsx";
 import { requestRunWithOptions, togglePause } from "./components/JobControls.tsx";
@@ -64,8 +66,18 @@ import { RecentProjects } from "./workspace/RecentProjects.tsx";
 import { StatusBar } from "./workspace/StatusBar.tsx";
 import { sendViewCommand } from "./workspace/viewStatus.ts";
 import { WorkspaceFileItems, useWorkspaceUi } from "./workspace/useWorkspace.tsx";
+import { Dock } from "./workspace/Dock.tsx";
+import { DockAreaHost, FloatHost, WindowMenu, useAreaHasWindows } from "./workspace/DockHost.tsx";
+import { useDocTabs } from "./workspace/DocTabs.tsx";
+import { useDocking } from "./workspace/DockingTool.tsx";
+import { useFlash, withLayerFlash } from "./workspace/flash.tsx";
+import { togglePositionLaser, usePositionLaser, withPositionLaser } from "./workspace/positionLaser.tsx";
+import { requestRotarySetup } from "./workspace/LaserDock.tsx";
+import { MoveTogetherDialog } from "./design/DesignDialogs.tsx";
+import { jobApi } from "./api/jobApi.ts";
+import { useT } from "./workspace/usePrefs.ts";
 import { alignMoves, distributeMoves, nudgeDelta, nudgeKeyId, queueNudge, rotateKeyDeg, roundMm, type AlignX, type AlignY } from "./editing.ts";
-import { boxCenter, objectBounds, toPathData, geometryCmds, unionBoxes, type Box } from "./geometry.ts";
+import { boxCenter, objectBounds, unionBoxes, type Box } from "./geometry.ts";
 import {
   EMPTY_SELECTION,
   alignReference,
@@ -89,18 +101,11 @@ const DEFAULT_FIELD_MM = 153.75;
 const NARROW_QUERY = "(max-width: 1023px)";
 const VIEW_KEY = "openetch.view";
 
-type Dialog = "stock" | "place" | "array" | "commands" | null;
+type Dialog = "stock" | "place" | "commands" | null;
 interface Toast {
   id: number;
   msg: string;
   kind: "info" | "error";
-}
-
-/** Copied objects: ids to duplicate while they exist, plus outlines to recreate after a cut. */
-interface Clip {
-  ids: string[];
-  box: Box | null;
-  shapes: { layer: string; name: string; d: string; image: boolean }[];
 }
 
 function useMediaQuery(q: string): boolean {
@@ -161,7 +166,6 @@ export function App() {
   const [rightOpen, setRightOpen] = useState(!narrow);
   const fileRef = useRef<HTMLInputElement>(null);
   const toastId = useRef(0);
-  const clip = useRef<Clip | null>(null);
   const cursor = useRef<Vec2 | null>(null);
   const importing = useRef(false);
   const openOtherRef = useRef<(f: File) => void>(() => undefined);
@@ -263,6 +267,26 @@ export function App() {
     refreshMachine: () => void engine.refreshMachine(),
     onStartPointTool: () => setTool("select"),
   });
+  // Shape Properties, warp / deform, tangent circle, rubber band, toolpath to path, selection queries, page positions,
+  // grid array, curve tolerance, the Art Library and the clipboard (src/design/).
+  const designUi = useDesignUi({
+    doc,
+    selection,
+    selectIds,
+    activeLayer,
+    workspaceMm,
+    design: workspace === "design",
+    blocked: !!dialog || fileModalOpen || devicesOpen || filesUi.modalOpen || libsUi.modalOpen,
+    has,
+    run: engine.run,
+    notify,
+    report,
+    cursor,
+    refreshDoc: () => void engine.refreshDoc(),
+  });
+  // The key handler reads the design layer through a ref (a new object each render would re-install it every time).
+  const designRef = useRef(designUi);
+  designRef.current = designUi;
   const runs = pendingRuns(machine);
   const outside = useMemo(() => outsideField(doc, workspaceMm), [doc, workspaceMm]);
 
@@ -271,6 +295,24 @@ export function App() {
 
   // Workspace layer (workspace/): theme, preferences, the rebindable key map (installed before EditTools' keys).
   const ws = useWorkspaceUi();
+  const t = useT();
+  // Document tabs (several open documents, LightBurn's New Window), the Docking tool, Flash layer, dockable windows.
+  const tabs = useDocTabs({
+    dirty: file.dirty,
+    refresh: () => engine.refreshDoc(),
+    onSwitched: () => {
+      setSelectionRaw(EMPTY_SELECTION);
+      setTool("select");
+    },
+    notify,
+    report,
+  });
+  const docking = useDocking({ doc, selected: selection.objects, workspaceMm, run, report, notify });
+  const flash = useFlash();
+  const leftHasWindows = useAreaHasWindows("left");
+  const [moveTogether, setMoveTogether] = useState<"x" | "y" | null>(null);
+  const positioning = usePositionLaser();
+  const rightHasWindows = useAreaHasWindows("right");
 
   // Node editing, line/pen/polygon, measure, trim, rulers and guides, the Modify and Arrange menus (EditTools.tsx).
   const edit = useEditTools({
@@ -283,12 +325,13 @@ export function App() {
     activeLayer,
     workspaceMm,
     design: workspace === "design",
-    blocked: !!dialog || fileModalOpen || devicesOpen || filesUi.modalOpen || libsUi.modalOpen,
+    blocked: !!dialog || fileModalOpen || devicesOpen || filesUi.modalOpen || libsUi.modalOpen || designUi.modalOpen,
     has,
     run,
     notify,
     report,
-    onGridArray: () => setDialog("array"),
+    onGridArray: designUi.openArray,
+    arrangeExtra: designUi.arrangeItems,
     // Guides belong to the project (not the document's name, which projects can share); wait until both are known.
     guideScope: doc && engine.projectKnown ? guideScope(file.projectName, file.openedName) : null,
   });
@@ -333,7 +376,7 @@ export function App() {
       if (m?.kind === "import") {
         const lb = files.filter((f) => /\.lbrn2$/i.test(f.name));
         if (lb.length) file.setModal({ ...m, files: lb, nonce: (m.nonce ?? 0) + 1 });
-        else notify("This dialog takes LightBurn .lbrn2 files.", "error");
+        else notify(t("app.lbrnOnly"), "error");
         return;
       }
       // While another dialog is open or a file task runs, a drop is still kept from the browser but not imported.
@@ -368,7 +411,8 @@ export function App() {
       try {
         for (const imp of plan.imports) {
           try {
-            const ids = await importOne(imp, activeLayer);
+            // Never onto a tool layer unless Import options allow it (LightBurn's "Allow Importing to Tool Layers").
+            const ids = await importOne(imp, importTargetLayer(docRef.current?.layers, activeLayer, filesState().importPrefs.toolLayers));
             imported.push(imp.file.name);
             created.push(...ids);
           } catch (e) {
@@ -433,7 +477,7 @@ export function App() {
       if (!d) return;
       const units = selUnits();
       if (units.length < 2) {
-        notify("Select at least two objects to align. The last one selected stays put.", "error");
+        notify(t("app.alignTwo"), "error");
         return;
       }
       const ref = alignReference(selection, d);
@@ -463,7 +507,7 @@ export function App() {
       const d = docRef.current;
       if (!d || selection.objects.length === 0) return;
       if (target === "stock" && !d.stock) {
-        notify("Define a stock first.", "error");
+        notify(t("app.stockFirst"), "error");
         return;
       }
       if (has(C.OPT.align)) {
@@ -473,8 +517,8 @@ export function App() {
       const b = boxOf(selection.objects);
       if (!b) return;
       const c = boxCenter(b);
-      const t: Vec2 = target === "stock" && d.stock ? d.stock.center : [0, 0];
-      void exec(C.transform(selection.objects, { translate: [roundMm(t[0] - c[0]), roundMm(t[1] - c[1])] }));
+      const to: Vec2 = target === "stock" && d.stock ? d.stock.center : [0, 0];
+      void exec(C.transform(selection.objects, { translate: [roundMm(to[0] - c[0]), roundMm(to[1] - c[1])] }));
     },
     [selection.objects, has, exec, boxOf, notify],
   );
@@ -485,7 +529,7 @@ export function App() {
       if (!d) return;
       const units = selUnits();
       if (units.length < 3) {
-        notify("Select at least three objects to distribute.", "error");
+        notify(t("app.distributeThree"), "error");
         return;
       }
       if (has(C.OPT.distribute) && !anyGrouped(d, selection.objects)) {
@@ -501,12 +545,12 @@ export function App() {
     const d = docRef.current;
     if (!d || selection.objects.length === 0) return;
     if (!has(C.OPT.groupCreate)) {
-      notify("This engine cannot group objects yet.", "error");
+      notify(t("app.noGroup"), "error");
       return;
     }
     const units = unitsOf(d, selection.objects);
     if (units.length < 2) {
-      notify("Select at least two objects or groups to group.", "error");
+      notify(t("app.groupTwo"), "error");
       return;
     }
     void exec(C.groupCreate(units));
@@ -517,11 +561,11 @@ export function App() {
     if (!d) return;
     const groups = [...new Set(selection.objects.map((id) => topGroup(d, id)).filter((g): g is string => g !== null))];
     if (groups.length === 0) {
-      notify("The selection has no groups.", "error");
+      notify(t("app.noGroups"), "error");
       return;
     }
     if (!has(C.OPT.groupUngroup)) {
-      notify("This engine cannot ungroup yet.", "error");
+      notify(t("app.noUngroup"), "error");
       return;
     }
     const invs = groups.map((g) => C.groupUngroup(g));
@@ -536,7 +580,7 @@ export function App() {
   const duplicate = useCallback(() => {
     if (selection.objects.length === 0) return;
     if (!has(C.OPT.duplicate)) {
-      notify("This engine cannot duplicate objects.", "error");
+      notify(t("app.noDuplicate"), "error");
       return;
     }
     run(C.duplicate(selection.objects))
@@ -551,58 +595,10 @@ export function App() {
     if (selection.objects.length) void exec(C.remove(selection.objects));
   }, [selection.objects, exec]);
 
-  const copy = useCallback(
-    (cut: boolean) => {
-      const d = docRef.current;
-      if (!d || selection.objects.length === 0) return;
-      const set = new Set(selection.objects);
-      const objs = d.objects.filter((o) => set.has(o.id));
-      clip.current = {
-        ids: objs.map((o) => o.id),
-        box: boxOf(selection.objects),
-        shapes: objs.map((o) => ({ layer: o.layer, name: o.name, d: toPathData(geometryCmds(o.geometry), o.transform), image: o.geometry.kind === "image" })),
-      };
-      if (cut) void exec(C.remove(selection.objects));
-      notify(`${cut ? "Cut" : "Copied"} ${objs.length} object${objs.length === 1 ? "" : "s"}.`);
-    },
-    [selection.objects, boxOf, exec, notify],
-  );
-
-  /** Paste at the pointer when it is over the canvas, else in place. */
-  const paste = useCallback(
-    (inPlace: boolean) => {
-      const d = docRef.current;
-      const c = clip.current;
-      if (!d || !c) return;
-      const at = !inPlace && cursor.current && c.box ? cursor.current : null;
-      const off: Vec2 = at && c.box ? [roundMm(at[0] - boxCenter(c.box)[0]), roundMm(at[1] - boxCenter(c.box)[1])] : [0, 0];
-      const exist = c.ids.every((id) => d.objects.some((o) => o.id === id));
-      if (exist && has(C.OPT.duplicate)) {
-        run(C.duplicate(c.ids, off))
-          .then((r) => selectIds(createdIds(r)))
-          .catch(report);
-        return;
-      }
-      if (!has(C.OPT.shapePath)) {
-        notify("The copied objects no longer exist.", "error");
-        return;
-      }
-      const shapes = c.shapes.filter((s) => !s.image && d.layers.some((l) => l.id === s.layer));
-      if (shapes.length < c.shapes.length) notify("Images and objects on deleted layers cannot be pasted after a cut.", "error");
-      if (!shapes.length) return;
-      const invs = shapes.map((s) => C.shapePath(s.d, s.layer, s.name));
-      const moveAfter = off[0] !== 0 || off[1] !== 0;
-      run(invs.length === 1 ? invs[0] : invs)
-        .then(async (r) => {
-          const results = r && typeof r === "object" && Array.isArray((r as { results?: unknown }).results) ? (r as { results: unknown[] }).results : [r];
-          const ids = results.flatMap((x) => createdIds(x));
-          if (moveAfter && ids.length) await run(C.transform(ids, { translate: off }));
-          selectIds(ids);
-        })
-        .catch(report);
-    },
-    [has, run, selectIds, report, notify],
-  );
+  // Cut / copy / paste: the design layer keeps the internal copy (an Art Library fragment: images, groups, text and
+  // parametric shapes survive a cut) and talks to the system clipboard (src/design/useDesignUi.tsx).
+  const copy = useCallback((cut: boolean) => designRef.current.copy(cut), []);
+  const paste = useCallback((inPlace: boolean) => designRef.current.paste(inPlace), []);
 
   // While a command is in flight, auto-repeats of the same held arrow key merge, so holding a key sends a few commands,
   // not dozens. Separate presses, or another key or modifier, are never merged: one undo step each (see `mergesNudge`).
@@ -702,7 +698,7 @@ export function App() {
         return;
       }
       if (typingIn(e.target)) return;
-      if (dialog || fileModalOpen || filesUi.modalOpen || libsUi.modalOpen) return;
+      if (dialog || fileModalOpen || filesUi.modalOpen || libsUi.modalOpen || designRef.current.modalOpen) return;
       const d = docRef.current;
       const design = workspace === "design";
       const m = { shift: e.shiftKey, ctrl: mod, alt: e.altKey };
@@ -757,36 +753,27 @@ export function App() {
               duplicate();
               return;
             case "c":
-              if (selection.objects.length && window.getSelection()?.isCollapsed !== false) {
-                e.preventDefault();
-                copy(false);
-              }
+              if (selection.objects.length && window.getSelection()?.isCollapsed !== false) designRef.current.clipKey("copy", e);
               return;
             case "x":
-              if (selection.objects.length) {
-                e.preventDefault();
-                copy(true);
-              }
+              if (selection.objects.length) designRef.current.clipKey("cut", e);
               return;
             case "v":
-              if (clip.current) {
-                e.preventDefault();
-                paste(false);
-              }
+              designRef.current.clipKey("paste", e);
               return;
           }
         }
       }
       if (e.key === "Escape") {
         setMenu(null);
+        togglePositionLaser(false);
         if (tool !== "select") setTool("select");
         else setSelectionRaw(EMPTY_SELECTION);
         return;
       }
       if (!design) return;
-      if (e.altKey && !mod && k === "v" && clip.current) {
-        e.preventDefault();
-        paste(true);
+      if (e.altKey && !mod && k === "v" && designRef.current.canPaste) {
+        designRef.current.clipKey("pasteInPlace", e);
         return;
       }
       // Alt+arrows / Alt+PgUp/PgDn align (LightBurn).
@@ -931,46 +918,49 @@ export function App() {
   const grouped = doc ? anyGrouped(doc, selection.objects) : false;
 
   const menuItems: MenuItem[] = [
-    { label: "Cut", hint: "Ctrl+X", disabled: !hasSel, action: () => copy(true) },
-    { label: "Copy", hint: "Ctrl+C", disabled: !hasSel, action: () => copy(false) },
-    { label: "Paste", hint: "Ctrl+V", disabled: !clip.current, action: () => paste(false) },
-    { label: "Duplicate", hint: "Ctrl+D", disabled: !hasSel || !has(C.OPT.duplicate), action: duplicate },
-    { label: "Delete", hint: "Del", disabled: !hasSel, action: deleteSelection },
+    { label: t("app.cut"), hint: "Ctrl+X", disabled: !hasSel, action: () => copy(true) },
+    { label: t("app.copy"), hint: "Ctrl+C", disabled: !hasSel, action: () => copy(false) },
+    { label: t("app.paste"), hint: "Ctrl+V", disabled: !designUi.canPaste, action: () => paste(false) },
+    { label: t("app.duplicate"), hint: "Ctrl+D", disabled: !hasSel || !has(C.OPT.duplicate), action: duplicate },
+    { label: t("app.delete"), hint: "Del", disabled: !hasSel, action: deleteSelection },
     { sep: true },
-    { label: "Group", hint: "Ctrl+G", disabled: units < 2 || !has(C.OPT.groupCreate), action: group },
-    { label: "Ungroup", hint: "Ctrl+U", disabled: !grouped || !has(C.OPT.groupUngroup), action: ungroup },
+    { label: t("app.group"), hint: "Ctrl+G", disabled: units < 2 || !has(C.OPT.groupCreate), action: group },
+    { label: t("app.ungroup"), hint: "Ctrl+U", disabled: !grouped || !has(C.OPT.groupUngroup), action: ungroup },
     { sep: true },
     ...edit.menuItems,
     ...filesUi.contextItems,
     ...libsUi.menuItems,
+    ...designUi.menuItems,
     ...(text.menuItems.length ? [{ sep: true } as const, ...text.menuItems] : []),
     { sep: true },
-    { label: "Align left", hint: "L", disabled: units < 2, action: () => alignTo("left") },
-    { label: "Align horizontal centres", hint: "C", disabled: units < 2, action: () => alignTo("center") },
-    { label: "Align right", hint: "R", disabled: units < 2, action: () => alignTo("right") },
-    { label: "Align top", hint: "T", disabled: units < 2, action: () => alignTo(undefined, "top") },
-    { label: "Align vertical centres", hint: "E", disabled: units < 2, action: () => alignTo(undefined, "center") },
-    { label: "Align bottom", hint: "B", disabled: units < 2, action: () => alignTo(undefined, "bottom") },
-    { label: "Centre on stock", disabled: !hasSel || !doc?.stock, action: () => centreOn("stock") },
-    { label: "Centre on field", hint: "P", disabled: !hasSel, action: () => centreOn("field") },
+    { label: t("app.alignLeft"), hint: "L", disabled: units < 2, action: () => alignTo("left") },
+    { label: t("app.alignHCenter"), hint: "C", disabled: units < 2, action: () => alignTo("center") },
+    { label: t("app.alignRight"), hint: "R", disabled: units < 2, action: () => alignTo("right") },
+    { label: t("app.alignTop"), hint: "T", disabled: units < 2, action: () => alignTo(undefined, "top") },
+    { label: t("app.alignVCenter"), hint: "E", disabled: units < 2, action: () => alignTo(undefined, "center") },
+    { label: t("app.alignBottom"), hint: "B", disabled: units < 2, action: () => alignTo(undefined, "bottom") },
+    { label: t("app.centreStock"), disabled: !hasSel || !doc?.stock, action: () => centreOn("stock") },
+    { label: t("app.centreField"), hint: "P", disabled: !hasSel, action: () => centreOn("field") },
     { sep: true },
-    { label: "Flip horizontal", hint: "Ctrl+Shift+H", disabled: !hasSel, action: () => flip("x") },
-    { label: "Flip vertical", hint: "Ctrl+Shift+V", disabled: !hasSel, action: () => flip("y") },
+    ...docking.menuItems,
     { sep: true },
-    { label: "Select all", hint: "Ctrl+A", disabled: !doc, action: () => doc && setSelection(selectAll(doc)) },
-    { label: "Invert selection", hint: "Ctrl+Shift+I", disabled: !doc, action: () => doc && setSelection(invertSelection(selection, doc)) },
+    { label: t("app.flipH"), hint: "Ctrl+Shift+H", disabled: !hasSel, action: () => flip("x") },
+    { label: t("app.flipV"), hint: "Ctrl+Shift+V", disabled: !hasSel, action: () => flip("y") },
+    { sep: true },
+    { label: t("app.selectAll"), hint: "Ctrl+A", disabled: !doc, action: () => doc && setSelection(selectAll(doc)) },
+    { label: t("app.invertSelection"), hint: "Ctrl+Shift+I", disabled: !doc, action: () => doc && setSelection(invertSelection(selection, doc)) },
   ];
 
   // The framing hotkeys: the Laser window's framing options (components/FramingOptions.tsx), on the selection when
   // there is one, else the whole job; `style` overrides the frame style.
   const frameWith = (style?: "bounds" | "outline") =>
-    void machineAction(frameWithOptions(selection.objects, { selectionOnly: selection.objects.length > 0, ...(style ? { style } : {}) }), "Framing with the red pointer.");
+    void machineAction(frameWithOptions(selection.objects, { selectionOnly: selection.objects.length > 0, ...(style ? { style } : {}) }), t("app.framing"));
   // Request run (hotkey, toolbar) with the Laser window's run options; it still needs PIN approval.
   const requestRun = () => void requestRunWithOptions(selection.objects).then(notify).catch(report).finally(() => void engine.refreshMachine());
   const laserDisabled = designOnlyReason(device);
   // Workspace hotkeys (workspace/hotkeys.ts); App's own keys stay in the handler above.
   ws.keymap.current = {
-    blocked: () => !!dialog || fileModalOpen || devicesOpen || filesUi.modalOpen || libsUi.modalOpen,
+    blocked: () => !!dialog || fileModalOpen || devicesOpen || filesUi.modalOpen || libsUi.modalOpen || designUi.modalOpen,
     modalOpen: () => ws.dialog !== null,
     handlers: {
       "app.preferences": () => ws.open("prefs"),
@@ -991,13 +981,38 @@ export function App() {
       "laser.frameSelection": () => (laserDisabled ? false : frameWith()),
       "laser.frameSquare": () => (laserDisabled ? false : frameWith("bounds")),
       "laser.frameOutline": () => (laserDisabled ? false : frameWith("outline")),
-      "laser.frameStop": () => void machineAction(api.frameStop(), "Framing stopped. Pending runs are kept."),
+      "laser.frameStop": () => void machineAction(api.frameStop(), t("app.frameStopped")),
       "laser.requestRun": () => (laserDisabled ? false : requestRun()),
       "laser.pauseResume": () => void togglePause().then(notify).catch(report),
       "laser.stop": stop,
       ...text.handlers,
       ...filesUi.handlers,
       ...libsUi.handlers,
+      ...designUi.handlers,
+      ...edit.handlers,
+      // LightBurn 2.0 defaults (workspace/hotkeys.ts): Trim Ctrl+K, Measure Alt+M, Align centres Alt+Home, Move together
+      // Alt+Shift+H / V, Position laser Alt+L, Rotary setup Ctrl+Shift+R; Docking and Toggle Side Panels unbound.
+      "tool.trim": () => (workspace === "design" && has("path.trim") ? setTool("trim") : false),
+      "tool.measure": () => (workspace === "design" ? setTool("measure") : false),
+      "arrange.alignCenters": () => (workspace === "design" && units >= 2 ? alignTo("center", "center") : false),
+      "arrange.moveHTogether": () => (workspace === "design" && units >= 2 ? setMoveTogether("x") : false),
+      "arrange.moveVTogether": () => (workspace === "design" && units >= 2 ? setMoveTogether("y") : false),
+      "arrange.dockLeft": () => (workspace === "design" && hasSel ? docking.dock("left") : false),
+      "arrange.dockRight": () => (workspace === "design" && hasSel ? docking.dock("right") : false),
+      "arrange.dockUp": () => (workspace === "design" && hasSel ? docking.dock("up") : false),
+      "arrange.dockDown": () => (workspace === "design" && hasSel ? docking.dock("down") : false),
+      "laser.position": () => (laserDisabled ? false : togglePositionLaser()),
+      "laser.rotary": () => {
+        if (!has("job.set_rotary")) return false;
+        if (workspace !== "laser") switchWorkspace("laser");
+        requestRotarySetup();
+      },
+      "window.sidePanels": () => {
+        const open = !(leftOpen || rightOpen);
+        setLeftOpen(open);
+        setRightOpen(open);
+      },
+      "window.newTab": () => (tabs.api.supported ? tabs.api.newTab() : false),
     },
   };
 
@@ -1027,6 +1042,18 @@ export function App() {
             )}
             extra={(close) => (
               <>
+                {tabs.api.supported && (
+                  <button
+                    role="menuitem"
+                    className="menu-item"
+                    onClick={() => {
+                      close();
+                      tabs.api.newTab();
+                    }}
+                  >
+                    <span>{t("tabs.newTab")}</span>
+                  </button>
+                )}
                 <WorkspaceFileItems close={close} open={ws.open} />
                 {libsUi.fileItems(close)}
               </>
@@ -1036,6 +1063,7 @@ export function App() {
         }
         extra={
           <>
+            <WindowMenu />
             <SimPinBadge machine={machine} />
             <TopActions machine={machine} onHotkeys={() => ws.open("hotkeys")} onPreferences={() => ws.open("prefs")} helpExtra={libsUi.helpItems} />
           </>
@@ -1054,6 +1082,7 @@ export function App() {
         dirty={file.dirty}
         pendingRuns={runs.length}
       />
+      <div className="doc-tabs-row">{tabs.bar}</div>
       <Toolbar
         workspace={workspace}
         tool={tool}
@@ -1071,15 +1100,15 @@ export function App() {
         onStock={() => setDialog("stock")}
         onImport={openImport}
         onPlace={() => setDialog("place")}
-        onArray={() => setDialog("array")}
+        onArray={designUi.openArray}
         onDelete={deleteSelection}
         onArrange={arrange}
         onSnap={(snap) => setPrefs((p) => ({ ...p, snap }))}
         onViewStyle={(viewStyle) => setPrefs((p) => ({ ...p, viewStyle }))}
         onCommands={() => setDialog("commands")}
         onTogglePreview={() => setShowPreview((v) => !v)}
-        onFrame={() => void machineAction(frameWithOptions(selection.objects), "Framing with the red pointer.")}
-        onFrameStop={() => void machineAction(api.frameStop(), "Framing stopped. Pending runs are kept.")}
+        onFrame={() => void machineAction(frameWithOptions(selection.objects), t("app.framing"))}
+        onFrameStop={() => void machineAction(api.frameStop(), t("app.frameStopped"))}
         onRequestRun={requestRun}
         designOnly={designOnlyReason(device)}
         onToggleLeft={() => setLeftOpen((v) => !v)}
@@ -1088,6 +1117,7 @@ export function App() {
           <>
             {text.toolbar}
             {edit.toolbar}
+            {designUi.toolbar}
             {libsUi.toolbar}
           </>
         }
@@ -1102,9 +1132,10 @@ export function App() {
             }}
           />
         )}
-        <aside className={`panel panel-left${leftOpen ? " open" : ""}`} aria-label="Browser">
-          <div className="panel-title">Browser</div>
+        <aside className={`panel panel-left${leftOpen && leftHasWindows ? " open" : ""}`} aria-label={t("win.browser")}>
           <div className="panel-body">
+            <DockAreaHost area="left" />
+            <Dock id="browser" title={t("win.browser")}>
             <BrowserPanel
               doc={doc}
               selection={selection}
@@ -1122,6 +1153,7 @@ export function App() {
               run={run}
               report={report}
             />
+            </Dock>
           </div>
         </aside>
 
@@ -1148,7 +1180,20 @@ export function App() {
             run={run}
             notify={notify}
             report={report}
-            canvasTool={libsUi.wrap(text.wrap(edit.canvas))}
+            canvasTool={withPositionLaser(
+              withLayerFlash(designUi.wrap(libsUi.wrap(text.wrap(edit.canvas))), doc, flash),
+              positioning,
+              (pt) =>
+                void machineAction(jobApi.pointer(roundMm(pt[0]), roundMm(pt[1])), t("poslaser.done", { x: roundMm(pt[0]), y: roundMm(pt[1]) })),
+              (end) => (
+                <div className="vp-overlay lx-sp-bar" role="status">
+                  <span>{t("poslaser.bar")}</span>
+                  <button className="btn small" onClick={end}>
+                    {t("common.cancel")}
+                  </button>
+                </div>
+              ),
+            )}
           />
           {previewOn && engine.preview && (
             <PreviewTimeline
@@ -1163,12 +1208,13 @@ export function App() {
             />
           )}
           </div>
-          {workspace === "design" && <PaletteBar doc={doc} selected={selection.objects} run={run} report={report} notify={notify} />}
+          <DockAreaHost area="bottom" />
+          {workspace === "design" && <PaletteBar doc={doc} selected={selection.objects} run={run} report={report} notify={notify} has={has} />}
         </section>
 
-        <aside className={`panel panel-right${rightOpen ? " open" : ""}`} aria-label={workspace === "laser" ? "Machine" : "Properties"}>
-          <div className="panel-title">{workspace === "laser" ? "Machine" : "Properties"}</div>
+        <aside className={`panel panel-right${rightOpen && rightHasWindows ? " open" : ""}`} aria-label={workspace === "laser" ? t("win.machine") : t("win.properties")}>
           <div className="panel-body">
+            <DockAreaHost area="right" />
             {workspace === "design" ? (
               <>
               {filesUi.pagesDock}
@@ -1186,6 +1232,9 @@ export function App() {
                 }}
               />
               {libsUi.dock}
+              {designUi.dock}
+              {docking.window}
+              <Dock id="properties" title={t("win.properties")}>
               <PropertiesPanel
                 doc={doc}
                 selection={selection}
@@ -1197,7 +1246,9 @@ export function App() {
                 onEditStock={() => setDialog("stock")}
                 onArrange={arrange}
               />
+              {designUi.properties}
               {text.properties}
+              </Dock>
               </>
             ) : (
               <div className="props">
@@ -1243,6 +1294,7 @@ export function App() {
                   }}
                 />
                 {libsUi.dock}
+                <Dock id="machine" title={t("win.machine")}>
                 <MachineCard machine={machine} httpError={engine.httpError}>
                   {/* Engines without the device registry: LightBurn's devices and the profile diffs. */}
                   {!canDevices && (
@@ -1270,6 +1322,7 @@ export function App() {
                   onOptions={setPreviewOptions}
                 />
                 {selectedLayer && <LayerSection layer={selectedLayer} machine={machine} run={run} report={report} has={has} />}
+                </Dock>
               </div>
             )}
           </div>
@@ -1281,26 +1334,18 @@ export function App() {
         onGoto={(marker) => void engine.historyGoto(marker).catch(report)}
         onDelete={(index) => void engine.historyDelete(index).catch(report)}
       />
-      <StatusBar doc={doc} selection={selection} snap={prefs.snap} machineText={statusMachineText(machineState(machine))} />
+      <StatusBar doc={doc} selection={selection} snap={prefs.snap} machineText={statusMachineText(machineState(machine), t)} />
 
       <input ref={fileRef} type="file" accept={importAccept(has("art.import_pdf") ? ENGINE_ACCEPT : null)} multiple hidden onChange={onPick} />
 
       {dialog === "stock" && <StockDialog doc={doc} run={run} onClose={closeDialog} />}
       {dialog === "place" && <PlaceDialog ids={selection.objects} run={run} onClose={closeDialog} />}
-      {dialog === "array" && doc && (
-        <ArrayDialog
-          doc={doc}
-          ids={selection.objects}
-          workspaceMm={workspaceMm}
-          run={run}
-          onClose={closeDialog}
-          onCreated={(ids) => selectIds([...selection.objects, ...ids])}
-        />
-      )}
       {dialog === "commands" && <CommandPalette commands={engine.commands} run={run} onClose={closeDialog} />}
+      {moveTogether && <MoveTogetherDialog ids={selection.objects} axis={moveTogether} run={run} onClose={() => setMoveTogether(null)} />}
       {edit.dialogs}
       {filesUi.dialogs}
       {libsUi.dialogs}
+      {designUi.dialogs}
       {text.dialogs}
       {ws.dialogs}
       <FileDialogs file={file} docName={doc?.name ?? null} />
@@ -1316,6 +1361,7 @@ export function App() {
           run={run}
         />
       )}
+      <FloatHost />
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />}
       {dropLabel && <DropOverlay label={dropLabel} />}
 
@@ -1331,7 +1377,14 @@ export function App() {
 }
 
 /** The machine part of the status bar. */
-function statusMachineText(st: ReturnType<typeof machineState>): string {
-  const t = { offline: "Engine offline", framing: "Framing", running: "Running", busy: "Busy", ready: "Ready", noLaser: "No laser" }[st.text];
-  return st.sim && st.text === "ready" ? `${t} (simulator)` : t;
+function statusMachineText(st: ReturnType<typeof machineState>, tr: ReturnType<typeof useT>): string {
+  const t = {
+    offline: tr("app.stOffline"),
+    framing: tr("app.stFraming"),
+    running: tr("app.stRunning"),
+    busy: tr("app.stBusy"),
+    ready: tr("app.stReady"),
+    noLaser: tr("app.stNoLaser"),
+  }[st.text];
+  return st.sim && st.text === "ready" ? tr("app.stSim", { state: t }) : t;
 }

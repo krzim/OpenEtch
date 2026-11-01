@@ -1,3 +1,4 @@
+import { tr } from "../workspace/tr.ts";
 // Pure routing for files dropped on the window or picked with Import: which file goes to which engine import, which
 // are refused and why, the drop overlay's label, the enter/leave counter, and the summary toast. No DOM and no fetch,
 // so `npm test` covers it. The browser side (window listeners, reading files) is in components/FileDrop.tsx.
@@ -30,7 +31,7 @@ const NOT_YET: Record<string, string> = {
   gc: "G-code",
   gcode: "G-code",
   nc: "G-code",
-  clb: "LightBurn library",
+  clb: tr("apidr.lightburnLibrary"),
 };
 
 /**
@@ -38,7 +39,7 @@ const NOT_YET: Record<string, string> = {
  * EzCad). On such engines src/files/useFilesUi.tsx takes them before this router; older engines refuse them here.
  */
 const ENGINE_ONLY: Record<string, string> = {
-  ai: "Adobe Illustrator",
+  ai: tr("apidr.adobeIllustrator"),
   pdf: "PDF",
   eps: "EPS",
   plt: "HPGL",
@@ -48,7 +49,7 @@ const ENGINE_ONLY: Record<string, string> = {
   tga: "TGA",
   ezd: "EzCad",
   gbr: "Gerber",
-  drl: "Excellon drill",
+  drl: tr("apidr.excellonDrill"),
   stl: "STL",
   obj: "OBJ",
   off: "OFF",
@@ -126,23 +127,23 @@ export function routeDroppedFiles<F extends { name: string; size: number }>(file
     const ext = fileExt(f.name);
     const refuse = (reason: string) => plan.refused.push({ name: f.name, reason });
     if (kind === "unknown") {
-      refuse(ext ? `.${ext} files cannot be imported` : "not a file type OpenEtch can import");
+      refuse(ext ? tr("apidr.v1FilesCannotBeImported", { v1: ext }) : "not a file type OpenEtch can import");
       continue;
     }
     if (kind === "lbrn-old") {
-      refuse("LightBurn .lbrn/.lbt files need a newer OpenEtch engine; save as .lbrn2");
+      refuse(tr("apidr.lightburnLbrnLbtFilesNeedA"));
       continue;
     }
     if (kind === "engine") {
-      refuse(`${ENGINE_ONLY[ext]} (.${ext}) import needs a newer OpenEtch engine`);
+      refuse(tr("apidr.v1V2ImportNeedsANewer", { v1: ENGINE_ONLY[ext], v2: ext }));
       continue;
     }
     if (kind === "not-yet") {
-      refuse(`${NOT_YET[ext]} (.${ext}) import is not supported yet`);
+      refuse(tr("apidr.v1V2ImportIsNotSupported", { v1: NOT_YET[ext], v2: ext }));
       continue;
     }
     if (f.size > opts.maxBytes) {
-      refuse(`larger than ${mb(opts.maxBytes)}`);
+      refuse(tr("apidr.largerThanV1", { v1: mb(opts.maxBytes) }));
       continue;
     }
     if (f.size === 0) {
@@ -178,10 +179,10 @@ export function planIsEmpty(p: DropPlan<unknown>): boolean {
  * number of items and (sometimes) their MIME types, so a single item that is not a known graphic may be a project.
  */
 export function overlayLabel(items: readonly { type: string }[]): string {
-  if (items.length > 1) return `Drop to import ${items.length} files`;
+  if (items.length > 1) return tr("apidr.dropToImportV1Files", { v1: items.length });
   const t = items[0]?.type ?? "";
-  if (t.startsWith("image/") || t === "image/svg+xml" || /dxf/i.test(t)) return "Drop to import";
-  return "Drop to open or import";
+  if (t.startsWith("image/") || t === "image/svg+xml" || /dxf/i.test(t)) return tr("apidr.dropToImport");
+  return tr("apidr.dropToOpenOrImport");
 }
 
 /** Enter/leave counter so the overlay does not flicker while the pointer crosses child elements. */
@@ -239,7 +240,7 @@ export function dropSummary(s: { imported: string[]; objects: number; refused: {
   if (s.pending) parts.push(`${s.pending} LightBurn file${s.pending === 1 ? "" : "s"} waiting in the import dialog.`);
   if (s.refused.length === 1) parts.push(`${s.refused[0].name}: ${s.refused[0].reason}.`);
   else if (s.refused.length > 1) parts.push(`Not imported: ${s.refused.map((r) => `${r.name} (${r.reason})`).join("; ")}.`);
-  if (parts.length === 0) return { msg: "Nothing imported.", kind: "error" };
+  if (parts.length === 0) return { msg: tr("apidr.nothingImported"), kind: "error" };
   const failed = s.imported.length === 0 && !s.pending;
   return { msg: parts.join(" "), kind: failed ? "error" : "info" };
 }

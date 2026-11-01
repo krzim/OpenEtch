@@ -5,6 +5,8 @@ import { EN_FILES } from "./en-files.ts";
 import { EN_JOB } from "./en-job.ts";
 import { EN_LIBS } from "./en-libs.ts";
 import { EN_TEXT } from "./en-text.ts";
+import { EN_UI } from "./en-ui.ts";
+import { EN_WS } from "./en-ws.ts";
 
 export const EN = {
   // Text, barcodes and variable text (src/text/).
@@ -15,6 +17,10 @@ export const EN = {
   ...EN_FILES,
   // Material library, defaults, test generators, approval gates, laser tools, camera, Help additions (src/libs/).
   ...EN_LIBS,
+  // Document tabs, dockable windows and the Window menu, docking, UI scale (src/workspace/).
+  ...EN_WS,
+  // The older components' strings: Properties, File menu, Toolbar, Edit tools, top bar, dialogs.
+  ...EN_UI,
   "common.cancel": "Cancel",
   "common.close": "Close",
   "common.loading": "Loading…",
@@ -79,6 +85,8 @@ export const EN = {
   "prefs.theme": "Theme",
   "prefs.language": "Language",
   "prefs.uiScale": "Text size",
+  "prefs.iconScale": "Icon and toolbar size",
+  "prefs.handleScale": "Handle and node size",
   "prefs.crosshair": "Full-window crosshair cursor on the canvas",
   "prefs.unitsSection": "Units",
   "prefs.units": "Units",
@@ -171,6 +179,37 @@ export const EN = {
   "layers.frequency": "Frequency",
   "layers.interval": "Interval",
   "layers.speedHint": "Speed {speed}. Double-click a layer for every setting and its sub-layers.",
+  "layers.flash": "Flash layer",
+  "layers.shiftRightClick": "Shift+right-click",
+  "layers.makeTool": "Make tool layer {tool}",
+  "layers.makeOrdinary": "Make an ordinary layer",
+  "layers.toolTitle": "Tool layer {tool}: never output; framed with the job (guides, alignment marks, print-and-cut targets)",
+  "layers.toolNoOutput": "A tool layer never outputs",
+  "layers.modeTool": "Tool",
+  "layers.modeLine": "Line",
+  "layers.modeFill": "Fill",
+  "layers.modeFillLine": "Fill+Line",
+  "layers.modeOffset": "Offset Fill",
+  "layers.unsupported": "LightBurn settings in this layer that OpenEtch will not execute:",
+  "layers.main": "Main",
+  "layers.cleanupPass": "Cleanup",
+  "shape.Circle": "Circle",
+  "shape.Ellipse": "Ellipse",
+  "shape.Rectangle": "Rectangle",
+  "shape.Star": "Star",
+  "shape.Polygon": "Polygon",
+  "shape.Image": "Image",
+  "shape.Text": "Text",
+  "shape.Barcode": "Barcode",
+  "shape.Path": "Path",
+  "layers.subN": "Sub-layer {n}",
+  "layers.subRowTitle": "Click to edit this pass below; double-click for every setting.",
+  "layers.subTabs": "Sub-layers",
+  "layers.mainTabTitle": "The layer's main settings (burned first)",
+  "layers.subTabTitle": "Drag to change the order: sub-layers burn left to right after the main settings",
+  "layers.qpulse": "Q-Pulse",
+  "layers.qpulseDefault": "source default",
+  "layers.passHint": "These fields edit the chosen tab's pass ({mode}); its mode is set in the cut settings.",
 
   "palette.label": "Layer colours",
   "palette.selectFirst": "Select shapes first, then click a colour to put them on that layer.",

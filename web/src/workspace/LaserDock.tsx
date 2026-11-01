@@ -4,7 +4,7 @@
 // Cut Selected Graphics), the job counter (Count, Reset Count, Stop At), Optimization Settings and Rotary Setup, and
 // STOP, which is always allowed. Request run never fires by itself: the run waits for PIN approval in the Runs card.
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { Invocation } from "../api/client.ts";
 import type { GDocument, MachineStatus } from "../api/types.ts";
 import type { LinkState } from "../api/useEngine.ts";
@@ -49,10 +49,31 @@ export function machineState(m: MachineStatus | null): { text: "offline" | "fram
   return { text: m.connected ? "ready" : "noLaser", sim };
 }
 
+/** Rotary Setup asked for by a hotkey (Ctrl+Shift+R, LightBurn's default); the Laser window opens its dialog. */
+let rotaryAsked = false;
+const rotaryListeners = new Set<() => void>();
+export function requestRotarySetup(): void {
+  rotaryAsked = true;
+  for (const l of rotaryListeners) l();
+}
+
 export function LaserDock(p: LaserDockProps) {
   const t = useT();
   const job = useJobStatus(p.link);
   const [dialog, setDialog] = useState<"optimization" | "rotary" | null>(null);
+  const canRotaryNow = p.has("job.set_rotary");
+  useEffect(() => {
+    const take = () => {
+      if (!rotaryAsked) return;
+      rotaryAsked = false;
+      if (canRotaryNow) setDialog("rotary");
+    };
+    take();
+    rotaryListeners.add(take);
+    return () => {
+      rotaryListeners.delete(take);
+    };
+  }, [canRotaryNow]);
   const [requesting, setRequesting] = useState(false);
   const st = machineState(p.machine);
   const stateText = {

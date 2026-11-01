@@ -10,6 +10,7 @@
 // then undone further are mixed: only the undone ones go). Engines without these fields keep every rolled-back step.
 
 import type { HistoryEntry, HistoryStep, Origin } from "./types.ts";
+import { tr } from "../workspace/tr.ts";
 
 export interface TimelineStep {
   /** The engine's step index (what `history.goto` and `history.delete` take). */
@@ -112,8 +113,8 @@ export function discardedByNextEdit(m: TimelineModel, step: TimelineStep): boole
 /** Tooltip line for a step after the marker: what the next edit does to it, and how to bring it back. */
 export function afterMarkerNote(m: TimelineModel, step: TimelineStep): string {
   return discardedByNextEdit(m, step)
-    ? "Undone: your next edit discards it (Redo, Ctrl+Y, brings it back until then)"
-    : "Rolled back (after the marker): kept, and a new edit is inserted before it";
+    ? tr("apih.undoneYourNextEditDiscardsIt")
+    : tr("apih.rolledBackAfterTheMarkerKept");
 }
 
 /** Whether `step` is applied (left of the marker) — failed steps are skipped even then. */

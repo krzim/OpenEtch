@@ -1,0 +1,212 @@
+/* Design-engine UI (src/design/): Art Library dock, Move Selected Objects, Grid Array preview, Shape Properties, and
+   the Warp / Deform and tangent-circle canvas layers. Colours come from the theme tokens in styles.css. */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* ---- Art Library dock ---- */
+.dz-art {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.dz-art-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+.dz-art-row select {
+  flex: 1 1 120px;
+  min-width: 0;
+}
+.dz-art-search {
+  width: 100%;
+  box-sizing: border-box;
+}
+.dz-art-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.dz-art-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: grab;
+  min-width: 0;
+}
+.dz-art-item:hover {
+  background: var(--surface-hover);
+}
+.dz-art-item.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.dz-art-item img,
+.dz-art-ph {
+  width: 64px;
+  height: 64px;
+  object-fit: contain;
+  background: var(--panel);
+  border-radius: 2px;
+}
+.dz-art-name {
+  font-size: 11px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- Move Selected Objects ---- */
+.dz-move-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 52px);
+  gap: 6px;
+  justify-content: center;
+  margin: 4px 0 10px;
+}
+.dz-move-grid .btn {
+  width: 52px;
+  height: 52px;
+  padding: 0;
+  position: relative;
+}
+.dz-anchor {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.dz-anchor-top_left,
+.dz-anchor-left,
+.dz-anchor-bottom_left {
+  left: 6px;
+}
+.dz-anchor-top,
+.dz-anchor-center,
+.dz-anchor-bottom {
+  left: calc(50% - 7px);
+}
+.dz-anchor-top_right,
+.dz-anchor-right,
+.dz-anchor-bottom_right {
+  right: 6px;
+}
+.dz-anchor-top_left,
+.dz-anchor-top,
+.dz-anchor-top_right {
+  top: 6px;
+}
+.dz-anchor-left,
+.dz-anchor-center,
+.dz-anchor-right {
+  top: calc(50% - 7px);
+}
+.dz-anchor-bottom_left,
+.dz-anchor-bottom,
+.dz-anchor-bottom_right {
+  bottom: 6px;
+}
+
+/* ---- Grid Array ---- */
+.dz-array {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.dz-array-form {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+.dz-array-preview {
+  flex: 1 1 220px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.dz-array-preview svg {
+  width: 100%;
+  height: 260px;
+  background: var(--panel);
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+}
+.dz-array-preview.empty {
+  color: var(--muted);
+  min-height: 120px;
+}
+.dz-ap-field {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+}
+.dz-ap-orig,
+.dz-ap-copy {
+  fill: none;
+  stroke-width: 1.2;
+}
+.dz-ap-orig {
+  stroke: var(--text);
+}
+.dz-ap-copy {
+  stroke: var(--accent);
+}
+
+/* ---- canvas layers ---- */
+.dz-layer {
+  pointer-events: none;
+}
+.dz-warp-box {
+  fill: none;
+  stroke: var(--muted);
+}
+.dz-warp-mesh {
+  fill: none;
+  stroke: var(--accent);
+  opacity: 0.6;
+}
+.dz-warp-preview {
+  fill: none;
+  stroke: var(--accent);
+}
+.dz-warp-handle {
+  fill: var(--surface);
+  stroke: var(--accent);
+}
+.dz-warp-handle.hot {
+  fill: var(--accent);
+}
+.dz-tangent {
+  fill: none;
+  stroke: var(--danger);
+  opacity: 0.55;
+}
+.dz-tangent.hot {
+  opacity: 1;
+}
+
+@media (max-width: 600px) {
+  .dz-array-preview svg {
+    height: 180px;
+  }
+}

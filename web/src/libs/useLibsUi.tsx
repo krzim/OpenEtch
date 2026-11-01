@@ -165,13 +165,19 @@ export function useLibsUi(p: LibsUiProps) {
         ctx.readout(node === null ? t("sp.readoutShape") : t("sp.readoutNode", { node }));
         return true;
       },
-      render: (r) => (
+      // The camera overlay goes under the design (LightBurn shows the camera image behind the shapes).
+      underlay: (r) => (
         <>
+          {inner.underlay?.(r)}
           {ov.shown && ov.url && ov.fieldMm > 0 && (
             <g transform="scale(1,-1)" pointerEvents="none" className="lx-cam-overlay">
               <image href={ov.url} x={-ov.fieldMm / 2} y={-ov.fieldMm / 2} width={ov.fieldMm} height={ov.fieldMm} opacity={ov.opacity} preserveAspectRatio="none" />
             </g>
           )}
+        </>
+      ),
+      render: (r) => (
+        <>
           {inner.render(r)}
           {marks.map((mk) => (
             <g key={mk.id} className="lx-start-mark" pointerEvents="none">

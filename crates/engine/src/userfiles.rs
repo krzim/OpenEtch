@@ -9,7 +9,7 @@
 //! | GET | `/api/print` | `?format=pdf\|svg&colors=black\|layers&line_width_mm=&paper=w,h&margin_mm=&area=&ids=` → the print-ready file, inline (`doc.print`) |
 //! | GET | `/api/images/{id}/file` | the image object's file (`image.export`) |
 //! | GET | `/api/images/{id}/processed.png` | `?sub_layer=n`: Save Processed Bitmap (`image.processed`) |
-//! | POST | `/api/document/import` | `?format=svg\|dxf\|image\|tiff\|tga\|pdf\|ai\|eps\|ezd\|hpgl\|plt\|gerber\|drill\|model\|lbrn&mode=merge\|replace&name=` + the command's options as query parameters, the raw file as the body (≤ 100 MB) → like `/api/execute`; `mode=replace` opens the file as a new, unsaved project (`doc.new` then the import, one undo step; downloads are named after `name`) |
+//! | POST | `/api/document/import` | `?format=svg\|dxf\|image\|tiff\|tga\|pdf\|ai\|eps\|ezd\|hpgl\|plt\|gerber\|drill\|model\|lbrn&mode=merge\|replace&name=` + the command's options as query parameters, the raw file as the body (≤ 100 MB) → like `/api/execute`; `mode=replace` opens the file as a new, unsaved project (`doc.new` then the import, one undo step; downloads are named after `name`). `tool_layers=true` (LightBurn's "Allow Importing to Tool Layers", default off) allows `layer=T1`/`T2` (added in the same step when missing); off, those names are refused and an import without `layer` skips a tool layer listed first; a `layer` id is used as given |
 //! | GET | `/api/projects/{name}/thumbnail.png` | `?width=32..=1024` (default 256): the saved project rendered |
 //! | GET | `/api/backups` | `?project=`: `{autosaves: [{file, project, saved_unix_s, size}], backups: [...]}` newest first |
 //! | POST | `/api/backups/restore` | `{kind: "autosave"\|"backup", file, origin?}`: opens it as an unsaved document → like `/api/projects/open` |
@@ -215,7 +215,7 @@ impl UserFiles {
         lock(&self.settings).clone()
     }
 
-    fn config_dir(&self) -> Result<PathBuf, EngineError> {
+    pub(crate) fn config_dir(&self) -> Result<PathBuf, EngineError> {
         lock(&self.config_dir).clone().ok_or_else(|| EngineError::Conflict("the engine has no config directory".into()))
     }
 
@@ -257,9 +257,11 @@ pub fn backup_before_save(dir: &ProjectDir, name: &str, keep: u32) {
     }
     let Ok((on_disk, text)) = dir.read(name) else { return };
     let bdir = dir.root().join(BACKUP_DIR);
-    let path = stamped(&bdir, &on_disk, projects::PROJECT_EXT);
+    // A project in folders is backed up under its flat name (`Clients__Acme__badge`).
+    let stem = projects::flat_name(&on_disk);
+    let path = stamped(&bdir, &stem, projects::PROJECT_EXT);
     match write_atomic(&path, text.as_bytes()) {
-        Ok(()) => rotate(&bdir, projects::PROJECT_EXT, Some(&on_disk), keep as usize),
+        Ok(()) => rotate(&bdir, projects::PROJECT_EXT, Some(&stem), keep as usize),
         Err(e) => tracing::warn!(error = %e, "project backup failed"),
     }
 }
@@ -292,10 +294,10 @@ pub fn autosave_now(st: &AppState, force: bool) -> Result<Option<PathBuf>, Engin
     let text = doc::file::try_to_openetch_json(&doc).map_err(|e| EngineError::Internal(e.to_string()))?;
     let stem = status["name"]
         .as_str()
-        .or(status["display_name"].as_str())
-        .filter(|n| projects::validate_name(n).is_ok())
-        .unwrap_or("Untitled")
-        .to_string();
+        .filter(|n| projects::validate_project_name(n).is_ok())
+        .map(projects::flat_name)
+        .or_else(|| status["display_name"].as_str().filter(|n| projects::validate_name(n).is_ok()).map(str::to_owned))
+        .unwrap_or_else(|| "Untitled".into());
     let dir = st.projects.root().join(AUTOSAVE_DIR);
     let path = stamped(&dir, &stem, projects::PROJECT_EXT);
     write_atomic(&path, text.as_bytes())?;
@@ -429,6 +431,10 @@ fn qvalue(key: &str, v: &str) -> Result<Value, EngineError> {
     {
         if !n.is_finite() {
             return Err(EngineError::BadRequest(format!("{key} '{v}' is not a finite number")));
+        }
+        // Whole numbers stay integers, so integer options (a PDF `page`, a `dpi`) read; float options take them too.
+        if let Ok(i) = v.trim().parse::<i64>() {
+            return Ok(json!(i));
         }
         return Ok(json!(n));
     }
@@ -594,9 +600,16 @@ async fn import(State(st): State<Arc<AppState>>, q: Q, body: Result<Bytes, Bytes
         &[
             "format", "mode", "name", "layer", "width_mm", "keep_position", "split", "page", "hidden_layers", "units_per_mm",
             "invert", "kind", "model_format", "dpi", "outline", "sixteen_bit", "transparent_background", "depth_cutoff_mm",
-            "equalize", "rotation_deg", "mime", "field_mm",
+            "equalize", "rotation_deg", "mime", "field_mm", "tool_layers", "pen_layers",
         ],
     )?;
+    let mut q = q;
+    // LightBurn's "Allow Importing to Tool Layers" (off by default): only then may art land on T1 / T2.
+    let tool_layers = match q.remove("tool_layers").as_deref() {
+        None | Some("false") => false,
+        Some("true") => true,
+        Some(v) => return Err(EngineError::BadRequest(format!("tool_layers must be true or false (got '{v}')"))),
+    };
     let body = body.map_err(|e| match e.status() {
         StatusCode::PAYLOAD_TOO_LARGE => EngineError::TooLarge(format!("the file is larger than {} MB", MAX_IMPORT_BYTES / (1024 * 1024))),
         _ => EngineError::BadRequest(format!("cannot read the upload: {e}")),
@@ -615,16 +628,23 @@ async fn import(State(st): State<Arc<AppState>>, q: Q, body: Result<Bytes, Bytes
         .blocking(move |st| {
             // The file's name without its extension names the document (and the import's group).
             let display = q.get("name").and_then(|n| projects::display_name(n.rsplit_once('.').map_or(n.as_str(), |(stem, _)| stem)));
+            let mut q = q;
+            let before = if lightburn { Vec::new() } else { import_layer(st, &mut q, tool_layers, replace)? };
             let mut inv = import_invocation(&format, Vec::from(body), &q)?;
             if lightburn {
                 inv.params["mode"] = json!(if replace { "replace" } else { "merge" });
                 return st.batch_opening(vec![inv], Origin::Ui, None, display).map(|mut v| v.remove(0));
             }
             if !replace {
-                return st.batch(vec![inv], Origin::Ui).map(|mut v| v.remove(0));
+                let mut invs = before;
+                invs.push(inv);
+                return st.batch(invs, Origin::Ui).map(|mut v| v.pop().expect("the import ran"));
             }
             let new = Invocation { id: "doc.new".into(), params: json!({ "name": display.clone().unwrap_or_else(|| "Untitled".into()) }) };
-            st.batch_opening(vec![new, inv], Origin::Ui, None, display).map(|mut v| v.remove(1))
+            let mut invs = vec![new];
+            invs.extend(before);
+            invs.push(inv);
+            st.batch_opening(invs, Origin::Ui, None, display).map(|mut v| v.pop().expect("the import ran"))
         })
         .await;
     match result {
@@ -634,13 +654,48 @@ async fn import(State(st): State<Arc<AppState>>, q: Q, body: Result<Bytes, Bytes
     }
 }
 
+/// The import's target layer under LightBurn's "Allow Importing to Tool Layers" (`tool_layers`): with it, `layer`
+/// may be `T1` / `T2` (the tool layer, added in the same step when the document has none; returned as the commands
+/// to run first); without it, those names are refused and an import without `layer` goes to the first ordinary
+/// layer. A layer given by id is used as given.
+fn import_layer(st: &AppState, q: &mut HashMap<String, String>, tool_layers: bool, replace: bool) -> Result<Vec<Invocation>, EngineError> {
+    // A replacing import starts from an empty document (one ordinary layer).
+    let doc = if replace { doc::Document::default() } else { st.document() };
+    let off = || EngineError::BadRequest("importing to tool layers is off: pass tool_layers=true (LightBurn's \"Allow Importing to Tool Layers\")".into());
+    match q.get("layer").cloned() {
+        Some(l) if doc.layer(&l).is_none() && (l.eq_ignore_ascii_case("t1") || l.eq_ignore_ascii_case("t2")) => {
+            if !tool_layers {
+                return Err(off());
+            }
+            let t = if l.eq_ignore_ascii_case("t1") { doc::ToolLayer::T1 } else { doc::ToolLayer::T2 };
+            q.insert("layer".into(), t.name().into());
+            if doc.layers.iter().any(|x| x.tool == Some(t)) {
+                Ok(Vec::new())
+            } else {
+                Ok(vec![Invocation { id: "layer.tool".into(), params: json!({ "tool": t.name() }) }])
+            }
+        }
+        // An existing layer named by id is the caller's choice (the web UI applies the preference itself).
+        Some(_) => Ok(Vec::new()),
+        None => {
+            if !tool_layers && doc.layers.first().is_some_and(|x| x.tool.is_some()) {
+                let plain = doc.layers.iter().find(|x| x.tool.is_none()).ok_or_else(|| {
+                    EngineError::BadRequest("the document has only tool layers: add a layer, or pass tool_layers=true".into())
+                })?;
+                q.insert("layer".into(), plain.id.clone());
+            }
+            Ok(Vec::new())
+        }
+    }
+}
+
 async fn thumbnail(State(st): State<Arc<AppState>>, UrlPath(name): UrlPath<String>, q: Q) -> Result<Response, EngineError> {
     let q = query(q, &["width"])?;
     let width = match q.get("width") {
         Some(w) => w.parse::<u32>().ok().filter(|w| (32..=1024).contains(w)).ok_or_else(|| EngineError::BadRequest("width must be 32..=1024".into()))?,
         None => 256,
     };
-    projects::validate_name(&name)?;
+    projects::validate_project_name(&name)?;
     let png = st
         .blocking(move |st| {
             let (_, text) = st.projects.read(&name)?;
@@ -656,7 +711,7 @@ async fn thumbnail(State(st): State<Arc<AppState>>, UrlPath(name): UrlPath<Strin
 async fn backups(State(st): State<Arc<AppState>>, q: Q) -> Result<Json<Value>, EngineError> {
     let q = query(q, &["project"])?;
     let root = st.projects.root().to_path_buf();
-    let p = q.get("project").cloned();
+    let p = q.get("project").map(|p| projects::flat_name(p));
     let a = stored(&root.join(AUTOSAVE_DIR), projects::PROJECT_EXT, p.as_deref());
     let b = stored(&root.join(BACKUP_DIR), projects::PROJECT_EXT, p.as_deref());
     Ok(Json(json!({ "autosaves": a, "backups": b })))

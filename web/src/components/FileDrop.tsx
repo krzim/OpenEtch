@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState } from "react";
 import { carriesFiles, dragDepth, overlayLabel } from "../api/drop.ts";
 import { Icon } from "./ui.tsx";
+import { useT } from "../workspace/usePrefs.ts";
 
 /** Listen for file drags on the window; `onFiles` gets the dropped files. Returns the overlay label, or null. */
 export function useFileDrop(onFiles: (files: File[]) => void): string | null {
@@ -67,12 +68,13 @@ export function useFileDrop(onFiles: (files: File[]) => void): string | null {
 
 /** The full-window "Drop to import" overlay. It ignores pointer events so the drop reaches the window listeners. */
 export function DropOverlay({ label }: { label: string }) {
+  const t = useT();
   return (
     <div className="drop-overlay" aria-live="polite">
       <div className="drop-card">
         <Icon name="import" size={40} />
         <div className="drop-title">{label}</div>
-        <div className="drop-hint">SVG, DXF, PDF, AI, EPS, HPGL, Gerber, 3D models, images, LightBurn or an OpenEtch project</div>
+        <div className="drop-hint">{t("fd.svgDxfPdfAiEpsHpgl")}</div>
       </div>
     </div>
   );

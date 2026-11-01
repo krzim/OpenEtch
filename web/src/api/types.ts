@@ -59,6 +59,8 @@ export interface Layer {
   sub_layers: CutSettings[];
   /** Settings from other software that OpenEtch does not model (e.g. `lbrn2.*`), kept so exports round-trip. */
   extras?: Record<string, string>;
+  /** LightBurn's tool layer T1 / T2 (never outputs, framed with the job); absent for an ordinary layer. */
+  tool?: "T1" | "T2" | null;
 }
 
 /** One kurbo `PathEl` as serde derives it, e.g. `{"MoveTo":{"x":0,"y":0}}` or `"ClosePath"`. */
@@ -79,6 +81,12 @@ export type Geometry =
   | { kind: "rect"; width_mm: number; height_mm: number; corner_radius_mm: number }
   | { kind: "ellipse"; rx_mm: number; ry_mm: number }
   | { kind: "path"; path: BezPathJson }
+  /**
+   * A regular polygon or star (LightBurn's Polygon tool), kept parametric so Shape Properties can edit it: `sides`
+   * corners (star points) on a circle of `radius_mm`, the first one up (+Y); a star's inner corners at
+   * `star_ratio` of the radius; corners rounded by `corner_radius_mm` where it fits (crates/doc Geometry::Polygon).
+   */
+  | { kind: "polygon"; sides: number; radius_mm: number; star_ratio?: number | null; corner_radius_mm?: number }
   /** A bitmap centred on the local origin. Not engraved yet (the planner skips it with a warning). */
   | { kind: "image"; width_mm: number; height_mm: number; mime: string; data_base64: string }
   /** Live text (`doc::Text`): its settings plus the rendered `outline`, which is what is drawn and burned. */
@@ -176,6 +184,17 @@ export interface GDocument {
   extras?: Record<string, string>;
   /** Variable text state; absent while it is the default (start 0, end 999, current 0, advance by 1). */
   variables?: VariableState | null;
+  /** Manual guidelines saved with the project (`guide.add` / `guide.move` / `guide.delete`); absent while none. */
+  guides?: DocGuide[];
+  /** Output curve tolerance in mm (`doc.set_curve_tolerance`); absent or null: the device's, else 0.01 mm. */
+  curve_tolerance_mm?: number | null;
+}
+
+/** A manual guide in the document: "x" is a vertical line at x = position_mm, "y" a horizontal one. */
+export interface DocGuide {
+  id: string;
+  axis: "x" | "y";
+  position_mm: number;
 }
 
 /**

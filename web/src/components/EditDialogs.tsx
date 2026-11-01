@@ -1,6 +1,7 @@
 // Dialogs of the Modify and Arrange menus: Offset, Fillet, Transform (scale %, shear, and the mirror-line and
-// two-point picks), Circular array (with a centre pick), Copy along path, Quick nest, and the tolerance dialogs for
-// Optimize, Close paths and Auto-join. Each one runs one engine command; picks hand back to the canvas and reopen.
+// two-point picks), Circular array (with a centre pick), Copy along path, Nest (Quick Nest by boxes, or true shapes),
+// Optimize (LightBurn's fit to lines / arcs and smoothing), and the tolerance dialogs for Close paths and Auto-join.
+// Each one runs one engine command; picks hand back to the canvas and reopen.
 
 import { useState, type ReactNode } from "react";
 import type { Invocation } from "../api/client.ts";
@@ -11,8 +12,9 @@ import { boxCenter, objectBounds, unionBoxes } from "../geometry.ts";
 import { Modal, UnitTextField } from "./ui.tsx";
 import { usePrefs } from "../workspace/usePrefs.ts";
 import { fixedLength, fixedNumber, formatLength } from "../workspace/units.ts";
+import { useT } from "../workspace/usePrefs.ts";
 
-export type PickKind = "circularCenter" | "mirror" | "rotate2" | "scale2" | "scale2rot";
+export type PickKind = "circularCenter" | "mirror" | "mirrorCopy" | "rotate2" | "scale2" | "scale2rot";
 
 export interface CircularValues {
   count: string;
@@ -104,6 +106,7 @@ function useSubmit(p: Props) {
 }
 
 function Frame(props: { title: string; p: Props; busy: boolean; error: string | null; ok: string; onOk: () => void; children: ReactNode }) {
+  const t = useT();
   return (
     <Modal
       title={props.title}
@@ -113,7 +116,7 @@ function Frame(props: { title: string; p: Props; busy: boolean; error: string | 
         <>
           {props.error && <span className="form-error">{props.error}</span>}
           <button className="btn" onClick={props.p.onClose}>
-            Cancel
+            {t("ed.cancel")}
           </button>
           <button className="btn btn-primary" disabled={props.busy} onClick={props.onOk}>
             {props.ok}
@@ -144,6 +147,7 @@ export function EditDialogs(p: Props) {
     case "nest":
       return <NestDialog p={p} />;
     case "optimize":
+      return <OptimizeDialog p={p} />;
     case "close":
     case "autojoin":
       return <ToleranceDialog p={p} kind={p.dialog.kind} />;
@@ -151,6 +155,7 @@ export function EditDialogs(p: Props) {
 }
 
 function OffsetDialog({ p }: { p: Props }) {
+  const t = useT();
   const [d, setD] = useState("1");
   const [direction, setDirection] = useState<G.OffsetDirection>("outward");
   const [join, setJoin] = useState<G.OffsetJoin>("round");
@@ -160,51 +165,53 @@ function OffsetDialog({ p }: { p: Props }) {
   const lu = usePrefs().units;
   const ok = () => {
     const v = num(d);
-    if (v === null || v === 0 || Math.abs(v) > 1000) return submit(`Distance must be a non-zero number up to ${formatLength(1000, lu)}.`);
+    if (v === null || v === 0 || Math.abs(v) > 1000) return submit(t("ed.distanceMustBeANonZero", { v1: formatLength(1000, lu) }));
     void submit(G.offset(p.ids, { distance_mm: v, direction, join, keep_original: !del, combine }));
   };
   return (
     <Frame title={`Offset ${plural(p.ids.length, "shape")}`} p={p} busy={busy} error={error} ok="Offset" onOk={ok}>
-      <Num label="Distance" unit="mm" value={d} onChange={setD} />
-      <Select label="Direction" value={direction} onChange={setDirection} options={[["outward", "Outward"], ["inward", "Inward"], ["both", "Both"]]} />
-      <Select label="Corners" value={join} onChange={setJoin} options={[["round", "Rounded"], ["miter", "Sharp"], ["bevel", "Bevelled"]]} />
-      <Check label="Delete original shapes" checked={del} onChange={setDel} />
-      <Check label="Merge shapes first (one result)" checked={combine} onChange={setCombine} title="LightBurn's 'Offset as group': overlapping shapes are merged before offsetting" />
-      <p className="hint">Results are new shapes on each source's layer. Open paths are offset on both sides.</p>
+      <Num label={t("ed.distance")} unit="mm" value={d} onChange={setD} />
+      <Select label={t("ed.direction")} value={direction} onChange={setDirection} options={[["outward", "Outward"], ["inward", "Inward"], ["both", "Both"]]} />
+      <Select label={t("ed.corners")} value={join} onChange={setJoin} options={[["round", "Rounded"], ["miter", "Sharp"], ["bevel", "Bevelled"]]} />
+      <Check label={t("ed.deleteOriginalShapes")} checked={del} onChange={setDel} />
+      <Check label={t("ed.mergeShapesFirstOneResult")} checked={combine} onChange={setCombine} title={t("ed.lightburnSOffsetAsGroupOverlapping")} />
+      <p className="hint">{t("ed.resultsAreNewShapesOnEach")}</p>
     </Frame>
   );
 }
 
 function FilletDialog({ p, nodeId, corners }: { p: Props; nodeId: string | null; corners: number[] }) {
+  const t = useT();
   const [r, setR] = useState("1");
   const [which, setWhich] = useState<"all" | "nodes">(nodeId && corners.length ? "nodes" : "all");
   const { busy, error, submit } = useSubmit(p);
   const lu = usePrefs().units;
   const ok = () => {
     const v = num(r);
-    if (v === null || v === 0 || Math.abs(v) > 1000) return submit(`Radius must be a non-zero number up to ${formatLength(1000, lu)}.`);
+    if (v === null || v === 0 || Math.abs(v) > 1000) return submit(t("ed.radiusMustBeANonZero", { v1: formatLength(1000, lu) }));
     void submit(which === "nodes" && nodeId ? G.fillet([nodeId], v, corners) : G.fillet(p.ids, v));
   };
   return (
-    <Frame title="Fillet corners" p={p} busy={busy} error={error} ok="Fillet" onOk={ok}>
-      <Num label="Radius" unit="mm" value={r} onChange={setR} title="Negative cuts a concave bite instead (LightBurn)" />
+    <Frame title={t("ed.filletCorners")} p={p} busy={busy} error={error} ok="Fillet" onOk={ok}>
+      <Num label={t("ed.radius")} unit="mm" value={r} onChange={setR} title={t("ed.negativeCutsAConcaveBiteInstead")} />
       {nodeId && corners.length > 0 && (
         <Select
-          label="Corners"
+          label={t("ed.corners")}
           value={which}
           onChange={setWhich}
           options={[
-            ["nodes", `Selected nodes (${corners.length})`],
+            ["nodes", t("ed.selectedNodesV1", { v1: corners.length })],
             ["all", `All corners of ${plural(p.ids.length, "shape")}`],
           ]}
         />
       )}
-      <p className="hint">Only corners between two straight lines are rounded. A negative radius cuts a concave bite.</p>
+      <p className="hint">{t("ed.roundsCornersBetweenLinesAndCurves")}</p>
     </Frame>
   );
 }
 
 function TransformDialog({ p }: { p: Props }) {
+  const t = useT();
   const [sx, setSx] = useState("100");
   const [sy, setSy] = useState("100");
   const [lock, setLock] = useState(true);
@@ -215,15 +222,15 @@ function TransformDialog({ p }: { p: Props }) {
   const scale = () => {
     const a = num(sx);
     const b = lock ? a : num(sy);
-    if (a === null || b === null || a <= 0 || b <= 0) return submit("Scale must be a percentage above 0.");
+    if (a === null || b === null || a <= 0 || b <= 0) return submit(t("ed.scaleMustBeAPercentageAbove"));
     if (a === 100 && b === 100) return submit("100 % changes nothing.");
     void submit(G.transformEx(p.ids, { scale: lock ? a / 100 : [a / 100, b / 100], about: "center" }), false);
   };
   const shear = () => {
     const a = num(hx);
     const b = num(hy);
-    if (a === null || b === null || Math.abs(a) > 89 || Math.abs(b) > 89) return submit("Shear angles must be within ±89°.");
-    if (a === 0 && b === 0) return submit("A 0° shear changes nothing.");
+    if (a === null || b === null || Math.abs(a) > 89 || Math.abs(b) > 89) return submit(t("ed.shearAnglesMustBeWithin89"));
+    if (a === 0 && b === 0) return submit(t("ed.a0ShearChangesNothing"));
     void submit(G.transformEx(p.ids, { shear_deg: [a, b], about: "center" }), false);
   };
   return (
@@ -234,45 +241,48 @@ function TransformDialog({ p }: { p: Props }) {
         <>
           {error && <span className="form-error">{error}</span>}
           <button className="btn btn-primary" onClick={p.onClose}>
-            Done
+            {t("ed.done")}
           </button>
         </>
       }
     >
-      <h4 className="et-dlg-h">Scale about the centre</h4>
+      <h4 className="et-dlg-h">{t("ed.scaleAboutTheCentre")}</h4>
       <div className="field-grid">
         <Num label={lock ? "Scale" : "Width"} unit="%" value={sx} onChange={setSx} />
-        {!lock && <Num label="Height" unit="%" value={sy} onChange={setSy} />}
+        {!lock && <Num label={t("ed.height")} unit="%" value={sy} onChange={setSy} />}
       </div>
-      <Check label="Keep proportions" checked={lock} onChange={setLock} />
+      <Check label={t("ed.keepProportions")} checked={lock} onChange={setLock} />
       <div className="et-dlg-row">
         <button className="btn" disabled={busy} onClick={scale}>
-          Apply scale
+          {t("ed.applyScale")}
         </button>
       </div>
-      <h4 className="et-dlg-h">Shear (slant) about the centre</h4>
+      <h4 className="et-dlg-h">{t("ed.shearSlantAboutTheCentre")}</h4>
       <div className="field-grid">
-        <Num label="X" unit="°" value={hx} onChange={setHx} title="Slants vertical lines" />
-        <Num label="Y" unit="°" value={hy} onChange={setHy} title="Slants horizontal lines" />
+        <Num label="X" unit="°" value={hx} onChange={setHx} title={t("ed.slantsVerticalLines")} />
+        <Num label="Y" unit="°" value={hy} onChange={setHy} title={t("ed.slantsHorizontalLines")} />
       </div>
       <div className="et-dlg-row">
         <button className="btn" disabled={busy} onClick={shear}>
-          Apply shear
+          {t("ed.applyShear")}
         </button>
       </div>
-      <h4 className="et-dlg-h">Pick on the canvas</h4>
+      <h4 className="et-dlg-h">{t("ed.pickOnTheCanvas")}</h4>
       <div className="et-dlg-row">
-        <button className="btn" disabled={!p.has(G.GEO.transform)} onClick={() => p.onPick("mirror")} title="Click two points of the mirror line">
-          Mirror across line…
+        <button className="btn" disabled={!p.has(G.GEO.transform)} onClick={() => p.onPick("mirror")} title={t("ed.clickTwoPointsOfTheMirror")}>
+          {t("ed.mirrorAcrossLine")}
         </button>
-        <button className="btn" disabled={!p.has(G.GEO.rotateTo)} onClick={() => p.onPick("rotate2")} title="Pivot, reference point, target (Ctrl+2)">
-          Two-point rotate…
+        <button className="btn" disabled={!p.has(G.GEO.transform)} onClick={() => p.onPick("mirrorCopy")} title={t("ed.clickTwoPointsOfTheMirror2")}>
+          {t("ed.mirrorCopyAcrossLine")}
         </button>
-        <button className="btn" disabled={!p.has(G.GEO.scaleTo)} onClick={() => p.onPick(alsoRotate ? "scale2rot" : "scale2")} title="Pivot, reference point, target: scales by the ratio of distances">
-          Two-point scale…
+        <button className="btn" disabled={!p.has(G.GEO.rotateTo)} onClick={() => p.onPick("rotate2")} title={t("ed.pivotReferencePointTargetCtrl2")}>
+          {t("ed.twoPointRotate")}
+        </button>
+        <button className="btn" disabled={!p.has(G.GEO.scaleTo)} onClick={() => p.onPick(alsoRotate ? "scale2rot" : "scale2")} title={t("ed.pivotReferencePointTargetScalesBy")}>
+          {t("ed.twoPointScale")}
         </button>
       </div>
-      <Check label="Two-point scale also rotates" checked={alsoRotate} onChange={setAlsoRotate} />
+      <Check label={t("ed.twoPointScaleAlsoRotates")} checked={alsoRotate} onChange={setAlsoRotate} />
     </Modal>
   );
 }
@@ -282,6 +292,7 @@ function defaultCentre(doc: GDocument): Vec2 {
 }
 
 function CircularDialog({ p, init }: { p: Props; init: CircularValues | null }) {
+  const t = useT();
   const c0 = defaultCentre(p.doc);
   const [v, setV] = useState<CircularValues>(init ?? { count: "6", angle: "360", rotate: true, cx: String(c0[0]), cy: String(c0[1]) });
   const set = (patch: Partial<CircularValues>) => setV((x) => ({ ...x, ...patch }));
@@ -292,31 +303,31 @@ function CircularDialog({ p, init }: { p: Props; init: CircularValues | null }) 
     const angle = num(v.angle);
     const cx = num(v.cx);
     const cy = num(v.cy);
-    if (count === null || !Number.isInteger(count) || count < 2 || count > 10000) return submit("Count must be a whole number from 2 to 10000 (the original included).");
-    if (angle === null || angle === 0 || Math.abs(angle) > 360) return submit("Angle must be non-zero, within ±360°.");
-    if (cx === null || cy === null) return submit("The centre must be numbers.");
+    if (count === null || !Number.isInteger(count) || count < 2 || count > 10000) return submit(t("ed.countMustBeAWholeNumber"));
+    if (angle === null || angle === 0 || Math.abs(angle) > 360) return submit(t("ed.angleMustBeNonZeroWithin"));
+    if (cx === null || cy === null) return submit(t("ed.theCentreMustBeNumbers"));
     void submit(G.circularArray(p.ids, { count, center: [cx, cy], angle_deg: angle, rotate_copies: v.rotate }));
   };
   const sel = unionBoxes(p.doc.objects.filter((o) => p.ids.includes(o.id) || (o.group && p.ids.includes(o.group))).map(objectBounds));
   return (
-    <Frame title="Circular array" p={p} busy={busy} error={error} ok="Create" onOk={ok}>
-      <Num label="Count" value={v.count} onChange={(count) => set({ count })} title="Items in the finished array, the original included" />
-      <Num label="Sweep" unit="°" value={v.angle} onChange={(angle) => set({ angle })} title="360: evenly round the circle; less: the last copy at the end of the sweep; negative: clockwise" />
-      <Check label="Rotate copies" checked={v.rotate} onChange={(rotate) => set({ rotate })} title="Off keeps each copy upright (like clock numerals)" />
+    <Frame title={t("ed.circularArray")} p={p} busy={busy} error={error} ok="Create" onOk={ok}>
+      <Num label={t("ed.count")} value={v.count} onChange={(count) => set({ count })} title={t("ed.itemsInTheFinishedArrayThe")} />
+      <Num label={t("ed.sweep")} unit="°" value={v.angle} onChange={(angle) => set({ angle })} title={t("ed.360EvenlyRoundTheCircleLess")} />
+      <Check label={t("ed.rotateCopies")} checked={v.rotate} onChange={(rotate) => set({ rotate })} title={t("ed.offKeepsEachCopyUprightLike")} />
       <div className="field-grid">
-        <Num label="Centre X" unit="mm" value={v.cx} onChange={(cx) => set({ cx })} />
-        <Num label="Centre Y" unit="mm" value={v.cy} onChange={(cy) => set({ cy })} />
+        <Num label={t("ed.centreX")} unit="mm" value={v.cx} onChange={(cx) => set({ cx })} />
+        <Num label={t("ed.centreY")} unit="mm" value={v.cy} onChange={(cy) => set({ cy })} />
       </div>
       <div className="et-dlg-row">
         <button className="btn" onClick={() => p.onPick("circularCenter", v)}>
-          Pick centre…
+          {t("ed.pickCentre")}
         </button>
         <button className="btn" onClick={() => set({ cx: "0", cy: "0" })}>
-          Field centre
+          {t("ed.fieldCentre")}
         </button>
         {p.doc.stock && (
           <button className="btn" onClick={() => set({ cx: String(p.doc.stock?.center[0] ?? 0), cy: String(p.doc.stock?.center[1] ?? 0) })}>
-            Stock centre
+            {t("ed.stockCentre")}
           </button>
         )}
       </div>
@@ -330,6 +341,7 @@ function CircularDialog({ p, init }: { p: Props; init: CircularValues | null }) 
 }
 
 function AlongDialog({ p }: { p: Props }) {
+  const t = useT();
   const [mode, setMode] = useState<"count" | "spacing">("count");
   const [count, setCount] = useState("5");
   const [spacing, setSpacing] = useState("10");
@@ -339,88 +351,185 @@ function AlongDialog({ p }: { p: Props }) {
   const path = p.ids[p.ids.length - 1];
   const pathObj = p.doc.objects.find((o) => o.id === path);
   const ok = () => {
-    if (!pathObj) return submit("The path (selected last) must be a single shape, not a group.");
+    if (!pathObj) return submit(t("ed.thePathSelectedLastMustBe"));
     const ids = p.ids.slice(0, -1);
     if (mode === "count") {
       const n = num(count);
-      if (n === null || !Number.isInteger(n) || n < 2 || n > 10000) return submit("Count must be a whole number from 2 to 10000.");
+      if (n === null || !Number.isInteger(n) || n < 2 || n > 10000) return submit(t("ed.countMustBeAWholeNumber2"));
       return void submit(G.alongPath(ids, path, { count: n, rotate_to_path: rotate }));
     }
     const s = num(spacing);
-    if (s === null || s <= 0) return submit(`Spacing must be above ${formatLength(0, lu)}.`);
+    if (s === null || s <= 0) return submit(t("ed.spacingMustBeAboveV1", { v1: formatLength(0, lu) }));
     void submit(G.alongPath(ids, path, { spacing_mm: s, rotate_to_path: rotate }));
   };
   return (
-    <Frame title="Copy along path" p={p} busy={busy} error={error} ok="Create" onOk={ok}>
+    <Frame title={t("ed.copyAlongPath")} p={p} busy={busy} error={error} ok="Create" onOk={ok}>
       <p className="hint">
         Copies {plural(p.ids.length - 1, "shape")} along <b>{pathObj?.name ?? path}</b> (the shape selected last).
       </p>
-      <Select label="Spread by" value={mode} onChange={setMode} options={[["count", "Number of copies"], ["spacing", "Distance between copies"]]} />
-      {mode === "count" ? <Num label="Count" value={count} onChange={setCount} title="Items including the original" /> : <Num label="Spacing" unit="mm" value={spacing} onChange={setSpacing} />}
-      <Check label="Rotate to the path" checked={rotate} onChange={setRotate} />
+      <Select label={t("ed.spreadBy")} value={mode} onChange={setMode} options={[["count", t("ed.numberOfCopies")], ["spacing", t("ed.distanceBetweenCopies")]]} />
+      {mode === "count" ? <Num label={t("ed.count")} value={count} onChange={setCount} title={t("ed.itemsIncludingTheOriginal")} /> : <Num label={t("ed.spacing")} unit="mm" value={spacing} onChange={setSpacing} />}
+      <Check label={t("ed.rotateToThePath")} checked={rotate} onChange={setRotate} />
     </Frame>
   );
 }
 
 function NestDialog({ p }: { p: Props }) {
-  const [region, setRegion] = useState<"stock" | "field">(p.doc.stock ? "stock" : "field");
+  const t = useT();
+  const shapesOk = p.has(G.GEO.nest);
+  // "object": the last selected shape is the material outline the others are nested into (LightBurn's nest target).
+  const [region, setRegion] = useState<"stock" | "field" | "object">(p.doc.stock ? "stock" : "field");
+  const [mode, setMode] = useState<"boxes" | "shapes">("shapes");
   const [spacing, setSpacing] = useState("1");
   const [edge, setEdge] = useState("0");
-  const [rot, setRot] = useState<"0" | "90" | "all">("90");
-  const { busy, error, submit } = useSubmit(p);
-  const ok = () => {
+  const [rot, setRot] = useState<"0" | "90" | "all" | "45">("90");
+  const [res, setRes] = useState("");
+  const [report, setReport] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const lu = usePrefs().units;
+  const target = p.ids[p.ids.length - 1];
+  const targetObj = p.doc.objects.find((o) => o.id === target);
+  const ok = async () => {
     const s = num(spacing);
     const e = num(edge);
-    if (s === null || s < 0 || e === null || e < 0) return submit("Spacing and edge gap must be numbers ≥ 0.");
-    const rotations = rot === "0" ? [0] : rot === "90" ? [0, 90] : [0, 90, 180, 270];
-    void submit(G.nest(p.ids, region, { spacing_mm: s, edge_mm: e, rotations }));
+    if (s === null || s < 0 || e === null || e < 0) return setError(t("ed.spacingAndEdgeGapMustBe"));
+    const r = res.trim() === "" ? undefined : num(res);
+    if (r === null || (r !== undefined && !(r > 0))) return setError(t("ed.theGridCellMustBeAbove", { v1: formatLength(0, lu) }));
+    const rotations = rot === "0" ? [0] : rot === "90" ? [0, 90] : rot === "all" ? [0, 90, 180, 270] : [0, 45, 90, 135, 180, 225, 270, 315];
+    const parts = region === "object" ? p.ids.slice(0, -1) : p.ids;
+    if (region === "object" && (!targetObj || parts.length < 1)) return setError(t("ed.selectThePartsThenTheMaterial"));
+    const where: G.NestRegion = region === "object" ? { object: target } : region;
+    setBusy(true);
+    setError(null);
+    try {
+      const out = (await p.run(G.nest(parts, where, { spacing_mm: s, edge_mm: e, rotations, ...(mode === "shapes" ? { mode, resolution_mm: r } : {}) }))) as {
+        placed?: unknown[];
+        unplaced?: unknown[];
+        budget_exhausted?: boolean;
+      } | null;
+      const placed = Array.isArray(out?.placed) ? out.placed.length : 0;
+      const unplaced = Array.isArray(out?.unplaced) ? out.unplaced.length : 0;
+      p.onDone(G.resultIds(out));
+      if (unplaced || out?.budget_exhausted) {
+        setReport(
+          `Placed ${plural(placed, "part")}; ${plural(unplaced, "part")} did not fit${out?.budget_exhausted ? " (the search stopped at its work limit: try a coarser grid cell)" : ""}. They stay where they were.`,
+        );
+      } else p.onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
   };
   return (
-    <Frame title={`Quick nest ${plural(p.ids.length, "part")}`} p={p} busy={busy} error={error} ok="Nest" onOk={ok}>
+    <Frame title={`Nest ${plural(region === "object" ? p.ids.length - 1 : p.ids.length, "part")}`} p={p} busy={busy} error={error} ok="Nest" onOk={() => void ok()}>
       <Select
-        label="Into"
+        label={t("ed.method")}
+        value={mode}
+        onChange={setMode}
+        options={shapesOk ? [["shapes", t("ed.trueShapePartsInterlockFillHoles")], ["boxes", t("ed.quickNestBoundingBoxes")]] : [["boxes", t("ed.quickNestBoundingBoxes")]]}
+      />
+      <Select
+        label={t("ed.into")}
         value={region}
         onChange={setRegion}
-        options={p.doc.stock ? [["stock", "The stock"], ["field", "The whole field"]] : [["field", "The whole field"]]}
+        options={[
+          ...(p.doc.stock ? ([["stock", t("ed.theStock")]] as ["stock", string][]) : []),
+          ["field", t("ed.theWholeField")],
+          ...(p.ids.length >= 2 && targetObj ? ([["object", t("ed.theLastSelectedShapeV1", { v1: targetObj.name || target })]] as ["object", string][]) : []),
+        ]}
       />
-      <Num label="Spacing" unit="mm" value={spacing} onChange={setSpacing} />
-      <Num label="Edge gap" unit="mm" value={edge} onChange={setEdge} />
-      <Select label="Rotations" value={rot} onChange={setRot} options={[["0", "None"], ["90", "0° and 90°"], ["all", "0°, 90°, 180°, 270°"]]} />
-      <p className="hint">Packs parts by their bounding boxes (like LightBurn's Quick Nest). A group keeps its layout.</p>
+      <Num label={t("ed.spacing")} unit="mm" value={spacing} onChange={setSpacing} />
+      <Num label={t("ed.edgeGap")} unit="mm" value={edge} onChange={setEdge} />
+      <Select
+        label={t("ed.rotations")}
+        value={rot}
+        onChange={setRot}
+        options={[
+          ["0", "None"],
+          ["90", "0° and 90°"],
+          ["all", "0°, 90°, 180°, 270°"],
+          ["45", "Every 45°"],
+        ]}
+      />
+      {mode === "shapes" && <Num label={t("ed.gridCell")} unit="mm" value={res} onChange={setRes} title={t("ed.smallestCellOfTheSearchGrid")} />}
+      {report && <p className="warn-text">{report}</p>}
+      <p className="hint">
+        {mode === "shapes"
+          ? t("ed.placesEachPartByItsReal")
+          : t("ed.packsPartsByTheirBoundingBoxes")}{" "}
+        {t("ed.aGroupKeepsItsLayout")}
+      </p>
     </Frame>
   );
 }
 
-function ToleranceDialog({ p, kind }: { p: Props; kind: "optimize" | "close" | "autojoin" }) {
-  const [tol, setTol] = useState(kind === "optimize" ? "0.01" : kind === "autojoin" ? "0.05" : "0.5");
+/** LightBurn's Optimize Selected Shapes: fit to lines, fit to arcs and smooth, each with its own tolerance. */
+function OptimizeDialog({ p }: { p: Props }) {
+  const t = useT();
+  const [lines, setLines] = useState(true);
+  const [tol, setTol] = useState("0.01");
+  const [arcs, setArcs] = useState(false);
+  const [arcTol, setArcTol] = useState("0.05");
+  const [smooth, setSmooth] = useState(false);
+  const [smoothTol, setSmoothTol] = useState("0.05");
+  const { busy, error, submit } = useSubmit(p);
+  const lu = usePrefs().units;
+  const ok = () => {
+    const vals: { tolerance_mm?: number; arcs_mm?: number; smooth_mm?: number } = {};
+    for (const [on, txt, key] of [
+      [lines, tol, "tolerance_mm"],
+      [arcs, arcTol, "arcs_mm"],
+      [smooth, smoothTol, "smooth_mm"],
+    ] as const) {
+      if (!on) continue;
+      const v = num(txt);
+      if (v === null || v < 0 || v > 10) return submit(t("ed.eachToleranceMustBeFrom0", { v1: formatLength(10, lu) }));
+      vals[key] = v;
+    }
+    if (!lines && !arcs && !smooth) return submit(t("ed.chooseAtLeastOneOption"));
+    void submit(G.optimize(p.ids, vals));
+  };
+  return (
+    <Frame title={`Optimize ${plural(p.ids.length, "shape")}`} p={p} busy={busy} error={error} ok="Optimize" onOk={ok}>
+      <Check label={t("ed.fitShapesToLines")} checked={lines} onChange={setLines} title={t("ed.removeRedundantNodesAndZeroLength")} />
+      {lines && <Num label={t("ed.lineTolerance")} unit="mm" value={tol} onChange={setTol} title={t("ed.howFarTheResultMayStray")} />}
+      <Check label={t("ed.fitShapesToArcs")} checked={arcs} onChange={setArcs} title={t("ed.runsOf4OrMoreShort")} />
+      {arcs && <Num label={t("ed.arcTolerance")} unit="mm" value={arcTol} onChange={setArcTol} />}
+      <Check label={t("ed.smoothSourceShapes")} checked={smooth} onChange={setSmooth} title={t("ed.runsOfLinesBecomeSmoothCurves")} />
+      {smooth && <Num label={t("ed.smoothing")} unit="mm" value={smoothTol} onChange={setSmoothTol} title={t("ed.largerSmoothsMoreAndRoundsSmall")} />}
+      <p className="hint">{t("ed.theyRunInTheOrderSmooth")}</p>
+    </Frame>
+  );
+}
+
+function ToleranceDialog({ p, kind }: { p: Props; kind: "close" | "autojoin" }) {
+  const t = useT();
+  const [tol, setTol] = useState(kind === "autojoin" ? "0.05" : "0.5");
   const [mode, setMode] = useState<"line" | "move_ends">("line");
   const { busy, error, submit } = useSubmit(p);
   const max = kind === "close" ? 1000 : 10;
   const lu = usePrefs().units;
   const ok = () => {
-    const t = num(tol);
-    if (t === null || t < 0 || t > max) return submit(`Tolerance must be from 0 to ${formatLength(max, lu)}.`);
-    if (kind === "optimize") return void submit(G.optimize(p.ids, t));
-    if (kind === "autojoin") return void submit(G.autoJoin(p.ids, t));
-    void submit(G.closePaths(p.ids, { tolerance_mm: t, mode }));
+    const tolMm = num(tol);
+    if (tolMm === null || tolMm < 0 || tolMm > max) return submit(t("ed.toleranceMustBeFrom0To", { v1: formatLength(max, lu) }));
+    if (kind === "autojoin") return void submit(G.autoJoin(p.ids, tolMm));
+    void submit(G.closePaths(p.ids, { tolerance_mm: tolMm, mode }));
   };
-  const title = kind === "optimize" ? "Optimize shapes" : kind === "autojoin" ? "Auto-join" : "Close paths with tolerance";
+  const title = kind === "autojoin" ? "Auto-join" : t("ed.closePathsWithTolerance");
   return (
-    <Frame title={title} p={p} busy={busy} error={error} ok={kind === "optimize" ? "Optimize" : kind === "autojoin" ? "Join" : "Close"} onOk={ok}>
+    <Frame title={title} p={p} busy={busy} error={error} ok={kind === "autojoin" ? "Join" : "Close"} onOk={ok}>
       <Num
-        label="Tolerance"
+        label={t("ed.tolerance")}
         unit="mm"
         value={tol}
         onChange={setTol}
-        title={kind === "optimize" ? "How far the result may stray from the original" : kind === "autojoin" ? "Largest gap between ends that still joins" : "Only paths whose ends are this close are closed"}
+        title={kind === "autojoin" ? t("ed.largestGapBetweenEndsThatStill") : t("ed.onlyPathsWhoseEndsAreThis")}
       />
-      {kind === "close" && <Select label="Close by" value={mode} onChange={setMode} options={[["line", "Adding a line"], ["move_ends", "Moving the ends together"]]} />}
+      {kind === "close" && <Select label={t("ed.closeBy")} value={mode} onChange={setMode} options={[["line", t("ed.addingALine")], ["move_ends", t("ed.movingTheEndsTogether")]]} />}
       <p className="hint">
-        {kind === "optimize"
-          ? "Removes zero-length segments, straightens flat curves and drops redundant nodes."
-          : kind === "autojoin"
-            ? "Joins open paths whose ends lie within the tolerance into continuous paths."
-            : "Closes open paths whose two ends are within the tolerance."}
+        {kind === "autojoin" ? t("ed.joinsOpenPathsWhoseEndsLie") : t("ed.closesOpenPathsWhoseTwoEnds")}
       </p>
     </Frame>
   );

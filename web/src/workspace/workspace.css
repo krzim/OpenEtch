@@ -262,6 +262,85 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.cuts-sub.selected {
+  background: var(--accent-fill);
+}
+
+/* LightBurn's sub-layer tabs above the quick-edit fields. */
+.cuts-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin: 4px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+.cuts-tab {
+  border: 1px solid var(--border-soft);
+  border-bottom: none;
+  border-radius: var(--radius) var(--radius) 0 0;
+  background: var(--chrome-2);
+  color: var(--text-2);
+  font: inherit;
+  font-size: calc(12px * var(--ui-scale, 1));
+  padding: 3px 8px;
+  min-height: 28px;
+  cursor: pointer;
+}
+.cuts-tab.active {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+.cuts-tab.cleanup {
+  font-style: italic;
+}
+.cuts-tab[draggable="true"] {
+  cursor: grab;
+}
+
+/* Tool layer T1 / T2 and the "settings that will not be executed" badge in a layer row. */
+.tool-badge,
+.unsup-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 4px;
+  border-radius: 3px;
+  font-size: calc(10px * var(--ui-scale, 1));
+  font-weight: 700;
+  line-height: 1;
+  vertical-align: middle;
+}
+.tool-badge {
+  padding: 2px 3px;
+  border: 1px solid var(--border);
+  color: var(--text-2);
+}
+.unsup-badge {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--warn);
+  color: var(--on-accent);
+  cursor: help;
+}
+
+/* Flash layer: the layer's shapes blink on the canvas. */
+.layer-flash {
+  fill: none;
+  stroke: var(--snap);
+  animation: layer-flash 0.3s steps(2, jump-none) 6 both;
+}
+@keyframes layer-flash {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
 /* ---- colour palette bar --------------------------------------------------------------------------------------- */
 
 .palette-bar {
@@ -810,4 +889,223 @@ a.menu-item {
 
 .tp-mark.shade {
   stroke: var(--tp-shade);
+}
+
+/* ---- dockable windows (layout.ts, DockHost.tsx) ------------------------------------------------------------------ */
+
+.dock-slot:empty,
+.dock-area[data-empty] {
+  display: none;
+}
+.dock-menu-btn {
+  flex: none;
+  color: var(--text-2);
+}
+.dock-group {
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+.dock-tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  min-height: 34px;
+  padding: 4px 4px 0;
+  background: var(--chrome-2);
+  border-bottom: 1px solid var(--border-soft);
+  overflow-x: auto;
+}
+.dock-tab {
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: var(--radius) var(--radius) 0 0;
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-weight: 600;
+  font-size: calc(11px * var(--ui-scale, 1));
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 5px 10px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.dock-tab.active {
+  background: var(--panel);
+  border-color: var(--border-soft);
+  color: var(--text);
+}
+.dock.tabbed {
+  border-bottom: none;
+}
+.dock-head-tabbed {
+  justify-content: flex-end;
+  min-height: 30px;
+}
+
+/* The bottom strip under the canvas: its windows side by side, each scrolling on its own. */
+.dock-area-bottom {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  max-height: 38vh;
+  min-height: 0;
+  flex: none;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+  overflow-x: auto;
+}
+.dock-area-bottom > .dock-slot,
+.dock-area-bottom > .dock-group {
+  flex: 1 1 300px;
+  min-width: 260px;
+  max-width: 640px;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+}
+.dock-area-bottom .dock {
+  border-bottom: none;
+}
+
+/* Floating windows over the canvas. */
+.dock-float-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 60;
+}
+.dock-float {
+  position: fixed;
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 24px var(--shadow-strong);
+  overflow: hidden;
+  touch-action: none;
+}
+.dock-float-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  touch-action: auto;
+}
+.dock-float .dock {
+  border-bottom: none;
+}
+.dock-float [data-drag-handle] {
+  cursor: move;
+}
+.dock-float-grip {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 18px;
+  height: 18px;
+  cursor: nwse-resize;
+  background: linear-gradient(135deg, transparent 55%, var(--border) 55%, var(--border) 62%, transparent 62%, transparent 75%, var(--border) 75%, var(--border) 82%, transparent 82%);
+}
+
+.menu-check {
+  display: inline-block;
+  width: 1.2em;
+  color: var(--accent);
+}
+
+/* ---- document tabs (DocTabs.tsx) ----------------------------------------------------------------------------------- */
+
+.doc-tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  min-height: 30px;
+  padding: 3px 6px 0;
+  background: var(--chrome-2);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  flex: none;
+}
+.doc-tab {
+  display: flex;
+  align-items: center;
+  max-width: 220px;
+  border: 1px solid var(--border-soft);
+  border-bottom: none;
+  border-radius: var(--radius) var(--radius) 0 0;
+  background: var(--chrome);
+}
+.doc-tab.active {
+  background: var(--surface);
+  border-color: var(--border);
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+.doc-tab-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 26px;
+  padding: 3px 4px 3px 10px;
+  border: none;
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-size: calc(12px * var(--ui-scale, 1));
+  cursor: pointer;
+}
+.doc-tab.active .doc-tab-btn {
+  color: var(--text);
+  font-weight: 600;
+}
+.doc-tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.doc-tab-dirty {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+.doc-tab-close,
+.doc-tab-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  color: var(--text-2);
+  border-radius: var(--radius);
+  min-width: 24px;
+  min-height: 24px;
+  cursor: pointer;
+}
+.doc-tab-close:hover,
+.doc-tab-add:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.doc-tab-add {
+  align-self: center;
+  margin-left: 2px;
+}
+.doc-tab-menu {
+  min-width: 240px;
+}
+
+/* ---- Docking tool (DockingTool.tsx) -------------------------------------------------------------------------------- */
+
+.docking-buttons {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.docking-btn {
+  font-size: calc(18px * var(--ui-scale, 1));
+  justify-content: center;
 }

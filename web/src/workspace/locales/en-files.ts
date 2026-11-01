@@ -133,6 +133,7 @@ export const EN_FILES = {
   "files.prefSelect": "Select imported shapes",
   "files.prefCenter": "Centre imported shapes",
   "files.prefHidden": "Import hidden layers (AI / PDF)",
+  "files.prefToolLayers": "Allow importing to tool layers (T1 / T2)",
   "files.importOptionsHint": "LightBurn's Import/Export settings, kept in this browser. Without centring, DXF, PDF, AI, EPS, HPGL, Gerber and EzCad art keeps the file's own coordinates.",
 
   // Autosave and backups

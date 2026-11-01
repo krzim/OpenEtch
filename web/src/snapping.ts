@@ -89,6 +89,8 @@ export function shapeKindName(o: Pick<DocObject, "geometry" | "transform"> & { e
       return isRound(o) ? "Circle" : "Ellipse";
     case "rect":
       return "Rectangle";
+    case "polygon":
+      return o.geometry.star_ratio ? "Star" : "Polygon";
     case "image":
       return "Image";
     case "text":
@@ -285,6 +287,7 @@ export function objectSnaps(o: DocObject): SnapPart {
       break;
     }
     case "rect":
+    case "polygon":
     case "image": {
       pt(apply(t, [0, 0]), "center", "Center");
       points.push(...pathPoints(cmds, t, owner, o.id));

@@ -3,6 +3,7 @@
 
 import { fieldSourceText, parseFieldSource, type FieldSource } from "./lightburn.ts";
 import type { GDocument, ProjectEntry, ProjectInfo } from "./types.ts";
+import { tr } from "../workspace/tr.ts";
 
 /** File formats the engine reads and writes: the native project and LightBurn's. */
 export type FileFormat = "openetch" | "lbrn2";
@@ -21,17 +22,38 @@ export const MAX_PROJECT_NAME = 100;
 
 const NAME_CHARS = /^[\p{L}\p{N} _.()-]+$/u;
 
+/** How many folders a project name may sit in (`Clients/Acme/badge` is 2), as the engine allows. */
+export const MAX_PROJECT_FOLDERS = 4;
+
+/** Top folders of the projects directory that hold OpenEtch's own files, never projects (engine `INTERNAL_DIRS`). */
+const INTERNAL_DIRS = ["templates", "art-libraries"];
+
+/** One name or folder of a project path: 1-100 letters, digits, spaces and `- _ . ( )`, no leading dot, no "..". */
+function validateSegment(name: string): string | null {
+  const n = [...name].length;
+  if (n === 0) return tr("apip.enterAName");
+  if (n > MAX_PROJECT_NAME) return `Use at most ${MAX_PROJECT_NAME} characters.`;
+  if (!NAME_CHARS.test(name)) return tr("apip.useOnlyLettersDigitsSpacesAnd");
+  if (name.startsWith(".")) return tr("apip.theNameCannotStartWithA");
+  if (name.includes("..")) return 'The name cannot contain "..".';
+  if (name !== name.trim()) return "A name or folder cannot start or end with a space.";
+  return null;
+}
+
 /**
- * Check a project name against the engine's rule: 1-100 letters, digits, spaces and `- _ . ( )`, no leading dot, no
- * "..". Returns the problem as a sentence, or null when the name is fine. Callers trim first.
+ * Check a project name against the engine's rule: a name inside at most four folders, `/`-separated
+ * (`Clients/Acme/badge`); the name and each folder 1-100 letters, digits, spaces and `- _ . ( )`, no leading dot, no
+ * "..", and the first folder not one of OpenEtch's own (templates, art-libraries). Returns the problem as a sentence,
+ * or null when the name is fine. Callers trim first.
  */
 export function validateProjectName(name: string): string | null {
-  const n = [...name].length;
-  if (n === 0) return "Enter a name.";
-  if (n > MAX_PROJECT_NAME) return `Use at most ${MAX_PROJECT_NAME} characters.`;
-  if (!NAME_CHARS.test(name)) return "Use only letters, digits, spaces and - _ . ( )";
-  if (name.startsWith(".")) return "The name cannot start with a dot.";
-  if (name.includes("..")) return 'The name cannot contain "..".';
+  const segs = name.split("/");
+  if (segs.length > MAX_PROJECT_FOLDERS + 1) return `Use at most ${MAX_PROJECT_FOLDERS} folders (Folder/Sub folder/Name).`;
+  for (const s of segs) {
+    const problem = validateSegment(s);
+    if (problem) return problem;
+  }
+  if (segs.length > 1 && INTERNAL_DIRS.includes(segs[0]!.toLowerCase())) return `"${segs[0]}" holds OpenEtch's own files, not projects.`;
   return null;
 }
 

@@ -6,6 +6,7 @@ import { objectBounds, type Box } from "../geometry.ts";
 import type { CutSettings, GDocument, Layer, MachineStatus, Preview, PreviewSegment, Vec2 } from "./types.ts";
 import type { LengthUnit } from "../workspace/prefs.ts";
 import { lengthText } from "../workspace/units.ts";
+import { tr } from "../workspace/tr.ts";
 
 /** JPT M7 MOPA pulse widths (fixtures/b6-mopa-60w.toml), used when the engine does not report its profile's list. */
 export const DEFAULT_PULSE_WIDTHS_NS = [2, 4, 6, 9, 13, 20, 30, 45, 55, 60, 80, 100, 150, 200, 250, 300, 350, 400, 450, 500];
@@ -95,9 +96,9 @@ export function formatDuration(s: number): string {
 export function statRows(stats: Record<string, unknown> | undefined, skip: readonly string[] = [], lu: LengthUnit = "mm"): [string, string][] {
   if (!stats) return [];
   const labels: Record<string, [string, (v: number) => string]> = {
-    estimated_time_s: ["Estimated time", formatDuration],
-    mark_length_mm: ["Mark length", (v) => lengthText(v, lu, 1)],
-    jump_length_mm: ["Travel length", (v) => lengthText(v, lu, 1)],
+    estimated_time_s: [tr("apila.estimatedTime"), formatDuration],
+    mark_length_mm: [tr("apila.markLength"), (v) => lengthText(v, lu, 1)],
+    jump_length_mm: [tr("apila.travelLength"), (v) => lengthText(v, lu, 1)],
     segment_count: ["Segments", (v) => String(v)],
     polyline_count: ["Paths", (v) => String(v)],
     packet_count: ["Packets", (v) => String(v)],
@@ -167,7 +168,7 @@ export function previewLayers(preview: Preview | null, doc: GDocument | null): L
     const dl = byId.get(id);
     rows.push({
       id,
-      name: dl?.name ?? (id || "Unknown layer"),
+      name: dl?.name ?? (id || tr("apila.unknownLayer")),
       color: dl?.color ?? "#333",
       mode: dl?.settings.mode ?? "",
       segments: c.n,

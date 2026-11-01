@@ -21,6 +21,7 @@ import { formatBytes } from "../api/project.ts";
 import type { MachineStatus } from "../api/types.ts";
 import type { LinkState } from "../api/useEngine.ts";
 import { fmt } from "./ui.tsx";
+import { useT } from "../workspace/usePrefs.ts";
 
 export interface LightBurnState {
   /** The engine's LightBurn devices, or null while loading or when the engine has no LightBurn routes. */
@@ -71,6 +72,7 @@ export function LightBurnDevices(p: {
   notify: (msg: string, kind?: "info" | "error") => void;
   report: (e: unknown) => void;
 }) {
+  const t = useT();
   const { info, unsupported } = p.lightburn;
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
@@ -105,7 +107,7 @@ export function LightBurnDevices(p: {
     setBusy(true);
     try {
       await api.lightburnForget();
-      p.notify("Forgot the uploaded LightBurn settings.");
+      p.notify(t("lb.forgotTheUploadedLightburnSettings"));
       await p.lightburn.refresh();
       p.onChanged();
     } catch (e) {
@@ -117,7 +119,7 @@ export function LightBurnDevices(p: {
 
   return (
     <div className="lb-devices">
-      <h4>LightBurn devices</h4>
+      <h4>{t("lb.lightburnDevices")}</h4>
       <input
         ref={input}
         type="file"
@@ -130,9 +132,9 @@ export function LightBurnDevices(p: {
         }}
       />
       {info === null ? (
-        <p className="muted">Loading…</p>
+        <p className="muted">{t("lb.loading")}</p>
       ) : !info.available ? (
-        <p className="muted">No LightBurn settings on the engine computer.</p>
+        <p className="muted">{t("lb.noLightburnSettingsOnTheEngine")}</p>
       ) : (
         <>
           <ul className="lb-device-list">
@@ -151,7 +153,7 @@ export function LightBurnDevices(p: {
             ))}
           </ul>
           <p className="hint">
-            {info.source === "uploaded" ? "From LightBurn settings loaded from a browser." : "From LightBurn on the engine computer."}
+            {info.source === "uploaded" ? t("lb.fromLightburnSettingsLoadedFromA") : t("lb.fromLightburnOnTheEngineComputer")}
           </p>
           {matched && matched.device && (
             <>
@@ -165,9 +167,9 @@ export function LightBurnDevices(p: {
                   <table className="lb-diff-table">
                     <thead>
                       <tr>
-                        <th scope="col">Setting</th>
-                        <th scope="col">OpenEtch</th>
-                        <th scope="col">LightBurn</th>
+                        <th scope="col">{t("lb.setting")}</th>
+                        <th scope="col">{t("lb.openetch")}</th>
+                        <th scope="col">{t("lb.lightburn")}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -195,11 +197,11 @@ export function LightBurnDevices(p: {
       )}
       <div className="lb-actions">
         <button className="btn" disabled={busy} onClick={() => input.current?.click()}>
-          Load LightBurn settings…
+          {t("lb.loadLightburnSettings")}
         </button>
         {info?.source === "uploaded" && (
           <button className="btn" disabled={busy} onClick={() => void forget()}>
-            Forget
+            {t("lb.forget")}
           </button>
         )}
       </div>

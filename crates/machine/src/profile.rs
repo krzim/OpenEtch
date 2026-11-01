@@ -416,6 +416,10 @@ pub struct MachineProfile {
     /// confirmation. 14 on the B6 (unverified that anything is wired to it).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start_mark_input_bit: Option<u8>,
+    /// The start-mark input is active when low (LightBurn `StartMarkBitHigh` = false, its IO Ports "Low"): pressed
+    /// while the bit reads 0. Default active high.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub start_mark_active_low: bool,
     /// Input bit of a stop-marking signal (a button wired to the board), 0..=15; `None` when there is none. While a
     /// run streams, the controller reads the inputs at every status poll and aborts the run when this bit is set
     /// (unverified on hardware: nothing is known to be wired to it on the B6).
@@ -484,6 +488,7 @@ impl MachineProfile {
             pulse_width_enabled: true,
             open_mo_delay_us: DEFAULT_OPEN_MO_DELAY_US,
             start_mark_input_bit: None,
+            start_mark_active_low: false,
             stop_mark_input_bit: None,
             focus_light_port_bit: None,
             blanking: true,

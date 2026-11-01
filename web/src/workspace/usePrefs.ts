@@ -3,7 +3,7 @@
 // (once, in App) puts the theme and UI scale on <html>.
 
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
-import { translate, type MsgKey, type T, type Vars } from "./i18n.ts";
+import { translate, translateDynamic, type MsgKey, type T, type Vars } from "./i18n.ts";
 import { getPrefs, reloadPrefs, subscribePrefs, PREFS_KEY, type Prefs } from "./prefs.ts";
 import { resolveTheme, type Theme } from "./theme.ts";
 import { unitConversion, type UnitConversion } from "./units.ts";
@@ -15,6 +15,26 @@ export function usePrefs(): Prefs {
 export function useT(): T {
   const lang = usePrefs().language;
   return useCallback((key: MsgKey, vars?: Vars) => translate(lang, key, vars), [lang]);
+}
+
+/** Translate a key built at runtime ("shape.Circle"), with the English `fallback` when there is no such message. */
+export function useTD(): (key: string, fallback: string, vars?: Vars) => string {
+  const lang = usePrefs().language;
+  return useCallback((key: string, fallback: string, vars?: Vars) => translateDynamic(lang, key, fallback, vars), [lang]);
+}
+
+/** The display name of a shape kind from snapping.ts `shapeKindName` ("Circle", "Path", ...), translated. */
+export function shapeKindText(td: ReturnType<typeof useTD>, englishName: string): string {
+  return td(`shape.${englishName}`, englishName);
+}
+
+/** A pass label from api/passes.ts ("Main", "Sub-layer 2" or the sub-layer's own name), translated. */
+export function passLabelText(t: T, label: string): string {
+  if (label === "Main") return t("layers.main");
+  if (label === "Cleanup") return t("layers.cleanupPass");
+  if (label.startsWith("Main · ")) return `${t("layers.main")} · ${label.slice(7)}`;
+  const m = /^Sub-layer (\d+)$/.exec(label);
+  return m ? t("layers.subN", { n: Number(m[1]) }) : label;
 }
 
 const DARK_QUERY = "(prefers-color-scheme: dark)";
@@ -46,7 +66,7 @@ export function useResolvedTheme(): Theme {
 /** Theme, UI scale and language on the document root; preferences changed in another tab are picked up. */
 export function useApplyWorkspace(): void {
   const theme = useResolvedTheme();
-  const { uiScale, language } = usePrefs();
+  const { uiScale, iconScale, handleScale, language } = usePrefs();
   useEffect(() => {
     const root = document.documentElement;
     root.dataset.theme = theme;
@@ -55,6 +75,12 @@ export function useApplyWorkspace(): void {
   useEffect(() => {
     document.documentElement.style.setProperty("--ui-scale", String(uiScale));
   }, [uiScale]);
+  useEffect(() => {
+    document.documentElement.style.setProperty("--icon-scale", String(iconScale));
+  }, [iconScale]);
+  useEffect(() => {
+    document.documentElement.style.setProperty("--handle-scale", String(handleScale));
+  }, [handleScale]);
   useEffect(() => {
     document.documentElement.lang = language;
   }, [language]);

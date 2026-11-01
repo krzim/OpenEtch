@@ -991,7 +991,7 @@ async fn project_names_cannot_leave_the_directory() {
     rect(&app, 4.0, 4.0).await;
     let root = st.projects.root().to_path_buf();
     let base = root.parent().unwrap().to_path_buf();
-    for name in ["../x", "a/b", "..", ".hidden", "C:\\x", "..\\x", "/etc/passwd", "x/../../y", "", "con"] {
+    for name in ["../x", "a//b", "templates/x", "1/2/3/4/5/x", "..", ".hidden", "C:\\x", "..\\x", "/etc/passwd", "x/../../y", "", "con"] {
         for route in ["/api/projects/save", "/api/projects/open"] {
             let (s, v) = send(&app, req("POST", route, Some(json!({"name": name})))).await;
             assert_eq!(s, StatusCode::BAD_REQUEST, "{route} {name:?}: {v}");

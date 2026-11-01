@@ -226,7 +226,7 @@ impl AppState {
             if !activate {
                 return Err(EngineError::BadRequest("a project opens into the active document: leave activate out".into()));
             }
-            projects::validate_name(name)?;
+            projects::validate_project_name(name)?;
             if let Some(id) = self.document_with_project(name) {
                 let r = self.activate_document(&id, origin)?;
                 return Ok(json!({ "ok": true, "id": id, "active": id, "existing": true, "revision": r["revision"] }));
@@ -262,7 +262,7 @@ impl AppState {
     /// Open project `name` into open document `id` while it is not the active one (`doc.load`, one undo step, the
     /// document then belongs to the project). Returns `{ok, name, result, revision}` as `POST /api/projects/open`.
     pub(crate) async fn load_project_into(self: &Arc<Self>, id: &str, name: &str, origin: Origin) -> Result<Value, EngineError> {
-        projects::validate_name(name)?;
+        projects::validate_project_name(name)?;
         let (id, owned) = (id.to_owned(), name.to_owned());
         self.blocking(move |st| {
             let (name, content) = st.projects.read(&owned)?;

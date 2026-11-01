@@ -183,14 +183,31 @@ export interface ImportPrefs {
   center: boolean;
   /** Import hidden Illustrator / PDF layers. */
   hiddenLayers: boolean;
+  /** LightBurn's "Allow Importing to Tool Layers": the import may land on tool layer T1 / T2 (else never). */
+  toolLayers: boolean;
 }
 
-export const DEFAULT_IMPORT_PREFS: ImportPrefs = { group: true, select: true, center: true, hiddenLayers: false };
+export const DEFAULT_IMPORT_PREFS: ImportPrefs = { group: true, select: true, center: true, hiddenLayers: false, toolLayers: false };
+
+/**
+ * The layer an import goes to: the active layer, unless it is a tool layer (T1 / T2) and importing to tool layers is
+ * off (LightBurn's default); then the first ordinary layer, or null (the engine picks).
+ */
+export function importTargetLayer(
+  layers: readonly { id: string; tool?: string | null }[] | undefined,
+  active: string | null,
+  toolLayers: boolean,
+): string | null {
+  if (!active || toolLayers || !layers) return active;
+  const l = layers.find((x) => x.id === active);
+  if (!l?.tool) return active;
+  return layers.find((x) => !x.tool)?.id ?? null;
+}
 
 export function importPrefsFrom(raw: unknown): ImportPrefs {
   const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   const b = (k: keyof ImportPrefs) => (typeof o[k] === "boolean" ? (o[k] as boolean) : DEFAULT_IMPORT_PREFS[k]);
-  return { group: b("group"), select: b("select"), center: b("center"), hiddenLayers: b("hiddenLayers") };
+  return { group: b("group"), select: b("select"), center: b("center"), hiddenLayers: b("hiddenLayers"), toolLayers: b("toolLayers") };
 }
 
 /** 3D model options (LightBurn 2.2 Import 3D Model). */
@@ -258,6 +275,8 @@ export function importQuery(r: ImportRequest): string {
     if (m) q.set("mime", m);
   }
   if (lb) return q.toString();
+  // Allow Importing to Tool Layers: the engine then accepts a tool layer (or T1 / T2) as the target.
+  if (r.prefs.toolLayers) q.set("tool_layers", "true");
   if (KEEPS_POSITION.has(r.format) && !r.prefs.center) q.set("keep_position", "true");
   const width = r.format === "model" ? r.model?.widthMm : r.widthMm;
   if (width != null && Number.isFinite(width) && width > 0) q.set("width_mm", String(width));

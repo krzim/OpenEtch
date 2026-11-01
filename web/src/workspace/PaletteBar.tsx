@@ -1,6 +1,7 @@
 // LightBurn's colour palette along the bottom of the canvas: C00..C29 and the tool layers T1/T2. Clicking a swatch
 // moves the selection to that colour's layer, creating the layer first when there is none (two commands then:
-// `layer.add`, `object.set_layer`; a tool layer is also set to no output, as LightBurn's tool layers never burn).
+// `layer.add`, `object.set_layer`). T1 / T2 stand for the document's tool layers (`Layer.tool`, made with
+// `layer.tool`): they never output and are framed with the job; older engines get a layer with output off instead.
 // Swatches whose layer exists are marked; the selection's layer is outlined.
 
 import type { Invocation } from "../api/client.ts";
@@ -19,6 +20,8 @@ export interface PaletteBarProps {
   notify: (msg: string, kind?: "info" | "error") => void;
   /** After a click: the layer the selection is now on (to show it in the properties). */
   onLayer?: (layer: string) => void;
+  /** Engine command check: with `layer.tool`, T1 / T2 are real tool layers. */
+  has?: (cmd: string) => boolean;
 }
 
 export function PaletteBar(p: PaletteBarProps) {
@@ -28,13 +31,18 @@ export function PaletteBar(p: PaletteBarProps) {
   const selLayers = new Set(doc.objects.filter((o) => p.selected.includes(o.id)).map((o) => o.layer));
 
   const click = async (e: PaletteEntry) => {
-    const plan = assignPlan(doc.layers, doc.objects, p.selected, e);
+    const plan = assignPlan(doc.layers, doc.objects, p.selected, e, p.has?.(C.OPT.layerTool) ?? false);
     try {
       if (plan.kind === "none") {
         if (plan.reason === "no-selection") p.notify(t("palette.selectFirst"), "error");
         return;
       }
       let layer = plan.kind === "existing" ? plan.layer : "";
+      if (plan.kind === "tool") {
+        const r = await p.run(C.layerTool(plan.tool));
+        layer = r && typeof r === "object" ? String((r as { id?: unknown }).id ?? "") : "";
+        if (!layer) return;
+      }
       if (plan.kind === "create") {
         const r = await p.run(C.layerAdd(plan.name, plan.color));
         layer = createdIds(r)[0] ?? (r && typeof r === "object" ? String((r as { id?: unknown }).id ?? "") : "");

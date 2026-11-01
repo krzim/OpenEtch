@@ -5,6 +5,7 @@
 // `t_s`). Pure: no React and no fetch, so `npm test` covers it.
 
 import type { Preview, PreviewSegment } from "./types.ts";
+import { tr } from "../workspace/tr.ts";
 
 // ---- job status -----------------------------------------------------------------------------------------------------
 
@@ -182,7 +183,7 @@ export function runRequestBody(o: RunOptions, extra: { selection?: readonly stri
   const body: Record<string, unknown> = { origin: "ui" };
   const from = extra.fromSegment ?? null;
   if (o.cutSelected && from === null) {
-    if (!extra.selection || extra.selection.length === 0) throw new Error("Cut Selected Graphics is on, but nothing is selected.");
+    if (!extra.selection || extra.selection.length === 0) throw new Error(tr("apij.cutSelectedGraphicsIsOnBut"));
     body.selection = [...extra.selection];
   }
   if (from !== null) {
@@ -278,7 +279,7 @@ export function normalizeFrameOptions(raw: unknown): FrameOptions {
 export function frameRequestBody(o: FrameOptions, selection: readonly string[] = []): Record<string, unknown> {
   const body: Record<string, unknown> = { mode: o.style };
   if (o.selectionOnly) {
-    if (selection.length === 0) throw new Error("Select shapes to frame, or turn off Selection only.");
+    if (selection.length === 0) throw new Error(tr("apij.selectShapesToFrameOrTurn"));
     body.ids = [...selection];
   } else if (o.toolLayersOnly) body.tool_layers_only = true;
   if (o.style !== "outline" && o.individually) body.individually = true;

@@ -120,18 +120,27 @@ pub(super) struct Placement<'a> {
     pub width_mm: Option<f64>,
     pub keep_position: bool,
     pub split: bool,
+    /// Put the paths on the layers the file carries (EzCad pens and hatches) even when `layer` is given.
+    pub file_layers: bool,
 }
 
 /// Add imported art to the document: scaled to `width_mm`, centred on the field origin unless `keep_position`, one
 /// object per path in a group named after the file (`split`, the default, as LightBurn groups imports) or one
 /// combined object. Returns `{created, group, bounds, warnings, size_mm}`.
 pub(super) fn place_art(cmd: &str, doc: &mut Document, art: Art, p: &Placement, default_name: &str) -> Result<(Value, String)> {
-    let Art { paths, mut warnings } = art;
-    if paths.is_empty() {
+    let Art { paths, images, layers: art_layers, texts, mut warnings } = art;
+    if paths.is_empty() && images.is_empty() && texts.is_empty() {
         return Err(CommandError::Failed(format!("{cmd}: the file contains no vector paths")));
     }
     let base = p.name.map(|n| util::name(cmd, "name", n)).transpose()?.unwrap_or_else(|| default_name.to_string());
-    let bounds = paths.iter().map(|a| a.path.bounding_box()).reduce(|a, b| a.union(b)).unwrap_or(Rect::ZERO);
+    let text_box = |t: &fileio::ArtText| Rect::from_points(t.at, t.at + kurbo::Vec2::new(text_width(t), t.height_mm));
+    let bounds = paths
+        .iter()
+        .map(|a| a.path.bounding_box())
+        .chain(images.iter().map(fileio::ArtImage::bounds))
+        .chain(texts.iter().map(text_box))
+        .reduce(|a, b| a.union(b))
+        .unwrap_or(Rect::ZERO);
     let k = match p.width_mm {
         Some(w) => {
             let w = util::positive(cmd, "width_mm", w)?;
@@ -158,8 +167,40 @@ pub(super) fn place_art(cmd: &str, doc: &mut Document, art: Art, p: &Placement, 
     }
     transact(doc, |doc| {
         let layer = util::layer_or_default(doc, p.layer)?;
+        // Layers the file carries (EzCad pens and hatches), made only for what uses them and only when the caller
+        // named no layer.
+        let mut made_layers: Vec<String> = Vec::new();
+        let mut file_layers: Vec<Option<String>> = vec![None; art_layers.len()];
+        if p.file_layers || p.layer.is_none() {
+            let used: Vec<usize> = paths.iter().filter_map(|a| a.layer).chain(texts.iter().filter_map(|t| t.layer)).collect();
+            for (i, l) in art_layers.iter().enumerate().filter(|(i, _)| used.contains(i)) {
+                let id = doc.alloc_id("layer")?;
+                let color = format!("#{:02x}{:02x}{:02x}", l.color[0], l.color[1], l.color[2]);
+                let mut layer = doc::Layer::new(id.clone(), &l.name, &color);
+                let usable = |s: &doc::CutSettings| super::layer::validate_settings(cmd, s).map_err(|e| e.to_string());
+                match usable(&l.settings) {
+                    Ok(()) => layer.settings = l.settings.clone(),
+                    Err(e) => warnings.push(format!("layer \"{}\": the file's settings are not usable ({e}); defaults used", l.name)),
+                }
+                for s in &l.sub_layers {
+                    match usable(s) {
+                        Ok(()) => layer.sub_layers.push(s.clone()),
+                        Err(e) => warnings.push(format!("layer \"{}\": a further hatch is left out ({e})", l.name)),
+                    }
+                }
+                doc.layers.push(layer);
+                made_layers.push(id.clone());
+                file_layers[i] = Some(id);
+            }
+        }
+        let layer_of = |l: Option<usize>| l.and_then(|i| file_layers.get(i).cloned().flatten()).unwrap_or_else(|| layer.clone());
         let mut created: Vec<ObjectId> = Vec::new();
         let mut group = None;
+        // Images and texts are objects of their own, grouped with the art.
+        let mut extra = place_images(cmd, doc, &images, fit, &base, &layer)?;
+        for t in &texts {
+            extra.push(place_text(cmd, doc, t, fit, k, &layer_of(t.layer), &mut warnings)?);
+        }
         if p.split && paths.len() > 1 && paths.len() <= MAX_SPLIT {
             let gid = doc.alloc_id("group")?;
             doc.groups.push(Group::new(gid.clone(), base.clone(), None));
@@ -167,26 +208,119 @@ pub(super) fn place_art(cmd: &str, doc: &mut Document, art: Art, p: &Placement, 
             for (n, a) in paths.into_iter().enumerate() {
                 let path = fit * a.path;
                 validate_path(cmd, &path)?;
-                let obj = add_object(doc, format!("{base} {} {}", a.label, n + 1), layer.clone(), Geometry::Path { path }, Affine::IDENTITY)?;
+                let obj = add_object(doc, format!("{base} {} {}", a.label, n + 1), layer_of(a.layer), Geometry::Path { path }, Affine::IDENTITY)?;
                 if let Some(o) = doc.object_mut(&obj) {
                     o.group = group.clone();
                 }
                 created.push(obj);
             }
-        } else {
-            let mut all = BezPath::new();
+        } else if !paths.is_empty() {
+            // One object per layer the paths are on.
+            let mut by_layer: Vec<(String, BezPath)> = Vec::new();
             for a in paths {
-                all.extend(fit * a.path);
+                let l = layer_of(a.layer);
+                let path = fit * a.path;
+                match by_layer.iter_mut().find(|(x, _)| *x == l) {
+                    Some((_, all)) => all.extend(path),
+                    None => by_layer.push((l, path)),
+                }
             }
-            validate_path(cmd, &all)?;
-            created.push(add_object(doc, base.clone(), layer, Geometry::Path { path: all }, Affine::IDENTITY)?);
+            let several = by_layer.len() > 1;
+            for (l, all) in by_layer {
+                validate_path(cmd, &all)?;
+                let name = if several { format!("{base} {}", doc.layer(&l).map_or("", |x| x.name.as_str())) } else { base.clone() };
+                created.push(add_object(doc, name, l, Geometry::Path { path: all }, Affine::IDENTITY)?);
+            }
+        }
+        if !extra.is_empty() || (group.is_none() && created.len() > 1) {
+            let gid = match &group {
+                Some(g) => g.clone(),
+                None if created.len() + extra.len() > 1 => {
+                    let gid = doc.alloc_id("group")?;
+                    doc.groups.push(Group::new(gid.clone(), base.clone(), None));
+                    for id in &created {
+                        if let Some(o) = doc.object_mut(id) {
+                            o.group = Some(gid.clone());
+                        }
+                    }
+                    group = Some(gid.clone());
+                    gid
+                }
+                None => String::new(),
+            };
+            for id in &extra {
+                if let Some(o) = doc.object_mut(id).filter(|_| !gid.is_empty()) {
+                    o.group = Some(gid.clone());
+                }
+            }
+            created.extend(extra);
         }
         let mut r = util::edit_result(doc, &created, &[]);
         r["group"] = json!(group);
+        r["layers"] = json!(made_layers);
         r["warnings"] = json!(warnings);
         r["size_mm"] = json!([util::r4(size.width), util::r4(size.height)]);
         Ok((r, format!("imported {base} ({} object(s))", created.len())))
     })
+}
+
+/// A text's width before it is set: about 0.6 of the height per character.
+fn text_width(t: &fileio::ArtText) -> f64 {
+    0.6 * t.height_mm * t.text.lines().map(|l| l.chars().count()).max().unwrap_or(1).max(1) as f64
+}
+
+/// A text the file holds without outlines: live text in its font when that is installed, else a placeholder
+/// rectangle where it goes (named after the text) and a warning.
+fn place_text(cmd: &str, doc: &mut Document, t: &fileio::ArtText, fit: Affine, k: f64, layer: &str, warnings: &mut Vec<String>) -> Result<ObjectId> {
+    let at = fit * t.at;
+    let height = t.height_mm * k;
+    let input = json!({
+        "text": t.text, "font": { "family": t.font, "kind": "system" }, "height_mm": height,
+        "center": [at.x, at.y], "rotation_deg": t.angle_deg, "layer": layer, "align_h": "left", "align_v": "bottom",
+    });
+    let set = serde_json::from_value::<<super::text::ShapeText as Command>::Input>(input)
+        .map_err(|e| e.to_string())
+        .and_then(|i| <super::text::ShapeText as Command>::apply(doc, i).map_err(|e| e.to_string()));
+    match set {
+        Ok((r, _)) => {
+            warnings.push(format!("text \"{}\" was set in {} (its place in the file is the start of the baseline; unverified against EzCad)", t.text, t.font));
+            r["created"][0].as_str().map(str::to_owned).ok_or_else(|| CommandError::Failed("the text was not created".into()))
+        }
+        Err(e) => {
+            warnings.push(format!("text \"{}\" in font \"{}\" has no outline in the file and the font cannot be used here ({e}): a placeholder marks its place", t.text, t.font));
+            let w = text_width(t) * k;
+            let rect = Geometry::Rect { width_mm: w, height_mm: height, corner_radius_mm: 0.0 };
+            let place = Affine::translate(at.to_vec2()) * Affine::rotate(t.angle_deg.to_radians()) * Affine::translate((w / 2.0, height / 2.0));
+            let _ = cmd;
+            add_object(doc, format!("Text placeholder: {}", t.text.chars().take(60).collect::<String>()), layer.to_owned(), rect, place)
+        }
+    }
+}
+
+/// Add `images` as image objects placed by `fit` after their own placement. Returns their ids.
+fn place_images(cmd: &str, doc: &mut Document, images: &[fileio::ArtImage], fit: Affine, base: &str, layer: &str) -> Result<Vec<ObjectId>> {
+    let mut out = Vec::new();
+    for (n, im) in images.iter().enumerate() {
+        let m = fit * im.placement;
+        let c = m.as_coeffs();
+        let (w, h) = (c[0].hypot(c[1]), c[2].hypot(c[3]));
+        if !(w.is_finite() && h.is_finite() && w > 1e-6 && h > 1e-6) || m.determinant().abs() < 1e-12 {
+            continue;
+        }
+        // The image is centred on its local origin: unit square = local / size + 0.5.
+        let transform = m * Affine::translate((0.5, 0.5)) * Affine::scale_non_uniform(1.0 / w, 1.0 / h);
+        let geometry = Geometry::Image {
+            width_mm: w,
+            height_mm: h,
+            mime: im.mime.into(),
+            data_base64: STANDARD.encode(&im.data).into(),
+            adjust: doc::ImageAdjust::default(),
+        };
+        let name = if images.len() == 1 { format!("{base} {}", im.label) } else { format!("{base} {} {}", im.label, n + 1) };
+        let _ = cmd;
+        out.push(add_object(doc, name, layer.to_owned(), geometry, transform)?);
+    }
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -444,9 +578,9 @@ impl Command for ImportPdf {
     const ID: &'static str = "art.import_pdf";
     const TITLE: &'static str = "Import PDF";
     const DESCRIPTION: &'static str = concat!(
-        "Import the vector paths of one page (default 1) of a PDF (base64) in mm: paths and rectangles of the page \
-         and its forms; text, images and gradients are left out with a warning. hidden_layers imports optional \
-         content that is off. ",
+        "Import one page (default 1) of a PDF (base64) in mm: paths and rectangles of the page and its forms, and \
+         its embedded images as image objects where the page draws them; text and gradients are left out with a \
+         warning. hidden_layers imports optional content that is off. ",
         placement_doc!()
     );
     const RISK: Risk = Risk::Edit;
@@ -456,7 +590,7 @@ impl Command for ImportPdf {
         let bytes = base64_bytes(id, &i.data_base64, MAX_FILE_BYTES)?;
         let art = fileio::pdf_in::parse(&bytes, &fileio::pdf_in::PdfImportOptions { page: i.page, hidden_layers: i.hidden_layers })
             .map_err(file_err(id))?;
-        let p = Placement { layer: i.layer.as_deref(), name: i.name.as_deref(), width_mm: i.width_mm, keep_position: i.keep_position, split: i.split.unwrap_or(true) };
+        let p = Placement { layer: i.layer.as_deref(), name: i.name.as_deref(), width_mm: i.width_mm, keep_position: i.keep_position, split: i.split.unwrap_or(true), file_layers: false };
         place_art(id, doc, art, &p, "Imported PDF")
     }
 }
@@ -471,8 +605,8 @@ impl Command for ImportAi {
     const DESCRIPTION: &'static str = concat!(
         "Import an Adobe Illustrator .ai file (base64): Illustrator 9 and later files are read through their PDF \
          content (saved with 'Create PDF Compatible File', LightBurn's requirement too; hidden_layers imports hidden \
-         layers), older PostScript-based ones through the EPS reader. Vectors only; text and images are left out with \
-         a warning. ",
+         layers; embedded images as image objects), older PostScript-based ones through the EPS reader (vectors \
+         only). Text is left out with a warning. ",
         placement_doc!()
     );
     const RISK: Risk = Risk::Edit;
@@ -495,7 +629,7 @@ impl Command for ImportAi {
         } else {
             fileio::postscript::parse(&bytes).map_err(file_err(id))?
         };
-        let p = Placement { layer: i.layer.as_deref(), name: i.name.as_deref(), width_mm: i.width_mm, keep_position: i.keep_position, split: i.split.unwrap_or(true) };
+        let p = Placement { layer: i.layer.as_deref(), name: i.name.as_deref(), width_mm: i.width_mm, keep_position: i.keep_position, split: i.split.unwrap_or(true), file_layers: false };
         place_art(id, doc, art, &p, "Imported AI")
     }
 }
@@ -518,27 +652,60 @@ pub struct ImportEpsInput {
     pub split: Option<bool>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ImportEzdInput {
+    /// The .ezd file in base64.
+    pub data_base64: String,
+    /// Layer id for what carries no settings of its own (default the first layer).
+    pub layer: Option<String>,
+    /// Name of the group (or the object).
+    pub name: Option<String>,
+    /// Scale uniformly to this width in mm.
+    pub width_mm: Option<f64>,
+    /// Keep the file's own coordinates instead of centring on the field origin.
+    #[serde(default)]
+    pub keep_position: bool,
+    /// One object per path in a group (default true); false makes one object per layer.
+    pub split: Option<bool>,
+    /// Put the objects on layers made from the file's pens and hatches (default true); false puts everything on
+    /// `layer`.
+    pub pen_layers: Option<bool>,
+}
+
 /// `art.import_ezd`.
 pub struct ImportEzd;
 
 impl Command for ImportEzd {
-    type Input = ImportEpsInput;
+    type Input = ImportEzdInput;
     const ID: &'static str = "art.import_ezd";
     const TITLE: &'static str = "Import EzCad project";
     const DESCRIPTION: &'static str = concat!(
-        "Import the vector objects of an EzCad 2 .ezd project (base64; not in LightBurn): curves, rectangles, \
-         circles, ellipses, polygons, groups and the outlines of hatches, one path per object named after its pen. \
-         Text, images, hatch and pen settings are not read (a warning lists them). keep_position defaults to false; \
-         EzCad's field frame matches OpenEtch's, so true keeps every object where EzCad had it. ",
+        "Import an EzCad 2 .ezd project (base64; not in LightBurn): curves, rectangles, circles, ellipses, polygons, \
+         groups, hatch outlines, text outlines and images, each pen a line layer with its speed, power, frequency, \
+         loops and pulse width, each hatch a fill layer (further hatches as sub-layers; pen_layers: false puts \
+         everything on `layer`). A text without outlines is set in its font when installed, else a placeholder \
+         marks it (warned). keep_position keeps EzCad's field positions. ",
         placement_doc!()
     );
     const RISK: Risk = Risk::Edit;
 
-    fn apply(doc: &mut Document, i: ImportEpsInput) -> Result<(Value, String)> {
+    fn apply(doc: &mut Document, i: ImportEzdInput) -> Result<(Value, String)> {
         let id = Self::ID;
         let bytes = base64_bytes(id, &i.data_base64, fileio::ezd::MAX_BYTES)?;
         let art = fileio::ezd::parse(&bytes).map_err(file_err(id))?;
-        let p = Placement { layer: i.layer.as_deref(), name: i.name.as_deref(), width_mm: i.width_mm, keep_position: i.keep_position, split: i.split.unwrap_or(true) };
+        let pen_layers = i.pen_layers.unwrap_or(true);
+        let mut art = art;
+        if !pen_layers {
+            art.layers.clear();
+            for a in &mut art.paths {
+                a.layer = None;
+            }
+            for t in &mut art.texts {
+                t.layer = None;
+            }
+        }
+        let p = Placement { layer: i.layer.as_deref(), name: i.name.as_deref(), width_mm: i.width_mm, keep_position: i.keep_position, split: i.split.unwrap_or(true), file_layers: pen_layers };
         place_art(id, doc, art, &p, "Imported EzCad")
     }
 }
@@ -561,7 +728,7 @@ impl Command for ImportEps {
         let id = Self::ID;
         let bytes = base64_bytes(id, &i.data_base64, MAX_FILE_BYTES)?;
         let art = fileio::postscript::parse(&bytes).map_err(file_err(id))?;
-        let p = Placement { layer: i.layer.as_deref(), name: i.name.as_deref(), width_mm: i.width_mm, keep_position: i.keep_position, split: i.split.unwrap_or(true) };
+        let p = Placement { layer: i.layer.as_deref(), name: i.name.as_deref(), width_mm: i.width_mm, keep_position: i.keep_position, split: i.split.unwrap_or(true), file_layers: false };
         place_art(id, doc, art, &p, "Imported EPS")
     }
 }
@@ -603,7 +770,7 @@ impl Command for ImportHpgl {
     fn apply(doc: &mut Document, i: ImportHpglInput) -> Result<(Value, String)> {
         let id = Self::ID;
         let art = fileio::hpgl::parse(&i.content, i.units_per_mm.unwrap_or(fileio::hpgl::UNITS_PER_MM)).map_err(file_err(id))?;
-        let p = Placement { layer: i.layer.as_deref(), name: i.name.as_deref(), width_mm: i.width_mm, keep_position: i.keep_position, split: i.split.unwrap_or(true) };
+        let p = Placement { layer: i.layer.as_deref(), name: i.name.as_deref(), width_mm: i.width_mm, keep_position: i.keep_position, split: i.split.unwrap_or(true), file_layers: false };
         place_art(id, doc, art, &p, "Imported HPGL")
     }
 }
@@ -672,7 +839,7 @@ impl Command for ImportGerber {
         .map_err(file_err(id))?;
         let default = if kind == fileio::gerber::Kind::Excellon { "Drill" } else { "Gerber" };
         // Copper outlines with their holes belong together: one object per island.
-        let p = Placement { layer: i.layer.as_deref(), name: i.name.as_deref(), width_mm: i.width_mm, keep_position: i.keep_position, split: i.split.unwrap_or(true) };
+        let p = Placement { layer: i.layer.as_deref(), name: i.name.as_deref(), width_mm: i.width_mm, keep_position: i.keep_position, split: i.split.unwrap_or(true), file_layers: false };
         place_art(id, doc, art, &p, default)
     }
 }
@@ -680,7 +847,7 @@ impl Command for ImportGerber {
 // ---------------------------------------------------------------------------------------------------------------------
 // 3D models.
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, serde::Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelFormat {
     Stl,
@@ -728,6 +895,112 @@ pub struct ImportModelInput {
     pub name: Option<String>,
 }
 
+/// Object `extras` of a depth map made by `art.import_model` (LightBurn's Edit 3D Model reopens its dialog on it):
+/// the options it was rendered with (JSON of [`ModelOptions`]).
+pub const MODEL_OPTIONS_KEY: &str = "model3d.options";
+/// The model file itself, zipped (deflate) and in base64, when it fits [`MAX_KEPT_MODEL_BYTES`].
+pub const MODEL_SOURCE_KEY: &str = "model3d.source";
+/// The id of the outline object made with it, if any.
+pub const MODEL_OUTLINE_KEY: &str = "model3d.outline";
+/// Largest zipped model kept on the image (bigger models import, but cannot be edited again).
+pub const MAX_KEPT_MODEL_BYTES: usize = 16 * 1024 * 1024;
+
+/// The options a depth map is rendered with (the import dialog's fields).
+#[derive(Debug, Clone, PartialEq, Deserialize, serde::Serialize)]
+pub struct ModelOptions {
+    #[serde(default)]
+    pub format: Option<ModelFormat>,
+    #[serde(default)]
+    pub rotation_deg: [f64; 3],
+    #[serde(default)]
+    pub width_mm: Option<f64>,
+    pub dpi: f64,
+    #[serde(default)]
+    pub sixteen_bit: bool,
+    #[serde(default)]
+    pub invert: bool,
+    #[serde(default)]
+    pub transparent_background: bool,
+    #[serde(default)]
+    pub depth_cutoff_mm: Option<f64>,
+    #[serde(default)]
+    pub equalize: bool,
+    #[serde(default)]
+    pub outline: bool,
+}
+
+/// Render `bytes` (a model file) with `o`: the depth map, the triangle count and warnings.
+fn render_model(id: &str, bytes: &[u8], o: &ModelOptions) -> Result<(fileio::mesh::DepthMap, usize, Vec<String>)> {
+    let format = o.format.map(|f| match f {
+        ModelFormat::Stl => fileio::mesh::Format::Stl,
+        ModelFormat::Obj => fileio::mesh::Format::Obj,
+        ModelFormat::Off => fileio::mesh::Format::Off,
+        ModelFormat::Ply => fileio::mesh::Format::Ply,
+        ModelFormat::ThreeMf => fileio::mesh::Format::ThreeMf,
+        ModelFormat::Amf => fileio::mesh::Format::Amf,
+    });
+    let (mesh, mut warnings) = fileio::mesh::load(bytes, format).map_err(file_err(id))?;
+    let dpi = util::positive(id, "dpi", o.dpi)?;
+    for (k, v) in o.rotation_deg.iter().enumerate() {
+        util::finite(id, ["rotation_deg[0]", "rotation_deg[1]", "rotation_deg[2]"][k], *v)?;
+    }
+    let d = fileio::mesh::DepthOptions {
+        rotation_deg: o.rotation_deg,
+        width_mm: o.width_mm,
+        px_per_mm: dpi / 25.4,
+        sixteen_bit: o.sixteen_bit,
+        invert: o.invert,
+        transparent_background: o.transparent_background,
+        depth_cutoff_mm: o.depth_cutoff_mm,
+        equalize: o.equalize,
+    };
+    let map = fileio::mesh::depth_map(&mesh, &d).map_err(file_err(id))?;
+    if map.width_mm > 300.0 || map.height_mm > 300.0 {
+        warnings.push(format!("the depth map is {:.1} x {:.1} mm; pass width_mm to scale the model", map.width_mm, map.height_mm));
+    }
+    Ok((map, mesh.triangles.len(), warnings))
+}
+
+/// The model's outline rings as one path (`None` when it has none).
+fn outline_path(id: &str, map: &fileio::mesh::DepthMap) -> Result<Option<BezPath>> {
+    if map.outline.is_empty() {
+        return Ok(None);
+    }
+    let mut p = BezPath::new();
+    for ring in &map.outline {
+        p.move_to(ring[0]);
+        for q in &ring[1..] {
+            p.line_to(*q);
+        }
+        p.close_path();
+    }
+    validate_path(id, &p)?;
+    Ok(Some(p))
+}
+
+/// The model file zipped and in base64 for [`MODEL_SOURCE_KEY`], or why it is not kept.
+fn keep_model(bytes: &[u8]) -> std::result::Result<String, String> {
+    let zipped = fileio::zip::write(&[fileio::zip::Entry { name: "model".into(), data: bytes.to_vec() }]).map_err(|e| e.to_string())?;
+    if zipped.len() > MAX_KEPT_MODEL_BYTES {
+        return Err(format!(
+            "the model is too large to keep with the image ({} MB zipped, at most {} MB): Edit 3D Model needs it imported again",
+            zipped.len() / (1024 * 1024),
+            MAX_KEPT_MODEL_BYTES / (1024 * 1024)
+        ));
+    }
+    Ok(STANDARD.encode(zipped))
+}
+
+/// The depth map's result fields.
+fn model_result(r: &mut Value, map: &fileio::mesh::DepthMap, triangles: usize, warnings: &[String]) {
+    r["width_px"] = json!(map.width_px);
+    r["height_px"] = json!(map.height_px);
+    r["depth_mm"] = json!(util::r4(map.depth_mm));
+    r["size_mm"] = json!([util::r4(map.width_mm), util::r4(map.height_mm)]);
+    r["triangles"] = json!(triangles);
+    r["warnings"] = json!(warnings);
+}
+
 /// `art.import_model`.
 pub struct ImportModel;
 
@@ -747,31 +1020,23 @@ impl Command for ImportModel {
     fn apply(doc: &mut Document, i: ImportModelInput) -> Result<(Value, String)> {
         let id = Self::ID;
         let bytes = base64_bytes(id, &i.data_base64, fileio::mesh::MAX_BYTES)?;
-        let format = i.format.map(|f| match f {
-            ModelFormat::Stl => fileio::mesh::Format::Stl,
-            ModelFormat::Obj => fileio::mesh::Format::Obj,
-            ModelFormat::Off => fileio::mesh::Format::Off,
-            ModelFormat::Ply => fileio::mesh::Format::Ply,
-            ModelFormat::ThreeMf => fileio::mesh::Format::ThreeMf,
-            ModelFormat::Amf => fileio::mesh::Format::Amf,
-        });
-        let (mesh, mut warnings) = fileio::mesh::load(&bytes, format).map_err(file_err(id))?;
-        drop(bytes);
-        let dpi = i.dpi.map(|d| util::positive(id, "dpi", d)).transpose()?.unwrap_or(254.0);
-        let o = fileio::mesh::DepthOptions {
+        let options = ModelOptions {
+            format: i.format,
             rotation_deg: i.rotation_deg.unwrap_or([0.0; 3]),
             width_mm: i.width_mm,
-            px_per_mm: dpi / 25.4,
+            dpi: i.dpi.unwrap_or(254.0),
             sixteen_bit: i.sixteen_bit,
             invert: i.invert,
             transparent_background: i.transparent_background,
             depth_cutoff_mm: i.depth_cutoff_mm,
             equalize: i.equalize,
+            outline: i.outline,
         };
-        let map = fileio::mesh::depth_map(&mesh, &o).map_err(file_err(id))?;
-        if map.width_mm > 300.0 || map.height_mm > 300.0 {
-            warnings.push(format!("the depth map is {:.1} x {:.1} mm; pass width_mm to scale the model", map.width_mm, map.height_mm));
-        }
+        let (map, triangles, mut warnings) = render_model(id, &bytes, &options)?;
+        // Kept so Edit 3D Model can render it again with other options.
+        let kept = keep_model(&bytes).map_err(|w| warnings.push(w)).ok();
+        drop(bytes);
+        let options_json = serde_json::to_string(&options).map_err(|e| CommandError::Failed(e.to_string()))?;
         let name = i.name.as_deref().map(|n| util::name(id, "name", n)).transpose()?.unwrap_or_else(|| "Depth map".into());
         transact(doc, |doc| {
             let layer = util::layer_or_default(doc, i.layer.as_deref())?;
@@ -785,30 +1050,170 @@ impl Command for ImportModel {
             let image = add_object(doc, name.clone(), layer.clone(), geometry, Affine::IDENTITY)?;
             let mut created = vec![image.clone()];
             let mut outline = None;
-            if i.outline && !map.outline.is_empty() {
-                let mut p = BezPath::new();
-                for ring in &map.outline {
-                    p.move_to(ring[0]);
-                    for q in &ring[1..] {
-                        p.line_to(*q);
-                    }
-                    p.close_path();
-                }
-                validate_path(id, &p)?;
+            if i.outline
+                && let Some(p) = outline_path(id, &map)?
+            {
                 let o = add_object(doc, format!("{name} outline"), layer, Geometry::Path { path: p }, Affine::IDENTITY)?;
                 created.push(o.clone());
                 outline = Some(o);
             }
+            if let Some(obj) = doc.objects.iter_mut().find(|o| o.id == image) {
+                obj.extras.insert(MODEL_OPTIONS_KEY.into(), options_json.clone());
+                if let Some(k) = &kept {
+                    obj.extras.insert(MODEL_SOURCE_KEY.into(), k.clone());
+                }
+                if let Some(o) = &outline {
+                    obj.extras.insert(MODEL_OUTLINE_KEY.into(), o.clone());
+                }
+            }
             let mut r = util::edit_result(doc, &created, &[]);
             r["image"] = json!(image);
             r["outline"] = json!(outline);
-            r["width_px"] = json!(map.width_px);
-            r["height_px"] = json!(map.height_px);
-            r["depth_mm"] = json!(util::r4(map.depth_mm));
-            r["size_mm"] = json!([util::r4(map.width_mm), util::r4(map.height_mm)]);
-            r["triangles"] = json!(mesh.triangles.len());
-            r["warnings"] = json!(warnings);
+            r["editable"] = json!(kept.is_some());
+            model_result(&mut r, &map, triangles, &warnings);
             Ok((r, format!("imported a 3D model as depth map \"{name}\" ({} x {} px)", map.width_px, map.height_px)))
+        })
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EditModelInput {
+    /// The depth map image made by art.import_model.
+    pub id: String,
+    /// Rotation about X, then Y, then Z in degrees. Default: as before (also for every field below).
+    pub rotation_deg: Option<[f64; 3]>,
+    /// Width of the depth map in mm; null for the model's own size.
+    #[serde(default, deserialize_with = "super::layer::double_option")]
+    #[schemars(with = "Option<f64>")]
+    pub width_mm: Option<Option<f64>>,
+    /// Resolution in dots per inch.
+    pub dpi: Option<f64>,
+    /// 16-bit grey levels.
+    pub sixteen_bit: Option<bool>,
+    /// Swap light and dark on the model.
+    pub invert: Option<bool>,
+    /// Background transparent instead of black.
+    pub transparent_background: Option<bool>,
+    /// Floor this many mm below the top; null for automatic.
+    #[serde(default, deserialize_with = "super::layer::double_option")]
+    #[schemars(with = "Option<f64>")]
+    pub depth_cutoff_mm: Option<Option<f64>>,
+    /// Spread the grey levels evenly.
+    pub equalize: Option<bool>,
+    /// Keep an outline object: updated when the import made one, added when there is none.
+    pub outline: Option<bool>,
+}
+
+/// `image.edit_model`.
+pub struct EditModel;
+
+impl Command for EditModel {
+    type Input = EditModelInput;
+    const ID: &'static str = "image.edit_model";
+    const TITLE: &'static str = "Edit 3D model";
+    const DESCRIPTION: &'static str = "LightBurn's Edit 3D Model: render a depth map made by art.import_model again \
+        from the model kept on it, with changed options (rotation_deg, width_mm, dpi, sixteen_bit, invert, \
+        transparent_background, depth_cutoff_mm, equalize, outline; the others stay as they were, see the image's \
+        extras model3d.options). The image keeps its place and transform; its outline object is redrawn (or added \
+        with outline: true). Refused for images without a kept model. Returns {image, outline, width_px, height_px, \
+        depth_mm, size_mm, options, warnings}. Undoable.";
+    const RISK: Risk = Risk::Edit;
+
+    fn apply(doc: &mut Document, i: EditModelInput) -> Result<(Value, String)> {
+        let id = Self::ID;
+        let obj = util::object(doc, &i.id)?;
+        if !matches!(obj.geometry, Geometry::Image { .. }) {
+            return Err(invalid(id, format!("{} is not an image", i.id)));
+        }
+        let (Some(opts), Some(source)) = (obj.extras.get(MODEL_OPTIONS_KEY), obj.extras.get(MODEL_SOURCE_KEY)) else {
+            return Err(invalid(id, format!("{} was not made from a 3D model kept with it; import the model again", i.id)));
+        };
+        let mut o: ModelOptions =
+            serde_json::from_str(opts).map_err(|e| invalid(id, format!("the image's model options are not usable: {e}")))?;
+        let zipped = base64_bytes(id, source, MAX_KEPT_MODEL_BYTES * 2)?;
+        let bytes = fileio::zip::read_one(&zipped, "model")
+            .map_err(|e| invalid(id, format!("the kept model is not readable: {e}")))?
+            .ok_or_else(|| invalid(id, "the kept model is missing"))?;
+        drop(zipped);
+        if let Some(v) = i.rotation_deg {
+            o.rotation_deg = v;
+        }
+        if let Some(v) = i.width_mm {
+            o.width_mm = v;
+        }
+        if let Some(v) = i.dpi {
+            o.dpi = v;
+        }
+        if let Some(v) = i.sixteen_bit {
+            o.sixteen_bit = v;
+        }
+        if let Some(v) = i.invert {
+            o.invert = v;
+        }
+        if let Some(v) = i.transparent_background {
+            o.transparent_background = v;
+        }
+        if let Some(v) = i.depth_cutoff_mm {
+            o.depth_cutoff_mm = v;
+        }
+        if let Some(v) = i.equalize {
+            o.equalize = v;
+        }
+        if let Some(v) = i.outline {
+            o.outline = v;
+        }
+        let (map, triangles, warnings) = render_model(id, &bytes, &o)?;
+        drop(bytes);
+        let options_json = serde_json::to_string(&o).map_err(|e| CommandError::Failed(e.to_string()))?;
+        transact(doc, |doc| {
+            let image = i.id.clone();
+            let (layer, transform, name, outline_id) = {
+                let obj = util::object(doc, &image)?;
+                (obj.layer.clone(), obj.transform, obj.name.clone(), obj.extras.get(MODEL_OUTLINE_KEY).cloned())
+            };
+            let obj = doc.objects.iter_mut().find(|x| x.id == image).ok_or_else(|| CommandError::Failed(format!("{image} vanished")))?;
+            if let Geometry::Image { width_mm, height_mm, mime, data_base64, .. } = &mut obj.geometry {
+                *width_mm = map.width_mm;
+                *height_mm = map.height_mm;
+                *mime = "image/png".into();
+                *data_base64 = STANDARD.encode(&map.png).into();
+            }
+            obj.extras.insert(MODEL_OPTIONS_KEY.into(), options_json.clone());
+            let mut created = Vec::new();
+            let mut affected = vec![image.clone()];
+            // The outline the import (or an earlier edit) made, while it is still a path.
+            let existing = outline_id.filter(|o| doc.object(o).is_some_and(|x| matches!(x.geometry, Geometry::Path { .. })));
+            let mut outline = None;
+            if let Some(p) = outline_path(id, &map)? {
+                match existing {
+                    Some(oid) => {
+                        if let Some(x) = doc.objects.iter_mut().find(|x| x.id == oid) {
+                            x.geometry = Geometry::Path { path: p };
+                        }
+                        affected.push(oid.clone());
+                        outline = Some(oid);
+                    }
+                    None if o.outline => {
+                        let oid = add_object(doc, format!("{name} outline"), layer, Geometry::Path { path: p }, transform)?;
+                        created.push(oid.clone());
+                        outline = Some(oid);
+                    }
+                    None => {}
+                }
+            }
+            if let Some(obj) = doc.objects.iter_mut().find(|x| x.id == image) {
+                match &outline {
+                    Some(oid) => obj.extras.insert(MODEL_OUTLINE_KEY.into(), oid.clone()),
+                    None => obj.extras.remove(MODEL_OUTLINE_KEY),
+                };
+            }
+            let mut r = util::edit_result(doc, &created, &affected);
+            r["image"] = json!(image);
+            r["outline"] = json!(outline);
+            r["options"] = serde_json::to_value(&o).unwrap_or(Value::Null);
+            model_result(&mut r, &map, triangles, &warnings);
+            Ok((r, format!("rendered the 3D model of \"{name}\" again ({} x {} px)", map.width_px, map.height_px)))
         })
     }
 }
@@ -895,7 +1300,115 @@ mod tests {
         assert!(r["outline"].is_string());
         let img = s.document().object(r["image"].as_str().unwrap()).unwrap();
         assert!(matches!(img.geometry, doc::Geometry::Image { width_mm, .. } if (width_mm - 10.0).abs() < 1e-9));
+        assert_eq!(r["editable"], json!(true));
+        let opts: Value = serde_json::from_str(&img.extras[super::MODEL_OPTIONS_KEY]).unwrap();
+        assert_eq!((opts["dpi"].clone(), opts["outline"].clone()), (json!(25.4), json!(true)));
     }
+
+    /// UX-030: images of imported art (PDF, EzCad) become image objects where the file placed them, grouped with
+    /// the paths.
+    #[test]
+    fn art_images_become_image_objects_grouped_with_the_paths() {
+        use base64::Engine as _;
+        let mut d = Document { field_mm: Some(100.0), ..Document::default() };
+        let png = base64::engine::general_purpose::STANDARD.decode(PNG_1X1).unwrap();
+        let mut path = kurbo::BezPath::new();
+        path.move_to((0.0, 0.0));
+        path.line_to((10.0, 0.0));
+        path.line_to((10.0, 10.0));
+        path.close_path();
+        let art = fileio::Art {
+            paths: vec![fileio::ArtPath { path, label: "path".into(), color: None, layer: None }],
+            images: vec![fileio::ArtImage { data: png, mime: "image/png", placement: kurbo::Affine::new([20.0, 0.0, 0.0, 10.0, 10.0, 0.0]), label: "image".into() }],
+            ..Default::default()
+        };
+        let p = super::Placement { layer: None, name: Some("Art"), width_mm: None, keep_position: true, split: false, file_layers: false };
+        let (r, _) = super::place_art("t", &mut d, art, &p, "Art").unwrap();
+        assert_eq!(r["created"].as_array().unwrap().len(), 2);
+        let img = d.objects.iter().find(|o| matches!(o.geometry, doc::Geometry::Image { .. })).unwrap();
+        let b = img.bounds();
+        assert!((b.x0 - 10.0).abs() < 1e-9 && (b.x1 - 30.0).abs() < 1e-9 && b.y0.abs() < 1e-9 && (b.y1 - 10.0).abs() < 1e-9, "{b:?}");
+        assert!(matches!(img.geometry, doc::Geometry::Image { width_mm, height_mm, .. } if (width_mm - 20.0).abs() < 1e-9 && (height_mm - 10.0).abs() < 1e-9));
+        assert!(img.group.is_some() && d.objects.iter().all(|o| o.group == img.group), "grouped with the path");
+    }
+
+    /// UX-038: layers an imported file carries (EzCad pens and hatches) become document layers for the paths on
+    /// them; a text without outlines whose font is not installed leaves a placeholder and a warning.
+    #[test]
+    fn file_layers_and_texts_are_placed() {
+        let mut d = Document { field_mm: Some(100.0), ..Document::default() };
+        let sq = |x: f64| {
+            let mut p = kurbo::BezPath::new();
+            p.move_to((x, 0.0));
+            p.line_to((x + 5.0, 0.0));
+            p.line_to((x + 5.0, 5.0));
+            p.close_path();
+            p
+        };
+        let fill = doc::CutSettings { mode: doc::FillMode::Fill, power_pct: 40.0, ..doc::CutSettings::default() };
+        let line = doc::CutSettings { mode: doc::FillMode::Line, speed_mm_s: 3000.0, ..doc::CutSettings::default() };
+        let art = fileio::Art {
+            paths: vec![
+                fileio::ArtPath { path: sq(0.0), label: "Pen 1".into(), color: None, layer: Some(1) },
+                fileio::ArtPath { path: sq(10.0), label: "hatch".into(), color: None, layer: Some(2) },
+            ],
+            layers: vec![
+                fileio::ArtLayer { name: "Unused".into(), color: [0, 0, 0], settings: line.clone(), sub_layers: vec![] },
+                fileio::ArtLayer { name: "Pen 1".into(), color: [255, 0, 0], settings: line, sub_layers: vec![] },
+                fileio::ArtLayer { name: "Hatch".into(), color: [0, 0, 255], settings: fill.clone(), sub_layers: vec![fill] },
+            ],
+            texts: vec![fileio::ArtText { text: "Hi".into(), font: "No Such Font 123".into(), height_mm: 4.0, at: kurbo::Point::new(20.0, 0.0), angle_deg: 0.0, layer: Some(1) }],
+            ..Default::default()
+        };
+        let p = super::Placement { layer: None, name: Some("E"), width_mm: None, keep_position: true, split: true, file_layers: true };
+        let (r, _) = super::place_art("t", &mut d, art, &p, "E").unwrap();
+        assert_eq!(r["layers"].as_array().unwrap().len(), 2, "only the used layers: {r}");
+        let layer_named = |n: &str| d.layers.iter().find(|l| l.name == n).unwrap().clone();
+        let (pen, hatch) = (layer_named("Pen 1"), layer_named("Hatch"));
+        assert_eq!((pen.color.as_str(), pen.settings.speed_mm_s), ("#ff0000", 3000.0));
+        assert_eq!((hatch.settings.mode.clone(), hatch.sub_layers.len()), (doc::FillMode::Fill, 1));
+        let on = |l: &str| d.objects.iter().filter(|o| o.layer == l).count();
+        assert_eq!((on(&pen.id), on(&hatch.id)), (2, 1), "the text placeholder goes on its pen's layer too");
+        let ph = d.objects.iter().find(|o| o.name.starts_with("Text placeholder")).expect("a placeholder");
+        assert!((ph.bounds().height() - 4.0).abs() < 1e-9 && (ph.bounds().x0 - 20.0).abs() < 1e-9, "{:?}", ph.bounds());
+        assert!(r["warnings"].as_array().unwrap().iter().any(|w| w.as_str().unwrap().contains("placeholder")), "{r}");
+    }
+
+    /// UX-040: Edit 3D Model renders the kept model again with new options; the image keeps its place, the outline
+    /// follows, undo restores the old map, and an ordinary image is refused.
+    #[test]
+    fn edit_model_renders_the_kept_model_again() {
+        let mut s = session();
+        let obj = "v 0 0 0\nv 10 0 0\nv 10 10 5\nv 0 10 5\nf 1 2 3 4\n";
+        let r = run(&mut s, "art.import_model", json!({
+            "data_base64": base64::Engine::encode(&base64::engine::general_purpose::STANDARD, obj), "dpi": 25.4, "outline": true
+        }));
+        let (image, outline) = (r["image"].as_str().unwrap().to_owned(), r["outline"].as_str().unwrap().to_owned());
+        run(&mut s, "object.transform", json!({"ids": [image], "translate": [5, 7]}));
+        let before = s.document().clone();
+        let r = run(&mut s, "image.edit_model", json!({"id": image, "width_mm": 20, "dpi": 50.8, "invert": true}));
+        assert_eq!((r["width_px"].as_u64(), r["size_mm"].clone()), (Some(40), json!([20.0, 20.0])));
+        assert_eq!((r["options"]["invert"].clone(), r["options"]["dpi"].clone(), r["outline"].clone()), (json!(true), json!(50.8), json!(outline)));
+        let d = s.document();
+        let img = d.object(&image).unwrap();
+        assert_eq!(img.transform, before.object(&image).unwrap().transform, "the image stays where it was");
+        assert!(matches!(img.geometry, doc::Geometry::Image { width_mm, .. } if (width_mm - 20.0).abs() < 1e-9));
+        assert!((d.object(&outline).unwrap().bounds().width() - 20.0).abs() < 1e-6, "the outline follows");
+        // width_mm null goes back to the model's own size.
+        let r = run(&mut s, "image.edit_model", json!({"id": image, "width_mm": null}));
+        assert_eq!(r["size_mm"], json!([10.0, 10.0]));
+        s.undo().unwrap();
+        s.undo().unwrap();
+        assert_eq!(s.document().object(&image), before.object(&image));
+        // Not a model: refused.
+        run(&mut s, "art.import_image", json!({"mime": "image/png", "data_base64": PNG_1X1}));
+        let plain = s.document().objects.last().unwrap().id.clone();
+        assert!(s.execute(Invocation { id: "image.edit_model".into(), params: json!({"id": plain}) }, Origin::Ui).is_err());
+        assert!(s.execute(Invocation { id: "image.edit_model".into(), params: json!({"id": outline}) }, Origin::Ui).is_err());
+        assert!(s.execute(Invocation { id: "image.edit_model".into(), params: json!({"id": image, "dpi": -1}) }, Origin::Ui).is_err());
+    }
+
+    const PNG_1X1: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==";
 
     #[test]
     fn notes_are_read_from_and_written_into_lightburn_files() {

@@ -21,7 +21,7 @@ import {
 import { jobApi, saveBlob } from "../api/jobApi.ts";
 import type { DeviceSummary } from "../api/devices.ts";
 import type { GDocument } from "../api/types.ts";
-import { useT } from "../workspace/usePrefs.ts";
+import { useT, useTD } from "../workspace/usePrefs.ts";
 import { LensWizard } from "./LensWizard.tsx";
 import { DeviceJobSettings } from "../libs/JobSafety.tsx";
 import { refreshActiveDevice } from "../libs/store.ts";
@@ -61,6 +61,7 @@ export function DeviceEditor(p: {
   onClose: () => void;
 }) {
   const t = useT();
+  const td = useTD();
   const { device } = p;
   const readOnly = device.source === "builtin";
   const [tab, setTab] = useState<Tab>("galvo");
@@ -293,7 +294,7 @@ export function DeviceEditor(p: {
             .map((g) => (
               <Group
                 key={g.id}
-                title={g.id === "galvo1" || g.id === "galvo2" ? `${g.title} (${g.fields[0].label.slice(-2, -1)})` : g.title}
+                title={g.id === "galvo1" || g.id === "galvo2" ? `${td(`dev.g.${g.id}`, g.title)} (${g.fields[0].label.slice(-2, -1)})` : td(`dev.g.${g.id}`, g.title)}
                 fields={g.id === "axis" && values["axis.enabled"] !== true ? g.fields.slice(0, 1) : g.id === "axis" && values["axis.role"] === "rotary" ? g.fields.filter((f) => !/min_mm|max_mm|steps_per_mm/.test(f.path)) : g.id === "axis" && String(values["axis.role"]).endsWith("_table") ? g.fields.filter((f) => !/min_mm|max_mm/.test(f.path)) : g.fields}
                 values={values}
                 edited={edits}
@@ -358,7 +359,15 @@ function Group(p: {
 
 function FieldRow(p: { f: FieldSpec; value: unknown; edited: boolean; error: string | null; limit: unknown; readOnly: boolean; onEdit: (v: unknown) => void }) {
   const t = useT();
-  const { f } = p;
+  // The field specs (api/deviceProfile.ts) are English; their messages are "dev.f.<path>", "dev.h.<path>" and
+  // "dev.o.<path>.<value>" (locales/en-ui.ts), with the spec's text as the fallback.
+  const td = useTD();
+  const f: FieldSpec = {
+    ...p.f,
+    label: td(`dev.f.${p.f.path}`, p.f.label),
+    hint: p.f.hint ? td(`dev.h.${p.f.path}`, p.f.hint) : undefined,
+    options: p.f.options?.map((o) => ({ ...o, label: td(`dev.o.${p.f.path}.${o.value}`, o.label) })),
+  };
   const unknown = p.value === undefined;
   const title = [f.hint, f.lb ? `LightBurn: ${f.lb}` : null, f.limit && typeof p.limit === "number" ? t("dev.limitHint", { limit: p.limit }) : null, unknown ? t("dev.notReported") : null]
     .filter(Boolean)
@@ -380,9 +389,10 @@ function FieldRow(p: { f: FieldSpec; value: unknown; edited: boolean; error: str
         min={f.min}
         max={f.max}
         digits={f.digits}
-        placeholder={unknown ? t("dev.notReportedShort") : undefined}
+        placeholder={unknown ? t("dev.notReportedShort") : f.nullable ? t("dev.emptySquare") : undefined}
         disabled={p.readOnly}
-        onCommit={(v) => v !== null && p.onEdit(v)}
+        allowEmpty={f.nullable}
+        onCommit={(v) => (v !== null ? p.onEdit(v) : f.nullable && p.onEdit(null))}
       />
     );
   } else if (f.kind === "bool") {

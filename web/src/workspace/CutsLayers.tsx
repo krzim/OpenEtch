@@ -7,8 +7,14 @@
 // The list order is the cut order (jobs burn layer by layer). Drag a row (above or below another), or use the up/down
 // buttons or the right-click menu, to reorder: one `layer.move {id, to_index}` each, shown only on engines that have
 // it. Every change is a `layer.*` command.
+//
+// LightBurn's further details: "Flash layer" in the right-click menu (or Shift+right-click) blinks the layer's shapes
+// on the canvas (flash.tsx); tool layers T1 / T2 (`Layer.tool`) read "Tool", never output and can be made or cleared
+// from the menu; a layer imported from LightBurn with settings OpenEtch will not execute gets a warning badge listing
+// them (GET /api/layers/unsupported); a layer with sub-layers shows a tab per sub-layer above the quick-edit fields
+// (LightBurn's sub-layer tabs): the fields edit the chosen tab's pass, and dragging a tab reorders the sub-layers.
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Invocation } from "../api/client.ts";
 import * as C from "../api/commands.ts";
 import { createdIds } from "../api/drop.ts";
@@ -18,6 +24,8 @@ import { LayerSection } from "../components/PropertiesPanel.tsx";
 import { Icon, NumberField } from "../components/ui.tsx";
 import type { Selection } from "../selection.ts";
 import { Dock } from "./Dock.tsx";
+import { flashLayer } from "./flash.tsx";
+import { hasLightBurnExtras, unsupportedText, wsApi, type UnsupportedSetting } from "./wsApi.ts";
 import { layerPresetMenuItems } from "../libs/LayerDefaults.tsx";
 import { LinkIcon } from "../libs/MaterialLibrary.tsx";
 import { layerLink } from "../libs/model.ts";
@@ -27,7 +35,6 @@ import {
   dropIndex,
   invertAll,
   layerRows,
-  modeLabel,
   onlyThis,
   pasteLayerSettings,
   setAll,
@@ -64,7 +71,30 @@ export function CutsLayers(p: CutsLayersProps) {
   const [, bump] = useState(0);
   const drag = useRef<number | null>(null);
   const [dropAt, setDropAt] = useState<{ index: number; after: boolean } | null>(null);
+  // The quick-edit tab (0 = main settings, n = sub-layer n) per layer, and the sub-layer tab being dragged.
+  const [passTab, setPassTab] = useState<Record<string, number>>({});
+  const tabDrag = useRef<number | null>(null);
   const { doc, run, report } = p;
+
+  // LightBurn settings the engine will not execute, per layer: asked again when the document changes, and only for
+  // documents with LightBurn layer settings in them.
+  const [unsupported, setUnsupported] = useState<Map<string, UnsupportedSetting[]>>(() => new Map());
+  const lbExtras = !!doc && hasLightBurnExtras(doc.layers);
+  const revision = doc?.revision;
+  useEffect(() => {
+    if (!lbExtras) {
+      setUnsupported((m) => (m.size ? new Map() : m));
+      return;
+    }
+    let alive = true;
+    wsApi
+      .unsupported()
+      .then((m) => alive && setUnsupported(m))
+      .catch(() => alive && setUnsupported(new Map()));
+    return () => {
+      alive = false;
+    };
+  }, [lbExtras, revision]);
 
   const batch = (invs: Invocation[]) => {
     if (invs.length) void run(invs.length === 1 ? invs[0] : invs).catch(report);
@@ -117,11 +147,24 @@ export function CutsLayers(p: CutsLayersProps) {
     { label: field === "output" ? t("layers.invertOutput") : t("layers.invertShow"), action: () => batch(invertAll(doc.layers, field)) },
   ];
 
+  const canTool = p.has(C.OPT.layerTool);
+  const toolItems = (l: Layer): MenuItem[] => {
+    if (!canTool) return [];
+    const owner = (tool: "T1" | "T2") => doc.layers.find((x) => x.tool === tool && x.id !== l.id);
+    const make = (tool: "T1" | "T2"): MenuItem => ({
+      label: t("layers.makeTool", { tool }),
+      disabled: l.tool === tool || !!owner(tool),
+      action: () => void run(C.layerTool(tool, l.id)).catch(report),
+    });
+    return [{ sep: true }, make("T1"), make("T2"), { label: t("layers.makeOrdinary"), disabled: !l.tool, action: () => void run(C.layerTool(null, l.id)).catch(report) }];
+  };
+
   const layerMenu = (l: Layer, index: number): MenuItem[] => {
     const others = doc.layers.filter((x) => x.id !== l.id);
     const items: MenuItem[] = [
       { label: t("layers.settings"), hint: t("layers.doubleClick"), action: () => setEditing(l.id) },
       { label: t("layers.selectShapes"), hint: t("layers.shiftClick"), action: () => p.onSelectLayer(l.id, true) },
+      { label: t("layers.flash"), hint: t("layers.shiftRightClick"), action: () => flashLayer(l.id) },
       { sep: true },
       { label: t("layers.showOnly"), action: () => batch(onlyThis(doc.layers, l.id, "visible")) },
       { label: t("layers.showAll"), action: () => batch(setAll(doc.layers, "visible", true)) },
@@ -146,6 +189,7 @@ export function CutsLayers(p: CutsLayersProps) {
         { label: t("layers.moveDown"), disabled: stepIndex(index, 1, doc.layers.length) === null, action: () => moveLayer(l.id, stepIndex(index, 1, doc.layers.length)) },
       );
     }
+    items.push(...toolItems(l));
     // Make Default / Reset / Library / Unlink (src/libs/LayerDefaults.tsx).
     items.push(...layerPresetMenuItems(l, { t, run, notify: p.notify, report }));
     items.push(
@@ -156,7 +200,16 @@ export function CutsLayers(p: CutsLayersProps) {
   };
 
   const sel = current ? doc.layers.find((l) => l.id === current) : undefined;
-  const patch = (l: Layer, settings: C.CutSettingsPatch) => void run(C.layerUpdate(l.id, { settings })).catch(report);
+  const subCount = sel?.sub_layers?.length ?? 0;
+  // The quick-edit pass: 0 = the main settings, n = sub-layer n (kept in range when sub-layers are deleted).
+  const pass = sel ? Math.min(passTab[sel.id] ?? 0, subCount) : 0;
+  const passSettings = sel ? (pass === 0 ? sel.settings : sel.sub_layers[pass - 1]) : undefined;
+  const patch = (l: Layer, settings: C.CutSettingsPatch) =>
+    void run(pass === 0 ? C.layerUpdate(l.id, { settings }) : C.layerSubUpdate(l.id, pass - 1, { settings })).catch(report);
+  const modeText = (m: string) =>
+    m === "line" ? t("layers.modeLine") : m === "fill" ? t("layers.modeFill") : m === "offset_fill" ? t("layers.modeOffset") : t("layers.modeFillLine");
+  const passName = (l: Layer, n: number) => (n === 0 ? t("layers.main") : l.sub_layers[n - 1]?.name?.trim() || t("layers.subN", { n }));
+  const subLabel = (n: number) => t("layers.subN", { n });
 
   return (
     <Dock
@@ -237,7 +290,9 @@ export function CutsLayers(p: CutsLayersProps) {
                   onDoubleClick={() => setEditing(l.id)}
                   onContextMenu={(e) => {
                     e.preventDefault();
-                    setMenu({ x: e.clientX, y: e.clientY, items: layerMenu(l, index) });
+                    // LightBurn: Shift+right-click flashes the layer's shapes.
+                    if (e.shiftKey) flashLayer(l.id);
+                    else setMenu({ x: e.clientX, y: e.clientY, items: layerMenu(l, index) });
                   }}
                 >
                   <td className="c-num">{r.number}</td>
@@ -259,27 +314,46 @@ export function CutsLayers(p: CutsLayersProps) {
                       </button>
                     )}
                     <span className="cuts-name">{l.name}</span>
+                    {l.tool && (
+                      <span className="tool-badge" title={t("layers.toolTitle", { tool: l.tool })}>
+                        {l.tool}
+                      </span>
+                    )}
+                    {unsupportedText(unsupported.get(l.id) ?? [], subLabel) && (
+                      <span
+                        className="unsup-badge"
+                        role="img"
+                        aria-label={t("layers.unsupported")}
+                        title={`${t("layers.unsupported")}\n${unsupportedText(unsupported.get(l.id) ?? [], subLabel)}`}
+                      >
+                        !
+                      </span>
+                    )}
                     {layerLink(l) && (
                       <span className="lx-link-badge" title={t("lib.layerLinked", { path: layerLink(l)!.path, library: layerLink(l)!.library })}>
                         <LinkIcon />
                       </span>
                     )}
                   </td>
-                  <td>{r.multi ? t("layers.multi") : modeLabel(main.mode)}</td>
-                  <td className="c-num-r">{r.multi ? t("layers.multi") : `${trimNumber(speedToDisplay(main.speed_mm_s, prefs.speedUnit), 1)} / ${trimNumber(main.power_pct, 1)}`}</td>
+                  <td>{l.tool ? t("layers.modeTool") : r.multi ? t("layers.multi") : modeText(main.mode)}</td>
+                  <td className="c-num-r">
+                    {l.tool ? "–" : r.multi ? t("layers.multi") : `${trimNumber(speedToDisplay(main.speed_mm_s, prefs.speedUnit), 1)} / ${trimNumber(main.power_pct, 1)}`}
+                  </td>
                   <td className="c-num-r">{r.passes.reduce((n, x) => n + x.passes, 0)}</td>
                   <td className="c-tog">
                     <button
-                      className={`tog${l.output ? " on" : ""}`}
+                      className={`tog${l.output && !l.tool ? " on" : ""}`}
                       role="switch"
-                      aria-checked={l.output}
-                      title={l.output ? t("layers.outputOn") : t("layers.outputOff")}
+                      aria-checked={l.output && !l.tool}
+                      // A tool layer never outputs (the engine refuses output on for it).
+                      disabled={!!l.tool}
+                      title={l.tool ? t("layers.toolNoOutput") : l.output ? t("layers.outputOn") : t("layers.outputOff")}
                       onClick={(e) => {
                         e.stopPropagation();
                         void run(C.layerUpdate(l.id, { output: !l.output })).catch(report);
                       }}
                     >
-                      <Icon name={l.output ? "laser" : "noLaser"} size={16} />
+                      <Icon name={l.output && !l.tool ? "laser" : "noLaser"} size={16} />
                     </button>
                   </td>
                   <td className="c-tog">
@@ -327,16 +401,26 @@ export function CutsLayers(p: CutsLayersProps) {
                 </tr>,
                 ...(r.multi && open
                   ? r.passes.map((ps) => (
-                      <tr key={`${l.id}#${ps.pass}`} className="cuts-sub" onClick={() => p.onSelectLayer(l.id, false)} onDoubleClick={() => setEditing(l.id)}>
+                      <tr
+                        key={`${l.id}#${ps.pass}`}
+                        className={`cuts-sub${current === l.id && pass === ps.pass ? " selected" : ""}`}
+                        title={t("layers.subRowTitle")}
+                        onClick={() => {
+                          // A sub-layer row selects the layer and that pass's quick-edit tab.
+                          p.onSelectLayer(l.id, false);
+                          setPassTab((x) => ({ ...x, [l.id]: ps.pass }));
+                        }}
+                        onDoubleClick={() => setEditing(l.id)}
+                      >
                         <td />
                         <td />
                         <td className="c-name">
                           <span className="cuts-sub-name">
-                            {ps.name}
+                            {passName(l, ps.pass)}
                             {ps.cleanup ? ` · ${t("layers.cleanup")}` : ""}
                           </span>
                         </td>
-                        <td>{modeLabel(ps.mode)}</td>
+                        <td>{modeText(ps.mode)}</td>
                         <td className="c-num-r">{`${trimNumber(speedToDisplay(ps.speed_mm_s, prefs.speedUnit), 1)} / ${trimNumber(ps.power_pct, 1)}`}</td>
                         <td className="c-num-r">{ps.passes}</td>
                         <td />
@@ -357,7 +441,7 @@ export function CutsLayers(p: CutsLayersProps) {
           <div className="cuts-quick-head">
             <span className="swatch small" style={{ background: sel.color }} />
             <span className="cuts-quick-name">{sel.name}</span>
-            <span className="muted">{(sel.sub_layers?.length ?? 0) > 0 ? t("layers.mainOnly") : ""}</span>
+            <span className="muted">{sel.tool ? t("layers.modeTool") : ""}</span>
             <span className="tool-spacer" />
             <button className="btn small" onClick={() => copy(sel)} title={t("layers.copySettings")}>
               {t("layers.copy")}
@@ -369,23 +453,84 @@ export function CutsLayers(p: CutsLayersProps) {
               {t("layers.more")}
             </button>
           </div>
-          <div className={`field-grid cuts-quick-grid${layerLink(sel) ? " lx-readonly" : ""}`} aria-disabled={layerLink(sel) ? true : undefined}>
-            <NumberField label={t("layers.speed")} unit="mm/s" value={sel.settings.speed_mm_s} min={0.01} onCommit={(v) => v !== null && patch(sel, { speed_mm_s: v })} />
-            <NumberField label={t("layers.power")} unit="%" value={sel.settings.power_pct} min={0} max={100} onCommit={(v) => v !== null && patch(sel, { power_pct: v })} />
-            <NumberField label={t("layers.passes")} value={sel.settings.passes} min={1} max={1000} digits={0} onCommit={(v) => v !== null && patch(sel, { passes: Math.round(v) })} />
-            <NumberField label={t("layers.frequency")} unit="kHz" value={sel.settings.frequency_khz} min={1} onCommit={(v) => v !== null && patch(sel, { frequency_khz: v })} />
-            {sel.settings.mode !== "line" && (
-              <NumberField
-                label={t("layers.interval")}
-                unit="mm"
-                value={sel.settings.hatch.interval_mm}
-                min={0.001}
-                digits={4}
-                onCommit={(v) => v !== null && patch(sel, { hatch: { interval_mm: v } })}
-              />
+          {subCount > 0 && (
+            <div className="cuts-tabs" role="tablist" aria-label={t("layers.subTabs")}>
+              {[0, ...sel.sub_layers.map((_, i) => i + 1)].map((n) => (
+                <button
+                  key={n}
+                  role="tab"
+                  aria-selected={pass === n}
+                  className={`cuts-tab${pass === n ? " active" : ""}${sel.sub_layers[n - 1]?.cleanup ? " cleanup" : ""}`}
+                  title={n === 0 ? t("layers.mainTabTitle") : p.has(C.OPT.layerSubMove) ? t("layers.subTabTitle") : undefined}
+                  draggable={n > 0 && p.has(C.OPT.layerSubMove) && !layerLink(sel)}
+                  onClick={() => setPassTab((x) => ({ ...x, [sel.id]: n }))}
+                  onDragStart={(e) => {
+                    tabDrag.current = n;
+                    e.dataTransfer.effectAllowed = "move";
+                    e.dataTransfer.setData("text/plain", String(n));
+                  }}
+                  onDragOver={(e) => {
+                    if (tabDrag.current !== null && n > 0) e.preventDefault();
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const from = tabDrag.current;
+                    tabDrag.current = null;
+                    if (from === null || n === 0 || from === n) return;
+                    // Sub-layers burn left to right after the main settings; the dragged tab stays selected.
+                    void run(C.layerSubMove(sel.id, from - 1, n - 1))
+                      .then(() => setPassTab((x) => ({ ...x, [sel.id]: n })))
+                      .catch(report);
+                  }}
+                  onDragEnd={() => (tabDrag.current = null)}
+                >
+                  {passName(sel, n)}
+                </button>
+              ))}
+            </div>
+          )}
+          <div
+            className={`field-grid cuts-quick-grid${layerLink(sel) ? " lx-readonly" : ""}`}
+            aria-disabled={layerLink(sel) ? true : undefined}
+            // `inert` keeps a linked layer's read-only fields out of the Tab order too (React 18 has no prop for it).
+            ref={(el) => {
+              if (el) el.toggleAttribute("inert", !!layerLink(sel));
+            }}
+          >
+            {passSettings && (
+              <>
+                <NumberField label={t("layers.speed")} unit="mm/s" value={passSettings.speed_mm_s} min={0.01} onCommit={(v) => v !== null && patch(sel, { speed_mm_s: v })} />
+                <NumberField label={t("layers.power")} unit="%" value={passSettings.power_pct} min={0} max={100} onCommit={(v) => v !== null && patch(sel, { power_pct: v })} />
+                <NumberField label={t("layers.passes")} value={passSettings.passes} min={1} max={1000} digits={0} onCommit={(v) => v !== null && patch(sel, { passes: Math.round(v) })} />
+                <NumberField label={t("layers.frequency")} unit="kHz" value={passSettings.frequency_khz} min={1} onCommit={(v) => v !== null && patch(sel, { frequency_khz: v })} />
+                {/* LightBurn's Q-Pulse (MOPA): empty keeps the source's current pulse width. */}
+                <NumberField
+                  label={t("layers.qpulse")}
+                  unit="ns"
+                  value={passSettings.pulse_width_ns}
+                  min={1}
+                  digits={0}
+                  allowEmpty
+                  placeholder={t("layers.qpulseDefault")}
+                  onCommit={(v) => patch(sel, { pulse_width_ns: v === null ? null : Math.round(v) })}
+                />
+                {passSettings.mode !== "line" && (
+                  <NumberField
+                    label={t("layers.interval")}
+                    unit="mm"
+                    value={passSettings.hatch.interval_mm}
+                    min={0.001}
+                    digits={4}
+                    onCommit={(v) => v !== null && patch(sel, { hatch: { interval_mm: v } })}
+                  />
+                )}
+              </>
             )}
           </div>
-          <p className="hint">{t("layers.speedHint", { speed: formatSpeed(sel.settings.speed_mm_s, prefs.speedUnit) })}</p>
+          <p className="hint">
+            {passSettings && t("layers.speedHint", { speed: formatSpeed(passSettings.speed_mm_s, prefs.speedUnit) })}
+            {subCount > 0 && passSettings && ` ${t("layers.passHint", { mode: modeText(passSettings.mode) })}`}
+          </p>
         </div>
       )}
 

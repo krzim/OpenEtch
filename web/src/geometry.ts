@@ -245,6 +245,73 @@ function rectCmds(w: number, h: number, r: number): PathCmd[] {
   ];
 }
 
+/** Corner points of a regular polygon (or a star, `starRatio` set) on a circle of `radius`, the first one up (+Y). */
+export function polygonCorners(sides: number, radius: number, starRatio?: number | null): Vec2[] {
+  const n = Math.round(sides);
+  if (!(n >= 3 && n <= 1000) || !(radius > 0) || !Number.isFinite(radius)) return [];
+  const at = (r: number, a: number): Vec2 => [r * Math.cos(a), r * Math.sin(a)];
+  if (starRatio !== null && starRatio !== undefined) {
+    if (!(starRatio > 0 && starRatio < 1)) return [];
+    return Array.from({ length: 2 * n }, (_, i) => at(i % 2 === 0 ? radius : radius * starRatio, Math.PI / 2 + (Math.PI * i) / n));
+  }
+  return Array.from({ length: n }, (_, i) => at(radius, Math.PI / 2 + (2 * Math.PI * i) / n));
+}
+
+/** Cubics of a circular arc from angle `a0` sweeping `sweep` radians about `c` (pieces of at most 90 degrees). */
+function arcCubics(c: Vec2, r: number, a0: number, sweep: number): PathCmd[] {
+  const n = Math.max(1, Math.ceil(Math.abs(sweep) / (Math.PI / 2) - 1e-9));
+  const d = sweep / n;
+  const k = (4 / 3) * Math.tan(d / 4);
+  const out: PathCmd[] = [];
+  for (let i = 0; i < n; i++) {
+    const s = a0 + i * d;
+    const e = s + d;
+    const [cs, ss, ce, se] = [Math.cos(s), Math.sin(s), Math.cos(e), Math.sin(e)];
+    out.push({
+      c: "C",
+      p1: [c[0] + r * (cs - k * ss), c[1] + r * (ss + k * cs)],
+      p2: [c[0] + r * (ce + k * se), c[1] + r * (se - k * ce)],
+      p: [c[0] + r * ce, c[1] + r * se],
+    });
+  }
+  return out;
+}
+
+/**
+ * A parametric polygon's outline, as the engine builds it (geom::shapes polygon_path): every corner rounded by
+ * `cornerRadius` where the rounding fits in half of each neighbouring side, else left sharp.
+ */
+export function polygonCmds(sides: number, radius: number, starRatio?: number | null, cornerRadius = 0): PathCmd[] {
+  const pts = polygonCorners(sides, radius, starRatio);
+  const n = pts.length;
+  if (n < 3) return [];
+  const r = cornerRadius > 0 && Number.isFinite(cornerRadius) ? cornerRadius : 0;
+  const corner = pts.map((c, k) => {
+    const prev = pts[(k + n - 1) % n];
+    const next = pts[(k + 1) % n];
+    const la = Math.hypot(c[0] - prev[0], c[1] - prev[1]);
+    const lb = Math.hypot(next[0] - c[0], next[1] - c[1]);
+    if (r === 0 || la <= 0 || lb <= 0) return { pin: c, pout: c, arc: [] as PathCmd[] };
+    const u: Vec2 = [(c[0] - prev[0]) / la, (c[1] - prev[1]) / la];
+    const v: Vec2 = [(next[0] - c[0]) / lb, (next[1] - c[1]) / lb];
+    const turn = Math.atan2(u[0] * v[1] - u[1] * v[0], u[0] * v[0] + u[1] * v[1]);
+    const t = r * Math.tan(Math.abs(turn) / 2);
+    if (Math.abs(turn) <= (Math.PI / 180) || !(t <= la / 2 + 1e-9 && t <= lb / 2 + 1e-9)) return { pin: c, pout: c, arc: [] as PathCmd[] };
+    const pin: Vec2 = [c[0] - u[0] * t, c[1] - u[1] * t];
+    const pout: Vec2 = [c[0] + v[0] * t, c[1] + v[1] * t];
+    const normal: Vec2 = turn > 0 ? [-u[1], u[0]] : [u[1], -u[0]];
+    const centre: Vec2 = [pin[0] + normal[0] * r, pin[1] + normal[1] * r];
+    return { pin, pout, arc: arcCubics(centre, r, Math.atan2(pin[1] - centre[1], pin[0] - centre[0]), turn) };
+  });
+  const out: PathCmd[] = [{ c: "M", p: corner[0].pout }];
+  for (let i = 1; i <= n; i++) {
+    const k = corner[i % n];
+    out.push({ c: "L", p: k.pin }, ...k.arc);
+  }
+  out.push({ c: "Z" });
+  return out;
+}
+
 /** Object-local commands for a document geometry. */
 export function geometryCmds(g: Geometry): PathCmd[] {
   switch (g.kind) {
@@ -252,6 +319,8 @@ export function geometryCmds(g: Geometry): PathCmd[] {
       return rectCmds(g.width_mm, g.height_mm, g.corner_radius_mm ?? 0);
     case "ellipse":
       return ellipseCmds(g.rx_mm, g.ry_mm);
+    case "polygon":
+      return polygonCmds(g.sides, g.radius_mm, g.star_ratio, g.corner_radius_mm ?? 0);
     case "path":
       return parseBezPath(g.path);
     case "text":

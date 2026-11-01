@@ -23,23 +23,25 @@ import type { Origin } from "../api/types.ts";
 import type { RemoteEdit } from "../api/useEngine.ts";
 import { capturePointer } from "../pointer.ts";
 import { Icon } from "./ui.tsx";
+import { useT } from "../workspace/usePrefs.ts";
+import type { T } from "../workspace/i18n.ts";
 
 /** Display label and CSS class for an origin. */
-export function originBadge(o: Origin | undefined): { label: string; cls: string } {
+export function originBadge(o: Origin | undefined, t: T): { label: string; cls: string } {
   if (o === undefined || o === null) return { label: "?", cls: "origin-unknown" };
   if (typeof o === "string") {
-    if (o === "ui") return { label: "You", cls: "origin-ui" };
-    if (o === "script") return { label: "Script", cls: "origin-script" };
-    if (o.startsWith("agent")) return { label: o.replace(/^agent[:\s]*/, "") || "AI", cls: "origin-agent" };
+    if (o === "ui") return { label: t("tl.you"), cls: "origin-ui" };
+    if (o === "script") return { label: t("tl.script"), cls: "origin-script" };
+    if (o.startsWith("agent")) return { label: o.replace(/^agent[:\s]*/, "") || t("tl.ai"), cls: "origin-agent" };
     return { label: o, cls: "origin-unknown" };
   }
   switch (o.kind) {
     case "ui":
-      return { label: "You", cls: "origin-ui" };
+      return { label: t("tl.you"), cls: "origin-ui" };
     case "script":
-      return { label: "Script", cls: "origin-script" };
+      return { label: t("tl.script"), cls: "origin-script" };
     case "agent":
-      return { label: "name" in o && o.name ? o.name : "AI agent", cls: "origin-agent" };
+      return { label: "name" in o && o.name ? o.name : t("tl.aiAgent"), cls: "origin-agent" };
     default:
       return { label: String((o as { kind: unknown }).kind), cls: "origin-unknown" };
   }
@@ -53,6 +55,7 @@ export interface TimelineProps {
 }
 
 export function Timeline({ timeline, flash, onGoto, onDelete }: TimelineProps) {
+  const t = useT();
   const stripRef = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState<{ step: TimelineStep; x: number; y: number } | null>(null);
   /** Slot the marker is being dragged to, or null. */
@@ -124,11 +127,11 @@ export function Timeline({ timeline, flash, onGoto, onDelete }: TimelineProps) {
       key="marker"
       className={`tl-marker${editable ? " draggable" : ""}${dragSlot !== null ? " dragging" : ""}`}
       role={editable ? "slider" : undefined}
-      aria-label="History marker"
+      aria-label={t("tl.historyMarker")}
       aria-valuemin={0}
       aria-valuemax={steps.length}
       aria-valuenow={shownSlot}
-      title={editable ? "History marker: drag to roll the design back or forward" : undefined}
+      title={editable ? t("tl.historyMarkerDragToRollThe") : undefined}
       onPointerDown={onMarkerDown}
       onPointerMove={onMarkerMove}
       onPointerUp={onMarkerUp}
@@ -139,7 +142,7 @@ export function Timeline({ timeline, flash, onGoto, onDelete }: TimelineProps) {
   const chips: React.ReactNode[] = [];
   steps.forEach((h, i) => {
     if (i === shownSlot) chips.push(marker);
-    const b = originBadge(h.origin);
+    const b = originBadge(h.origin, t);
     const flashing = !!flash && h.revision !== null && flash.revision === h.revision;
     const applied = dragSlot !== null ? i < dragSlot : isApplied(timeline, h);
     // While scrubbing, the drop is a goto: the steps after the marker will be kept, not discarded.
@@ -160,9 +163,9 @@ export function Timeline({ timeline, flash, onGoto, onDelete }: TimelineProps) {
       `${h.commands || h.label}`,
       h.summary,
       `by ${b.label}`,
-      h.state === "failed" ? `Failed on replay: ${h.error ?? "the step no longer applies"}` : "",
+      h.state === "failed" ? `Failed on replay: ${h.error ?? t("tl.theStepNoLongerApplies")}` : "",
       !applied ? afterMarkerNote(dragSlot === null ? timeline : { ...timeline, discardThrough: timeline.marker }, h) : "",
-      editable ? "Click to roll the marker here. Right-click for more." : "",
+      editable ? t("tl.clickToRollTheMarkerHere") : "",
     ]
       .filter(Boolean)
       .join("\n");
@@ -189,25 +192,25 @@ export function Timeline({ timeline, flash, onGoto, onDelete }: TimelineProps) {
 
   return (
     <div className="timeline">
-      <div className="timeline-label">Timeline</div>
+      <div className="timeline-label">{t("tl.timeline")}</div>
       {editable && (
-        <div className="tl-controls" role="group" aria-label="Timeline playback">
-          <button className="icon-btn small" title="Go to start" aria-label="Go to start" disabled={slot === 0} onClick={() => goSlot(0)}>
+        <div className="tl-controls" role="group" aria-label={t("tl.timelinePlayback")}>
+          <button className="icon-btn small" title={t("tl.goToStart")} aria-label={t("tl.goToStart")} disabled={slot === 0} onClick={() => goSlot(0)}>
             <Icon name="first" size={16} />
           </button>
-          <button className="icon-btn small" title="Previous step" aria-label="Previous step" disabled={slot === 0} onClick={() => goSlot(slot - 1)}>
+          <button className="icon-btn small" title={t("tl.previousStep")} aria-label={t("tl.previousStep")} disabled={slot === 0} onClick={() => goSlot(slot - 1)}>
             <Icon name="prev" size={16} />
           </button>
-          <button className="icon-btn small" title="Next step" aria-label="Next step" disabled={slot >= steps.length} onClick={() => goSlot(slot + 1)}>
+          <button className="icon-btn small" title={t("tl.nextStep")} aria-label={t("tl.nextStep")} disabled={slot >= steps.length} onClick={() => goSlot(slot + 1)}>
             <Icon name="next" size={16} />
           </button>
-          <button className="icon-btn small" title="Go to end" aria-label="Go to end" disabled={slot >= steps.length} onClick={() => goSlot(steps.length)}>
+          <button className="icon-btn small" title={t("tl.goToEnd")} aria-label={t("tl.goToEnd")} disabled={slot >= steps.length} onClick={() => goSlot(steps.length)}>
             <Icon name="last" size={16} />
           </button>
         </div>
       )}
       <div className="timeline-strip" ref={stripRef} onPointerMove={onMarkerMove} onPointerUp={onMarkerUp}>
-        {steps.length === 0 ? <span className="muted tl-empty">No edits yet.</span> : chips}
+        {steps.length === 0 ? <span className="muted tl-empty">{t("tl.noEditsYet")}</span> : chips}
       </div>
       {menu && (
         <div className="menu ctx-menu" role="menu" style={{ left: menu.x, top: menu.y }} onPointerDown={(e) => e.stopPropagation()}>
@@ -219,7 +222,7 @@ export function Timeline({ timeline, flash, onGoto, onDelete }: TimelineProps) {
               onGoto(menu.step.index);
             }}
           >
-            Roll marker here
+            {t("tl.rollMarkerHere")}
           </button>
           <button
             role="menuitem"
@@ -230,7 +233,7 @@ export function Timeline({ timeline, flash, onGoto, onDelete }: TimelineProps) {
               onGoto(markerForSlot(timeline, i));
             }}
           >
-            Roll marker before this step
+            {t("tl.rollMarkerBeforeThisStep")}
           </button>
           <div className="menu-sep" role="separator" />
           <button
@@ -241,7 +244,7 @@ export function Timeline({ timeline, flash, onGoto, onDelete }: TimelineProps) {
               onDelete(menu.step.index);
             }}
           >
-            Delete step
+            {t("tl.deleteStep")}
           </button>
         </div>
       )}

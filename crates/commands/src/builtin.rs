@@ -37,7 +37,9 @@ mod pathutil;
 // Libraries and generators: material library presets, test generators, start points, registration targets.
 mod preset;
 mod targets;
+pub mod camera_markers;
 mod testgen;
+pub mod testgen_presets;
 // Files and image tools (crate fileio): exports, further imports, trace, masks, pages, notes.
 pub(crate) mod files;
 mod image_tools;
@@ -126,6 +128,7 @@ fn register_files(r: &mut Registry) {
     r.register::<files::ImportHpgl>();
     r.register::<files::ImportGerber>();
     r.register::<files::ImportModel>();
+    r.register::<files::EditModel>();
     r.register::<image_tools::TraceImage>();
     r.register::<image_tools::TracePreview>();
     r.register::<image_tools::ConvertToBitmap>();
@@ -153,6 +156,7 @@ fn register_libs(r: &mut Registry) {
     r.register::<testgen::MaterialTest>();
     r.register::<testgen::IntervalTest>();
     r.register::<testgen::FocusTest>();
+    r.register::<camera_markers::CameraMarkers>();
     r.register::<targets::SetStartPoint>();
     r.register::<targets::ClearStartPoint>();
     r.register::<targets::AlignTargets>();

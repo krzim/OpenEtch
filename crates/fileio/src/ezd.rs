@@ -1,4 +1,4 @@
-//! EzCad2 `.ezd` import (vectors only), for galvo users moving from EzCad. Not in LightBurn.
+//! EzCad2 `.ezd` import, for galvo users moving from EzCad. Not in LightBurn.
 //!
 //! The layout follows meerk40t's EZD reader (`meerk40t/extra/ezd.py`, https://github.com/meerk40t/meerk40t, MIT,
 //! Copyright (c) meerk40t contributors), re-written here and checked against the owner's EzCad 2 files:
@@ -6,7 +6,9 @@
 //! - Header: `EZCADUNI` in UTF-16 (16 bytes), two `i32` (0, 2001), three 60-byte UTF-16 strings, 140 bytes; then
 //!   seven `i32` absolute offsets (preview, v1, pens, font, v4, vectors, prevectors).
 //! - Pens: `i32` count, `i32` offset, then per pen a "struct" (`i32` item count, then `i32` length + bytes per item);
-//!   item 0 is the colour (BGR), 1 the name.
+//!   item 0 is the colour (BGR), 1 the name, 4 the loop count, 5 the speed (mm/s), 6 the power (%), 7 the frequency
+//!   (Hz) as meerk40t reads them; item 8 is read as the MOPA pulse width in ns (EzCad's default 200 is there in the
+//!   owner's files; meerk40t does not name it). Each pen that marks something becomes a layer (line mode).
 //! - Vectors: five `u32` (the first the uncompressed length), a `u16` Huffman table size and 7-byte entries
 //!   (`u8` symbol, `u32` code, `u16` code length: the low bits of the code, most significant first), then the
 //!   bit stream, most significant bit first.
@@ -17,15 +19,29 @@
 //!   and the children), and struct-described shapes (rectangle 0x03, circle 0x04, ellipse 0x05, polygon 0x06)
 //!   whose items are typed by size (8 bytes `f64`, 16 a point, 72 a 3 x 3 matrix).
 //!
-//! Coordinates are mm with the origin at the field centre and +Y up, as OpenEtch's field frame. Text (0x800) and
-//! images (0x40) are skipped with a warning (EzCad text has no outline in the file); hatch settings are not read
-//! (the outlines a hatch fills are imported). Unknown objects are skipped by scanning for the next object.
+//! Coordinates are mm with the origin at the field centre and +Y up, as OpenEtch's field frame. Unknown objects are
+//! skipped by scanning for the next object.
+//!
+//! - **Hatch** (0x20): its children are the outlines; after them a 54-item settings struct (meerk40t's layout:
+//!   item 0 mark contours, then per hatch 1/2/3 enabled, pen, type flags, edge offset, line space, start/end
+//!   offsets, angle at items 1-8, 9-16 and 20-27). The outlines go on a fill layer: the first enabled hatch with its
+//!   pen's settings (interval = line space, angle), the others as sub-layers; marked contours make it fill + line.
+//!   The type flags (bidirectional, loops, edge follow, ...) are not decoded: hatches are bidirectional. The hatch
+//!   lines EzCad generated are dropped (the fill layer hatches the outlines again).
+//! - **Text** (0x800): a 126-item struct (item 1 the height, 7 the start point, 10 the text, 44 the TrueType font,
+//!   18 its other font name) and then, after an `i32`, a child list. In the owner's file the children are the glyph
+//!   outlines (a hatch of one group per character), which are imported. A text with no outlines is returned in
+//!   [`Art::texts`] for the caller to set in the font (or mark the place of).
+//! - **Image** (0x40): a struct (item 4 height, 5 width, mm) then a Windows bitmap (`BM`, `i32` size, the rest),
+//!   converted to PNG and centred on the object's position (header item 13). **Unverified**: none of the owner's
+//!   files has an image; the layout is meerk40t's.
 
 use std::collections::HashMap;
 
 use kurbo::{Affine, BezPath, Point, Shape};
 
-use crate::{Art, FileError, Result, invalid};
+use crate::{Art, ArtLayer, ArtText, FileError, Result, invalid};
+use doc::{CutSettings, FillMode};
 
 /// Largest file read.
 pub const MAX_BYTES: usize = 200 * 1024 * 1024;
@@ -182,17 +198,90 @@ const SPIRAL: i32 = 0x60;
 const TEXT: i32 = 0x800;
 const KNOWN: [i32; 12] = [CURVE, RECT, CIRCLE, ELLIPSE, POLYGON, GROUP, HATCH, COMBINE, IMAGE, VECTOR_FILE, SPIRAL, TEXT];
 
+/// One EzCad pen: name, colour and its settings as a line layer.
+#[derive(Debug, Clone, PartialEq)]
+struct Pen {
+    name: String,
+    color: [u8; 3],
+    settings: CutSettings,
+}
+
+/// The object tree being read.
 struct Parse<'a> {
     art: Art,
-    pens: &'a [(String, [u8; 3])],
+    pens: &'a [Pen],
     objects: usize,
     skipped: HashMap<&'static str, usize>,
+    /// The layer (index into `art.layers`) of each pen used so far.
+    pen_layers: HashMap<usize, usize>,
 }
 
 impl Parse<'_> {
+    fn pen(&self, pen: usize) -> Pen {
+        self.pens.get(pen).cloned().unwrap_or_else(|| Pen {
+            name: format!("Pen {pen}"),
+            color: [0, 0, 0],
+            settings: CutSettings { mode: FillMode::Line, ..CutSettings::default() },
+        })
+    }
+
+    /// The line layer of `pen`, made on first use.
+    fn pen_layer(&mut self, pen: usize) -> usize {
+        if let Some(l) = self.pen_layers.get(&pen) {
+            return *l;
+        }
+        let p = self.pen(pen);
+        self.art.layers.push(ArtLayer { name: p.name, color: p.color, settings: p.settings, sub_layers: Vec::new() });
+        let l = self.art.layers.len() - 1;
+        self.pen_layers.insert(pen, l);
+        l
+    }
+
     fn push(&mut self, path: BezPath, pen: usize) {
-        let (name, color) = self.pens.get(pen).cloned().unwrap_or_else(|| (format!("Pen {pen}"), [0, 0, 0]));
-        self.art.push(path, name, Some(color));
+        let p = self.pen(pen);
+        let before = self.art.paths.len();
+        self.art.push(path, p.name, Some(p.color));
+        if self.art.paths.len() > before {
+            let l = self.pen_layer(pen);
+            self.art.paths[before].layer = Some(l);
+        }
+    }
+
+    /// The fill layer of a hatch from its settings struct (see the module docs); `None` when no hatch is enabled.
+    fn hatch_layer(&mut self, set: &[&[u8]], contour_pen: usize) -> Option<usize> {
+        let int = |i: usize| set.get(i).and_then(|b| as_i32(b));
+        let num = |i: usize| set.get(i).and_then(|b| as_f64(b)).filter(|v| v.is_finite());
+        // (enabled, pen, line space, angle) of hatches 1, 2 and 3.
+        let hatches: Vec<(usize, f64, f64)> = [(1, 2, 5, 8), (9, 10, 13, 16), (20, 21, 24, 27)]
+            .into_iter()
+            .filter(|(e, ..)| int(*e).is_some_and(|v| v != 0))
+            .filter_map(|(_, p, s, a)| {
+                let space = num(s).filter(|v| *v >= 0.001 && *v <= 100.0)?;
+                Some((int(p).unwrap_or(0).max(0) as usize, space, num(a).unwrap_or(0.0)))
+            })
+            .collect();
+        let (&(pen, space, angle), rest) = hatches.split_first()?;
+        let fill = |this: &Self, pen: usize, space: f64, angle: f64| {
+            let mut s = this.pen(pen).settings;
+            s.mode = FillMode::Fill;
+            s.hatch.interval_mm = space;
+            s.hatch.angle_deg = angle;
+            s.hatch.bidirectional = true;
+            s
+        };
+        let mut settings = fill(self, pen, space, angle);
+        if int(0).is_some_and(|v| v != 0) {
+            settings.mode = FillMode::FillThenLine;
+        }
+        let sub_layers: Vec<CutSettings> = rest.iter().map(|&(p, s, a)| fill(self, p, s, a)).collect();
+        let base = self.pen(contour_pen);
+        let name = format!("{} hatch {} mm", self.pen(pen).name, show(space));
+        let layer = ArtLayer { name, color: base.color, settings, sub_layers };
+        if let Some(i) = self.art.layers.iter().position(|l| *l == layer) {
+            return Some(i);
+        }
+        self.art.layers.push(layer);
+        Some(self.art.layers.len() - 1)
     }
 
     /// Parse one list of objects (until a 0 type or the end). `top` allows resyncing after unknown data.
@@ -371,6 +460,7 @@ impl Parse<'_> {
             HATCH | SPIRAL => {
                 let first = self.art.paths.len();
                 container(self, r)?;
+                let children_end = self.art.paths.len();
                 if kind == HATCH {
                     // Some files keep the generated hatch lines among the children: many open two-point lines.
                     let line = |p: &BezPath| p.elements().len() == 2 && matches!(p.elements()[1], kurbo::PathEl::LineTo(_));
@@ -379,7 +469,18 @@ impl Parse<'_> {
                         self.art.paths.extend(kept);
                     }
                 }
-                let _ = r.items()?;
+                let settings = r.items()?;
+                if kind == HATCH {
+                    match self.hatch_layer(&settings, pen) {
+                        Some(l) => {
+                            let end = children_end.min(self.art.paths.len());
+                            for a in &mut self.art.paths[first..end] {
+                                a.layer = Some(l);
+                            }
+                        }
+                        None => *self.skipped.entry("hatch settings (no hatch enabled)").or_default() += 1,
+                    }
+                }
                 // The generated hatch lines may follow as a group body without its type word (its 15-item header
                 // comes first); they are skipped: the outlines carry the art and a fill layer hatches them again.
                 let save = r.at;
@@ -393,15 +494,66 @@ impl Parse<'_> {
                 } else {
                     r.at = save;
                 }
-                *self.skipped.entry("hatch settings").or_default() += usize::from(kind == HATCH);
             }
             TEXT => {
-                *self.skipped.entry("text").or_default() += 1;
-                return None;
+                let args = r.items()?;
+                let _ = r.i32()?;
+                let first = self.art.paths.len();
+                container(self, r)?;
+                let text = args.get(10).map(|b| utf16(b)).unwrap_or_default();
+                if self.art.paths.len() > first {
+                    // The glyph outlines EzCad keeps with the text.
+                    let label = format!("text \"{}\"", text.chars().take(40).collect::<String>());
+                    for a in &mut self.art.paths[first..] {
+                        a.label = label.clone();
+                    }
+                } else if !hidden && !text.trim().is_empty() {
+                    let font = [44, 18]
+                        .iter()
+                        .filter_map(|i| args.get(*i).map(|b| utf16(b)))
+                        .find(|f| !f.trim().is_empty())
+                        .unwrap_or_default();
+                    let height = args.get(1).and_then(|b| as_f64(b)).filter(|h| h.is_finite() && *h > 0.0 && *h <= 1000.0).unwrap_or(5.0);
+                    let at = args.get(7).and_then(|b| as_point(b)).unwrap_or(Point::ZERO);
+                    let m = args.get(9).and_then(|b| as_matrix(b)).unwrap_or(Affine::IDENTITY);
+                    let at = m * at;
+                    let angle = args.first().and_then(|b| as_f64(b)).filter(|a| a.is_finite()).unwrap_or(0.0);
+                    if at.x.is_finite() && at.y.is_finite() && at.x.abs() <= MAX_SHAPE_MM && at.y.abs() <= MAX_SHAPE_MM {
+                        let layer = Some(self.pen_layer(pen));
+                        self.art.texts.push(ArtText { text, font, height_mm: height, at, angle_deg: angle.to_degrees(), layer });
+                    }
+                }
             }
             IMAGE => {
-                *self.skipped.entry("image").or_default() += 1;
-                return None;
+                let args = r.items()?;
+                let magic = r.take(2)?;
+                let size = r.i32()?;
+                if magic != b"BM" || !(6..=64 << 20).contains(&size) {
+                    *self.skipped.entry("images not read").or_default() += 1;
+                    return None;
+                }
+                let rest = r.take(size as usize - 6)?;
+                let mut bmp = Vec::with_capacity(size as usize);
+                bmp.extend_from_slice(b"BM");
+                bmp.extend_from_slice(&size.to_le_bytes());
+                bmp.extend_from_slice(rest);
+                let w = args.get(5).and_then(|b| as_f64(b)).filter(|v| v.is_finite() && *v > 0.0 && *v <= MAX_SHAPE_MM);
+                let h = args.get(4).and_then(|b| as_f64(b)).filter(|v| v.is_finite() && *v > 0.0 && *v <= MAX_SHAPE_MM);
+                let centre = header.get(13).and_then(|b| as_point(b)).filter(|p| p.x.is_finite() && p.y.is_finite()).unwrap_or(Point::ZERO);
+                let png = image::load_from_memory_with_format(&bmp, image::ImageFormat::Bmp).ok().and_then(|img| {
+                    let mut out = Vec::new();
+                    img.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).ok().map(|_| out)
+                });
+                match (png, w, h) {
+                    (Some(data), Some(w), Some(h)) if !hidden => self.art.images.push(crate::ArtImage {
+                        data,
+                        mime: "image/png",
+                        placement: Affine::new([w, 0.0, 0.0, h, centre.x - w / 2.0, centre.y - h / 2.0]),
+                        label: "image".into(),
+                    }),
+                    (_, _, _) if hidden => {}
+                    _ => *self.skipped.entry("images not read").or_default() += 1,
+                }
             }
             _ => return None,
         }
@@ -409,8 +561,37 @@ impl Parse<'_> {
     }
 }
 
-/// Read pens: (name, RGB colour).
-fn pens(b: &[u8], at: usize) -> Vec<(String, [u8; 3])> {
+/// A number for a name: at most 4 decimals, trailing zeros dropped.
+fn show(v: f64) -> String {
+    let s = format!("{v:.4}");
+    s.trim_end_matches('0').trim_end_matches('.').to_string()
+}
+
+/// A pen's settings as a line layer (see the module docs); values out of range keep OpenEtch's defaults.
+fn pen_settings(items: &[&[u8]]) -> CutSettings {
+    let num = |i: usize| items.get(i).and_then(|b| as_f64(b)).filter(|v| v.is_finite());
+    let int = |i: usize| items.get(i).and_then(|b| as_i32(b));
+    let mut s = CutSettings { mode: FillMode::Line, ..CutSettings::default() };
+    if let Some(v) = num(5).filter(|v| *v > 0.0 && *v <= 100_000.0) {
+        s.speed_mm_s = v;
+    }
+    if let Some(v) = num(6).filter(|v| (0.0..=100.0).contains(v)) {
+        s.power_pct = v;
+    }
+    if let Some(v) = int(7).filter(|v| (1_000..=10_000_000).contains(v)) {
+        s.frequency_khz = f64::from(v) / 1000.0;
+    }
+    if let Some(v) = int(4).filter(|v| (1..=1000).contains(v)) {
+        s.passes = v as u32;
+    }
+    if let Some(v) = int(8).filter(|v| (1..=1000).contains(v)) {
+        s.pulse_width_ns = Some(f64::from(v));
+    }
+    s
+}
+
+/// Read pens: name, RGB colour and settings.
+fn pens(b: &[u8], at: usize) -> Vec<Pen> {
     let mut r = Reader { b, at };
     let (Some(n), Some(ptr)) = (r.i32(), r.i32()) else { return vec![] };
     if !(0..=256).contains(&n) {
@@ -423,7 +604,7 @@ fn pens(b: &[u8], at: usize) -> Vec<(String, [u8; 3])> {
         let bgr = items.first().and_then(|i| as_i32(i)).unwrap_or(0) as u32;
         let color = [(bgr & 0xFF) as u8, ((bgr >> 8) & 0xFF) as u8, ((bgr >> 16) & 0xFF) as u8];
         let name = items.get(1).map(|i| utf16(i)).filter(|s| !s.is_empty()).unwrap_or_else(|| format!("Pen {}", out.len()));
-        out.push((name, color));
+        out.push(Pen { name, color, settings: pen_settings(&items) });
     }
     out
 }
@@ -444,15 +625,18 @@ pub fn parse(bytes: &[u8]) -> Result<Art> {
     }
     let pens = if pen_at > 0 && pen_at < bytes.len() { pens(bytes, pen_at) } else { vec![] };
     let data = decode_vectors(bytes, vec_at)?;
-    let mut p = Parse { art: Art::default(), pens: &pens, objects: 0, skipped: HashMap::new() };
+    let mut p = Parse { art: Art::default(), pens: &pens, objects: 0, skipped: HashMap::new(), pen_layers: HashMap::new() };
     let mut r = Reader { b: &data, at: 0 };
     p.list(&mut r, true, 0);
     let mut skipped: Vec<String> = p.skipped.iter().filter(|(_, n)| **n > 0).map(|(k, n)| format!("{n} {k}")).collect();
     skipped.sort();
     if !skipped.is_empty() {
-        p.art.warn(format!("left out: {} (EzCad text has no outline in the file; images and hatch settings are not read)", skipped.join(", ")));
+        p.art.warn(format!("left out: {}", skipped.join(", ")));
     }
-    if p.art.paths.is_empty() {
+    if !p.art.layers.is_empty() {
+        p.art.warn("EzCad hatch types (bidirectional, loops, edge follow) are not read: hatches are bidirectional fills");
+    }
+    if p.art.paths.is_empty() && p.art.texts.is_empty() && p.art.images.is_empty() {
         return invalid("no vector objects found in the EZD file");
     }
     Ok(p.art)
@@ -508,11 +692,53 @@ mod tests {
         let t = std::time::Instant::now();
         for (r, paths) in [(1e300, 0), (f64::INFINITY, 0), (5.0, 1)] {
             let data = circle(r);
-            let mut p = Parse { art: Art::default(), pens: &[], objects: 0, skipped: HashMap::new() };
+            let mut p = Parse { art: Art::default(), pens: &[], objects: 0, skipped: HashMap::new(), pen_layers: HashMap::new() };
             p.object(&mut Reader { b: &data, at: 0 }, CIRCLE, 0).unwrap();
             assert_eq!(p.art.paths.len(), paths, "radius {r}");
         }
         assert!(t.elapsed().as_secs() < 5);
+    }
+
+    /// An image object as meerk40t describes it (no sample file has one): a struct (item 4 height, 5 width), then a
+    /// Windows bitmap; it is placed centred on the header's position.
+    #[test]
+    fn images_are_read_from_their_bitmap() {
+        let items = |list: &[Vec<u8>]| {
+            let mut b = (list.len() as i32).to_le_bytes().to_vec();
+            for i in list {
+                b.extend_from_slice(&(i.len() as i32).to_le_bytes());
+                b.extend_from_slice(i);
+            }
+            b
+        };
+        let mut header: Vec<Vec<u8>> = (0..15).map(|_| 0i32.to_le_bytes().to_vec()).collect();
+        header[13] = [5f64, -3f64].iter().flat_map(|v| v.to_le_bytes()).collect();
+        let mut args: Vec<Vec<u8>> = (0..10).map(|_| 0i32.to_le_bytes().to_vec()).collect();
+        args[4] = 10f64.to_le_bytes().to_vec();
+        args[5] = 20f64.to_le_bytes().to_vec();
+        let mut bmp = Vec::new();
+        image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(4, 2, image::Rgb([200, 10, 10])))
+            .write_to(&mut std::io::Cursor::new(&mut bmp), image::ImageFormat::Bmp)
+            .unwrap();
+        let mut data = items(&header);
+        data.extend(items(&args));
+        data.extend_from_slice(&bmp);
+        let mut p = Parse { art: Art::default(), pens: &[], objects: 0, skipped: HashMap::new(), pen_layers: HashMap::new() };
+        let mut r = Reader { b: &data, at: 0 };
+        p.object(&mut r, IMAGE, 0).unwrap();
+        assert_eq!(r.at, data.len(), "the whole bitmap is read");
+        assert_eq!(p.art.images.len(), 1);
+        let im = &p.art.images[0];
+        let b = im.bounds();
+        assert!((b.x0 + 5.0).abs() < 1e-9 && (b.x1 - 15.0).abs() < 1e-9 && (b.y0 + 8.0).abs() < 1e-9 && (b.y1 - 2.0).abs() < 1e-9, "{b:?}");
+        let png = image::load_from_memory(&im.data).unwrap().to_rgb8();
+        assert_eq!((png.width(), png.get_pixel(0, 0).0), (4, [200, 10, 10]));
+        // A broken bitmap leaves the object out (and the reader resyncs on the next object).
+        let mut bad = items(&header);
+        bad.extend(items(&args));
+        bad.extend_from_slice(&[b'X', b'X', 16, 0, 0, 0]);
+        let mut p = Parse { art: Art::default(), pens: &[], objects: 0, skipped: HashMap::new(), pen_layers: HashMap::new() };
+        assert!(p.object(&mut Reader { b: &bad, at: 0 }, IMAGE, 0).is_none());
     }
 
     /// The owner's EzCad files (OPENETCH_LBRN_SAMPLES), read in place.
@@ -539,6 +765,25 @@ mod tests {
                 let b = art.paths.iter().map(|a| a.path.bounding_box()).reduce(|a, b| a.union(b)).unwrap();
                 eprintln!("{}: {} paths, bounds {b:?}, warnings {:?}", p.display(), art.paths.len(), art.warnings);
                 assert!(b.width() < 1000.0 && b.height() < 1000.0, "{}: {b:?}", p.display());
+                assert!(art.paths.iter().all(|a| a.layer.is_some_and(|l| l < art.layers.len())), "every path has its layer");
+                for l in &art.layers {
+                    let s = &l.settings;
+                    eprintln!("  layer {:?} {:?} {} mm/s {} % {} kHz {:?} ns, interval {} angle {}, {} sub-layer(s)", l.name, s.mode, s.speed_mm_s, s.power_pct, s.frequency_khz, s.pulse_width_ns, s.hatch.interval_mm, s.hatch.angle_deg, l.sub_layers.len());
+                }
+                if name == "AUTOSAVE.ezd" {
+                    // EzCad's default "TEXT" in Arial 10 mm, hatched: its glyph outlines on a 0.03 mm fill at -90 degrees.
+                    assert!(art.paths.iter().all(|a| a.label == "text \"TEXT\""), "{:?}", art.paths.iter().map(|a| &a.label).collect::<Vec<_>>());
+                    assert!((b.height() - 7.15).abs() < 0.01, "cap height of 10 mm Arial: {b:?}");
+                    let l = &art.layers[art.paths[0].layer.unwrap()];
+                    assert_eq!((l.settings.mode.clone(), l.settings.hatch.interval_mm, l.settings.hatch.angle_deg), (FillMode::Fill, 0.03, -90.0));
+                    assert_eq!((l.settings.speed_mm_s, l.settings.power_pct, l.settings.frequency_khz, l.settings.pulse_width_ns), (1000.0, 75.0, 30.0, Some(200.0)));
+                }
+                if name == "Test file-Dog.ezd" {
+                    // Three hatches (0.05, 0.2 and 1 mm): one fill layer with two sub-layers.
+                    let l = art.layers.iter().find(|l| l.settings.mode == FillMode::Fill).expect("a fill layer");
+                    assert_eq!((l.settings.hatch.interval_mm, l.sub_layers.len()), (0.05, 2));
+                    assert_eq!((l.sub_layers[0].hatch.interval_mm, l.sub_layers[0].hatch.angle_deg, l.sub_layers[1].hatch.interval_mm), (0.2, 45.0, 1.0));
+                }
                 n += 1;
             }
         }

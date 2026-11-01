@@ -58,19 +58,73 @@ pub struct ArtPath {
     pub label: String,
     /// The stroke or fill colour the file gave it, if any.
     pub color: Option<[u8; 3]>,
+    /// The layer the file gives it (an index into [`Art::layers`]), for formats that carry settings (EzCad pens
+    /// and hatches); `None`: the import's target layer.
+    pub layer: Option<usize>,
 }
 
-/// Imported vector art and what the importer left out.
+/// Laser settings an imported file carries (an EzCad pen, or a hatch with its pens), to become a layer.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArtLayer {
+    pub name: String,
+    pub color: [u8; 3],
+    pub settings: doc::CutSettings,
+    /// Further passes with their own settings (EzCad's second and third hatch).
+    pub sub_layers: Vec<doc::CutSettings>,
+}
+
+/// A text the file holds without its outline (EzCad keeps glyph outlines only for some texts): the importer's
+/// caller sets it in the font if it can, else marks its place.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArtText {
+    pub text: String,
+    /// The font family the file names.
+    pub font: String,
+    pub height_mm: f64,
+    /// Where the text starts (its left end at the baseline), art mm.
+    pub at: kurbo::Point,
+    /// Rotation, degrees counter-clockwise.
+    pub angle_deg: f64,
+    pub layer: Option<usize>,
+}
+
+/// One imported raster image (embedded in a PDF or an EzCad file).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArtImage {
+    /// The image file (`mime`).
+    pub data: Vec<u8>,
+    /// `image/png` or `image/jpeg`.
+    pub mime: &'static str,
+    /// Maps the image's unit square (`(0, 0)` its lower-left corner as shown, `(1, 1)` its upper-right; the first
+    /// pixel row is at the top) to art millimetres, +Y up.
+    pub placement: kurbo::Affine,
+    /// What it came from, for object names.
+    pub label: String,
+}
+
+impl ArtImage {
+    /// The image's corners in art mm.
+    pub fn bounds(&self) -> kurbo::Rect {
+        self.placement.transform_rect_bbox(kurbo::Rect::new(0.0, 0.0, 1.0, 1.0))
+    }
+}
+
+/// Imported vector art (and images) and what the importer left out.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Art {
     pub paths: Vec<ArtPath>,
+    pub images: Vec<ArtImage>,
+    /// Layers the paths name ([`ArtPath::layer`]).
+    pub layers: Vec<ArtLayer>,
+    /// Texts without outlines.
+    pub texts: Vec<ArtText>,
     pub warnings: Vec<String>,
 }
 
 impl Art {
     pub(crate) fn push(&mut self, path: BezPath, label: impl Into<String>, color: Option<[u8; 3]>) {
         if path.elements().iter().any(|e| !matches!(e, kurbo::PathEl::MoveTo(_) | kurbo::PathEl::ClosePath)) {
-            self.paths.push(ArtPath { path, label: label.into(), color });
+            self.paths.push(ArtPath { path, label: label.into(), color, layer: None });
         }
     }
 

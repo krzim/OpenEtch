@@ -7,7 +7,7 @@ import type { ReactNode } from "react";
 import type { Workspace } from "./TopBar.tsx";
 import type { SnapSettings, Tool, ViewStyle } from "./Viewport.tsx";
 import { Icon } from "./ui.tsx";
-import { usePrefs } from "../workspace/usePrefs.ts";
+import { usePrefs, useT } from "../workspace/usePrefs.ts";
 import { formatLength } from "../workspace/units.ts";
 
 export type ArrangeAction =
@@ -98,77 +98,78 @@ function Mini(props: { icon: string; title: string; onClick: () => void; disable
 }
 
 export function Toolbar(p: ToolbarProps) {
+  const t = useT();
   const lengthUnit = usePrefs().units;
   const two = p.units >= 2;
   const three = p.units >= 3;
   const a = (x: ArrangeAction) => () => p.onArrange(x);
   return (
     <div className="toolbar">
-      <button className={`tool-btn panel-toggle${p.leftOpen ? " active" : ""}`} onClick={p.onToggleLeft} title="Browser panel" aria-pressed={p.leftOpen}>
+      <button className={`tool-btn panel-toggle${p.leftOpen ? " active" : ""}`} onClick={p.onToggleLeft} title={t("tb.browserPanel")} aria-pressed={p.leftOpen}>
         <Icon name="panelLeft" size={22} />
-        <span>Browser</span>
+        <span>{t("tb.browser")}</span>
       </button>
       <div className="tool-sep" />
       {p.workspace === "design" ? (
         <>
           <div className="tool-group">
-            <Btn icon="stock" label="Stock" onClick={p.onStock} title="Define the stock (material piece)" />
+            <Btn icon="stock" label={t("tb.stock")} onClick={p.onStock} title={t("tb.stockTitle")} />
           </div>
           <div className="tool-group">
-            <Btn icon="rect" label="Rectangle" active={p.tool === "rect"} onClick={() => p.onTool(p.tool === "rect" ? "select" : "rect")} title="Rectangle (R)" />
-            <Btn icon="ellipse" label="Ellipse" active={p.tool === "ellipse"} onClick={() => p.onTool(p.tool === "ellipse" ? "select" : "ellipse")} title="Ellipse (E). Shift draws a circle." />
-            <Btn icon="circle" label="Circle" active={p.tool === "circle"} onClick={() => p.onTool(p.tool === "circle" ? "select" : "circle")} title="Circle from the centre (C)" />
-            <Btn icon="import" label="Import" onClick={p.onImport} title="Import SVG, DXF, PNG/JPG, LightBurn or OpenEtch files (Ctrl+I). You can also drop files on the window." />
+            <Btn icon="rect" label={t("tb.rect")} active={p.tool === "rect"} onClick={() => p.onTool(p.tool === "rect" ? "select" : "rect")} title={t("tb.rectTitle")} />
+            <Btn icon="ellipse" label={t("tb.ellipse")} active={p.tool === "ellipse"} onClick={() => p.onTool(p.tool === "ellipse" ? "select" : "ellipse")} title={t("tb.ellipseTitle")} />
+            <Btn icon="circle" label={t("tb.circle")} active={p.tool === "circle"} onClick={() => p.onTool(p.tool === "circle" ? "select" : "circle")} title={t("tb.circleTitle")} />
+            <Btn icon="import" label={t("tb.import")} onClick={p.onImport} title={t("tb.importTitle")} />
           </div>
           {p.extra}
           <div className="tool-group">
-            <Btn icon="place" label="Place" onClick={p.onPlace} disabled={!p.hasSelection || !p.hasStock} title={p.hasStock ? "Place on stock" : "Define a stock first"} />
-            <Btn icon="array" label="Array" onClick={p.onArray} disabled={!p.hasSelection} />
-            <Btn icon="delete" label="Delete" onClick={p.onDelete} disabled={!p.hasSelection} title="Delete (Del)" />
+            <Btn icon="place" label={t("tb.place")} onClick={p.onPlace} disabled={!p.hasSelection || !p.hasStock} title={p.hasStock ? t("tb.placeTitle") : t("tb.stockFirst")} />
+            <Btn icon="array" label={t("tb.array")} onClick={p.onArray} disabled={!p.hasSelection} />
+            <Btn icon="delete" label={t("tb.delete")} onClick={p.onDelete} disabled={!p.hasSelection} title={t("tb.deleteTitle")} />
           </div>
           <div className="tool-group arrange" role="group" aria-label="Arrange">
             <div className="mini-grid">
-              <Mini icon="alignLeft" title="Align left (L). Aligns to the last object selected." onClick={a("left")} disabled={!two} />
-              <Mini icon="alignHCenter" title="Align horizontal centres (C)" onClick={a("hcenter")} disabled={!two} />
-              <Mini icon="alignRight" title="Align right (R)" onClick={a("right")} disabled={!two} />
-              <Mini icon="distH" title="Distribute horizontally: equal gaps (3+ objects)" onClick={a("distH")} disabled={!three} />
-              <Mini icon="centerStock" title="Centre on stock" onClick={a("stock")} disabled={!p.hasSelection || !p.hasStock} />
-              <Mini icon="group" title="Group (Ctrl+G)" onClick={a("group")} disabled={!two || !p.canGroup} />
-              <Mini icon="flipH" title="Flip horizontal (Ctrl+Shift+H)" onClick={a("flipH")} disabled={!p.hasSelection} />
-              <Mini icon="alignTop" title="Align top (T)" onClick={a("top")} disabled={!two} />
-              <Mini icon="alignVCenter" title="Align vertical centres (E)" onClick={a("vcenter")} disabled={!two} />
-              <Mini icon="alignBottom" title="Align bottom (B)" onClick={a("bottom")} disabled={!two} />
-              <Mini icon="distV" title="Distribute vertically: equal gaps (3+ objects)" onClick={a("distV")} disabled={!three} />
-              <Mini icon="centerField" title="Centre on field (P)" onClick={a("field")} disabled={!p.hasSelection} />
-              <Mini icon="ungroup" title="Ungroup (Ctrl+U)" onClick={a("ungroup")} disabled={!p.grouped || !p.canGroup} />
-              <Mini icon="flipV" title="Flip vertical (Ctrl+Shift+V)" onClick={a("flipV")} disabled={!p.hasSelection} />
+              <Mini icon="alignLeft" title={t("tb.alignLeft")} onClick={a("left")} disabled={!two} />
+              <Mini icon="alignHCenter" title={t("tb.alignHCenter")} onClick={a("hcenter")} disabled={!two} />
+              <Mini icon="alignRight" title={t("tb.alignRight")} onClick={a("right")} disabled={!two} />
+              <Mini icon="distH" title={t("tb.distH")} onClick={a("distH")} disabled={!three} />
+              <Mini icon="centerStock" title={t("tb.centreStock")} onClick={a("stock")} disabled={!p.hasSelection || !p.hasStock} />
+              <Mini icon="group" title={t("tb.group")} onClick={a("group")} disabled={!two || !p.canGroup} />
+              <Mini icon="flipH" title={t("tb.flipH")} onClick={a("flipH")} disabled={!p.hasSelection} />
+              <Mini icon="alignTop" title={t("tb.alignTop")} onClick={a("top")} disabled={!two} />
+              <Mini icon="alignVCenter" title={t("tb.alignVCenter")} onClick={a("vcenter")} disabled={!two} />
+              <Mini icon="alignBottom" title={t("tb.alignBottom")} onClick={a("bottom")} disabled={!two} />
+              <Mini icon="distV" title={t("tb.distV")} onClick={a("distV")} disabled={!three} />
+              <Mini icon="centerField" title={t("tb.centreField")} onClick={a("field")} disabled={!p.hasSelection} />
+              <Mini icon="ungroup" title={t("tb.ungroup")} onClick={a("ungroup")} disabled={!p.grouped || !p.canGroup} />
+              <Mini icon="flipV" title={t("tb.flipV")} onClick={a("flipV")} disabled={!p.hasSelection} />
             </div>
             <span className="mini-label">Arrange</span>
           </div>
-          <div className="tool-group arrange" role="group" aria-label="Snap and view">
+          <div className="tool-group arrange" role="group" aria-label={t("tb.snapAndView")}>
             <div className="mini-grid two">
               <Mini
                 icon="magnet"
-                title={`Snap to objects ${p.snap.objects ? "on" : "off"}: centres, quadrants, vertices, midpoints, intersections and outlines of objects, stock and field, with alignment guides. Hold Ctrl while dragging to toggle, Alt to snap to guides only.`}
+                title={t("tb.snapObjects", { state: p.snap.objects ? t("tb.on") : t("tb.off") })}
                 active={p.snap.objects}
                 onClick={() => p.onSnap({ ...p.snap, objects: !p.snap.objects })}
               />
               <Mini
                 icon="gridSnap"
-                title={`Snap to grid ${p.snap.grid ? "on" : "off"} (${formatLength(p.snap.gridMm, lengthUnit, 3)})`}
+                title={t("tb.snapGrid", { state: p.snap.grid ? t("tb.on") : t("tb.off"), step: formatLength(p.snap.gridMm, lengthUnit, 3) })}
                 active={p.snap.grid}
                 onClick={() => p.onSnap({ ...p.snap, grid: !p.snap.grid })}
               />
               <Mini
                 icon="filled"
-                title={`Filled view ${p.viewStyle === "filled" ? "on" : "off"}: fill layers drawn as shaded regions (Alt+Shift+W)`}
+                title={t("tb.filled", { state: p.viewStyle === "filled" ? t("tb.on") : t("tb.off") })}
                 active={p.viewStyle === "filled"}
                 onClick={() => p.onViewStyle(p.viewStyle === "filled" ? "wireframe" : "filled")}
               />
               <select
                 className="mini-select"
-                title="Grid snap distance"
-                aria-label="Grid snap distance"
+                title={t("tb.gridStep")}
+                aria-label={t("tb.gridStep")}
                 value={p.snap.gridMm}
                 onChange={(e) => p.onSnap({ ...p.snap, gridMm: Number(e.target.value) })}
               >
@@ -179,28 +180,28 @@ export function Toolbar(p: ToolbarProps) {
                 ))}
               </select>
             </div>
-            <span className="mini-label">Snap · view</span>
+            <span className="mini-label">{t("tb.snapView")}</span>
           </div>
         </>
       ) : (
         <>
           <div className="tool-group">
-            <Btn icon="preview" label="Preview" active={p.showPreview} onClick={p.onTogglePreview} title="Show simulated toolpath" />
+            <Btn icon="preview" label={t("tb.preview")} active={p.showPreview} onClick={p.onTogglePreview} title={t("tb.previewTitle")} />
           </div>
           <div className="tool-group">
-            <Btn icon="frame" label="Frame" onClick={p.onFrame} disabled={!!p.designOnly} title={p.designOnly ?? "Trace the job bounds with the red pointer (no emission)"} />
-            <Btn icon="frameStop" label="Stop frame" onClick={p.onFrameStop} title="End red-pointer framing (pending runs are kept)" />
-            <Btn icon="run" label="Request run" onClick={p.onRequestRun} disabled={!!p.designOnly} title={p.designOnly ?? "Create a pending run; it fires only after approval"} cls="tool-run" />
+            <Btn icon="frame" label={t("tb.frame")} onClick={p.onFrame} disabled={!!p.designOnly} title={p.designOnly ?? t("tb.frameTitle")} />
+            <Btn icon="frameStop" label={t("tb.stopFrame")} onClick={p.onFrameStop} title={t("tb.stopFrameTitle")} />
+            <Btn icon="run" label={t("tb.requestRun")} onClick={p.onRequestRun} disabled={!!p.designOnly} title={p.designOnly ?? t("tb.requestRunTitle")} cls="tool-run" />
           </div>
         </>
       )}
       <div className="tool-group">
-        <Btn icon="terminal" label="Commands" onClick={p.onCommands} title="Run any registered command" />
+        <Btn icon="terminal" label={t("tb.commands")} onClick={p.onCommands} title={t("tb.commandsTitle")} />
       </div>
       <div className="tool-spacer" />
-      <button className={`tool-btn panel-toggle${p.rightOpen ? " active" : ""}`} onClick={p.onToggleRight} title="Properties panel" aria-pressed={p.rightOpen}>
+      <button className={`tool-btn panel-toggle${p.rightOpen ? " active" : ""}`} onClick={p.onToggleRight} title={t("tb.propertiesPanel")} aria-pressed={p.rightOpen}>
         <Icon name="panelRight" size={22} />
-        <span>{p.workspace === "laser" ? "Machine" : "Properties"}</span>
+        <span>{p.workspace === "laser" ? t("tb.machine") : t("tb.properties")}</span>
       </button>
     </div>
   );

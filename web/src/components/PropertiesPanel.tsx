@@ -15,7 +15,7 @@ import { normDeg, objectBounds, transformParts, unionBoxes } from "../geometry.t
 import { topGroup, unitsOf, type Selection } from "../selection.ts";
 import { circleOf, shapeKindName } from "../snapping.ts";
 import { ANCHORS, anchorPoint, useAnchor } from "../workspace/numeric.ts";
-import { usePrefs } from "../workspace/usePrefs.ts";
+import { passLabelText, shapeKindText, usePrefs, useT, useTD } from "../workspace/usePrefs.ts";
 import { formatLength, lengthDigits, lengthToDisplay, trimNumber } from "../workspace/units.ts";
 import { CutOptionsSection, ShapeCutProperties } from "./CutOptions.tsx";
 import { ImageSettings } from "./ImageSettings.tsx";
@@ -40,8 +40,9 @@ export interface PropertiesPanelProps {
 }
 
 export function PropertiesPanel(props: PropertiesPanelProps) {
+  const t = useT();
   const { doc, selection } = props;
-  if (!doc) return <div className="panel-empty">No document.</div>;
+  if (!doc) return <div className="panel-empty">{t("pp.noDocument")}</div>;
   const layer = selection.layer ? doc.layers.find((l) => l.id === selection.layer) : undefined;
   const nothing = selection.objects.length === 0 && !layer && !selection.stock;
   return (
@@ -52,8 +53,7 @@ export function PropertiesPanel(props: PropertiesPanelProps) {
       {layer && <LayerSection layer={layer} machine={props.machine} run={props.run} report={props.report} doc={doc} has={props.has} />}
       {nothing && (
         <div className="panel-empty">
-          Select an object, layer or the stock. Drag on empty canvas to box-select (left to right encloses, right to left
-          crosses); Shift adds, Ctrl toggles. Drop files on the window to import them.
+          {t("pp.nothing")}
         </div>
       )}
     </div>
@@ -61,6 +61,8 @@ export function PropertiesPanel(props: PropertiesPanelProps) {
 }
 
 function ObjectSection({ doc, selection, run, report, onArrange, workspaceMm }: PropertiesPanelProps & { doc: GDocument }) {
+  const t = useT();
+  const td = useTD();
   const [lockAspect, setLockAspect] = useState(true);
   // LightBurn's 9-point anchor, the same one the numeric toolbar uses.
   const [anchor, setAnchor] = useAnchor();
@@ -111,17 +113,23 @@ function ObjectSection({ doc, selection, run, report, onArrange, workspaceMm }: 
 
   return (
     <section className="prop-section">
-      <h3>{single ? shapeKindName(single) : group ? `Group "${group.name}"` : `${units.length > 1 ? `${units.length} items` : "Group"} · ${objs.length} objects`}</h3>
-      {outside && <p className="warn-text">Part of the selection is outside the galvo field and cannot be marked.</p>}
-      {single && <TextField label="Name" value={single.name} onCommit={(name) => exec(C.rename(single.id, name))} />}
+      <h3>
+        {single
+          ? shapeKindText(td, shapeKindName(single))
+          : group
+            ? t("pp.groupNamed", { name: group.name })
+            : `${units.length > 1 ? t("pp.nItems", { n: units.length }) : t("pp.group")} · ${t("pp.nObjects", { n: objs.length })}`}
+      </h3>
+      {outside && <p className="warn-text">{t("pp.outside")}</p>}
+      {single && <TextField label={t("pp.name")} value={single.name} onCommit={(name) => exec(C.rename(single.id, name))} />}
       <label className="field">
-        <span className="field-label">Layer</span>
+        <span className="field-label">{t("pp.layer")}</span>
         <span className="field-input">
           <select
             value={layers.size === 1 ? objs[0].layer : ""}
             onChange={(e) => e.target.value && exec(C.setLayer(ids, e.target.value))}
           >
-            {layers.size > 1 && <option value="">Several layers</option>}
+            {layers.size > 1 && <option value="">{t("pp.severalLayers")}</option>}
             {doc.layers.map((l) => (
               <option key={l.id} value={l.id}>
                 {l.name}
@@ -131,10 +139,10 @@ function ObjectSection({ doc, selection, run, report, onArrange, workspaceMm }: 
         </span>
       </label>
       <div className="pos-row">
-        <span className="pos-label">Reference</span>
-        <div className="anchor-grid small" role="radiogroup" aria-label="Reference point">
+        <span className="pos-label">{t("pp.reference")}</span>
+        <div className="anchor-grid small" role="radiogroup" aria-label={t("pp.referencePoint")}>
           {ANCHORS.map((a) => (
-            <button key={a} role="radio" aria-checked={a === anchor} className={a === anchor ? "active" : ""} title={`X/Y and scaling refer to this point (${a})`} onClick={() => setAnchor(a)}>
+            <button key={a} role="radio" aria-checked={a === anchor} className={a === anchor ? "active" : ""} title={t("pp.anchorTitle", { a })} onClick={() => setAnchor(a)}>
               <span className="anchor-dot" />
             </button>
           ))}
@@ -145,15 +153,15 @@ function ObjectSection({ doc, selection, run, report, onArrange, workspaceMm }: 
         <NumberField label="W" unit="mm" value={w} min={0.01} onCommit={(v) => setSize(v, null)} />
         <NumberField label="H" unit="mm" value={h} min={0.01} onCommit={(v) => setSize(null, v)} />
       </div>
-      <CheckField label="Lock aspect" checked={lockAspect} onChange={setLockAspect} />
+      <CheckField label={t("pp.lockAspect")} checked={lockAspect} onChange={setLockAspect} />
       {circle && (
         <>
-          <NumberField label="Diameter" unit="mm" value={circle.diameter} min={0.01} onCommit={setDiameter} />
-          <CheckField label="Keep round" checked={keepRound} onChange={setKeepRound} />
+          <NumberField label={t("pp.diameter")} unit="mm" value={circle.diameter} min={0.01} onCommit={setDiameter} />
+          <CheckField label={t("pp.keepRound")} checked={keepRound} onChange={setKeepRound} />
         </>
       )}
       <NumberField
-        label={single ? "Rotation" : "Rotate by"}
+        label={single ? t("pp.rotation") : t("pp.rotateBy")}
         unit="°"
         value={rot}
         digits={2}
@@ -165,47 +173,52 @@ function ObjectSection({ doc, selection, run, report, onArrange, workspaceMm }: 
       />
       {parts && (
         <dl className="kv">
-          <dt>Flip</dt>
-          <dd>{parts.flip === "horizontal" ? "Horizontal" : parts.flip === "vertical" ? "Vertical" : "None"}</dd>
+          <dt>{t("pp.flip")}</dt>
+          <dd>{parts.flip === "horizontal" ? t("pp.horizontal") : parts.flip === "vertical" ? t("pp.vertical") : t("pp.none")}</dd>
         </dl>
       )}
       <div className="btn-row compact">
-        <button className="icon-btn small" title="Flip horizontal (Ctrl+Shift+H)" aria-label="Flip horizontal" onClick={() => onArrange("flipH")}>
+        <button className="icon-btn small" title={t("tb.flipH")} aria-label={t("app.flipH")} onClick={() => onArrange("flipH")}>
           <Icon name="flipH" size={18} />
         </button>
-        <button className="icon-btn small" title="Flip vertical (Ctrl+Shift+V)" aria-label="Flip vertical" onClick={() => onArrange("flipV")}>
+        <button className="icon-btn small" title={t("tb.flipV")} aria-label={t("app.flipV")} onClick={() => onArrange("flipV")}>
           <Icon name="flipV" size={18} />
         </button>
-        <button className="icon-btn small" title="Centre on stock" aria-label="Centre on stock" disabled={!doc.stock} onClick={() => onArrange("stock")}>
+        <button className="icon-btn small" title={t("tb.centreStock")} aria-label={t("tb.centreStock")} disabled={!doc.stock} onClick={() => onArrange("stock")}>
           <Icon name="centerStock" size={18} />
         </button>
-        <button className="icon-btn small" title="Centre on field (P)" aria-label="Centre on field" onClick={() => onArrange("field")}>
+        <button className="icon-btn small" title={t("tb.centreField")} aria-label={t("app.centreField")} onClick={() => onArrange("field")}>
           <Icon name="centerField" size={18} />
         </button>
         {units.length >= 2 && (
           <>
-            <button className="icon-btn small" title="Align left (L)" aria-label="Align left" onClick={() => onArrange("left")}>
+            <button className="icon-btn small" title={t("pp.alignLeftKey")} aria-label={t("app.alignLeft")} onClick={() => onArrange("left")}>
               <Icon name="alignLeft" size={18} />
             </button>
-            <button className="icon-btn small" title="Align horizontal centres (C)" aria-label="Align horizontal centres" onClick={() => onArrange("hcenter")}>
+            <button className="icon-btn small" title={t("tb.alignHCenter")} aria-label={t("app.alignHCenter")} onClick={() => onArrange("hcenter")}>
               <Icon name="alignHCenter" size={18} />
             </button>
-            <button className="icon-btn small" title="Align vertical centres (E)" aria-label="Align vertical centres" onClick={() => onArrange("vcenter")}>
+            <button className="icon-btn small" title={t("tb.alignVCenter")} aria-label={t("app.alignVCenter")} onClick={() => onArrange("vcenter")}>
               <Icon name="alignVCenter" size={18} />
             </button>
           </>
         )}
       </div>
       <p className="hint">
-        X/Y are the chosen reference point of the bounding box in the field frame. Arrows nudge {formatLength(nudge.normal, lu, 3)} (Ctrl{" "}
-        {formatLength(nudge.ctrl, lu, 3)}, Shift {formatLength(nudge.shift, lu, 3)}, Ctrl+Shift {formatLength(nudge.ctrlShift, lu, 3)});{" "}
-        <kbd>.</kbd> and <kbd>,</kbd> rotate 90°.
+        {t("pp.nudgeHint", {
+          normal: formatLength(nudge.normal, lu, 3),
+          ctrl: formatLength(nudge.ctrl, lu, 3),
+          shift: formatLength(nudge.shift, lu, 3),
+          ctrlShift: formatLength(nudge.ctrlShift, lu, 3),
+        })}{" "}
+        <kbd>.</kbd> <kbd>,</kbd> {t("pp.rotateKeys")}
       </p>
     </section>
   );
 }
 
 function StockSection({ doc, has, run, report, onEditStock }: PropertiesPanelProps & { doc: GDocument }) {
+  const t = useT();
   const s = doc.stock;
   const lu = usePrefs().units;
   if (!s) return null;
@@ -220,27 +233,27 @@ function StockSection({ doc, has, run, report, onEditStock }: PropertiesPanelPro
       : `Ø ${formatLength(s.shape.diameter_mm, lu, 3)}`;
   return (
     <section className="prop-section">
-      <h3>Stock</h3>
+      <h3>{t("pp.stock")}</h3>
       <dl className="kv">
-        <dt>Name</dt>
+        <dt>{t("pp.name")}</dt>
         <dd>{s.name}</dd>
-        <dt>Shape</dt>
+        <dt>{t("pp.shape")}</dt>
         <dd>{dims}</dd>
-        <dt>Thickness</dt>
+        <dt>{t("pp.thickness")}</dt>
         <dd>{formatLength(s.thickness_mm, lu, 3)}</dd>
-        <dt>Material</dt>
+        <dt>{t("pp.material")}</dt>
         <dd>{s.material ?? "—"}</dd>
       </dl>
-      <PairField labels={["Centre X", "Centre Y"]} unit="mm" value={s.center} onCommit={(c) => move({ center: [roundMm(c[0]), roundMm(c[1])] })} />
-      <NumberField label="Rotation" unit="°" value={s.rotation_deg} digits={2} onCommit={(v) => v !== null && move({ rotation_deg: round6(normDeg(v)) })} />
-      <p className="hint">While the stock is selected, drag it on the canvas or nudge it with the arrow keys.</p>
+      <PairField labels={[t("pp.centreX"), t("pp.centreY")]} unit="mm" value={s.center} onCommit={(c) => move({ center: [roundMm(c[0]), roundMm(c[1])] })} />
+      <NumberField label={t("pp.rotation")} unit="°" value={s.rotation_deg} digits={2} onCommit={(v) => v !== null && move({ rotation_deg: round6(normDeg(v)) })} />
+      <p className="hint">{t("pp.stockHint")}</p>
       <div className="btn-row">
         <button className="btn" onClick={onEditStock}>
-          Edit stock…
+          {t("pp.editStock")}
         </button>
         {has(C.OPT.stockClear) && (
           <button className="btn" onClick={() => exec(C.stockClear())}>
-            Remove stock
+            {t("pp.removeStock")}
           </button>
         )}
       </div>
@@ -275,6 +288,7 @@ export function LayerSection({
   doc?: GDocument;
   has?: (cmd: string) => boolean;
 }) {
+  const t = useT();
   const setL = (patch: { name?: string; color?: string; visible?: boolean; output?: boolean }) => run(C.layerUpdate(layer.id, patch)).catch(report);
   const others = doc ? doc.layers.filter((l) => l.id !== layer.id) : [];
   const count = doc ? doc.objects.filter((o) => o.layer === layer.id).length : 0;
@@ -282,12 +296,12 @@ export function LayerSection({
   return (
     <section className="prop-section">
       <h3>
-        <span className="swatch" style={{ background: layer.color }} /> Layer
+        <span className="swatch" style={{ background: layer.color }} /> {t("pp.layer")}
       </h3>
-      <TextField label="Name" value={layer.name} onCommit={(name) => setL({ name })} />
-      <ColorField label="Colour" value={toHex(layer.color)} onCommit={(color) => setL({ color })} />
-      <CheckField label="Show" checked={layer.visible} onChange={(visible) => setL({ visible })} />
-      <CheckField label="Output" checked={layer.output} onChange={(output) => setL({ output })} />
+      <TextField label={t("pp.name")} value={layer.name} onCommit={(name) => setL({ name })} />
+      <ColorField label={t("pp.colour")} value={toHex(layer.color)} onCommit={(color) => setL({ color })} />
+      <CheckField label={t("pp.show")} checked={layer.visible} onChange={(visible) => setL({ visible })} />
+      <CheckField label={t("pp.output")} checked={layer.output} onChange={(output) => setL({ output })} />
 
       <LayerPresetBar layer={layer} run={run} report={report} />
       <PassEditor layer={layer} machine={machine} run={run} report={report} has={has} />
@@ -297,13 +311,13 @@ export function LayerSection({
         <div className="btn-row">
           {!confirmDelete ? (
             <button className="btn" onClick={() => setConfirmDelete(true)}>
-              Delete layer…
+              {t("pp.deleteLayer")}
             </button>
           ) : (
             <>
-              <span className="hint">{count ? `Its ${count} object${count === 1 ? "" : "s"} move to "${others[0].name}".` : "The layer is empty."}</span>
+              <span className="hint">{count ? t(count === 1 ? "pp.moves1" : "pp.movesN", { n: count, name: others[0].name }) : t("pp.layerEmpty")}</span>
               <button className="btn" onClick={() => setConfirmDelete(false)}>
-                Cancel
+                {t("common.cancel")}
               </button>
               <button
                 className="btn btn-warn"
@@ -312,7 +326,7 @@ export function LayerSection({
                   run(C.layerDelete(layer.id, count ? others[0].id : undefined)).catch(report);
                 }}
               >
-                Delete
+                {t("pp.delete")}
               </button>
             </>
           )}
@@ -336,6 +350,7 @@ function PassEditor({
   report: (e: unknown) => void;
   has?: (cmd: string) => boolean;
 }) {
+  const t = useT();
   // The open pass, per layer: selecting another layer opens its Main tab.
   const [open, setOpen] = useState<{ layer: string; pass: number }>({ layer: layer.id, pass: 0 });
   const speedUnit = usePrefs().speedUnit;
@@ -390,20 +405,20 @@ function PassEditor({
 
   return (
     <>
-      <h4>Cut settings</h4>
-      <div className="pass-tabs" role="tablist" aria-label="Passes of this layer, in run order">
+      <h4>{t("pp.cutSettings")}</h4>
+      <div className="pass-tabs" role="tablist" aria-label={t("pp.passesTabs")}>
         {entries.map((e) => (
           <button
             key={e.pass}
             role="tab"
             aria-selected={e.pass === pass}
             className={`pass-tab${e.pass === pass ? " active" : ""}`}
-            title={`${e.label}: ${settingsSummary(e.settings, speedUnit)}`}
+            title={`${passLabelText(t, e.label)}: ${settingsSummary(e.settings, speedUnit)}`}
             onClick={() => select(e.pass)}
           >
             <span className="pass-tab-dot" style={{ background: passColor(layer.color, e.pass) }} />
-            <span className="pass-tab-name">{e.label}</span>
-            {e.cleanup && <span className="badge pass-badge">Cleanup</span>}
+            <span className="pass-tab-name">{passLabelText(t, e.label)}</span>
+            {e.cleanup && <span className="badge pass-badge">{t("layers.cleanupPass")}</span>}
             <span className="pass-tab-meta">{settingsSummary(e.settings, speedUnit)}</span>
           </button>
         ))}
@@ -414,64 +429,64 @@ function PassEditor({
             <>
               <button
                 className="btn small"
-                title="Add a sub-layer: a further pass over the same objects, starting from the main settings"
+                title={t("pp.addSubTitle")}
                 disabled={full}
                 onClick={() => void add({}, subs + 1)}
               >
-                <Icon name="plus" size={14} /> Sub-layer
+                <Icon name="plus" size={14} /> {t("pp.subLayer")}
               </button>
               <button
                 className="btn small"
-                title="Add a cleanup pass: one fast, low-power pass with the hatch turned 45°, run after the main passes"
+                title={t("pp.addCleanupTitle")}
                 disabled={full}
                 onClick={() => void add(cleanupPass(layer.settings, freq.max), subs + 1)}
               >
-                <Icon name="plus" size={14} /> Cleanup pass
+                <Icon name="plus" size={14} /> {t("pp.cleanupPass")}
               </button>
             </>
           )}
           {(sub === null ? canAdd : can(C.OPT.layerSubDuplicate)) && (
             <button
               className="btn small"
-              title={sub === null ? "Copy the main settings as a new first sub-layer" : "Copy this sub-layer right after it"}
+              title={sub === null ? t("pp.dupMain") : t("pp.dupSub")}
               disabled={full}
               onClick={() => void duplicate()}
             >
-              Duplicate
+              {t("pp.duplicate")}
             </button>
           )}
           {sub !== null && can(C.OPT.layerSubMove) && (
             <>
-              <button className="icon-btn small" title="Run earlier" aria-label="Move sub-layer up" disabled={sub === 0} onClick={() => void move(-1)}>
+              <button className="icon-btn small" title={t("pp.runEarlier")} aria-label={t("pp.subUp")} disabled={sub === 0} onClick={() => void move(-1)}>
                 <Icon name="chevronUp" size={16} />
               </button>
-              <button className="icon-btn small" title="Run later" aria-label="Move sub-layer down" disabled={sub >= subs - 1} onClick={() => void move(1)}>
+              <button className="icon-btn small" title={t("pp.runLater")} aria-label={t("pp.subDown")} disabled={sub >= subs - 1} onClick={() => void move(1)}>
                 <Icon name="chevronDown" size={16} />
               </button>
             </>
           )}
           {sub !== null && can(C.OPT.layerSubDelete) && (
-            <button className="btn small btn-warn" title="Delete this sub-layer" onClick={() => void remove()}>
-              Delete
+            <button className="btn small btn-warn" title={t("pp.deleteSub")} onClick={() => void remove()}>
+              {t("pp.delete")}
             </button>
           )}
         </div>
       )}
-      {subs > 0 && !editSubs && <p className="hint">This engine cannot edit sub-layers: they are shown read-only and still run after the main settings.</p>}
+      {subs > 0 && !editSubs && <p className="hint">{t("pp.subsReadOnly")}</p>}
 
       {sub !== null && editSubs && !linked && (
         <>
-          <TextField label="Sub-layer" value={entry.settings.name ?? ""} onCommit={(name) => setSub({ name: name.trim() || null })} />
+          <TextField label={t("pp.subLayer")} value={entry.settings.name ?? ""} onCommit={(name) => setSub({ name: name.trim() || null })} />
           <CheckField
-            label="Cleanup pass"
+            label={t("pp.cleanupPass")}
             checked={entry.cleanup !== null}
             onChange={(on) => setSub({ cleanup: on ? { every_n_passes: Math.max(1, layer.settings.passes) } : null })}
           />
           {entry.cleanup && (
             <>
               <NumberField
-                label="Clean after"
-                unit="passes"
+                label={t("pp.cleanAfter")}
+                unit={t("pp.passesUnit")}
                 value={entry.cleanup.every_n_passes}
                 min={1}
                 max={1000}
@@ -479,8 +494,7 @@ function PassEditor({
                 onCommit={(v) => v !== null && setSub({ cleanup: { every_n_passes: Math.round(v) } })}
               />
               <p className="hint">
-                Runs after every {entry.cleanup.every_n_passes === 1 ? "main pass" : `${entry.cleanup.every_n_passes} main passes`} and after the last one,
-                before the other sub-layers.
+                {t(entry.cleanup.every_n_passes === 1 ? "pp.cleanupEvery1" : "pp.cleanupEveryN", { n: entry.cleanup.every_n_passes })}
               </p>
             </>
           )}
@@ -494,7 +508,7 @@ function PassEditor({
         </>
       ) : (
         <dl className="kv">
-          <dt>Settings</dt>
+          <dt>{t("pp.settings")}</dt>
           <dd>{settingsSummary(entry.settings, speedUnit)}</dd>
         </dl>
       )}
@@ -504,6 +518,7 @@ function PassEditor({
 
 /** Full cut-settings form for one pass. Each field sends one partial settings patch. */
 function CutSettingsForm({ settings: s, machine, onPatch }: { settings: CutSettings; machine: MachineStatus | null; onPatch: (p: C.CutSettingsPatch) => unknown }) {
+  const t = useT();
   const set = (p: C.CutSettingsPatch) => void onPatch(p);
   const num = (f: (v: number) => C.CutSettingsPatch) => (v: number | null) => v !== null && set(f(v));
   const hatching = s.mode !== "line";
@@ -514,21 +529,21 @@ function CutSettingsForm({ settings: s, machine, onPatch }: { settings: CutSetti
   return (
     <>
       <label className="field">
-        <span className="field-label">Mode</span>
+        <span className="field-label">{t("pp.mode")}</span>
         <span className="field-input">
           <select value={s.mode} onChange={(e) => set({ mode: e.target.value as FillMode })}>
             {MODES.map((m) => (
               <option key={m.value} value={m.value}>
-                {m.label}
+                {t(`pp.mode.${m.value}` as "pp.mode.line")}
               </option>
             ))}
           </select>
         </span>
       </label>
-      <NumberField label="Power" unit="%" value={s.power_pct} min={0} max={100} digits={1} onCommit={num((power_pct) => ({ power_pct }))} />
-      <NumberField label="Speed" unit="mm/s" value={s.speed_mm_s} min={0.1} digits={1} onCommit={num((speed_mm_s) => ({ speed_mm_s }))} />
+      <NumberField label={t("pp.power")} unit="%" value={s.power_pct} min={0} max={100} digits={1} onCommit={num((power_pct) => ({ power_pct }))} />
+      <NumberField label={t("pp.speed")} unit="mm/s" value={s.speed_mm_s} min={0.1} digits={1} onCommit={num((speed_mm_s) => ({ speed_mm_s }))} />
       <NumberField
-        label="Frequency"
+        label={t("pp.frequency")}
         unit="kHz"
         value={s.frequency_khz}
         min={freq.min}
@@ -537,15 +552,15 @@ function CutSettingsForm({ settings: s, machine, onPatch }: { settings: CutSetti
         onCommit={num((frequency_khz) => ({ frequency_khz }))}
       />
       <label className="field">
-        <span className="field-label">Pulse width</span>
+        <span className="field-label">{t("pp.pulseWidth")}</span>
         <span className="field-input">
           <select
             value={pw === null ? "" : String(pw)}
             onChange={(e) => set({ pulse_width_ns: e.target.value === "" ? null : Number(e.target.value) })}
-            title="The MOPA source only accepts these pulse widths"
+            title={t("pp.pulseTitle")}
           >
-            <option value="">Source default</option>
-            {!pwKnown && pw !== null && <option value={String(pw)}>{pw} ns (not supported; nearest {nearestPulseWidth(pw, widths)} ns)</option>}
+            <option value="">{t("pp.sourceDefault")}</option>
+            {!pwKnown && pw !== null && <option value={String(pw)}>{t("pp.pwUnsupported", { pw, nearest: nearestPulseWidth(pw, widths) })}</option>}
             {widths.map((v) => (
               <option key={v} value={String(v)}>
                 {v} ns
@@ -554,22 +569,22 @@ function CutSettingsForm({ settings: s, machine, onPatch }: { settings: CutSetti
           </select>
         </span>
       </label>
-      {!pwKnown && pw !== null && <p className="warn-text">The source does not take {pw} ns; pick one from the list.</p>}
-      <NumberField label="Passes" value={s.passes} min={1} max={1000} digits={0} onCommit={num((v) => ({ passes: Math.round(v) }))} />
+      {!pwKnown && pw !== null && <p className="warn-text">{t("pp.pwPick", { pw })}</p>}
+      <NumberField label={t("pp.passes")} value={s.passes} min={1} max={1000} digits={0} onCommit={num((v) => ({ passes: Math.round(v) }))} />
 
-      <h4 className={hatching ? "" : "muted"}>Hatch{hatching ? "" : " (fill modes only)"}</h4>
-      <NumberField label="Interval" unit="mm" value={s.hatch.interval_mm} min={0.001} digits={4} onCommit={num((interval_mm) => ({ hatch: { interval_mm } }))} />
-      {s.mode === "offset_fill" && <p className="hint">Offset Fill: concentric inward outlines at the interval; the angle, cross hatch and bidirectional settings below do not apply.</p>}
-      <NumberField label="Angle" unit="°" value={s.hatch.angle_deg} digits={2} onCommit={num((angle_deg) => ({ hatch: { angle_deg } }))} />
+      <h4 className={hatching ? "" : "muted"}>{hatching ? t("pp.hatch") : t("pp.hatchFillOnly")}</h4>
+      <NumberField label={t("pp.interval")} unit="mm" value={s.hatch.interval_mm} min={0.001} digits={4} onCommit={num((interval_mm) => ({ hatch: { interval_mm } }))} />
+      {s.mode === "offset_fill" && <p className="hint">{t("pp.offsetHint")}</p>}
+      <NumberField label={t("pp.angle")} unit="°" value={s.hatch.angle_deg} digits={2} onCommit={num((angle_deg) => ({ hatch: { angle_deg } }))} />
       <NumberField
-        label="Increment"
-        unit="°/pass"
+        label={t("pp.increment")}
+        unit={t("pp.degPerPass")}
         value={s.hatch.angle_increment_deg}
         digits={2}
         onCommit={num((angle_increment_deg) => ({ hatch: { angle_increment_deg } }))}
       />
-      <CheckField label="Cross hatch" checked={s.hatch.cross_hatch} onChange={(cross_hatch) => set({ hatch: { cross_hatch } })} />
-      <CheckField label="Bidirectional" checked={s.hatch.bidirectional} onChange={(bidirectional) => set({ hatch: { bidirectional } })} />
+      <CheckField label={t("pp.crossHatch")} checked={s.hatch.cross_hatch} onChange={(cross_hatch) => set({ hatch: { cross_hatch } })} />
+      <CheckField label={t("pp.bidirectional")} checked={s.hatch.bidirectional} onChange={(bidirectional) => set({ hatch: { bidirectional } })} />
     </>
   );
 }

@@ -775,7 +775,7 @@ impl AppState {
     /// refused (409), also when its name differs only in case. Emits `project_saved`. Returns
     /// `{ok, name, path, revision}`.
     pub async fn project_save(&self, name: &str, overwrite: bool) -> Result<Value, EngineError> {
-        projects::validate_name(name)?;
+        projects::validate_project_name(name)?;
         // The document, which open document it is and its project, read together: another document may become the
         // active one at any moment, and its project must not decide whether this save may replace a file.
         let (content, revision, doc_id, current) = {
@@ -806,7 +806,7 @@ impl AppState {
     /// name that differs only in case finds the project when exactly one matches; the project keeps the name it
     /// has on disk. Returns `{ok, name, result, revision}`.
     pub async fn project_open(self: &Arc<Self>, name: &str, origin: Origin) -> Result<Value, EngineError> {
-        projects::validate_name(name)?;
+        projects::validate_project_name(name)?;
         let owned = name.to_owned();
         let (name, o) = self
             .blocking(move |st| {
@@ -828,7 +828,7 @@ impl AppState {
         overwrite: bool,
         origin: Origin,
     ) -> Result<Value, EngineError> {
-        projects::validate_name(name)?;
+        projects::validate_project_name(name)?;
         let mut o = self.execute(Invocation { id: "doc.export_lbrn2".into(), params: json!({}) }, origin)?;
         let content = match o.result["content"].take() {
             Value::String(s) => s,
@@ -1281,12 +1281,18 @@ impl AppState {
     }
 }
 
-/// An empty document laid out for `device`: a galvo's field (`machine_field` when it drives the machine), a gantry's
-/// bed with its origin corner (the smaller side as `field_mm`).
+/// An empty document laid out for `device`: a galvo's field (`machine_field` when it drives the machine; a
+/// non-square field as its `workspace_mm` with the centre origin), a gantry's bed with its origin corner (the
+/// smaller side as `field_mm`).
 pub fn new_document_for(device: &machine::Device, machine_field: f64) -> Document {
     let mut d = Document::default();
     if device.kind.is_galvo() {
-        d.field_mm = Some(if device.controllable { machine_field } else { device.field_mm() });
+        let [w, h] = galvo_field(device, machine_field);
+        d.field_mm = Some(w);
+        if (w - h).abs() > 1e-9 {
+            d.workspace_mm = Some([w, h]);
+            d.extras.insert(commands::ORIGIN_KEY.into(), "center".into());
+        }
     } else {
         d.field_mm = Some(device.field_mm());
         d.workspace_mm = Some(device.workspace_mm);
@@ -1327,10 +1333,26 @@ fn lacks(inv: &Invocation, key: &str) -> bool {
     inv.params.get(key).is_none_or(Value::is_null)
 }
 
-/// `doc.new` parameters for `device`: a galvo's `field_mm` (`field`), a gantry's bed and origin corner.
+/// A galvo device's field `[width, height]`: `machine_field` (the machine profile's width) when it drives the
+/// machine, else the device's workspace width, with the device's height (LightBurn's separate field Height; the
+/// width again for a square field).
+pub(crate) fn galvo_field(device: &machine::Device, machine_field: f64) -> [f64; 2] {
+    let [w, h] = device.workspace_mm;
+    let width = if device.controllable { machine_field } else { w };
+    // A square device keeps a square field even when the machine's width differs from the record's.
+    if (w - h).abs() < 1e-9 { [width, width] } else { [width, h] }
+}
+
+/// `doc.new` parameters for `device`: a galvo's `field_mm` (`field`) or, for a non-square field, its
+/// `workspace_mm` with the centre origin; a gantry's bed and origin corner.
 fn new_layout(device: &machine::Device, field: f64) -> Value {
     if device.kind.is_galvo() {
-        json!({ "field_mm": field })
+        let [w, h] = galvo_field(device, field);
+        if (w - h).abs() > 1e-9 {
+            json!({ "workspace_mm": [w, h], "origin": "center" })
+        } else {
+            json!({ "field_mm": w })
+        }
     } else {
         json!({ "workspace_mm": device.workspace_mm, "origin": device.origin.name() })
     }
@@ -1340,7 +1362,13 @@ fn new_layout(device: &machine::Device, field: f64) -> Value {
 /// `Width`, e.g. 153.8 for the B6, whose profile keeps EzCad's 153.75), a gantry's bed and origin corner.
 fn lightburn_layout(device: &machine::Device) -> Value {
     if let Some(field) = device.lightburn_field_mm() {
-        json!({ "field_mm": field })
+        let h = device.workspace_mm[1];
+        // A non-square galvo field (LightBurn's Height more than its 0.1 mm display step from the Width).
+        if (h - device.workspace_mm[0]).abs() > 0.05 {
+            json!({ "workspace_mm": [field, h], "origin": "center" })
+        } else {
+            json!({ "field_mm": field })
+        }
     } else {
         json!({ "workspace_mm": device.workspace_mm, "origin": device.origin.name() })
     }
@@ -1378,6 +1406,28 @@ fn fill_field_mm(inv: &mut Invocation, field_mm: f64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A galvo with a separate field Height lays new documents (and LightBurn imports) out on its whole field, so the
+    /// canvas can draw it; a square galvo keeps the plain field_mm.
+    #[test]
+    fn non_square_galvo_fields_lay_documents_out_on_their_workspace() {
+        let profile = machine::MachineProfile { field_height_mm: Some(120.0), ..machine::MachineProfile::generic_jcz_galvo() };
+        let w = profile.field_mm;
+        let device = machine::Device::builtin(profile);
+        let d = new_document_for(&device, w);
+        assert_eq!((d.field_mm, d.workspace(), d.extras.get(commands::ORIGIN_KEY).map(String::as_str)), (Some(w), Some([w, 120.0]), Some("center")));
+        assert_eq!(new_layout(&device, w), json!({"workspace_mm": [w, 120.0], "origin": "center"}));
+        assert_eq!(lightburn_layout(&device), json!({"workspace_mm": [w, 120.0], "origin": "center"}));
+        // doc.new with that layout makes the same document.
+        let mut s = commands::Session::new(Document::default());
+        s.execute(Invocation { id: "doc.new".into(), params: new_layout(&device, w) }, commands::Origin::Ui).unwrap();
+        assert_eq!((s.document().field_mm, s.document().workspace()), (Some(w), Some([w, 120.0])));
+
+        let square = machine::Device::builtin(machine::MachineProfile::generic_jcz_galvo());
+        let d = new_document_for(&square, 150.0);
+        assert_eq!((d.field_mm, d.workspace_mm, d.extras.get(commands::ORIGIN_KEY)), (Some(150.0), None, None));
+        assert_eq!(new_layout(&square, 150.0), json!({"field_mm": 150.0}));
+    }
 
     #[test]
     fn field_is_filled_only_when_missing() {

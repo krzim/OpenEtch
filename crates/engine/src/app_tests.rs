@@ -486,6 +486,40 @@ async fn full_pulse_decides_whether_a_held_pedal_starts() {
     set_inputs(&app, 0).await;
 }
 
+/// JOB-053: an active-low pedal (LightBurn StartMarkBitHigh = false) is pressed while its input reads 0: the input
+/// resting high never starts the job, pulling it low does (after being seen released, the full pulse).
+#[tokio::test]
+async fn an_active_low_pedal_starts_on_a_low_input() {
+    let p = MachineProfile { start_mark_active_low: true, ..pedal_profile() };
+    let st = state_with(p, test_projects()).await;
+    let app = api::router(st.clone(), None);
+    rect(&app, 0.0).await;
+    let counters = st.machine.sim_counters().unwrap().clone();
+    // Released: the input rests high.
+    set_inputs(&app, 1 << 14).await;
+    let id = request_run(&app, json!({"start_input": true})).await;
+    assert_eq!(approve(&app, &id).await.0, StatusCode::OK);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(job_state(&app).await, "waiting_for_start_input", "high is released for an active-low pedal");
+    assert_eq!(counters.emitting_packets(), 0);
+    set_inputs(&app, 0).await;
+    let run = wait_final(&st, &id).await;
+    assert_eq!(run.state, RunState::Finished, "{:?}", run.error);
+    assert!(counters.emitting_packets() > 0);
+
+    // A pedal held low since before approval is no full pulse.
+    let before = counters.emitting_packets();
+    let id = request_run(&app, json!({"start_input": true})).await;
+    assert_eq!(approve(&app, &id).await.0, StatusCode::OK);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(counters.emitting_packets(), before, "held low since approval");
+    // Released long enough for the wait to see it even on a busy test machine, then pressed.
+    set_inputs(&app, 1 << 14).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    set_inputs(&app, 0).await;
+    assert_eq!(wait_final(&st, &id).await.state, RunState::Finished);
+}
+
 /// Door Protect through the simulated inputs: an open door refuses approval; closed, the run goes.
 #[tokio::test]
 async fn the_door_input_refuses_approval_while_open() {

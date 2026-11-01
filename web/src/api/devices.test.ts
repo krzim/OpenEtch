@@ -165,17 +165,20 @@ test("active device: from the list, else what GET /api/machine reports", () => {
   assert.equal(D.machineDevice({ connected: true } as MachineStatus), null);
 });
 
-test("canvas workspace: a galvo's square field, a gantry's rectangle, else the machine's field", () => {
+test("canvas workspace: a galvo field (square or not), a gantry rectangle, else the machine field", () => {
   const list = D.deviceList(LIST);
   const [b6, jcz, wazer] = list.devices;
   assert.deepEqual(D.canvasWorkspace(b6, 110, 153.75), [153.75, 153.75]);
   assert.deepEqual(D.canvasWorkspace(wazer, 110, 153.75), [500, 300]);
-  // A galvo is square even when a device file says otherwise (LightBurn's galvo field is Width).
-  assert.deepEqual(D.canvasWorkspace({ ...jcz, workspace_mm: [150, 140] }, null, 153.75), [150, 150]);
+  // A non-square galvo field (separate field height, OTH-009) is drawn as reported.
+  assert.deepEqual(D.canvasWorkspace({ ...jcz, workspace_mm: [150, 140] }, null, 153.75), [150, 140]);
   assert.deepEqual(D.canvasWorkspace(null, 110, 153.75), [110, 110]);
   assert.deepEqual(D.canvasWorkspace(null, null, 153.75), [153.75, 153.75]);
   assert.equal(D.workspaceText([153.8000030517578, 153.8000030517578]), "153.8 mm");
   assert.equal(D.workspaceText([500, 300]), "500 × 300 mm");
+  // A galvo shows its real field: square within 0.05 mm (LightBurn's 0.1 mm display), else width x height.
+  assert.equal(D.deviceSizeText({ kind: "jcz_galvo", workspace_mm: [153.75, 153.8] }), "153.75 mm");
+  assert.equal(D.deviceSizeText({ kind: "jcz_galvo", workspace_mm: [153.75, 100] }), "153.75 × 100 mm");
 });
 
 // ---- switching and removing ---------------------------------------------------------------------------------------

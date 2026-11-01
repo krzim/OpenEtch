@@ -245,6 +245,9 @@ async fn run(config: Config) -> Result<(), String> {
         println!("openetch: {note}");
     }
     engine::userfiles::spawn_autosave(state.clone());
+    for note in engine::folders::open(&state, &config.config_dir, &config.projects_mounts) {
+        println!("openetch: {note}");
+    }
     let lightburn = engine::lightburn::LightBurnConfig {
         prefs_paths: match &config.lightburn_prefs {
             Some(p) => vec![p.clone()],

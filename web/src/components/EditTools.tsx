@@ -9,8 +9,10 @@
 // - Polygon / star: drag from the centre to a corner (Shift: 15° steps); sides, star and corner radius in the bar.
 // - Measure: click two points or drag (snapped): distance, ΔX, ΔY, angle. Trim: click the piece to remove.
 // - Point picks for the dialogs (circular array centre, mirror line, two-point rotate/scale; Ctrl+2).
-// - Rulers along the top and left (mm), and guides dragged out of them (stored per document in this browser; drag a
-//   guide back onto a ruler to remove it). Guides are snap targets.
+// - Rulers along the top and left (mm), and guides dragged out of them (saved in the document with guide.add / move /
+//   delete; double-click one, or Arrange > Add guide, to type its position; drag a guide back onto a ruler to remove
+//   it). Guides an older version kept in this browser move into the document once. Engines without guide commands keep
+//   them per project in this browser (guides.ts). Guides are snap targets.
 // - The Modify and Arrange dropdowns (booleans, offset, path tools, draw order, lock, make same size, transform,
 //   arrays, nesting) and their hotkeys (Ctrl+W weld, Alt++ / Alt+- / Alt+* booleans, Alt+C cut shapes, Alt+O offset,
 //   Alt+B break apart, Alt+J auto-join, Alt+D delete duplicates, Ctrl+Shift+C convert, Alt+Shift+O optimize,
@@ -37,10 +39,13 @@ import {
 } from "../drawTools.ts";
 import { constrainDelta, roundMm, type Mods } from "../editing.ts";
 import { boxFromPoints, geometryCmds, toPathData } from "../geometry.ts";
-import { getPrefs } from "../workspace/prefs.ts";
-import { usePrefs } from "../workspace/usePrefs.ts";
+import { getPrefs, handleScale } from "../workspace/prefs.ts";
+import { usePrefs, useT, useTD } from "../workspace/usePrefs.ts";
 import { fixedLength, fixedNumber, formatLength, lengthDigits, lengthFromDisplay, lengthToDisplay, trimNumber } from "../workspace/units.ts";
 import { guideLabel, guideSnapPart, loadGuidesFor, newGuideId, onGuidesChanged, saveGuidesFor, type Guide } from "../guides.ts";
+import { DCMD, extend as extendCmd, guideAdd, guideDelete, guideMove } from "../design/designApi.ts";
+import { GuideDialog } from "../design/DesignDialogs.tsx";
+import { docGuides, guidesToMigrate } from "../design/model.ts";
 import {
   clickNode,
   handlesShown,
@@ -85,6 +90,8 @@ export interface EditToolsProps {
   report: (e: unknown) => void;
   /** Open the app's grid array dialog. */
   onGridArray: () => void;
+  /** More entries for the Arrange dropdown (src/design/). */
+  arrangeExtra?: MenuItem[];
   /**
    * Which project the guides belong to (`guideScope`), or null while the document and project are still loading
    * (guides are then neither loaded nor stored).
@@ -98,6 +105,8 @@ export interface EditTools {
   dialogs: ReactNode;
   /** Items for the canvas context menu. */
   menuItems: MenuItem[];
+  /** Workspace hotkey handlers (workspace/hotkeys.ts ids): LightBurn's Mirror Across Line (Ctrl+Shift+M). */
+  handlers: Record<string, () => boolean | void>;
 }
 
 // ---- live state ------------------------------------------------------------------------------------------------------
@@ -245,6 +254,10 @@ const SHAPE_WORD: Record<string, string> = { rect: "rectangle", ellipse: "ellips
 // ---- the hook --------------------------------------------------------------------------------------------------------
 
 export function useEditTools(p: EditToolsProps): EditTools {
+  const t = useT();
+  // The verb in "Select a shape to {what}" / "This engine cannot {what} yet", translated (keys "et.do.<english>").
+  const td = useTD();
+  const doWhat = (what: string) => td(`et.do.${what}`, what);
   const P = useRef(p);
   P.current = p;
   const store = useMemo(() => createStore<Live>(INITIAL), []);
@@ -264,11 +277,16 @@ export function useEditTools(p: EditToolsProps): EditTools {
     }
   };
 
-  // ---- guides (per project, this browser; see guides.ts) ----
+  // ---- guides: in the document (guide.* commands); per project in this browser on older engines (guides.ts) ----
   const gscope = p.guideScope;
-  const [guides, setGuides] = useState<Guide[]>([]);
+  const docMode = p.has(DCMD.guideAdd);
+  const [browserGuides, setGuides] = useState<Guide[]>([]);
+  const docG = p.doc?.guides;
+  const guides = useMemo(() => (docMode ? docGuides(P.current.doc) : browserGuides), [docMode, docG, browserGuides]);
   const guidesRef = useRef(guides);
   guidesRef.current = guides;
+  const [guideDlg, setGuideDlg] = useState<{ id: string | null; axis: "x" | "y"; v: number } | null>(null);
+  const lastGuideTap = useRef<{ id: string; t: number } | null>(null);
   const gscopeRef = useRef(gscope);
   const docNameRef = useRef(p.doc?.name);
   docNameRef.current = p.doc?.name;
@@ -288,6 +306,31 @@ export function useEditTools(p: EditToolsProps): EditTools {
     setGuides(next);
     if (gscopeRef.current !== null) saveGuidesFor(gscopeRef.current, next);
   };
+  const guideOps = {
+    add: (axis: "x" | "y", v: number) =>
+      docMode ? void exec(guideAdd(axis, v)) : commitGuides([...guidesRef.current, { id: newGuideId(guidesRef.current), axis, v }]),
+    move: (id: string, v: number, axis?: "x" | "y") =>
+      docMode ? void exec(guideMove(id, v, axis)) : commitGuides(guidesRef.current.map((x) => (x.id === id ? { ...x, v, axis: axis ?? x.axis } : x))),
+    remove: (id: string) => (docMode ? void exec(guideDelete([id])) : commitGuides(guidesRef.current.filter((x) => x.id !== id))),
+    clear: () => {
+      if (!docMode) commitGuides([]);
+      else if (guidesRef.current.length) void exec(guideDelete(null));
+    },
+  };
+  // Guides an older version kept in this browser for this project move into the document, once.
+  const hasDoc = !!p.doc;
+  useEffect(() => {
+    if (!docMode || !hasDoc || gscope === null) return;
+    const local = loadGuidesFor(gscope, docNameRef.current);
+    if (!local.length) return;
+    saveGuidesFor(gscope, []);
+    const add = guidesToMigrate(local, docGuides(P.current.doc));
+    if (add.length)
+      void exec(
+        add.map((g) => guideAdd(g.axis, g.v)),
+        () => notify(t(add.length === 1 ? "et.guidesMoved1" : "et.guidesMovedN", { n: add.length })),
+      );
+  }, [docMode, hasDoc, gscope]);
   const [wsW, wsH] = p.workspaceMm;
   const snapParts = useMemo(() => {
     const ext = Math.max(wsW, wsH) * 2;
@@ -342,11 +385,11 @@ export function useEditTools(p: EditToolsProps): EditTools {
   useEffect(() => {
     if (tool !== "node") return;
     if (!canNodes) {
-      store.set({ nl: null, preview: null, nlNote: "This engine has no node editing yet." });
+      store.set({ nl: null, preview: null, nlNote: t("et.thisEngineHasNoNodeEditing") });
       return;
     }
     if (!target) {
-      store.set({ nl: null, preview: null, nlNote: many ? "Click one shape to edit its nodes." : "Click a shape to edit its nodes." });
+      store.set({ nl: null, preview: null, nlNote: many ? t("et.clickOneShape") : t("et.clickAShapeToEditIts") });
       return;
     }
     let live = true;
@@ -356,7 +399,7 @@ export function useEditTools(p: EditToolsProps): EditTools {
         const nl = parseNodeList(r.result);
         const sel = store.get().nodeSel;
         const keep = nl ? new Set([...sel].filter((i) => i < nl.nodes.length)) : new Set<number>();
-        store.set({ nl, preview: null, nodeSel: keep, nlNote: nl ? null : "The engine sent no nodes for this shape." });
+        store.set({ nl, preview: null, nodeSel: keep, nlNote: nl ? null : t("et.noNodes") });
       })
       .catch((e: unknown) => {
         if (live) store.set({ nl: null, preview: null, nlNote: errText(e) });
@@ -372,7 +415,7 @@ export function useEditTools(p: EditToolsProps): EditTools {
     const { nl } = store.get();
     if (!nl) return;
     if (nl.converts_on_edit) {
-      notify(`Convert this ${SHAPE_WORD[nl.kind] ?? "shape"} to a path first (Convert to path, Ctrl+Shift+C).`, "error");
+      notify(t("et.convertFirst", { kind: td(`et.kind.${nl.kind}`, SHAPE_WORD[nl.kind] ?? t("et.shape")) }), "error");
       store.set({ preview: null });
       return;
     }
@@ -409,7 +452,7 @@ export function useEditTools(p: EditToolsProps): EditTools {
     lastTap.current = null;
     clearSnap();
     if (nodes.length < 2) {
-      if (pts.length) notify("A line needs at least two points.", "error");
+      if (pts.length) notify(t("et.aLineNeedsAtLeastTwo"), "error");
       return;
     }
     const layer = layerFor();
@@ -417,14 +460,14 @@ export function useEditTools(p: EditToolsProps): EditTools {
     if (!curved) {
       const points = cleanPoints(nodes.map((n) => rp(n.p)));
       if (!P.current.has(G.GEO.line)) {
-        notify("This engine cannot draw lines yet.", "error");
+        notify(t("et.thisEngineCannotDrawLinesYet"), "error");
         return;
       }
       void execSelect(G.line(points, closed && points.length >= 3, layer));
       return;
     }
     if (!P.current.has(G.GEO.path)) {
-      notify("This engine cannot add paths.", "error");
+      notify(t("et.thisEngineCannotAddPaths"), "error");
       return;
     }
     const round = (q: Vec2 | null | undefined) => (q ? rp(q) : q);
@@ -440,7 +483,7 @@ export function useEditTools(p: EditToolsProps): EditTools {
     if (!st) return;
     const pp = P.current;
     if (!pp.has(G.GEO.polygon)) {
-      notify("This engine cannot draw polygons yet.", "error");
+      notify(t("et.thisEngineCannotDrawPolygonsYet"), "error");
       return;
     }
     let { radius, rotationDeg } = polygonFromDrag(st.c, st.p, st.shift);
@@ -458,6 +501,8 @@ export function useEditTools(p: EditToolsProps): EditTools {
         star_inner_ratio: o.star ? o.ratio : undefined,
         corner_radius_mm: o.cornerMm > 0 ? o.cornerMm : undefined,
         layer: layerFor(),
+        // Engines with Shape Properties keep it a polygon whose sides, star and corners stay editable.
+        parametric: pp.has(DCMD.shapeUpdate) ? true : undefined,
       }),
     );
     pp.setTool("select");
@@ -493,6 +538,15 @@ export function useEditTools(p: EditToolsProps): EditTools {
       const id = gEl.getAttribute("data-guide");
       const gd = guidesRef.current.find((x) => x.id === id);
       if (gd) {
+        const lt = lastGuideTap.current;
+        lastGuideTap.current = { id: gd.id, t: info.time };
+        if (lt && lt.id === gd.id && info.time - lt.t < DBL_MS) {
+          // Double-click: type the guide's position.
+          lastGuideTap.current = null;
+          gest.current = { kind: "none" };
+          setGuideDlg({ id: gd.id, axis: gd.axis, v: gd.v });
+          return true;
+        }
         gest.current = { kind: "guide", id: gd.id, axis: gd.axis };
         store.set({ guideDrag: { id: gd.id, axis: gd.axis, v: gd.v, remove: false } });
         return true;
@@ -506,7 +560,7 @@ export function useEditTools(p: EditToolsProps): EditTools {
           selectOnly(ctx.hitObject(f));
           return true;
         }
-        const tol = NODE_TOL_PX / ctx.scale;
+        const tol = (NODE_TOL_PX * handleScale()) / ctx.scale;
         const h = hitNodes(nl, f, tol, handlesShown(nl, st.nodeSel));
         if (h?.kind === "node") {
           const sel = clickNode(st.nodeSel, h.index, m.shift);
@@ -577,7 +631,7 @@ export function useEditTools(p: EditToolsProps): EditTools {
         gest.current = { kind: "none" };
         if (!id) return true;
         if (!pp.has(G.GEO.trim)) {
-          notify("This engine cannot trim yet.", "error");
+          notify(t("et.thisEngineCannotTrimYet"), "error");
           return true;
         }
         void exec(G.trim(id, rp(f), r6(Math.max(0.05, 10 / ctx.scale))));
@@ -615,7 +669,7 @@ export function useEditTools(p: EditToolsProps): EditTools {
         ctx.showSnap(remove ? null : sp.hit);
         const v = roundMm(g.axis === "x" ? sp.p[0] : sp.p[1]);
         store.set({ guideDrag: { id: g.id, axis: g.axis, v, remove } });
-        ctx.readout(remove ? "Release on the ruler to remove the guide" : guideLabel({ axis: g.axis, v }));
+        ctx.readout(remove ? t("et.releaseRemove") : guideLabel({ axis: g.axis, v }));
         break;
       }
       case "nodes": {
@@ -709,7 +763,9 @@ export function useEditTools(p: EditToolsProps): EditTools {
         store.set({ guideDrag: null });
         clearSnap();
         if (!gd || !g.id) return;
-        commitGuides(gd.remove ? guidesRef.current.filter((x) => x.id !== g.id) : guidesRef.current.map((x) => (x.id === g.id ? { ...x, v: gd.v } : x)));
+        const before = guidesRef.current.find((x) => x.id === g.id);
+        if (gd.remove) guideOps.remove(g.id);
+        else if (before && Math.abs(before.v - gd.v) > 1e-9) guideOps.move(g.id, gd.v);
         return;
       }
       case "nodes": {
@@ -803,7 +859,7 @@ export function useEditTools(p: EditToolsProps): EditTools {
       case "node": {
         ctx.showSnap(null);
         const nl = st.nl;
-        const h = nl ? hitNodes(nl, f, NODE_TOL_PX / ctx.scale, handlesShown(nl, st.nodeSel)) : null;
+        const h = nl ? hitNodes(nl, f, (NODE_TOL_PX * handleScale()) / ctx.scale, handlesShown(nl, st.nodeSel)) : null;
         if (!sameHit(h, st.hover)) store.set({ hover: h });
         return true;
       }
@@ -869,7 +925,7 @@ export function useEditTools(p: EditToolsProps): EditTools {
       return;
     }
     store.set({ guideDrag: null });
-    if (!remove) commitGuides([...guidesRef.current, { id: newGuideId(guidesRef.current), axis, v }]);
+    if (!remove) guideOps.add(axis, v);
   };
 
   // ---- actions (menus and hotkeys) ---------------------------------------------------------------------------------
@@ -877,14 +933,14 @@ export function useEditTools(p: EditToolsProps): EditTools {
   const need = (n: number, what: string): string[] | null => {
     const u = units();
     if (u.length < n) {
-      notify(n === 1 ? `Select a shape to ${what}.` : `Select at least ${n} shapes to ${what}.`, "error");
+      notify(n === 1 ? t("et.selectOne", { what: doWhat(what) }) : t("et.selectN", { n, what: doWhat(what) }), "error");
       return null;
     }
     return u;
   };
   const cmd = (id: string, what: string): boolean => {
     if (P.current.has(id)) return true;
-    notify(`This engine cannot ${what} yet.`, "error");
+    notify(t("et.cannot", { what: doWhat(what) }), "error");
     return false;
   };
   const act = {
@@ -917,7 +973,7 @@ export function useEditTools(p: EditToolsProps): EditTools {
       const ids = units();
       void exec(G.deleteDuplicates(ids.length ? ids : null), (r) => {
         const n = Array.isArray((r as { deleted?: unknown } | null)?.deleted) ? (r as { deleted: unknown[] }).deleted.length : null;
-        notify(n === null ? "Duplicates deleted." : `Deleted ${n} duplicate${n === 1 ? "" : "s"}${ids.length ? " in the selection" : ""}.`);
+        notify(n === null ? t("et.dupsDeleted") : t(ids.length ? (n === 1 ? "et.dupDeletedSel1" : "et.dupDeletedSelN") : n === 1 ? "et.dupDeleted1" : "et.dupDeletedN", { n }));
       });
     },
     convert: () => {
@@ -926,7 +982,7 @@ export function useEditTools(p: EditToolsProps): EditTools {
     },
     reverse: () => {
       const ids = need(1, "reverse");
-      if (ids && cmd(G.GEO.reverse, "reverse paths")) void exec(G.reverse(ids), () => notify("Direction reversed."));
+      if (ids && cmd(G.GEO.reverse, "reverse paths")) void exec(G.reverse(ids), () => notify(t("et.directionReversed")));
     },
     order: (to: G.OrderTo) => {
       const ids = need(1, "reorder");
@@ -934,7 +990,7 @@ export function useEditTools(p: EditToolsProps): EditTools {
     },
     lock: (locked: boolean) => {
       const ids = need(1, locked ? "lock" : "unlock");
-      if (ids && cmd(G.GEO.lock, "lock shapes")) void exec(G.lock(ids, locked), () => notify(locked ? "Locked: the shapes cannot be moved or edited until unlocked." : "Unlocked."));
+      if (ids && cmd(G.GEO.lock, "lock shapes")) void exec(G.lock(ids, locked), () => notify(locked ? t("et.lockedTheShapesCannotBeMoved") : "Unlocked."));
     },
     makeSame: (dim: "width" | "height" | "both") => {
       const ids = need(2, "match (the last one selected is the reference)");
@@ -953,8 +1009,8 @@ export function useEditTools(p: EditToolsProps): EditTools {
     if (kind === "circularCenter") {
       const v = values as CircularValues;
       startPick({
-        title: "Circular array centre",
-        labels: ["Click the centre of the circle"],
+        title: t("et.circularArrayCentre"),
+        labels: [t("et.pickCircleCentre")],
         preview: "point",
         done: (pts) => setDialog({ kind: "circular", values: { ...v, cx: String(roundMm(pts[0][0])), cy: String(roundMm(pts[0][1])) } }),
         cancel: () => setDialog({ kind: "circular", values: v }),
@@ -962,18 +1018,20 @@ export function useEditTools(p: EditToolsProps): EditTools {
       return;
     }
     if (!ids.length) {
-      notify("Select the shapes first.", "error");
+      notify(t("et.selectTheShapesFirst"), "error");
       return;
     }
-    if (kind === "mirror") {
+    if (kind === "mirror" || kind === "mirrorCopy") {
       if (!cmd(G.GEO.transform, "mirror")) return;
+      const keep = kind === "mirrorCopy";
       startPick({
-        title: "Mirror across line",
-        labels: ["Click the first point of the mirror line", "Click the second point"],
+        title: keep ? t("et.mirrorKeepTitle") : t("et.mirrorTitle"),
+        labels: [t("et.pickMirror1"), t("et.pickMirror2")],
         preview: "line",
         done: (pts) => {
-          if (dist(pts[0], pts[1]) < 1e-6) return notify("Pick two different points.", "error");
-          void exec(G.transformEx(ids, { mirror_line: { a: rp(pts[0]), b: rp(pts[1]) } }));
+          if (dist(pts[0], pts[1]) < 1e-6) return notify(t("et.pickTwoDifferentPoints"), "error");
+          const inv = G.transformEx(ids, { mirror_line: { a: rp(pts[0]), b: rp(pts[1]) }, ...(keep ? { keep_copy: true } : {}) });
+          void (keep ? execSelect(inv) : exec(inv));
         },
         cancel: () => {},
       });
@@ -982,11 +1040,11 @@ export function useEditTools(p: EditToolsProps): EditTools {
     const scale = kind === "scale2" || kind === "scale2rot";
     if (!cmd(scale ? G.GEO.scaleTo : G.GEO.rotateTo, scale ? "two-point scale" : "two-point rotate")) return;
     startPick({
-      title: scale ? "Two-point scale" : "Two-point rotate",
-      labels: ["Click the pivot (fixed point)", "Click a reference point", scale ? "Click where the reference should go (sets the scale)" : "Click where the reference should point"],
+      title: scale ? t("et.twoPointScale") : t("et.twoPointRotate"),
+      labels: [t("et.pickPivot"), t("et.pickRef"), scale ? t("et.pickScaleTo") : t("et.pickRotateTo")],
       preview: "two-point",
       done: ([pv, from, to]) => {
-        if (dist(pv, from) < 1e-6 || dist(pv, to) < 1e-6) return notify("The reference and target must differ from the pivot.", "error");
+        if (dist(pv, from) < 1e-6 || dist(pv, to) < 1e-6) return notify(t("et.theReferenceAndTargetMustDiffer"), "error");
         void exec(scale ? G.scaleTo(ids, rp(pv), rp(from), rp(to), kind === "scale2rot") : G.rotateTo(ids, rp(pv), rp(from), rp(to)));
       },
       cancel: () => {},
@@ -1025,7 +1083,7 @@ export function useEditTools(p: EditToolsProps): EditTools {
       case "d": {
         const idx = k === "d" ? nodes() : sel.size ? [...sel] : hovNode !== null ? [hovNode] : [];
         if (!idx.length) {
-          notify(hovSeg ? "Point at a node to delete it." : "Select or point at nodes to delete.", "error");
+          notify(hovSeg ? t("et.pointNodeDelete") : t("et.selectNodesDelete"), "error");
           return true;
         }
         nodeEdit((id) => G.nodeDelete(id, idx), () => store.set({ nodeSel: new Set() }));
@@ -1033,7 +1091,7 @@ export function useEditTools(p: EditToolsProps): EditTools {
       }
       case "b": {
         const i = hovNode ?? (sel.size === 1 ? [...sel][0] : null);
-        if (i === null) notify("Point at (or select) one node to break the path there.", "error");
+        if (i === null) notify(t("et.pointAtOrSelectOneNode"), "error");
         else nodeEdit((id) => G.nodeBreak(id, i), () => store.set({ nodeSel: new Set() }));
         return true;
       }
@@ -1053,14 +1111,14 @@ export function useEditTools(p: EditToolsProps): EditTools {
           return true;
         }
         const idx = nodes();
-        if (!idx.length) notify("Point at (or select) nodes first.", "error");
+        if (!idx.length) notify(t("et.pointAtOrSelectNodesFirst"), "error");
         else nodeEdit((id) => G.nodeSetType(id, idx, k === "s" ? "smooth" : "corner"));
         return true;
       }
       case "l":
       case "k": {
         const segs = hovSeg ? [hovSeg.index] : segmentsBetween(nl, sel);
-        if (!segs.length) notify("Point at a segment (or select both of its nodes) first.", "error");
+        if (!segs.length) notify(t("et.pointAtASegmentOrSelect"), "error");
         else nodeEdit((id) => {
           const invs = segs.map((s) => G.nodeSegmentType(id, s, k === "l" ? "line" : "curve"));
           return invs.length === 1 ? invs[0] : invs;
@@ -1069,7 +1127,7 @@ export function useEditTools(p: EditToolsProps): EditTools {
       }
       case "i":
       case "m": {
-        if (!hovSeg) notify("Point at a segment to add a node.", "error");
+        if (!hovSeg) notify(t("et.pointAtASegmentToAdd"), "error");
         else
           nodeEdit(
             (id) => G.nodeInsert(id, hovSeg.index, k === "m" ? 0.5 : Math.min(0.999999, Math.max(0.000001, r6(hovSeg.t)))),
@@ -1086,9 +1144,13 @@ export function useEditTools(p: EditToolsProps): EditTools {
         if (cmd(G.GEO.trim, "trim")) nodeEdit((id) => G.trim(id, rp(at), r6(Math.max(0.05, 10 / (lastCtx.current?.scale ?? 4)))));
         return true;
       }
-      case "e":
-        notify("Extend is not available yet.", "error");
+      case "e": {
+        // Extend the open end nearest the pointer straight on to the nearest line (LightBurn's E).
+        const at = cursor.current;
+        if (!at) return true;
+        if (cmd(DCMD.extend, "extend lines")) nodeEdit((id) => extendCmd(id, rp(at), r6(Math.max(0.5, 12 / (lastCtx.current?.scale ?? 4)))));
         return true;
+      }
     }
     return false;
   };
@@ -1101,10 +1163,11 @@ export function useEditTools(p: EditToolsProps): EditTools {
       e.preventDefault();
       e.stopImmediatePropagation();
     };
-    if (dialog) {
+    if (dialog || guideDlg) {
       // Our dialog is modal: Esc closes it, and keys outside it never reach the app's shortcuts.
       if (e.key === "Escape") {
         setDialog(null);
+        setGuideDlg(null);
         stop();
       } else if (!(e.target as Element | null)?.closest?.(".modal")) e.stopImmediatePropagation();
       return;
@@ -1174,16 +1237,16 @@ export function useEditTools(p: EditToolsProps): EditTools {
   const anyLocked = p.selection.objects.some((id) => lockedIds.has(id));
   const allLocked = p.selection.objects.length > 0 && p.selection.objects.every((id) => lockedIds.has(id));
   const modifyItems: MenuItem[] = [
-    { label: "Weld", hint: "Ctrl+W", disabled: n < 1 || !has(G.GEO.weld), action: act.weld },
-    { label: "Union", hint: "Alt++", disabled: n < 2 || !has(G.GEO.boolean), action: () => act.boolean("union") },
-    { label: "Subtract (last selected)", hint: "Alt+-", disabled: n < 2 || !has(G.GEO.boolean), action: () => act.boolean("subtract") },
-    { label: "Intersect", hint: "Alt+*", disabled: n < 2 || !has(G.GEO.boolean), action: () => act.boolean("intersect") },
-    { label: "Exclusive or (XOR)", disabled: n < 2 || !has(G.GEO.boolean), action: () => act.boolean("xor") },
-    { label: "Cut shapes (last selected cuts)", hint: "Alt+C", disabled: n < 2 || !has(G.GEO.cutShapes), action: act.cutShapes },
+    { label: t("et.weld"), hint: "Ctrl+W", disabled: n < 1 || !has(G.GEO.weld), action: act.weld },
+    { label: t("et.union"), hint: "Alt++", disabled: n < 2 || !has(G.GEO.boolean), action: () => act.boolean("union") },
+    { label: t("et.subtractLastSelected"), hint: "Alt+-", disabled: n < 2 || !has(G.GEO.boolean), action: () => act.boolean("subtract") },
+    { label: t("et.intersect"), hint: "Alt+*", disabled: n < 2 || !has(G.GEO.boolean), action: () => act.boolean("intersect") },
+    { label: t("et.exclusiveOrXor"), disabled: n < 2 || !has(G.GEO.boolean), action: () => act.boolean("xor") },
+    { label: t("et.cutShapesLastSelectedCuts"), hint: "Alt+C", disabled: n < 2 || !has(G.GEO.cutShapes), action: act.cutShapes },
     { sep: true },
-    { label: "Offset shapes…", hint: "Alt+O", disabled: n < 1 || !has(G.GEO.offset), action: () => act.dialog({ kind: "offset" }, 1, "offset", G.GEO.offset) },
+    { label: t("et.offsetShapes"), hint: "Alt+O", disabled: n < 1 || !has(G.GEO.offset), action: () => act.dialog({ kind: "offset" }, 1, "offset", G.GEO.offset) },
     {
-      label: "Fillet corners…",
+      label: t("et.filletCorners"),
       disabled: n < 1 || !has(G.GEO.fillet),
       action: () => {
         const ns = nodeSelNow();
@@ -1191,59 +1254,62 @@ export function useEditTools(p: EditToolsProps): EditTools {
       },
     },
     { sep: true },
-    { label: "Break apart", hint: "Alt+B", disabled: n < 1 || !has(G.GEO.breakApart), action: act.breakApart },
-    { label: "Auto-join", hint: "Alt+J", disabled: n < 1 || !has(G.GEO.autoJoin), action: act.autoJoin },
-    { label: "Auto-join with tolerance…", disabled: n < 1 || !has(G.GEO.autoJoin), action: () => act.dialog({ kind: "autojoin" }, 1, "join", G.GEO.autoJoin) },
-    { label: "Close path", disabled: n < 1 || !has(G.GEO.close), action: act.close },
-    { label: "Close paths with tolerance…", disabled: n < 1 || !has(G.GEO.close), action: () => act.dialog({ kind: "close" }, 1, "close", G.GEO.close) },
-    { label: "Delete duplicates", hint: "Alt+D", disabled: !doc?.objects.length || !has(G.GEO.deleteDuplicates), action: act.deleteDuplicates },
-    { label: "Convert to path", hint: "Ctrl+Shift+C", disabled: n < 1 || !has(G.GEO.convert), action: act.convert },
-    { label: "Optimize shapes…", hint: "Alt+Shift+O", disabled: n < 1 || !has(G.GEO.optimize), action: () => act.dialog({ kind: "optimize" }, 1, "optimize", G.GEO.optimize) },
-    { label: "Reverse direction", disabled: n < 1 || !has(G.GEO.reverse), action: act.reverse },
+    { label: t("et.breakApart"), hint: "Alt+B", disabled: n < 1 || !has(G.GEO.breakApart), action: act.breakApart },
+    { label: t("et.autoJoin"), hint: "Alt+J", disabled: n < 1 || !has(G.GEO.autoJoin), action: act.autoJoin },
+    { label: t("et.autoJoinWithTolerance"), disabled: n < 1 || !has(G.GEO.autoJoin), action: () => act.dialog({ kind: "autojoin" }, 1, "join", G.GEO.autoJoin) },
+    { label: t("et.closePath"), disabled: n < 1 || !has(G.GEO.close), action: act.close },
+    { label: t("et.closePathsWithTolerance"), disabled: n < 1 || !has(G.GEO.close), action: () => act.dialog({ kind: "close" }, 1, "close", G.GEO.close) },
+    { label: t("et.deleteDuplicates"), hint: "Alt+D", disabled: !doc?.objects.length || !has(G.GEO.deleteDuplicates), action: act.deleteDuplicates },
+    { label: t("et.convertToPath"), hint: "Ctrl+Shift+C", disabled: n < 1 || !has(G.GEO.convert), action: act.convert },
+    { label: t("et.optimizeShapes"), hint: "Alt+Shift+O", disabled: n < 1 || !has(G.GEO.optimize), action: () => act.dialog({ kind: "optimize" }, 1, "optimize", G.GEO.optimize) },
+    { label: t("et.reverseDirection"), disabled: n < 1 || !has(G.GEO.reverse), action: act.reverse },
     { sep: true },
-    { label: tool === "node" ? "Stop editing nodes" : "Edit nodes", hint: "Ctrl+`", disabled: !has(G.GEO.nodeList), action: act.nodeTool },
-    { label: "Trim (click pieces)", disabled: !has(G.GEO.trim), action: () => p.setTool("trim") },
+    { label: tool === "node" ? t("et.stopNodes") : t("et.editNodes"), hint: "Ctrl+`", disabled: !has(G.GEO.nodeList), action: act.nodeTool },
+    { label: t("et.trimClickPieces"), disabled: !has(G.GEO.trim), action: () => p.setTool("trim") },
   ];
   const arrangeItems: MenuItem[] = [
-    { label: "Bring to front", hint: "Ctrl+PgUp", disabled: n < 1 || !has(G.GEO.order), action: () => act.order("front") },
-    { label: "Bring forward", hint: "PgUp", disabled: n < 1 || !has(G.GEO.order), action: () => act.order("forward") },
-    { label: "Send backward", hint: "PgDn", disabled: n < 1 || !has(G.GEO.order), action: () => act.order("backward") },
-    { label: "Send to back", hint: "Ctrl+PgDn", disabled: n < 1 || !has(G.GEO.order), action: () => act.order("back") },
+    { label: t("et.bringToFront"), hint: "Ctrl+PgUp", disabled: n < 1 || !has(G.GEO.order), action: () => act.order("front") },
+    { label: t("et.bringForward"), hint: "PgUp", disabled: n < 1 || !has(G.GEO.order), action: () => act.order("forward") },
+    { label: t("et.sendBackward"), hint: "PgDn", disabled: n < 1 || !has(G.GEO.order), action: () => act.order("backward") },
+    { label: t("et.sendToBack"), hint: "Ctrl+PgDn", disabled: n < 1 || !has(G.GEO.order), action: () => act.order("back") },
     { sep: true },
-    { label: "Lock", disabled: n < 1 || allLocked || !has(G.GEO.lock), action: () => act.lock(true) },
-    { label: "Unlock", disabled: !anyLocked || !has(G.GEO.lock), action: () => act.lock(false) },
+    { label: t("et.lock"), disabled: n < 1 || allLocked || !has(G.GEO.lock), action: () => act.lock(true) },
+    { label: t("et.unlock"), disabled: !anyLocked || !has(G.GEO.lock), action: () => act.lock(false) },
     { sep: true },
-    { label: "Make same width", disabled: n < 2 || !has(G.GEO.makeSame), action: () => act.makeSame("width") },
-    { label: "Make same height", disabled: n < 2 || !has(G.GEO.makeSame), action: () => act.makeSame("height") },
-    { label: "Make same size", disabled: n < 2 || !has(G.GEO.makeSame), action: () => act.makeSame("both") },
+    { label: t("et.makeSameWidth"), disabled: n < 2 || !has(G.GEO.makeSame), action: () => act.makeSame("width") },
+    { label: t("et.makeSameHeight"), disabled: n < 2 || !has(G.GEO.makeSame), action: () => act.makeSame("height") },
+    { label: t("et.makeSameSize"), disabled: n < 2 || !has(G.GEO.makeSame), action: () => act.makeSame("both") },
     { sep: true },
-    { label: "Transform…", disabled: n < 1 || !has(G.GEO.transform), action: () => act.dialog({ kind: "transform" }, 1, "transform", G.GEO.transform) },
-    { label: "Two-point rotate", hint: "Ctrl+2", disabled: n < 1 || !has(G.GEO.rotateTo), action: () => act.pick("rotate2") },
-    { label: "Two-point scale", disabled: n < 1 || !has(G.GEO.scaleTo), action: () => act.pick("scale2") },
-    { label: "Mirror across line", disabled: n < 1 || !has(G.GEO.transform), action: () => act.pick("mirror") },
+    { label: t("et.transform"), disabled: n < 1 || !has(G.GEO.transform), action: () => act.dialog({ kind: "transform" }, 1, "transform", G.GEO.transform) },
+    { label: t("et.twoPointRotate"), hint: "Ctrl+2", disabled: n < 1 || !has(G.GEO.rotateTo), action: () => act.pick("rotate2") },
+    { label: t("et.twoPointScale"), disabled: n < 1 || !has(G.GEO.scaleTo), action: () => act.pick("scale2") },
+    { label: t("et.mirrorAcrossLine"), disabled: n < 1 || !has(G.GEO.transform), action: () => act.pick("mirror") },
+    { label: t("et.mirrorAcrossLineKeepOriginal"), disabled: n < 1 || !has(G.GEO.transform), action: () => act.pick("mirrorCopy") },
     { sep: true },
-    { label: "Grid array…", disabled: n < 1, action: p.onGridArray },
+    { label: t("et.gridArray"), disabled: n < 1, action: p.onGridArray },
     {
-      label: "Circular array…",
+      label: t("et.circularArray"),
       disabled: n < 1 || !has(G.GEO.circularArray),
       action: () => act.dialog({ kind: "circular", values: null }, 1, "copy in a circle", G.GEO.circularArray),
     },
-    { label: "Copy along path… (path selected last)", disabled: n < 2 || !has(G.GEO.alongPath), action: () => act.dialog({ kind: "along" }, 2, "copy along a path", G.GEO.alongPath) },
-    { label: "Quick nest…", disabled: n < 1 || !has(G.GEO.nest), action: () => act.dialog({ kind: "nest" }, 1, "nest", G.GEO.nest) },
+    { label: t("et.copyAlongPathPathSelectedLast"), disabled: n < 2 || !has(G.GEO.alongPath), action: () => act.dialog({ kind: "along" }, 2, "copy along a path", G.GEO.alongPath) },
+    { label: t("et.quickNest"), disabled: n < 1 || !has(G.GEO.nest), action: () => act.dialog({ kind: "nest" }, 1, "nest", G.GEO.nest) },
+    ...(p.arrangeExtra ?? []),
     { sep: true },
-    { label: `Clear guides${guides.length ? ` (${guides.length})` : ""}`, disabled: !guides.length, action: () => commitGuides([]) },
+    { label: t("et.addGuide"), action: () => setGuideDlg({ id: null, axis: "x", v: 0 }) },
+    { label: guides.length ? t("et.clearGuidesN", { n: guides.length }) : t("et.clearGuides"), disabled: !guides.length, action: guideOps.clear },
   ];
 
   const menuItems: MenuItem[] = [
-    { label: "Edit nodes", hint: "Ctrl+`", disabled: n !== 1 || !has(G.GEO.nodeList), action: () => p.setTool("node") },
-    { label: "Weld", hint: "Ctrl+W", disabled: n < 1 || !has(G.GEO.weld), action: act.weld },
-    { label: "Break apart", hint: "Alt+B", disabled: n < 1 || !has(G.GEO.breakApart), action: act.breakApart },
-    { label: "Convert to path", hint: "Ctrl+Shift+C", disabled: n < 1 || !has(G.GEO.convert), action: act.convert },
-    { label: "Bring to front", hint: "Ctrl+PgUp", disabled: n < 1 || !has(G.GEO.order), action: () => act.order("front") },
-    { label: "Send to back", hint: "Ctrl+PgDn", disabled: n < 1 || !has(G.GEO.order), action: () => act.order("back") },
+    { label: t("et.editNodes"), hint: "Ctrl+`", disabled: n !== 1 || !has(G.GEO.nodeList), action: () => p.setTool("node") },
+    { label: t("et.weld"), hint: "Ctrl+W", disabled: n < 1 || !has(G.GEO.weld), action: act.weld },
+    { label: t("et.breakApart"), hint: "Alt+B", disabled: n < 1 || !has(G.GEO.breakApart), action: act.breakApart },
+    { label: t("et.convertToPath"), hint: "Ctrl+Shift+C", disabled: n < 1 || !has(G.GEO.convert), action: act.convert },
+    { label: t("et.bringToFront"), hint: "Ctrl+PgUp", disabled: n < 1 || !has(G.GEO.order), action: () => act.order("front") },
+    { label: t("et.sendToBack"), hint: "Ctrl+PgDn", disabled: n < 1 || !has(G.GEO.order), action: () => act.order("back") },
     allLocked
-      ? { label: "Unlock", disabled: !has(G.GEO.lock), action: () => act.lock(false) }
-      : { label: "Lock", disabled: n < 1 || !has(G.GEO.lock), action: () => act.lock(true) },
+      ? { label: t("et.unlock"), disabled: !has(G.GEO.lock), action: () => act.lock(false) }
+      : { label: t("et.lock"), disabled: n < 1 || !has(G.GEO.lock), action: () => act.lock(true) },
   ];
 
   const toolbar = p.design ? (
@@ -1256,8 +1322,30 @@ export function useEditTools(p: EditToolsProps): EditTools {
     />
   ) : null;
 
+  const guideDialog = guideDlg ? (
+    <GuideDialog
+      guide={guideDlg.id ? { axis: guideDlg.axis, v: guideDlg.v } : null}
+      onClose={() => setGuideDlg(null)}
+      onOk={(axis, v) => {
+        const g = guideDlg;
+        setGuideDlg(null);
+        if (g.id) guideOps.move(g.id, v, axis !== g.axis ? axis : undefined);
+        else guideOps.add(axis, v);
+      }}
+      onDelete={
+        guideDlg.id
+          ? () => {
+              const id = guideDlg.id as string;
+              setGuideDlg(null);
+              guideOps.remove(id);
+            }
+          : undefined
+      }
+    />
+  ) : null;
   const dialogs =
-    dialog && doc ? (
+    guideDialog ??
+    (dialog && doc ? (
       <EditDialogs
         dialog={dialog}
         doc={doc}
@@ -1271,7 +1359,7 @@ export function useEditTools(p: EditToolsProps): EditTools {
           startPickFor(kind, values);
         }}
       />
-    ) : null;
+    ) : null);
 
   const canvas: CanvasTool = {
     down,
@@ -1291,7 +1379,7 @@ export function useEditTools(p: EditToolsProps): EditTools {
         onPolyOpts={setPolyOpts}
         onRulerDrag={(axis, s, phase) => rulerDrag(axis, s, r, phase)}
         guides={guides.length}
-        onClearGuides={() => commitGuides([])}
+        onClearGuides={guideOps.clear}
         onConvert={(id) => cmd(G.GEO.convert, "convert to paths") && void exec(G.convertToPath([id]), () => setNodeTick((t) => t + 1))}
         onNodeKey={(key) => {
           nodeKey(new KeyboardEvent("keydown", { key }), false);
@@ -1302,7 +1390,10 @@ export function useEditTools(p: EditToolsProps): EditTools {
     ),
   };
 
-  return { canvas, toolbar, dialogs, menuItems };
+  const handlers: Record<string, () => boolean | void> = {
+    "tool.mirrorLine": () => (p.design && p.selection.objects.length > 0 && has(G.GEO.transform) ? act.pick("mirror") : false),
+  };
+  return { canvas, toolbar, dialogs, menuItems, handlers };
 }
 
 function sameHit(a: NodeHit | null, b: NodeHit | null): boolean {
@@ -1348,7 +1439,7 @@ function EditLayer(props: { store: Store<Live>; r: RenderCtx; tool: Tool; guides
       const s = nl.segments[st.hover.index];
       if (s) out.push(<path key="nh" className="et-seg-hover" d={segmentPathData(nl, s)} strokeWidth={px(4)} pointerEvents="none" />);
     }
-    const hs = px(3.5);
+    const hs = px(3.5 * handleScale());
     for (const n of nl.nodes) {
       if (!shown.has(n.index)) continue;
       for (const [side, h] of [
@@ -1365,7 +1456,7 @@ function EditLayer(props: { store: Store<Live>; r: RenderCtx; tool: Tool; guides
         );
       }
     }
-    const ns = px(4);
+    const ns = px(4 * handleScale());
     for (const n of nl.nodes) {
       const sel = st.nodeSel.has(n.index);
       const hot = st.hover?.kind === "node" && st.hover.index === n.index;
@@ -1464,6 +1555,7 @@ function EditOverlay(props: {
   onFinishLine: (closed: boolean) => void;
   onCancelPick: () => void;
 }) {
+  const t = useT();
   const st = useLive(props.store);
   const { tool, r } = props;
   const units = usePrefs().units;
@@ -1477,30 +1569,30 @@ function EditOverlay(props: {
     case "node": {
       const nl = st.nl;
       const o = nl && props.doc?.objects.find((x) => x.id === nl.id);
-      if (!nl) bar = <span>{st.nlNote ?? "Click a shape to edit its nodes."}</span>;
+      if (!nl) bar = <span>{st.nlNote ?? t("et.clickAShapeToEditIts")}</span>;
       else if (nl.converts_on_edit)
         bar = (
           <>
             <span>
               <b>{o?.name ?? nl.id}</b> is a {SHAPE_WORD[nl.kind] ?? nl.kind}. Convert it to a path to edit its nodes.
             </span>
-            {btn("Convert to path", () => props.onConvert(nl.id), "Ctrl+Shift+C")}
+            {btn(t("et.convertToPath"), () => props.onConvert(nl.id), "Ctrl+Shift+C")}
           </>
         );
       else
         bar = (
           <>
             <span>
-              <b>{o?.name ?? nl.id}</b> · {nl.nodes.length} nodes{st.nodeSel.size ? ` · ${st.nodeSel.size} selected` : ""}
+              <b>{o?.name ?? nl.id}</b> · {t("et.nNodes", { n: nl.nodes.length })}{st.nodeSel.size ? ` · ${t("et.nSelected", { n: st.nodeSel.size })}` : ""}
             </span>
-            {btn("Delete", () => props.onNodeKey("Delete"), "Delete or D: delete the selected nodes", !st.nodeSel.size)}
-            {btn("Break", () => props.onNodeKey("b"), "B: break the path at the node", st.nodeSel.size !== 1)}
-            {btn("Join", () => props.onNodeKey("j"), "J: join two selected end nodes", st.nodeSel.size !== 2)}
-            {btn("Smooth", () => props.onNodeKey("s"), "S: smooth node (on a line: make it a curve)", !st.nodeSel.size)}
-            {btn("Corner", () => props.onNodeKey("c"), "C: corner node", !st.nodeSel.size)}
-            {btn("Line", () => props.onNodeKey("l"), "L: make the segment between two selected nodes a line", st.nodeSel.size < 2)}
-            {btn("Curve", () => props.onNodeKey("k"), "K: make the segment between two selected nodes a curve", st.nodeSel.size < 2)}
-            <span className="et-hint">Click a segment to add a node · drag nodes, handles or segments · Shift: add to selection / H, V, 45° · Ctrl: no snap · I M T keys at the pointer</span>
+            {btn(t("et.delete"), () => props.onNodeKey("Delete"), t("et.tipDelete"), !st.nodeSel.size)}
+            {btn(t("et.break"), () => props.onNodeKey("b"), t("et.tipBreak"), st.nodeSel.size !== 1)}
+            {btn(t("et.join"), () => props.onNodeKey("j"), t("et.tipJoin"), st.nodeSel.size !== 2)}
+            {btn(t("et.smooth"), () => props.onNodeKey("s"), t("et.tipSmooth"), !st.nodeSel.size)}
+            {btn(t("et.corner"), () => props.onNodeKey("c"), t("et.tipCorner"), !st.nodeSel.size)}
+            {btn(t("et.line"), () => props.onNodeKey("l"), t("et.tipLine"), st.nodeSel.size < 2)}
+            {btn(t("et.curve"), () => props.onNodeKey("k"), t("et.tipCurve"), st.nodeSel.size < 2)}
+            <span className="et-hint">{t("et.nodeHint")}</span>
           </>
         );
       break;
@@ -1510,11 +1602,10 @@ function EditOverlay(props: {
       bar = (
         <>
           <span>
-            <b>{tool === "line" ? "Line" : "Pen"}</b>: {tool === "line" ? "click points" : "click for corners, drag for curves"} · double-click or Enter finishes · C or the first
-            point closes · Shift: 15° · Backspace: undo point · Esc: cancel
+            <b>{tool === "line" ? t("et.lineTool") : t("et.penTool")}</b>: {tool === "line" ? t("et.lineHow") : t("et.penHow")} · {t("et.lineKeys")}
           </span>
-          {btn("Finish", () => props.onFinishLine(false), "Enter", st.pen.length < 2)}
-          {btn("Close", () => props.onFinishLine(true), "C", st.pen.length < (tool === "line" ? 3 : 2))}
+          {btn(t("et.finish"), () => props.onFinishLine(false), "Enter", st.pen.length < 2)}
+          {btn(t("et.close"), () => props.onFinishLine(true), "C", st.pen.length < (tool === "line" ? 3 : 2))}
         </>
       );
       break;
@@ -1522,9 +1613,9 @@ function EditOverlay(props: {
       const o = props.polyOpts;
       bar = (
         <>
-          <b>{o.star ? "Star" : "Polygon"}</b>
+          <b>{o.star ? t("shape.Star") : t("shape.Polygon")}</b>
           <label className="et-opt">
-            {o.star ? "Points" : "Sides"}
+            {o.star ? t("et.points") : t("et.sides")}
             <input
               type="number"
               min={3}
@@ -1539,11 +1630,11 @@ function EditOverlay(props: {
           </label>
           <label className="et-opt">
             <input type="checkbox" checked={o.star} onChange={(e) => props.onPolyOpts({ ...o, star: e.target.checked })} />
-            Star
+            {t("shape.Star")}
           </label>
           {o.star && (
             <label className="et-opt">
-              Inner
+              {t("et.inner")}
               <input
                 type="number"
                 min={1}
@@ -1559,7 +1650,7 @@ function EditOverlay(props: {
             </label>
           )}
           <label className="et-opt">
-            Corner radius
+            {t("et.cornerRadius")}
             <input
               type="number"
               min={0}
@@ -1572,7 +1663,7 @@ function EditOverlay(props: {
             />
             {units}
           </label>
-          <span className="et-hint">Drag from the centre to a corner · Shift: 15° steps · tap for {formatLength(20, units)}</span>
+          <span className="et-hint">{t("et.polyHint", { size: formatLength(20, units) })}</span>
         </>
       );
       break;
@@ -1580,14 +1671,14 @@ function EditOverlay(props: {
     case "measure":
       bar = (
         <span>
-          <b>Measure</b>: {st.meas ? measureText(measure(st.meas.a, st.meas.b), units) : "click two points or drag (snaps to objects; Shift: 15°)"}
+          <b>{t("et.measure")}</b>: {st.meas ? measureText(measure(st.meas.a, st.meas.b), units) : t("et.measureHow")}
         </span>
       );
       break;
     case "trim":
       bar = (
         <span>
-          <b>Trim</b>: click the piece of a shape to remove (up to the nearest crossings) · Esc: done
+          <b>{t("et.trim")}</b>: {t("et.trimHow")}
         </span>
       );
       break;
@@ -1597,9 +1688,9 @@ function EditOverlay(props: {
         bar = (
           <>
             <span>
-              <b>{pk.title}</b>: {pk.labels[pk.pts.length]} ({pk.pts.length + 1}/{pk.labels.length}) · Shift: 15° · Esc: cancel
+              <b>{pk.title}</b>: {pk.labels[pk.pts.length]} ({pk.pts.length + 1}/{pk.labels.length}) · {t("et.pickKeys")}
             </span>
-            {btn("Cancel", props.onCancelPick)}
+            {btn(t("et.cancel"), props.onCancelPick)}
           </>
         );
       break;
@@ -1622,7 +1713,7 @@ function EditOverlay(props: {
     <>
       <Rulers r={r} guideDrag={st.guideDrag} onDrag={props.onRulerDrag} guides={props.guides} onClearGuides={props.onClearGuides} />
       {bar && (
-        <div className="vp-overlay et-bar" role="toolbar" aria-label="Tool options">
+        <div className="vp-overlay et-bar" role="toolbar" aria-label={t("et.toolOptions")}>
           {bar}
         </div>
       )}

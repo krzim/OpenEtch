@@ -40,7 +40,11 @@ Mac, PC, phone) and Claude are clients of the same live document. The engine is 
   `FieldTransform.field_height_mm`, `plan::Target.field_height_mm`, all `None` for a square field) maps field X over
   `field_mm` and field Y over the height, each axis onto the full word range (the swap keeps each field axis with its
   own size); Y is bounded by `±height / 2`. Speeds convert with the larger side (`FieldTransform::speed_field_mm`), so
-  neither axis runs faster than asked. The device's workspace is then `[field_mm, height]`.
+  neither axis runs faster than asked. The device's workspace is then `[field_mm, height]`, and so is the
+  document's: a document made for such a galvo (`state::new_document_for`, `doc.new {workspace_mm, origin:
+  "center"}`) has `workspace_mm [width, height]`, `field_mm` the width and `extras` `lbrn2._origin = "center"`, so
+  the canvas draws the real field (`Document::workspace`); LightBurn files of such a field convert from its
+  lower-left corner on both axes (`file.rs` `Layout::Field`). `GET /api/machine` reports `field_height_mm`.
 - Axis swap / negate from the machine profile and lens correction are applied in `plan`/`machine` when converting
   field mm to galvo units, never in `doc`. Both use the one function pair `lmc::units::field_to_galvo` /
   `galvo_to_field` with a `FieldTransform { field_mm, swap_xy, negate_x, negate_y, calibration }`: points with
@@ -108,7 +112,8 @@ stolen PIN used through the engine's API, not against a process that restarts th
   Stop At or "end after the current run"); one PIN approval covers them. Every iteration gets its own arming token in
   `approve` (the only module that makes one), checks the stop epoch first, and with `start_input` waits for the
   profile's start-marking input (foot pedal) to be released and pressed (`full_pulse`, the default; or merely pressed)
-  before it starts; a stop cancels the wait. Stop At refuses approvals once the job counter reaches it.
+  before it starts; a stop cancels the wait. An active-low input (`MachineProfile.start_mark_active_low`, from
+  LightBurn's `StartMarkBitHigh = false` and written back to it) is pressed while its bit reads 0. Stop At refuses approvals once the job counter reaches it.
 - **Pause / resume.** `POST /api/machine/pause` is not gated (it sends `StopList`, galvoplotter's and meerk40t's
   pause, at the next packet or poll); `POST /api/machine/resume` (`RestartList`) continues an approved run and is
   UI-only (MCP headers or a non-`ui` origin are refused). Stop ends a paused run like a running one. A pause pressed
@@ -341,7 +346,13 @@ diagnostics,updates,camera}.rs`; the module docs of `api_libs` list every route)
   (`POST /api/camera/detect`); lens calibration (two radial terms about the image centre, fitted so each view's
   corners are a perspective image of a flat grid); field alignment from at least four image points with known field
   positions (homography); `GET /api/camera/overlay.png?px_per_mm=` resamples the frame into the field square, +Y
-  up. Calibrations per device in `<config-dir>/camera.json`. Marker (ArUco/AprilTag) detection is not implemented.
+  up. Calibrations per device in `<config-dir>/camera.json`. **Markers** (`markers.rs`, pure Rust): `generate.camera_markers
+  {positions?, size_mm = 8, settings?}` adds square ArUco-layout fiducials (6 x 6 cells, OpenEtch's own 16-code
+  dictionary in `commands::camera_markers`, every two codes 5+ cells apart in every turn; OpenCV's dictionaries are
+  not included, so markers printed by other tools are not recognised) on a fill layer, each object keeping its id in
+  `extras` `camera.marker`; `POST /api/camera/markers` finds them in the frame (adaptive threshold, both polarities,
+  convex-hull quads, cells read through a homography, one cell error tolerated) and `POST /api/camera/align_markers`
+  (UI only) aligns with the centres of those found that the document has (at least four).
 
 **History timeline** (`commands::Session`, like Fusion 360's design timeline). Every successful edit (one execute or
 one batch) is a step `{ index, revision, command, invocations: [{id, params}], origin, summary, state, error? }`:
@@ -584,8 +595,10 @@ merges overlapping glyphs only (polygons within 0.01 mm), the rest keep their cu
 fontdb (lazily scanned), `.ttf/.otf/.ttc/.shx/.jsf` from the folders in `OPENETCH_FONT_DIRS` (`;` on Windows, `:`
 elsewhere), and 12 bundled Hershey fonts (`kind: stroke`, never filled or welded); bold/italic use the family's own
 faces (a missing italic is slanted, a missing bold is reported). `.jsf` (EzCad) and `.shx` (AutoCAD) layouts are
-described in `jsf.rs` / `shx.rs`; the owner's 162 EzCad fonts all parse; no real `.shx` was available, so SHX is tested
-on synthetic files only; Asian big fonts and GB2312 JSF codes are not mapped. LightBurn's own single-line font format is
+described in `jsf.rs` / `shx.rs`; the owner's 162 EzCad fonts all parse; no real `.shx` with a licence that allows
+committing it was found (ixmilia/shx's `ISO3098B.SHX` comes from a page with no licence, tatarize/shxparser marks its
+test fonts "of dubious providence", ezdxf ships none), so SHX is tested on synthetic files, plus any real fonts in
+`OPENETCH_SHX_SAMPLES` (`text::shx` `real_shx_fonts_parse`, read in place); Asian big fonts and GB2312 JSF codes are not mapped. LightBurn's own single-line font format is
 undocumented and not read.
 - Commands: `shape.text {text, font?, height_mm? (5), ...the settings, center, rotation_deg, layer, name}`,
   `text.update {id, ...partial settings}` (`variable: {mode: normal}` turns variable text off; an update that changes
@@ -626,7 +639,15 @@ undocumented and not read.
 
 **Projects.** Named projects are `<projects-dir>/<name>.openetch` (`--projects-dir`, default the OS data dir +
 `openetch/projects`, e.g. `%APPDATA%\openetch\projects`, `~/Library/Application Support/openetch/projects`,
-`~/.local/share/openetch/projects`; created on the first save). A name is 1-100 characters of letters, digits, space,
+`~/.local/share/openetch/projects`; created on the first save). **Folders and locations** (UX-013; LightBurn saves
+anywhere through OS dialogs, OpenEtch is a server): a project name may sit in up to 4 folders, `/`-separated
+(`Clients/Acme/badge`, each part following the name rules; `templates` and `art-libraries` are never project
+folders); further directories are mounted as locations under a label (`--projects-mount <label>=<path>`, repeatable,
+and the list saved in `<config-dir>/project-locations.json` by `PUT /api/projects/locations {locations: [{label,
+path}]}`, UI only, absolute existing directories), and a name whose first folder is a label lives there
+(`NAS/coaster`). `GET /api/projects` lists every folder and location (`folder` on each), `GET /api/projects/folders`
+gives `{folders, locations}`, `POST /api/projects/folders {name}` makes one; folders and files are both checked to stay
+inside their root. Backups and autosaves of a project in folders use its flat name (`Clients__Acme__badge`). A name is 1-100 characters of letters, digits, space,
 `-`, `_`, `.`, `(` and `)`, with no leading dot, no `..`, no leading or trailing space, and not a Windows device name
 in any case or with any extension (`con`, `prn`, `aux`, `nul`, `com0`-`com9`, `lpt0`-`lpt9`, and `com¹`-`com³`,
 `lpt¹`-`lpt³` with superscript digits). Names that differ only in case are the same project, as on Windows and macOS:
@@ -756,6 +777,20 @@ MCP tool can approve a run or touch the operator PIN, and the server instruction
   denoise?}, reset?}` (partial; images only) and `art.import_image {data_base64, mime, width_mm?, layer?, name?}` (PNG, JPEG, GIF,
   BMP, WebP; size from the file's resolution, else 254 dpi, fitted to 80 % of the field). Groups: `group.create {ids,
   name?}`, `group.ungroup {group}` (one level), `group.rename {group, name}`.
+- **Presets** (`engine/src/test_presets.rs`, shared by every client, in the config directory): material test presets
+  (LAY-070; LightBurn's Material Test Preset list) are named `generate.material_test` parameters,
+  `/api/material-test/presets` (GET, PUT/DELETE `/{name}`, `POST .../import` and `GET .../export` of LightBurn's
+  `material_test_presets.lbmt`, read from the owner's own file: JSON `name → {XParam/YParam (1 power, 2 interval,
+  3 passes, 4 frequency kHz, 5 Q-pulse; 0 = speed inferred), XMin/XMax/XCount, XSize/YSize, XCenter/YCenter (from the
+  field's lower-left), MaterialCut/TextCut/BorderCut as LightBurn cut settings}`, `commands::testgen_presets`; spacing,
+  label height and title have no place in it). The owner's presets use 30 values a side, so a material test axis takes
+  up to 30. Adjust Image presets (OTH-022) are `{name, adjust?, image?}` at `/api/image-adjust/presets` (GET, PUT/DELETE
+  `/{name}`, `POST .../import` of the GET JSON). **Adjust Image unknowns**: LightBurn documents what Gamma, Contrast,
+  Brightness and Enhance (unsharp mask: radius, amount, denoise "in smooth areas") do but no formula, range or unit;
+  OpenEtch's curves (`plan::image::adjust`) follow the documented directions, its file scale (Contrast/Brightness as
+  fractions) rests on the one sample with values (`photo on namecard.lbrn2`: Contrast 0.2, Brightness -0.11), and the
+  file scale of `EnhanceRadius/Amount/Denoise` is unknown (every sample has 0); LightBurn's built-in "Basic" and "Black
+  Paint on White" presets and its preset export file are undocumented, with no sample.
 - **`.clb`** (LightBurn material library, `crates/lbrn/src/library.rs`): `lbrn::parse_clb` / `write_clb` round trip
   byte for byte (BOM, CRLF, two-space indentation, `" />"`, attribute spelling; unchanged entries from their source
   text, changed ones in the file's style). Material → Entry `Thickness` (`-1.0000` = none) / `Desc` / `NoThickTitle`
@@ -787,8 +822,10 @@ Pages, Show Notes, Managing Preferences, User Bundles, Import 3D Model, 3D Slice
 - **Imports** (each Edit, one undo step; placement as `art.import_dxf`: `layer`, `name`, `width_mm`,
   `keep_position` (default centred), `split` (default one object per path in a group named after the file)).
   `art.import_pdf {data_base64, page?, hidden_layers?}` (native only; lopdf): the page's paths, rectangles and form
-  XObjects with the CTM, in mm; optional content that is off (hidden Illustrator layers) unless `hidden_layers`; text,
-  images and shadings left out with a warning. `art.import_ai`: PDF-based AI through the PDF reader (an AI without PDF
+  XObjects with the CTM, in mm; optional content that is off (hidden Illustrator layers) unless `hidden_layers`;
+  image XObjects as image objects where the page draws them (JPEG kept as is; 8-bit gray/RGB/CMYK/ICC/indexed and
+  1-bit gray decoded to PNG with the soft mask as alpha; stencil masks, inline images, JPEG 2000/CCITT/JBIG2 left out
+  with a warning); text and shadings left out with a warning. Page resources given by reference are followed. `art.import_ai`: PDF-based AI through the PDF reader (an AI without PDF
   content is refused with LightBurn's advice, "Create PDF Compatible File"), older PostScript AI through the EPS reader.
   `art.import_eps`: no permissive PostScript interpreter exists in Rust (Ghostscript is AGPL), so `fileio::postscript`
   interprets the subset vector art uses (path, arc, rect, transform, gsave/grestore, colour operators, `def`/`bind`/
@@ -806,16 +843,27 @@ Pages, Show Notes, Managing Preferences, User Bundles, Import 3D Model, 3D Slice
   references and item transforms) and AMF, rotated X then Y then Z, seen from above and z-buffered into a grey depth
   map image (top white, floor black: black engraves deepest, LightBurn's convention; background black or transparent;
   `depth_cutoff_mm` below the top is the floor, else the lowest point); `outline` also adds the silhouette as a path
-  (Generate Outline). `art.import_ezd {data_base64}` (not in LightBurn): EzCad 2 `.ezd` vector objects (layout from
-  meerk40t's MIT reader, checked on the owner's files: header offsets, pens, the Huffman-coded vector stream, curves,
-  rectangles, circles, ellipses, polygons, groups, combines and hatch outlines; the generated hatch lines are dropped
-  so a fill layer hatches the outlines again; text, images and pen settings are not read). `art.import_image` also
+  (Generate Outline); the image keeps the options (`extras` `model3d.options`) and the model zipped
+  (`model3d.source`, up to 16 MB zipped) so `image.edit_model {id, ...options}` (LightBurn's Edit 3D Model) renders it
+  again in place, redrawing its outline. `art.import_ezd {data_base64, pen_layers = true}` (not in LightBurn): EzCad 2
+  `.ezd` objects (layout from meerk40t's MIT reader, checked on the owner's files: header offsets, pens, the
+  Huffman-coded vector stream, curves, rectangles, circles, ellipses, polygons, groups, combines and hatch outlines;
+  the generated hatch lines are dropped so a fill layer hatches the outlines again). Each pen becomes a line layer
+  (speed, power, frequency, loops, pulse width), each hatch a fill layer (first enabled hatch's spacing and angle,
+  further hatches as sub-layers, marked contours as fill + line; the hatch type flags are not decoded). Text: its
+  glyph outlines when the file keeps them (the owner's file does), else live text in the named font when installed,
+  else a placeholder rectangle and a warning. Images: the embedded bitmap as PNG (meerk40t's layout; no sample has
+  one, unverified). `art.import_image` also
   takes TIFF and TGA, converted to PNG (a TIFF's resolution kept) so browsers show them and plans decode them. Legacy
   `.lbrn` projects (`<V vx vy c0x c0y c1x c1y/>` / `<P T p0 p1/>` path elements instead of `VertList`/`PrimList`; from
   LightBurn's forum, no sample file) are rewritten to `.lbrn2` text by `fileio::lbrn_legacy` inside
   `doc.import_lbrn2`, so `.lbrn` uploads and imports work like `.lbrn2`. `POST /api/document/import?format=...&mode=
   merge|replace` takes every format; `mode=replace` is LightBurn's Open of a vector or image file: a new, unsaved
-  document (`doc.new` then the import, one step) named after the file.
+  document (`doc.new` then the import, one step) named after the file. `tool_layers=true` is LightBurn's "Allow
+  Importing to Tool Layers" (UX-034, default off): `layer` may then be `T1` / `T2` (added in the same step when the
+  document has none; `util::layer_or_default` resolves those names); off, those names are refused and an import
+  without `layer` skips a tool layer listed first. A `layer` id is used as given (the web UI applies the preference
+  to the active layer itself).
 - **Trace Image** (`image.trace`, `image.trace_preview` (Query, the dialog's live preview as SVG path data)):
   `fileio::trace`, written for OpenEtch (no potrace, which is GPL): pixels in `cutoff..=threshold` (0..128 default),
   or `sketch` (darker than the local mean) or `transparency` (opaque), limited to a `boundary` field rectangle;

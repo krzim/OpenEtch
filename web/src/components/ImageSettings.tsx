@@ -32,6 +32,8 @@ import {
 import type { DocObject, GDocument, Geometry, Layer } from "../api/types.ts";
 import { CheckField, Modal, NumberField, fmt } from "./ui.tsx";
 import { Slice3dSettings } from "../files/Slice3d.tsx";
+import { useT } from "../workspace/usePrefs.ts";
+import type { MsgKey } from "../workspace/i18n.ts";
 
 type Run = (inv: Invocation | Invocation[]) => Promise<unknown>;
 /** An image's geometry as the engine sends it (`adjust` only when it changes something). */
@@ -55,6 +57,7 @@ export function ImageSettings({
   report: (e: unknown) => void;
   has?: (cmd: string) => boolean;
 }) {
+  const t = useT();
   const [adjusting, setAdjusting] = useState(false);
   const images = doc ? doc.objects.filter((o) => o.layer === layer.id && o.geometry.kind === "image") : [];
   if (!doc || images.length === 0) return null;
@@ -70,7 +73,7 @@ export function ImageSettings({
         Image · {images.length} image{images.length === 1 ? "" : "s"}
       </h4>
       <label className="field">
-        <span className="field-label">Dither</span>
+        <span className="field-label">{t("img.dither")}</span>
         <span className="field-input">
           <select value={s.dither} title={mode?.hint} onChange={(e) => set({ dither: e.target.value })}>
             {!mode && <option value={s.dither}>{s.dither}</option>}
@@ -85,7 +88,7 @@ export function ImageSettings({
       {mode && <p className="hint">{mode.hint}.</p>}
       <div className="field-grid">
         <NumberField
-          label="Interval"
+          label={t("img.interval")}
           unit="mm"
           value={s.interval_mm}
           min={0.001}
@@ -95,7 +98,7 @@ export function ImageSettings({
           onCommit={num((interval_mm) => ({ interval_mm }))}
         />
         <NumberField
-          label="DPI"
+          label={t("img.dpi")}
           value={dpi}
           min={2.54}
           max={25400}
@@ -105,11 +108,11 @@ export function ImageSettings({
           onCommit={num((dpi) => (intervalFromDpi(dpi) === null ? {} : { dpi }))}
         />
       </div>
-      <CheckField label="Negative" checked={s.negative} onChange={(negative) => set({ negative })} />
-      <CheckField label="Pass-through" checked={s.pass_through} onChange={(pass_through) => set({ pass_through })} />
-      {s.pass_through && <p className="hint">Engraves the image's own pixels unchanged (already dithered elsewhere): one dot per pixel, so interval and scan angle are not used.</p>}
+      <CheckField label={t("img.negative")} checked={s.negative} onChange={(negative) => set({ negative })} />
+      <CheckField label={t("img.passThrough")} checked={s.pass_through} onChange={(pass_through) => set({ pass_through })} />
+      {s.pass_through && <p className="hint">{t("img.engravesTheImageSOwnPixels")}</p>}
       <NumberField
-        label="Dot width"
+        label={t("img.dotWidth")}
         unit="mm"
         value={s.dot_width_mm}
         min={0}
@@ -117,19 +120,19 @@ export function ImageSettings({
         digits={4}
         onCommit={num((dot_width_mm) => ({ dot_width_mm }))}
       />
-      <NumberField label="Scan angle" unit="°" value={s.angle_deg} digits={2} onCommit={num((angle_deg) => ({ angle_deg }))} />
+      <NumberField label={t("img.scanAngle")} unit="°" value={s.angle_deg} digits={2} onCommit={num((angle_deg) => ({ angle_deg }))} />
       <NumberField
-        label="Increment"
+        label={t("img.increment")}
         unit="°/pass"
         value={s.angle_increment_deg}
         digits={2}
         onCommit={num((angle_increment_deg) => ({ angle_increment_deg }))}
       />
-      <CheckField label="Bidirectional" checked={s.bidirectional} onChange={(bidirectional) => set({ bidirectional })} />
+      <CheckField label={t("img.bidirectional")} checked={s.bidirectional} onChange={(bidirectional) => set({ bidirectional })} />
       {s.dither === "halftone" && (
         <>
           <NumberField
-            label="Cells"
+            label={t("img.cells")}
             unit="per inch"
             value={s.halftone_cells_per_inch}
             min={1}
@@ -138,7 +141,7 @@ export function ImageSettings({
             onCommit={num((halftone_cells_per_inch) => ({ halftone_cells_per_inch }))}
           />
           <NumberField
-            label="Halftone angle"
+            label={t("img.halftoneAngle")}
             unit="°"
             value={s.halftone_angle_deg}
             digits={2}
@@ -149,7 +152,7 @@ export function ImageSettings({
       {s.dither === "grayscale" && (
         <>
           <NumberField
-            label="Min power"
+            label={t("img.minPower")}
             unit="%"
             value={s.min_power_pct}
             min={0}
@@ -162,13 +165,13 @@ export function ImageSettings({
       )}
       <Slice3dSettings layer={layer} run={run} report={report} has={has} />
       <div className="btn-row">
-        <button className="btn" title="Gamma, contrast, brightness and enhance of this layer's images, with a live preview" onClick={() => setAdjusting(true)}>
-          Adjust image…
+        <button className="btn" title={t("img.gammaContrastBrightnessAndEnhanceOf")} onClick={() => setAdjusting(true)}>
+          {t("img.adjustImage")}
         </button>
-        {adjusted > 0 && <span className="hint">{adjusted === images.length ? (adjusted === 1 ? "Adjusted" : "All adjusted") : `${adjusted} of ${images.length} adjusted`}</span>}
+        {adjusted > 0 && <span className="hint">{adjusted === images.length ? (adjusted === 1 ? "Adjusted" : t("img.allAdjusted")) : `${adjusted} of ${images.length} adjusted`}</span>}
       </div>
       <ImageViewToggle />
-      <p className="hint">The dithered view is a preview at the layer's interval; scan angle and dot width are not shown.</p>
+      <p className="hint">{t("img.theDitheredViewIsAPreview")}</p>
       {adjusting && (
         <AdjustImageDialog
           layer={layer}
@@ -187,16 +190,17 @@ export function ImageSettings({
 
 /** Original / dithered switch for the images on the canvas (a per-browser preference). */
 export function ImageViewToggle() {
+  const t = useT();
   const { view } = useSyncExternalStore(imageView.subscribe, imageView.get);
   return (
-    <div className="segmented" role="radiogroup" aria-label="Images on the canvas">
+    <div className="segmented" role="radiogroup" aria-label={t("img.imagesOnTheCanvas")}>
       {(["original", "dithered"] as const).map((v) => (
         <button
           key={v}
           role="radio"
           aria-checked={view === v}
           className={view === v ? "active" : ""}
-          title={v === "original" ? "Show images on the canvas as imported" : "Show images on the canvas as their layer's dither will engrave them (preview)"}
+          title={v === "original" ? t("img.showImagesOnTheCanvasAs") : t("img.showImagesOnTheCanvasAs2")}
           onClick={() => imageView.setView(v)}
         >
           {v === "original" ? "Original" : "Dithered"}
@@ -208,23 +212,24 @@ export function ImageViewToggle() {
 
 /** Checkbox form of the view switch, for the toolpath card; renders nothing when the document has no images. */
 export function DitheredImagesOption({ doc }: { doc: GDocument | null }) {
+  const t = useT();
   const { view } = useSyncExternalStore(imageView.subscribe, imageView.get);
   if (!doc?.objects.some((o) => o.geometry.kind === "image")) return null;
   return (
-    <label title="Show images on the canvas as their layer's dither will engrave them (client-side preview)">
+    <label title={t("img.showImagesOnTheCanvasAs")}>
       <input type="checkbox" checked={view === "dithered"} onChange={(e) => imageView.setView(e.target.checked ? "dithered" : "original")} /> Dithered images
     </label>
   );
 }
 
 /** The Adjust Image fields with doc::ImageAdjust's ranges (sliders cover the useful part; the numbers take all). */
-const ADJUST_FIELDS: { key: keyof ImageAdjust; label: string; min: number; max: number; slider: [number, number]; step: number; unit?: string }[] = [
-  { key: "gamma", label: "Gamma", min: 0.01, max: 10, slider: [0.1, 4], step: 0.01 },
-  { key: "contrast", label: "Contrast", min: -100, max: 100, slider: [-100, 100], step: 1, unit: "%" },
-  { key: "brightness", label: "Brightness", min: -100, max: 100, slider: [-100, 100], step: 1, unit: "%" },
-  { key: "enhance_radius", label: "Enhance radius", min: 0, max: 100, slider: [0, 20], step: 1, unit: "px" },
-  { key: "enhance_amount", label: "Enhance amount", min: 0, max: 10000, slider: [0, 1000], step: 10, unit: "%" },
-  { key: "denoise", label: "Denoise", min: 0, max: 255, slider: [0, 64], step: 1 },
+const ADJUST_FIELDS: { key: keyof ImageAdjust; label: MsgKey; min: number; max: number; slider: [number, number]; step: number; unit?: string }[] = [
+  { key: "gamma", label: "img.gamma", min: 0.01, max: 10, slider: [0.1, 4], step: 0.01 },
+  { key: "contrast", label: "img.contrast", min: -100, max: 100, slider: [-100, 100], step: 1, unit: "%" },
+  { key: "brightness", label: "img.brightness", min: -100, max: 100, slider: [-100, 100], step: 1, unit: "%" },
+  { key: "enhance_radius", label: "img.enhanceRadius", min: 0, max: 100, slider: [0, 20], step: 1, unit: "px" },
+  { key: "enhance_amount", label: "img.enhanceAmount", min: 0, max: 10000, slider: [0, 1000], step: 10, unit: "%" },
+  { key: "denoise", label: "img.denoise", min: 0, max: 255, slider: [0, 64], step: 1 },
 ];
 
 /**
@@ -245,6 +250,7 @@ export function AdjustImageDialog({
   onClose: () => void;
   onApply: (ids: string[], a: ImageAdjust) => void;
 }) {
+  const t = useT();
   const [pick, setPick] = useState(images[0]?.id ?? "");
   const obj = images.find((o) => o.id === pick) ?? images[0];
   const geom = obj?.geometry.kind === "image" ? (obj.geometry as ImageGeometry) : null;
@@ -269,24 +275,24 @@ export function AdjustImageDialog({
   const set = (k: keyof ImageAdjust, v: number) => setDraft({ ...draft, [k]: v });
   return (
     <Modal
-      title={`Adjust image · ${layer.name}`}
+      title={t("img.adjustImageV1", { v1: layer.name })}
       wide
       onClose={onClose}
       footer={
         <>
           <button className="btn img-adjust-reset" onClick={() => setDraft(DEFAULT_ADJUST)}>
-            Reset
+            {t("img.reset")}
           </button>
           <button className="btn" onClick={onClose}>
-            Cancel
+            {t("img.cancel")}
           </button>
           <button
             className="btn btn-primary"
             disabled={!changed || !canApply || targets.length === 0}
-            title={canApply ? undefined : "This engine cannot store image adjustments yet"}
+            title={canApply ? undefined : t("img.thisEngineCannotStoreImageAdjustments")}
             onClick={() => onApply(targets, draft)}
           >
-            Apply
+            {t("img.apply")}
           </button>
         </>
       }
@@ -294,7 +300,7 @@ export function AdjustImageDialog({
       {images.length > 1 && (
         <>
           <label className="field">
-            <span className="field-label">Image</span>
+            <span className="field-label">{t("img.image")}</span>
             <span className="field-input">
               <select
                 value={obj?.id ?? ""}
@@ -312,17 +318,17 @@ export function AdjustImageDialog({
               </select>
             </span>
           </label>
-          <CheckField label={`Apply to all ${images.length} images`} checked={all} onChange={setAll} />
+          <CheckField label={t("img.applyToAllV1Images", { v1: images.length })} checked={all} onChange={setAll} />
         </>
       )}
       <div className="img-adjust">
         <div className="img-adjust-fields">
           {ADJUST_FIELDS.map((f) => (
             <div key={f.key} className="img-slider">
-              <NumberField label={f.label} unit={f.unit} value={draft[f.key]} min={f.min} max={f.max} digits={2} onCommit={(v) => v !== null && set(f.key, v)} />
+              <NumberField label={t(f.label)} unit={f.unit} value={draft[f.key]} min={f.min} max={f.max} digits={2} onCommit={(v) => v !== null && set(f.key, v)} />
               <input
                 type="range"
-                aria-label={f.label}
+                aria-label={t(f.label)}
                 min={f.slider[0]}
                 max={f.slider[1]}
                 step={f.step}
@@ -335,15 +341,15 @@ export function AdjustImageDialog({
             Applied before dithering: enhance (sharpens edges; denoise skips differences below that many grey levels), then contrast,
             brightness and gamma (above 1 darkens the mid-tones).
           </p>
-          {!canApply && <p className="warn-text">This engine cannot store image adjustments yet; the preview still works.</p>}
+          {!canApply && <p className="warn-text">{t("img.thisEngineCannotStoreImageAdjustments")}</p>}
         </div>
         <div className="img-adjust-previews">
           <figure>
-            {preview?.gray ? <img src={preview.gray} alt="Adjusted greyscale" /> : <div className="img-placeholder">Rendering…</div>}
+            {preview?.gray ? <img src={preview.gray} alt={t("img.adjustedGreyscale")} /> : <div className="img-placeholder">{t("img.rendering")}</div>}
             <figcaption>Adjusted{settings.negative ? " (negative)" : ""}</figcaption>
           </figure>
           <figure>
-            {preview?.url ? <img src={preview.url} alt="Dithered preview" className="pixelated" /> : <div className="img-placeholder">Rendering…</div>}
+            {preview?.url ? <img src={preview.url} alt={t("img.ditheredPreview")} className="pixelated" /> : <div className="img-placeholder">{t("img.rendering")}</div>}
             <figcaption>
               {settings.pass_through ? "Pass-through" : (DITHER_MODES.find((m) => m.value === settings.dither)?.label ?? settings.dither)}
               {preview ? ` · ${preview.width}×${preview.height} px${preview.capped ? " (reduced)" : ""}` : ""}

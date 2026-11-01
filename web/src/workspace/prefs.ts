@@ -38,6 +38,11 @@ export interface Prefs {
   invertWheel: boolean;
   /** Font scale of the whole UI, 0.8 to 1.5. */
   uiScale: number;
+  /** Size of toolbar and window icons and their buttons, 0.75 to 2 (LightBurn's toolbar icon size). */
+  iconScale: number;
+  /** Size of the canvas handles: selection, rotation and node handles, and how near the pointer must be, 0.75 to 3
+   * (LightBurn's larger cursors and nodes). */
+  handleScale: number;
   /** Full-window crosshair lines at the pointer over the canvas. */
   crosshair: boolean;
   /** UI language code (i18n.ts). */
@@ -61,6 +66,8 @@ export const DEFAULT_PREFS: Prefs = {
   nudge: DEFAULT_NUDGE,
   invertWheel: false,
   uiScale: 1,
+  iconScale: 1,
+  handleScale: 1,
   crosshair: false,
   language: "en",
   hotkeys: {},
@@ -106,6 +113,8 @@ export function sanitizePrefs(raw: unknown): Prefs {
     },
     invertWheel: bool(r.invertWheel, d.invertWheel),
     uiScale: num(r.uiScale, 0.8, 1.5, d.uiScale),
+    iconScale: num(r.iconScale, 0.75, 2, d.iconScale),
+    handleScale: num(r.handleScale, 0.75, 3, d.handleScale),
     crosshair: bool(r.crosshair, d.crosshair),
     language: typeof r.language === "string" && /^[a-z]{2}(-[A-Z]{2})?$/.test(r.language) ? r.language : d.language,
     hotkeys: hk,
@@ -151,6 +160,11 @@ export function updatePrefs(patch: Partial<Prefs> | ((p: Prefs) => Partial<Prefs
   current = sanitizePrefs({ ...current, ...delta });
   savePrefs(current);
   for (const l of listeners) l();
+}
+
+/** The canvas handle size factor (Preferences > Handle size), for code outside React's render. */
+export function handleScale(): number {
+  return current.handleScale;
 }
 
 /** Back to the defaults (hotkeys too). */

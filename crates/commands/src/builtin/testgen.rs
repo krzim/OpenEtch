@@ -14,8 +14,8 @@ use super::layer::{MAX_PASSES, SettingsPatch, validate_settings};
 use super::util::{self, invalid, transact};
 use crate::{Command, CommandError, Result, Risk};
 
-/// Most values along one axis of a material test (LightBurn defaults to 10).
-pub const MAX_COUNT: u32 = 20;
+/// Most values along one axis of a material test (LightBurn defaults to 10; the owner's LightBurn presets use 30).
+pub const MAX_COUNT: u32 = 30;
 /// Most interval or focus steps.
 pub const MAX_STEPS: u32 = 50;
 
@@ -89,7 +89,7 @@ pub struct TestAxis {
     pub param: TestParam,
     pub min: f64,
     pub max: f64,
-    /// Number of values, 1..=20 (LightBurn's Count; default 10).
+    /// Number of values, 1..=30 (LightBurn's Count; default 10).
     #[serde(default = "ten")]
     pub count: u32,
 }
@@ -285,7 +285,7 @@ impl Command for MaterialTest {
     const ID: &'static str = "generate.material_test";
     const TITLE: &'static str = "Material test";
     const DESCRIPTION: &'static str = "Add a material test grid (LightBurn's Material Test): boxes varying two of power, \
-        speed, frequency, pulse_width (MOPA Q-pulse), interval and passes between min and max (count 1..=20 each, \
+        speed, frequency, pulse_width (MOPA Q-pulse), interval and passes between min and max (count 1..=30 each, \
         default 10 x 10 power x speed); every other setting comes from `base` (fill mode by default). Each box gets \
         its own layer, ordered so the safest boxes run first (highest speed, lowest power, lowest interval, fewest \
         passes, as LightBurn does). Optional labels (bundled single-line font, own layer), border and title. \
@@ -726,7 +726,7 @@ mod tests {
         assert!(run(&mut s, "generate.material_test", same).is_err());
         let over = json!({ "columns": {"param": "power", "min": 10, "max": 150, "count": 3} });
         assert!(run(&mut s, "generate.material_test", over).unwrap_err().contains("power_pct"));
-        let many = json!({ "columns": {"param": "power", "min": 10, "max": 50, "count": 21} });
+        let many = json!({ "columns": {"param": "power", "min": 10, "max": 50, "count": 31} });
         assert!(run(&mut s, "generate.material_test", many).is_err());
         let zero_passes = json!({ "columns": {"param": "passes", "min": 0, "max": 3, "count": 4} });
         assert!(run(&mut s, "generate.material_test", zero_passes).unwrap_err().contains("passes"), "a box labelled 0 would run once");

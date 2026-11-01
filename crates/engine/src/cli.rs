@@ -50,6 +50,9 @@ OPTIONS:
   --projects-dir <path> Where named projects (.openetch) and LightBurn exports are saved. Default: the OS data dir
                         + openetch/projects, e.g. %APPDATA%\\openetch\\projects or ~/.local/share/openetch/projects;
                         created on the first save.
+  --projects-mount <label>=<path>
+                        Also offer the projects in directory <path> as the top folder <label> (repeatable; e.g. a
+                        network or cloud-synced folder). More can be saved from the UI (Project locations).
   --confirm-input <bit> Also require a physical input (0-15, ReadPort) after PIN approval: the run waits up to 30 s
                         for the input to be released and then pressed. The B6's markcfg suggests a foot pedal on 14
                         (unverified).
@@ -86,6 +89,8 @@ pub struct Config {
     pub confirm_input: Option<u8>,
     /// Where named projects are saved.
     pub projects_dir: PathBuf,
+    /// `--projects-mount <label>=<path>`: further project directories, shown as top folders.
+    pub projects_mounts: Vec<(String, PathBuf)>,
     /// `--lightburn-prefs`: LightBurn's `prefs.ini` (`None`: the OS locations).
     pub lightburn_prefs: Option<PathBuf>,
     /// `--lightburn-device`: the LightBurn device used when a file names none.
@@ -160,6 +165,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Parsed, String> 
     let mut listen: Option<String> = None;
     let mut config: Option<PathBuf> = None;
     let mut projects_dir: Option<PathBuf> = None;
+    let mut projects_mounts = Vec::new();
     let mut confirm_input = None;
     let mut profile: Option<PathBuf> = None;
     let mut web_dir: Option<PathBuf> = None;
@@ -195,6 +201,15 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Parsed, String> 
             "--allow-host" => allow_hosts.push(value("--allow-host")?),
             "--config-dir" => config = Some(PathBuf::from(value("--config-dir")?)),
             "--projects-dir" => projects_dir = Some(PathBuf::from(value("--projects-dir")?)),
+            "--projects-mount" => {
+                let v = value("--projects-mount")?;
+                let (label, path) = v
+                    .split_once('=')
+                    .filter(|(l, p)| !l.trim().is_empty() && !p.trim().is_empty())
+                    .ok_or_else(|| format!("--projects-mount needs <label>=<path> (got '{v}')"))?;
+                crate::projects::validate_name(label.trim()).map_err(|e| format!("--projects-mount: {e}"))?;
+                projects_mounts.push((label.trim().to_owned(), PathBuf::from(path.trim())));
+            }
             "--confirm-input" => {
                 let v = value("--confirm-input")?;
                 match v.parse::<u8>() {
@@ -247,6 +262,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Parsed, String> 
         projects_dir: projects_dir
             .or_else(crate::projects::default_projects_dir)
             .ok_or("cannot find the OS data directory; pass --projects-dir <path>")?,
+        projects_mounts,
         lightburn_prefs,
         lightburn_device,
         device,
@@ -379,6 +395,13 @@ mod tests {
         assert_eq!(run(&[]).confirm_input, None);
         assert_eq!(run(&["--projects-dir", "p"]).projects_dir, PathBuf::from("p"));
         assert_eq!(run(&["--projects-dir=q"]).projects_dir, PathBuf::from("q"));
+        assert_eq!(
+            run(&["--projects-mount", "NAS=//nas/laser", "--projects-mount=Cloud=C:\\Sync=x"]).projects_mounts,
+            [("NAS".to_owned(), PathBuf::from("//nas/laser")), ("Cloud".to_owned(), PathBuf::from("C:\\Sync=x"))]
+        );
+        for bad in ["NAS", "=p", "NAS=", "a/b=p"] {
+            assert!(parse(["--projects-mount", bad].iter().map(|s| s.to_string())).is_err(), "{bad}");
+        }
         assert!(run(&[]).projects_dir.ends_with(Path::new("openetch").join("projects")));
     }
 

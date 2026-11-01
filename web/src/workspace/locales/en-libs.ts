@@ -183,6 +183,7 @@ export const EN_LIBS = {
   "ltest.lineLength": "Line length",
   "ltest.lineSpacing": "Line spacing",
   "ltest.focusHint": "Each line is its own layer with its Z offset; the axis moves between lines.",
+  "ltest.focusNoZWarn": "No Z lift on this device: every line of the focus test will be marked at the current height (the Z offsets are ignored).",
   "ltest.focusNoZ": "This device has no Z axis on the board: the plan warns, and each line can be marked on its own with the height set by hand.",
   "ltest.focusWhat": "A focus test of {lines} lines",
   "ltest.added": "{what} added and selected.",
@@ -374,7 +375,7 @@ export const EN_LIBS = {
   "fml.supported": "Supported",
   "fml.unsupported": "Not supported",
   "fml.step2": "2. EzCad settings",
-  "fml.filesHint": "From the laser's EzCad folder: the markcfg7 file (in PARAM) and the lens correction .cor file.",
+  "fml.filesHint": "From the laser's EzCad folder: the markcfg7 file (in the plug folder on most machines, PARAM on some) and the lens correction .cor file.",
   "fml.markcfg": "Choose markcfg7…",
   "fml.markcfgPicked": "markcfg: {name}",
   "fml.cor": "Choose .cor…",
@@ -389,7 +390,7 @@ export const EN_LIBS = {
 
   // ---- Help ----
   "dbg.title": "Report a bug…",
-  "dbg.intro": "The bug report holds versions, the machine status, the outcomes of recent jobs, the document's counts and the last log lines. Tokens, PINs and document content are left out. Attach the file to an issue.",
+  "dbg.intro": "The bug report holds versions, the machine status, the outcomes of recent jobs, the document's counts and the last log lines. Tokens, PINs and document content are left out, but file and folder paths in the log lines and settings can include your user name. Look through it before you attach it to an issue.",
   "dbg.debugLog": "Enable debug log",
   "dbg.debugHint": "Keeps detailed log lines of OpenEtch's own modules until turned off.",
   "dbg.on": "Debug log on.",

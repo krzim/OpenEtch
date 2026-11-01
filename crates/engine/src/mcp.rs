@@ -173,14 +173,16 @@ struct RenderArgs {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ProjectArgs {
-    /// Project name: 1-100 letters, digits, spaces and - _ . ( ) (no path, no leading dot, no "..").
+    /// Project name: 1-100 letters, digits, spaces and - _ . ( ) (no leading dot, no ".."), optionally inside up to 4
+    /// folders separated by "/" ("Clients/Acme/badge"; project_list shows them). Never a file path.
     name: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SaveArgs {
-    /// Project name: 1-100 letters, digits, spaces and - _ . ( ) (no path, no leading dot, no "..").
+    /// Project name: 1-100 letters, digits, spaces and - _ . ( ) (no leading dot, no ".."), optionally inside up to 4
+    /// folders separated by "/" ("Clients/Acme/badge"; project_list shows them). Never a file path.
     name: String,
     /// Replace an existing project that is not the current one. Default false; only when the person asked.
     #[serde(default)]
@@ -337,7 +339,7 @@ impl GalvoMcp {
             tool::<NoArgs>(
                 "project_list",
                 "List projects",
-                "Saved projects in the engine's projects directory: {projects: [{name, modified_unix_s, size}], \
+                "Saved projects in the engine's projects directory, its folders and locations: {projects: [{name, folder, modified_unix_s, size}], \
                  current: {name, saved_revision, revision, dirty}}.",
                 true,
             ),
@@ -822,7 +824,7 @@ mod tests {
         let (err, v) = call("project_export_lbrn2", json!({"name": "Agent job", "overwrite": "yes"})).await;
         assert!(err, "{v}");
 
-        for bad in [json!({"name": "../x"}), json!({"name": "a/b"}), json!({}), json!({"name": "x", "path": "/tmp"})] {
+        for bad in [json!({"name": "../x"}), json!({"name": "a//b"}), json!({}), json!({"name": "x", "path": "/tmp"})] {
             for tool in ["project_save", "project_open", "project_export_lbrn2"] {
                 let (err, v) = call(tool, bad.clone()).await;
                 assert!(err, "{tool} {bad}: {v}");

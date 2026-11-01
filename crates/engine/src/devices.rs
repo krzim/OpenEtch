@@ -430,7 +430,7 @@ impl DeviceRegistry {
             };
             let p = machine::edit_profile(profile, patch, &limits).map_err(EngineError::BadRequest)?;
             if d.kind.is_galvo() {
-                next.workspace_mm = [p.field_mm, p.field_mm];
+                next.workspace_mm = [p.field_mm, p.field_height_mm.unwrap_or(p.field_mm)];
             }
             next.profile = Some(p);
         }
@@ -584,6 +584,8 @@ fn profile_summary(p: &MachineProfile) -> Value {
         "name": p.name,
         "laser_source": p.laser_source,
         "field_mm": p.field_mm,
+        // A non-square field's height (absent when square), so the device editor shows and keeps it.
+        "field_height_mm": p.field_height_mm,
         "swap_xy": p.swap_xy,
         "negate_x": p.negate_x,
         "negate_y": p.negate_y,
@@ -607,6 +609,7 @@ fn profile_summary(p: &MachineProfile) -> Value {
         // fields as the profile (and `PUT /api/devices/{id}`) spell them, plus one list of each.
         "laser_enable_port_bit": p.laser_enable_port_bit,
         "start_mark_input_bit": p.start_mark_input_bit,
+        "start_mark_active_low": p.start_mark_active_low,
         "stop_mark_input_bit": p.stop_mark_input_bit,
         "io": p.io,
         "inputs": io_inputs(p),
@@ -615,11 +618,11 @@ fn profile_summary(p: &MachineProfile) -> Value {
 }
 
 /// The profile's input bits: `[{role, bit, active_low}]` (roles `start_marking`, `stop_marking`, `door_protect`,
-/// `start_framing`; start/stop marking are active high).
+/// `start_framing`; stop marking is active high).
 fn io_inputs(p: &MachineProfile) -> Value {
     let mut v = Vec::new();
     if let Some(b) = p.start_mark_input_bit {
-        v.push(json!({ "role": "start_marking", "bit": b, "active_low": false }));
+        v.push(json!({ "role": "start_marking", "bit": b, "active_low": p.start_mark_active_low }));
     }
     if let Some(b) = p.stop_mark_input_bit {
         v.push(json!({ "role": "stop_marking", "bit": b, "active_low": false }));
@@ -1021,6 +1024,15 @@ mod tests {
         assert_eq!(p["red_dot"]["scale_y"], json!(1.0));
         assert_eq!((p["blanking"].clone(), p["focus_light_port_bit"].clone()), (json!(false), Value::Null));
         assert!(p["red_light_port_bit"].is_u64() && p["red_light_speed_mm_s"].is_number());
+        // A field height from the device editor gives a non-square workspace and comes back in the details; null
+        // makes the field square again.
+        assert_eq!(p["field_height_mm"], Value::Null);
+        let field = r.details(&copy.id).unwrap()["profile"]["field_mm"].as_f64().unwrap();
+        let tall = r.edit(&copy.id, Some(&serde_json::json!({"field_height_mm": 100.0})), None).unwrap();
+        assert_eq!(tall.workspace_mm, [field, 100.0]);
+        assert_eq!(r.details(&copy.id).unwrap()["profile"]["field_height_mm"], json!(100.0));
+        let square = r.edit(&copy.id, Some(&serde_json::json!({"field_height_mm": null})), None).unwrap();
+        assert_eq!(square.workspace_mm, [field, field]);
         let (name, text) = r.lbdev(&copy.id).unwrap();
         assert!(name.ends_with(".lbdev") && text.contains("\"FieldAngle\": 0.5"), "{text}");
         let markcfg = include_bytes!("../../../fixtures/markcfg7.ini");

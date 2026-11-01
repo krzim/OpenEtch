@@ -14,6 +14,7 @@
 import { DEVICE_SETTINGS_KEYS, type LightBurnDevice, type ProfileDiff } from "./lightburn.ts";
 import { ACTIVE_STATES } from "./runs.ts";
 import type { MachineStatus, Vec2 } from "./types.ts";
+import { tr } from "../workspace/tr.ts";
 
 /** What kind of controller a device is. Only `jcz_galvo` can be driven by OpenEtch today. */
 export type DeviceKind = "jcz_galvo" | "gantry" | "galvo_other" | "unknown";
@@ -277,7 +278,7 @@ export function importMessage(r: ImportResult): { msg: string; kind: "info" | "e
     const first = r.skipped[0];
     parts.push(`skipped ${r.skipped.length}${first.reason ? ` (${first.name}: ${first.reason}${r.skipped.length > 1 ? ", …" : ""})` : ""}`);
   }
-  if (parts.length === 0) return { msg: "No devices were imported.", kind: "error" };
+  if (parts.length === 0) return { msg: tr("apid.noDevicesWereImported"), kind: "error" };
   const s = parts.join(", ");
   // Importing the same devices again is not an error: the engine skips them as "already imported, unchanged".
   const allUnchanged = r.skipped.length > 0 && r.skipped.every((x) => /unchanged/i.test(x.reason));
@@ -298,13 +299,15 @@ export function machineDevice(machine: MachineStatus | null | undefined): Device
 }
 
 /**
- * The canvas workspace in mm: the active device's (a galvo's field is square, so its width counts), else the
+ * The canvas workspace in mm: the active device's (a galvo field may be non-square), else the
  * machine's field, else `fallback`. Objects live in the field frame, so the workspace is centred on (0, 0).
  */
 export function canvasWorkspace(device: DeviceSummary | null, machineFieldMm: number | null, fallback: number): Vec2 {
   if (device) {
+    // A galvo's field is [width, height]: square unless the profile has a separate height (LightBurn's Width and
+    // Height), which the engine reports as the device's workspace.
     const [w, h] = device.workspace_mm;
-    return isGalvo(device.kind) ? [w, w] : [w, h];
+    return [w, h];
   }
   const f = pos(machineFieldMm) ?? fallback;
   return [f, f];
@@ -321,6 +324,13 @@ export function workspaceText(ws: Vec2): string {
   return isSquare(ws) ? `${n(ws[0])} mm` : `${n(ws[0])} × ${n(ws[1])} mm`;
 }
 
+/** A device's size text: a galvo shows its field (square unless the height differs by more than 0.05 mm, the
+ * engine's rule for a non-square field), anything else its workspace. */
+export function deviceSizeText(d: Pick<DeviceSummary, "kind" | "workspace_mm">): string {
+  const [w, h] = d.workspace_mm;
+  return workspaceText(isGalvo(d.kind) && Math.abs(w - h) <= 0.05 + 1e-9 ? [w, w] : d.workspace_mm);
+}
+
 /**
  * Why switching devices is not allowed now, or null: never while a run is approved, waiting for its confirmation
  * input or running, or while the red pointer frames (the engine refuses with 409 too).
@@ -329,23 +339,23 @@ export function switchBlocker(machine: MachineStatus | null | undefined): string
   if (!machine) return null;
   const runs = Array.isArray(machine.runs) ? machine.runs : [];
   if (machine.running === true || runs.some((r) => r && typeof r.state === "string" && ACTIVE_STATES.includes(r.state)))
-    return "A run is under way. Wait for it to finish or press STOP.";
-  if (machine.framing === true) return "The red pointer is framing. Stop the frame first.";
+    return tr("apid.aRunIsUnderWayWait");
+  if (machine.framing === true) return tr("apid.theRedPointerIsFramingStop");
   return null;
 }
 
 /** Why `device` cannot be made active now, or null. */
 export function activateBlocker(device: DeviceSummary | null, list: DeviceList | null, machine: MachineStatus | null | undefined): string | null {
-  if (!device) return "Select a device.";
-  if (list?.active === device.id) return `${device.display_name} is already the active device.`;
+  if (!device) return tr("apid.selectADevice");
+  if (list?.active === device.id) return tr("apid.v1IsAlreadyTheActiveDevice", { v1: device.display_name });
   return switchBlocker(machine);
 }
 
 /** Why `device` cannot be removed, or null: the built-in device and the active device stay. */
 export function removeBlocker(device: DeviceSummary | null, list: DeviceList | null): string | null {
-  if (!device) return "Select a device.";
-  if (device.source === "builtin") return "The built-in device cannot be removed.";
-  if (list?.active === device.id) return "Make another device active before removing this one.";
+  if (!device) return tr("apid.selectADevice");
+  if (device.source === "builtin") return tr("apid.theBuiltInDeviceCannotBe");
+  if (list?.active === device.id) return tr("apid.makeAnotherDeviceActiveBeforeRemoving");
   return null;
 }
 
@@ -384,7 +394,7 @@ export function asLightBurnDevices(devices: readonly DeviceSummary[]): LightBurn
 export function kindLabel(kind: DeviceKind | string): string {
   switch (kind) {
     case "jcz_galvo":
-      return "JCZ galvo (EzCad2 / LMC)";
+      return tr("apid.jczGalvoEzcad2Lmc");
     case "galvo_other":
       return "Galvo";
     case "gantry":
@@ -397,15 +407,15 @@ export function kindLabel(kind: DeviceKind | string): string {
 export function originLabel(origin: DeviceOrigin | string): string {
   switch (origin) {
     case "center":
-      return "Centre (galvo)";
+      return tr("apid.centreGalvo");
     case "bottom_left":
-      return "Front left";
+      return tr("apid.frontLeft");
     case "top_left":
-      return "Rear left";
+      return tr("apid.rearLeft");
     case "bottom_right":
-      return "Front right";
+      return tr("apid.frontRight");
     case "top_right":
-      return "Rear right";
+      return tr("apid.rearRight");
     default:
       return origin;
   }
@@ -414,13 +424,13 @@ export function originLabel(origin: DeviceOrigin | string): string {
 export function sourceLabel(source: DeviceSource | string): string {
   switch (source) {
     case "builtin":
-      return "Built in";
+      return tr("apid.builtIn");
     case "lightburn-prefs":
       return "LightBurn";
     case "lbdev":
       return ".lbdev file";
     case "manual":
-      return "Added by hand";
+      return tr("apid.addedByHand");
     default:
       return source;
   }
@@ -430,21 +440,21 @@ export function sourceLabel(source: DeviceSource | string): string {
 export function designOnlyReason(device: DeviceSummary | null): string | null {
   if (!device || device.controllable) return null;
   const what = device.kind === "gantry" ? "a gantry laser" : device.kind === "galvo_other" ? "this galvo controller" : "this controller";
-  return `OpenEtch can't drive ${what} (${device.name}) yet. Its workspace is used for designing and LightBurn files; to run jobs, make a JCZ galvo device active.`;
+  return tr("apid.openetchCanTDriveV1V2", { v1: what, v2: device.name });
 }
 
 /** The dropdown/list text of a device: "JCZFiber (Unknown) · 153.8 mm". */
 export function deviceOptionText(d: DeviceSummary): string {
-  return `${d.display_name} · ${workspaceText(isGalvo(d.kind) ? [d.workspace_mm[0], d.workspace_mm[0]] : d.workspace_mm)}`;
+  return `${d.display_name} · ${deviceSizeText(d)}`;
 }
 
 /** The confirmation text before switching to `next`. */
 export function switchMessage(next: DeviceSummary, current: DeviceSummary | null): string {
-  const ws = workspaceText(isGalvo(next.kind) ? [next.workspace_mm[0], next.workspace_mm[0]] : next.workspace_mm);
+  const ws = deviceSizeText(next);
   const parts = [`Switch to ${next.display_name}? The canvas becomes its ${isGalvo(next.kind) ? "field" : "workspace"} (${ws}).`];
-  if (next.controllable) parts.push("The engine re-initialises the laser with this device's settings.");
-  else parts.push("OpenEtch can't run jobs on this device; it is for designing and LightBurn files only.");
-  if (current && current.origin !== next.origin) parts.push("Its origin differs: open designs keep their field coordinates.");
+  if (next.controllable) parts.push(tr("apid.theEngineReInitialisesTheLaser"));
+  else parts.push(tr("apid.openetchCanTRunJobsOn"));
+  if (current && current.origin !== next.origin) parts.push(tr("apid.itsOriginDiffersOpenDesignsKeep"));
   return parts.join(" ");
 }
 
@@ -497,7 +507,7 @@ function baseName(p: string): string {
 
 /** A device's name for the import picker: its DisplayName, else its controller Name. */
 function entryName(d: Record<string, unknown>): string {
-  return str(d.DisplayName) ?? str(d.Name) ?? "Unnamed device";
+  return str(d.DisplayName) ?? str(d.Name) ?? tr("apid.unnamedDevice");
 }
 
 /** What a picked prefs.ini or .lbdev holds, after the cut: the body to send and the device names, in file order. */
@@ -520,12 +530,12 @@ export function deviceImportBody(text: string): DeviceImportBody {
   try {
     data = JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
   } catch {
-    throw new Error("This is not a LightBurn device file (prefs.ini or .lbdev are JSON).");
+    throw new Error(tr("apid.thisIsNotALightburnDevice"));
   }
   const root = obj(data);
-  if (!root) throw new Error("This is not a LightBurn device file.");
+  if (!root) throw new Error(tr("apid.thisIsNotALightburnDevice2"));
   const list = root.DeviceList;
-  if (!Array.isArray(list)) throw new Error("This file has no LightBurn device list. Pick LightBurn's prefs.ini or a .lbdev file.");
+  if (!Array.isArray(list)) throw new Error(tr("apid.thisFileHasNoLightburnDevice"));
   const devices: Record<string, unknown>[] = [];
   const names: string[] = [];
   let defaultIndex: number | null = null;
@@ -551,10 +561,10 @@ export function deviceImportBody(text: string): DeviceImportBody {
     devices.push(out);
     names.push(entryName(src));
   });
-  if (devices.length === 0) throw new Error("This file lists no LightBurn devices.");
+  if (devices.length === 0) throw new Error(tr("apid.thisFileListsNoLightburnDevices"));
   const kind: "prefs" | "lbdev" = "DefaultDevice" in root || Object.keys(root).some((k) => k !== "DeviceList") ? "prefs" : "lbdev";
   const body = JSON.stringify(defaultIndex !== null ? { DefaultDevice: defaultIndex, DeviceList: devices } : { DeviceList: devices });
-  if (new TextEncoder().encode(body).length > MAX_DEVICE_IMPORT_BYTES) throw new Error("The device list is larger than 2 MB.");
+  if (new TextEncoder().encode(body).length > MAX_DEVICE_IMPORT_BYTES) throw new Error(tr("apid.theDeviceListIsLargerThan"));
   return { body, kind, names, defaultIndex };
 }
 

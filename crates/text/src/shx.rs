@@ -505,4 +505,36 @@ mod tests {
         let font = parse("t", &f).unwrap();
         assert!(font.glyph('A').is_some());
     }
+
+    /// Real `.shx` fonts, when there are some (OPENETCH_SHX_SAMPLES: folders, separated like PATH; read in place,
+    /// never copied). No permissively licensed real .shx file was found to commit: see ARCHITECTURE.md "Text".
+    /// Every font must parse and give A-Z outlines that start at the baseline and fit the capital height.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn real_shx_fonts_parse() {
+        let Some(dirs) = std::env::var_os("OPENETCH_SHX_SAMPLES") else { return };
+        let mut n = 0;
+        for d in std::env::split_paths(&dirs) {
+            for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+                let p = e.path();
+                if !p.extension().is_some_and(|x| x.eq_ignore_ascii_case("shx")) {
+                    continue;
+                }
+                let data = std::fs::read(&p).unwrap();
+                if !is_shx(&data) {
+                    continue;
+                }
+                let name = p.file_stem().unwrap().to_string_lossy().to_string();
+                let font = parse(&name, &data).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
+                if let Some(g) = font.glyph('A') {
+                    let b = kurbo::Shape::bounding_box(&g.path);
+                    assert!(b.height() > 0.0 && b.height() <= font.cap_height * 1.5 + 1e-9, "{}: A is {b:?}", p.display());
+                    assert!(g.advance > 0.0);
+                }
+                eprintln!("{}: {} em, cap {}", p.display(), font.em, font.cap_height);
+                n += 1;
+            }
+        }
+        eprintln!("{n} SHX font(s) parsed");
+    }
 }

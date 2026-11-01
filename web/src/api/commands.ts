@@ -51,6 +51,7 @@ export const OPT = {
   layerSubDelete: "layer.sub_delete",
   layerSubMove: "layer.sub_move",
   layerSubDuplicate: "layer.sub_duplicate",
+  layerTool: "layer.tool",
 } as const;
 
 /** Define (or replace) the stock. */
@@ -291,6 +292,14 @@ export function layerSubDelete(layer: string, index: number): Invocation {
 /** Move sub-layer `from` to position `to` (both indices into `sub_layers`); the others keep their order. */
 export function layerSubMove(layer: string, from: number, to: number): Invocation {
   return { id: OPT.layerSubMove, params: { layer, from, to } };
+}
+
+/**
+ * LightBurn's tool layers T1 / T2 (never output, framed with the job): `{tool}` adds that tool layer (refused when the
+ * document has it), `{tool, id}` makes layer `id` that tool layer, `{tool: null, id}` makes it an ordinary layer.
+ */
+export function layerTool(tool: "T1" | "T2" | null, id?: string): Invocation {
+  return { id: OPT.layerTool, params: id === undefined ? { tool } : { tool, id } };
 }
 
 /** Copy sub-layer `index` of `layer` right after it; the result is the copy's index. */

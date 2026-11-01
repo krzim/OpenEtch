@@ -18,6 +18,24 @@ import "./job.css";
 export const LENS_MEASURES = ["top_mm", "bottom_mm", "middle_x_mm", "left_mm", "right_mm", "middle_y_mm", "diagonal_up_mm", "diagonal_down_mm"] as const;
 export type LensMeasure = (typeof LENS_MEASURES)[number];
 
+/**
+ * Optional corner shifts that tell the X and Y skew apart (the diagonals only give their sum): the top-left corner's
+ * X offset from the bottom-left one, and the bottom-right corner's Y offset from the bottom-left one, each measured
+ * against a straight edge along the machine's axis. Signed; an empty field is left out.
+ */
+export const LENS_SHIFTS = ["top_shift_mm", "right_shift_mm"] as const;
+export type LensShift = (typeof LENS_SHIFTS)[number];
+
+/** The measurements to send: the eight lines plus the corner shifts that were entered. */
+export function lensMeasurements(meas: Partial<Record<LensMeasure | LensShift, number>>): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const k of [...LENS_MEASURES, ...LENS_SHIFTS]) {
+    const v = meas[k];
+    if (typeof v === "number" && Number.isFinite(v)) out[k] = v;
+  }
+  return out;
+}
+
 /** The expected length of each measured line for a pattern of `size` mm. */
 export function expectedLength(m: LensMeasure, size: number): number {
   return m.startsWith("diagonal") ? size * Math.SQRT2 : size;
@@ -41,7 +59,7 @@ export function LensWizard(p: {
   const [size, setSize] = useState(() => Math.round(Math.min(100, (p.device.workspace_mm[0] || 150) * 0.65)));
   const [layer, setLayer] = useState<string>(p.doc?.layers[0]?.id ?? "");
   const [created, setCreated] = useState<string[]>([]);
-  const [meas, setMeas] = useState<Partial<Record<LensMeasure, number>>>({});
+  const [meas, setMeas] = useState<Partial<Record<LensMeasure | LensShift, number>>>({});
   const [solved, setSolved] = useState<{ current: Record<string, number>; calibration: Record<string, number> } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -79,7 +97,7 @@ export function LensWizard(p: {
     setBusy(true);
     setError(null);
     try {
-      const r = (await jobApi.calibrationSolve(size, meas as Record<string, number>, apply)) as {
+      const r = (await jobApi.calibrationSolve(size, lensMeasurements(meas), apply)) as {
         current?: Record<string, number>;
         calibration?: Record<string, number>;
         applied?: boolean;
@@ -202,6 +220,24 @@ export function LensWizard(p: {
                 onCommit={(v) => setMeas((x) => ({ ...x, [m]: v ?? undefined }))}
               />
             ))}
+            <fieldset className="job-fieldset lens-shifts">
+              <legend>{t("lens.shifts")}</legend>
+              <p className="hint">{t("lens.shiftsHint")}</p>
+              {LENS_SHIFTS.map((m, i) => (
+                <NumberField
+                  key={m}
+                  label={`${String.fromCharCode(73 + i)}. ${t(`lens.m.${m}` as "lens.m.top_mm")}`}
+                  unit="mm"
+                  value={meas[m] ?? null}
+                  min={-size * 0.2}
+                  max={size * 0.2}
+                  digits={3}
+                  allowEmpty
+                  placeholder={t("lens.optional")}
+                  onCommit={(v) => setMeas((x) => ({ ...x, [m]: v ?? undefined }))}
+                />
+              ))}
+            </fieldset>
           </div>
         </div>
       )}
@@ -247,7 +283,7 @@ function LensDiagram() {
     </text>
   );
   return (
-    <svg className="lens-diagram" viewBox={`0 0 ${s + 2 * o} ${s + 2 * o}`} role="img" aria-label="Test pattern: A top, B bottom, C middle horizontal, D left, E right, F middle vertical, G diagonal up, H diagonal down">
+    <svg className="lens-diagram" viewBox={`0 0 ${s + 2 * o} ${s + 2 * o}`} role="img" aria-label="Test pattern: A top, B bottom, C middle horizontal, D left, E right, F middle vertical, G diagonal up, H diagonal down, I top-left corner shift, J bottom-right corner shift">
       <rect x={o} y={o} width={s} height={s} className="lens-line" />
       <line x1={o} y1={o + s / 2} x2={o + s} y2={o + s / 2} className="lens-line" />
       <line x1={o + s / 2} y1={o} x2={o + s / 2} y2={o + s} className="lens-line" />
@@ -261,6 +297,11 @@ function LensDiagram() {
       {lab(o + s / 2 + 8, o + s / 4, "F")}
       {lab(o + (s * 3) / 4 + 8, o + s / 4 + 4, "G")}
       {lab(o + (s * 3) / 4 + 8, o + (s * 3) / 4 - 4, "H")}
+      {/* I and J: the optional corner shifts against a straight edge along the machine's Y and X axes. */}
+      <line x1={o} y1={o + s + 4} x2={o} y2={o - 6} className="lens-ref" />
+      <line x1={o - 6} y1={o + s} x2={o + s + 6} y2={o + s} className="lens-ref" />
+      {lab(o - 9, o - 2, "I")}
+      {lab(o + s + 4, o + s + 11, "J")}
     </svg>
   );
 }

@@ -38,6 +38,7 @@ import {
   fileSettingsOf,
   imageFileName,
   importQuery,
+  importTargetLayer,
   liveRecent,
   maskOf,
   maskPair,
@@ -67,7 +68,7 @@ type Notify = (msg: string, kind?: "info" | "error") => void;
 
 type FilesModal =
   | { kind: "export" }
-  | { kind: "print" }
+  | { kind: "print"; colors?: "layers" | "black" }
   | { kind: "import"; files: File[]; mode: "merge" | "replace" }
   | { kind: "importOptions" }
   | { kind: "backups" }
@@ -187,7 +188,7 @@ export function useFilesUi(p: {
                 format,
                 fileName: f.name,
                 mode: files.length > 1 ? "merge" : choice.mode,
-                layer: live.current.activeLayer,
+                layer: importTargetLayer(live.current.doc?.layers, live.current.activeLayer, prefs.toolLayers),
                 prefs,
                 widthMm: choice.widthMm ?? null,
                 page: choice.page ?? null,
@@ -268,12 +269,14 @@ export function useFilesUi(p: {
           .then(async () => {
             rememberTemplate(name);
             await afterOpen();
+            // LightBurn opens a template as an Untitled document; the engine keeps the template's own document name.
+            if (has("doc.rename")) await run({ id: "doc.rename", params: { name: "Untitled" } }).catch(() => undefined);
             notify(t("files.templateOpened", { name }));
           })
           .catch(report);
       });
     },
-    [guard, t, afterOpen, notify, report],
+    [guard, t, afterOpen, notify, report, has, run],
   );
 
   const restore = useCallback(
@@ -387,6 +390,7 @@ export function useFilesUi(p: {
   const handlers: Record<string, KeyHandler> = {
     "file.export": () => (can.exports ? setModal({ kind: "export" }) : false),
     "file.print": () => (can.print ? setModal({ kind: "print" }) : false),
+    "file.printColors": () => (can.print ? setModal({ kind: "print", colors: "layers" }) : false),
     "window.notes": () => (can.notes ? setModal({ kind: "notes" }) : false),
     "image.trace": () => (p.design ? trace() : false),
     "image.adjust": () => (p.design && can.adjust ? adjust() : false),
@@ -445,7 +449,7 @@ export function useFilesUi(p: {
     <>
       <FilePick ref={replacePick} accept=".png,.jpg,.jpeg,.bmp,.gif,.webp,.tif,.tiff,.tga" onFiles={onReplaceFile} />
       {m?.kind === "export" && <ExportDialog selection={p.selection} baseName={baseName} onClose={close} notify={notify} report={report} />}
-      {m?.kind === "print" && <PrintDialog selection={p.selection} baseName={baseName} onClose={close} notify={notify} report={report} />}
+      {m?.kind === "print" && <PrintDialog selection={p.selection} baseName={baseName} colors={m.colors} onClose={close} notify={notify} report={report} />}
       {m?.kind === "import" && <ImportFilesDialog files={m.files} initialMode={m.mode} busy={busy} onClose={close} onImport={(files, c) => importFiles(files, c)} />}
       {m?.kind === "importOptions" && <ImportOptionsDialog onClose={close} />}
       {m?.kind === "backups" && <BackupsDialog project={p.file.projectName} onRestore={restore} onClose={close} notify={notify} report={report} />}

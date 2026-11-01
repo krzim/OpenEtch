@@ -13,6 +13,7 @@
 // device entry). `devicePrefsBody` keeps only the device fields the engine maps, so nothing else leaves this browser.
 
 import type { MachineStatus } from "./types.ts";
+import { tr } from "../workspace/tr.ts";
 
 /** One device of GET /api/lightburn (only these fields are sent). */
 export interface LightBurnDevice {
@@ -296,11 +297,11 @@ export function parseFieldSource(v: unknown): FieldSource | null {
 export function fieldSourceText(s: FieldSource): string {
   switch (s.kind) {
     case "file-device":
-      return `from your LightBurn device ${s.device}`;
+      return tr("apil.fromYourLightburnDeviceV1", { v1: String(s.device) });
     case "default-device":
-      return `from your default LightBurn device ${s.device}`;
+      return tr("apil.fromYourDefaultLightburnDeviceV1", { v1: String(s.device) });
     case "active-device":
-      return `from your active device ${s.device}`;
+      return tr("apil.fromYourActiveDeviceV1", { v1: String(s.device) });
     case "document":
       return "the field size of your current design";
     case "machine":
@@ -409,11 +410,11 @@ export function devicePrefsBody(text: string): { body: string; devices: number }
   try {
     data = JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
   } catch {
-    throw new Error("This is not LightBurn's prefs.ini (it is not a JSON settings file).");
+    throw new Error(tr("apil.thisIsNotLightburnSPrefs"));
   }
-  if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("This is not LightBurn's prefs.ini.");
+  if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error(tr("apil.thisIsNotLightburnSPrefs2"));
   const list = (data as { DeviceList?: unknown }).DeviceList;
-  if (!Array.isArray(list)) throw new Error("This file has no LightBurn device list. Pick prefs.ini from LightBurn's settings folder.");
+  if (!Array.isArray(list)) throw new Error(tr("apil.thisFileHasNoLightburnDevice"));
   const devices: Record<string, unknown>[] = [];
   for (const d of list) {
     if (!d || typeof d !== "object" || Array.isArray(d)) continue;
@@ -432,10 +433,10 @@ export function devicePrefsBody(text: string): { body: string; devices: number }
     }
     devices.push(out);
   }
-  if (devices.length === 0) throw new Error("LightBurn's settings list no devices.");
+  if (devices.length === 0) throw new Error(tr("apil.lightburnSSettingsListNoDevices"));
   const dflt = (data as { DefaultDevice?: unknown }).DefaultDevice;
   const body = JSON.stringify(typeof dflt === "number" && Number.isInteger(dflt) ? { DefaultDevice: dflt, DeviceList: devices } : { DeviceList: devices });
-  if (new TextEncoder().encode(body).length > MAX_PREFS_BYTES) throw new Error("LightBurn's device list is larger than 2 MB.");
+  if (new TextEncoder().encode(body).length > MAX_PREFS_BYTES) throw new Error(tr("apil.lightburnSDeviceListIsLarger"));
   return { body, devices: devices.length };
 }
 

@@ -56,10 +56,11 @@ pub struct Document {
     /// new and opened documents that have none; LightBurn import/export uses it to move between frames.
     #[serde(default)]
     pub field_mm: Option<f64>,
-    /// Workspace `[width, height]` in mm of a bed (gantry) device, which need not be square; `None` for a galvo,
-    /// whose workspace is the square `field_mm` (then `field_mm` is the largest square inside the bed, used where a
-    /// square size is needed). The field frame's origin is the workspace's centre either way. Missing in older
-    /// files.
+    /// Workspace `[width, height]` in mm of a bed (gantry) device, which need not be square, or of a galvo with a
+    /// non-square field (LightBurn's separate field Width and Height; `extras` `lbrn2._origin` is then `center` and
+    /// `field_mm` the width); `None` for a square galvo, whose workspace is the square `field_mm` (for a bed,
+    /// `field_mm` is the largest square inside it, used where a square size is needed). The field frame's origin is
+    /// the workspace's centre either way. Missing in older files.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_mm: Option<[f64; 2]>,
     pub stock: Option<Stock>,

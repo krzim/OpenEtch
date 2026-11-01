@@ -51,20 +51,58 @@ anywhere else.
   "Keep round" in Properties (stored as an ellipse with equal radii).
 - **Editing tools** (`components/EditTools.tsx`, LightBurn behaviour and hotkeys): Line (Ctrl+L; click points,
   double-click/Enter finishes, C or the first point closes, Shift 15°), Pen (drag a point for a smooth curve node),
-  Polygon/star (drag from the centre; sides, star ratio and corner radius in the options bar), Rectangle/Ellipse Ctrl
+  Polygon/star (drag from the centre; sides, star ratio and corner radius in the options bar; on engines with
+  `shape.update` it stays a parametric polygon, drawn by `geometry.ts` `polygonCmds` exactly as the engine outlines it,
+  and Shape Properties edits it), Rectangle/Ellipse Ctrl
   from the centre and Shift square. Edit nodes (Ctrl+`) lists the shape's nodes with `node.list`: drag nodes, handles
   or segments (live preview, `node.move` on release), click a segment to add a node, marquee/Shift selects; keys at
-  the pointer or on the selection: Delete/D, B break, J join, S smooth, C corner, L line, K curve, I/M insert, T trim;
+  the pointer or on the selection: Delete/D, B break, J join, S smooth, C corner, L line, K curve, I/M insert, T trim,
+  E extend (the open end nearest the pointer straight on to the nearest line, `node.extend`);
   rectangles and ellipses offer Convert to path first. Measure (distance, ΔX, ΔY, angle, snapped), Trim (click a
   piece). Modify and Arrange dropdowns: weld (Ctrl+W), union/subtract/intersect (Alt++ / Alt+- / Alt+*), XOR, cut
   shapes (Alt+C), offset (Alt+O), fillet, break apart (Alt+B), auto-join (Alt+J), close, delete duplicates (Alt+D),
-  convert (Ctrl+Shift+C), optimize (Alt+Shift+O), reverse; draw order (PgUp/PgDn, Ctrl+PgUp/PgDn), lock, make same
-  size, Transform (scale %, shear, mirror across a picked line, two-point rotate Ctrl+2 / scale), grid and circular
-  arrays (centre pick), copy along path, quick nest. Rulers (in the display unit) run along the top and left; drag a
-  guide out of a ruler (back onto it to remove; guides move with the Select tool). Guides are kept per project in this
-  browser (the saved project's name, else the opened file, else one unsaved slot; Save carries them to the project
-  and New clears the unsaved slot; guides an older version stored by document name are adopted once)
-  (`src/guides.ts`) and are snap targets. The Viewport hands presses to these tools through `src/canvasTool.ts`.
+  convert (Ctrl+Shift+C), optimize (Alt+Shift+O: fit to lines, fit to arcs and smoothing, each with its tolerance),
+  reverse; draw order (PgUp/PgDn, Ctrl+PgUp/PgDn), lock, make same size, Transform (scale %, shear, mirror across a
+  picked line, also keeping the original as LightBurn's copy option, two-point rotate Ctrl+2 / scale), grid and
+  circular arrays (centre pick), copy along path, nest (true shape or Quick Nest boxes, into the stock, the field or the
+  shape selected last; parts that did not fit are reported). Rulers (in the display unit) run along the top and left;
+  drag a guide out of a ruler (back onto it to remove; guides move with the Select tool; double-click one, or Arrange >
+  Add guide, to type its position). Guides are saved in the document (`guide.add` / `guide.move` / `guide.delete`);
+  guides an older version kept in this browser for the project move into the document once. Engines without guide
+  commands keep them per project in this browser as before (`src/guides.ts`). Guides are snap targets. Scaling with
+  the selection handles snaps the dragged handle to other objects and shows the alignment guides (an edge handle only
+  along its axis). The Viewport hands presses to these tools through `src/canvasTool.ts`.
+- **Design tools** (`src/design/`, one hook `useDesignUi` for App.tsx; commands in crates/commands/src/builtin/
+  design.rs, construct.rs, art_library.rs; pure logic in `design/model.ts`, tested in `design/design.test.ts`; HTTP
+  and command builders in `design/designApi.ts`; styles in `design/design.css`):
+  - **Edit** dropdown: Cut, Copy, Paste (centred on the pointer), Paste in place (Alt+V), Use system clipboard (on by
+    default, as in LightBurn; kept in this browser), Select open shapes, Select open shapes set to fill, Select
+    contained shapes (`select.*` queries), Curve tolerance (`doc.set_curve_tolerance`, saved with the project; empty
+    uses the device's).
+  - **Clipboard**: the internal copy is the selection as an Art Library fragment (objects, groups, layer names and
+    colours), so pasting after Cut brings back images, groups, text and parametric shapes; a paste is one batch of
+    `art.insert` per top-level piece (one undo step; layers matched by colour). With the system clipboard on, Copy also
+    writes the selection as SVG in mm (y flipped, layer colours, images embedded) as text and, where the browser
+    allows, `image/svg+xml`, tagged with a marker; Paste reads the page's paste event (no permission prompt, works on
+    a LAN address too): our own copy comes from the internal one, SVG code (Inkscape, Illustrator's "Include SVG
+    Code") is imported, a bitmap is imported as an image, other text becomes a text object, each centred on the
+    pointer. The menu's Paste uses the async Clipboard API when the browser allows it, else the internal copy.
+  - **Tools** dropdown: Warp selection (four corner handles, Perspective or Envelope) and Deform selection (4 x 4
+    handles): drag handles over a live preview (the engine's maps, `model.ts` `warpMapper`), Shift keeps horizontal and
+    Alt vertical symmetry, double-click resets a handle, Enter or Apply sends one `path.warp`, Esc cancels. Generate
+    tangent circle (three circles selected: the candidates in light red, click one or Create all), Rubber-band outline,
+    Convert toolpath to path (the selection or every output shape), Art Library.
+  - **Arrange** additions: Move selected objects (the nine page positions of the workspace or the stock with a margin,
+    `object.move_to_page_position`), Move horizontally / vertically together (fixed spacing, `object.distribute`
+    by spacing). **Grid array** (Arrange and the toolbar): columns, rows, padding between edges or centre to centre,
+    reverse X / Y, alternate row / column shift (mm or half), mirror alternate columns / rows, with a live preview of
+    the copies in the workspace and a warning for cells outside it.
+  - **Shape Properties** (Properties, a lone rectangle, ellipse or polygon): width, height, corner radius; radii;
+    sides / points, radius, star and inner radius, corner radius (`shape.update`, the centre and rotation stay).
+  - **Art Library** dock (Tools > Art Library, the Window menu): libraries the engine keeps in its projects folder
+    (New, Load .oeart, Download, Rename, Delete), thumbnails (searchable), Add selection, Import a file, double-click to
+    add at the field centre or drag onto the canvas (centred on the drop point), right-click to rename, delete, copy or
+    move an item to another library; follows `art_library_changed`. LightBurn's `.lbart` is refused with the reason.
 - **Text and barcodes** (`src/text/`, LightBurn's Text tool, Text Options, Variable Text and Create Bar Code; engine
   commands in ARCHITECTURE.md "Text"). Text tool (T, LightBurn's Ctrl+T where the browser passes it; toolbar): click
   places a text box at the (snapped) point; Enter starts a line, Esc / Ctrl+Enter / a click elsewhere finishes
@@ -284,6 +322,9 @@ src/
   components/EditTools.tsx, EditMenus.tsx, EditDialogs.tsx, Rulers.tsx, edit.css   editing tools, menus, dialogs, rulers
   api/geomCommands.ts geometry command builders (path.*, node.*, shape.polygon/line, arrays, order, lock...) (tested)
   nodes.ts, drawTools.ts, guides.ts   node model, drawing/measure/ruler maths, guides (pure; tested)
+  design/             Shape Properties, warp / deform, tangent circle, rubber band, toolpath to path, selection
+                      queries, page positions, grid array, curve tolerance, Art Library dock, clipboard (useDesignUi.tsx;
+                      model.ts pure and tested; design.css)
   libs/               Library dock, defaults, test generators, approval gates, laser tools, camera, Find My Laser,
                       Help additions (useLibsUi.tsx for App; model.ts and testgen.ts are pure and tested; libs.css)
   text/               Text and Barcode tools, text/barcode properties, Variable Text window, font picker
@@ -320,6 +361,56 @@ src/
   Browser tree by drag and Move up / Move down in the layer menu, each one `layer.move {id, to_index}`; hidden on
   engines without it. After a palette swatch or the Layer field moves the selection, the highlighted layer follows it
   (`pruneSelection`).
+- **Document tabs** (`DocTabs.tsx`, LightBurn's File > New Window on the engine's open documents, `GET/POST
+  /api/documents`): one tab per open document with an unsaved dot; a click activates it (every edit, save, preview and
+  run then goes to it, and the selection is dropped); "+" makes a new document or opens a saved project in a new tab
+  (also File > New tab and the unbound "New document tab" hotkey); × closes a tab and asks first when it has unsaved
+  changes (Discard and close, Show it, Cancel); middle-click closes too. The strip follows `documents_changed`, so a
+  switch made by an agent or another browser shows. Only the active document is autosaved (engine).
+- **Dockable windows** (`layout.ts`, `Dock.tsx`, `DockHost.tsx`, `windows.ts`; LightBurn's docking and Window menu):
+  every tool window (`<Dock id>`: Browser, Laser, Pages, Cuts / Layers, Material Library, Art Library, Variable Text,
+  Docking, Shape Properties, Machine and runs) can be docked left, right or in the bottom strip under the canvas,
+  floated (drag its title, resize from the corner), tabbed with another window, moved up or down and hidden, from the
+  ⋯ button or a right-click on its title. A Dock portals its frame into the slot its area's host renders, so the
+  components that render it are unchanged (without hosts, e.g. in tests, it renders in place). The top-bar Window menu
+  shows or hides each window (windows of the other workspace are marked) and has Reset to default layout. The layout
+  is kept per browser (`openetch.layout`, sanitised on load); an empty side panel is hidden.
+- **Docking tool** (`docking.ts`, `DockingTool.tsx`; LightBurn's Arrange > Dock and Docking toolbar): Dock left /
+  right / up / down slide the selection until its outline touches another visible shape's outline or the workspace
+  edge (rays cast from every vertex both ways, so shapes dock snugly). Shapes inside a container are not stopped by
+  its inner edges; shapes overlapping at the start are no obstacle. Without Move as group each unit docks on its own,
+  nearest the destination first, so a row stacks up; Lock inner objects carries selected inner shapes with their
+  container; Padding keeps a gap in the direction of travel. One batch of `object.transform`, one undo step. In the
+  Docking window, the canvas menu and as unbound hotkeys.
+- **UI scale** (Preferences > Appearance): text size (`--ui-scale`), icon and toolbar size (`--icon-scale`: every
+  `Icon` and the toolbar buttons) and handle and node size (`--handle-scale`: selection and rotation handles, node
+  squares and handles, and how near the pointer must be to pick a node), LightBurn's font, toolbar icon and
+  larger-cursor/node settings.
+- **Languages** (`i18n.ts`, `locales/`): every UI string is a message key; `en-ui.ts` holds the older components'
+  strings (Properties, File menu, Toolbar, Edit tools, top bar, dialogs, Devices, Laser panel...). `locales/es.ts`
+  is a machine-translated Spanish skeleton (marked "traducción automática" in the selector) that proves the
+  framework; untranslated keys fall back to English. Keys built at runtime (shape kinds, Edit tools verbs) go
+  through `useTD()` with the English text as fallback.
+- **Cuts / Layers extras**: Flash layer (right-click menu, or Shift+right-click a row) blinks the layer's shapes on the
+  canvas (`flash.tsx`); T1 / T2 tool layers (`Layer.tool`, `layer.tool`) read "Tool", never output and can be made or
+  cleared from the layer menu, and the palette's T1 / T2 swatches put the selection on the real tool layer; a layer
+  with LightBurn settings OpenEtch will not execute shows a "!" badge listing them (`GET /api/layers/unsupported`,
+  asked only for documents with `lbrn2.*` layer settings); a layer with sub-layers shows a tab per pass above the
+  quick-edit fields (speed, power, passes, frequency, Q-Pulse, interval of that pass; drag a sub-layer tab to change
+  the order, `layer.sub_move`).
+- **Hotkeys (LightBurn 2.0 cheat sheet)**: besides the earlier defaults, Ctrl+P / Ctrl+Shift+P print (black only /
+  keep colours), Ctrl+Shift+B convert to bitmap, Ctrl+K trim, Alt+M measure, Ctrl+Shift+M mirror across line,
+  Alt+Shift+C cut shapes (Alt+C too), Alt+Home align centres, Alt+Shift+H / V move together, Alt+S request run,
+  Pause pause/resume, Alt+L position laser (the next canvas click points the red dot there), Ctrl+Shift+R rotary
+  setup, Alt+0 Print and Cut. Not mapped because the browser keeps them or a galvo has no such thing: Ctrl+Tab (add
+  tabs), Ctrl+Q (exit), F12 (toggle side panels: bindable, unbound), Alt+Shift+L (save G-code), the jog keys, Ctrl+H
+  (home), Alt+Shift+S (send to laser), Ctrl+Shift+F (feeder) and Alt+1..4 (Print and Cut steps inside its dialog).
+- **Also**: Calibrate Galvo Lens takes the two optional corner shifts (I: top-left in X, J: bottom-right in Y, against
+  a straight edge) that separate the X and Y skew (`top_shift_mm`, `right_shift_mm`); Device Settings has Field width
+  and Field height (empty = square) and the canvas draws a non-square galvo field from the device's workspace; Import
+  options has "Allow importing to tool layers" (`tool_layers=true` on `/api/document/import`; off, imports never land
+  on T1 / T2); the camera overlay is drawn under the design (`CanvasTool.underlay`); Enter in a dialog field commits
+  the field before the dialog submits (Modal blurs, then submits on the next tick).
 - **Display units everywhere**: besides fields, the rulers, canvas readouts (cursor, field size, drag/size, node and
   Measure readouts), cut-settings summaries, Laser stats, hints and dialog messages use the length and speed units;
   dialogs share `UnitTextField` (ui.tsx).

@@ -195,7 +195,7 @@ pub(super) fn json_merge_patch(target: &mut Value, patch: &Value) {
 }
 
 /// Distinguishes an absent field (`None`) from an explicit `null` (`Some(None)`).
-fn double_option<'de, D: Deserializer<'de>, T: Deserialize<'de>>(d: D) -> Result<Option<Option<T>>, D::Error> {
+pub(super) fn double_option<'de, D: Deserializer<'de>, T: Deserialize<'de>>(d: D) -> Result<Option<Option<T>>, D::Error> {
     Option::<T>::deserialize(d).map(Some)
 }
 

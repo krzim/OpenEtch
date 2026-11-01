@@ -171,9 +171,10 @@ async function printSvg(blob: Blob, title: string): Promise<void> {
   window.setTimeout(() => frame.remove(), 60_000);
 }
 
-export function PrintDialog(p: Common) {
+export function PrintDialog(p: Common & { colors?: PrintOptions["colors"] }) {
   const t = useT();
-  const [colors, setColors] = useState<PrintOptions["colors"]>("black");
+  // LightBurn: Print (black only, Ctrl+P) and Print (keep colours, Ctrl+Shift+P) open with that choice.
+  const [colors, setColors] = useState<PrintOptions["colors"]>(p.colors ?? "black");
   const [width, setWidth] = useBox(DEFAULT_PRINT.lineWidthMm);
   const [paper, setPaper] = useState("actual");
   const [margin, setMargin] = useBox(DEFAULT_PRINT.marginMm);

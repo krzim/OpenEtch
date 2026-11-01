@@ -97,6 +97,7 @@ import { TOOLPATH_INK, canvasColor, type Theme } from "../workspace/theme.ts";
 import { usePrefs, useResolvedTheme } from "../workspace/usePrefs.ts";
 import { fixedLength, fixedNumber, formatLength, lengthDigits, lengthToDisplay, trimNumber } from "../workspace/units.ts";
 import { onViewCommand, publishViewStatus } from "../workspace/viewStatus.ts";
+import { useT } from "../workspace/usePrefs.ts";
 
 export type Tool = "select" | "rect" | "ellipse" | "circle" | CanvasToolId;
 
@@ -144,7 +145,8 @@ type Gesture =
       /** Selection to narrow to when this turns out to be a click without a drag. */
       tapSelect: string | null;
     }
-  | { kind: "scale"; handle: Handle; box: Box; ids: string[]; start: Vec2; round: boolean }
+  /** `index`: snap candidates without the selection; `target`: the dragged handle's snapped position (smart guides). */
+  | { kind: "scale"; handle: Handle; box: Box; ids: string[]; start: Vec2; round: boolean; index: SnapIndex; target: Vec2 | null }
   | { kind: "rotate"; center: Vec2; start: Vec2; ids: string[] }
   | { kind: "draw"; start: Vec2; tool: DrawTool; index: SnapIndex }
   | { kind: "pinch"; dist: number; mid: Vec2; view: View }
@@ -205,6 +207,7 @@ export function Viewport(props: ViewportProps) {
   const galvo = Math.abs(wsW - wsH) < 1e-3;
   // Display preferences (workspace/prefs.ts): grid, wheel direction, snap distance and kinds, crosshair; and the theme.
   const uiPrefs = usePrefs();
+  const t = useT();
   /** Display length unit for readouts (fields convert on their own). */
   const lu = uiPrefs.units;
   const theme = useResolvedTheme();
@@ -518,7 +521,7 @@ export function Viewport(props: ViewportProps) {
       } else {
         const lone = selection.objects.length === 1 ? doc.objects.find((o) => o.id === selection.objects[0]) : undefined;
         const round = !!lone && isRound(lone) && circleLocked();
-        gesture.current = { kind: "scale", handle: h as Handle, box: selBoundsRaw, ids: selection.objects, start: f, round };
+        gesture.current = { kind: "scale", handle: h as Handle, box: selBoundsRaw, ids: selection.objects, start: f, round, index: snapIndexFor(new Set(selection.objects), true), target: null };
       }
       return;
     }
@@ -628,7 +631,26 @@ export function Viewport(props: ViewportProps) {
         break;
       }
       case "scale": {
-        const sc0 = scaleFromHandle(g.box, g.handle, handleTarget(g, f), m);
+        // Smart guides while scaling: the dragged handle snaps to other objects' points and shows the alignment
+        // guides (Ctrl only moves the pivot to the centre here, so it does not turn snapping off).
+        const raw = handleTarget(g, f);
+        const opts = snapOpts({ ...m, ctrl: false });
+        let hit: SnapHit | null;
+        if (g.handle.length === 1) {
+          // An edge handle moves along one axis: only an alignment guide on that axis applies.
+          const ax = g.handle === "e" || g.handle === "w" ? "x" : "y";
+          const k = ax === "x" ? 0 : 1;
+          const any = findSnap(g.index, raw, { ...opts, points: false, nearest: false, grid: 0 });
+          const gs = (any?.guides ?? []).filter((q) => q.axis === ax);
+          const at = (v: number): Vec2 => (k === 0 ? [v, raw[1]] : [raw[0], v]);
+          // "Aligned · A / B" names both axes' sources; keep the one on this axis.
+          const both = any?.label.startsWith("Aligned · ") ? any.label.slice("Aligned · ".length).split(" / ") : null;
+          const label = both ? `${ax === "x" ? "Vertical" : "Horizontal"} · ${both[k] ?? both[0]}` : (any?.label ?? "");
+          hit = any && gs.length ? { ...any, label, p: at(gs[0].to[k]), guides: gs.map((q) => ({ ...q, to: at(q.to[k]) })) } : null;
+        } else hit = findSnap(g.index, raw, opts);
+        g.target = hit ? hit.p : raw;
+        setSnapShown(hit);
+        const sc0 = scaleFromHandle(g.box, g.handle, g.target, m);
         const sc = g.round ? keepRound(sc0, g.handle) : sc0;
         setTransient({ m: scaleAbout(sc.sx, sc.sy, sc.about), stock: false });
         const w = (g.box.x1 - g.box.x0) * Math.abs(sc.sx);
@@ -755,7 +777,7 @@ export function Viewport(props: ViewportProps) {
       }
       case "scale": {
         if (!t) break;
-        const sc0 = scaleFromHandle(g.box, g.handle, handleTarget(g, f), modsOf(e));
+        const sc0 = scaleFromHandle(g.box, g.handle, g.target ?? handleTarget(g, f), modsOf(e));
         const sc = g.round ? keepRound(sc0, g.handle) : sc0;
         if (Math.abs(sc.sx - 1) < 1e-6 && Math.abs(sc.sy - 1) < 1e-6) break;
         const about: Vec2 = [roundMm(sc.about[0]), roundMm(sc.about[1])];
@@ -788,7 +810,7 @@ export function Viewport(props: ViewportProps) {
     if (!doc) return;
     const layer = props.activeLayer ?? doc.layers[0]?.id;
     if (!layer) {
-      props.notify("No layer to draw on.", "error");
+      props.notify(t("vp.noLayerToDrawOn"), "error");
       return;
     }
     let inv: Invocation;
@@ -859,6 +881,8 @@ export function Viewport(props: ViewportProps) {
 
   // --- rendering -------------------------------------------------------------------------------------------------
   const px = (n: number) => n / view.scale;
+  // Selection and rotation handles follow Preferences > Handle and node size.
+  const hpx = (n: number) => (n * uiPrefs.handleScale) / view.scale;
   const renderCtx: RenderCtx = {
     scale: view.scale,
     size,
@@ -1031,7 +1055,10 @@ export function Viewport(props: ViewportProps) {
         <DitheredSource key={o.id} id={o.id} g={o.geometry as ImageGeom} layer={layerById.get(o.layer)} onHref={onDithered} />
       ))}
       <svg className="vp-layer vp-back" width={size[0]} height={size[1]} aria-hidden="true">
-        <g transform={matrix}>{back}</g>
+        <g transform={matrix}>
+          {back}
+          {props.canvasTool?.underlay?.(renderCtx)}
+        </g>
       </svg>
       {paintImageLayer && <CanvasLayer className="vp-images" view={view} size={size} dpr={dpr} paint={paintImageLayer} />}
       <svg className="vp-layer vp-objects" width={size[0]} height={size[1]} aria-hidden="true">
@@ -1098,13 +1125,13 @@ export function Viewport(props: ViewportProps) {
               {!live &&
                 (["rot-nw", "rot-ne", "rot-se", "rot-sw"] as const).map((h) => {
                   const p = handlePoint(pad(selBounds, px(6)), h.slice(4) as Handle);
-                  const o = px(14);
+                  const o = hpx(14);
                   const cx = p[0] + (h.endsWith("e") ? o : -o);
                   const cy = p[1] + (h.includes("n") ? o : -o);
                   return (
                     <g key={h} data-handle={h} className="rot-handle">
-                      <circle cx={cx} cy={cy} r={px(9)} className="handle-hit" />
-                      <circle cx={cx} cy={cy} r={px(4.5)} strokeWidth={px(1.2)} />
+                      <circle cx={cx} cy={cy} r={hpx(9)} className="handle-hit" />
+                      <circle cx={cx} cy={cy} r={hpx(4.5)} strokeWidth={px(1.2)} />
                     </g>
                   );
                 })}
@@ -1113,8 +1140,8 @@ export function Viewport(props: ViewportProps) {
                   const [x, y] = handlePoint(pad(selBounds, px(6)), h);
                   return (
                     <g key={h} data-handle={h} className={`scale-handle h-${h}`}>
-                      <rect x={x - px(8)} y={y - px(8)} width={px(16)} height={px(16)} className="handle-hit" />
-                      <rect x={x - px(4)} y={y - px(4)} width={px(8)} height={px(8)} strokeWidth={px(1)} className="handle" />
+                      <rect x={x - hpx(8)} y={y - hpx(8)} width={hpx(16)} height={hpx(16)} className="handle-hit" />
+                      <rect x={x - hpx(4)} y={y - hpx(4)} width={hpx(8)} height={hpx(8)} strokeWidth={px(1)} className="handle" />
                     </g>
                   );
                 })}
@@ -1167,13 +1194,13 @@ export function Viewport(props: ViewportProps) {
       </svg>
 
       <div className="vp-overlay vp-top-right">
-        <button className="icon-btn" title="Fit field" aria-label="Fit field" onClick={fitField}>
+        <button className="icon-btn" title={t("vp.fitField")} aria-label={t("vp.fitField")} onClick={fitField}>
           <Icon name="fit" />
         </button>
         <button
           className="icon-btn"
-          title="Zoom to selection"
-          aria-label="Zoom to selection"
+          title={t("vp.zoomToSelection")}
+          aria-label={t("vp.zoomToSelection")}
           disabled={!selBounds && !stockBox}
           onClick={() => {
             const b = selBounds ?? stockBox;

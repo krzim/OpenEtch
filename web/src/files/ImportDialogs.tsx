@@ -43,6 +43,7 @@ export function ImportPrefsFields() {
       <CheckField label={t("files.prefSelect")} checked={p.select} onChange={set("select")} />
       <CheckField label={t("files.prefCenter")} checked={p.center} onChange={set("center")} />
       <CheckField label={t("files.prefHidden")} checked={p.hiddenLayers} onChange={set("hiddenLayers")} />
+      <CheckField label={t("files.prefToolLayers")} checked={p.toolLayers} onChange={set("toolLayers")} />
     </>
   );
 }

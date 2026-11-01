@@ -4,6 +4,7 @@
 // Preferences lists whatever is registered.
 
 import { EN, type MsgKey } from "./locales/en.ts";
+import { ES } from "./locales/es.ts";
 
 export type { MsgKey };
 export type Messages = Partial<Record<MsgKey, string>>;
@@ -17,6 +18,8 @@ interface Locale {
 
 const LOCALES: Record<string, Locale> = {
   en: { name: "English", messages: EN },
+  // A machine-translated skeleton (locales/es.ts) that proves the framework; other messages fall back to English.
+  es: { name: "Español (traducción automática)", messages: ES },
 };
 
 /** Add (or replace) a language at runtime. */

@@ -84,6 +84,32 @@ export function PreferencesDialog(p: { onClose: () => void; onHotkeys: () => voi
             />
             <span className="pref-value">{Math.round(prefs.uiScale * 100)}%</span>
           </label>
+          <label className="pref-row">
+            <span className="pref-label">{t("prefs.iconScale")}</span>
+            <input
+              type="range"
+              min={0.75}
+              max={2}
+              step={0.05}
+              value={prefs.iconScale}
+              onChange={(e) => updatePrefs({ iconScale: Number(e.target.value) })}
+              aria-valuetext={`${Math.round(prefs.iconScale * 100)}%`}
+            />
+            <span className="pref-value">{Math.round(prefs.iconScale * 100)}%</span>
+          </label>
+          <label className="pref-row">
+            <span className="pref-label">{t("prefs.handleScale")}</span>
+            <input
+              type="range"
+              min={0.75}
+              max={3}
+              step={0.05}
+              value={prefs.handleScale}
+              onChange={(e) => updatePrefs({ handleScale: Number(e.target.value) })}
+              aria-valuetext={`${Math.round(prefs.handleScale * 100)}%`}
+            />
+            <span className="pref-value">{Math.round(prefs.handleScale * 100)}%</span>
+          </label>
           {check(t("prefs.crosshair"), prefs.crosshair, (crosshair) => updatePrefs({ crosshair }))}
         </section>
 

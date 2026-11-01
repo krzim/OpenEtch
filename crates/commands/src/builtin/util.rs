@@ -121,9 +121,17 @@ pub fn layer<'a>(doc: &'a Document, id: &str) -> Result<&'a Layer> {
     doc.layer(id).ok_or_else(|| not_found("layer", id, doc.layers.iter().map(|l| (l.id.as_str(), l.name.as_str()))))
 }
 
-/// Resolve an optional layer reference; `None` means the first layer.
+/// Resolve an optional layer reference; `None` means the first layer. `"T1"` / `"T2"`, when no layer has that id,
+/// name the document's tool layer of that name (imports onto tool layers, LightBurn's "Allow Importing to Tool
+/// Layers").
 pub fn layer_or_default(doc: &Document, id: Option<&str>) -> Result<String> {
     match id {
+        Some(id) if doc.layer(id).is_none() && matches!(id, "T1" | "T2") => {
+            let t = if id == "T1" { doc::ToolLayer::T1 } else { doc::ToolLayer::T2 };
+            doc.layers.iter().find(|l| l.tool == Some(t)).map(|l| l.id.clone()).ok_or_else(|| {
+                CommandError::Failed(format!("the document has no tool layer {id}; add it with layer.tool first"))
+            })
+        }
         Some(id) => Ok(layer(doc, id)?.id.clone()),
         None => doc
             .layers

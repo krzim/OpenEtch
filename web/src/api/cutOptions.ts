@@ -6,6 +6,7 @@
 
 import type { Invocation } from "./client.ts";
 import type { CutSettings, GDocument, Layer } from "./types.ts";
+import { tr } from "../workspace/tr.ts";
 
 export const CUT_CMD = {
   setOptimization: "job.set_optimization",
@@ -358,7 +359,7 @@ export function rotaryProblems(r: Rotary): Partial<Record<keyof Rotary | "taper.
   pos("object_diameter_mm", r.object_diameter_mm);
   if (r.kind === "roller") pos("roller_diameter_mm", r.roller_diameter_mm);
   pos("split_width_mm", r.split_width_mm);
-  if (!out.split_width_mm && r.split_width_mm > r.object_diameter_mm) out.split_width_mm = "Not more than the object diameter";
+  if (!out.split_width_mm && r.split_width_mm > r.object_diameter_mm) out.split_width_mm = tr("apic.notMoreThanTheObjectDiameter");
   if (r.taper) {
     pos("taper.end_diameter_mm", r.taper.end_diameter_mm);
     pos("taper.length_mm", r.taper.length_mm);

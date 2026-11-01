@@ -49,7 +49,12 @@ test("project names follow the engine's rule", () => {
   }
   assert.match(P.validateProjectName("") ?? "", /Enter/);
   assert.match(P.validateProjectName("x".repeat(101)) ?? "", /100/);
-  for (const bad of ["a/b", "a\\b", "c:x", "tag*", "new\nline"]) assert.match(P.validateProjectName(bad) ?? "", /letters/, bad);
+  for (const bad of ["a\\b", "c:x", "tag*", "new\nline"]) assert.match(P.validateProjectName(bad) ?? "", /letters/, bad);
+  // Folders, like the engine: up to four, each following the name rule, never OpenEtch's own top folders.
+  for (const ok of ["Clients/Acme/badge", "a/b/c/d/name"]) assert.equal(P.validateProjectName(ok), null, ok);
+  assert.match(P.validateProjectName("a/b/c/d/e/name") ?? "", /4 folders/);
+  for (const bad of ["a//b", "/a", "a/", "a/.b", "a /b"]) assert.notEqual(P.validateProjectName(bad), null, bad);
+  assert.match(P.validateProjectName("Templates/x") ?? "", /own files/);
   assert.match(P.validateProjectName(".hidden") ?? "", /dot/);
   assert.match(P.validateProjectName("a..b") ?? "", /\.\./);
 });

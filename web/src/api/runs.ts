@@ -5,6 +5,7 @@
 import type { MachineStatus, PendingRun, RunFinishedEvent, RunStats } from "./types.ts";
 import type { LengthUnit } from "../workspace/prefs.ts";
 import { MM_PER_IN } from "../workspace/units.ts";
+import { tr } from "../workspace/tr.ts";
 
 /** States of a run that has been approved but not yet ended. */
 export const ACTIVE_STATES: readonly string[] = ["approved", "awaiting_confirm", "running"];
@@ -104,7 +105,7 @@ export function approveBlocker(run: PendingRun, m: MachineStatus | null, ctx: Bl
   return approvalNotice(m, ctx.nowUnixS ?? Date.now() / 1000);
 }
 
-const STALE_TEXT = "Document changed - request a new run.";
+const STALE_TEXT = tr("apir.documentChangedRequestANewRun");
 
 /** The operator PIN is 6-12 digits (`openetch set-pin`). */
 export function validPin(pin: string): boolean {
@@ -113,16 +114,16 @@ export function validPin(pin: string): boolean {
 
 /** Hint under a PIN being typed: null when it is empty or long enough. */
 export function pinHint(pin: string): string | null {
-  return pin.length > 0 && pin.length < 6 ? "At least 6 digits." : null;
+  return pin.length > 0 && pin.length < 6 ? tr("apir.atLeast6Digits") : null;
 }
 
 /** User-facing text for the approval error codes (HTTP 403 `{ok:false, error, code}`). */
 export const APPROVAL_CODE_TEXT: Readonly<Record<string, string>> = {
-  pin_not_set: "No operator PIN is set. Run 'openetch set-pin' on the engine machine once.",
+  pin_not_set: tr("apir.noOperatorPinIsSetRun"),
   pin_invalid: "Wrong PIN.",
-  pin_required: "Enter the operator PIN.",
-  pin_locked: "Too many wrong PINs. Approvals are locked for a while.",
-  pin_changed: "PIN file changed - restart the engine.",
+  pin_required: tr("apir.enterTheOperatorPin"),
+  pin_locked: tr("apir.tooManyWrongPinsApprovalsAre"),
+  pin_changed: tr("apir.pinFileChangedRestartTheEngine"),
 };
 
 /** Message for a failed approval: the code's text when known, else the engine's own message. */
@@ -135,11 +136,11 @@ export function stateLabel(state: string | undefined): string {
   switch (state) {
     case undefined:
     case "pending":
-      return "Waiting for approval";
+      return tr("apir.waitingForApproval");
     case "approved":
-      return "Approved, starting";
+      return tr("apir.approvedStarting");
     case "awaiting_confirm":
-      return "Waiting for the foot pedal";
+      return tr("apir.waitingForTheFootPedal");
     case "running":
       return "Running";
     case "finished":
@@ -180,7 +181,7 @@ const num = (v: unknown): v is number => typeof v === "number" && Number.isFinit
 export function runStatRows(run: PendingRun, lu: LengthUnit = "mm"): [string, string][] {
   const s: RunStats = run.stats && typeof run.stats === "object" ? run.stats : {};
   const rows: [string, string][] = [];
-  if (num(s.estimated_time_s)) rows.push(["Est. time", formatDuration(s.estimated_time_s)]);
+  if (num(s.estimated_time_s)) rows.push([tr("apir.estTime"), formatDuration(s.estimated_time_s)]);
   if (num(s.mark_length_mm)) rows.push(["Mark", len(s.mark_length_mm, lu)]);
   if (num(s.jump_length_mm)) rows.push(["Jump", len(s.jump_length_mm, lu)]);
   if (num(s.segment_count)) rows.push(["Segments", String(s.segment_count)]);

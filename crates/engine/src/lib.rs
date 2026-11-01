@@ -36,6 +36,7 @@ pub mod state;
 // Libraries, preferences, job log, diagnostics, camera, updates (see `libs`).
 mod api_libs;
 pub mod camera;
+pub mod markers;
 mod camera_capture;
 pub mod diagnostics;
 pub mod joblog;
@@ -47,6 +48,10 @@ pub mod userfiles;
 // Several open documents (File > New Window) and the Art Library.
 pub mod artlib;
 pub mod documents;
+// Project folders and locations.
+pub mod folders;
+// Material test presets (and LightBurn .lbmt).
+pub mod test_presets;
 
 pub use error::EngineError;
 pub use events::Event;
@@ -62,3 +67,5 @@ mod libs_tests;
 mod userfiles_tests;
 #[cfg(test)]
 mod app_tests;
+#[cfg(test)]
+mod final_tests;

@@ -7,6 +7,7 @@ import type { LinkState } from "../api/useEngine.ts";
 import type { MachineStatus } from "../api/types.ts";
 import { ProjectIndicator } from "./FileMenu.tsx";
 import { Icon } from "./ui.tsx";
+import { useT } from "../workspace/usePrefs.ts";
 
 export type Workspace = "design" | "laser";
 
@@ -33,13 +34,14 @@ export interface TopBarProps {
 }
 
 export function TopBar(p: TopBarProps) {
+  const t = useT();
   const engineOk = p.link === "open" && !p.httpError;
-  const linkText = p.link === "open" ? (p.httpError ? "Engine error" : "Live") : p.link === "connecting" ? "Connecting…" : "Offline";
-  const machineText = !p.machine ? "" : p.machine.connected ? (p.machine.sim ? "Simulator" : "Laser connected") : "No laser";
+  const linkText = p.link === "open" ? (p.httpError ? t("top.engineError") : t("top.live")) : p.link === "connecting" ? t("top.connecting") : t("top.offline");
+  const machineText = !p.machine ? "" : p.machine.connected ? (p.machine.sim ? t("top.simulator") : t("top.laserConnected")) : t("top.noLaser");
   const title = [
-    `Events: ${p.link}`,
-    p.httpError ? `Last error: ${p.httpError}` : "",
-    p.missingCommands.length ? `Engine is missing commands: ${p.missingCommands.join(", ")}` : "",
+    t("top.events", { state: p.link }),
+    p.httpError ? t("top.lastError", { error: p.httpError }) : "",
+    p.missingCommands.length ? t("top.missing", { list: p.missingCommands.join(", ") }) : "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -51,20 +53,20 @@ export function TopBar(p: TopBarProps) {
         <span className="brand-name">OpenEtch</span>
         <ProjectIndicator name={p.projectName} docName={p.docName} dirty={p.dirty} />
       </div>
-      <nav className="workspaces" role="tablist" aria-label="Workspace">
+      <nav className="workspaces" role="tablist" aria-label={t("top.workspace")}>
         {(["design", "laser"] as const).map((w) => (
           <button key={w} role="tab" aria-selected={p.workspace === w} className={p.workspace === w ? "active" : ""} onClick={() => p.onWorkspace(w)}>
-            {w === "design" ? "Design" : "Laser"}
+            {w === "design" ? t("top.design") : t("top.laser")}
             {w === "laser" && p.pendingRuns > 0 && <span className="pill">{p.pendingRuns}</span>}
           </button>
         ))}
       </nav>
       <div className="topbar-actions">
         {p.extra}
-        <button className="icon-btn" title="Undo (Ctrl+Z)" aria-label="Undo" onClick={p.onUndo}>
+        <button className="icon-btn" title={t("top.undoTitle")} aria-label={t("top.undo")} onClick={p.onUndo}>
           <Icon name="undo" />
         </button>
-        <button className="icon-btn" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" onClick={p.onRedo}>
+        <button className="icon-btn" title={t("top.redoTitle")} aria-label={t("top.redo")} onClick={p.onRedo}>
           <Icon name="redo" />
         </button>
         <div className={`conn ${engineOk ? "ok" : p.link === "connecting" ? "wait" : "bad"}`} title={title}>
@@ -73,10 +75,10 @@ export function TopBar(p: TopBarProps) {
             {linkText}
             {machineText && ` · ${machineText}`}
           </span>
-          {p.missingCommands.length > 0 && <span className="warn-chip">{p.missingCommands.length} cmd missing</span>}
+          {p.missingCommands.length > 0 && <span className="warn-chip">{t("top.cmdMissing", { n: p.missingCommands.length })}</span>}
         </div>
-        <button className="btn btn-stop" onClick={p.onStop} title="Emergency stop: abort any run or frame and cancel pending runs. Always allowed.">
-          <Icon name="stop" /> STOP
+        <button className="btn btn-stop" onClick={p.onStop} title={t("top.stopTitle")}>
+          <Icon name="stop" /> {t("top.stop")}
         </button>
       </div>
     </header>

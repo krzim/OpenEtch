@@ -50,11 +50,13 @@ export const ACTIONS: HotkeyAction[] = [
   // Files and image tools (src/files/useFilesUi.tsx): LightBurn's Export (Alt+X), Notes (Ctrl+Alt+N), Trace Image
   // (Alt+T); Adjust Image gets Alt+I here.
   ws("file.export", "file", "Export", ["Alt+X"]),
-  ws("file.print", "file", "Print", []),
+  // LightBurn 2.0: Print (black only) Ctrl+P, Print (keep colours) Ctrl+Shift+P.
+  ws("file.print", "file", "Print", ["Ctrl+P"]),
+  ws("file.printColors", "file", "Print (keep colours)", ["Ctrl+Shift+P"]),
   ws("window.notes", "view", "Notes window", ["Ctrl+Alt+N"]),
   ws("image.trace", "tools", "Trace image", ["Alt+T"]),
   ws("image.adjust", "tools", "Adjust image", ["Alt+I"]),
-  ws("image.toBitmap", "tools", "Convert to bitmap", []),
+  ws("image.toBitmap", "tools", "Convert to bitmap", ["Ctrl+Shift+B"]),
 
   app("edit.undo", "edit", "Undo", ["Ctrl+Z"]),
   app("edit.redo", "edit", "Redo", ["Ctrl+Shift+Z", "Ctrl+Y"]),
@@ -84,7 +86,11 @@ export const ACTIONS: HotkeyAction[] = [
   app("tool.union", "tools", "Boolean union", ["Alt+Shift++", "Alt++"]),
   app("tool.subtract", "tools", "Boolean subtract", ["Alt+-"]),
   app("tool.intersect", "tools", "Boolean intersection", ["Alt+Shift+*", "Alt+*"]),
-  app("tool.cutShapes", "tools", "Cut shapes", ["Alt+C"]),
+  // LightBurn 2.0 moved Cut Shapes to Alt+Shift+C (Alt+C captures the camera image there); both work here.
+  app("tool.cutShapes", "tools", "Cut shapes", ["Alt+C"], ["Alt+Shift+C"]),
+  ws("tool.trim", "tools", "Trim shapes", ["Ctrl+K"]),
+  ws("tool.measure", "tools", "Measure", ["Alt+M"]),
+  ws("tool.mirrorLine", "tools", "Mirror across line", ["Ctrl+Shift+M"]),
   app("tool.offset", "tools", "Offset shapes", ["Alt+O"]),
   app("tool.breakApart", "tools", "Break apart", ["Alt+B"]),
   app("tool.autoJoin", "tools", "Auto-join", ["Alt+J"]),
@@ -103,6 +109,13 @@ export const ACTIONS: HotkeyAction[] = [
   app("arrange.alignHCenter", "arrange", "Align centres horizontally", ["Alt+PgUp"]),
   app("arrange.alignVCenter", "arrange", "Align centres vertically", ["Alt+PgDn"]),
   app("arrange.centerField", "arrange", "Move selection to field centre", ["P"]),
+  ws("arrange.alignCenters", "arrange", "Align centres", ["Alt+Home"]),
+  ws("arrange.moveHTogether", "arrange", "Move horizontally together", ["Alt+Shift+H"]),
+  ws("arrange.moveVTogether", "arrange", "Move vertically together", ["Alt+Shift+V"]),
+  ws("arrange.dockLeft", "arrange", "Dock left", []),
+  ws("arrange.dockRight", "arrange", "Dock right", []),
+  ws("arrange.dockUp", "arrange", "Dock up", []),
+  ws("arrange.dockDown", "arrange", "Dock down", []),
   app("arrange.forward", "arrange", "Push forward in draw order", ["PgUp"]),
   app("arrange.backward", "arrange", "Push backward in draw order", ["PgDn"]),
   app("arrange.front", "arrange", "Bring to front", ["Ctrl+PgUp"]),
@@ -129,8 +142,11 @@ export const ACTIONS: HotkeyAction[] = [
   ws("laser.frameSquare", "laser", "Frame (bounding box)", ["Alt+R"]),
   ws("laser.frameOutline", "laser", "Frame outline (rubber band)", ["Alt+Shift+R"]),
   ws("laser.frameStop", "laser", "Stop framing", []),
-  ws("laser.requestRun", "laser", "Request run", []),
-  ws("laser.pauseResume", "laser", "Pause / resume the job", []),
+  // LightBurn's Start (Alt+S) here requests a run: it still needs the PIN approval.
+  ws("laser.requestRun", "laser", "Request run", ["Alt+S"]),
+  ws("laser.pauseResume", "laser", "Pause / resume the job", ["Pause"]),
+  ws("laser.position", "laser", "Position laser (point the red dot at a click)", ["Alt+L"]),
+  ws("laser.rotary", "laser", "Rotary setup", ["Ctrl+Shift+R"]),
   ws("laser.stop", "laser", "Stop", ["Ctrl+Pause", "Ctrl+Cancel"]),
   // Library, test generators and laser tools (src/libs/useLibsUi.tsx); LightBurn gives these no default keys.
   ws("window.library", "view", "Material Library", []),
@@ -138,9 +154,20 @@ export const ACTIONS: HotkeyAction[] = [
   ws("laser.intervalTest", "laser", "Interval test", []),
   ws("laser.focusTest", "laser", "Focus test", []),
   ws("tool.startPoint", "tools", "Set start point", []),
-  ws("laser.printCut", "laser", "Print and Cut", []),
+  ws("laser.printCut", "laser", "Print and Cut", ["Alt+0"]),
   ws("window.camera", "view", "Camera", []),
   ws("laser.jobLog", "laser", "Job log", []),
+  // Design tools (src/design/useDesignUi.tsx); LightBurn gives these no default keys.
+  ws("tools.warp", "tools", "Warp selection", []),
+  ws("tools.deform", "tools", "Deform selection", []),
+  ws("tools.tangentCircle", "tools", "Generate tangent circle", []),
+  ws("edit.selectOpen", "edit", "Select open shapes", []),
+  ws("arrange.movePosition", "arrange", "Move selected objects (page positions)", []),
+  ws("window.artLibrary", "view", "Art Library", []),
+
+  // F12 (LightBurn's Toggle Side Panels) belongs to the browser's developer tools; bind another key to use it.
+  ws("window.sidePanels", "view", "Toggle side panels", []),
+  ws("window.newTab", "file", "New document tab", []),
 
   ws("help.hotkeys", "help", "Keyboard shortcuts", ["F1", "Shift+?"]),
 ];

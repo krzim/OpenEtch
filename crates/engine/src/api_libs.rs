@@ -38,6 +38,8 @@
 //! | POST | `/api/camera/detect` | `{cols, rows}`: checkerboard corners in the frame |
 //! | POST | `/api/camera/lens` | `{width, height, views: [{cols, rows, corners}]}`: lens calibration (UI only) |
 //! | POST | `/api/camera/align` | `{image: [[u, v]...], field: [[x, y]...]}`: field alignment (UI only) |
+//! | POST | `/api/camera/markers` | the camera markers (`generate.camera_markers`) found in the frame: `{markers: [{id, corners, center, inverted, errors}]}` |
+//! | POST | `/api/camera/align_markers` | `{origin?}` (UI only): align with the markers found in the frame, each matched by id to the document's marker object (its centre is the field position); at least four → `{ok, alignment, used: [id], missing: [id], unknown: [id]}` |
 //! | DELETE | `/api/camera/calibration` | forget the active device's camera calibration (UI only) |
 
 use std::sync::Arc;
@@ -101,6 +103,8 @@ pub(crate) fn routes() -> Router<Arc<AppState>> {
         .route("/camera/detect", post(camera_detect))
         .route("/camera/lens", post(camera_lens))
         .route("/camera/align", post(camera_align))
+        .route("/camera/markers", post(camera_markers))
+        .route("/camera/align_markers", post(camera_align_markers))
         .route("/camera/calibration", axum::routing::delete(camera_forget))
 }
 
@@ -885,6 +889,62 @@ async fn camera_align(State(st): State<Arc<AppState>>, headers: HeaderMap, b: By
     cal.alignment = Some(a.clone());
     c.save()?;
     Ok(Json(json!({ "ok": true, "alignment": a })))
+}
+
+/// The markers in the latest frame.
+async fn find_markers(st: &AppState) -> Result<Vec<crate::markers::Marker>, EngineError> {
+    let f = lock(&st.libs.camera).frame.clone().ok_or_else(|| EngineError::NotFound("no camera frame yet".into()))?;
+    Ok(tokio::task::spawn_blocking(move || {
+        let g = camera::Gray::from_luma8(&image::DynamicImage::ImageRgb8(f).to_luma8());
+        crate::markers::detect_markers(&g)
+    })
+    .await?)
+}
+
+async fn camera_markers(State(st): State<Arc<AppState>>) -> Result<Json<Value>, EngineError> {
+    let markers = find_markers(&st).await?;
+    Ok(Json(json!({ "markers": markers })))
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct AlignMarkersBody {
+    #[serde(default)]
+    origin: Option<Value>,
+}
+
+async fn camera_align_markers(State(st): State<Arc<AppState>>, headers: HeaderMap, b: Bytes) -> Result<Json<Value>, EngineError> {
+    let b: AlignMarkersBody = if b.iter().all(u8::is_ascii_whitespace) { AlignMarkersBody::default() } else { body(&b)? };
+    ui_only(&headers, b.origin.as_ref(), "the camera can be aligned")?;
+    let found = find_markers(&st).await?;
+    let placed = commands::camera_markers::document_markers(&st.document());
+    let (mut image, mut field, mut used, mut unknown) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    for m in &found {
+        match placed.iter().find(|(id, _)| *id == m.id) {
+            Some((_, f)) => {
+                image.push(m.center);
+                field.push(*f);
+                used.push(m.id);
+            }
+            None => unknown.push(m.id),
+        }
+    }
+    let missing: Vec<usize> = placed.iter().map(|(id, _)| *id).filter(|id| !used.contains(id)).collect();
+    if image.len() < 4 {
+        return Err(EngineError::Conflict(format!(
+            "{} of the document's camera markers were found in the frame (ids {used:?}; missing {missing:?}); at least four are needed",
+            image.len()
+        )));
+    }
+    let device = st.active_device().id;
+    let mut c = lock(&st.libs.camera);
+    let (fw, fh) = c.frame.as_ref().map_or((0, 0), |f| (f.width(), f.height()));
+    let cal = c.calibrations.entry(device).or_default();
+    let lens = cal.lens.unwrap_or(camera::Lens::identity(fw, fh));
+    let a = camera::align(&lens, &image, &field).map_err(EngineError::BadRequest)?;
+    cal.alignment = Some(a.clone());
+    c.save()?;
+    Ok(Json(json!({ "ok": true, "alignment": a, "used": used, "missing": missing, "unknown": unknown })))
 }
 
 async fn camera_forget(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Result<Json<Value>, EngineError> {
