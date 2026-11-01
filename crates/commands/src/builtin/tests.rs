@@ -58,6 +58,7 @@ fn registry_lists_every_command_with_documented_schema() {
     assert_eq!(ids, ALL_IDS);
     for spec in s.registry().specs() {
         assert!(!spec.description.is_empty() && spec.description.len() < 700, "{}", spec.id);
+        assert!(!spec.description.contains("  "), "{}: a line continuation lost its backslash", spec.id);
         let query = matches!(spec.id, "doc.inspect" | "doc.save" | "doc.export_lbrn2");
         assert_eq!(spec.risk == Risk::Query, query, "{}", spec.id);
         let props = spec.input_schema["properties"].as_object();

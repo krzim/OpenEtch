@@ -55,6 +55,8 @@ export interface ToolbarProps {
   onFrame: () => void;
   onFrameStop: () => void;
   onRequestRun: () => void;
+  /** Why the active device can't frame or run (design-only device), or null. */
+  designOnly?: string | null;
   onToggleLeft: () => void;
   onToggleRight: () => void;
 }
@@ -178,9 +180,9 @@ export function Toolbar(p: ToolbarProps) {
             <Btn icon="preview" label="Preview" active={p.showPreview} onClick={p.onTogglePreview} title="Show simulated toolpath" />
           </div>
           <div className="tool-group">
-            <Btn icon="frame" label="Frame" onClick={p.onFrame} title="Trace the job bounds with the red pointer (no emission)" />
+            <Btn icon="frame" label="Frame" onClick={p.onFrame} disabled={!!p.designOnly} title={p.designOnly ?? "Trace the job bounds with the red pointer (no emission)"} />
             <Btn icon="frameStop" label="Stop frame" onClick={p.onFrameStop} title="End red-pointer framing (pending runs are kept)" />
-            <Btn icon="run" label="Request run" onClick={p.onRequestRun} title="Create a pending run; it fires only after approval" cls="tool-run" />
+            <Btn icon="run" label="Request run" onClick={p.onRequestRun} disabled={!!p.designOnly} title={p.designOnly ?? "Create a pending run; it fires only after approval"} cls="tool-run" />
           </div>
         </>
       )}

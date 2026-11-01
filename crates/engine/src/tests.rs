@@ -1565,13 +1565,13 @@ async fn lightburn_imports_take_the_device_field() {
     assert_eq!(st.document().field_mm, Some(110.0));
     // The recorded step carries the field, so replays do not depend on prefs.ini.
     assert_eq!(st.history().last().unwrap().invocations[0].params["field_mm"], json!(110.0));
-    // A device LightBurn does not know, or none (LightBurn 1.x): the default device.
+    // A device nobody knows, or none (LightBurn 1.x): the active device.
     for content in [lbrn2_for("Someone else (Unknown)"), LBRN2.to_owned()] {
         let (_, v) = send(&app, exec("doc.import_lbrn2", json!({"content": content}))).await;
         assert_eq!(v["ok"], true, "{v}");
         assert_eq!(
-            (&v["result"]["field_mm"], &v["result"]["field_source"]),
-            (&json!(153.8), &json!("LightBurn default device JCZFiber"))
+            (&v["result"]["field_mm"], &v["result"]["field_source"], &v["result"]["device"]),
+            (&json!(150.0), &json!("active device Generic LMC fiber (EzCad)"), &json!("generic-lmc-fiber-ezcad"))
         );
     }
     // The caller's field wins.
@@ -1584,10 +1584,10 @@ async fn lightburn_imports_take_the_device_field() {
     let (_, v) = send(&app, exec("doc.export_lbrn2", json!({}))).await;
     assert_eq!(v["result"]["field_mm"], json!(153.8));
 
-    // Without LightBurn devices: the document's field.
+    // Without LightBurn devices: the active device's field.
     st.lightburn.configure(crate::lightburn::LightBurnConfig::default());
     let (_, v) = send(&app, raw("POST", "/api/document/upload?format=lbrn2", lbrn2_for("JCZFiber"))).await;
-    assert_eq!((&v["result"]["field_mm"], &v["result"]["field_source"]), (&json!(120.0), &json!("document")));
+    assert_eq!((&v["result"]["field_mm"], &v["result"]["field_source"]), (&json!(150.0), &json!("active device Generic LMC fiber (EzCad)")));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1644,4 +1644,177 @@ async fn downloads_after_open_use_the_opened_file_name() {
     send(&app, raw("POST", "/api/document/upload?format=lbrn2", LBRN2)).await;
     assert_eq!(fetch(&app, "/api/document/download").await.1["content-disposition"], disposition("Untitled", "openetch"));
     let _ = std::fs::remove_dir_all(st.projects.root().parent().unwrap());
+}
+
+/// The synthetic gantry `.lbdev` ("Test Bed 400": Custom GCode over TCP, 400 x 300 mm, rear-left origin).
+const LB_GANTRY: &str = include_str!("../../machine/tests/fixtures/gantry.lbdev");
+
+/// A state whose device registry lives in a temp config dir (with the B6 fixture as the built-in device, so a
+/// B6-lens LightBurn device finds jcz150.cor next to it) and whose LightBurn prefs.ini is the synthetic fixture.
+async fn devices_state() -> (Arc<AppState>, std::path::PathBuf) {
+    let (st, dir) = lightburn_state().await;
+    let profile = crate::cli::resolve_default(crate::cli::DEFAULT_PROFILE);
+    let (b6, cor) = crate::devices::load_profile(&profile, false).unwrap();
+    let (registry, notes) =
+        crate::devices::DeviceRegistry::open(dir.join("config").join("devices"), b6, cor, Some(&profile), || None).unwrap();
+    assert!(notes[0].contains("no LightBurn devices"), "{notes:?}");
+    st.install_devices(registry);
+    (st, dir)
+}
+
+#[tokio::test]
+async fn devices_routes_import_list_show_and_remove() {
+    let (st, dir) = devices_state().await;
+    let app = app(&st);
+    let mut events = st.subscribe();
+    let (s, v) = send(&app, req("GET", "/api/devices", None)).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!((&v["active"], v["devices"].as_array().unwrap().len()), (&json!("commarker-b6-mopa-60w-ezcad"), 1));
+    // A .lbdev upload; then LightBurn on this computer (the fixture prefs.ini).
+    let (s, v) = send(&app, raw("POST", "/api/devices/import", LB_GANTRY)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v, json!({"ok": true, "added": ["test-bed-400"], "updated": [], "skipped": []}));
+    assert_eq!(events.recv().await.unwrap(), crate::Event::DevicesChanged);
+    let (s, v) = send(&app, raw("POST", "/api/devices/import?from=lightburn&add=all", "")).await;
+    assert_eq!((s, &v["added"]), (StatusCode::OK, &json!(["jczfiber-unknown", "bench-110-lens"])), "{v}");
+    let (_, v) = send(&app, raw("POST", "/api/devices/import?from=lightburn&add=JCZFiber", "")).await;
+    assert_eq!(v["skipped"][0]["reason"], json!("already imported, unchanged"), "{v}");
+    let (_, v) = send(&app, req("GET", "/api/devices", None)).await;
+    let ids: Vec<&str> = v["devices"].as_array().unwrap().iter().map(|d| d["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, ["commarker-b6-mopa-60w-ezcad", "test-bed-400", "jczfiber-unknown", "bench-110-lens"]);
+    let bed = &v["devices"][1];
+    assert_eq!(
+        (&bed["kind"], &bed["origin"], &bed["workspace_mm"], &bed["controllable"], &bed["source"], &bed["active"]),
+        (&json!("gantry"), &json!("top_left"), &json!([400.0, 300.0]), &json!(false), &json!("lbdev"), &json!(false))
+    );
+    let text = v.to_string();
+    for leaked in ["secret", "someone", "10.0.0.5", "M1403", "guid"] {
+        assert!(!text.contains(leaked), "{leaked} in {text}");
+    }
+    // Details: settings read-only, the profile and its diffs against the base.
+    let (s, d) = send(&app, req("GET", "/api/devices/jczfiber-unknown", None)).await;
+    assert_eq!(s, StatusCode::OK, "{d}");
+    assert_eq!((&d["base"], &d["profile"]["field_mm"]), (&json!("ComMarker B6 MOPA 60W"), &json!(153.75)));
+    assert!(d["diffs"].as_array().unwrap().iter().any(|x| x["field"] == "mark_speed.max_mm_s"), "{d}");
+    let (_, d) = send(&app, req("GET", "/api/devices/test-bed-400", None)).await;
+    assert!(d["reason"].as_str().unwrap().contains("design-only"), "{d}");
+    assert_eq!(send(&app, req("GET", "/api/devices/nope", None)).await.0, StatusCode::NOT_FOUND);
+    // Refusals.
+    for (uri, body, status) in [
+        ("/api/devices/import", "", StatusCode::BAD_REQUEST),
+        ("/api/devices/import", "{\"DeviceList\": []}", StatusCode::BAD_REQUEST),
+        ("/api/devices/import", "not json secret-1", StatusCode::BAD_REQUEST),
+        ("/api/devices/import?add=Nobody", LB_GANTRY, StatusCode::NOT_FOUND),
+        ("/api/devices/import?from=elsewhere", "", StatusCode::BAD_REQUEST),
+        ("/api/devices/import?bogus=1", LB_GANTRY, StatusCode::BAD_REQUEST),
+    ] {
+        let (s, v) = send(&app, raw("POST", uri, body)).await;
+        assert_eq!(s, status, "{uri}: {v}");
+        assert!(!v.to_string().contains("secret-1"), "{v}");
+    }
+    // Remove: never the built-in or the active device.
+    assert_eq!(send(&app, req("DELETE", "/api/devices/commarker-b6-mopa-60w-ezcad", None)).await.0, StatusCode::CONFLICT);
+    let (s, v) = send(&app, req("DELETE", "/api/devices/bench-110-lens", None)).await;
+    assert_eq!((s, &v["ok"]), (StatusCode::OK, &json!(true)), "{v}");
+    assert_eq!(send(&app, req("GET", "/api/devices", None)).await.1["devices"].as_array().unwrap().len(), 3);
+    assert_eq!(std::fs::read_to_string(dir.join("prefs.ini")).unwrap(), LB_PREFS, "prefs.ini is never written");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn activating_a_device_swaps_the_machine_and_is_refused_while_busy() {
+    let (st, dir) = devices_state().await;
+    let app = app(&st);
+    send(&app, raw("POST", "/api/devices/import", LB_GANTRY)).await;
+    send(&app, raw("POST", "/api/devices/import?from=lightburn", "")).await;
+    let pending = pending_run(&app).await;
+    let mut events = st.subscribe();
+
+    // The B6 lens from LightBurn: the profile is swapped and the board initialised again; pending runs are cancelled.
+    let (s, v) = send(&app, req("POST", "/api/devices/jczfiber-unknown/activate", None)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!((&v["active"]["id"], &v["warnings"]), (&json!("jczfiber-unknown"), &json!([])));
+    assert_eq!(events.recv().await.unwrap(), crate::Event::DeviceChanged { id: "jczfiber-unknown".into() });
+    let profile = st.machine.profile();
+    assert_eq!((profile.name.as_str(), profile.field_mm, profile.mark_speed.max_mm_s), ("JCZFiber (Unknown)", 153.75, 7000.0));
+    assert_eq!(st.machine.generation(), 1);
+    assert!(st.machine.config().cor.is_some(), "jcz150.cor found next to the built-in profile");
+    assert_eq!(st.runs().get(&pending).unwrap().state, RunState::Cancelled);
+    let (_, m) = send(&app, req("GET", "/api/machine", None)).await;
+    assert_eq!((&m["device"]["id"], &m["connected"], &m["field_mm"]), (&json!("jczfiber-unknown"), &json!(true), &json!(153.75)));
+    assert_eq!(m["sim_counters"]["laser_singles"], json!(0), "re-initialising fires nothing");
+    // New documents take its field; a run can be requested and approved.
+    send(&app, exec("doc.new", json!({}))).await;
+    assert_eq!(st.document().field_mm, Some(153.75));
+    let id = pending_run(&app).await;
+    // A run planned for the previous configuration is never approved.
+    let generic = MachineProfile::generic_jcz_galvo();
+    st.machine.blocking(move |m, ctl| m.swap_config(ctl, generic, None)).await.unwrap().unwrap();
+    let (s, v) = send(&app, req("POST", &format!("/api/runs/{id}/approve"), pin_body())).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+    assert!(v["error"].as_str().unwrap().contains("another device"), "{v}");
+
+    // Busy: an approved run, or framing, refuses the change (409) and changes nothing.
+    let id = pending_run(&app).await;
+    st.runs().set_state(&id, RunState::Approved);
+    let (s, v) = send(&app, req("POST", "/api/devices/test-bed-400/activate", None)).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+    st.runs().finish(&id, RunState::Cancelled, None, None);
+    st.machine.set_framing_gen(st.machine.frame_gen());
+    let (s, v) = send(&app, req("POST", "/api/devices/test-bed-400/activate", None)).await;
+    assert_eq!((s, v["error"].as_str().unwrap().contains("framing")), (StatusCode::CONFLICT, true), "{v}");
+    st.machine.set_framing_gen(0);
+    assert_eq!(st.active_device().id, "jczfiber-unknown");
+    // Only the UI may change the device.
+    let mut r = req("POST", "/api/devices/test-bed-400/activate", None);
+    r.headers_mut().insert("mcp-session-id", "x".parse().unwrap());
+    assert_eq!(send(&app, r).await.0, StatusCode::FORBIDDEN);
+    let (s, _) = send(&app, req("POST", "/api/devices/test-bed-400/activate", Some(json!({"origin": "agent:x"})))).await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    assert_eq!(send(&app, req("POST", "/api/devices/nope/activate", None)).await.0, StatusCode::NOT_FOUND);
+
+    // A design-only gantry: its bed drives new documents and LightBurn files; planning, runs and framing are refused.
+    let generation = st.machine.generation();
+    let (s, v) = send(&app, req("POST", "/api/devices/test-bed-400/activate", None)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(st.machine.generation(), generation, "the machine keeps its profile");
+    assert!(st.machine.profile().name.contains("Generic"));
+    send(&app, exec("doc.new", json!({}))).await;
+    let d = st.document();
+    assert_eq!((d.workspace_mm, d.field_mm), (Some([400.0, 300.0]), Some(300.0)));
+    rect(&app, 10.0, 10.0).await;
+    let (s, v) = send(&app, req("POST", "/api/runs", None)).await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
+    assert!(v["error"].as_str().unwrap().contains("can't drive Custom GCode"), "{v}");
+    let (s, _) = send(&app, req("POST", "/api/machine/frame", None)).await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
+    let (s, v) = send(&app, req("GET", "/api/preview", None)).await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
+    assert_eq!(fetch(&app, "/api/preview.svg").await.0, StatusCode::OK, "the SVG still shows the document");
+    let (_, v) = send(&app, exec("doc.import_lbrn2", json!({"content": LBRN2}))).await;
+    assert_eq!(
+        (&v["result"]["field_source"], &v["result"]["workspace_mm"], &v["result"]["origin"]),
+        (&json!("active device Test Bed 400"), &json!([400.0, 300.0]), &json!("top_left")),
+        "{v}"
+    );
+    let (_, v) = send(&app, exec("doc.export_lbrn2", json!({}))).await;
+    assert!(v["result"]["content"].as_str().unwrap().contains("MirrorY=\"True\""), "{v}");
+    // A file naming a registry device is laid out for it (by display name), whatever is active.
+    let (_, v) = send(&app, exec("doc.import_lbrn2", json!({"content": lbrn2_for("JCZFiber (Unknown)")}))).await;
+    assert_eq!(
+        (&v["result"]["field_mm"], &v["result"]["field_source"], &v["result"]["device"]),
+        (&json!(153.8), &json!("file device JCZFiber (Unknown)"), &json!("jczfiber-unknown")),
+        "LightBurn's width, as the file was laid out"
+    );
+    // The choice survives a restart of the registry.
+    let (again, _) = crate::devices::DeviceRegistry::open(
+        dir.join("config").join("devices"),
+        MachineProfile::generic_lmc_fiber(),
+        None,
+        None,
+        || None,
+    )
+    .unwrap();
+    assert_eq!(again.active().id, "test-bed-400");
+    let _ = std::fs::remove_dir_all(&dir);
 }

@@ -3,7 +3,10 @@
 //!
 //! - [`MachineProfile`]: one laser's fixed facts and hard limits (field, axis swap/negate, laser source, port bits,
 //!   default timing). TOML on disk; importable from an EzCad `markcfg7` ([`MachineProfile::from_markcfg`]) and from
-//!   a LightBurn device ([`lightburn`]: the device list of LightBurn's `prefs.ini`, [`profile_from_lightburn`]).
+//!   a LightBurn device ([`lightburn`]: the device list of LightBurn's `prefs.ini` or a `.lbdev` file,
+//!   [`profile_from_lightburn`]).
+//! - [`Device`] ([`device`]): an OpenEtch device, LightBurn-style: a workspace (field or bed, origin) and, for a JCZ
+//!   galvo, a profile; other kinds are design-only.
 //! - [`Link`]: sends 12-byte single commands and 3072-byte list packets. [`SimLink`] records traffic and fakes a
 //!   board for tests and the engine's simulator mode; `UsbLink` is the real board and is only compiled with the
 //!   `usb` feature.
@@ -18,6 +21,7 @@
 mod armed;
 mod check;
 mod controller;
+pub mod device;
 mod geometry;
 mod init;
 pub mod lightburn;
@@ -36,8 +40,9 @@ pub use init::InitSettings;
 pub use link::{Link, LinkError, Reply};
 pub use lightburn::{
     LightBurnDevice, LightBurnError, LightBurnPrefs, LightBurnSettings, ProfileDiff, find_device, parse_devices,
-    profile_from_lightburn,
+    parse_lbdev, profile_from_lightburn,
 };
+pub use device::{Bases, Device, DeviceKind, DeviceSource, Origin, ProfileBase};
 pub use markcfg::MarkcfgImport;
 pub use profile::{
     DEFAULT_MAX_DELAY_US, DEFAULT_MAX_JUMP_SPEED_MM_S, DEFAULT_OPEN_MO_DELAY_US, MachineProfile, MarkSpeedLimits,

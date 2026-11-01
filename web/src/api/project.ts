@@ -169,7 +169,7 @@ function plural(n: number, word: string): string {
 export function importMessage(o: ImportOutcome, mode: ImportMode): string {
   const layers = o.reusedLayers > 0 ? `${plural(o.createdLayers, "new layer")}, ${o.reusedLayers} reused` : plural(o.createdLayers, "layer");
   // The source only when it says something the user may not expect (a LightBurn device); "the size you entered" is noise.
-  const src = o.fieldSource && (o.fieldSource.kind === "file-device" || o.fieldSource.kind === "default-device") ? ` ${fieldSourceText(o.fieldSource)}` : "";
+  const src = o.fieldSource && (o.fieldSource.kind === "file-device" || o.fieldSource.kind === "default-device" || o.fieldSource.kind === "active-device") ? ` ${fieldSourceText(o.fieldSource)}` : "";
   const field = o.fieldMm !== null ? ` (field ${Number(o.fieldMm.toFixed(3))} mm${src})` : "";
   const what = mode === "merge" ? "Merged" : "Imported";
   const warn = o.warnings.length ? ` ${plural(o.warnings.length, "warning")}.` : "";
@@ -226,6 +226,24 @@ export function currentProjectName(project: ProjectInfo | null, detachedFrom: st
   const name = project?.name ?? null;
   if (detachedFrom !== undefined && name === detachedFrom) return null;
   return name;
+}
+
+/**
+ * What the LightBurn Open/Import dialog preselects: Open (replace) when the current design has no objects, so the file
+ * becomes the design and gives it its name; Import (merge) otherwise, so nothing is replaced by surprise.
+ */
+export function defaultImportMode(doc: Pick<GDocument, "objects"> | null | undefined): ImportMode {
+  return !doc || doc.objects.length === 0 ? "replace" : "merge";
+}
+
+/**
+ * The name of the file the design was opened from, as the engine reports it (`GET /api/project` `display_name`, which
+ * survives a page reload), else this page's own record of it; null when neither has one.
+ */
+export function openedFileName(project: Pick<ProjectInfo, "display_name"> | null | undefined, openedHere: string | null): string | null {
+  const d = project?.display_name;
+  if (typeof d === "string" && d.trim()) return d;
+  return openedHere && openedHere.trim() ? openedHere : null;
 }
 
 /** Ask before replacing the document: when it has unsaved changes, or (engine without project state) any content. */

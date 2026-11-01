@@ -134,7 +134,11 @@ const SNAP_PX = 10;
 
 export interface ViewportProps {
   doc: GDocument | null;
-  fieldMm: number;
+  /**
+   * The active device's workspace (W x H mm), centred on the field origin: a galvo's square field, or a gantry
+   * device's bed (LightBurn coordinates minus W/2, H/2).
+   */
+  workspaceMm: Vec2;
   selection: Selection;
   tool: Tool;
   /** Layer that new shapes go on. */
@@ -144,7 +148,7 @@ export interface ViewportProps {
   previewOptions: PreviewOptions;
   viewStyle: ViewStyle;
   snap: SnapSettings;
-  /** Objects outside the galvo field, drawn in red. */
+  /** Objects outside the workspace, drawn in red. */
   outside: ReadonlySet<string>;
   has: (cmd: string) => boolean;
   onSelection: (s: Selection) => void;
@@ -159,7 +163,9 @@ export interface ViewportProps {
 }
 
 export function Viewport(props: ViewportProps) {
-  const { doc, fieldMm, selection, tool, preview, showPreview, previewOptions, viewStyle, snap, outside } = props;
+  const { doc, workspaceMm, selection, tool, preview, showPreview, previewOptions, viewStyle, snap, outside } = props;
+  const [wsW, wsH] = workspaceMm;
+  const galvo = Math.abs(wsW - wsH) < 1e-3;
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [size, setSize] = useState<Vec2>([1, 1]);
@@ -178,7 +184,7 @@ export function Viewport(props: ViewportProps) {
   const lastMove = useRef<{ s: Vec2; m: Mods } | null>(null);
   /** The view follows the field (refit on resize) until the user pans or zooms. */
   const autoFit = useRef(true);
-  const fittedField = useRef<number | null>(null);
+  const fittedField = useRef<string | null>(null);
 
   // Track canvas size.
   useLayoutEffect(() => {
@@ -202,7 +208,7 @@ export function Viewport(props: ViewportProps) {
     },
     [size],
   );
-  const fieldBox = useMemo<Box>(() => ({ x0: -fieldMm / 2, y0: -fieldMm / 2, x1: fieldMm / 2, y1: fieldMm / 2 }), [fieldMm]);
+  const fieldBox = useMemo<Box>(() => ({ x0: -wsW / 2, y0: -wsH / 2, x1: wsW / 2, y1: wsH / 2 }), [wsW, wsH]);
   const fitField = useCallback(() => {
     autoFit.current = true;
     fitBox(fieldBox);
@@ -212,11 +218,13 @@ export function Viewport(props: ViewportProps) {
   // user pans or zooms (so the first fit never leaves the field clipped).
   useEffect(() => {
     if (size[0] <= 20 || size[1] <= 20) return;
-    if (autoFit.current || fittedField.current !== fieldMm) {
-      fittedField.current = fieldMm;
+    // The workspace changes with the active device: fit the new one.
+    const key = `${wsW}x${wsH}`;
+    if (autoFit.current || fittedField.current !== key) {
+      fittedField.current = key;
       fitBox(fieldBox);
     }
-  }, [size, fitBox, fieldBox, fieldMm]);
+  }, [size, fitBox, fieldBox, wsW, wsH]);
 
   useEffect(() => {
     if (settling && doc && doc.revision !== settling.rev) setSettling(null);
@@ -703,7 +711,8 @@ export function Viewport(props: ViewportProps) {
 
   // --- rendering -------------------------------------------------------------------------------------------------
   const px = (n: number) => n / view.scale;
-  const half = fieldMm / 2;
+  const halfX = wsW / 2;
+  const halfY = wsH / 2;
   const matrix = `matrix(${view.scale},0,0,${-view.scale},${size[0] / 2 - view.scale * view.cx},${size[1] / 2 + view.scale * view.cy})`;
 
   const grid = useMemo(() => {
@@ -711,15 +720,24 @@ export function Viewport(props: ViewportProps) {
     const major = minor * (minor === 2 || minor === 20 ? 5 : minor === 0.5 || minor === 5 || minor === 50 ? 2 : 10);
     let dMinor = "";
     let dMajor = "";
-    const n = Math.floor(half / minor);
-    for (let i = -n; i <= n; i++) {
+    // Lines through the origin (the field centre), across the whole workspace.
+    const isMajor = (v: number) => Math.abs(v / major - Math.round(v / major)) < 1e-9;
+    const nx = Math.floor(halfX / minor);
+    for (let i = -nx; i <= nx; i++) {
       const v = i * minor;
-      const line = `M${v},${-half}V${half}M${-half},${v}H${half}`;
-      if (Math.abs(v / major - Math.round(v / major)) < 1e-9) dMajor += line;
+      const line = `M${v},${-halfY}V${halfY}`;
+      if (isMajor(v)) dMajor += line;
+      else dMinor += line;
+    }
+    const ny = Math.floor(halfY / minor);
+    for (let i = -ny; i <= ny; i++) {
+      const v = i * minor;
+      const line = `M${-halfX},${v}H${halfX}`;
+      if (isMajor(v)) dMajor += line;
       else dMinor += line;
     }
     return { dMinor, dMajor };
-  }, [half, view.scale]);
+  }, [halfX, halfY, view.scale]);
 
   /** Object path data in the field frame, cached per document. */
   const paths = useMemo(() => {
@@ -810,13 +828,13 @@ export function Viewport(props: ViewportProps) {
         onAuxClick={(e) => e.preventDefault()}
       >
         <g transform={matrix}>
-          {/* galvo field */}
-          <rect className="field-bg" x={-half} y={-half} width={fieldMm} height={fieldMm} />
+          {/* the active device's workspace: a galvo field (square) or a gantry bed (rectangle) */}
+          <rect className="field-bg" x={-halfX} y={-halfY} width={wsW} height={wsH} />
           <path className="grid-minor" d={grid.dMinor} strokeWidth={px(0.6)} />
           <path className="grid-major" d={grid.dMajor} strokeWidth={px(0.9)} />
-          <path className="axis-x" d={`M${-half},0H${half}`} strokeWidth={px(1.2)} />
-          <path className="axis-y" d={`M0,${-half}V${half}`} strokeWidth={px(1.2)} />
-          <rect className="field-edge" x={-half} y={-half} width={fieldMm} height={fieldMm} strokeWidth={px(1.5)} />
+          <path className="axis-x" d={`M${-halfX},0H${halfX}`} strokeWidth={px(1.2)} />
+          <path className="axis-y" d={`M0,${-halfY}V${halfY}`} strokeWidth={px(1.2)} />
+          <rect className="field-edge" x={-halfX} y={-halfY} width={wsW} height={wsH} strokeWidth={px(1.5)} />
 
           {stock && (
             <path
@@ -993,11 +1011,12 @@ export function Viewport(props: ViewportProps) {
       </div>
       {outsideCount > 0 && (
         <div className="vp-overlay vp-warn" role="status">
-          {outsideCount} object{outsideCount === 1 ? "" : "s"} outside the galvo field (red). The laser cannot reach {outsideCount === 1 ? "it" : "them"}.
+          {outsideCount} object{outsideCount === 1 ? "" : "s"} outside the {galvo ? "galvo field" : "workspace"} (red). The laser cannot reach{" "}
+          {outsideCount === 1 ? "it" : "them"}.
         </div>
       )}
       <div className="vp-overlay vp-bottom-left">
-        {cursor ? `X ${cursor[0].toFixed(2)}  Y ${cursor[1].toFixed(2)} mm` : `Field ${fieldMm} mm`}
+        {cursor ? `X ${cursor[0].toFixed(2)}  Y ${cursor[1].toFixed(2)} mm` : galvo ? `Field ${wsW} mm` : `Workspace ${wsW} × ${wsH} mm`}
         {drawBox && `  ·  ${(drawBox.x1 - drawBox.x0).toFixed(2)} × ${(drawBox.y1 - drawBox.y0).toFixed(2)} mm`}
         {readout && `  ·  ${readout}`}
       </div>

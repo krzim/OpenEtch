@@ -110,6 +110,8 @@ export interface GDocument {
   next_id: number;
   /** Galvo field size the document was laid out for; the engine fills it from the machine profile. */
   field_mm?: number | null;
+  /** Workspace (W x H mm) of a non-square (gantry) device the document was laid out for; absent for galvo fields. */
+  workspace_mm?: [number, number] | null;
   /** Groups (absent on older engines). */
   groups?: Group[];
   extras?: Record<string, string>;
@@ -289,6 +291,11 @@ export interface RunFinishedEvent {
 export interface ProjectInfo {
   /** Project name (file `<projects-dir>/<name>.openetch`), or null when the document was never saved or opened. */
   name: string | null;
+  /**
+   * Name of the file a replacing upload or LightBurn import came from (without its extension), while no project holds
+   * the document; null otherwise (absent on older engines).
+   */
+  display_name?: string | null;
   /** Document revision at the last save or open, or null. */
   saved_revision: number | null;
   revision: number;
@@ -310,6 +317,12 @@ export interface ProjectSavedEvent {
   revision: number;
 }
 
+/** `device_changed`: another device became active (refetch the devices, the machine and the document). */
+export interface DeviceChangedEvent {
+  type: "device_changed";
+  id?: string;
+}
+
 /** Server-to-client WebSocket messages on /api/events. */
 export type EngineEvent =
   | { type: "document_changed"; revision: number; /** Who edited; absent for undo/redo. */ origin?: Origin | null }
@@ -318,4 +331,5 @@ export type EngineEvent =
   | ApprovalLockedEvent
   | RunFinishedEvent
   | ProjectSavedEvent
-  | { type: "history_changed"; [key: string]: unknown };
+  | { type: "history_changed"; [key: string]: unknown }
+  | DeviceChangedEvent;

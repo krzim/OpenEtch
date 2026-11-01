@@ -7,12 +7,13 @@ use std::sync::Arc;
 
 use commands::Session;
 use engine::cli::{self, Config, Parsed};
+use engine::devices::{self, DeviceRegistry};
 use engine::hw::Machine;
 use engine::pin::{self, ApprovalConfig, PhysicalConfirm, PinStore};
 use engine::projects::ProjectDir;
 use engine::security::{SecurityConfig, generate_token};
 use engine::{AppState, api};
-use machine::{MachineProfile, PollConfig};
+use machine::PollConfig;
 
 fn main() -> ExitCode {
     let config = match cli::parse(std::env::args().skip(1)) {
@@ -22,6 +23,18 @@ fn main() -> ExitCode {
             return ExitCode::SUCCESS;
         }
         Ok(Parsed::SetPin { config_dir, reset }) => return set_pin(&config_dir, reset),
+        Ok(Parsed::Devices(cmd)) => {
+            return match engine::devices::devices_command(&cmd) {
+                Ok(report) => {
+                    print!("{report}");
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("openetch devices: {e}");
+                    ExitCode::FAILURE
+                }
+            };
+        }
         Ok(Parsed::ProfileFromLightBurn(opts)) => {
             return match engine::lightburn::profile_from_lightburn_command(&opts) {
                 Ok(report) => {
@@ -100,31 +113,53 @@ fn set_pin(dir: &Path, reset: bool) -> ExitCode {
     }
 }
 
-/// Load the profile and its correction table.
-fn load_profile(config: &Config) -> Result<(MachineProfile, Option<corfile::CorTable>), String> {
-    let text = match std::fs::read_to_string(&config.profile) {
-        Ok(t) => t,
-        Err(e) if config.profile_is_default => {
-            tracing::warn!(path = %config.profile.display(), error = %e, "default profile not found; using the generic LMC fiber profile");
-            return Ok((MachineProfile::generic_lmc_fiber(), None));
-        }
-        Err(e) => return Err(format!("cannot read profile {}: {e}", config.profile.display())),
-    };
-    let profile = MachineProfile::from_toml(&text).map_err(|e| format!("profile {}: {e}", config.profile.display()))?;
-    let cor = match profile.cor_path(&config.profile) {
-        Some(path) => {
-            let bytes =
-                std::fs::read(&path).map_err(|e| format!("cannot read correction file {}: {e}", path.display()))?;
-            Some(corfile::CorTable::parse(&bytes).map_err(|e| format!("correction file {}: {e}", path.display()))?)
-        }
-        None => None,
-    };
-    Ok((profile, cor))
-}
-
 async fn run(config: Config) -> Result<(), String> {
-    let (profile, cor) = load_profile(&config)?;
-    tracing::info!(profile = %profile.name, field_mm = profile.field_mm, correction = cor.is_some(), "machine profile loaded");
+    let (builtin, builtin_cor) = devices::load_profile(&config.profile, config.profile_is_default)?;
+    tracing::info!(profile = %builtin.name, field_mm = builtin.field_mm, correction = builtin_cor.is_some(), "machine profile loaded");
+
+    // Devices: the registry in <config-dir>/devices (a first run imports LightBurn's devices on this computer), and
+    // the active one, or --device for this run.
+    let prefs_paths = match &config.lightburn_prefs {
+        Some(p) => vec![p.clone()],
+        None => engine::lightburn::default_prefs_paths(),
+    };
+    let opened = DeviceRegistry::open(
+        config.config_dir.join(devices::DEVICES_DIR),
+        builtin.clone(),
+        builtin_cor.clone(),
+        Some(&config.profile),
+        || devices::first_run_prefs(&prefs_paths),
+    );
+    let mut registry = match opened {
+        Ok((r, notes)) => {
+            for n in notes {
+                println!("openetch: {n}");
+            }
+            r
+        }
+        Err(e) => {
+            println!("openetch: devices: {e}; using the built-in device only");
+            DeviceRegistry::in_memory(builtin.clone(), builtin_cor.clone())
+        }
+    };
+    if let Some(query) = &config.device {
+        registry.override_active(query).map_err(|e| format!("--device: {e}"))?;
+    }
+    let active = registry.active().clone();
+    let (profile, cor) = match active.profile.clone().filter(|_| active.controllable) {
+        Some(p) => {
+            let (cor, warning) = registry.correction_for(&active);
+            if let Some(w) = warning {
+                println!("openetch: device \"{}\": {w}", active.display_name);
+            }
+            (p, cor)
+        }
+        None => (builtin, builtin_cor),
+    };
+    match active.not_controllable_reason() {
+        None => println!("openetch: device \"{}\" ({})", active.display_name, active.id),
+        Some(reason) => println!("openetch: {reason}; framing and runs are off until a JCZ galvo is made active"),
+    }
 
     let machine = if config.usb {
         if !cfg!(feature = "usb") {
@@ -168,11 +203,12 @@ async fn run(config: Config) -> Result<(), String> {
             c.input_bit
         );
     }
-    // The document starts laid out for this machine's field (AppState::new also fills it in).
-    let document = doc::Document { field_mm: Some(machine.profile().field_mm), ..doc::Document::default() };
+    // The document starts laid out for the active device (AppState::new also fills a field in).
+    let document = engine::state::new_document_for(&active, machine.profile().field_mm);
     let projects = ProjectDir::new(&config.projects_dir);
     tracing::info!(path = %config.projects_dir.display(), "projects directory");
     let state = AppState::new(Session::new(document), machine.clone(), security, approval, projects);
+    state.install_devices(registry);
     let lightburn = engine::lightburn::LightBurnConfig {
         prefs_paths: match &config.lightburn_prefs {
             Some(p) => vec![p.clone()],

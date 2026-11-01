@@ -1,0 +1,62 @@
+{
+    "DeviceList": [
+        {
+            "Checklist": "synthetic checklist macro",
+            "DefaultCutList": [
+            ],
+            "DefaultToolCutList": [
+            ],
+            "DisplayName": "Test Bed 400",
+            "EnableLaser2Offset": false,
+            "EnableProcessOffset": false,
+            "GUID": "synthetic-guid",
+            "Height": 300,
+            "HomeOnStartup": false,
+            "Info": "10.0.0.5",
+            "Laser2OffsetX": 0,
+            "Laser2OffsetY": 0,
+            "LastCamera": "",
+            "LastDevLibraryPath": "C:/Users/someone/Desktop/materials.clb",
+            "MirrorX": false,
+            "MirrorY": true,
+            "Name": "Custom GCode",
+            "ProcessOffsetX": 0,
+            "ProcessOffsetY": 0,
+            "ProfilePath": "Custom GCode",
+            "RestPendantSecret": "synthetic-secret",
+            "ReverseIntervalCompensation": false,
+            "Settings": {
+                "AllowComms": true,
+                "BaudRate": 115200,
+                "CommPort": "(Choose)",
+                "CutOrigin": 2,
+                "DockState_Console": true,
+                "EnableBoundsCheck": true,
+                "EnableU": false,
+                "EnableZ": false,
+                "EndGCode": "M5 ; synthetic macro",
+                "GCodeBlocks": {
+                    "home": "$H",
+                    "start_user": "M1403\nM1405 X0.00"
+                },
+                "GCodeFlavor": "smoothie",
+                "GridSpacing": 10,
+                "LastMachineFilePath": "C:/Users/someone/Desktop/jobs",
+                "NetworkPort": 23,
+                "S_Scale": 1000,
+                "Sim_MaxAccelX": 3000,
+                "Sim_MaxAccelY": 3000,
+                "Sim_MaxSpeedX": 500,
+                "Sim_MaxSpeedY": 400,
+                "Sim_RapidSpeed": 400,
+                "StartGCode": "G21 ; synthetic macro",
+                "TransferMode": 0,
+                "Units": 0,
+                "UserFinishX": 0,
+                "UserFinishY": 0
+            },
+            "Type": "TCP",
+            "Width": 400
+        }
+    ]
+}

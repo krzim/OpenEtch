@@ -108,3 +108,39 @@ test("LightBurn routes: GET devices, POST the device list as JSON, DELETE the up
   reply = { status: 413, body: { error: "body larger than 2 MB" } };
   await assert.rejects(api.lightburnUpload(body), (e: unknown) => e instanceof ApiError && e.status === 413 && e.detail === "body larger than 2 MB");
 });
+
+test("device routes: list, details, import (file or LightBurn on the engine computer), activate, remove", async () => {
+  reply = { status: 200, body: { active: null, devices: [] } };
+  await api.devices();
+  await api.device("jcz fiber/1");
+  reply = { status: 200, body: { added: [], updated: [], skipped: [] } };
+  const body = JSON.stringify({ DeviceList: [{ Name: "Custom GCode", DisplayName: "WAZER" }] });
+  await api.deviceImport(body, "WAZER & co");
+  await api.deviceImport(null, "all");
+  reply = { status: 200, body: { ok: true } };
+  await api.deviceActivate("wazer");
+  await api.deviceRemove("wazer");
+  assert.deepEqual(
+    calls.map((c) => `${c.method} ${c.path}`),
+    [
+      "GET /api/devices",
+      "GET /api/devices/jcz%20fiber%2F1",
+      "POST /api/devices/import?add=WAZER%20%26%20co",
+      "POST /api/devices/import?from=lightburn&add=all",
+      "POST /api/devices/wazer/activate",
+      "DELETE /api/devices/wazer",
+    ],
+  );
+  assert.equal(calls[2]?.headers["Content-Type"], "application/json");
+  assert.deepEqual(calls[2]?.body, { DeviceList: [{ Name: "Custom GCode", DisplayName: "WAZER" }] });
+  // Reading LightBurn on the engine computer sends no body at all.
+  assert.equal(calls[3]?.body, undefined);
+  assert.equal(calls[3]?.headers["Content-Type"], undefined);
+  for (const c of calls) assert.equal(c.headers.Authorization, "Bearer tok-123");
+
+  // Switching while a run or frame is active: the engine's 409 text reaches the toast.
+  reply = { status: 409, body: { ok: false, error: "a run is active" } };
+  await assert.rejects(api.deviceActivate("wazer"), (e: unknown) => e instanceof ApiError && e.status === 409 && e.detail === "a run is active");
+  reply = { status: 200, body: { ok: false, error: "no devices in DeviceList" } };
+  await assert.rejects(api.deviceImport(body, "all"), /no devices in DeviceList/);
+});

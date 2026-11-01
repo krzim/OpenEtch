@@ -10,6 +10,7 @@
 //! Only device-list values are printed; the tests also check that nothing else of the file survives parsing.
 
 use machine::lightburn::diff_table;
+use machine::device::{self, Bases, DeviceKind, DeviceSource};
 use machine::{MachineProfile, ProfileDiff, find_device, parse_devices, profile_from_lightburn};
 
 const PREFS: &str = include_str!("fixtures/lightburn-prefs.json");
@@ -202,4 +203,49 @@ fn real_prefs_files() {
         }
     }
     assert!(checked > 0, "no devices in {list}");
+}
+
+/// The same real files as OpenEtch devices: every device classifies, and LightBurn's default device, when it is a JCZ
+/// galvo of the B6's lens, is built on the B6 profile. Prints only the device's typed summary.
+#[test]
+fn real_prefs_files_as_devices() {
+    let Ok(list) = std::env::var("OPENETCH_LIGHTBURN_PREFS") else {
+        println!("OPENETCH_LIGHTBURN_PREFS is not set; skipping the real device check");
+        return;
+    };
+    let bases = Bases { builtin: b6(), generic: MachineProfile::generic_jcz_galvo() };
+    for path in list.split(';').map(str::trim).filter(|p| !p.is_empty()) {
+        let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("cannot read {path}: {e}"));
+        let prefs = parse_devices(&text).unwrap_or_else(|e| panic!("{path}: {e}"));
+        for dev in &prefs.devices {
+            let d = match device::from_lightburn(dev, DeviceSource::LightburnPrefs, &bases) {
+                Ok(d) => d,
+                Err(e) => {
+                    println!("-- \"{}\": skipped: {e}", dev.name);
+                    continue;
+                }
+            };
+            println!(
+                "-- \"{}\": {} {} {:?} mm, origin {}, base {:?}, controllable {}",
+                d.display_name,
+                d.kind.name(),
+                d.lightburn_type,
+                d.workspace_mm,
+                d.origin.name(),
+                d.base,
+                d.controllable
+            );
+            if let Some(p) = &d.profile {
+                p.validate().unwrap();
+            }
+            let text = d.to_toml().unwrap() + &d.settings_view().to_string();
+            for leaked in ["RestPendant", "Secret", "Users", "Documents", "GUID"] {
+                assert!(!text.contains(leaked), "{path}: {leaked} in the device");
+            }
+            if prefs.default_device() == Some(dev) && d.kind == DeviceKind::JczGalvo && device::same_lens(dev, &bases.builtin) {
+                assert_eq!(d.base, Some(device::ProfileBase::Builtin));
+                assert_eq!(d.workspace_mm, [bases.builtin.field_mm; 2]);
+            }
+        }
+    }
 }

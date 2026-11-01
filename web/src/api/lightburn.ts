@@ -22,6 +22,8 @@ export interface LightBurnDevice {
   field_mm: number | null;
   width_mm: number | null;
   height_mm: number | null;
+  /** OpenEtch's device kind ("jcz_galvo", "gantry"...), for registry devices (api/devices.ts); absent for LightBurn's. */
+  kind?: string;
 }
 
 /** GET /api/lightburn. `source` is where the engine got the devices: LightBurn on its own computer, or an upload. */
@@ -102,12 +104,22 @@ export function formatDiffValue(v: unknown): string {
   if (typeof v === "number") return Number.isFinite(v) ? String(Number(v.toFixed(4))) : String(v);
   if (typeof v === "boolean") return v ? "Yes" : "No";
   if (typeof v === "string") return v;
-  return JSON.stringify(v);
+  if (Array.isArray(v)) {
+    if (v.length === 2 && v.every((x) => typeof x === "number")) return `${formatDiffValue(v[0])} × ${formatDiffValue(v[1])}`;
+    return v.map(formatDiffValue).join(", ");
+  }
+  if (typeof v === "object") {
+    return Object.entries(v as Record<string, unknown>)
+      .map(([k, x]) => `${diffLabel(k)}: ${formatDiffValue(x)}`)
+      .join(", ");
+  }
+  return String(v);
 }
 
-/** A profile field name for display: "max_mark_speed_mm_s" -> "max mark speed mm s". */
+/** A profile field name for display: "max_mark_speed_mm_s" -> "Max mark speed mm s". */
 export function diffLabel(field: string): string {
-  return field.replace(/[._]+/g, " ").trim();
+  const t = field.replace(/[._]+/g, " ").trim();
+  return t.charAt(0).toUpperCase() + t.slice(1);
 }
 
 /** Case-insensitive comparison key for device names. */
@@ -200,11 +212,11 @@ export async function readLbrnDeviceName(file: Blob): Promise<string | null> {
 // ---- the import field size ------------------------------------------------------------------------------------------
 
 /** Where a LightBurn import's field size comes from (the engine's `field_source`, without the device name). */
-export type FieldSourceKind = "file-device" | "default-device" | "document" | "machine" | "caller";
+export type FieldSourceKind = "file-device" | "default-device" | "active-device" | "document" | "machine" | "caller";
 
 export interface FieldSource {
   kind: FieldSourceKind;
-  /** The LightBurn device's name, for the two device kinds. */
+  /** The device's name, for the device kinds. */
   device: string | null;
 }
 
@@ -216,31 +228,48 @@ export interface ImportFieldDefault extends FieldSource {
    * the engine has no LightBurn settings): the size then comes from further down the rule.
    */
   unknownFileDevice: string | null;
+  /**
+   * The workspace (W x H mm) when the chosen device is not a galvo (a gantry laser): the engine then lays the file out
+   * for that workspace and its origin, not for a square field. Null for galvos and the size-only kinds.
+   */
+  workspaceMm: [number, number] | null;
+}
+
+/** A device's workspace when it is laid out as a workspace rather than a galvo field (see `workspaceMm`). */
+function deviceWorkspace(d: LightBurnDevice): [number, number] | null {
+  if (d.kind === undefined || d.kind === "jcz_galvo" || d.kind === "galvo_other") return null;
+  const w = d.width_mm ?? d.field_mm;
+  const h = d.height_mm ?? w;
+  return w !== null && h !== null ? [w, h] : null;
 }
 
 /**
  * The field size the engine uses for a LightBurn import when the caller sends none: the device the file was saved
- * for, else `engineDevice` (the engine's `--lightburn-device` or LightBurn's default device), else the document's
- * field, else the machine profile's, else `fallback` (the UI's default before the engine answers).
+ * for, else `engineDevice` (the active OpenEtch device, or on older engines `--lightburn-device` / LightBurn's
+ * default device; `engineKind` says which), else the document's field, else the machine profile's, else `fallback`
+ * (the UI's default before the engine answers).
  */
 export function lbrnImportField(o: {
   fileDevice: string | null;
   devices: readonly LightBurnDevice[];
   engineDevice: string | null;
+  engineKind?: "default-device" | "active-device";
   docField: number | null;
   machineField: number | null;
   fallback: number;
 }): ImportFieldDefault {
   const fromFile = findDevice(o.devices, o.fileDevice);
   const unknownFileDevice = o.fileDevice && !fromFile ? o.fileDevice : null;
-  if (fromFile && fromFile.field_mm !== null) return { kind: "file-device", device: fromFile.name, fieldMm: fromFile.field_mm, unknownFileDevice };
+  if (fromFile && fromFile.field_mm !== null)
+    return { kind: "file-device", device: fromFile.name, fieldMm: fromFile.field_mm, unknownFileDevice, workspaceMm: deviceWorkspace(fromFile) };
   const dflt = findDevice(o.devices, o.engineDevice);
-  if (dflt && dflt.field_mm !== null) return { kind: "default-device", device: dflt.name, fieldMm: dflt.field_mm, unknownFileDevice };
+  if (dflt && dflt.field_mm !== null)
+    return { kind: o.engineKind ?? "default-device", device: dflt.name, fieldMm: dflt.field_mm, unknownFileDevice, workspaceMm: deviceWorkspace(dflt) };
   const doc = num(o.docField);
-  if (doc !== null) return { kind: "document", device: null, fieldMm: doc, unknownFileDevice };
+  if (doc !== null) return { kind: "document", device: null, fieldMm: doc, unknownFileDevice, workspaceMm: null };
   const machine = num(o.machineField);
-  if (machine !== null) return { kind: "machine", device: null, fieldMm: machine, unknownFileDevice };
-  return { kind: "machine", device: null, fieldMm: o.fallback, unknownFileDevice };
+  if (machine !== null) return { kind: "machine", device: null, fieldMm: machine, unknownFileDevice, workspaceMm: null };
+  return { kind: "machine", device: null, fieldMm: o.fallback, unknownFileDevice, workspaceMm: null };
 }
 
 /** The LightBurn device the engine falls back to: the one it matched for the machine card, else LightBurn's default. */
@@ -256,6 +285,8 @@ export function parseFieldSource(v: unknown): FieldSource | null {
   if (m) return { kind: "file-device", device: m[1] };
   m = /^LightBurn default device\s+(.+)$/i.exec(s);
   if (m) return { kind: "default-device", device: m[1] };
+  m = /^active device\s+(.+)$/i.exec(s);
+  if (m) return { kind: "active-device", device: m[1] };
   const k = s.toLowerCase();
   if (k === "document" || k === "machine" || k === "caller") return { kind: k, device: null };
   return null;
@@ -268,6 +299,8 @@ export function fieldSourceText(s: FieldSource): string {
       return `from your LightBurn device ${s.device}`;
     case "default-device":
       return `from your default LightBurn device ${s.device}`;
+    case "active-device":
+      return `from your active device ${s.device}`;
     case "document":
       return "the field size of your current design";
     case "machine":
@@ -284,7 +317,14 @@ export function fieldSourceText(s: FieldSource): string {
 export function sharedField(list: readonly ImportFieldDefault[]): ImportFieldDefault | null {
   if (list.length === 0) return null;
   const [first] = list;
-  const same = list.every((f) => Math.abs(f.fieldMm - first.fieldMm) < 1e-6 && f.kind === first.kind && f.device === first.device);
+  const same = list.every(
+    (f) =>
+      Math.abs(f.fieldMm - first.fieldMm) < 1e-6 &&
+      f.kind === first.kind &&
+      f.device === first.device &&
+      (f.workspaceMm === null) === (first.workspaceMm === null) &&
+      (f.workspaceMm === null || first.workspaceMm === null || Math.abs(f.workspaceMm[1] - first.workspaceMm[1]) < 1e-6),
+  );
   return same ? first : null;
 }
 

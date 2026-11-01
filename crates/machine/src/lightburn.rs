@@ -109,6 +109,12 @@ pub struct LightBurnDevice {
     /// File name of `Settings.CorrectionFile` (the folders are dropped).
     #[serde(default)]
     pub correction_file: Option<String>,
+    /// `HomeOnStartup`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home_on_startup: Option<bool>,
+    /// File name of `LastDevLibraryPath`, the material library linked to the device (the folders are dropped).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub library_file: Option<String>,
     #[serde(default)]
     pub settings: LightBurnSettings,
     /// Known keys whose value had the wrong type (and were ignored). Key names only.
@@ -166,8 +172,10 @@ pub struct LightBurnSettings {
     /// `Galvo_2_Sign` (1 or -1).
     pub galvo_2_sign: Option<f64>,
     /// `Galvo_1_Scale`, `Galvo_1_Skew`, `Galvo_1_Trapezoid`, `Galvo_1_Bulge` (1 = neutral).
+    #[serde(with = "shape_serde")]
     pub galvo_1_shape: [Option<f64>; 4],
     /// `Galvo_2_Scale`, `Galvo_2_Skew`, `Galvo_2_Trapezoid`, `Galvo_2_Bulge` (1 = neutral).
+    #[serde(with = "shape_serde")]
     pub galvo_2_shape: [Option<f64>; 4],
     /// `Laser_Type`.
     pub laser_type: Option<i64>,
@@ -195,6 +203,64 @@ pub struct LightBurnSettings {
     pub start_mark_bit_high: Option<bool>,
     /// `StartMarkPulseMode`.
     pub start_mark_pulse_mode: Option<bool>,
+    // Every family (Device Settings shown read-only; OpenEtch does not use them).
+    /// `CutOrigin` (LightBurn's job origin selector).
+    pub cut_origin: Option<i64>,
+    /// `EnableBoundsCheck`.
+    pub bounds_check: Option<bool>,
+    /// `Sim_MaxSpeedX`, mm/s (LightBurn's preview timing).
+    pub preview_max_speed_x_mm_s: Option<f64>,
+    /// `Sim_MaxSpeedY`, mm/s.
+    pub preview_max_speed_y_mm_s: Option<f64>,
+    /// `Sim_RapidSpeed`, mm/s.
+    pub preview_rapid_speed_mm_s: Option<f64>,
+    /// `Sim_MaxAccelX`, mm/s².
+    pub preview_max_accel_x: Option<f64>,
+    /// `Sim_MaxAccelY`, mm/s².
+    pub preview_max_accel_y: Option<f64>,
+    // GCode family.
+    /// `BaudRate`.
+    pub baud_rate: Option<i64>,
+    /// `NetworkPort`.
+    pub network_port: Option<i64>,
+    /// `S_Scale` (the S value of 100 % power).
+    pub s_value_max: Option<f64>,
+    /// `AirAssistM7`.
+    pub air_assist_m7: Option<bool>,
+    /// `EnableZ`.
+    pub enable_z: Option<bool>,
+    /// `EnableU`.
+    pub enable_u: Option<bool>,
+    /// `TransferMode`.
+    pub transfer_mode: Option<i64>,
+    /// `GCodeFlavor` (Custom GCode, e.g. "smoothie"), at most 40 characters.
+    pub gcode_flavor: Option<String>,
+}
+
+impl LightBurnSettings {
+    /// Whether any galvo setting (`Galvo_*`, `CorrectionFile` aside) is present.
+    pub fn has_galvo_keys(&self) -> bool {
+        self.galvo_1_is_x.is_some()
+            || self.galvo_1_sign.is_some()
+            || self.galvo_2_sign.is_some()
+            || self.galvo_1_shape.iter().chain(&self.galvo_2_shape).any(Option::is_some)
+    }
+}
+
+/// The galvo shape arrays as numbers, a missing value as NaN (TOML has no null; JSON writes NaN as null), read back
+/// from numbers, NaN or null.
+mod shape_serde {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(v: &[Option<f64>; 4], s: S) -> Result<S::Ok, S::Error> {
+        let numbers: [f64; 4] = v.map(|x| x.unwrap_or(f64::NAN));
+        serde::Serialize::serialize(&numbers, s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[Option<f64>; 4], D::Error> {
+        let v: [Option<f64>; 4] = Deserialize::deserialize(d)?;
+        Ok(v.map(|x| x.filter(|f| !f.is_nan())))
+    }
 }
 
 // --- prefs.ini reading -------------------------------------------------------------------------------------------
@@ -226,6 +292,10 @@ struct RawDevice {
     mirror_x: Option<Value>,
     #[serde(rename = "MirrorY")]
     mirror_y: Option<Value>,
+    #[serde(rename = "HomeOnStartup")]
+    home_on_startup: Option<Value>,
+    #[serde(rename = "LastDevLibraryPath")]
+    library_path: Option<Value>,
     #[serde(rename = "Settings")]
     settings: Option<RawSettings>,
 }
@@ -280,6 +350,21 @@ raw_settings! {
     start_mark_port_bit = "StartMarkPortBit",
     start_mark_bit_high = "StartMarkBitHigh",
     start_mark_pulse_mode = "StartMarkPulseMode",
+    cut_origin = "CutOrigin",
+    bounds_check = "EnableBoundsCheck",
+    sim_max_speed_x = "Sim_MaxSpeedX",
+    sim_max_speed_y = "Sim_MaxSpeedY",
+    sim_rapid_speed = "Sim_RapidSpeed",
+    sim_max_accel_x = "Sim_MaxAccelX",
+    sim_max_accel_y = "Sim_MaxAccelY",
+    baud_rate = "BaudRate",
+    network_port = "NetworkPort",
+    s_scale = "S_Scale",
+    air_assist_m7 = "AirAssistM7",
+    enable_z = "EnableZ",
+    enable_u = "EnableU",
+    transfer_mode = "TransferMode",
+    gcode_flavor = "GCodeFlavor",
 }
 
 /// A LightBurn float as the `f32` LightBurn stored (`153.8000030517578` -> `153.8`); other values unchanged.
@@ -365,6 +450,8 @@ fn device(raw: RawDevice) -> Option<LightBurnDevice> {
     let height_mm = r.num("Height", &raw.height);
     let mirror_x = r.flag("MirrorX", &raw.mirror_x);
     let mirror_y = r.flag("MirrorY", &raw.mirror_y);
+    let home_on_startup = r.flag("HomeOnStartup", &raw.home_on_startup);
+    let library_file = r.text("LastDevLibraryPath", &raw.library_path).and_then(|p| file_name(&p));
     let s = raw.settings.unwrap_or_default();
     let correction_file = r.text("Settings.CorrectionFile", &s.correction_file).and_then(|p| file_name(&p));
     let settings = LightBurnSettings {
@@ -409,6 +496,21 @@ fn device(raw: RawDevice) -> Option<LightBurnDevice> {
         start_mark_port_bit: r.int("Settings.StartMarkPortBit", &s.start_mark_port_bit),
         start_mark_bit_high: r.flag("Settings.StartMarkBitHigh", &s.start_mark_bit_high),
         start_mark_pulse_mode: r.flag("Settings.StartMarkPulseMode", &s.start_mark_pulse_mode),
+        cut_origin: r.int("Settings.CutOrigin", &s.cut_origin),
+        bounds_check: r.flag("Settings.EnableBoundsCheck", &s.bounds_check),
+        preview_max_speed_x_mm_s: r.num("Settings.Sim_MaxSpeedX", &s.sim_max_speed_x),
+        preview_max_speed_y_mm_s: r.num("Settings.Sim_MaxSpeedY", &s.sim_max_speed_y),
+        preview_rapid_speed_mm_s: r.num("Settings.Sim_RapidSpeed", &s.sim_rapid_speed),
+        preview_max_accel_x: r.num("Settings.Sim_MaxAccelX", &s.sim_max_accel_x),
+        preview_max_accel_y: r.num("Settings.Sim_MaxAccelY", &s.sim_max_accel_y),
+        baud_rate: r.int("Settings.BaudRate", &s.baud_rate),
+        network_port: r.int("Settings.NetworkPort", &s.network_port),
+        s_value_max: r.num("Settings.S_Scale", &s.s_scale),
+        air_assist_m7: r.flag("Settings.AirAssistM7", &s.air_assist_m7),
+        enable_z: r.flag("Settings.EnableZ", &s.enable_z),
+        enable_u: r.flag("Settings.EnableU", &s.enable_u),
+        transfer_mode: r.int("Settings.TransferMode", &s.transfer_mode),
+        gcode_flavor: r.text("Settings.GCodeFlavor", &s.gcode_flavor).map(|f| f.trim().chars().take(40).collect()),
     };
     Some(LightBurnDevice {
         name,
@@ -419,6 +521,8 @@ fn device(raw: RawDevice) -> Option<LightBurnDevice> {
         mirror_x,
         mirror_y,
         correction_file,
+        home_on_startup,
+        library_file,
         settings,
         warnings,
     })
@@ -451,6 +555,20 @@ pub fn parse_devices(json: &str) -> Result<LightBurnPrefs, LightBurnError> {
             None => prefs.warnings.push(format!("DeviceList[{i}] has no Name; skipped")),
         }
     }
+    Ok(prefs)
+}
+
+/// Read a LightBurn `.lbdev` device file (LightBurn 1.7's Devices > Export): plain JSON of the same shape as
+/// `prefs.ini`'s device list, `{"DeviceList": [...]}`, without `DefaultDevice`. Read with the same typed whitelist as
+/// [`parse_devices`] (macros, G-code, addresses, paths and every other key are skipped). A file without `DeviceList`
+/// is refused.
+pub fn parse_lbdev(json: &str) -> Result<LightBurnPrefs, LightBurnError> {
+    let raw: RawPrefs = serde_json::from_str(json.trim_start_matches('\u{feff}')).map_err(|e| json_error(&e))?;
+    if raw.device_list.is_none() {
+        return Err(LightBurnError::Prefs("the file has no DeviceList (expected a LightBurn .lbdev device file)".into()));
+    }
+    let mut prefs = parse_devices(json)?;
+    prefs.default_index = None;
     Ok(prefs)
 }
 

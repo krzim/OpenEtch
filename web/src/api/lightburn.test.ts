@@ -73,7 +73,7 @@ const base = { devices: [UV, JCZ], engineDevice: "UV", docField: 150, machineFie
 
 test("import field: the file's device first", () => {
   const f = L.lbrnImportField({ ...base, fileDevice: "JCZFiber (Unknown)" });
-  assert.deepEqual(f, { kind: "file-device", device: "JCZFiber", fieldMm: 153.8000030517578, unknownFileDevice: null });
+  assert.deepEqual(f, { kind: "file-device", device: "JCZFiber", fieldMm: 153.8000030517578, unknownFileDevice: null, workspaceMm: null });
   assert.equal(L.fieldSourceText(f), "from your LightBurn device JCZFiber");
 });
 
@@ -89,14 +89,30 @@ test("import field: then the engine's LightBurn device, the document, the machin
   assert.equal(f.unknownFileDevice, "Shop CO2");
   // No LightBurn settings at all: the document's field, then the machine's, then the fallback.
   f = L.lbrnImportField({ ...base, devices: [], engineDevice: null, fileDevice: "JCZFiber (Unknown)" });
-  assert.deepEqual(f, { kind: "document", device: null, fieldMm: 150, unknownFileDevice: "JCZFiber (Unknown)" });
+  assert.deepEqual(f, { kind: "document", device: null, fieldMm: 150, unknownFileDevice: "JCZFiber (Unknown)", workspaceMm: null });
   f = L.lbrnImportField({ ...base, devices: [], engineDevice: null, fileDevice: null, docField: null });
-  assert.deepEqual(f, { kind: "machine", device: null, fieldMm: 153.75, unknownFileDevice: null });
+  assert.deepEqual(f, { kind: "machine", device: null, fieldMm: 153.75, unknownFileDevice: null, workspaceMm: null });
   f = L.lbrnImportField({ ...base, devices: [], engineDevice: null, fileDevice: null, docField: null, machineField: null, fallback: 120 });
   assert.equal(f.fieldMm, 120);
   // An engine device name that matches nothing is skipped.
   f = L.lbrnImportField({ ...base, fileDevice: null, engineDevice: "Gone" });
   assert.equal(f.kind, "document");
+});
+
+test("import field: the active OpenEtch device, and a gantry device's workspace", () => {
+  const shop: L.LightBurnDevice = { name: "Shop CO2", display_name: "Ruida", field_mm: 600, width_mm: 600, height_mm: 400, kind: "gantry" };
+  const galvo: L.LightBurnDevice = { ...UV, kind: "jcz_galvo" };
+  let f = L.lbrnImportField({ ...base, devices: [galvo, shop], engineDevice: "UV", engineKind: "active-device", fileDevice: null });
+  assert.equal(f.kind, "active-device");
+  assert.equal(f.workspaceMm, null);
+  assert.equal(L.fieldSourceText(f), "from your active device UV");
+  f = L.lbrnImportField({ ...base, devices: [galvo, shop], engineDevice: "UV", engineKind: "active-device", fileDevice: "Shop CO2" });
+  assert.equal(f.kind, "file-device");
+  assert.deepEqual(f.workspaceMm, [600, 400]);
+  // A gantry file and a galvo file never share one size line.
+  const g = L.lbrnImportField({ ...base, devices: [galvo, shop], engineDevice: "UV", fileDevice: null });
+  assert.equal(L.sharedField([f, g]), null);
+  assert.deepEqual(L.parseFieldSource("active device Shop CO2"), { kind: "active-device", device: "Shop CO2" });
 });
 
 test("import field: a device without a usable size is skipped", () => {
@@ -186,7 +202,7 @@ test("machineLightBurn reads the machine status's lightburn diffs", () => {
   assert.equal(L.formatDiffValue(false), "No");
   assert.equal(L.formatDiffValue(null), "–");
   assert.equal(L.formatDiffValue("jcz150.cor"), "jcz150.cor");
-  assert.equal(L.diffLabel("timing.laser_on_delay_us"), "timing laser on delay us");
+  assert.equal(L.diffLabel("timing.laser_on_delay_us"), "Timing laser on delay us");
 });
 
 // ---- prefs.ini upload ---------------------------------------------------------------------------------------------

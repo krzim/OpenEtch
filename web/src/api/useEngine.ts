@@ -29,6 +29,8 @@ export interface Engine {
   httpError: string | null;
   /** The latest edit made by someone other than this UI (from `document_changed.origin`), for the timeline to flash. */
   remoteEdit: RemoteEdit | null;
+  /** Counts `device_changed` events (another device became active), so the device list refetches. */
+  deviceSeq: number;
   /** Run one command (or several as one undo step) and refetch. Resolves to the result, or throws ApiError. */
   run: (inv: Invocation | Invocation[]) => Promise<unknown>;
   undo: () => Promise<void>;
@@ -98,6 +100,7 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
   const [link, setLink] = useState<LinkState>("connecting");
   const [httpError, setHttpError] = useState<string | null>(null);
   const [remoteEdit, setRemoteEdit] = useState<RemoteEdit | null>(null);
+  const [deviceSeq, setDeviceSeq] = useState(0);
 
   const notifyRef = useRef(notify);
   notifyRef.current = notify;
@@ -288,6 +291,12 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
           case "history_changed":
             void refreshDoc();
             break;
+          case "device_changed":
+            // The profile, field size and controller changed: everything that shows them refetches.
+            setDeviceSeq((n) => n + 1);
+            void refreshMachine();
+            void refreshDoc();
+            break;
           case "run_finished": {
             void refreshMachine();
             const t = runFinishedToast(ev);
@@ -336,6 +345,7 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
     link,
     httpError,
     remoteEdit,
+    deviceSeq,
     run,
     undo,
     redo,

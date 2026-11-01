@@ -386,3 +386,21 @@ test("export names: project, else the opened file, else the document", () => {
   assert.equal(P.exportBaseName(null, null, null), null);
   assert.equal(P.downloadName(P.exportBaseName(null, "Brass tags (v2)", "Untitled"), "lbrn2"), "Brass tags (v2).lbrn2");
 });
+
+test("opened file name: the engine's display_name (survives a reload), else this page's", () => {
+  assert.equal(P.openedFileName({ display_name: "Coaster" }, null), "Coaster");
+  assert.equal(P.openedFileName({ display_name: "Coaster" }, "Old"), "Coaster");
+  assert.equal(P.openedFileName({ display_name: null }, "Tags"), "Tags");
+  assert.equal(P.openedFileName({ display_name: "  " }, null), null);
+  assert.equal(P.openedFileName(null, "  "), null);
+  assert.equal(P.openedFileName(undefined, null), null);
+  // After a reload this page remembers nothing; exports still use the opened file's name.
+  assert.equal(P.downloadName(P.exportBaseName(null, P.openedFileName({ display_name: "Mug wrap" }, null), "Untitled"), "lbrn2"), "Mug wrap.lbrn2");
+});
+
+test("Open/Import dialog default: Open for an empty design, Import otherwise", () => {
+  const obj = { id: "obj-1" } as unknown as import("./types.ts").DocObject;
+  assert.equal(P.defaultImportMode(null), "replace");
+  assert.equal(P.defaultImportMode({ objects: [] }), "replace");
+  assert.equal(P.defaultImportMode({ objects: [obj] }), "merge");
+});

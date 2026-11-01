@@ -4,6 +4,10 @@
 //
 // Files dropped anywhere on the window (or picked with Import / Ctrl+I) are routed by api/drop.ts: SVG, DXF and bitmaps
 // are imported into the document, a LightBurn .lbrn2 opens the Open/Import dialog, a .openetch opens the project.
+//
+// The canvas shows the active device's workspace (components/Devices.tsx): a galvo's square field or a gantry
+// device's rectangle. File > Devices… (Alt+Shift+M, as in LightBurn) opens the Devices window, and the Laser workspace
+// has the device dropdown.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api/client.ts";
@@ -20,14 +24,16 @@ import {
   type DirectImport,
 } from "./api/drop.ts";
 import { friendlyError, outsideField } from "./api/laser.ts";
+import { activeDevice, asLightBurnDevices, canvasWorkspace, designOnlyReason, machineDevice } from "./api/devices.ts";
 import { engineLightBurnDevice } from "./api/lightburn.ts";
-import { MAX_UPLOAD_BYTES, commandResult, fileError, warningList } from "./api/project.ts";
+import { MAX_UPLOAD_BYTES, commandResult, defaultImportMode, fileError, warningList } from "./api/project.ts";
 import { pendingRuns, stopToast } from "./api/runs.ts";
 import type { Vec2 } from "./api/types.ts";
 import { useEngine } from "./api/useEngine.ts";
 import { BrowserPanel } from "./components/BrowserPanel.tsx";
 import { ContextMenu, type MenuItem } from "./components/ContextMenu.tsx";
 import { ArrayDialog, CommandPalette, PlaceDialog, StockDialog } from "./components/Dialogs.tsx";
+import { DeviceBar, DevicesWindow, useDevices } from "./components/Devices.tsx";
 import { DropOverlay, useFileDrop } from "./components/FileDrop.tsx";
 import { FileDialogs, FileMenu, useFileActions } from "./components/FileMenu.tsx";
 import { MachineCard, PreviewPlayer, PreviewStatsCard, RunsCard } from "./components/LaserPanel.tsx";
@@ -128,6 +134,7 @@ export function App() {
   const [prefs, setPrefs] = useState<ViewPrefs>(loadPrefs);
   const [previewOptions, setPreviewOptions] = useState<PreviewOptions>({ hidden: new Set(), upTo: null, shade: true, jumps: true });
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [devicesOpen, setDevicesOpen] = useState(false);
   const narrow = useMediaQuery(NARROW_QUERY);
   const [leftOpen, setLeftOpen] = useState(!narrow);
   const [rightOpen, setRightOpen] = useState(!narrow);
@@ -188,11 +195,20 @@ export function App() {
   }, [engine.commands]);
 
   const machineFieldMm = typeof machine?.field_mm === "number" && machine.field_mm > 0 ? machine.field_mm : null;
-  const fieldMm = machineFieldMm ?? DEFAULT_FIELD_MM;
   const lightburn = useLightBurn(engine.link);
+  const devices = useDevices(engine.link, engine.deviceSeq);
+  // The active device: from the registry, else the one GET /api/machine reports; null on older engines.
+  const device = activeDevice(devices.list) ?? machineDevice(machine);
+  const [wsW, wsH] = canvasWorkspace(device, machineFieldMm, DEFAULT_FIELD_MM);
+  const workspaceMm = useMemo<Vec2>(() => [wsW, wsH], [wsW, wsH]);
+  // The LightBurn dialogs match files against the device registry (the active device is the engine's own); engines
+  // without it fall back to LightBurn's devices.
   const lightburnDevices = useMemo(
-    () => ({ devices: lightburn.info?.devices ?? [], engineDevice: engineLightBurnDevice(machine, lightburn.info) }),
-    [lightburn.info, machine],
+    () =>
+      devices.list
+        ? { devices: asLightBurnDevices(devices.list.devices), engineDevice: device?.display_name ?? null, engineKind: "active-device" as const, active: device }
+        : { devices: lightburn.info?.devices ?? [], engineDevice: engineLightBurnDevice(machine, lightburn.info) },
+    [devices.list, device, lightburn.info, machine],
   );
   const file = useFileActions({
     engine,
@@ -207,7 +223,7 @@ export function App() {
   const saveFile = file.save;
   const activeLayer = selection.layer ?? doc?.layers[0]?.id ?? null;
   const runs = pendingRuns(machine);
-  const outside = useMemo(() => outsideField(doc, fieldMm), [doc, fieldMm]);
+  const outside = useMemo(() => outsideField(doc, workspaceMm), [doc, workspaceMm]);
 
   const run = engine.run;
   const exec = useCallback((inv: Parameters<typeof run>[0]) => run(inv).catch(report), [run, report]);
@@ -294,7 +310,8 @@ export function App() {
         setWorkspace("design");
         selectIds(created);
       }
-      if (plan.lbrn2.length) file.setModal({ kind: "import", files: plan.lbrn2, mode: "merge" });
+      // Open when the design is (still) empty, Import otherwise.
+      if (plan.lbrn2.length) file.setModal({ kind: "import", files: plan.lbrn2, mode: created.length ? "merge" : defaultImportMode(docRef.current) });
       if (imported.length || refused.length) {
         const sum = dropSummary({ imported, objects: created.length, refused, pending: plan.lbrn2.length });
         notify(sum.msg, sum.kind);
@@ -790,17 +807,23 @@ export function App() {
     exec,
   ]);
 
-  // LightBurn: Alt+Shift+W toggles the filled view.
+  // LightBurn: Alt+Shift+W toggles the filled view; Alt+Shift+M opens the Devices window.
+  const canDevices = !devices.unsupported;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.altKey && e.shiftKey && e.key.toLowerCase() === "w" && !typingIn(e.target)) {
+      if (!e.altKey || !e.shiftKey || typingIn(e.target)) return;
+      const k = e.key.toLowerCase();
+      if (k === "w") {
         e.preventDefault();
         setPrefs((p) => ({ ...p, viewStyle: p.viewStyle === "filled" ? "wireframe" : "filled" }));
+      } else if (k === "m" && canDevices) {
+        e.preventDefault();
+        setDevicesOpen(true);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [canDevices]);
 
   const onPick = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
@@ -820,6 +843,11 @@ export function App() {
   };
 
   const closeDialog = useCallback(() => setDialog(null), []);
+  // After a device switch: the profile, field size and controller changed (the `device_changed` event does the same).
+  const onDeviceSwitched = useCallback(() => {
+    void engine.refreshMachine();
+    void engine.refreshDoc();
+  }, [engine]);
   const selectedLayer = selection.layer ? doc?.layers.find((l) => l.id === selection.layer) : undefined;
   const hasSel = selection.objects.length > 0;
   const units = doc ? unitsOf(doc, selection.objects).length : 0;
@@ -860,7 +888,7 @@ export function App() {
   return (
     <div className={`app ws-${workspace}${narrow ? " narrow" : ""}`}>
       <TopBar
-        fileMenu={<FileMenu file={file} onImport={openImport} />}
+        fileMenu={<FileMenu file={file} onImport={openImport} onDevices={canDevices ? () => setDevicesOpen(true) : undefined} />}
         workspace={workspace}
         onWorkspace={switchWorkspace}
         onUndo={() => void undo()}
@@ -870,7 +898,7 @@ export function App() {
         httpError={engine.httpError}
         machine={machine}
         missingCommands={missingCommands}
-        docName={doc?.name ?? null}
+        docName={file.openedName ?? doc?.name ?? null}
         projectName={file.projectName}
         dirty={file.dirty}
         pendingRuns={runs.length}
@@ -902,6 +930,7 @@ export function App() {
         onFrame={() => void machineAction(api.frame(), "Framing with the red pointer.")}
         onFrameStop={() => void machineAction(api.frameStop(), "Framing stopped. Pending runs are kept.")}
         onRequestRun={() => void machineAction(api.requestRun(), "Run requested. Approve it in the Machine panel.")}
+        designOnly={designOnlyReason(device)}
         onToggleLeft={() => setLeftOpen((v) => !v)}
         onToggleRight={() => setRightOpen((v) => !v)}
       />
@@ -937,7 +966,7 @@ export function App() {
         <section className="center">
           <Viewport
             doc={doc}
-            fieldMm={fieldMm}
+            workspaceMm={workspaceMm}
             selection={selection}
             tool={tool}
             activeLayer={activeLayer}
@@ -969,7 +998,7 @@ export function App() {
                 doc={doc}
                 selection={selection}
                 machine={machine}
-                fieldMm={fieldMm}
+                workspaceMm={workspaceMm}
                 has={has}
                 run={run}
                 report={report}
@@ -978,14 +1007,30 @@ export function App() {
               />
             ) : (
               <div className="props">
+                {canDevices && (
+                  <section className="card">
+                    <h3>Device</h3>
+                    <DeviceBar
+                      devices={devices}
+                      machine={machine}
+                      onOpenWindow={() => setDevicesOpen(true)}
+                      onSwitched={onDeviceSwitched}
+                      notify={notify}
+                      report={report}
+                    />
+                  </section>
+                )}
                 <MachineCard machine={machine} httpError={engine.httpError}>
-                  <LightBurnDevices
-                    lightburn={lightburn}
-                    machine={machine}
-                    onChanged={() => void engine.refreshMachine()}
-                    notify={notify}
-                    report={report}
-                  />
+                  {/* Engines without the device registry: LightBurn's devices and the profile diffs. */}
+                  {!canDevices && (
+                    <LightBurnDevices
+                      lightburn={lightburn}
+                      machine={machine}
+                      onChanged={() => void engine.refreshMachine()}
+                      notify={notify}
+                      report={report}
+                    />
+                  )}
                 </MachineCard>
                 <RunsCard
                   machine={machine}
@@ -1019,10 +1064,20 @@ export function App() {
       {dialog === "stock" && <StockDialog doc={doc} run={run} onClose={closeDialog} />}
       {dialog === "place" && <PlaceDialog ids={selection.objects} run={run} onClose={closeDialog} />}
       {dialog === "array" && doc && (
-        <ArrayDialog doc={doc} ids={selection.objects} fieldMm={fieldMm} run={run} onClose={closeDialog} onCreated={(ids) => selectIds([...selection.objects, ...ids])} />
+        <ArrayDialog
+          doc={doc}
+          ids={selection.objects}
+          workspaceMm={workspaceMm}
+          run={run}
+          onClose={closeDialog}
+          onCreated={(ids) => selectIds([...selection.objects, ...ids])}
+        />
       )}
       {dialog === "commands" && <CommandPalette commands={engine.commands} run={run} onClose={closeDialog} />}
       <FileDialogs file={file} docName={doc?.name ?? null} />
+      {devicesOpen && (
+        <DevicesWindow devices={devices} machine={machine} onClose={() => setDevicesOpen(false)} onSwitched={onDeviceSwitched} notify={notify} report={report} />
+      )}
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />}
       {dropLabel && <DropOverlay label={dropLabel} />}
 

@@ -43,6 +43,11 @@ pub enum Event {
     /// `marker` is the index of the last applied step (0 = none), `steps` how many there are. Clients refetch
     /// `GET /api/history`.
     HistoryChanged { marker: usize, steps: usize, revision: u64 },
+    /// Device `id` was made active (`POST /api/devices/{id}/activate`): the machine profile and workspace changed.
+    /// Clients refetch `GET /api/devices` and `GET /api/machine`.
+    DeviceChanged { id: String },
+    /// Devices were imported or removed; clients refetch `GET /api/devices`.
+    DevicesChanged,
 }
 
 impl Event {
@@ -119,6 +124,11 @@ mod tests {
             serde_json::to_value(Event::HistoryChanged { marker: 2, steps: 5, revision: 9 }).unwrap(),
             serde_json::json!({"type": "history_changed", "marker": 2, "steps": 5, "revision": 9})
         );
+        assert_eq!(
+            serde_json::to_value(Event::DeviceChanged { id: "jczfiber".into() }).unwrap(),
+            serde_json::json!({"type": "device_changed", "id": "jczfiber"})
+        );
+        assert_eq!(serde_json::to_value(Event::DevicesChanged).unwrap(), serde_json::json!({"type": "devices_changed"}));
         let ev = Event::RunPending { run_id: "run-1".into(), origin: Origin::Agent("mcp".into()), summary: "s".into() };
         let v = serde_json::to_value(&ev).unwrap();
         assert_eq!(v["type"], "run_pending");

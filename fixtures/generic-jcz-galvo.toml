@@ -1,0 +1,53 @@
+# Generic JCZ galvo (BJJCZ LMC board, EzCad2 family): the base a LightBurn "JCZFiber" device that is not the B6 is
+# imported onto (machine::device, `MachineProfile::generic_jcz_galvo`). The LightBurn device then sets the field,
+# axes, correction file, timing and its own speed and frequency limits; this file only supplies conservative hard
+# limits and defaults for what LightBurn does not say. Hard limits are never raised by an import, so the values below
+# are deliberately narrow:
+#
+# - frequency 20..4000 kHz: 20 kHz is the usual lower limit of Q-switched fiber sources (low frequencies give high
+#   pulse energies); MOPA sources that go lower need a profile of their own after checking the datasheet.
+# - mark speed up to 5000 mm/s, travel (jump) up to 3000 mm/s, delays up to 2000 µs: below what common galvo heads
+#   take, so a mistyped LightBurn value cannot drive the mirrors harder than usual.
+# - pulse_width_enabled = false: a plain Q-switched source (LightBurn's Laser_QPulseWidthEnabled turns it on).
+# - field 110 mm (LightBurn's default galvo lens), no correction file, no axis swap or mirroring, red pointer bit 8
+#   and laser enable bit 0 (the only bits lmc drives).
+# - timing: meerk40t/galvoplotter @ fc35136 defaults; jump_distance_limit_mm is a placeholder.
+#
+# The JPT M7 pulse-width table is only a list of values a MOPA source might take; it is not used unless
+# pulse_width_enabled is on.
+
+name = "Generic JCZ galvo"
+laser_source = ""
+field_mm = 110.0
+swap_xy = false
+negate_x = false
+negate_y = false
+pulse_widths_ns = [2, 4, 6, 9, 13, 20, 30, 45, 55, 60, 80, 100, 150, 200, 250, 300, 350, 400, 450, 500]
+frequency_khz_min = 20.0
+frequency_khz_max = 4000.0
+max_power_pct = 100.0
+red_light_port_bit = 8
+laser_enable_port_bit = 0
+red_light_speed_mm_s = 2000.0
+max_jump_speed_mm_s = 3000.0
+max_delay_us = 2000.0
+pulse_width_enabled = false
+open_mo_delay_us = 8000.0
+notes = [
+    "generic JCZ galvo base (fixtures/generic-jcz-galvo.toml): conservative hard limits for an unknown machine",
+    "timing defaults from meerk40t/galvoplotter @ fc35136; jump_distance_limit_mm is a placeholder",
+]
+
+[timing]
+laser_on_delay_us = 100.0
+laser_off_delay_us = 100.0
+polygon_delay_us = 100.0
+end_delay_us = 300.0
+jump_speed_mm_s = 2000.0
+jump_delay_min_us = 8.0
+jump_delay_max_us = 200.0
+jump_distance_limit_mm = 10.0
+
+[mark_speed]
+min_mm_s = 1.0
+max_mm_s = 5000.0

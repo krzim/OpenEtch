@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use doc::file::{from_openetch_json, try_to_openetch_json};
 use doc::{Document, ObjectId};
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::layer::validate_settings;
@@ -23,10 +23,156 @@ const MAX_FIELD_MM: f64 = 2000.0;
 /// document's `field_mm` instead.)
 const IMPORT_FIELD_KEY: &str = "lbrn2._field_mm";
 
+/// Document `extras` key: the bed `"width height"` in mm a merging gantry LightBurn import was read with (the
+/// [`IMPORT_FIELD_KEY`] of beds).
+const IMPORT_WORKSPACE_KEY: &str = "lbrn2._workspace_mm";
+/// Document `extras` key: the LightBurn origin corner of the device the document was made or imported for
+/// ([`WorkspaceOrigin`] name), which `doc.export_lbrn2` uses by default.
+pub const ORIGIN_KEY: &str = "lbrn2._origin";
+/// Largest bed side accepted, in mm.
+const MAX_BED_MM: f64 = lbrn::MAX_BED_MM;
+
 /// The field size a merging LightBurn import remembered in `doc`, when usable.
 fn import_field(doc: &Document) -> Option<f64> {
     let f = doc.extras.get(IMPORT_FIELD_KEY)?.parse::<f64>().ok()?;
     (f.is_finite() && f > 0.0 && f <= MAX_FIELD_MM).then_some(f)
+}
+
+/// The bed a merging gantry LightBurn import remembered in `doc`, when usable.
+fn import_workspace(doc: &Document) -> Option<[f64; 2]> {
+    let text = doc.extras.get(IMPORT_WORKSPACE_KEY)?;
+    let mut it = text.split_whitespace().map(|v| v.parse::<f64>().ok());
+    let (w, h) = (it.next()??, it.next()??);
+    [w, h].iter().all(|v| v.is_finite() && *v > 0.0 && *v <= MAX_BED_MM).then_some([w, h])
+}
+
+/// Where LightBurn's origin is on a device: the centre of the field for a galvo, else the bed corner its
+/// coordinates are measured from (LightBurn's Device Settings "Origin", stored as the device's and the project's
+/// `MirrorX` / `MirrorY`; see [`lbrn::Frame::Bed`]). Front = toward the operator = bottom.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceOrigin {
+    /// A galvo: LightBurn coordinates are absolute, the field centre is (W/2, H/2).
+    Center,
+    /// Front left (neither mirror flag): LightBurn's usual GCode origin.
+    BottomLeft,
+    /// Rear left (`MirrorY`).
+    TopLeft,
+    /// Front right (`MirrorX`; inferred, unconfirmed).
+    BottomRight,
+    /// Rear right (both flags; inferred, unconfirmed): DSP machines usually.
+    TopRight,
+}
+
+impl WorkspaceOrigin {
+    /// The snake_case name (`"bottom_left"`).
+    pub fn name(self) -> &'static str {
+        match self {
+            WorkspaceOrigin::Center => "center",
+            WorkspaceOrigin::BottomLeft => "bottom_left",
+            WorkspaceOrigin::TopLeft => "top_left",
+            WorkspaceOrigin::BottomRight => "bottom_right",
+            WorkspaceOrigin::TopRight => "top_right",
+        }
+    }
+
+    /// Parse [`WorkspaceOrigin::name`].
+    pub fn parse(s: &str) -> Option<Self> {
+        [Self::Center, Self::BottomLeft, Self::TopLeft, Self::BottomRight, Self::TopRight].into_iter().find(|o| o.name() == s)
+    }
+
+    /// The corner as LightBurn's `(MirrorX, MirrorY)`; `None` for the centre (a galvo).
+    pub fn mirror(self) -> Option<(bool, bool)> {
+        match self {
+            WorkspaceOrigin::Center => None,
+            WorkspaceOrigin::BottomLeft => Some((false, false)),
+            WorkspaceOrigin::TopLeft => Some((false, true)),
+            WorkspaceOrigin::BottomRight => Some((true, false)),
+            WorkspaceOrigin::TopRight => Some((true, true)),
+        }
+    }
+
+    /// The corner LightBurn's `(MirrorX, MirrorY)` stand for.
+    pub fn from_mirror(mirror_x: bool, mirror_y: bool) -> Self {
+        match (mirror_x, mirror_y) {
+            (false, false) => WorkspaceOrigin::BottomLeft,
+            (false, true) => WorkspaceOrigin::TopLeft,
+            (true, false) => WorkspaceOrigin::BottomRight,
+            (true, true) => WorkspaceOrigin::TopRight,
+        }
+    }
+}
+
+/// The origin a document was made or imported for ([`ORIGIN_KEY`]).
+fn doc_origin(doc: &Document) -> Option<WorkspaceOrigin> {
+    doc.extras.get(ORIGIN_KEY).and_then(|o| WorkspaceOrigin::parse(o))
+}
+
+/// A bed size from the caller, checked.
+fn bed(cmd: &str, [w, h]: [f64; 2]) -> Result<[f64; 2]> {
+    util::positive(cmd, "workspace_mm[0]", w)?;
+    util::positive(cmd, "workspace_mm[1]", h)?;
+    if w > MAX_BED_MM || h > MAX_BED_MM {
+        return Err(invalid(cmd, format!("workspace_mm sides must be at most {MAX_BED_MM} mm (got [{w}, {h}])")));
+    }
+    Ok([w, h])
+}
+
+/// How a LightBurn import or export lays the document out: a galvo field, or a bed with its origin corner.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Layout {
+    Galvo(f64),
+    Bed([f64; 2], WorkspaceOrigin),
+}
+
+/// The layout from the caller's `field_mm` / `workspace_mm` / `origin`, else the document's. A corner origin is a
+/// bed (its size: `workspace_mm`, else `remembered`, else the document's workspace); otherwise a galvo field
+/// (`field_mm`, else `remembered_field`, else the document's).
+fn layout(
+    cmd: &str,
+    field_mm: Option<f64>,
+    workspace_mm: Option<[f64; 2]>,
+    origin: Option<WorkspaceOrigin>,
+    remembered: (Option<f64>, Option<[f64; 2]>),
+    doc: &Document,
+) -> Result<Layout> {
+    match origin {
+        Some(o) if o != WorkspaceOrigin::Center => {
+            if field_mm.is_some() {
+                return Err(invalid(cmd, "field_mm is for galvo layouts; a gantry layout takes workspace_mm"));
+            }
+            let size = workspace_mm.or(remembered.1).or_else(|| doc.workspace()).ok_or_else(|| {
+                invalid(cmd, "workspace_mm is required: the document has no workspace size; pass [width, height] in mm")
+            })?;
+            Ok(Layout::Bed(bed(cmd, size)?, o))
+        }
+        _ => {
+            if workspace_mm.is_some() {
+                return Err(invalid(
+                    cmd,
+                    "workspace_mm is for gantry layouts and needs a corner origin (bottom_left, top_left, bottom_right \
+                     or top_right); a galvo layout takes field_mm",
+                ));
+            }
+            Ok(Layout::Galvo(field(cmd, field_mm.or(remembered.0), doc)?))
+        }
+    }
+}
+
+/// The result fields describing a layout: `field_mm`, `workspace_mm` (null for a galvo) and `origin`.
+fn layout_json(l: Layout, r: &mut Value) {
+    match l {
+        Layout::Galvo(f) => {
+            r["field_mm"] = json!(f);
+            r["workspace_mm"] = Value::Null;
+            r["origin"] = json!(WorkspaceOrigin::Center.name());
+        }
+        Layout::Bed(size, o) => {
+            r["field_mm"] = Value::Null;
+            r["workspace_mm"] = json!(size);
+            r["origin"] = json!(o.name());
+        }
+    }
 }
 
 fn content<'a>(cmd: &str, text: &'a str) -> Result<&'a str> {
@@ -73,8 +219,13 @@ pub struct NewInput {
     /// Name of the new document. Default "Untitled".
     pub name: Option<String>,
     /// Galvo field size in mm the new document is laid out for. Default: the current document's (the OpenEtch
-    /// engine passes the machine profile's, so New always starts at the machine's field).
+    /// engine passes the active device's, so New always starts at the machine's field).
     pub field_mm: Option<f64>,
+    /// Bed [width, height] in mm, for a gantry device (with a corner `origin`); the engine passes the active
+    /// device's. Then field_mm defaults to the smaller side.
+    pub workspace_mm: Option<[f64; 2]>,
+    /// The device's LightBurn origin: "center" (galvo, default) or a bed corner, used by doc.export_lbrn2.
+    pub origin: Option<WorkspaceOrigin>,
 }
 
 /// `doc.new`.
@@ -85,22 +236,38 @@ impl Command for DocNew {
     const ID: &'static str = "doc.new";
     const TITLE: &'static str = "New document";
     const DESCRIPTION: &'static str = "Replace the document with an empty one: one default layer, no stock, no \
-        objects. field_mm: the given one, else the engine's machine profile field (else the current one). Undoable.";
+        objects. field_mm: the given one, else the engine's active device field (else the current one); a gantry \
+        device gives workspace_mm [width, height] and its origin corner instead. Undoable.";
     const RISK: Risk = Risk::Edit;
 
     fn apply(doc: &mut Document, input: NewInput) -> Result<(Value, String)> {
         let name = input.name.as_deref().map(|n| util::name(Self::ID, "name", n)).transpose()?;
-        let field_mm = match input.field_mm {
-            Some(f) => Some(field(Self::ID, Some(f), doc)?),
-            None => doc.field_mm,
+        let corner = input.origin.filter(|o| *o != WorkspaceOrigin::Center);
+        let workspace_mm = match (input.workspace_mm, corner) {
+            (Some(size), Some(_)) => Some(bed(Self::ID, size)?),
+            (Some(_), None) => {
+                return Err(invalid(Self::ID, "workspace_mm is for gantry devices and needs a corner origin"));
+            }
+            (None, _) => None,
         };
-        let mut fresh = Document { revision: doc.revision, field_mm, ..Document::default() };
+        let field_mm = match (input.field_mm, workspace_mm) {
+            (Some(f), _) => Some(field(Self::ID, Some(f), doc)?),
+            (None, Some([w, h])) => Some(w.min(h)),
+            (None, None) => doc.field_mm,
+        };
+        let mut fresh = Document { revision: doc.revision, field_mm, workspace_mm, ..Document::default() };
         if let Some(n) = name {
             fresh.name = n;
         }
+        if let Some(o) = corner {
+            fresh.extras.insert(ORIGIN_KEY.into(), o.name().into());
+        }
         let summary = format!("new document \"{}\"", fresh.name);
         *doc = fresh;
-        let r = json!({ "created": [], "affected": [], "name": doc.name, "bounds": Value::Null, "field_mm": doc.field_mm });
+        let r = json!({
+            "created": [], "affected": [], "name": doc.name, "bounds": Value::Null, "field_mm": doc.field_mm,
+            "workspace_mm": doc.workspace_mm,
+        });
         Ok((r, summary))
     }
 }
@@ -191,6 +358,12 @@ pub struct ImportLbrn2Input {
     /// out and the OpenEtch engine picks it (see the command description); without the engine, the document's
     /// field_mm. Remembered for doc.export_lbrn2, so exports go back to the same place.
     pub field_mm: Option<f64>,
+    /// Gantry devices: the bed [width, height] in mm the project was laid out for (with a corner `origin`; the
+    /// engine fills it from the device). LightBurn measures from the bed corner the file's MirrorX/MirrorY record.
+    pub workspace_mm: Option<[f64; 2]>,
+    /// "center" (galvo, default) or the device's bed corner (gantry): bottom_left, top_left, bottom_right,
+    /// top_right. Remembered for doc.export_lbrn2.
+    pub origin: Option<WorkspaceOrigin>,
     /// File name (without extension). A merge names the group it creates after it (default "Imported LightBurn");
     /// the engine names later downloads after it when a replacing import is not saved as a project.
     pub name: Option<String>,
@@ -279,21 +452,37 @@ impl Command for ImportLbrn2 {
     const ID: &'static str = "doc.import_lbrn2";
     const TITLE: &'static str = "Import LightBurn project";
     const DESCRIPTION: &'static str = "Import a LightBurn .lbrn2 project or .lbt template given as text. Cut \
-        settings become layers, shapes objects and groups in the field frame; text burns as its saved outline, \
-        bitmaps become images; the rest is kept for doc.export_lbrn2. replace swaps the document; merge adds the \
-        file's objects as one group. Files do not record the field size; without field_mm the engine uses the \
-        LightBurn device the file names (DeviceName), else the configured or LightBurn default device, else the \
-        document's field_mm, else the machine's. Returns field_mm, field_source, created/reused ids, warnings, \
+        settings become layers, shapes objects and groups in the field frame; the rest is kept for \
+        doc.export_lbrn2. replace swaps the document; merge adds the file's objects as one group. Files do not \
+        record the workspace size; without field_mm the engine uses the device the file names (DeviceName), else \
+        the active device, else the document's, else the machine's. Gantry devices give workspace_mm [w, h] and a \
+        corner origin instead. Returns field_mm, workspace_mm, origin, field_source, created/reused ids, warnings, \
         bounds. Undoable.";
     const RISK: Risk = Risk::Edit;
 
     fn apply(doc: &mut Document, input: ImportLbrn2Input) -> Result<(Value, String)> {
         let id = Self::ID;
         let text = content(id, &input.content)?;
-        let field_mm = field(id, input.field_mm, doc)?;
+        let lay = layout(id, input.field_mm, input.workspace_mm, input.origin, (None, None), doc)?;
         let project = lbrn::parse(text).map_err(|e| invalid(id, e.to_string()))?;
-        let lbrn::Imported { layers, objects, groups, extras, warnings } =
-            lbrn::to_document(&project, field_mm).map_err(|e| invalid(id, e.to_string()))?;
+        let frame = match lay {
+            Layout::Galvo(field_mm) => lbrn::Frame::Galvo { field_mm },
+            Layout::Bed([width_mm, height_mm], _) => {
+                // The file's own origin corner, so the art lands where LightBurn showed it.
+                let (mirror_x, mirror_y) = project.mirror();
+                lbrn::Frame::Bed { width_mm, height_mm, mirror_x, mirror_y }
+            }
+        };
+        let lbrn::Imported { layers, objects, groups, mut extras, warnings } =
+            lbrn::to_document_in(&project, frame).map_err(|e| invalid(id, e.to_string()))?;
+        // A square size for what needs one (the field of a galvo; the bed's smaller side).
+        let (field_mm, workspace_mm) = match lay {
+            Layout::Galvo(f) => (f, None),
+            Layout::Bed([w, h], o) => {
+                extras.insert(ORIGIN_KEY.into(), o.name().into());
+                (w.min(h), Some([w, h]))
+            }
+        };
         // Nothing below can fail, so the document is never left half-changed.
         let (mut created_layers, mut reused_layers, mut created) = (Vec::new(), Vec::new(), Vec::new());
         let mut created_groups = Vec::new();
@@ -304,6 +493,7 @@ impl Command for ImportLbrn2 {
                 let mut fresh = Document {
                     revision: doc.revision,
                     field_mm: Some(field_mm),
+                    workspace_mm,
                     layers,
                     objects,
                     groups,
@@ -324,7 +514,21 @@ impl Command for ImportLbrn2 {
                 }
                 doc.field_mm = doc.field_mm.or(Some(field_mm));
                 // The document keeps its own field size; export uses the merged file's by default.
-                doc.extras.insert(IMPORT_FIELD_KEY.into(), field_mm.to_string());
+                match workspace_mm {
+                    None => {
+                        doc.extras.insert(IMPORT_FIELD_KEY.into(), field_mm.to_string());
+                        doc.extras.remove(IMPORT_WORKSPACE_KEY);
+                        doc.extras.remove(ORIGIN_KEY);
+                    }
+                    Some([w, h]) => {
+                        doc.workspace_mm = doc.workspace_mm.or(Some([w, h]));
+                        doc.extras.insert(IMPORT_WORKSPACE_KEY.into(), format!("{w} {h}"));
+                        doc.extras.remove(IMPORT_FIELD_KEY);
+                        if let Some(o) = extras.get(ORIGIN_KEY) {
+                            doc.extras.insert(ORIGIN_KEY.into(), o.clone());
+                        }
+                    }
+                }
                 let before = doc.layers.len();
                 let mut map: HashMap<String, String> = HashMap::new();
                 for mut l in layers {
@@ -407,9 +611,10 @@ impl Command for ImportLbrn2 {
         r["reused_layers"] = json!(reused_layers);
         r["warnings"] = json!(warnings);
         r["mode"] = json!(mode);
-        r["field_mm"] = json!(field_mm);
-        // The engine replaces this when it chose field_mm itself.
-        r["field_source"] = json!(if input.field_mm.is_some() { "caller" } else { "document" });
+        layout_json(lay, &mut r);
+        // The engine replaces this when it chose the size itself.
+        let given = input.field_mm.is_some() || input.workspace_mm.is_some();
+        r["field_source"] = json!(if given { "caller" } else { "document" });
         Ok((r, summary))
     }
 }
@@ -420,6 +625,13 @@ pub struct ExportLbrn2Input {
     /// Galvo field size in mm to lay the LightBurn project out for. Default: the field size the last LightBurn
     /// import was read with, else the document's field_mm.
     pub field_mm: Option<f64>,
+    /// Gantry: the bed [width, height] in mm (with a corner `origin`). Default: the bed the last LightBurn import
+    /// was read with, else the document's workspace.
+    pub workspace_mm: Option<[f64; 2]>,
+    /// "center" (galvo) or the target device's bed corner, whose MirrorX/MirrorY are written to the project.
+    /// Default: the origin the document was made or imported for, else center (bottom_left for a document with a
+    /// workspace_mm).
+    pub origin: Option<WorkspaceOrigin>,
 }
 
 /// `doc.export_lbrn2`.
@@ -430,16 +642,32 @@ impl Command for ExportLbrn2 {
     const ID: &'static str = "doc.export_lbrn2";
     const TITLE: &'static str = "Export LightBurn project";
     const DESCRIPTION: &'static str = "Convert the document to a LightBurn .lbrn2 project: returns {content (XML \
-        text), warnings, field_mm}. field_mm defaults to the one the last LightBurn import used, so shapes go back \
-        where they were. Layers keep the LightBurn index and settings they were imported with; the stock outline \
+        text), warnings, field_mm, workspace_mm, origin}. field_mm defaults to the one the last LightBurn import used, \
+        so shapes go back where they were; a gantry document (workspace_mm) is laid out for its bed and origin \
+        corner, whose MirrorX/MirrorY are written. Layers keep the LightBurn index and settings they were imported with; the stock outline \
         goes on tool layer T1; non-output and hidden layers stay so. Read-only.";
     const RISK: Risk = Risk::Query;
 
     fn apply(doc: &mut Document, input: ExportLbrn2Input) -> Result<(Value, String)> {
         let id = Self::ID;
-        let field_mm = field(id, input.field_mm.or_else(|| import_field(doc)), doc)?;
-        let (project, warnings) = lbrn::from_document(doc, field_mm).map_err(|e| invalid(id, e.to_string()))?;
-        Ok((json!({ "content": lbrn::write(&project), "warnings": warnings, "field_mm": field_mm }), String::new()))
+        let origin = input.origin.or_else(|| doc_origin(doc)).unwrap_or(if doc.workspace_mm.is_some() {
+            WorkspaceOrigin::BottomLeft
+        } else {
+            WorkspaceOrigin::Center
+        });
+        let remembered = (import_field(doc), import_workspace(doc));
+        let lay = layout(id, input.field_mm, input.workspace_mm, Some(origin), remembered, doc)?;
+        let frame = match lay {
+            Layout::Galvo(field_mm) => lbrn::Frame::Galvo { field_mm },
+            Layout::Bed([width_mm, height_mm], o) => {
+                let (mirror_x, mirror_y) = o.mirror().unwrap_or_default();
+                lbrn::Frame::Bed { width_mm, height_mm, mirror_x, mirror_y }
+            }
+        };
+        let (project, warnings) = lbrn::from_document_in(doc, frame).map_err(|e| invalid(id, e.to_string()))?;
+        let mut r = json!({ "content": lbrn::write(&project), "warnings": warnings });
+        layout_json(lay, &mut r);
+        Ok((r, String::new()))
     }
 }
 
@@ -879,6 +1107,64 @@ mod tests {
         assert_eq!(s.document().field_mm, Some(153.75), "kept without field_mm");
         assert!(run(&mut s, "doc.new", json!({"field_mm": -1})).is_err());
         assert!(run(&mut s, "doc.new", json!({"field_mm": 5000})).is_err());
+    }
+
+    #[test]
+    fn gantry_documents_have_a_bed_and_an_origin() {
+        let mut s = session(Some(150.0));
+        let r = ok(&mut s, "doc.new", json!({"workspace_mm": [400, 300], "origin": "top_left"}));
+        assert_eq!((r["workspace_mm"].clone(), r["field_mm"].clone()), (json!([400.0, 300.0]), json!(300.0)));
+        assert_eq!(s.document().workspace(), Some([400.0, 300.0]));
+        assert_eq!(s.document().extras.get("lbrn2._origin").map(String::as_str), Some("top_left"));
+        assert!(run(&mut s, "doc.new", json!({"workspace_mm": [400, 300]})).is_err(), "a bed needs its corner");
+        assert!(run(&mut s, "doc.new", json!({"workspace_mm": [400, 0], "origin": "bottom_left"})).is_err());
+        assert!(run(&mut s, "doc.new", json!({"origin": "middle"})).is_err());
+
+        // Import into the bed: LBRN's rect at (80, 75) with MirrorY="False" is 80 mm right of and 75 mm in front
+        // of... the front-left corner: field (-120, -75).
+        let r = ok(&mut s, "doc.import_lbrn2", json!({"content": LBRN, "workspace_mm": [400, 300], "origin": "top_left"}));
+        assert_eq!((r["origin"].clone(), r["workspace_mm"].clone(), r["field_mm"].clone()), (json!("top_left"), json!([400.0, 300.0]), Value::Null));
+        let d = s.document();
+        assert_eq!(d.workspace_mm, Some([400.0, 300.0]));
+        assert_eq!(d.objects[0].bounds().center(), kurbo::Point::new(-120.0, -75.0), "the file's own flags place it");
+        // Export for the device's top-left origin: y now counts from the rear (300 - 75) in a mirrored frame, so the
+        // shape's own y axis is mirrored too (it looks the same in LightBurn), and MirrorY is written.
+        let r = ok(&mut s, "doc.export_lbrn2", json!({}));
+        assert_eq!(r["origin"], json!("top_left"));
+        let text = r["content"].as_str().unwrap();
+        assert!(text.contains("MirrorY=\"True\"") && text.contains("<XForm>1 0 0 -1 80 225</XForm>"), "{text}");
+        // An explicit corner and bed win; field_mm is refused for a bed and workspace_mm for a galvo.
+        let text = ok(&mut s, "doc.export_lbrn2", json!({"origin": "bottom_left", "workspace_mm": [400, 300]}))["content"].clone();
+        assert!(text.as_str().unwrap().contains("<XForm>1 0 0 1 80 75</XForm>"));
+        assert!(run(&mut s, "doc.export_lbrn2", json!({"origin": "bottom_left", "field_mm": 150})).is_err());
+        assert!(run(&mut s, "doc.export_lbrn2", json!({"workspace_mm": [400, 300], "origin": "center"})).is_err());
+        assert!(run(&mut s, "doc.import_lbrn2", json!({"content": LBRN, "workspace_mm": [400, 300]})).is_err());
+
+        // Merging a bed file into a galvo document remembers the bed for export.
+        let mut s = session(Some(150.0));
+        ok(&mut s, "doc.import_lbrn2", json!({"content": LBRN, "mode": "merge", "workspace_mm": [200, 100], "origin": "bottom_left"}));
+        let d = s.document();
+        assert_eq!((d.field_mm, d.workspace_mm), (Some(150.0), Some([200.0, 100.0])));
+        let r = ok(&mut s, "doc.export_lbrn2", json!({}));
+        assert_eq!((r["origin"].clone(), r["workspace_mm"].clone()), (json!("bottom_left"), json!([200.0, 100.0])));
+        // A later galvo merge makes galvo exports the default again.
+        ok(&mut s, "doc.import_lbrn2", json!({"content": LBRN, "mode": "merge", "field_mm": 110}));
+        let r = ok(&mut s, "doc.export_lbrn2", json!({"origin": "center"}));
+        assert_eq!((r["origin"].clone(), r["field_mm"].clone()), (json!("center"), json!(110.0)));
+    }
+
+    #[test]
+    fn workspace_origins_name_the_mirror_flags() {
+        use super::WorkspaceOrigin as O;
+        for o in [O::Center, O::BottomLeft, O::TopLeft, O::BottomRight, O::TopRight] {
+            assert_eq!(O::parse(o.name()), Some(o));
+            if let Some((x, y)) = o.mirror() {
+                assert_eq!(O::from_mirror(x, y), o);
+            }
+            assert_eq!(serde_json::to_value(o).unwrap(), json!(o.name()));
+        }
+        assert_eq!(O::TopLeft.mirror(), Some((false, true)), "rear-left is MirrorY (xTool)");
+        assert_eq!(O::Center.mirror(), None);
     }
 
     #[test]

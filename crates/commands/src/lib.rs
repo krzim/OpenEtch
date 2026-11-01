@@ -16,7 +16,7 @@ use serde_json::Value;
 mod builtin;
 mod session;
 
-pub use builtin::lbrn2_device_name;
+pub use builtin::{ORIGIN_KEY, WorkspaceOrigin, lbrn2_device_name};
 pub use session::{HistoryEntry, HistoryStep, HistoryView, MAX_STEPS, MarkerMove, Session, StepState};
 
 /// What a command can affect. Machine actions (`Pointer`, `Emit`) are not document commands; they are listed here so

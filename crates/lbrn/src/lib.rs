@@ -116,6 +116,13 @@
 //! | root attributes and elements, layout | `Document::extras` (`lbrn2._root_attrs`, `lbrn2._root`, `lbrn2._el.N`, `lbrn2._decl`, `lbrn2._format`) |
 //! | T1 tool shape (export) | `Document::stock` outline (import: an object on a non-output layer) |
 //!
+//! **Gantry (bed) devices** ([`Frame::Bed`], [`to_document_in`], [`from_document_in`]): coordinates are mm from the
+//! device's origin corner, which the root's `MirrorX` / `MirrorY` record (front-left = neither, rear-left =
+//! `MirrorY`; rear-right = both and front-right = `MirrorX` are inferred, unconfirmed). Import uses the file's flags
+//! and the device's `W x H`: field = S · (LightBurn - [W/2, H/2]) with S negating the mirrored axes; export applies
+//! the inverse for the target device and writes its flags. **Unverified** against a file LightBurn saved for a
+//! top-left-origin device (LightBurn itself reorients designs from another origin on open, since 1.3).
+//!
 //! shift = translate(-field/2, -field/2) on import and its inverse on export. Export writes what the import kept;
 //! a transform, number or path list that did not change since keeps its exact source text, so an unchanged import
 //! exports byte for byte (all 27 sample projects and templates do, `tests/real_samples.rs`).
@@ -134,8 +141,8 @@ mod path;
 mod write;
 
 pub use convert::{
-    EXTRA_PREFIX, FREQUENCY_ABSENT, FREQUENCY_ABSENT_KEY, Imported, MAX_PASSES, cut_setting_to_layer, from_document,
-    keys, to_document,
+    EXTRA_PREFIX, FREQUENCY_ABSENT, FREQUENCY_ABSENT_KEY, Frame, Imported, MAX_BED_MM, MAX_PASSES, cut_setting_to_layer,
+    from_document, from_document_in, keys, to_document, to_document_in,
 };
 pub use model::{
     Backup, CutParams, CutSetting, Element, Encoded, Format, LbrnProject, PathData, Prim, Prims, RootItem, Shape,

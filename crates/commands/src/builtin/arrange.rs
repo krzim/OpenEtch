@@ -69,7 +69,7 @@ pub enum AlignReference {
     },
     /// The stock's field-frame bounding box (fails if no stock is defined).
     Stock,
-    /// The galvo field: centre [0, 0], edges at ±field_mm / 2.
+    /// The galvo field (or a gantry's bed): centre [0, 0], edges at ±field_mm / 2 (± workspace_mm / 2).
     Field,
 }
 
@@ -135,12 +135,12 @@ fn key_y(r: Rect, y: AlignY) -> f64 {
     }
 }
 
-/// The field as a rectangle centred on the origin.
+/// The workspace (the galvo field, or a gantry's bed) as a rectangle centred on the origin.
 fn field_rect(cmd: &str, doc: &Document) -> Result<Rect> {
-    let f = doc.field_mm.ok_or_else(|| {
+    let [w, h] = doc.workspace().ok_or_else(|| {
         CommandError::Failed(format!("{cmd}: the document has no field size; set one by opening or importing a file"))
     })?;
-    Ok(Rect::new(-f / 2.0, -f / 2.0, f / 2.0, f / 2.0))
+    Ok(Rect::new(-w / 2.0, -h / 2.0, w / 2.0, h / 2.0))
 }
 
 /// `object.align`.

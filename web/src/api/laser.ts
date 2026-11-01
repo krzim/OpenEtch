@@ -3,7 +3,7 @@
 // labels and per-layer preview summaries. No DOM, so `npm test` covers it.
 
 import { objectBounds, type Box } from "../geometry.ts";
-import type { CutSettings, GDocument, Layer, MachineStatus, Preview, PreviewSegment } from "./types.ts";
+import type { CutSettings, GDocument, Layer, MachineStatus, Preview, PreviewSegment, Vec2 } from "./types.ts";
 
 /** JPT M7 MOPA pulse widths (fixtures/b6-mopa-60w.toml), used when the engine does not report its profile's list. */
 export const DEFAULT_PULSE_WIDTHS_NS = [2, 4, 6, 9, 13, 20, 30, 45, 55, 60, 80, 100, 150, 200, 250, 300, 350, 400, 450, 500];
@@ -41,21 +41,24 @@ export function energyOpacity(e: number, max: number): number {
   return 0.25 + 0.75 * Math.min(1, Math.max(0, e / max));
 }
 
-/** Objects whose bounds reach past the ±field/2 square, by id. */
-export function outsideField(doc: GDocument | null, fieldMm: number): Set<string> {
+/**
+ * Objects whose bounds reach past the workspace, by id: the ±field/2 square of a galvo (`workspace` a number), or the
+ * centred W x H rectangle of a gantry device (`[w, h]`).
+ */
+export function outsideField(doc: GDocument | null, workspace: number | Vec2): Set<string> {
   const out = new Set<string>();
-  if (!doc || !(fieldMm > 0)) return out;
-  const h = fieldMm / 2;
+  const [w, h] = typeof workspace === "number" ? [workspace, workspace] : workspace;
+  if (!doc || !(w > 0) || !(h > 0)) return out;
   for (const o of doc.objects) {
     const b = objectBounds(o);
-    if (b && boxOutside(b, h)) out.add(o.id);
+    if (b && boxOutside(b, w / 2, h / 2)) out.add(o.id);
   }
   return out;
 }
 
-/** Whether a box reaches the field edge (the engine refuses points with |coord| >= field/2). */
-export function boxOutside(b: Box, half: number): boolean {
-  return b.x0 <= -half || b.y0 <= -half || b.x1 >= half || b.y1 >= half;
+/** Whether a box reaches the workspace edge (the engine refuses points with |coord| >= field/2). */
+export function boxOutside(b: Box, halfX: number, halfY: number = halfX): boolean {
+  return b.x0 <= -halfX || b.y0 <= -halfY || b.x1 >= halfX || b.y1 >= halfY;
 }
 
 /** Replace internal object and layer ids in an engine message with their names ("obj-5" -> "Ellipse [0,2]"). */

@@ -4,6 +4,7 @@
 import { useMemo, useState } from "react";
 import type { Invocation } from "../api/client.ts";
 import * as C from "../api/commands.ts";
+import { isSquare, workspaceText } from "../api/devices.ts";
 import { createdIds } from "../api/drop.ts";
 import { paramsTemplate } from "../api/schema.ts";
 import type { CommandSpec, GDocument, StockShape, Vec2 } from "../api/types.ts";
@@ -264,14 +265,15 @@ export function PlaceDialog({ ids, run, onClose }: { ids: string[]; run: Run; on
 export function ArrayDialog({
   doc,
   ids,
-  fieldMm,
+  workspaceMm,
   run,
   onClose,
   onCreated,
 }: {
   doc: GDocument;
   ids: string[];
-  fieldMm: number;
+  /** The active device's workspace (W x H mm, centred; a galvo field is square). */
+  workspaceMm: Vec2;
   run: Run;
   onClose: () => void;
   /** The copies' ids, to select them with the originals (LightBurn selects the result). */
@@ -291,12 +293,12 @@ export function ArrayDialog({
   const py = parse(dy);
   let outside = 0;
   if (b && nc !== null && nr !== null && px !== null && py !== null && nc >= 1 && nr >= 1 && nc * nr <= 2500) {
-    const h = fieldMm / 2;
+    const [hx, h] = [workspaceMm[0] / 2, workspaceMm[1] / 2];
     for (let i = 0; i < nc; i++)
       for (let j = 0; j < nr; j++) {
         const ox = i * px;
         const oy = j * py;
-        if (b.x0 + ox <= -h || b.x1 + ox >= h || b.y0 + oy <= -h || b.y1 + oy >= h) outside++;
+        if (b.x0 + ox <= -hx || b.x1 + ox >= hx || b.y0 + oy <= -h || b.y1 + oy >= h) outside++;
       }
   }
   const build = (): Invocation | string => {
@@ -334,7 +336,8 @@ export function ArrayDialog({
       </div>
       {outside > 0 && (
         <p className="warn-text" role="status">
-          {outside} of the {(nc ?? 0) * (nr ?? 0)} cells would be outside the {fieldMm} mm galvo field. Use a smaller pitch or
+          {outside} of the {(nc ?? 0) * (nr ?? 0)} cells would be outside the {workspaceText(workspaceMm)}{" "}
+          {isSquare(workspaceMm) ? "galvo field" : "workspace"}. Use a smaller pitch or
           negative pitch, or move the original first.
         </p>
       )}

@@ -64,6 +64,13 @@ pub fn router(state: Arc<AppState>, web_dir: Option<&Path>) -> Router {
                 .delete(lightburn_delete)
                 .layer(DefaultBodyLimit::max(crate::lightburn::MAX_PREFS_UPLOAD_BYTES)),
         )
+        .route("/devices", get(devices_list))
+        .route(
+            "/devices/import",
+            post(devices_import).layer(DefaultBodyLimit::max(crate::lightburn::MAX_PREFS_UPLOAD_BYTES)),
+        )
+        .route("/devices/{id}", get(device_details).delete(device_remove))
+        .route("/devices/{id}/activate", post(device_activate))
         .fallback(api_not_found)
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES));
     let mut app = Router::new().nest("/api", api).nest_service("/mcp", mcp::service(state.clone()));
@@ -466,6 +473,83 @@ async fn lightburn_delete(State(st): State<Arc<AppState>>) -> Result<Json<Value>
     let value = st.blocking(|st| st.lightburn.delete_upload()).await?;
     st.emit(crate::Event::machine("lightburn", None));
     Ok(Json(value))
+}
+
+/// `GET /api/devices`: `{active, devices: [summary]}`.
+async fn devices_list(State(st): State<Arc<AppState>>) -> Json<Value> {
+    Json(st.devices_view())
+}
+
+/// `GET /api/devices/{id}`: the summary plus `settings` (LightBurn's Device Settings, read-only), `profile`, `base`
+/// and `diffs`.
+async fn device_details(State(st): State<Arc<AppState>>, UrlPath(id): UrlPath<String>) -> Result<Json<Value>, EngineError> {
+    Ok(Json(st.device_details(&id)?))
+}
+
+/// `POST /api/devices/import[?add=all|<name>][&from=lightburn]` with a LightBurn `prefs.ini` or `.lbdev` as the raw
+/// body (at most 2 MB), or, with `from=lightburn` and no body, the devices of LightBurn on the engine's computer (or
+/// the uploaded `prefs.ini`). Answers `{ok, added, updated, skipped: [{name, reason}]}` (added/updated are ids).
+async fn devices_import(
+    State(st): State<Arc<AppState>>,
+    q: FileQuery,
+    body: Result<Bytes, BytesRejection>,
+) -> Result<Json<Value>, EngineError> {
+    let q = file_query(q, &["add", "from"])?;
+    let filter = crate::devices::ImportFilter::parse(q.get("add").map(String::as_str));
+    let body = body.map_err(|e| match e.status() {
+        StatusCode::PAYLOAD_TOO_LARGE => EngineError::TooLarge(format!(
+            "the device file is larger than {} MB",
+            crate::lightburn::MAX_PREFS_UPLOAD_BYTES / (1024 * 1024)
+        )),
+        _ => EngineError::BadRequest(format!("cannot read the upload: {e}")),
+    })?;
+    let report = match q.get("from").map(String::as_str) {
+        Some("lightburn") => {
+            if !body.is_empty() {
+                return Err(EngineError::BadRequest("from=lightburn reads LightBurn's own prefs.ini; send no body".into()));
+            }
+            st.blocking(move |st| st.import_devices_from_lightburn(&filter)).await?
+        }
+        Some(other) => return Err(EngineError::BadRequest(format!("unknown from '{other}' (only lightburn)"))),
+        None => {
+            if body.is_empty() {
+                return Err(EngineError::BadRequest("the upload is empty (send a .lbdev or prefs.ini)".into()));
+            }
+            st.blocking(move |st| {
+                let text = std::str::from_utf8(&body)
+                    .map_err(|_| EngineError::BadRequest("the file is not UTF-8 text (expected .lbdev or prefs.ini JSON)".into()))?;
+                st.import_devices(text, &filter)
+            })
+            .await?
+        }
+    };
+    let mut v = json!(report);
+    v["ok"] = json!(true);
+    Ok(Json(v))
+}
+
+/// `DELETE /api/devices/{id}`: not the active device, not the built-in one.
+async fn device_remove(State(st): State<Arc<AppState>>, UrlPath(id): UrlPath<String>) -> Result<Json<Value>, EngineError> {
+    st.remove_device(&id)?;
+    Ok(Json(json!({ "ok": true, "id": id })))
+}
+
+/// `POST /api/devices/{id}/activate`: make the device active (the UI's Devices window; it changes the machine, so
+/// requests that look like they came from an MCP client or name a non-UI origin are refused).
+async fn device_activate(
+    State(st): State<Arc<AppState>>,
+    UrlPath(id): UrlPath<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Json<Value>, EngineError> {
+    if has_mcp_marker(&headers) {
+        return Err(EngineError::Forbidden("devices can only be changed by a person in the OpenEtch UI".into()));
+    }
+    let b: OriginBody = body_or_default(&body)?;
+    if parse_origin(b.origin.as_ref())? != commands::Origin::Ui {
+        return Err(EngineError::Forbidden("devices can only be changed from the UI".into()));
+    }
+    Ok(Json(st.activate_device(&id).await?))
 }
 
 /// Body of `POST /api/runs/{id}/approve`.

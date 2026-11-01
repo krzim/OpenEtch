@@ -39,6 +39,13 @@ pub(crate) async fn approve(state: &Arc<AppState>, id: &str, pin: Option<&str>) 
             let st = serde_json::to_value(run.state).ok().and_then(|v| v.as_str().map(str::to_owned));
             return Err(EngineError::Conflict(format!("run '{id}' is {}, not pending", st.unwrap_or_default())));
         }
+        if run.generation != state.machine.generation() {
+            run.state = RunState::Cancelled;
+            run.error = Some("the device changed after the run was requested".into());
+            return Err(EngineError::Conflict(format!(
+                "run '{id}' was planned for another device; request a new run"
+            )));
+        }
         if run.revision != current {
             run.state = RunState::Cancelled;
             run.error = Some("the document changed after the run was requested".into());

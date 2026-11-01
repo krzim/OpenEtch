@@ -8,6 +8,11 @@
 // LightBurn field size: the dialog reads each file's DeviceName and shows the size the engine's rule picks (the file's
 // LightBurn device, else the engine's LightBurn device, else the design's, else the machine's; api/lightburn.ts). It
 // sends no `field_mm` unless the user edits the size, so the engine applies the same rule and reports `field_source`.
+// With the device registry (components/Devices.tsx) the devices are OpenEtch's devices and the engine's own device is
+// the active one; a gantry device is laid out for its workspace (W x H and origin), not for a square field.
+//
+// The dialog preselects Open (replace) when the design has no objects, Import (merge) otherwise (`defaultImportMode`).
+// The top bar and download names use the opened file's name, which the engine keeps as `display_name` across reloads.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -24,10 +29,12 @@ import {
   type LightBurnDevice,
 } from "../api/lightburn.ts";
 import * as C from "../api/commands.ts";
+import { isGalvo, originLabel, workspaceText, type DeviceSummary } from "../api/devices.ts";
 import {
   MAX_UPLOAD_BYTES,
   commandResult,
   currentProjectName,
+  defaultImportMode,
   downloadName,
   exportBaseName,
   exportFieldDefault,
@@ -44,6 +51,7 @@ import {
   importOutcome,
   isSaveConflict,
   needsConfirm,
+  openedFileName,
   projectClash,
   projectDirty,
   projectList,
@@ -86,8 +94,14 @@ export interface FileActions {
   defaultFieldMm: number;
   /** LightBurn devices the engine knows (for the field-size rule and chips). */
   lightburnDevices: LightBurnDevice[];
-  /** The engine's own LightBurn device (`--lightburn-device`, else LightBurn's default), or null. */
+  /** The engine's own device (the active device, or on older engines LightBurn's default), or null. */
   lightburnDevice: string | null;
+  /** Whether `lightburnDevice` is the active OpenEtch device or (older engines) LightBurn's default device. */
+  lightburnDeviceKind: "default-device" | "active-device";
+  /** The active device (null on engines without the device registry), for the LightBurn dialogs. */
+  activeDevice: DeviceSummary | null;
+  /** The name of the file the design was opened from (engine `display_name`, else this page's), or null. */
+  openedName: string | null;
   docFieldMm: number | null;
   machineFieldMm: number | null;
   /** Field size the document's LightBurn art was read at (opened, or the last merge the engine remembers), or null. */
@@ -101,15 +115,20 @@ export interface FileActions {
   /** Save under `name`; `overwrite: false` lets the engine refuse to replace another project (outcome "exists"). */
   saveAs: (name: string, overwrite?: boolean) => Promise<SaveOutcome>;
   openProject: (name: string) => void;
-  /** Open a .openetch (replace), or put a .lbrn2 in the import dialog with `lbrn2Mode` preselected. */
+  /**
+   * Open a .openetch (replace), or put a .lbrn2 in the import dialog with `lbrn2Mode` preselected (default: Open when
+   * the design is empty, else Import; see `defaultImportMode`).
+   */
   uploadFile: (file: File, lbrn2Mode?: ImportMode) => void;
+  /** Open the LightBurn Open/Import dialog with no file yet and the default mode. */
+  openLbrn2Dialog: () => void;
   /**
    * Import LightBurn files one after another (several files are always merged). `fieldMm` undefined lets the engine
    * pick each file's field size (see `lbrnImportField`); a number is the size the user typed, used for every file.
    */
   importLbrn2: (files: File[], mode: ImportMode, fieldMm?: number) => void;
-  /** Export the document as a LightBurn project laid out for `fieldMm`. */
-  exportLbrn2: (fieldMm: number) => void;
+  /** Export the document as a LightBurn project laid out for `fieldMm` (undefined: the active device's workspace). */
+  exportLbrn2: (fieldMm?: number) => void;
   downloadOpenetch: () => void;
 }
 
@@ -135,8 +154,16 @@ export function useFileActions(p: {
   report: (e: unknown) => void;
   /** Called with the ids of objects an import created, so they can be selected (LightBurn "Select imported shapes"). */
   onImported?: (ids: string[]) => void;
-  /** The engine's LightBurn devices and its own device (absent on engines without LightBurn support). */
-  lightburn?: { devices: LightBurnDevice[]; engineDevice: string | null };
+  /**
+   * The devices the LightBurn dialogs match files against and the engine's own device (absent on engines without
+   * LightBurn support): the device registry and its active device, or on older engines LightBurn's devices.
+   */
+  lightburn?: {
+    devices: LightBurnDevice[];
+    engineDevice: string | null;
+    engineKind?: "default-device" | "active-device";
+    active?: DeviceSummary | null;
+  };
 }): FileActions {
   const { engine, notify, report } = p;
   const onImportedRef = useRef(p.onImported);
@@ -172,9 +199,12 @@ export function useFileActions(p: {
     if (detachedFrom !== undefined && (project?.name ?? null) !== detachedFrom) setDetachedFrom(undefined);
   }, [project?.name, detachedFrom]);
 
+  // The opened file's name as the engine keeps it (survives a reload), else this page's own record.
+  const openedFile = openedFileName(project, openedName);
+
   // Latest values for callbacks that run after a confirmation.
-  const live = useRef({ project, doc, dirty, projectName, openedName });
-  live.current = { project, doc, dirty, projectName, openedName };
+  const live = useRef({ project, doc, dirty, projectName, openedName: openedFile, active: p.lightburn?.active ?? null });
+  live.current = { project, doc, dirty, projectName, openedName: openedFile, active: p.lightburn?.active ?? null };
 
   const task = useCallback(
     async (fn: () => Promise<void>) => {
@@ -288,8 +318,10 @@ export function useFileActions(p: {
     [guard, task, engine, notify],
   );
 
+  const openLbrn2Dialog = useCallback(() => setModal({ kind: "import", files: [], mode: defaultImportMode(live.current.doc) }), []);
+
   const uploadFile = useCallback(
-    (file: File, lbrn2Mode: ImportMode = "replace") => {
+    (file: File, lbrn2Mode?: ImportMode) => {
       const format = fileFormat(file.name);
       if (format === null) {
         notify("Choose a .openetch project or a LightBurn .lbrn2 file.", "error");
@@ -297,7 +329,7 @@ export function useFileActions(p: {
       }
       if (format === "lbrn2") {
         // LightBurn files need a field size and a replace/merge choice.
-        setModal({ kind: "import", files: [file], mode: lbrn2Mode });
+        setModal({ kind: "import", files: [file], mode: lbrn2Mode ?? defaultImportMode(live.current.doc) });
         return;
       }
       if (file.size > MAX_UPLOAD_BYTES) {
@@ -375,17 +407,20 @@ export function useFileActions(p: {
 
   const baseName = () => exportBaseName(live.current.projectName, live.current.openedName, live.current.doc?.name);
 
-  const exportLbrn2 = useCallback((fieldMm: number) => {
+  const exportLbrn2 = useCallback((fieldMm?: number) => {
     setModal(null);
     void task(async () => {
-      // Always the size the Export dialog showed, so the file is laid out exactly as the user saw it.
+      // Always the size the Export dialog showed, so the file is laid out exactly as the user saw it; no size for a
+      // gantry device, whose workspace and origin the engine applies.
       const res = await execute(C.exportLbrn2(fieldMm));
       const r = res.result as { content?: unknown } | null;
       if (!r || typeof r.content !== "string") throw new Error("the engine returned no LightBurn content");
       const name = downloadName(baseName(), "lbrn2");
       saveBlob(new Blob([r.content], { type: "application/xml" }), name);
       const w = warningList(r);
-      notify(`Exported ${name} for a ${fmt(fieldMm, 3)} mm field.${w.length ? ` ${w.length} warning${w.length === 1 ? "" : "s"}.` : ""}`);
+      const dev = live.current.active;
+      const what = fieldMm !== undefined ? `a ${fmt(fieldMm, 3)} mm field` : dev ? `${dev.display_name} (${workspaceText(dev.workspace_mm)})` : "the active device";
+      notify(`Exported ${name} for ${what}.${w.length ? ` ${w.length} warning${w.length === 1 ? "" : "s"}.` : ""}`);
       showWarnings(`Export of ${name}`, w);
     });
   }, [task, notify, showWarnings]);
@@ -411,6 +446,9 @@ export function useFileActions(p: {
     defaultFieldMm,
     lightburnDevices: p.lightburn?.devices ?? [],
     lightburnDevice: p.lightburn?.engineDevice ?? null,
+    lightburnDeviceKind: p.lightburn?.engineKind ?? "default-device",
+    activeDevice: p.lightburn?.active ?? null,
+    openedName: openedFile,
     docFieldMm,
     machineFieldMm: p.machineFieldMm,
     importedFieldMm: exportFromFieldMm,
@@ -422,6 +460,7 @@ export function useFileActions(p: {
     saveAs,
     openProject,
     uploadFile,
+    openLbrn2Dialog,
     importLbrn2,
     exportLbrn2,
     downloadOpenetch,
@@ -440,8 +479,11 @@ function shortcut(key: string, shift = false): string {
   return mac ? `${shift ? "⇧" : ""}⌘${key}` : `Ctrl+${shift ? "Shift+" : ""}${key}`;
 }
 
-/** The File button and its tap-to-open dropdown. `onImport` opens the Import picker (also Ctrl+I or a drop). */
-export function FileMenu({ file, onImport }: { file: FileActions; onImport: () => void }) {
+/**
+ * The File button and its tap-to-open dropdown. `onImport` opens the Import picker (also Ctrl+I or a drop); `onDevices`
+ * opens the Devices window (absent on engines without the device registry).
+ */
+export function FileMenu({ file, onImport, onDevices }: { file: FileActions; onImport: () => void; onDevices?: () => void }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -485,8 +527,14 @@ export function FileMenu({ file, onImport }: { file: FileActions; onImport: () =
           {item("Save as…", () => file.setModal({ kind: "saveAs" }), shortcut("S", true))}
           <div className="menu-sep" role="separator" />
           {item("Import…", onImport, shortcut("I"))}
-          {item("Import LightBurn…", () => file.setModal({ kind: "import", files: [], mode: "replace" }), ".lbrn2")}
+          {item("Import LightBurn…", file.openLbrn2Dialog, ".lbrn2")}
           {item("Export to LightBurn…", () => file.setModal({ kind: "export" }), ".lbrn2")}
+          {onDevices && (
+            <>
+              <div className="menu-sep" role="separator" />
+              {item("Devices…", onDevices)}
+            </>
+          )}
           <div className="menu-sep" role="separator" />
           {item("Download .openetch", file.downloadOpenetch)}
         </div>
@@ -616,7 +664,8 @@ function OpenDialog({ file, onClose }: { file: FileActions; onClose: () => void 
         onChange={(e) => {
           const f = e.target.files?.[0];
           e.target.value = "";
-          if (f) file.uploadFile(f);
+          // The user chose Open: a LightBurn file replaces the design.
+          if (f) file.uploadFile(f, "replace");
         }}
       />
       <div className="section-label">Projects on the engine</div>
@@ -747,16 +796,30 @@ function FieldEditor(p: { value: string; onChange: (v: string) => void; onEnter:
   );
 }
 
-/** "Field size 153.8 mm — from your LightBurn device JCZFiber  Edit". */
-function FieldSummary(p: { mm: number; source: string; onEdit: () => void }) {
+/**
+ * "Field size 153.8 mm — from your LightBurn device JCZFiber  Edit", or for a gantry device "Workspace 600 × 400 mm —
+ * from your active device Shop CO2" (no Edit: the device's workspace and origin are used as they are).
+ */
+function FieldSummary(p: { mm: number; source: string; onEdit?: () => void; workspaceMm?: [number, number] | null }) {
   return (
     <p className="field-summary">
       <span>
-        Field size <strong>{fmt(p.mm, 3)} mm</strong> — {p.source}
+        {p.workspaceMm ? (
+          <>
+            Workspace <strong>{workspaceText(p.workspaceMm)}</strong>
+          </>
+        ) : (
+          <>
+            Field size <strong>{fmt(p.mm, 3)} mm</strong>
+          </>
+        )}{" "}
+        — {p.source}
       </span>
-      <button className="link-btn" onClick={p.onEdit}>
-        Edit
-      </button>
+      {p.onEdit && !p.workspaceMm && (
+        <button className="link-btn" onClick={p.onEdit}>
+          Edit
+        </button>
+      )}
     </p>
   );
 }
@@ -765,7 +828,8 @@ function FieldSummary(p: { mm: number; source: string; onEdit: () => void }) {
 function fieldChoiceList(file: FileActions, first: { mm: number | null; label: string | null }[] = []): FieldChoice[] {
   return labelledFieldChoices([
     ...first,
-    ...file.lightburnDevices.map((d) => ({ mm: d.field_mm, label: d.name })),
+    // Galvo fields only: a gantry workspace is not a field size.
+    ...file.lightburnDevices.filter((d) => d.kind === undefined || isGalvo(d.kind)).map((d) => ({ mm: d.field_mm, label: d.name })),
     { mm: file.docFieldMm, label: "current design" },
     { mm: file.machineFieldMm, label: "this laser" },
     { mm: 110, label: null },
@@ -801,6 +865,7 @@ function ImportDialog(p: { file: FileActions; initialFiles: File[]; initialMode:
       fileDevice: names?.[i] ?? null,
       devices: file.lightburnDevices,
       engineDevice: file.lightburnDevice,
+      engineKind: file.lightburnDeviceKind,
       docField: file.docFieldMm,
       machineField: file.machineFieldMm,
       fallback: file.defaultFieldMm,
@@ -887,7 +952,7 @@ function ImportDialog(p: { file: FileActions; initialFiles: File[]; initialMode:
         reading ? (
           <p className="field-summary muted">Reading the file…</p>
         ) : shared ? (
-          <FieldSummary mm={shared.fieldMm} source={fieldSourceText(shared)} onEdit={edit} />
+          <FieldSummary mm={shared.fieldMm} source={fieldSourceText(shared)} onEdit={edit} workspaceMm={shared.workspaceMm} />
         ) : (
           <>
             <p className="field-summary">
@@ -899,7 +964,8 @@ function ImportDialog(p: { file: FileActions; initialFiles: File[]; initialMode:
             <ul className="field-per-file">
               {picked.map((f, i) => (
                 <li key={`${f.name}-${i}`}>
-                  {f.name}: {fmt(defaults[i].fieldMm, 3)} mm, {fieldSourceText(defaults[i])}
+                  {f.name}: {defaults[i].workspaceMm ? workspaceText(defaults[i].workspaceMm ?? [0, 0]) : `${fmt(defaults[i].fieldMm, 3)} mm`},{" "}
+                  {fieldSourceText(defaults[i])}
                 </li>
               ))}
             </ul>
@@ -926,8 +992,9 @@ function ImportDialog(p: { file: FileActions; initialFiles: File[]; initialMode:
       {field === null && !reading && unknown.length > 0 && (
         <p className="hint">
           {unknown.length === 1 ? `This file was made for the LightBurn device "${unknown[0]}"` : `These files were made for LightBurn devices ${unknown.map((u) => `"${u}"`).join(", ")}`}
-          , which the engine doesn't know. To use that device's field size, load your LightBurn settings in the Laser
-          workspace (Machine card).
+          {file.lightburnDeviceKind === "active-device"
+            ? ", which is not one of your devices. To use that device's size, import it in File > Devices."
+            : ", which the engine doesn't know. To use that device's field size, load your LightBurn settings in the Laser workspace (Machine card)."}
         </p>
       )}
     </Modal>
@@ -943,8 +1010,13 @@ function ExportDialog({ file, onClose }: { file: FileActions; onClose: () => voi
   const origin = exportFieldOrigin(file.importedFieldMm, file.docFieldMm, file.machineFieldMm);
   const device = file.lightburnDevices.find((d) => d.name === file.lightburnDevice) ?? (file.lightburnDevices.length === 1 ? file.lightburnDevices[0] : null);
   const deviceDiffers = device !== null && device.field_mm !== null && Math.abs(device.field_mm - file.exportFieldMm) >= 1e-3;
+  // A gantry device: the engine lays the file out for its workspace and origin, so there is no field size to pick.
+  const active = file.activeDevice;
+  const gantry = active !== null && !isGalvo(active.kind);
   const submit = () => {
-    if (fieldMm !== null && !file.busy) file.exportLbrn2(fieldMm);
+    if (file.busy) return;
+    if (gantry) file.exportLbrn2(undefined);
+    else if (fieldMm !== null) file.exportLbrn2(fieldMm);
   };
   return (
     <Modal
@@ -956,19 +1028,28 @@ function ExportDialog({ file, onClose }: { file: FileActions; onClose: () => voi
           <button className="btn" onClick={onClose}>
             Cancel
           </button>
-          <button className="btn btn-primary" autoFocus={field === null} disabled={fieldMm === null || file.busy} onClick={submit}>
+          <button className="btn btn-primary" autoFocus={field === null} disabled={(!gantry && fieldMm === null) || file.busy} onClick={submit}>
             Export
           </button>
         </>
       }
     >
-      {field === null ? (
+      {gantry && active ? (
+        <>
+          <FieldSummary mm={active.workspace_mm[0]} source={`from your active device ${active.display_name}`} workspaceMm={active.workspace_mm} />
+          <p className="hint">
+            Laid out for {active.display_name} ({active.name}, origin {originLabel(active.origin).toLowerCase()}), as LightBurn
+            places it on that device. To export for another device, make it active in File &gt; Devices.
+          </p>
+        </>
+      ) : field === null ? (
         <>
           <FieldSummary mm={file.exportFieldMm} source={exportFieldOriginText(origin)} onEdit={() => setField(fmt(file.exportFieldMm, 3))} />
+          {active && <p className="hint">Active device: {active.display_name} ({workspaceText([active.workspace_mm[0], active.workspace_mm[0]])} field).</p>}
           {deviceDiffers && device && (
             <p className="hint">
-              Your LightBurn device {device.name} uses {fmt(device.field_mm, 3)} mm. If the file will be opened with that device, edit the
-              size.
+              Your {active ? "active" : "LightBurn"} device {device.name} uses {fmt(device.field_mm, 3)} mm. If the file will be opened with that device,
+              edit the size.
             </p>
           )}
         </>

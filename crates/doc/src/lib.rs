@@ -48,6 +48,12 @@ pub struct Document {
     /// new and opened documents that have none; LightBurn import/export uses it to move between frames.
     #[serde(default)]
     pub field_mm: Option<f64>,
+    /// Workspace `[width, height]` in mm of a bed (gantry) device, which need not be square; `None` for a galvo,
+    /// whose workspace is the square `field_mm` (then `field_mm` is the largest square inside the bed, used where a
+    /// square size is needed). The field frame's origin is the workspace's centre either way. Missing in older
+    /// files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_mm: Option<[f64; 2]>,
     pub stock: Option<Stock>,
     pub layers: Vec<Layer>,
     pub objects: Vec<Object>,
@@ -69,6 +75,7 @@ impl Default for Document {
             revision: 0,
             name: "Untitled".into(),
             field_mm: None,
+            workspace_mm: None,
             stock: None,
             layers: vec![],
             objects: vec![],
@@ -83,6 +90,11 @@ impl Default for Document {
 }
 
 impl Document {
+    /// The workspace `[width, height]` in mm: `workspace_mm`, else the square `field_mm`, else `None`.
+    pub fn workspace(&self) -> Option<[f64; 2]> {
+        self.workspace_mm.or(self.field_mm.map(|f| [f, f]))
+    }
+
     /// A fresh `"{prefix}-{n}"` id. Ids stay below [`MAX_ID`]; past that this fails instead of wrapping.
     pub fn alloc_id(&mut self, prefix: &str) -> Result<String, IdsExhausted> {
         let n = self.next_id;
@@ -100,6 +112,11 @@ impl Document {
             && !f.is_finite()
         {
             return Some(format!("field_mm is {f}"));
+        }
+        if let Some([w, h]) = self.workspace_mm
+            && !(w.is_finite() && h.is_finite())
+        {
+            return Some(format!("workspace_mm is [{w}, {h}]"));
         }
         if let Some(s) = &self.stock {
             let dims = match s.shape {
@@ -637,6 +654,21 @@ mod tests {
         for bad in ["lbrn2.", "lbrn2", "lbrn2.evil a=\"1\"/><x", "lbrn2.1x", ".a", "lbrn2.größe", "lbrn2.a\u{1}"] {
             assert!(!is_extras_key(bad), "{bad}");
         }
+    }
+
+    #[test]
+    fn workspace_is_the_bed_or_the_square_field() {
+        let mut d = Document::default();
+        assert_eq!(d.workspace(), None);
+        d.field_mm = Some(150.0);
+        assert_eq!(d.workspace(), Some([150.0, 150.0]));
+        assert!(serde_json::to_value(&d).unwrap().get("workspace_mm").is_none(), "galvo documents stay as they were");
+        d.workspace_mm = Some([400.0, 300.0]);
+        assert_eq!(d.workspace(), Some([400.0, 300.0]));
+        let back: Document = serde_json::from_str(&serde_json::to_string(&d).unwrap()).unwrap();
+        assert_eq!(back.workspace_mm, Some([400.0, 300.0]));
+        d.workspace_mm = Some([f64::NAN, 300.0]);
+        assert!(d.numeric_problem().is_some_and(|p| p.contains("workspace_mm")));
     }
 
     #[test]

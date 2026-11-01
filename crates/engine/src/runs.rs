@@ -63,6 +63,9 @@ pub struct Run {
     pub created_unix_s: u64,
     pub error: Option<String>,
     pub report: Option<RunReport>,
+    /// The machine configuration generation the packets were made for (`hw::MachineConfig::generation`); a run of
+    /// another generation (planned for another device) is never approved.
+    pub generation: u64,
 }
 
 /// The JSON view of a [`Run`] (no packets).
@@ -130,6 +133,7 @@ impl RunStore {
             created_unix_s,
             error: None,
             report: None,
+            generation: prepared.generation,
         });
         self.prune();
         Ok(self.runs.last().expect("just pushed"))
@@ -165,6 +169,29 @@ impl RunStore {
             n += 1;
         }
         n
+    }
+
+    /// Cancel every pending (not yet approved) run; returns how many.
+    pub fn cancel_pending(&mut self, reason: &str) -> usize {
+        let mut n = 0;
+        for r in self.runs.iter_mut().filter(|r| r.state == RunState::Pending) {
+            r.state = RunState::Cancelled;
+            r.error = Some(reason.to_owned());
+            r.packets = Arc::new(Vec::new());
+            n += 1;
+        }
+        n
+    }
+
+    /// The state of a run that holds or is about to hold the machine (`approved`, `awaiting_confirm`, `running`),
+    /// if any, as its name.
+    pub fn busy_state(&self) -> Option<&'static str> {
+        self.runs.iter().find_map(|r| match r.state {
+            RunState::Approved => Some("approved"),
+            RunState::AwaitingConfirm => Some("waiting for its physical confirmation"),
+            RunState::Running => Some("running"),
+            _ => None,
+        })
     }
 
     /// Drop the oldest finished runs beyond [`KEEP_FINISHED`] (and their packets).
@@ -207,6 +234,8 @@ pub struct PreparedJob {
     pub packets: Vec<Packet>,
     pub stats: Stats,
     pub summary: String,
+    /// The machine configuration generation it was planned for (set by the caller; 0 from [`prepare_job`]).
+    pub generation: u64,
 }
 
 /// The layers' names as people see them (`"Fill", "Outline"`), each once, in first-use order; a layer the document
@@ -249,7 +278,7 @@ pub fn prepare_job(doc: &Document, target: &Target, profile: &MachineProfile) ->
         stats.mark_length_mm,
         stats.estimated_time_s
     );
-    Ok(PreparedJob { packets, stats, summary })
+    Ok(PreparedJob { packets, stats, summary, generation: 0 })
 }
 
 #[cfg(test)]
@@ -258,7 +287,7 @@ mod tests {
     use serde_json::Value;
 
     fn prepared() -> PreparedJob {
-        PreparedJob { packets: vec![Packet::empty()], stats: Stats::default(), summary: "s".into() }
+        PreparedJob { packets: vec![Packet::empty()], stats: Stats::default(), summary: "s".into(), generation: 0 }
     }
 
     #[test]

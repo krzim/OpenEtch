@@ -32,6 +32,9 @@ pub enum EngineError {
     Conflict(String),
     #[error("{0}")]
     Forbidden(String),
+    /// The active device is design-only: OpenEtch cannot plan for or drive it.
+    #[error("{0}")]
+    NotControllable(String),
     /// An upload or project file above the size limit.
     #[error("{0}")]
     TooLarge(String),
@@ -49,7 +52,9 @@ impl EngineError {
         match self {
             EngineError::Command(CommandError::NotFound { .. }) | EngineError::NotFound(_) => StatusCode::NOT_FOUND,
             EngineError::Command(_) | EngineError::BadRequest(_) => StatusCode::BAD_REQUEST,
-            EngineError::Plan(_) | EngineError::JobCheck(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            EngineError::Plan(_) | EngineError::JobCheck(_) | EngineError::NotControllable(_) => {
+                StatusCode::UNPROCESSABLE_ENTITY
+            }
             EngineError::Machine(ControllerError::Busy(_)) | EngineError::Conflict(_) => StatusCode::CONFLICT,
             EngineError::Machine(ControllerError::Refused(_) | ControllerError::Field(_)) => {
                 StatusCode::UNPROCESSABLE_ENTITY

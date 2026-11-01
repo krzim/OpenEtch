@@ -6,9 +6,13 @@
 //! `Controller` methods. Swapping in a freshly opened USB link uses `Controller::replace_link`
 //! ([`Machine::ensure_ready`]) and the physical run confirmation reads inputs with `Controller::read_port`
 //! ([`Machine::read_inputs`]).
+//!
+//! The profile, correction table and planning target form one [`MachineConfig`] that a device change swaps as a whole
+//! ([`Machine::swap_config`], under the controller lock, re-initialising the board); its `generation` tells runs
+//! planned for an earlier device apart.
 
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError, TryLockError};
+use std::sync::{Arc, Mutex, PoisonError, RwLock, TryLockError};
 
 use corfile::CorTable;
 use lmc::{LASER_ENABLE_BIT, Packet, Single};
@@ -182,13 +186,23 @@ pub enum AbortOutcome {
     NotConnected,
 }
 
+/// The profile the machine is driven with, its correction table and planning target, swapped as one by a device
+/// change.
+#[derive(Debug)]
+pub struct MachineConfig {
+    pub profile: MachineProfile,
+    pub cor: Option<CorTable>,
+    pub target: Target,
+    /// Bumped by every swap; a run planned with another generation is never approved.
+    pub generation: u64,
+}
+
 /// The laser as the engine sees it. See the module docs.
 pub struct Machine {
     ctl: Arc<Mutex<Ctl>>,
     abort: AbortHandle,
-    profile: MachineProfile,
-    cor: Option<CorTable>,
-    target: Target,
+    /// The current [`MachineConfig`]; replaced only with the controller lock held.
+    config: RwLock<Arc<MachineConfig>>,
     kind: LinkKind,
     sim: Option<Arc<SimCounters>>,
     /// An approved run holds this from approval until it ends.
@@ -229,9 +243,7 @@ impl Machine {
         Machine {
             abort: ctl.abort_handle(),
             ctl: Arc::new(Mutex::new(ctl)),
-            target: target_from_profile(&profile),
-            profile,
-            cor,
+            config: RwLock::new(Arc::new(MachineConfig { target: target_from_profile(&profile), profile, cor, generation: 0 })),
             kind,
             sim,
             running: AtomicBool::new(false),
@@ -242,13 +254,44 @@ impl Machine {
         }
     }
 
-    pub fn profile(&self) -> &MachineProfile {
-        &self.profile
+    /// The current profile, correction table, target and generation, as one snapshot.
+    pub fn config(&self) -> Arc<MachineConfig> {
+        self.config.read().unwrap_or_else(PoisonError::into_inner).clone()
     }
 
-    /// The planning target derived from the profile.
-    pub fn target(&self) -> &Target {
-        &self.target
+    /// The current machine profile (a copy).
+    pub fn profile(&self) -> MachineProfile {
+        self.config().profile.clone()
+    }
+
+    /// The planning target derived from the profile (a copy).
+    pub fn target(&self) -> Target {
+        self.config().target.clone()
+    }
+
+    /// The generation of the current [`MachineConfig`].
+    pub fn generation(&self) -> u64 {
+        self.config().generation
+    }
+
+    /// Swap in another profile and correction table (a device change) and re-initialise the board: the simulator
+    /// gets a fresh `SimLink` (the counters carry on), a USB board is closed and opened again. Call with the
+    /// controller lock held and no run or frame active (the caller has claimed the machine). The swap happens even
+    /// when the board then fails to initialise; that error is returned (and the next frame or run retries).
+    pub fn swap_config(&self, ctl: &mut Ctl, profile: MachineProfile, cor: Option<CorTable>) -> Result<u64, ControllerError> {
+        profile.validate()?;
+        let generation = {
+            let mut c = self.config.write().unwrap_or_else(PoisonError::into_inner);
+            let generation = c.generation + 1;
+            *c = Arc::new(MachineConfig { target: target_from_profile(&profile), profile, cor, generation });
+            generation
+        };
+        let link: Box<dyn Link> = match (&self.sim, self.kind) {
+            (Some(counters), LinkKind::Simulated) => Box::new(CountingSimLink::new(counters.clone())),
+            _ => Box::new(OfflineLink),
+        };
+        ctl.replace_link(link);
+        self.ensure_ready(ctl).map(|()| generation)
     }
 
     pub fn kind(&self) -> LinkKind {
@@ -339,7 +382,8 @@ impl Machine {
         if self.kind == LinkKind::Usb {
             ctl.replace_link(open_usb()?);
         }
-        match ctl.init(&self.profile, self.cor.as_ref()) {
+        let config = self.config();
+        match ctl.init(&config.profile, config.cor.as_ref()) {
             Ok(info) => {
                 tracing::info!(serial = ?info.serial, version = ?info.version, "board initialised");
                 self.set_error(None);
@@ -400,6 +444,7 @@ impl Machine {
         };
         let framing = self.is_framing();
         let simulated = self.kind == LinkKind::Simulated;
+        let config = self.config();
         json!({
             "connected": initialised,
             "simulated": simulated,
@@ -409,10 +454,10 @@ impl Machine {
             "state": state,
             "running": running,
             "framing": framing,
-            "field_mm": self.profile.field_mm,
-            "profile": self.profile.name,
-            "laser_source": self.profile.laser_source,
-            "max_power_pct": self.profile.max_power_pct,
+            "field_mm": config.profile.field_mm,
+            "profile": config.profile.name,
+            "laser_source": config.profile.laser_source,
+            "max_power_pct": config.profile.max_power_pct,
             "last_error": self.last_error(),
             "sim_counters": self.sim.as_ref().map(|c| c.json()),
         })
@@ -505,6 +550,23 @@ mod tests {
         let sim = Arc::new(Machine::simulated(MachineProfile::generic_lmc_fiber(), None, PollConfig::immediate()));
         sim.connect().await.unwrap();
         assert_eq!(sim.abort().await.unwrap(), AbortOutcome::Sent);
+    }
+
+    #[tokio::test]
+    async fn swapping_the_config_reinitialises_the_simulator() {
+        let m = Arc::new(Machine::simulated(MachineProfile::generic_lmc_fiber(), None, PollConfig::immediate()));
+        m.connect().await.unwrap();
+        let singles = m.sim_counters().unwrap().singles();
+        let generic = MachineProfile::generic_jcz_galvo();
+        let r = m.blocking(move |m, ctl| m.swap_config(ctl, generic, None)).await.unwrap();
+        assert_eq!(r.unwrap(), 1);
+        assert_eq!((m.generation(), m.profile().name.as_str(), m.target().field_mm), (1, "Generic JCZ galvo", 110.0));
+        assert_eq!(m.status_json()["connected"], true, "initialised again");
+        assert!(m.sim_counters().unwrap().singles() > singles, "the counters carry on");
+        assert_eq!(m.sim_counters().unwrap().laser_singles(), 0);
+        let bad = MachineProfile { field_mm: 0.0, ..MachineProfile::generic_lmc_fiber() };
+        assert!(m.blocking(move |m, ctl| m.swap_config(ctl, bad, None)).await.unwrap().is_err());
+        assert_eq!(m.generation(), 1, "an invalid profile is never swapped in");
     }
 
     #[tokio::test]

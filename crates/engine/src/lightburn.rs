@@ -224,15 +224,20 @@ impl LightBurn {
     /// The field size for a LightBurn import without `field_mm`: the device the file's `DeviceName` names, else the
     /// matched device ([`LightBurn::matched`]). Returns the size and its `field_source` text.
     pub fn field_for_import(&self, content: &str) -> Option<(f64, String)> {
-        let (_, prefs) = self.current()?;
-        if let Some(name) = commands::lbrn2_device_name(content)
-            && let Some(d) = find_device(&prefs, &name)
-            && let Some(f) = usable_field(d)
-        {
-            return Some((f, format!("file device {}", d.name)));
+        if let Some(found) = self.field_for_file_device(content) {
+            return Some(found);
         }
         let d = self.matched()?;
         usable_field(&d).map(|f| (f, format!("LightBurn default device {}", d.name)))
+    }
+
+    /// The field of the LightBurn device the file's `DeviceName` names (the engine uses it after OpenEtch's own
+    /// devices, for a device that was not imported), with its `field_source` text.
+    pub fn field_for_file_device(&self, content: &str) -> Option<(f64, String)> {
+        let (_, prefs) = self.current()?;
+        let name = commands::lbrn2_device_name(content)?;
+        let d = find_device(&prefs, &name)?;
+        usable_field(d).map(|f| (f, format!("file device {}", d.name)))
     }
 
     /// The `lightburn` part of `GET /api/machine`: `{device, field_mm, diffs}` comparing `profile` with the matched
@@ -320,6 +325,11 @@ pub fn default_prefs_paths() -> Vec<PathBuf> {
     machine::lightburn::default_prefs_paths(std::env::consts::OS, |k| std::env::var(k).ok())
 }
 
+/// A path for messages, with the OS separator throughout (`a/b\c` -> `a\b\c` on Windows).
+fn shown(p: &Path) -> String {
+    p.components().collect::<PathBuf>().display().to_string()
+}
+
 /// Options of `openetch profile from-lightburn`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProfileFromLightBurn {
@@ -361,12 +371,12 @@ pub fn profile_from_lightburn_command(opts: &ProfileFromLightBurn) -> Result<Str
     let (base, base_name) = match &opts.base {
         Some(p) => {
             let text = std::fs::read_to_string(p).map_err(|e| format!("cannot read {}: {e}", p.display()))?;
-            (MachineProfile::from_toml(&text).map_err(|e| format!("{}: {e}", p.display()))?, p.display().to_string())
+            (MachineProfile::from_toml(&text).map_err(|e| format!("{}: {e}", p.display()))?, shown(p))
         }
         None => {
             let p = crate::cli::resolve_default(crate::cli::DEFAULT_PROFILE);
             match std::fs::read_to_string(&p).ok().and_then(|t| MachineProfile::from_toml(&t).ok()) {
-                Some(b) => (b, p.display().to_string()),
+                Some(b) => (b, shown(&p)),
                 None => (MachineProfile::generic_lmc_fiber(), "the generic LMC fiber profile".into()),
             }
         }
@@ -374,7 +384,7 @@ pub fn profile_from_lightburn_command(opts: &ProfileFromLightBurn) -> Result<Str
     let (profile, diffs) = profile_from_lightburn(device, &base);
     let toml = profile.to_toml().map_err(|e| e.to_string())?;
     let header = format!(
-        "# Machine profile made by `openetch profile from-lightburn` from LightBurn device \"{}\" on {}.\n# See `notes`; \
+        "# Machine profile made by `openetch profile from-lightburn` from LightBurn device \"{}\" onto {}.\n# See `notes`; \
          the swap/negate mapping from LightBurn is unverified on hardware.\n\n",
         device.name, base_name
     );
@@ -396,10 +406,10 @@ pub fn profile_from_lightburn_command(opts: &ProfileFromLightBurn) -> Result<Str
         "LightBurn device \"{}\" ({}) from {}, onto {}:\n\n{}\nwrote {}\n",
         device.name,
         device.display_name,
-        prefs_path.display(),
+        shown(&prefs_path),
         base_name,
         diff_table(&diffs),
-        opts.out.display()
+        shown(&opts.out)
     );
     if let Some(cor) = &profile.cor_file {
         let dir = opts.out.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
@@ -515,7 +525,13 @@ mod tests {
         let opts = ProfileFromLightBurn { prefs: Some(path.clone()), device: None, base: None, out: out.clone(), force: false };
         let report = profile_from_lightburn_command(&opts).unwrap();
         assert!(report.contains("mark_speed.max_mm_s") && report.contains("jcz150.cor"), "{report}");
-        let written = MachineProfile::from_toml(&std::fs::read_to_string(&out).unwrap()).unwrap();
+        let text = std::fs::read_to_string(&out).unwrap();
+        let header = text.lines().next().unwrap();
+        assert!(header.contains("\"JCZFiber\" onto ") && header.ends_with("b6-mopa-60w.toml."), "{header}");
+        let other = if std::path::MAIN_SEPARATOR == '/' { '\\' } else { '/' };
+        let first_line = report.lines().next().unwrap();
+        assert!(!header.contains(other) && !first_line.contains(other), "one separator: {header} / {first_line}");
+        let written = MachineProfile::from_toml(&text).unwrap();
         assert_eq!((written.field_mm, written.mark_speed.max_mm_s, written.start_mark_input_bit), (153.75, 7000.0, Some(14)));
         let e = profile_from_lightburn_command(&opts).unwrap_err();
         assert!(e.contains("--force"), "{e}");

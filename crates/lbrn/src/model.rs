@@ -29,6 +29,13 @@ impl LbrnProject {
         self.attributes.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
     }
 
+    /// The root's `MirrorX` / `MirrorY` (`True`/`true`/`1`): the origin corner of the device the project was saved
+    /// with (see [`crate::Frame::Bed`]). Missing flags are false.
+    pub fn mirror(&self) -> (bool, bool) {
+        let flag = |k: &str| self.attribute(k).is_some_and(crate::convert::truthy);
+        (flag("MirrorX"), flag("MirrorY"))
+    }
+
     /// The vector (`CutSetting`, not `CutSetting_Img`) settings for a layer index.
     pub fn cut_setting(&self, index: u32) -> Option<&CutSetting> {
         self.cut_settings.iter().find(|c| c.index == index && !c.image)

@@ -5,7 +5,7 @@
 import { useState } from "react";
 import type { Invocation } from "../api/client.ts";
 import * as C from "../api/commands.ts";
-import { frequencyRange, nearestPulseWidth, pulseWidths } from "../api/laser.ts";
+import { boxOutside, frequencyRange, nearestPulseWidth, pulseWidths } from "../api/laser.ts";
 import type { CutSettings, FillMode, GDocument, Layer, MachineStatus, Vec2 } from "../api/types.ts";
 import { roundMm } from "../editing.ts";
 import { normDeg, objectBounds, transformParts, unionBoxes, type Box } from "../geometry.ts";
@@ -19,7 +19,8 @@ export interface PropertiesPanelProps {
   doc: GDocument | null;
   selection: Selection;
   machine: MachineStatus | null;
-  fieldMm: number;
+  /** The active device's workspace (W x H mm, centred on the field origin; a galvo field is square). */
+  workspaceMm: Vec2;
   has: (cmd: string) => boolean;
   run: Run;
   report: (e: unknown) => void;
@@ -57,7 +58,7 @@ function anchorPoint(b: Box, a: Anchor): Vec2 {
   return [x, y];
 }
 
-function ObjectSection({ doc, selection, run, report, onArrange, fieldMm }: PropertiesPanelProps & { doc: GDocument }) {
+function ObjectSection({ doc, selection, run, report, onArrange, workspaceMm }: PropertiesPanelProps & { doc: GDocument }) {
   const [lockAspect, setLockAspect] = useState(true);
   const [anchor, setAnchor] = useState<Anchor>("c");
   const objs = doc.objects.filter((o) => selection.objects.includes(o.id));
@@ -75,8 +76,7 @@ function ObjectSection({ doc, selection, run, report, onArrange, fieldMm }: Prop
   const rot = parts ? parts.rotationDeg : 0;
   const exec = (inv: Invocation | Invocation[]) => run(inv).catch(report);
   const layers = new Set(objs.map((o) => o.layer));
-  const half = fieldMm / 2;
-  const outside = bounds.x0 <= -half || bounds.y0 <= -half || bounds.x1 >= half || bounds.y1 >= half;
+  const outside = boxOutside(bounds, workspaceMm[0] / 2, workspaceMm[1] / 2);
 
   const setPos = (nx: number, ny: number) => {
     const d: Vec2 = [roundMm(nx - ax), roundMm(ny - ay)];

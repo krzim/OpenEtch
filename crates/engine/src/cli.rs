@@ -16,6 +16,8 @@ pub const USAGE: &str = "openetch: laser design and control engine
 USAGE: openetch [OPTIONS]
        openetch set-pin [--reset] [--config-dir <path>]
        openetch profile from-lightburn [--prefs <path>] [--device <name>] [--base <profile>] --out <file> [--force]
+       openetch devices list [--config-dir <path>] [--profile <path>]
+       openetch devices import <file> [--add all|<name>] [--config-dir <path>] [--profile <path>]
 
 COMMANDS:
   set-pin               Set the operator PIN (6-12 digits) that approving a run needs. Interactive: run it yourself
@@ -30,6 +32,11 @@ COMMANDS:
                         hard limits never raised. Prints every difference. Reads only the device list of LightBurn's
                         prefs.ini (--prefs, default the OS location); --device picks one by name or display name
                         (default LightBurn's default device). Refuses to replace --out without --force.
+  devices list          List OpenEtch's devices (<config-dir>/devices; like LightBurn's Devices window): the active
+                        one is marked *. On the first run LightBurn's devices on this computer are imported.
+  devices import <file> Import the devices of a LightBurn .lbdev file or prefs.ini (only the typed device settings
+                        are read; --add picks one by name). A device imported before (same name, controller,
+                        connection and size) is updated. Restart the engine to see them.
 
 OPTIONS:
   --listen <addr>       Address to serve on (default 127.0.0.1:7878). Off loopback a token is required.
@@ -52,8 +59,11 @@ OPTIONS:
                         ~/Library/Preferences/LightBurn/prefs.ini, ~/.local/share/LightBurn or ~/.config/LightBurn);
                         a missing file is fine. LightBurn imports without a field size use the device's field.
   --lightburn-device <name>
-                        The LightBurn device (name or display name) used when a LightBurn file names none. Default:
-                        LightBurn's default device.
+                        The LightBurn device (name or display name) GET /api/lightburn and the machine status compare
+                        the profile with. Default: LightBurn's default device.
+  --device <id or name> The OpenEtch device to use for this run (default: the active device, set in the UI's Devices
+                        window). Its profile drives the machine; a design-only device (not a JCZ galvo) only sets
+                        the workspace.
   -h, --help            Show this help.";
 
 /// Parsed options.
@@ -77,6 +87,8 @@ pub struct Config {
     pub lightburn_prefs: Option<PathBuf>,
     /// `--lightburn-device`: the LightBurn device used when a file names none.
     pub lightburn_device: Option<String>,
+    /// `--device`: the OpenEtch device for this run (id or name).
+    pub device: Option<String>,
 }
 
 /// What the command line asked for.
@@ -91,6 +103,8 @@ pub enum Parsed {
     },
     /// `openetch profile from-lightburn ...`.
     ProfileFromLightBurn(crate::lightburn::ProfileFromLightBurn),
+    /// `openetch devices list|import ...`.
+    Devices(crate::devices::DevicesCommand),
     Help,
 }
 
@@ -101,22 +115,26 @@ fn config_dir(given: Option<PathBuf>) -> Result<PathBuf, String> {
         .ok_or_else(|| "cannot find the OS config directory; pass --config-dir <path>".into())
 }
 
-/// Find `rel` in the current directory or one of its ancestors, then next to this crate's repo root; fall back to
-/// `rel` as given.
+/// Find `rel` (a `/`-separated relative path) in the current directory or one of its ancestors, then in this crate's
+/// repo root; fall back to `rel` as given. The result uses the OS path separator throughout.
 pub fn resolve_default(rel: &str) -> PathBuf {
+    let rel: PathBuf = rel.split('/').collect();
     if let Ok(cwd) = std::env::current_dir() {
         for dir in cwd.ancestors() {
-            let p = dir.join(rel);
+            let p = dir.join(&rel);
             if p.exists() {
                 return p;
             }
         }
     }
-    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join(rel);
-    if repo.exists() {
-        return repo;
+    // crates/engine -> the repo root, without `..` components.
+    if let Some(root) = Path::new(env!("CARGO_MANIFEST_DIR")).parent().and_then(Path::parent) {
+        let repo = root.join(&rel);
+        if repo.exists() {
+            return repo;
+        }
     }
-    PathBuf::from(rel)
+    rel
 }
 
 /// Parse arguments (without the program name).
@@ -130,6 +148,10 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Parsed, String> 
         args.next();
         return parse_profile(args);
     }
+    if args.peek().is_some_and(|a| a == "devices") {
+        args.next();
+        return parse_devices(args);
+    }
     let mut listen: Option<String> = None;
     let mut config: Option<PathBuf> = None;
     let mut projects_dir: Option<PathBuf> = None;
@@ -141,6 +163,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Parsed, String> 
     let mut allow_hosts = Vec::new();
     let mut lightburn_prefs = None;
     let mut lightburn_device = None;
+    let mut device = None;
     let mut it = args;
     while let Some(arg) = it.next() {
         let (flag, inline) = match arg.split_once('=') {
@@ -181,7 +204,14 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Parsed, String> 
                 }
                 lightburn_device = Some(v);
             }
-            "set-pin" | "profile" => {
+            "--device" => {
+                let v = value("--device")?;
+                if v.trim().is_empty() {
+                    return Err("--device needs a device id or name".into());
+                }
+                device = Some(v);
+            }
+            "set-pin" | "profile" | "devices" => {
                 return Err(format!("{flag} is a command of its own and comes first (see --help)"));
             }
             other => return Err(format!("unknown option '{other}' (see --help)")),
@@ -205,6 +235,51 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Parsed, String> 
             .ok_or("cannot find the OS data directory; pass --projects-dir <path>")?,
         lightburn_prefs,
         lightburn_device,
+        device,
+    }))
+}
+
+/// `openetch devices list|import <file> [--add all|<name>] [--config-dir P] [--profile P]`.
+fn parse_devices(mut it: impl Iterator<Item = String>) -> Result<Parsed, String> {
+    const USE: &str = "usage: openetch devices list [--config-dir <path>] [--profile <path>] | openetch devices import \
+                       <file> [--add all|<name>] [--config-dir <path>] [--profile <path>]";
+    let import = match it.next().as_deref() {
+        Some("list") => false,
+        Some("import") => true,
+        Some("-h" | "--help") => return Ok(Parsed::Help),
+        _ => return Err(USE.into()),
+    };
+    let (mut file, mut add, mut dir, mut profile) = (None, None, None, None);
+    while let Some(arg) = it.next() {
+        let (flag, inline) = match arg.split_once('=') {
+            Some((f, v)) if f.starts_with("--") => (f.to_owned(), Some(v.to_owned())),
+            _ => (arg.clone(), None),
+        };
+        let mut value = |name: &str| -> Result<String, String> {
+            inline.clone().or_else(|| it.next()).ok_or_else(|| format!("{name} needs a value"))
+        };
+        match flag.as_str() {
+            "--config-dir" => dir = Some(PathBuf::from(value("--config-dir")?)),
+            "--profile" => profile = Some(PathBuf::from(value("--profile")?)),
+            "--add" if import => add = Some(value("--add")?),
+            "-h" | "--help" => return Ok(Parsed::Help),
+            f if import && file.is_none() && !f.starts_with("--") => file = Some(PathBuf::from(arg)),
+            other => return Err(format!("devices: unexpected argument '{other}' ({USE})")),
+        }
+    }
+    let action = if import {
+        let file = file.ok_or_else(|| format!("devices import needs a file ({USE})"))?;
+        crate::devices::DevicesAction::Import { file, filter: crate::devices::ImportFilter::parse(add.as_deref()) }
+    } else {
+        crate::devices::DevicesAction::List
+    };
+    let profile_is_default = profile.is_none();
+    Ok(Parsed::Devices(crate::devices::DevicesCommand {
+        action,
+        config_dir: config_dir(dir)?,
+        profile: profile.unwrap_or_else(|| resolve_default(DEFAULT_PROFILE)),
+        profile_is_default,
+        prefs_paths: crate::lightburn::default_prefs_paths(),
     }))
 }
 
@@ -329,6 +404,41 @@ mod tests {
         assert!(p(&["profile"]).is_err());
         assert!(p(&["profile", "from-lightburn", "--out", "x", "--usb"]).is_err());
         assert!(p(&["--usb", "profile"]).is_err());
+    }
+
+    #[test]
+    fn device_option_and_devices_commands() {
+        use crate::devices::{DevicesAction, ImportFilter};
+        assert_eq!(run(&["--device", "jczfiber-unknown"]).device.as_deref(), Some("jczfiber-unknown"));
+        assert_eq!(run(&["--device=Test Bed 400"]).device.as_deref(), Some("Test Bed 400"));
+        assert_eq!(run(&[]).device, None);
+        assert!(parse(["--device".to_string(), " ".to_string()]).is_err());
+        let p = |a: &[&str]| parse(a.iter().map(|s| s.to_string()));
+        match p(&["devices", "list", "--config-dir", "cfg"]).unwrap() {
+            Parsed::Devices(c) => {
+                assert_eq!((c.action, c.config_dir), (DevicesAction::List, PathBuf::from("cfg")));
+                assert!(c.profile_is_default && c.profile.ends_with(Path::new("fixtures").join("b6-mopa-60w.toml")));
+            }
+            other => panic!("{other:?}"),
+        }
+        match p(&["devices", "import", "x.lbdev", "--add", "Test Bed", "--config-dir=cfg"]).unwrap() {
+            Parsed::Devices(c) => assert_eq!(
+                c.action,
+                DevicesAction::Import { file: "x.lbdev".into(), filter: ImportFilter::Named("Test Bed".into()) }
+            ),
+            other => panic!("{other:?}"),
+        }
+        assert!(p(&["devices", "import"]).unwrap_err().contains("needs a file"));
+        assert!(p(&["devices", "list", "--add", "x"]).is_err());
+        assert!(p(&["devices", "remove", "x"]).is_err());
+        assert!(p(&["--usb", "devices"]).is_err());
+    }
+
+    #[test]
+    fn default_paths_use_one_separator() {
+        let p = resolve_default(DEFAULT_PROFILE).display().to_string();
+        let other = if std::path::MAIN_SEPARATOR == '/' { '\\' } else { '/' };
+        assert!(!p.contains(other) && !p.contains(".."), "{p}");
     }
 
     #[test]

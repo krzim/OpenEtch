@@ -9,9 +9,15 @@
 //! before `document_changed` is sent. Project names that differ only in case are the same project (Windows and
 //! macOS file names ignore case), so saves refuse to replace one unless asked to and opens find it.
 //! The document's `field_mm` comes from the machine profile when the engine starts with a document that has none,
-//! and `doc.new` always starts at the profile's. `doc.import_lbrn2` without `field_mm` gets the LightBurn device's
-//! field ([`crate::lightburn`]), else the document's, else the profile's; `doc.export_lbrn2` gets the profile's when
-//! neither the caller nor the document gives one.
+//! and `doc.new` always starts at the active device's workspace (a gantry's bed and origin corner). `doc.import_lbrn2`
+//! without a size gets the workspace of the device the file names (registry devices, then LightBurn's prefs), else
+//! the active device's, else the document's, else the profile's; `doc.export_lbrn2` gets the profile's when neither
+//! the caller nor the document gives one.
+//!
+//! Devices ([`crate::devices`]): the active device's workspace drives new documents and imports; planning, runs and
+//! framing are refused while it is design-only. Activating another device ([`AppState::activate_device`]) is refused
+//! while a run is approved, waiting for its confirmation or running, or while framing; it cancels pending runs,
+//! swaps the machine profile (re-initialising the board) and emits `device_changed`.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -24,6 +30,7 @@ use base64::Engine as _;
 use serde_json::{Value, json};
 use tokio::sync::broadcast;
 
+use crate::devices::{DeviceRegistry, ImportFilter, ImportReport};
 use crate::frame::{self, FrameRequest};
 use crate::hw::{AbortOutcome, Machine};
 use crate::lightburn::LightBurn;
@@ -93,6 +100,9 @@ pub struct AppState {
     /// LightBurn's devices (field size of LightBurn imports, `GET /api/lightburn`). None until configured
     /// ([`LightBurn::configure`]); never locked while the session lock is held.
     pub lightburn: LightBurn,
+    /// OpenEtch's devices and the active one ([`AppState::install_devices`]; until then only the built-in device for
+    /// the machine's profile). Never locked while the session or runs lock is held.
+    devices: Mutex<DeviceRegistry>,
 }
 
 /// How an invocation changes which project the document belongs to.
@@ -298,6 +308,7 @@ impl AppState {
             session
         };
         let project = ProjectState::clean_at(session.document().revision);
+        let devices = DeviceRegistry::in_memory(machine.profile(), machine.config().cor.clone());
         Arc::new(AppState {
             session: Mutex::new(session),
             machine,
@@ -309,7 +320,146 @@ impl AppState {
             projects,
             project: Mutex::new(project),
             lightburn: LightBurn::default(),
+            devices: Mutex::new(devices),
         })
+    }
+
+    /// Use `registry` (opened from the config directory) for the devices. The machine must already be driven with
+    /// the registry's active device's profile when that device is controllable.
+    pub fn install_devices(&self, registry: DeviceRegistry) {
+        *lock(&self.devices) = registry;
+    }
+
+    /// The device registry (do not hold it across other locks).
+    pub fn devices(&self) -> MutexGuard<'_, DeviceRegistry> {
+        lock(&self.devices)
+    }
+
+    /// The active device (a copy).
+    pub fn active_device(&self) -> machine::Device {
+        self.devices().active().clone()
+    }
+
+    /// Refused (422) while the active device is design-only.
+    fn require_controllable(&self) -> Result<(), EngineError> {
+        match self.active_device().not_controllable_reason() {
+            Some(reason) => Err(EngineError::NotControllable(format!("{reason}. Make a JCZ galvo active in Devices to run or frame."))),
+            None => Ok(()),
+        }
+    }
+
+    /// `GET /api/devices`.
+    pub fn devices_view(&self) -> Value {
+        self.devices().view()
+    }
+
+    /// `GET /api/devices/{id}`.
+    pub fn device_details(&self, id: &str) -> Result<Value, EngineError> {
+        self.devices().details(id)
+    }
+
+    /// `POST /api/devices/import`: a `prefs.ini` or `.lbdev` as text. Emits `devices_changed`.
+    pub fn import_devices(&self, text: &str, filter: &ImportFilter) -> Result<ImportReport, EngineError> {
+        let (prefs, source) = crate::devices::parse_device_file(text).map_err(EngineError::BadRequest)?;
+        let report = self.devices().import(&prefs, source, filter).map_err(|e| {
+            if e.starts_with("the file has no device") { EngineError::NotFound(e) } else { EngineError::Internal(e) }
+        })?;
+        tracing::info!(added = report.added.len(), updated = report.updated.len(), skipped = report.skipped.len(), "imported devices");
+        self.emit(Event::DevicesChanged);
+        Ok(report)
+    }
+
+    /// `POST /api/devices/import?from=lightburn`: the devices of LightBurn's `prefs.ini` on the engine's computer (or
+    /// the uploaded copy, see [`LightBurn`]). Emits `devices_changed`.
+    pub fn import_devices_from_lightburn(&self, filter: &ImportFilter) -> Result<ImportReport, EngineError> {
+        let (_, prefs) = self.lightburn.current().ok_or_else(|| {
+            EngineError::NotFound("no LightBurn prefs.ini found on the engine's computer; import a .lbdev or prefs.ini file".into())
+        })?;
+        if prefs.devices.is_empty() {
+            return Err(EngineError::NotFound("LightBurn's prefs.ini lists no devices".into()));
+        }
+        let report = self.devices().import(&prefs, machine::DeviceSource::LightburnPrefs, filter).map_err(|e| {
+            if e.starts_with("the file has no device") { EngineError::NotFound(e) } else { EngineError::Internal(e) }
+        })?;
+        self.emit(Event::DevicesChanged);
+        Ok(report)
+    }
+
+    /// `DELETE /api/devices/{id}`: not the active one, not the built-in one. Emits `devices_changed`.
+    pub fn remove_device(&self, id: &str) -> Result<(), EngineError> {
+        self.devices().remove(id)?;
+        self.emit(Event::DevicesChanged);
+        Ok(())
+    }
+
+    /// Make device `id` active (see the module docs). Returns `{ok, active, warnings}`.
+    pub async fn activate_device(self: &Arc<Self>, id: &str) -> Result<Value, EngineError> {
+        let device = self.devices().get(id).cloned().ok_or_else(|| EngineError::NotFound(format!("no device with id '{id}'")))?;
+        // Claim the machine as a run would, so no run starts and no frame traces while the profile changes.
+        {
+            let mut runs = self.runs();
+            if let Some(state) = runs.busy_state() {
+                return Err(EngineError::Conflict(format!("a run is {state}; stop it or let it finish before changing the device")));
+            }
+            if self.machine.is_framing() {
+                return Err(EngineError::Conflict("framing is on; stop framing before changing the device".into()));
+            }
+            if !self.machine.try_begin_run() {
+                return Err(EngineError::Conflict("a run is in progress; let it finish before changing the device".into()));
+            }
+            runs.cancel_pending("cancelled: the device changed");
+        }
+        struct Claim<'a>(&'a Machine);
+        impl Drop for Claim<'_> {
+            fn drop(&mut self) {
+                self.0.end_run();
+            }
+        }
+        let _claim = Claim(&self.machine);
+        let mut warnings = Vec::new();
+        // File I/O (the correction file, the index) on a blocking thread.
+        let chosen = device.clone();
+        let (cor, cor_warning, previous) = self
+            .blocking(move |st| {
+                let mut devices = st.devices();
+                let (cor, warning) = devices.correction_for(&chosen);
+                let previous = devices.active().id.clone();
+                devices.set_active(&chosen.id)?;
+                Ok((cor, warning, previous))
+            })
+            .await?;
+        warnings.extend(cor_warning);
+        if let Some(profile) = device.profile.clone().filter(|_| device.controllable) {
+            let before = self.machine.generation();
+            let result = self
+                .machine
+                .blocking(move |m, ctl| {
+                    m.bump_frame_gen();
+                    m.swap_config(ctl, profile, cor)
+                })
+                .await;
+            match result {
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) if self.machine.generation() != before => {
+                    self.machine.set_error(Some(e.to_string()));
+                    warnings.push(format!("the board did not initialise ({e}); framing and runs will retry"));
+                }
+                // Refused before anything changed (an invalid profile): stay on the previous device.
+                Ok(Err(e)) => {
+                    let _ = self.devices().set_active(&previous);
+                    return Err(EngineError::Machine(e));
+                }
+                Err(e) => {
+                    let _ = self.devices().set_active(&previous);
+                    return Err(e);
+                }
+            }
+        }
+        // Runs planned while the profile changed belong to the previous device.
+        self.runs().cancel_pending("cancelled: the device changed");
+        tracing::info!(device = %device.id, controllable = device.controllable, "device activated");
+        self.emit(Event::DeviceChanged { id: device.id.clone() });
+        Ok(json!({ "ok": true, "active": self.devices().active().summary(), "warnings": warnings }))
     }
 
     /// A receiver for every future event.
@@ -414,18 +564,32 @@ impl AppState {
         }
         let profile_field = self.machine.profile().field_mm;
         // Filled in before the session lock: the LightBurn lookup may read prefs.ini.
-        let mut field_sources: Vec<(usize, String)> = Vec::new();
-        for (i, inv) in invs.iter_mut().enumerate() {
-            match inv.id.as_str() {
-                "doc.new" => fill_field_mm(inv, profile_field),
-                "doc.import_lbrn2" if lacks_field(inv) => {
-                    let content = inv.params.get("content").and_then(Value::as_str);
-                    if let Some((f, source)) = content.and_then(|c| self.lightburn.field_for_import(c)) {
-                        fill_field_mm(inv, f);
-                        field_sources.push((i, source));
+        let mut field_sources: Vec<(usize, String, Option<String>)> = Vec::new();
+        if invs.iter().any(|i| matches!(i.id.as_str(), "doc.new" | "doc.import_lbrn2")) {
+            let active = self.active_device();
+            for (i, inv) in invs.iter_mut().enumerate() {
+                match inv.id.as_str() {
+                    "doc.new" if lacks_field(inv) && lacks(inv, "workspace_mm") => {
+                        let field = if active.controllable { profile_field } else { active.field_mm() };
+                        fill_layout(inv, &new_layout(&active, field));
                     }
+                    "doc.import_lbrn2" if lacks_field(inv) && lacks(inv, "workspace_mm") => {
+                        let content = inv.params.get("content").and_then(Value::as_str).unwrap_or_default();
+                        let named = commands::lbrn2_device_name(content);
+                        let device = named.as_deref().and_then(|n| self.devices().find(n).cloned());
+                        if let Some(d) = device {
+                            fill_layout(inv, &lightburn_layout(&d));
+                            field_sources.push((i, format!("file device {}", d.display_name), Some(d.id)));
+                        } else if let Some((f, source)) = self.lightburn.field_for_file_device(content) {
+                            fill_field_mm(inv, f);
+                            field_sources.push((i, source, None));
+                        } else {
+                            fill_layout(inv, &lightburn_layout(&active));
+                            field_sources.push((i, format!("active device {}", active.display_name), Some(active.id.clone())));
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         }
         let display = display.or_else(|| {
@@ -452,10 +616,12 @@ impl AppState {
             }
             if s.document().field_mm.is_none() {
                 for (i, inv) in invs.iter_mut().enumerate() {
-                    if inv.id == "doc.import_lbrn2" && lacks_field(inv) {
-                        field_sources.push((i, "machine".into()));
+                    if lacks(inv, "workspace_mm") {
+                        if inv.id == "doc.import_lbrn2" && lacks_field(inv) {
+                            field_sources.push((i, "machine".into(), None));
+                        }
+                        fill_field_mm(inv, profile_field);
                     }
-                    fill_field_mm(inv, profile_field);
                 }
             }
             let replaced = invs.iter().any(|i| replaces(i) != Replaces::No);
@@ -484,9 +650,12 @@ impl AppState {
             }
             (outcomes, before, after, (s.marker(), s.history().len()))
         };
-        for (i, source) in field_sources {
+        for (i, source, device) in field_sources {
             if let Some(Value::Object(r)) = outcomes.get_mut(i).map(|o| &mut o.result) {
                 r.insert("field_source".into(), Value::String(source));
+                if let Some(id) = device {
+                    r.insert("device".into(), Value::String(id));
+                }
             }
         }
         if after != before {
@@ -760,13 +929,18 @@ impl AppState {
             return Ok(r.clone());
         }
         let doc = self.document();
-        let target = self.machine.target().clone();
+        let target = self.machine.target();
         let shared = self.previews.clone();
+        let design_only = self.active_device().not_controllable_reason();
         Ok(tokio::task::spawn_blocking(move || {
-            let preview = match plan::plan_job(&doc, &target) {
-                Ok(job) => Ok(plan::preview_document(&doc, &job)),
-                Err(PlanError::Empty) => Ok(Preview::default()),
-                Err(e) => Err(e),
+            let preview = match design_only {
+                // Still a result, so the SVG preview renders the document.
+                Some(reason) => Err(PlanError::Target(reason)),
+                None => match plan::plan_job(&doc, &target) {
+                    Ok(job) => Ok(plan::preview_document(&doc, &job)),
+                    Err(PlanError::Empty) => Ok(Preview::default()),
+                    Err(e) => Err(e),
+                },
             };
             let result: PreviewResult = Arc::new((doc, preview));
             shared.computed.fetch_add(1, Ordering::SeqCst);
@@ -813,13 +987,19 @@ impl AppState {
 
     /// Plan, encode and check the current document and store it as a pending run. Never touches the machine.
     pub async fn request_run(&self, origin: Origin) -> Result<RunView, EngineError> {
+        self.require_controllable()?;
         let doc = self.document();
         let revision = doc.revision;
-        let target = self.machine.target().clone();
-        let profile = self.machine.profile().clone();
-        let prepared = tokio::task::spawn_blocking(move || runs::prepare_job(&doc, &target, &profile)).await??;
+        let config = self.machine.config();
+        let generation = config.generation;
+        let mut prepared =
+            tokio::task::spawn_blocking(move || runs::prepare_job(&doc, &config.target, &config.profile)).await??;
+        prepared.generation = generation;
         let view = {
             let mut store = self.runs();
+            if self.machine.generation() != generation {
+                return Err(EngineError::Conflict("the device changed while the run was planned; request it again".into()));
+            }
             let run = store.add(origin.clone(), revision, prepared)?;
             run.view(revision)
         };
@@ -832,8 +1012,9 @@ impl AppState {
     pub fn machine_status(&self) -> Value {
         let rev = self.revision();
         let mut v = self.machine.status_json();
+        v["device"] = self.devices().active().summary();
         v["approval"] = self.approval.status_json();
-        v["lightburn"] = self.lightburn.machine_json(self.machine.profile());
+        v["lightburn"] = self.lightburn.machine_json(&self.machine.profile());
         let store = self.runs();
         v["pending_runs"] = json!(store.pending(rev));
         v["runs"] = json!(store.views(rev));
@@ -842,6 +1023,7 @@ impl AppState {
 
     /// Start red-pointer framing of the selection (or the whole job). Light only.
     pub async fn frame_start(&self, req: FrameRequest) -> Result<Value, EngineError> {
+        self.require_controllable()?;
         let outline = frame::outline_for(&self.document(), &req)?;
         frame::start(&self.machine, &self.events, outline).await
     }
@@ -888,6 +1070,20 @@ impl AppState {
     }
 }
 
+/// An empty document laid out for `device`: a galvo's field (`machine_field` when it drives the machine), a gantry's
+/// bed with its origin corner (the smaller side as `field_mm`).
+pub fn new_document_for(device: &machine::Device, machine_field: f64) -> Document {
+    let mut d = Document::default();
+    if device.kind.is_galvo() {
+        d.field_mm = Some(if device.controllable { machine_field } else { device.field_mm() });
+    } else {
+        d.field_mm = Some(device.field_mm());
+        d.workspace_mm = Some(device.workspace_mm);
+        d.extras.insert(commands::ORIGIN_KEY.into(), device.origin.name().into());
+    }
+    d
+}
+
 /// The document as `.openetch` JSON, refusing one that would not load again (never written as `null`s). The
 /// session refuses to commit such a document, so this is a backstop.
 fn saveable(doc: &Document) -> Result<String, EngineError> {
@@ -912,7 +1108,45 @@ fn refuse_clobber(dir: &ProjectDir, name: &str, ext: &str, current: Option<&str>
 
 /// Whether an invocation's params have no (or a null) `field_mm`.
 fn lacks_field(inv: &Invocation) -> bool {
-    inv.params.get("field_mm").is_none_or(Value::is_null)
+    lacks(inv, "field_mm")
+}
+
+/// Whether an invocation's params have no (or a null) `key`.
+fn lacks(inv: &Invocation, key: &str) -> bool {
+    inv.params.get(key).is_none_or(Value::is_null)
+}
+
+/// `doc.new` parameters for `device`: a galvo's `field_mm` (`field`), a gantry's bed and origin corner.
+fn new_layout(device: &machine::Device, field: f64) -> Value {
+    if device.kind.is_galvo() {
+        json!({ "field_mm": field })
+    } else {
+        json!({ "workspace_mm": device.workspace_mm, "origin": device.origin.name() })
+    }
+}
+
+/// `doc.import_lbrn2` parameters for a file laid out on `device`: a galvo's field as LightBurn knows it (its
+/// `Width`, e.g. 153.8 for the B6, whose profile keeps EzCad's 153.75), a gantry's bed and origin corner.
+fn lightburn_layout(device: &machine::Device) -> Value {
+    if let Some(field) = device.lightburn_field_mm() {
+        json!({ "field_mm": field })
+    } else {
+        json!({ "workspace_mm": device.workspace_mm, "origin": device.origin.name() })
+    }
+}
+
+/// Add every key of `layout` the invocation does not set.
+fn fill_layout(inv: &mut Invocation, layout: &Value) {
+    if inv.params.is_null() {
+        inv.params = json!({});
+    }
+    if let (Some(obj), Some(l)) = (inv.params.as_object_mut(), layout.as_object()) {
+        for (k, v) in l {
+            if obj.get(k).is_none_or(Value::is_null) {
+                obj.insert(k.clone(), v.clone());
+            }
+        }
+    }
 }
 
 /// Give a `doc.new` / `doc.import_lbrn2` / `doc.export_lbrn2` invocation `field_mm` when it has none.

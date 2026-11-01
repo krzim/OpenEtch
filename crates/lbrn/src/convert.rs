@@ -28,6 +28,8 @@ pub const EXTRA_PREFIX: &str = "lbrn2.";
 pub const MAX_PASSES: u32 = 1000;
 /// Largest field size accepted, in mm.
 const MAX_FIELD_MM: f64 = 2000.0;
+/// Largest bed (gantry workspace) side accepted, in mm.
+pub const MAX_BED_MM: f64 = 5000.0;
 
 /// The `extras` keys (after [`EXTRA_PREFIX`]) of what OpenEtch keeps for export. Keys starting with `_` are
 /// bookkeeping, never LightBurn tag or attribute names; any other key on an object or group is one of the shape's
@@ -155,6 +157,94 @@ fn check_field(field_mm: f64) -> Result<f64, LbrnError> {
     } else {
         Err(LbrnError::Invalid(format!("field_mm must be within 0..={MAX_FIELD_MM} mm (got {field_mm})")))
     }
+}
+
+/// How a LightBurn project's coordinates relate to OpenEtch's field frame (origin at the centre of the workspace,
+/// +X to the operator's right, +Y away from the operator). LightBurn files do not record the workspace size, so the
+/// caller gives it (normally the device's).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Frame {
+    /// A galvo: a square field of `field_mm`. LightBurn measures from the field's lower-left corner with y up, so
+    /// field = LightBurn - field/2 on both axes (checked on the owner's B6 projects). Galvos always use absolute
+    /// coordinates; the file's `MirrorX`/`MirrorY` are not applied (a set flag is reported).
+    Galvo { field_mm: f64 },
+    /// A bed (gantry) of `width_mm` x `height_mm`. LightBurn measures from the device's origin corner, which the
+    /// project root records as `MirrorX` / `MirrorY`: front-left = neither, rear-left = `MirrorY` (an xTool `.lbdev`
+    /// and LightBurn staff), rear-right = both, front-right = `MirrorX` (the last two inferred from the pattern,
+    /// unconfirmed). So field = S · (LightBurn - [w/2, h/2]), S negating the mirrored axes. On import the flags are
+    /// the file's ([`LbrnProject::mirror`]); on export the target device's, and they are written to the root.
+    Bed { width_mm: f64, height_mm: f64, mirror_x: bool, mirror_y: bool },
+}
+
+impl Frame {
+    /// Width and height of the workspace, mm.
+    pub fn size(&self) -> (f64, f64) {
+        match *self {
+            Frame::Galvo { field_mm } => (field_mm, field_mm),
+            Frame::Bed { width_mm, height_mm, .. } => (width_mm, height_mm),
+        }
+    }
+
+    /// The frame with its sizes checked (finite, positive, at most 2000 mm for a field, [`MAX_BED_MM`] for a bed).
+    fn checked(self) -> Result<Self, LbrnError> {
+        match self {
+            Frame::Galvo { field_mm } => check_field(field_mm).map(|field_mm| Frame::Galvo { field_mm }),
+            Frame::Bed { width_mm, height_mm, .. } => {
+                for (name, v) in [("width_mm", width_mm), ("height_mm", height_mm)] {
+                    if !(v.is_finite() && v > 0.0 && v <= MAX_BED_MM) {
+                        return Err(LbrnError::Invalid(format!("{name} must be within 0..={MAX_BED_MM} mm (got {v})")));
+                    }
+                }
+                Ok(self)
+            }
+        }
+    }
+
+    /// LightBurn coordinates -> field frame.
+    pub fn from_lightburn(&self) -> Affine {
+        match *self {
+            Frame::Galvo { field_mm } => Affine::translate((-field_mm / 2.0, -field_mm / 2.0)),
+            Frame::Bed { width_mm, height_mm, mirror_x, mirror_y } => {
+                Affine::scale_non_uniform(sign(mirror_x), sign(mirror_y))
+                    * Affine::translate((-width_mm / 2.0, -height_mm / 2.0))
+            }
+        }
+    }
+
+    /// Field frame -> LightBurn coordinates (the inverse of [`Frame::from_lightburn`]).
+    pub fn to_lightburn(&self) -> Affine {
+        match *self {
+            Frame::Galvo { field_mm } => Affine::translate((field_mm / 2.0, field_mm / 2.0)),
+            Frame::Bed { width_mm, height_mm, mirror_x, mirror_y } => {
+                Affine::translate((width_mm / 2.0, height_mm / 2.0))
+                    * Affine::scale_non_uniform(sign(mirror_x), sign(mirror_y))
+            }
+        }
+    }
+
+    /// Whether `b` (field frame) lies inside the workspace.
+    fn contains(&self, b: Rect) -> bool {
+        let (w, h) = self.size();
+        b.x0 >= -w / 2.0 && b.y0 >= -h / 2.0 && b.x1 <= w / 2.0 && b.y1 <= h / 2.0
+    }
+
+    /// "the 150 mm field" / "the 400 x 300 mm workspace", for warnings.
+    fn describe(&self) -> String {
+        match *self {
+            Frame::Galvo { field_mm } => format!("the {field_mm} mm field"),
+            Frame::Bed { width_mm, height_mm, .. } => format!("the {width_mm} x {height_mm} mm workspace"),
+        }
+    }
+}
+
+/// -1 for a mirrored axis, else 1.
+fn sign(mirrored: bool) -> f64 {
+    if mirrored { -1.0 } else { 1.0 }
+}
+
+/// A LightBurn boolean attribute value (`True`, `true`, `1`).
+pub(crate) fn truthy(v: &str) -> bool {
+    matches!(v.trim(), "True" | "true" | "TRUE" | "1")
 }
 
 /// `<tag a="1" b="2"/>`: attributes kept as one XML string, read back with [`xml_attributes`].
@@ -553,15 +643,23 @@ fn image_mime(data: &str) -> Option<&'static str> {
 /// object before them, so they are exported again. Refuses (with [`LbrnError::TooLarge`]) a project that would
 /// create more than a few million path elements in total.
 pub fn to_document(p: &LbrnProject, field_mm: f64) -> Result<Imported, LbrnError> {
-    to_document_within(p, field_mm, MAX_ELEMENTS)
+    to_document_in(p, Frame::Galvo { field_mm })
 }
 
-fn to_document_within(p: &LbrnProject, field_mm: f64, max_elements: usize) -> Result<Imported, LbrnError> {
-    let field = check_field(field_mm)?;
+/// [`to_document`] for any [`Frame`]: a galvo field, or a bed, whose mirror flags should be the file's own
+/// ([`LbrnProject::mirror`]) so the art lands where LightBurn showed it.
+pub fn to_document_in(p: &LbrnProject, frame: Frame) -> Result<Imported, LbrnError> {
+    to_document_within(p, frame, MAX_ELEMENTS)
+}
+
+fn to_document_within(p: &LbrnProject, frame: Frame, max_elements: usize) -> Result<Imported, LbrnError> {
+    let frame = frame.checked()?;
     let mut w = Warnings::default();
-    for k in ["MirrorX", "MirrorY"] {
-        if let Some(v) = p.attribute(k).filter(|v| !matches!(*v, "False" | "false" | "0")) {
-            w.push(format!("project {k}={v} was not applied"));
+    if let Frame::Galvo { .. } = frame {
+        for k in ["MirrorX", "MirrorY"] {
+            if let Some(v) = p.attribute(k).filter(|v| !matches!(*v, "False" | "false" | "0")) {
+                w.push(format!("project {k}={v} was not applied"));
+            }
         }
     }
 
@@ -625,7 +723,7 @@ fn to_document_within(p: &LbrnProject, field_mm: f64, max_elements: usize) -> Re
     }
 
     let mut cx = ToDoc {
-        shift: Affine::translate((-field / 2.0, -field / 2.0)),
+        shift: frame.from_lightburn(),
         layer_ids,
         fallback: layers[0].id.clone(),
         next,
@@ -658,11 +756,16 @@ fn to_document_within(p: &LbrnProject, field_mm: f64, max_elements: usize) -> Re
             "{images} image(s) were imported for display and LightBurn export; OpenEtch does not engrave images yet"
         ));
     }
-    let outside = objects.iter().filter(|o| !inside(o.bounds(), field)).count();
+    let outside = objects.iter().filter(|o| !frame.contains(o.bounds())).count();
     if outside > 0 {
+        let what = match frame {
+            Frame::Galvo { .. } => "the field size, so check that field_mm matches the one",
+            Frame::Bed { .. } => "the workspace size, so check that it matches the one",
+        };
         w.push(format!(
-            "{outside} object(s) are partly or wholly outside the {field} mm field; LightBurn files do not record \
-             the field size, so check that field_mm matches the one the project was laid out for"
+            "{outside} object(s) are partly or wholly outside {}; LightBurn files do not record {what} the project \
+             was laid out for",
+            frame.describe()
         ));
     }
 
@@ -718,11 +821,6 @@ fn to_document_within(p: &LbrnProject, field_mm: f64, max_elements: usize) -> Re
 /// An element as XML text (for elements without source text).
 fn element_xml(e: &Element) -> String {
     fragment(LbrnProject { extra_elements: vec![e.clone()], order: vec![RootItem::Element(0)], ..LbrnProject::default() })
-}
-
-fn inside(b: Rect, field: f64) -> bool {
-    let h = field / 2.0;
-    b.x0 >= -h && b.y0 >= -h && b.x1 <= h && b.y1 <= h
 }
 
 struct ToDoc {
@@ -975,7 +1073,13 @@ impl ToDoc {
 /// uses T1). What the import kept (see [`keys`]) is written back; numbers, transforms and path lists that did not
 /// change keep their exact source text.
 pub fn from_document(d: &Document, field_mm: f64) -> Result<(LbrnProject, Vec<String>), LbrnError> {
-    let field = check_field(field_mm)?;
+    from_document_in(d, Frame::Galvo { field_mm })
+}
+
+/// [`from_document`] for any [`Frame`]. For a bed the project root's `MirrorX` / `MirrorY` are set to the frame's
+/// flags (the target device's origin corner); a galvo export writes back the root attributes the import kept.
+pub fn from_document_in(d: &Document, frame: Frame) -> Result<(LbrnProject, Vec<String>), LbrnError> {
+    let frame = frame.checked()?;
     let mut w = Warnings::default();
 
     // Assign indices: kept index, then palette colour, then the lowest free colour index.
@@ -1131,7 +1235,7 @@ pub fn from_document(d: &Document, field_mm: f64) -> Result<(LbrnProject, Vec<St
     }
 
     // Shapes, in drawing order, with groups gathered at their first member.
-    let mut fx = FromDoc::new(d, &index_of, field);
+    let mut fx = FromDoc::new(d, &index_of, frame);
     for k in 0.. {
         let Some(xml) = d.extras.get(&format!("{EXTRA_PREFIX}{}{k}", keys::LEAD)) else { break };
         fx.kept(xml, &mut w);
@@ -1153,7 +1257,7 @@ pub fn from_document(d: &Document, field_mm: f64) -> Result<(LbrnProject, Vec<St
     }
     let FromDoc { mut shapes, outside, .. } = fx;
     if outside > 0 {
-        w.push(format!("{outside} object(s) are partly or wholly outside the {field} mm field"));
+        w.push(format!("{outside} object(s) are partly or wholly outside {}", frame.describe()));
     }
 
     if let Some(stock) = &d.stock {
@@ -1167,8 +1271,7 @@ pub fn from_document(d: &Document, field_mm: f64) -> Result<(LbrnProject, Vec<St
                         ShapeKind::Ellipse { rx: diameter_mm / 2.0, ry: diameter_mm / 2.0 }
                     }
                 };
-                let shift = Affine::translate((field / 2.0, field / 2.0));
-                shapes.push(Shape::new(kind, Some(index), shift * stock.transform()));
+                shapes.push(Shape::new(kind, Some(index), frame.to_lightburn() * stock.transform()));
                 let mut values = vec![("name", palette::default_name(index))];
                 if !kept_priorities {
                     values.push(("priority", cut_settings.len().to_string()));
@@ -1185,8 +1288,22 @@ pub fn from_document(d: &Document, field_mm: f64) -> Result<(LbrnProject, Vec<St
         }
     }
 
-    let project = root(d, cut_settings, kept_images, shapes);
+    let mut project = root(d, cut_settings, kept_images, shapes);
+    if let Frame::Bed { mirror_x, mirror_y, .. } = frame {
+        set_mirror(&mut project.attributes, "MirrorX", mirror_x);
+        set_mirror(&mut project.attributes, "MirrorY", mirror_y);
+    }
     Ok((project, w.into_vec()))
+}
+
+/// Set root attribute `name` to `on`, keeping the kept spelling when it already means the same.
+fn set_mirror(attributes: &mut Vec<(String, String)>, name: &str, on: bool) {
+    let text = if on { "True" } else { "False" };
+    match attributes.iter_mut().find(|(k, _)| k == name) {
+        Some((_, v)) if truthy(v) == on => {}
+        Some((_, v)) => *v = text.to_string(),
+        None => attributes.push((name.to_string(), text.to_string())),
+    }
 }
 
 /// The project around the layers and shapes: the root attributes, elements and child order kept from the source,
@@ -1312,7 +1429,7 @@ fn raw_element(xml: &str) -> Element {
 struct FromDoc<'a> {
     d: &'a Document,
     index_of: &'a HashMap<&'a str, u32>,
-    field: f64,
+    frame: Frame,
     /// Field frame → LightBurn, and back.
     to_lb: Affine,
     from_lb: Affine,
@@ -1332,7 +1449,7 @@ fn ex<'a>(e: &'a BTreeMap<String, String>, k: &str) -> Option<&'a str> {
 }
 
 impl<'a> FromDoc<'a> {
-    fn new(d: &'a Document, index_of: &'a HashMap<&'a str, u32>, field: f64) -> Self {
+    fn new(d: &'a Document, index_of: &'a HashMap<&'a str, u32>, frame: Frame) -> Self {
         let mut vert_defs = HashMap::new();
         let mut prim_defs = HashMap::new();
         for o in &d.objects {
@@ -1352,9 +1469,9 @@ impl<'a> FromDoc<'a> {
         FromDoc {
             d,
             index_of,
-            field,
-            to_lb: Affine::translate((field / 2.0, field / 2.0)),
-            from_lb: Affine::translate((-field / 2.0, -field / 2.0)),
+            frame,
+            to_lb: frame.to_lightburn(),
+            from_lb: frame.from_lightburn(),
             vert_defs,
             prim_defs,
             written_verts: HashSet::new(),
@@ -1441,7 +1558,7 @@ impl<'a> FromDoc<'a> {
     fn object(&mut self, o: &Object, parent: Affine, out: Option<&mut Vec<Shape>>, w: &mut Warnings) {
         let mut local_out = Vec::new();
         let Some(&index) = self.index_of.get(o.layer.as_str()) else { return };
-        if !inside(o.bounds(), self.field) {
+        if !self.frame.contains(o.bounds()) {
             self.outside += 1;
         }
         let e = &o.extras;
@@ -1585,8 +1702,8 @@ mod tests {
             .map(|_| r#"<Shape Type="Rect" CutIndex="0" W="1" H="1"><XForm>1 0 0 1 75 75</XForm></Shape>"#)
             .collect();
         let p = crate::parse(&format!("<LightBurnProject>{rects}</LightBurnProject>")).unwrap();
-        assert_eq!(to_document_within(&p, 150.0, 5 * FIXED_SHAPE_ELEMENTS).unwrap().objects.len(), 5);
-        let e = to_document_within(&p, 150.0, 5 * FIXED_SHAPE_ELEMENTS - 1).unwrap_err();
+        assert_eq!(to_document_within(&p, Frame::Galvo { field_mm: 150.0 }, 5 * FIXED_SHAPE_ELEMENTS).unwrap().objects.len(), 5);
+        let e = to_document_within(&p, Frame::Galvo { field_mm: 150.0 }, 5 * FIXED_SHAPE_ELEMENTS - 1).unwrap_err();
         assert!(matches!(&e, LbrnError::TooLarge(m) if m.contains("path elements")), "{e}");
     }
 

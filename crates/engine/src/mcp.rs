@@ -31,7 +31,7 @@ use crate::{AppState, EngineError};
 pub const MCP_AGENT: &str = "mcp";
 
 /// Every tool, in listing order.
-pub const TOOL_NAMES: [&str; 19] = [
+pub const TOOL_NAMES: [&str; 20] = [
     "list_commands",
     "execute",
     "batch",
@@ -51,6 +51,7 @@ pub const TOOL_NAMES: [&str; 19] = [
     "history_list",
     "history_goto",
     "lightburn_devices",
+    "devices_list",
 ];
 
 /// Server instructions shown to the model.
@@ -85,11 +86,17 @@ overwrite: true, same rule). File contents go through execute: doc.save \
 returns the .openetch JSON, doc.load replaces the document with one, doc.export_lbrn2 returns LightBurn XML, and \
 doc.import_lbrn2 {content, mode: replace|merge, field_mm} imports LightBurn XML. LightBurn files do not record the \
 galvo field size they were laid out for, and a wrong field_mm shifts everything by half the difference. Leave \
-field_mm out and the engine picks it: the field (Width) of the LightBurn device the file names (DeviceName, written \
-by LightBurn 2.x), else the configured or LightBurn default device, else the document's field_mm, else the \
-machine's; the result's field_source says which. lightburn_devices lists the known LightBurn devices. When none is \
-known and the person has not said (e.g. a 150 mm or 110 mm LightBurn workspace), ask, or check the import warnings \
-and bounds.
+field_mm out and the engine picks it: the workspace of the OpenEtch device the file names (DeviceName, written \
+by LightBurn 2.x; else a LightBurn device of that name), else the active device's, else the document's field_mm, \
+else the machine's; the result's field_source (and device) says which. lightburn_devices lists the known LightBurn \
+devices. When none fits and the person has not said (e.g. a 150 mm or 110 mm LightBurn workspace), ask, or check \
+the import warnings and bounds.
+
+Devices (like LightBurn's Devices window): devices_list shows OpenEtch's devices and which one is active. Only a \
+JCZ (LMC) galvo can be driven; other devices (GCode/DSP gantries, other galvo boards) are design-only: their \
+workspace (a bed of workspace_mm with an origin corner) is used for designing and LightBurn files, and frame_start \
+and job_request_run are refused. Making another device active changes the machine, so only a person can do it, in \
+the OpenEtch UI (Devices); you cannot activate, import or remove devices.
 
 Use list_commands for every command's input schema; execute runs one command, batch runs several as one undo step \
 (all-or-nothing). Edits you make are tagged as agent edits in the history and can be undone.
@@ -358,8 +365,18 @@ impl GalvoMcp {
                 "LightBurn's devices as the engine knows them (from LightBurn's prefs.ini on the engine's computer, or a \
                  copy a person uploaded; only the device list is read): {available, source, default_device, devices: \
                  [{name, display_name, field_mm, width_mm, height_mm}], machine: {device, field_mm, diffs} | null}. \
-                 field_mm is the field size LightBurn lays files out for; doc.import_lbrn2 uses it when no field_mm is \
-                 given. machine.diffs compare the machine profile with the LightBurn device.",
+                 field_mm is the field size LightBurn lays files out for; doc.import_lbrn2 uses it for a file naming a \
+                 LightBurn device that is not one of OpenEtch's devices (devices_list). machine.diffs compare the \
+                 machine profile with the LightBurn device.",
+                true,
+            ),
+            tool::<NoArgs>(
+                "devices_list",
+                "Devices",
+                "OpenEtch's devices, like LightBurn's Devices window: {active, devices: [{id, name, display_name, \
+                 source, kind (jcz_galvo|gantry|galvo_other|unknown), lightburn_type, workspace_mm, origin, \
+                 controllable, reason, active}]}. Only controllable devices (JCZ galvos) can frame or run; the others \
+                 are design-only workspaces. Read-only: only a person can change the active device, in the UI.",
                 true,
             ),
         ]
@@ -465,10 +482,14 @@ impl GalvoMcp {
                 let x: GotoArgs = args(name, a)?;
                 Ok(ok_json(st.blocking(move |st| st.history_goto(x.marker, Self::origin())).await?))
             }
+            "devices_list" => {
+                args::<NoArgs>(name, a)?;
+                Ok(ok_json(st.devices_view()))
+            }
             "lightburn_devices" => {
                 args::<NoArgs>(name, a)?;
                 let mut v = st.blocking(|st| Ok(st.lightburn.view())).await?;
-                v["machine"] = st.lightburn.machine_json(st.machine.profile());
+                v["machine"] = st.lightburn.machine_json(&st.machine.profile());
                 Ok(ok_json(v))
             }
             other => Err(EngineError::NotFound(format!("unknown tool '{other}' (tools: {})", TOOL_NAMES.join(", ")))),
@@ -564,6 +585,21 @@ mod tests {
         for t in GalvoMcp::tools() {
             assert_eq!(t.input_schema.get("type"), Some(&json!("object")), "{}", t.name);
             assert!(t.description.as_deref().is_some_and(|d| !d.is_empty()));
+        }
+    }
+
+    #[tokio::test]
+    async fn devices_list_is_read_only_and_activation_is_ui_only() {
+        let mcp = GalvoMcp::new(crate::tests::test_state().await);
+        let v: Value = serde_json::from_str(&text_of(&mcp.call("devices_list", JsonObject::new()).await)).unwrap();
+        assert_eq!(v["devices"][0]["kind"], json!("jcz_galvo"));
+        assert_eq!(v["devices"][0]["active"], json!(true));
+        assert_eq!(v["active"], v["devices"][0]["id"]);
+        let t = GalvoMcp::tools().into_iter().find(|t| t.name == "devices_list").unwrap();
+        assert!(t.annotations.as_ref().and_then(|a| a.read_only_hint) == Some(true));
+        assert!(INSTRUCTIONS.contains("only a person can do it"));
+        for name in TOOL_NAMES {
+            assert!(!name.contains("activate") && !name.contains("device_import"), "{name}");
         }
     }
 

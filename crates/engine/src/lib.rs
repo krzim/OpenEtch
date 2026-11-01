@@ -18,6 +18,7 @@
 pub mod api;
 mod approve;
 pub mod cli;
+pub mod devices;
 pub mod error;
 pub mod events;
 pub mod frame;

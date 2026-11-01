@@ -121,7 +121,10 @@ impl Command for StockMove {
     type Input = StockMoveInput;
     const ID: &'static str = "stock.move";
     const TITLE: &'static str = "Move stock";
-    const DESCRIPTION: &'static str = "Move and/or rotate the stock (e.g. to match where the piece sits in a jig):         center [x, y] or translate [dx, dy] in field mm, rotation_deg (absolute) or rotate_by_deg (relative),         counter-clockwise about the stock's centre. Objects are not moved. Fails if no stock is defined. Returns         the stock's field-frame bounds.";
+    const DESCRIPTION: &'static str = "Move and/or rotate the stock (e.g. to match where the piece sits in a jig): \
+        center [x, y] or translate [dx, dy] in field mm, rotation_deg (absolute) or rotate_by_deg (relative), \
+        counter-clockwise about the stock's centre. Objects are not moved. Fails if no stock is defined. Returns \
+        the stock's field-frame bounds.";
     const RISK: Risk = Risk::Edit;
 
     fn apply(doc: &mut Document, i: StockMoveInput) -> Result<(Value, String)> {

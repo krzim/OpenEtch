@@ -227,6 +227,31 @@ export const api = {
   },
   /** Forget an uploaded LightBurn device list (the engine's own LightBurn settings, if any, apply again). */
   lightburnForget: () => request<unknown>("DELETE", "/api/lightburn/prefs"),
+  /** The device registry (`{active, devices}`); normalize with `deviceList`. */
+  devices: () => request<unknown>("GET", "/api/devices"),
+  /** One device with its settings and profile diffs; normalize with `deviceDetails`. */
+  device: (id: string) => request<unknown>("GET", `/api/devices/${encodeURIComponent(id)}`),
+  /**
+   * Import devices. `body` is the prefs.ini/.lbdev JSON built by `deviceImportBody` (typed device fields only); without
+   * a body the engine reads LightBurn's prefs.ini on its own computer (read-only). `add` is "all" or one device's name.
+   * Resolves to `{added, updated, skipped}`; normalize with `importResult`.
+   */
+  deviceImport: async (body: string | null, add: string): Promise<unknown> => {
+    const path = `/api/devices/import?${body === null ? "from=lightburn&" : ""}add=${encodeURIComponent(add)}`;
+    const headers = authHeaders("application/json");
+    if (body !== null) headers["Content-Type"] = "application/json";
+    const res = await send("POST", path, { headers, body: body ?? undefined });
+    const text = await res.text();
+    if (!res.ok) throw httpError("POST", path, res, text);
+    const data = parseBody(text);
+    const err = okError(data, "the engine refused the devices");
+    if (err !== null) throw new ApiError(err);
+    return data;
+  },
+  /** Make a device active: the engine swaps the profile and re-initialises the laser; 409 while a run or frame is active. */
+  deviceActivate: (id: string) => checked(`/api/devices/${encodeURIComponent(id)}/activate`, {}, "switching the device failed"),
+  /** Remove a device (never the active or the built-in one). */
+  deviceRemove: (id: string) => request<unknown>("DELETE", `/api/devices/${encodeURIComponent(id)}`),
   /** Download the document as a file, with the name from Content-Disposition when the engine sends one. */
   download: async (format: FileFormat): Promise<{ blob: Blob; filename: string | null }> => {
     const path = `/api/document/download?format=${format}`;

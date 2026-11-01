@@ -60,6 +60,9 @@ pub const DEFAULT_MAX_JUMP_SPEED_MM_S: f64 = 4000.0;
 /// profile and the references use (largest: |laser on| 300 µs, jump 200 µs), so a mistyped delay is refused.
 pub const DEFAULT_MAX_DELAY_US: f64 = 2000.0;
 
+/// `fixtures/generic-jcz-galvo.toml`, the base of [`MachineProfile::generic_jcz_galvo`].
+pub const GENERIC_JCZ_GALVO_TOML: &str = include_str!("../../../fixtures/generic-jcz-galvo.toml");
+
 fn default_max_jump_speed() -> f64 {
     DEFAULT_MAX_JUMP_SPEED_MM_S
 }
@@ -183,6 +186,13 @@ impl MachineProfile {
             mark_speed: MarkSpeedLimits { min_mm_s: 1.0, max_mm_s: 10000.0 },
             notes: vec!["timing defaults from meerk40t/galvoplotter @ fc35136".into()],
         }
+    }
+
+    /// The generic JCZ galvo base (`fixtures/generic-jcz-galvo.toml`): conservative hard limits for an LMC galvo
+    /// that is not a known machine, which a LightBurn device is imported onto ([`crate::device`]). See the file's
+    /// comments for each value.
+    pub fn generic_jcz_galvo() -> Self {
+        Self::from_toml(GENERIC_JCZ_GALVO_TOML).expect("fixtures/generic-jcz-galvo.toml is a valid profile")
     }
 
     /// Parse and validate a TOML profile.
@@ -416,6 +426,17 @@ mod tests {
         refused(|p| p.open_mo_delay_us = f64::NAN);
         refused(|p| p.open_mo_delay_us = 2_000_000.0);
         refused(|p| p.start_mark_input_bit = Some(16));
+    }
+
+    #[test]
+    fn generic_jcz_galvo_is_conservative() {
+        let g = MachineProfile::generic_jcz_galvo();
+        let b6 = MachineProfile::from_toml(B6).unwrap();
+        assert_eq!(MachineProfile::from_toml(&g.to_toml().unwrap()).unwrap(), g);
+        assert!(g.cor_file.is_none() && !g.swap_xy && !g.negate_x && !g.negate_y && !g.pulse_width_enabled);
+        assert!(g.max_jump_speed_mm_s <= b6.max_jump_speed_mm_s && g.max_delay_us <= b6.max_delay_us);
+        assert!(g.mark_speed.max_mm_s <= b6.mark_speed.max_mm_s && g.frequency_khz_min >= b6.frequency_khz_min);
+        assert_eq!(g.start_mark_input_bit, None);
     }
 
     #[test]

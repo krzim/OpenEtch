@@ -18,10 +18,10 @@ Mac, PC, phone) and Claude are clients of the same live document. The engine is 
 | `lmc` | LMC wire protocol: opcodes, 12-byte single commands, 3072-byte list packets, unit conversions, list builders, decoder/disassembler. **Pure, no I/O.** | – | no (wasm-ok) |
 | `corfile` | EzCad lens correction files (`JCZ_COR_2_1`, `LMC1COR_1.0`): parse, produce the WriteCorLine upload sequence, host-side bilinear correction. **Pure.** | – | no |
 | `doc` | Document model: stock, layers with MOPA cut settings, objects (kurbo paths + affine transforms). **Pure data + geometry helpers.** | kurbo | no |
-| `lbrn` | LightBurn `.lbrn2` projects and `.clb` material libraries: parse, write, convert to and from `doc` (see "File formats"). **Pure.** | doc, kurbo, roxmltree | no |
+| `lbrn` | LightBurn `.lbrn2` projects and `.clb` material libraries: parse, write, convert to and from `doc` for a galvo field or a gantry bed (`lbrn::Frame`, see "File formats"). **Pure.** | doc, kurbo, roxmltree | no |
 | `commands` | Command registry: every change to a document goes through a registered command with a JSON Schema. Session with a Fusion-style timeline (see "History timeline"). | doc | no |
 | `plan` | Document → job: flatten paths, hatch fills, order travel, encode to LMC list packets for a `MachineProfile`. Also simulation (decode packets to a preview). | doc, lmc | no |
-| `machine` | Machine profile (TOML, importable from EzCad `markcfg7` and from a LightBurn device, see "LightBurn devices"), the `Link` transport trait, `SimLink`, `UsbLink` (nusb, feature `usb`), `Controller` (init, .cor upload, light framing, run, abort). | lmc, corfile | `usb` feature only |
+| `machine` | Machine profile (TOML, importable from EzCad `markcfg7` and from a LightBurn device, see "LightBurn devices"), devices (`machine::device`: LightBurn-style device model, family, workspace, origin), the `Link` transport trait, `SimLink`, `UsbLink` (nusb, feature `usb`), `Controller` (init, .cor upload, light framing, run, abort). | lmc, corfile | `usb` feature only |
 | `engine` | Binary. axum HTTP + WebSocket API for the web UI, MCP server (rmcp), run approval, serves `web/dist`. | all | yes |
 | `web/` | Fusion-style UI: React + TypeScript + Vite. Talks to the engine over HTTP + WebSocket. | – | – |
 
@@ -30,6 +30,8 @@ Mac, PC, phone) and Claude are clients of the same live document. The engine is 
 - All public APIs use **millimetres** and **degrees**.
 - **Field frame**: origin at the centre of the galvo field, +X to the operator's right, +Y away from the operator
   (toward the column), matching LightBurn's galvo frame. Objects, stock and jobs are all expressed in the field frame.
+- **Gantry devices** (design-only, see "Devices") use the same frame: origin at the centre of the bed
+  (`Document.workspace_mm` `[w, h]`), +Y away from the operator (toward the rear).
 - Galvo units are only used inside `lmc`/`plan`/`machine`: `0x0000..=0xFFFF` across `field_mm`, centre `0x8000`.
 - Axis swap / negate from the machine profile and lens correction are applied in `plan`/`machine` when converting
   field mm to galvo units, never in `doc`. Both use the one function pair `lmc::units::field_to_galvo` /
@@ -109,10 +111,15 @@ says otherwise. `origin` is `"ui"` (default), `"script"` or `"agent:<name>"`.
 | GET | `/api/preview` | planned job: `{ segments: [{kind: "jump"|"mark", layer, pass, from: [x,y], to: [x,y], emits}], stats, layers: [{layer_id, name, color, mode, output, visible, passes, segments, mark_length_mm, jump_length_mm, estimated_time_s}], warnings }` in field mm. `pass` indexes the job's passes in burn order (a jump belongs to the pass it travels into); `layers` lists every document layer in order (zeros for layers with nothing to mark or output off; layer times leave out the job's start-up delay); `warnings` are things the plan left out (images). `?layers=id1,id2` keeps only those layers' segments and entries (stats stay the whole job's). An empty document is an empty preview; a planning error (out of field, power above the limit, too many passes/segments) is **422** |
 | GET | `/api/fill_regions` | `{ layers: [{layer_id, name, color, mode, visible, output, paths: [d], object_ids: [id]}] }`: for every layer whose mode is `fill` or `fill_then_line`, one SVG path per object (its closed subpaths, field mm, +Y up, flattened at 0.05 mm) to draw with `fill-rule: evenodd`, which is exactly the area the hatch covers. Display only |
 | GET | `/api/preview.svg` | rendered preview (stock, objects, toolpath; `?jumps=false` hides travel); still renders the document on a planning error |
-| GET | `/api/machine` | `connected`, `simulated`, `busy`, `state`, `running`, `framing`, `field_mm`, `profile`, `max_power_pct`, `last_error`, `sim_counters`, `approval: { pin_set, pin_changed, locked_until_unix_s: null \| n, physical_confirm: null \| { input_bit, timeout_s } }`, `lightburn: null \| { device, field_mm, diffs: [{field, base_value, lightburn_value, note}] }` (the active profile compared with the matched LightBurn device, see "LightBurn devices"), `pending_runs: [Run]`, `runs: [Run]` |
+| GET | `/api/machine` | `connected`, `simulated`, `busy`, `state`, `running`, `framing`, `field_mm`, `profile`, `device` (the active device's summary, see `GET /api/devices`), `max_power_pct`, `last_error`, `sim_counters`, `approval: { pin_set, pin_changed, locked_until_unix_s: null \| n, physical_confirm: null \| { input_bit, timeout_s } }`, `lightburn: null \| { device, field_mm, diffs: [{field, base_value, lightburn_value, note}] }` (the active profile compared with the matched LightBurn device, see "LightBurn devices"), `pending_runs: [Run]`, `runs: [Run]` |
 | GET | `/api/lightburn` | `{ available, source: "file" \| "uploaded" \| null, default_device: name \| null, devices: [{name, display_name, field_mm, width_mm, height_mm}] }` (only these fields); `default_device` is the device used when a LightBurn file names none |
 | POST | `/api/lightburn/prefs` | LightBurn's `prefs.ini` as the raw body (at most 2 MB, else **413**): parses `DeviceList` in memory and stores only the parsed devices (`<config-dir>/lightburn-devices.json`), for an engine on a Pi without LightBurn; answers like `GET /api/lightburn`; no devices, not JSON or not UTF-8 is 400. Emits `machine` event `lightburn` |
 | DELETE | `/api/lightburn/prefs` | forgets the uploaded devices (the local `prefs.ini` is used again, if any); answers like `GET /api/lightburn`; emits `machine` event `lightburn` |
+| GET | `/api/devices` | `{ active: id, devices: [{id, name, display_name, source: "builtin" \| "lightburn-prefs" \| "lbdev" \| "manual", kind: "jcz_galvo" \| "gantry" \| "galvo_other" \| "unknown", lightburn_type, workspace_mm: [w, h], lightburn_field_mm: n \| null (galvos: the field LightBurn files are laid out for, LightBurn's Width, e.g. 153.8 on the B6 whose profile field is 153.75), origin: "center" \| "bottom_left" \| "top_left" \| "bottom_right" \| "top_right", controllable, reason: string \| null, active}] }` in list order (the built-in device first); `reason` says why a design-only device cannot be driven. See "Devices" |
+| GET | `/api/devices/{id}` | the summary plus `settings` (LightBurn's Device Settings, read-only: `[{title, rows: [{label, key, value}]}]`, `key` the LightBurn key), `profile` (JCZ galvos: name, field, swap/negate, cor file, frequency range, limits, timing), `base` (the profile it was built on) and `diffs` (`[{field, base_value, lightburn_value, note}]`, the profile against that base); unknown id 404 |
+| POST | `/api/devices/import` | `?add=all\|<name>` (default all) with a LightBurn `.lbdev` or `prefs.ini` as the raw body (at most 2 MB, else **413**), or `?from=lightburn` and no body: the devices of LightBurn's `prefs.ini` on the engine's computer (or the uploaded one) → `{ ok, added: [id], updated: [id], skipped: [{name, reason}] }`. Parsed with the typed, privacy-safe parser; a device with the same display name, controller, connection and size as an imported one is updated (same id). Not UTF-8, not JSON or no devices 400; `add=<name>` naming no device of the file 404. Emits `devices_changed` |
+| DELETE | `/api/devices/{id}` | → `{ ok, id }`; the built-in or the active device 409; unknown 404. Emits `devices_changed` |
+| POST | `/api/devices/{id}/activate` | optional `{ "origin" }` → `{ ok, active: summary, warnings: [text] }`: makes the device active (stored; it is also the one used at the next start). Refused **409** while a run is approved, awaiting confirmation or running, or while framing; MCP headers or a non-`ui` origin **403**. Cancels pending runs, swaps the machine profile (JCZ galvos; the board is initialised again, the simulator gets a fresh `SimLink`), and new documents start at the device's workspace. Emits `device_changed`. A correction file that cannot be found is a warning (output is then uncorrected) |
 | POST | `/api/runs` | optional `{ "origin" }` → **201** `{ "ok": true, "id", "run": Run, "message" }`; plans, encodes and checks the document; sends nothing to the board; at most 8 pending |
 | POST | `/api/runs/{id}/approve` | `{ "pin": "<operator PIN>" }` → `{ "ok": true, "id", "state": "approved" \| "awaiting_confirm" }`; the run then starts in the background. PIN refusals are **403** `{ "ok": false, "error", "code": "pin_not_set" \| "pin_changed" \| "pin_required" \| "pin_invalid" \| "pin_locked" }`; MCP headers or a non-`ui` origin 403; unknown run 404; not pending, stale revision or another run active 409 |
 | POST | `/api/machine/frame` | `{ "ids"?: [...], "mode"?: "bounds" \| "outline" }` → red-pointer framing (light only) until frame stop, stop, a run, or 120 s |
@@ -143,6 +150,8 @@ Events on `/api/events`:
 - `{ "type": "run_finished", "id", "ok": bool, "state", "error": string | null }`
 - `{ "type": "approval_locked", "until_unix_s": n }` (too many wrong PINs; approvals locked until then)
 - `{ "type": "project_saved", "name", "revision" }` (refetch `GET /api/project`)
+- `{ "type": "device_changed", "id": "<device id>" }` (another device was made active; refetch `GET /api/devices` and
+  `GET /api/machine`) and `{ "type": "devices_changed" }` (devices imported or removed; refetch `GET /api/devices`)
 - `{ "type": "history_changed", "marker": n, "steps": n, "revision": n }` (after every edit, undo, redo, goto or step
   delete, right after `document_changed`; refetch `GET /api/history`)
 
@@ -206,16 +215,20 @@ a clean document. The document is dirty whenever its revision differs from the l
 back to the saved state still counts as a change). Document commands from `/api/execute`, `/api/batch`, uploads and the MCP
 `execute` / `batch` tools run on a blocking thread, so a large import does not stall the server.
 
-**Field size.** The engine starts with `document.field_mm` set to the machine profile's `field_mm`, and `doc.new`
-without `field_mm` starts at the profile's again (the engine fills it in; so New never keeps an imported 150 mm).
+**Field size.** The engine starts with a document laid out for the active device (a galvo's `field_mm`, from the
+machine profile when it drives the machine; a gantry's `workspace_mm` and origin corner), and `doc.new` without a
+size starts at the active device's again (the engine fills it in; so New never keeps an imported 150 mm).
 `doc.load` keeps it when the new document has none and imports fill it in, so it stays set; when it is ever missing,
-`doc.export_lbrn2` called without `field_mm` gets the profile's. `doc.import_lbrn2` without `field_mm` (uploads,
-`/api/execute`, MCP) gets, in order: the field (`Width`) of the LightBurn device the file's root `DeviceName` names
-(LightBurn 2.x writes the device's display name, e.g. `JCZFiber (Unknown)`), else the `--lightburn-device` /
-LightBurn default device, else `document.field_mm`, else the profile's; its result reports `field_mm` and
-`field_source`: `"file device JCZFiber"`, `"LightBurn default device JCZFiber"`, `"document"`, `"machine"` or
-`"caller"`. The engine writes the chosen `field_mm` into the recorded invocation, so replays never depend on
-LightBurn's prefs. A LightBurn import remembers
+`doc.export_lbrn2` called without `field_mm` gets the profile's. `doc.import_lbrn2` without `field_mm` or `workspace_mm`
+(uploads, `/api/execute`, MCP) gets, in order: the layout of the OpenEtch device the file's root `DeviceName` names
+(display name, LightBurn name or id, ignoring case; LightBurn 2.x writes the device's display name, e.g. `JCZFiber
+(Unknown)`), else the field (`Width`) of a LightBurn device of that name in `prefs.ini` that was not imported, else the
+active device's, else `document.field_mm`, else the profile's. A galvo device's layout is its LightBurn `Width` (the
+field LightBurn laid the file out for: 153.8 on the B6, whose profile keeps EzCad's 153.75), else its field; a
+gantry's is `workspace_mm` and `origin`. The result reports `field_mm`, `workspace_mm`, `origin`, `field_source`
+(`"file device JCZFiber (Unknown)"`, `"file device JCZFiber"` for the prefs step, `"active device <name>"`,
+`"document"`, `"machine"` or `"caller"`) and `device` (the id, when a device was used). The engine writes the chosen size into the recorded invocation, so replays never depend on
+LightBurn's prefs or the active device. A LightBurn import remembers
 the field size it was read with, so an export puts every shape back where LightBurn had it: a replacing import sets
 `document.field_mm` to it, and a merging one (which keeps the document's) stores it in the document's
 `extras["lbrn2._field_mm"]`. `doc.export_lbrn2` (and the LightBurn download and `project_export_lbrn2`) uses, in
@@ -230,7 +243,10 @@ no token is needed. Off loopback (`--listen 0.0.0.0:7878` on the Pi) a bearer to
 
 Default listen address `127.0.0.1:7878`. Other options: `--profile`, `--web-dir`, `--usb`, `--token`,
 `--allow-host`, `--config-dir`, `--confirm-input`, `--projects-dir`, `--lightburn-prefs <path>` (default the OS
-location, a missing file is fine), `--lightburn-device <name>`; `openetch set-pin [--reset] [--config-dir <path>]` sets, changes
+location, a missing file is fine), `--lightburn-device <name>` (the LightBurn device `GET /api/lightburn` and the
+machine status compare with), `--device <id or name>` (the OpenEtch device for this run, overriding the stored active
+one without changing it); `openetch devices list` and `openetch devices import <file> [--add all|<name>]` (both
+`[--config-dir P] [--profile P]`; see "Devices"); `openetch set-pin [--reset] [--config-dir <path>]` sets, changes
 or deletes the operator PIN (restart the engine afterwards); `openetch profile from-lightburn [--prefs P] [--device
 NAME] [--base PROFILE] --out FILE [--force]` prints the diff table and writes a profile TOML for a LightBurn device
 (base default `fixtures/b6-mopa-60w.toml`, else the generic profile; refuses to replace `--out` without `--force`).
@@ -243,7 +259,9 @@ NAME] [--base PROFILE] --out FILE [--force]` prints the diff table and writes a 
 the current one needs `overwrite: true`, default false), `project_open {name}` and
 `project_export_lbrn2 {name, overwrite?}` (writes `<projects-dir>/<name>.lbrn2`; replacing an existing one, also one
 whose name differs only in case, needs `overwrite: true`, default false; returns `{path, warnings, field_mm}`), and
-`lightburn_devices` (`GET /api/lightburn` plus `machine`: the `lightburn` part of `GET /api/machine`). The
+`lightburn_devices` (`GET /api/lightburn` plus `machine`: the `lightburn` part of `GET /api/machine`) and
+`devices_list` (`GET /api/devices`, read-only: activating, importing and removing devices change the machine, so they
+are UI-only, and the server instructions say so; design-only devices refuse `frame_start` and `job_request_run`). The
 `doc.import_lbrn2` description and the server instructions state the field-size rule.
 Project tools take names, never paths.
 File contents go through `execute` with `doc.save`, `doc.load`, `doc.import_lbrn2` and `doc.export_lbrn2`. The MCP
@@ -256,7 +274,8 @@ MCP tool can approve a run or touch the operator PIN, and the server instruction
 - **`.openetch`** (native project): UTF-8 JSON `{"format": "openetch", "version": 1, "document": <doc::Document>}`
   (`doc::file`). Readers refuse other formats (XML is pointed to the LightBurn import) and newer versions, accept a
   UTF-8 BOM, refuse duplicate ids and raise `next_id` past existing ids. `Document.field_mm` is the galvo field the
-  document was laid out for. `Document.groups` (`{id, name, parent?}`, nested through `parent`) and `Object.group`
+  document was laid out for; `Document.workspace_mm` (`[w, h]`, optional, left out when absent) is a gantry's bed
+  (then `field_mm` is the smaller side, and `extras["lbrn2._origin"]` the device's origin corner). `Document.groups` (`{id, name, parent?}`, nested through `parent`) and `Object.group`
   (the innermost group) hold LightBurn-style groups; a group with no member objects is removed
   (`Document::prune_groups`, also on load). `Geometry::Image {width_mm, height_mm, mime, data_base64}` is a bitmap
   centred on the local origin; jobs skip images with the plan warning "image engraving is not supported yet".
@@ -274,9 +293,20 @@ MCP tool can approve a run or touch the operator PIN, and the server instruction
   source text of every number, transform and path list that did not change, so an unchanged import exports byte for
   byte (the env-gated `crates/lbrn/tests/real_samples.rs` checks every sample file). `.lbt` templates read the same
   way. Export keeps each layer's LightBurn index and writes the stock outline on tool layer T1. Commands:
-  `doc.import_lbrn2 {content, mode?: replace|merge, field_mm?, name?}` (Edit; merge brings the file's objects in as
-  one group) and `doc.export_lbrn2 {field_mm?}` (Query, returns `{content, warnings, field_mm}`). The format notes
+  `doc.import_lbrn2 {content, mode?: replace|merge, field_mm?, workspace_mm?, origin?, name?}` (Edit; merge brings the
+  file's objects in as one group) and `doc.export_lbrn2 {field_mm?, workspace_mm?, origin?}` (Query, returns `{content,
+  warnings, field_mm, workspace_mm, origin}`); `doc.new {name?, field_mm?, workspace_mm?, origin?}`. The format notes
   are in `crates/lbrn/src/lib.rs`.
+  **Gantry beds** (`lbrn::Frame::Bed`; `origin` a corner, with `workspace_mm`): LightBurn measures in mm from the
+  device's origin corner, which the project root records as `MirrorX` / `MirrorY` (front-left = neither, rear-left =
+  `MirrorY` from an xTool `.lbdev`; rear-right = both and front-right = `MirrorX` inferred, **unconfirmed**). Import
+  uses the file's own flags: field = S · (LightBurn - [W/2, H/2]), S negating the mirrored axes (a shape saved in a
+  mirrored frame gets a mirrored transform, so it looks as LightBurn showed it); export applies the inverse for the
+  target origin and writes its flags, so a file saved for another origin is reoriented as LightBurn does since 1.3.
+  Unverified against a file LightBurn saved for a rear-left device. The bed and origin are remembered like the
+  galvo field (`extras["lbrn2._workspace_mm"]` for merges, `extras["lbrn2._origin"]`); an export's default origin is
+  the document's, else `bottom_left` for a document with `workspace_mm`, else `center` (galvo). Galvo imports never
+  apply the file's mirror flags (galvos use absolute coordinates; a set flag is reported).
 - **`.dxf`, images**: `art.import_dxf {content, layer?, name?, width_mm?, split?, keep_position?}` (lines,
   polylines with bulges, circles, arcs, ellipses, splines, block references; units from `$INSUNITS`, else mm with a
   warning; native builds only; `split` defaults to true: one object per entity, all in one group named `name` (default
@@ -299,13 +329,17 @@ which is also Qt's app-data location; File > Open Prefs Folder in LightBurn show
   type, width/height, mirror, and a fixed subset of `Settings`); every other key is skipped by the deserializer, the
   correction file is cut to its file name, and errors give a line and column, never content. The engine reads the
   file into memory only to parse it (again when its size or mtime changes), never writes it, stores only the parsed
-  devices (an upload, `lightburn-devices.json`), returns only `{name, display_name, field_mm, width_mm, height_mm}`
+  devices (an upload, `lightburn-devices.json`; imported devices, `devices/<id>.toml`), returns only typed device
+  fields (`GET /api/lightburn`: `{name, display_name, field_mm, width_mm, height_mm}`; `GET /api/devices/{id}`: the
+  Device Settings listed under "Devices")
   and the profile diffs, and logs only the path and device count. An uploaded list wins over the local file until
   it is deleted. Tests use the synthetic `crates/machine/tests/fixtures/lightburn-prefs.json`; real files are read in
   place by the env-gated `crates/machine/tests/lightburn.rs` (`OPENETCH_LIGHTBURN_PREFS`, `;`-separated).
 - **Lookup.** `find_device` matches `Name` or `DisplayName`, ignoring case; `.lbrn2` files carry the display name.
-  The device used when a file names none is `--lightburn-device`, else LightBurn's `DefaultDevice` (else the only
-  device).
+  The device `GET /api/lightburn` reports as the default and the machine status compares with is
+  `--lightburn-device`, else LightBurn's `DefaultDevice` (else the only device). LightBurn imports use OpenEtch's
+  devices first (see "Devices" and "Field size"); `/api/lightburn` stays for compatibility, the UI uses
+  `/api/devices`.
 - **Profile from a device** (`machine::profile_from_lightburn(device, base) -> (profile, diffs)`; table in
   `crates/machine/src/lightburn.rs`): field (`Width`; within 0.05 mm of the base keeps the base, since LightBurn shows
   the field to 0.1 mm: the B6's 153.8 is EzCad's `FIELDSIZE=153.75`; width != height is reported), `swap_xy`,
@@ -324,6 +358,55 @@ which is also Qt's app-data location; File > Open Prefs Folder in LightBurn show
   channels the opposite way round. Then LightBurn's galvo 2 carries field X when not swapped, so `negate_x` comes
   from `Galvo_2_Sign` (galvo 1 when swapped), XOR `MirrorX` (likewise Y). If a frame comes out mirrored across the
   diagonal, both mappings are wrong together; the signs are 1 on the B6, so their assignment is untested.
+
+## Devices
+
+LightBurn-style devices (`machine::device`, the registry in `crates/engine/src/devices.rs`), so a user can bring any
+laser profile from LightBurn. Spec and evidence: LightBurn's docs (Devices window, Device Settings, Coordinates and
+Origin), the public WAZER `.lbdev`, xTool/Creality `.lbdev` posts and the owner's `prefs.ini` files.
+
+- **Device** = `{id (slug of the display name), name (LightBurn Name: the controller), display_name, source:
+  builtin | lightburn-prefs | lbdev | manual, kind: jcz_galvo | gantry | galvo_other | unknown, lightburn_type
+  (LightBurn Type: the connection, e.g. LibUSB), workspace_mm [w, h], origin, controllable, profile (JCZ galvos),
+  lightburn (the typed LightBurn settings it was made from)}`. Only a JCZ (BJJCZ LMC, EzCad2-family, LightBurn's
+  "JCZFiber") galvo is **controllable**; every other device is **design-only**: its workspace drives the canvas, new
+  documents and LightBurn import/export, and previews, runs and framing are refused (422, with the reason).
+- **Family** (LightBurn's `Name` is an open set, never matched against a closed list): a galvo when `Type` is
+  `LibUSB`, `Name` contains Fiber or EZCad, or any `Galvo_*` setting exists; JCZ when such a `Name` contains JCZ
+  (BSLFiber and EZCad3 are `galvo_other`); `unknown` for "No Machine"; everything else is a gantry (GCode/DSP).
+- **Workspace and origin**: a galvo's field (`Width`; for a JCZ galvo the profile's field, e.g. 153.75 on the B6) with
+  the centre origin; a gantry's `Width x Height` bed and the corner its `MirrorX`/`MirrorY` name (see "File
+  formats"). Devices without a usable size are skipped on import, with the reason.
+- **Profile** of a JCZ galvo: `profile_from_lightburn` over the built-in B6 profile when the device is the same lens
+  (width within 0.05 mm, same correction file or none), else over the generic JCZ galvo base
+  (`fixtures/generic-jcz-galvo.toml`, `MachineProfile::generic_jcz_galvo`: 20..4000 kHz, mark speed up to 5000 mm/s,
+  travel up to 3000 mm/s, no pulse width unless LightBurn enables it; hard limits are never raised by an import).
+  `GET /api/devices/{id}` recomputes the diffs against that base. The correction file (a name only) is looked up in
+  `<config-dir>/devices/`, then next to the built-in profile; a missing one is a warning on activation.
+- **Registry**: `<config-dir>/devices/index.json` (`{format: "openetch-devices", version: 1, active, order}`) and one
+  `<id>.toml` per imported device (`{format: "openetch-device", version: 1, ...}`, re-checked on load: a valid id,
+  workspace and profile; `controllable` is recomputed). The built-in device ("ComMarker B6 MOPA 60W (EzCad)", the
+  `--profile` fixture) is never stored. **First run** (no index): the devices of the auto-detected LightBurn
+  `prefs.ini` are imported (read only) and LightBurn's default device becomes active if it is a controllable JCZ
+  galvo, else the built-in device. Broken device files are skipped and reported at startup.
+- **Import** (`POST /api/devices/import`, `openetch devices import`): a `prefs.ini` or a `.lbdev` (plain JSON
+  `{"DeviceList": [...]}`, the shape of `prefs.ini`'s list, without `DefaultDevice`; `machine::parse_lbdev`), through
+  the same typed parser: `.lbdev` files also hold macros, G-code, addresses and paths, none of which is read; the
+  material library path is cut to its file name. `.lbzip` bundles and `.lbvendor` files are not read (their layout is
+  undocumented). A device with the same GUID-free identity (display name, controller, connection, LightBurn size) as
+  an imported one is updated in place.
+- **Active device**: stored in the index; `--device` overrides it for one run. Activation (UI only) is refused while
+  a run is approved, awaiting confirmation or running, or while framing; it claims the machine like a run, cancels
+  pending runs, swaps the profile (`hw::Machine::swap_config` under the controller lock: a new
+  `MachineConfig { profile, cor, target, generation }`, the simulator gets a fresh `SimLink`, a USB board is closed and
+  initialised again) and emits `device_changed`. A run remembers the configuration generation it was planned for;
+  approval refuses one of another generation, and a run planned while the device changed is refused when stored. A
+  design-only device leaves the machine profile as it was (nothing can run).
+- **Settings shown** (read-only, `GET /api/devices/{id}` `settings`): name, controller, connection, work area,
+  origin, auto-home, bounds check, job origin, library file, preview speeds; galvo: field, offset, angle, COR file,
+  galvo axis/sign/shape, frame/max/jump speeds, jump delays and limit, laser timing, laser/fiber type, frequency range,
+  Q-pulse/PWM, open MO delay, red-light and start-mark bits; GCode: baud rate, network port, S-value max, air assist,
+  Z/U axis, transfer mode, G-code flavor. DSP-specific keys are not read (their names are unconfirmed).
 
 ## Licensing and provenance
 

@@ -945,6 +945,12 @@ textarea {
   text-transform: capitalize;
 }
 
+/* Device settings labels carry units such as "(mm)"; keep their own casing. */
+.dev-group .kv dt,
+.lb-diffs .kv dt {
+  text-transform: none;
+}
+
 .kv dd {
   margin: 0;
   overflow-wrap: anywhere;
@@ -2186,4 +2192,159 @@ kbd {
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 8px;
+}
+
+/* ---- devices (LightBurn-style Devices window and the Laser workspace's device dropdown) ---------------------------- */
+
+.dev-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.dev-select {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.dev-select-bar {
+  flex: 1 1 200px;
+}
+
+.dev-select-label {
+  color: var(--text-2);
+  flex: none;
+}
+
+.dev-select select {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--tap);
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: #fff;
+}
+
+.dev-bar .hint,
+.dev-bar .run-hint {
+  margin-top: 6px;
+}
+
+.dev-table-wrap {
+  max-height: 40vh;
+  overflow: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: #fff;
+}
+
+.dev-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.dev-table th,
+.dev-table td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-soft);
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.dev-table th {
+  position: sticky;
+  top: 0;
+  background: var(--chrome);
+  color: var(--text-2);
+  font-weight: 500;
+}
+
+.dev-table tbody tr {
+  cursor: pointer;
+}
+
+.dev-table tbody tr:hover {
+  background: var(--chrome-2);
+}
+
+.dev-table tbody tr.selected {
+  background: var(--accent-soft);
+}
+
+.dev-table tbody tr:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.dev-name {
+  font-weight: 500;
+}
+
+.dev-star {
+  color: var(--accent);
+  font-weight: 700;
+  margin-right: 3px;
+}
+
+.dev-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: #fff7e6;
+  color: #8a4f00;
+  font-size: 11px;
+}
+
+.dev-sub {
+  color: var(--muted);
+}
+
+.dev-settings {
+  margin-top: 10px;
+}
+
+.dev-settings h4 {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+
+.dev-group summary {
+  cursor: pointer;
+  padding: 7px 0;
+  color: var(--text-2);
+}
+
+.dev-confirm {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dev-confirm p {
+  margin: 0;
+}
+
+.dev-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+@media (max-width: 640px) {
+  .dev-table th:nth-child(4),
+  .dev-table td:nth-child(4),
+  .dev-table th:nth-child(5),
+  .dev-table td:nth-child(5) {
+    display: none;
+  }
 }

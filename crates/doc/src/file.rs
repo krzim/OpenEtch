@@ -131,6 +131,11 @@ fn check(doc: &Document) -> Result<(), FileError> {
     {
         return Err(invalid(format!("field_mm must be a positive number (got {f})")));
     }
+    if let Some([w, h]) = doc.workspace_mm
+        && !(w.is_finite() && w > 0.0 && h.is_finite() && h > 0.0)
+    {
+        return Err(invalid(format!("workspace_mm must be two positive numbers (got [{w}, {h}])")));
+    }
     if doc.layers.is_empty() {
         return Err(invalid("the document has no layers; it needs at least one"));
     }
@@ -292,6 +297,11 @@ mod tests {
         let mut d = sample();
         d.field_mm = Some(-1.0);
         assert!(from_openetch_json(&to_openetch_json(&d)).is_err());
+        let mut d = sample();
+        d.workspace_mm = Some([400.0, 0.0]);
+        assert!(from_openetch_json(&to_openetch_json(&d)).is_err());
+        d.workspace_mm = Some([400.0, 300.0]);
+        assert_eq!(from_openetch_json(&to_openetch_json(&d)).unwrap().workspace_mm, Some([400.0, 300.0]));
     }
 
     fn refused(d: &Document, what: &str) {

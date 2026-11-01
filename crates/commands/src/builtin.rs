@@ -23,7 +23,7 @@ mod util;
 #[cfg(test)]
 mod tests;
 
-pub use file::lbrn2_device_name;
+pub use file::{ORIGIN_KEY, WorkspaceOrigin, lbrn2_device_name};
 
 use crate::Registry;
 
