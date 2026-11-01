@@ -22,6 +22,8 @@
 // - snapping is Fusion 360-style on real geometry (snapping.ts): centres, quadrants, vertices, midpoints,
 //   intersections and the nearest point on outlines, each with its own glyph and a label, plus dotted alignment
 //   guides and the grid. A dragged selection snaps by its own snap point nearest to where it was grabbed.
+// - while Shift constrains a drag (moves, node and segment drags, line/pen/measure angles), a guide line along the
+//   locked axis or angle crosses the canvas through the drag's start (LightBurn), in screen px like the snap overlay.
 // Every edit is a command sent on pointerup; until the engine answers, the change is drawn as a transient transform.
 
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -36,6 +38,8 @@ import { dragCorners } from "../drawTools.ts";
 import {
   HANDLES,
   constrainDelta,
+  constraintLine,
+  constraintSegment,
   handlePoint,
   keepRound,
   rotateAbout,
@@ -44,6 +48,7 @@ import {
   scaleAbout,
   scaleFromHandle,
   signedScaleParams,
+  type ConstraintLine,
   type Handle,
   type Mods,
 } from "../editing.ts";
@@ -71,6 +76,7 @@ import {
   type SelectOp,
   type Selection,
 } from "../selection.ts";
+import { modifierReplay } from "../pointer.ts";
 import { useDitheredHref } from "./ImageSettings.tsx";
 import { CanvasLayer, ToolpathLayer, originalHref, paintImages, useBitmaps, useDpr, type ImageItem, type PaintArgs } from "./SceneCanvas.tsx";
 import { maskClips } from "../files/fileFormats.ts";
@@ -240,6 +246,8 @@ export function Viewport(props: ViewportProps) {
   const [draw, setDraw] = useState<{ a: Vec2; b: Vec2; tool: DrawTool } | null>(null);
   const [marquee, setMarquee] = useState<{ a: Vec2; b: Vec2 } | null>(null);
   const [snapShown, setSnapShown] = useState<SnapHit | null>(null);
+  /** The Shift constraint guide of the current drag, or null. */
+  const [constraint, setConstraint] = useState<ConstraintLine | null>(null);
   const [readout, setReadout] = useState<string | null>(null);
   /** Transient kept on screen after pointerup until the document revision changes, so nothing snaps back. */
   const [settling, setSettling] = useState<(Transient & { rev: number }) | null>(null);
@@ -247,6 +255,8 @@ export function Viewport(props: ViewportProps) {
   const gesture = useRef<Gesture>({ kind: "none" });
   /** Last pointer position and modifiers, so pressing or releasing a modifier mid-drag updates the drag. */
   const lastMove = useRef<{ s: Vec2; m: Mods } | null>(null);
+  /** The last hover position (screen px, mouse or pen, no button down), or null off the canvas. */
+  const lastHover = useRef<Vec2 | null>(null);
   /** The view follows the field (refit on resize) until the user pans or zooms. */
   const autoFit = useRef(true);
   const fittedField = useRef<string | null>(null);
@@ -416,6 +426,7 @@ export function Viewport(props: ViewportProps) {
   // Leaving a draw tool takes its hover snap glyph with it.
   useEffect(() => {
     if (tool === "select" && gesture.current.kind === "none") setSnapShown(null);
+    setConstraint(null);
   }, [tool]);
 
   const extRef = useRef<CanvasTool | null | undefined>(null);
@@ -428,6 +439,7 @@ export function Viewport(props: ViewportProps) {
     setDraw(null);
     setMarquee(null);
     setSnapShown(null);
+    setConstraint(null);
     setReadout(null);
     return g.kind !== "none" && g.kind !== "idle";
   }, []);
@@ -446,15 +458,20 @@ export function Viewport(props: ViewportProps) {
     return () => window.removeEventListener("keydown", onKey, true);
   }, [cancelGesture]);
 
-  // Pressing or releasing Shift/Ctrl/Alt mid-drag re-evaluates the drag at the last pointer position.
+  // Pressing or releasing Shift/Ctrl/Alt mid-drag re-evaluates the drag at the last pointer position; with no button
+  // down it re-evaluates the hover (the line tool's Shift angle and its guide line follow the key without a move).
   useEffect(() => {
     const onMod = (e: KeyboardEvent) => {
-      if (!["Shift", "Control", "Alt", "Meta"].includes(e.key)) return;
+      const replay = modifierReplay(e.key, gesture.current.kind, lastHover.current !== null && pointers.current.size === 0);
+      const m: Mods = { shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey, alt: e.altKey };
+      if (replay === "hover" && lastHover.current) {
+        hoverAt(lastHover.current, m);
+        return;
+      }
       const lm = lastMove.current;
-      const g = gesture.current.kind;
-      if (!lm || g === "none" || g === "idle") return;
+      if (replay !== "drag" || !lm) return;
       if (e.key === "Alt") e.preventDefault(); // keep Alt from focusing the browser menu mid-drag
-      update(lm.s, { shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey, alt: e.altKey });
+      update(lm.s, m);
     };
     window.addEventListener("keydown", onMod);
     window.addEventListener("keyup", onMod);
@@ -625,6 +642,7 @@ export function Viewport(props: ViewportProps) {
           if (hit) d = [hit.p[0] - r[0], hit.p[1] - r[1]];
         }
         setSnapShown(hit);
+        setConstraint(m.shift ? constraintLine(g.startField, d) : null);
         setTransient({ m: [1, 0, 0, 1, d[0], d[1]], stock: g.stock });
         const from = g.ref.owner ? snapLabel(g.ref) : "";
         setReadout(`Δ ${fixedNumber(d[0], lu)}, ${fixedLength(d[1], lu)}${from ? ` · ${from}` : ""}${hit?.label ? ` → ${hit.label}` : ""}`);
@@ -678,15 +696,24 @@ export function Viewport(props: ViewportProps) {
     }
   };
 
+  /** Hover feedback at screen point `s` (mouse or pen, no button down): the canvas tool's, or where a draw tool snaps. */
+  const hoverAt = (s: Vec2, m: Mods) => {
+    const f = toField(s[0], s[1]);
+    // Hovering with a draw tool shows where the first click would snap (Fusion shows snaps before the click).
+    if (doc && props.canvasTool?.hover(f, m, canvasCtx())) return;
+    if (isDrawTool(tool) && doc) setSnapShown(snapPoint(f, snapIndexFor(new Set(), true), m).hit);
+  };
+
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     const s = local(e);
     const f = toField(s[0], s[1]);
     setCursor(f);
     props.onCursor?.(f);
+    // Also kept through a drag, so a modifier pressed after the button comes up acts where the pointer is.
+    lastHover.current = e.pointerType === "touch" ? null : s;
     if (!pointers.current.has(e.pointerId)) {
-      // Hovering with a draw tool shows where the first click would snap (Fusion shows snaps before the click).
-      if (doc && props.canvasTool?.hover(f, modsOf(e), canvasCtx())) return;
-      if (isDrawTool(tool) && doc && e.pointerType !== "touch") setSnapShown(snapPoint(f, snapIndexFor(new Set(), true), modsOf(e)).hit);
+      if (e.pointerType !== "touch") hoverAt(s, modsOf(e));
+      else if (doc) props.canvasTool?.hover(f, modsOf(e), canvasCtx());
       return;
     }
     pointers.current.set(e.pointerId, s);
@@ -732,6 +759,7 @@ export function Viewport(props: ViewportProps) {
     const t = transient;
     setTransient(null);
     setSnapShown(null);
+    setConstraint(null);
     setReadout(null);
     if (cancelled || !doc) {
       if (g.kind === "ext") props.canvasTool?.cancel();
@@ -857,7 +885,11 @@ export function Viewport(props: ViewportProps) {
     toField: (s) => toField(s[0], s[1]),
     toScreen,
     snap: (p, m, o) => snapPoint(p, snapIndexFor(new Set(o?.exclude ?? []), true), m, o?.extra),
-    showSnap: setSnapShown,
+    showSnap: (hit) => {
+      setSnapShown(hit);
+      setConstraint(null);
+    },
+    showConstraint: setConstraint,
     readout: setReadout,
     hitObject: (p) => hitTest(shapeIndex, p, CLICK_TOL_PX / view.scale),
   });
@@ -1090,7 +1122,11 @@ export function Viewport(props: ViewportProps) {
         onPointerLeave={() => {
           setCursor(null);
           props.onCursor?.(null);
-          if (gesture.current.kind === "none") setSnapShown(null);
+          lastHover.current = null;
+          if (gesture.current.kind === "none") {
+            setSnapShown(null);
+            setConstraint(null);
+          }
         }}
         onAuxClick={(e) => e.preventDefault()}
       >
@@ -1184,6 +1220,7 @@ export function Viewport(props: ViewportProps) {
             ))}
           {props.canvasTool?.render(renderCtx)}
         </g>
+        {constraint && <ConstraintGuide line={constraint} at={toScreen} size={size} />}
         {snapShown && <SnapOverlay hit={snapShown} at={(p) => [(p[0] - view.cx) * view.scale + size[0] / 2, -(p[1] - view.cy) * view.scale + size[1] / 2]} />}
         {uiPrefs.crosshair && cursor && (
           <path
@@ -1291,6 +1328,14 @@ function SnapOverlay({ hit, at }: { hit: SnapHit; at: (p: Vec2) => Vec2 }) {
       )}
     </g>
   );
+}
+
+/** The Shift constraint guide: the locked axis or angle through the drag's start, across the canvas, in screen px. */
+function ConstraintGuide({ line, at, size }: { line: ConstraintLine; at: (p: Vec2) => Vec2; size: Vec2 }) {
+  const seg = constraintSegment(line, at, size);
+  if (!seg) return null;
+  const [a, b] = seg;
+  return <path className="constraint-guide" d={`M${a[0]},${a[1]}L${b[0]},${b[1]}`} strokeDasharray="8 4" pointerEvents="none" />;
 }
 
 type ImageGeom = Extract<GDocument["objects"][number]["geometry"], { kind: "image" }>;

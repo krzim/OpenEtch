@@ -5,7 +5,8 @@
 // LightBurn behaviour (docs.lightburnsoftware.com Reference/TransformControls, Snapping, Align, Distribute):
 // - arrow keys nudge 5 mm, Ctrl 1 mm, Shift 20 mm, Ctrl+Shift 0.1 mm;
 // - `.` / `,` rotate 90° clockwise / counter-clockwise; Shift 45°, Ctrl 15°, Ctrl+Shift 1.5°;
-// - while moving, Shift constrains to horizontal, vertical or 45°; Ctrl turns snapping off; Alt snaps to alignment
+// - while moving, Shift constrains to horizontal, vertical or 45° (shown as a guide line across the canvas,
+//   constraintLine / constraintSegment); Ctrl turns snapping off; Alt snaps to alignment
 //   guides only (snapping.ts);
 // - corner handles keep the aspect ratio (Shift frees it), edge handles scale one axis, Ctrl scales about the centre;
 // - rotate handles snap to 15° with Shift and 5° with Ctrl.
@@ -75,6 +76,63 @@ export function constrainDelta(d: Vec2): Vec2 {
   if (ang > (3 * Math.PI) / 8) return [0, dy];
   const m = (ax + ay) / 2;
   return [Math.sign(dx) * m, Math.sign(dy) * m];
+}
+
+/** The line a Shift-constrained drag runs along (LightBurn shows it while Shift is held): through `p`, along `dir`. */
+export interface ConstraintLine {
+  /** Where the drag started, field mm. */
+  p: Vec2;
+  /** Unit direction in the field frame, pointing right (or up when vertical): [1, 0] horizontal, [0, 1] vertical. */
+  dir: Vec2;
+}
+
+/**
+ * The guide for a drag from `p` constrained to the offset `d` (constrainDelta's result, or constrainAngle's point
+ * minus `p`), or null while `d` has no direction yet. Float noise is rounded away so H/V come out exact.
+ */
+export function constraintLine(p: Vec2, d: Vec2): ConstraintLine | null {
+  const len = Math.hypot(d[0], d[1]);
+  if (!(len > 1e-9)) return null;
+  const unit = (v: number) => (Math.abs(v / len) < 1e-12 ? 0 : v / len);
+  let dir: Vec2 = [unit(d[0]), unit(d[1])];
+  // A line has no direction: one canonical form, so a drag left or right shows the same guide.
+  if (dir[0] < 0 || (dir[0] === 0 && dir[1] < 0)) dir = [-dir[0] || 0, -dir[1] || 0];
+  return { p: [p[0], p[1]], dir };
+}
+
+/**
+ * The visible part of an infinite line through `p` along `dir` inside the rectangle [0, w] x [0, h] (screen px), as
+ * its two end points, or null when it misses the rectangle (or `dir` is zero).
+ */
+export function lineAcrossRect(p: Vec2, dir: Vec2, w: number, h: number): [Vec2, Vec2] | null {
+  let t0 = -Infinity;
+  let t1 = Infinity;
+  for (const [pk, dk, max] of [
+    [p[0], dir[0], w],
+    [p[1], dir[1], h],
+  ] as const) {
+    if (Math.abs(dk) < 1e-12) {
+      // Parallel to this pair of sides: inside them or nowhere.
+      if (pk < 0 || pk > max) return null;
+      continue;
+    }
+    const a = -pk / dk;
+    const b = (max - pk) / dk;
+    t0 = Math.max(t0, Math.min(a, b));
+    t1 = Math.min(t1, Math.max(a, b));
+  }
+  if (!Number.isFinite(t0) || !Number.isFinite(t1) || t1 < t0) return null;
+  return [
+    [p[0] + dir[0] * t0, p[1] + dir[1] * t0],
+    [p[0] + dir[0] * t1, p[1] + dir[1] * t1],
+  ];
+}
+
+/** A constraint line's end points across a canvas of `size` px, given the field-to-screen mapping `toScreen`. */
+export function constraintSegment(line: ConstraintLine, toScreen: (p: Vec2) => Vec2, size: Vec2): [Vec2, Vec2] | null {
+  const a = toScreen(line.p);
+  const b = toScreen([line.p[0] + line.dir[0], line.p[1] + line.dir[1]]);
+  return lineAcrossRect(a, [b[0] - a[0], b[1] - a[1]], size[0], size[1]);
 }
 
 /** Scale handle positions: corners and edge midpoints of the selection box. */

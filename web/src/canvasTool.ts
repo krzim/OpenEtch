@@ -6,7 +6,7 @@
 
 import type { ReactNode } from "react";
 import type { GDocument, Vec2 } from "./api/types.ts";
-import type { Mods } from "./editing.ts";
+import type { ConstraintLine, Mods } from "./editing.ts";
 import type { SnapHit, SnapPart, SnapPoint } from "./snapping.ts";
 
 /** Tools implemented by the canvas tool (the Viewport's own are select, rect, ellipse and circle). */
@@ -30,8 +30,10 @@ export interface CanvasCtx {
   toScreen: (p: Vec2) => Vec2;
   /** Snap a field point (Ctrl toggles snapping, Alt snaps to guides only), skipping objects `exclude`. */
   snap: (p: Vec2, m: Mods, o?: { exclude?: readonly string[]; extra?: SnapPoint[] }) => { p: Vec2; hit: SnapHit | null };
-  /** Show (or clear) the snap glyph and label. */
+  /** Show (or clear) the snap glyph and label. Also clears the Shift constraint guide. */
   showSnap: (hit: SnapHit | null) => void;
+  /** Show (or clear) the guide line of a Shift-constrained drag (editing.ts constraintLine), until the next showSnap. */
+  showConstraint: (line: ConstraintLine | null) => void;
   /** Text after the cursor position in the bottom-left readout, or null. */
   readout: (text: string | null) => void;
   /** The object under a field point (click tolerance), or null. */

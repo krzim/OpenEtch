@@ -37,7 +37,7 @@ import {
   polygonPoints,
   type PenNode,
 } from "../drawTools.ts";
-import { constrainDelta, roundMm, type Mods } from "../editing.ts";
+import { constrainDelta, constraintLine, roundMm, type Mods } from "../editing.ts";
 import { boxFromPoints, geometryCmds, toPathData } from "../geometry.ts";
 import { getPrefs, handleScale } from "../workspace/prefs.ts";
 import { usePrefs, useT, useTD } from "../workspace/usePrefs.ts";
@@ -515,11 +515,13 @@ export function useEditTools(p: EditToolsProps): EditTools {
     P.current.setTool("pick");
   };
 
-  /** A snapped point for drawing, constrained to 15° steps from `from` while Shift is held. */
+  /** A snapped point for drawing, constrained to 15° steps from `from` while Shift is held (with its guide line). */
   const drawPoint = (f: Vec2, m: Mods, ctx: CanvasCtx, from: Vec2 | null): Vec2 => {
     if (m.shift && from) {
+      const q = constrainAngle(from, f);
       ctx.showSnap(null);
-      return constrainAngle(from, f);
+      ctx.showConstraint(constraintLine(from, [q[0] - from[0], q[1] - from[1]]));
+      return q;
     }
     const sp = ctx.snap(f, m);
     ctx.showSnap(sp.hit);
@@ -682,6 +684,7 @@ export function useEditTools(p: EditToolsProps): EditTools {
         if (m.shift) {
           d = constrainDelta(raw);
           ctx.showSnap(null);
+          ctx.showConstraint(constraintLine(g.base, d));
         } else {
           const sp = ctx.snap([g.base[0] + raw[0], g.base[1] + raw[1]], m);
           ctx.showSnap(sp.hit);
@@ -712,6 +715,7 @@ export function useEditTools(p: EditToolsProps): EditTools {
         g.moved = true;
         let d: Vec2 = [f[0] - g.start[0], f[1] - g.start[1]];
         if (m.shift) d = constrainDelta(d);
+        ctx.showConstraint(m.shift ? constraintLine(g.start, d) : null);
         g.d = d;
         store.set({ preview: moveNodes(nl, new Set([seg.from, seg.to]), d) });
         ctx.readout(`Δ ${fixedNumber(d[0], lu())}, ${fixedLength(d[1], lu())} · segment`);
@@ -727,6 +731,7 @@ export function useEditTools(p: EditToolsProps): EditTools {
         if (!g.moved && dist(s, g.startScreen) < SLOP) return;
         g.moved = true;
         const handle = m.shift ? constrainAngle(g.p, f) : f;
+        ctx.showConstraint(m.shift ? constraintLine(g.p, [handle[0] - g.p[0], handle[1] - g.p[1]]) : null);
         const pts = st.pen.slice();
         if (pts.length) pts[pts.length - 1] = penNode(g.p, handle);
         store.set({ pen: pts, rubber: null });
@@ -735,6 +740,11 @@ export function useEditTools(p: EditToolsProps): EditTools {
       }
       case "poly": {
         const q = drawPoint(f, { ...m, shift: false }, ctx, null);
+        if (m.shift) {
+          // Shift turns the polygon in 15° steps: the guide runs through the centre and the first corner.
+          const c = constrainAngle(g.c, q);
+          ctx.showConstraint(constraintLine(g.c, [c[0] - g.c[0], c[1] - g.c[1]]));
+        }
         store.set({ poly: { c: g.c, p: q, shift: m.shift } });
         const r = polygonFromDrag(g.c, q, m.shift);
         ctx.readout(`R ${fixedLength(r.radius, lu())} · ${r.rotationDeg.toFixed(1)}°`);

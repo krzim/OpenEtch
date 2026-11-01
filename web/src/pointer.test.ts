@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { capturePointer } from "./pointer.ts";
+import { capturePointer, modifierReplay } from "./pointer.ts";
 
 test("capture that throws is swallowed and reported as not taken", () => {
   const el = {
@@ -22,4 +22,13 @@ test("capture works when it can, and without an element or the method", () => {
   assert.equal(capturePointer({}, 1), false);
   assert.equal(capturePointer(null, 1), false);
   assert.equal(capturePointer(undefined, 1), false);
+});
+
+test("a modifier key re-evaluates the drag, else the hover, so the Shift guide follows the key without a pointer move", () => {
+  assert.equal(modifierReplay("Shift", "move", false), "drag");
+  assert.equal(modifierReplay("Control", "ext", true), "drag", "a drag wins over the hover");
+  assert.equal(modifierReplay("Shift", "none", true), "hover", "line tool hovering: releasing Shift drops the guide");
+  assert.equal(modifierReplay("Alt", "none", false), null, "pointer off the canvas");
+  assert.equal(modifierReplay("Shift", "idle", true), null, "a cancelled drag waits for the button to come up");
+  assert.equal(modifierReplay("a", "move", true), null, "other keys do nothing");
 });

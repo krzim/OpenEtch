@@ -6,10 +6,13 @@ import { test } from "node:test";
 import {
   alignMoves,
   constrainDelta,
+  constraintLine,
+  constraintSegment,
   distributeMoves,
   evalNumber,
   handlePoint,
   keepRound,
+  lineAcrossRect,
   mergesNudge,
   nudgeDelta,
   nudgeKeyId,
@@ -52,6 +55,39 @@ test("Shift constrains to horizontal, vertical or 45 degrees", () => {
   assert.deepEqual(constrainDelta([-1, -9]), [0, -9]);
   assert.deepEqual(constrainDelta([10, -8]), [9, -9]);
   assert.deepEqual(constrainDelta([0, 0]), [0, 0]);
+});
+
+test("the Shift guide follows the locked axis: horizontal, vertical or the active 45 degree line", () => {
+  const p: [number, number] = [3, 4];
+  assert.deepEqual(constraintLine(p, constrainDelta([-10, 2])), { p: [3, 4], dir: [1, 0] }, "left or right shows the X axis");
+  assert.deepEqual(constraintLine(p, constrainDelta([1, -9]))?.dir, [0, 1], "up or down shows the Y axis");
+  const r = Math.SQRT1_2;
+  const up = constraintLine(p, constrainDelta([10, 8]))?.dir ?? [0, 0];
+  assert.ok(Math.abs(up[0] - r) < 1e-12 && Math.abs(up[1] - r) < 1e-12, "up-right drag shows the +45 degree line");
+  const down = constraintLine(p, constrainDelta([-10, 8]))?.dir ?? [0, 0];
+  assert.ok(Math.abs(down[0] - r) < 1e-12 && Math.abs(down[1] + r) < 1e-12, "up-left drag shows the -45 degree line");
+  assert.equal(constraintLine(p, [0, 0]), null, "no guide before the drag has a direction");
+  // A 15 degree step from constrainAngle (drawTools.ts) gives that angle's line.
+  const a = (30 * Math.PI) / 180;
+  const l = constraintLine(p, [-2 * Math.cos(a), -2 * Math.sin(a)])?.dir ?? [0, 0];
+  assert.ok(Math.abs(l[0] - Math.cos(a)) < 1e-12 && Math.abs(l[1] - Math.sin(a)) < 1e-12);
+});
+
+test("the Shift guide spans the visible canvas", () => {
+  assert.deepEqual(lineAcrossRect([30, 20], [1, 0], 100, 50), [[0, 20], [100, 20]]);
+  assert.deepEqual(lineAcrossRect([30, 20], [0, -2], 100, 50), [[30, 50], [30, 0]]);
+  assert.deepEqual(lineAcrossRect([10, 10], [1, 1], 100, 50), [[0, 0], [50, 50]], "a diagonal stops at the nearer edges");
+  assert.equal(lineAcrossRect([30, 80], [1, 0], 100, 50), null, "off-screen horizontal line");
+  assert.equal(lineAcrossRect([200, 0], [1, 1], 100, 50), null, "diagonal that misses the canvas");
+  assert.equal(lineAcrossRect([30, 20], [0, 0], 100, 50), null);
+  // Field +Y is up and screen +Y down: a +45 degree field line runs from bottom-left to top-right on screen.
+  const toScreen = (q: [number, number]): [number, number] => [(q[0] - 0) * 2 + 50, -(q[1] - 0) * 2 + 25];
+  const line = constraintLine([0, 0], [5, 5]);
+  assert.ok(line);
+  const seg = constraintSegment(line, toScreen, [100, 50])?.flat() ?? [];
+  [25, 50, 75, 0].forEach((v, i) => assert.ok(Math.abs((seg[i] ?? NaN) - v) < 1e-9, `end point coordinate ${i}`));
+  // The start point may be off-screen: the guide still crosses the canvas when its line does.
+  assert.deepEqual(constraintSegment({ p: [-100, 0], dir: [1, 0] }, toScreen, [100, 50]), [[0, 25], [100, 25]]);
 });
 
 test("a locked circle scales uniformly from any handle", () => {

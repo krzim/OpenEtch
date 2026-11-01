@@ -72,6 +72,7 @@
   --snap: #e0007a;
   --snap-label: #b0005f;
   --snap-halo: rgba(255, 255, 255, 0.92);
+  --constraint: #e07800;
   --handle-fill: #ffffff;
   --tp-jump: #9aa0a8;
   --tp-shade: #111111;
@@ -161,6 +162,7 @@
     --snap: #ff4fa8;
     --snap-label: #ff8cc6;
     --snap-halo: rgba(20, 22, 26, 0.92);
+    --constraint: #ffa940;
     --handle-fill: #eef0f2;
     --tp-jump: #6f7783;
     --tp-shade: #f2f2f2;
@@ -239,6 +241,7 @@
   --snap: #ff4fa8;
   --snap-label: #ff8cc6;
   --snap-halo: rgba(20, 22, 26, 0.92);
+  --constraint: #ffa940;
   --handle-fill: #eef0f2;
   --tp-jump: #6f7783;
   --tp-shade: #f2f2f2;
@@ -1450,6 +1453,13 @@ textarea {
 
 /* Fusion-style snap glyphs and labels, drawn in screen pixels (Viewport.tsx SnapOverlay). */
 .snap-overlay .snap-guide {
+  stroke-width: 1;
+}
+
+/* The Shift constraint guide (Viewport.tsx ConstraintGuide): the locked axis or angle across the canvas, screen px. */
+.constraint-guide {
+  fill: none;
+  stroke: var(--constraint);
   stroke-width: 1;
 }
 
