@@ -3,8 +3,8 @@
 /// Proof that a person approved one run (in the UI, or with the foot switch at the machine).
 /// [`crate::Controller::run`] takes it by value, so each approval runs at most once.
 ///
-/// **Only the engine's approval module (`approve`: `POST /api/runs/{id}/approve` from the UI, or the foot switch in
-/// the no-PIN approval mode) may call [`Armed::approved_in_ui`].** API and MCP handlers must never construct one;
+/// **Only the engine's approval module (`approve`: `POST /api/runs/{id}/approve` or `POST /api/job/start` from the UI,
+/// or the foot switch cycle in the no-PIN approval mode) may call [`Armed::approved_in_ui`].** API and MCP handlers must never construct one;
 /// they create pending runs. The type has a private field, no `Default`, `Clone` or `Deserialize`, so it cannot be
 /// made any other way:
 ///

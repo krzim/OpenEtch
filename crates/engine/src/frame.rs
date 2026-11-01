@@ -376,7 +376,7 @@ pub async fn start(
             let live = run.live.is_some();
             tokio::spawn(async move { frame_loop(m, ev, generation, outline, (loops, call_time), run).await });
             Ok(json!({ "ok": true, "framing": true, "points": points, "loops_per_call": loops, "packets": packets,
-                "max_seconds": max_seconds, "continuous": continuous, "live": live }))
+                "max_seconds": max_seconds, "continuous": continuous, "live": live, "frame_gen": generation }))
         }
         Ok(None) => Err(EngineError::Conflict("framing was cancelled before it started".into())),
         Err(e) => {

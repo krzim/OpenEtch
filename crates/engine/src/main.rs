@@ -209,7 +209,10 @@ async fn run(config: Config) -> Result<(), String> {
     let approval = ApprovalConfig { pin: pin_store, confirm: config.confirm_input.map(PhysicalConfirm::new) };
     if config.approval == ApprovalMode::Click {
         let foot = match machine.profile().start_mark_input_bit {
-            Some(bit) => format!(" or by pressing the foot switch (input {bit}, the profile's Start Marking input)"),
+            Some(bit) => format!(
+                " or with the foot switch (input {bit}, the profile's Start Marking input: the first press frames the \
+                 job, the next burns what was framed)"
+            ),
             None => " (the profile has no Start Marking input, so there is no foot switch)".to_owned(),
         };
         println!(

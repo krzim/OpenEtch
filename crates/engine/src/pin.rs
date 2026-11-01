@@ -3,7 +3,8 @@
 //! **Approval modes** ([`ApprovalMode`], `--approval pin|click`, fixed at startup): with `pin` (the default) every
 //! approval needs the PIN below. With `click` there is no PIN: a run is approved only by the Start button of the
 //! OpenEtch web app (a browser request carrying `Sec-Fetch-Site: same-origin` and an accepted `Origin`, which page
-//! scripts cannot set) or by a press of the foot switch (the profile's Start Marking input). Neither path is open to
+//! scripts cannot set) or by the foot switch cycle (the profile's Start Marking input: frame, then burn what was
+//! framed; module `cycle`). Neither path is open to
 //! MCP. A non-browser HTTP client could imitate those headers (on loopback it needs no token; off loopback it needs
 //! the access token), and an agent driving the browser can click Start; the foot switch is the path backed by
 //! hardware, and the token stays the network guard. Everything else (checklist, Require Framing, the
@@ -570,8 +571,8 @@ pub enum ApprovalMode {
     #[default]
     Pin,
     /// No PIN: a run is approved only by the Start button of the OpenEtch web app (a same-origin browser request,
-    /// see `api::approve_run` and [`crate::security::same_origin_browser_request`]) or by a press of the foot switch
-    /// (the profile's Start Marking input, `approve::foot_switch_pressed`). Every other gate stays.
+    /// see `api::approve_run`, `api::start_job` and [`crate::security::same_origin_browser_request`]) or by the foot
+    /// switch cycle (the profile's Start Marking input, module `cycle`). Every other gate stays.
     Click,
 }
 

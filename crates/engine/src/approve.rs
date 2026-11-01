@@ -1,17 +1,15 @@
 //! Run approval: the only code in the engine that creates a `machine::Armed`, and so the only path to
-//! `Controller::run_parts` (which needs one). It is reachable only from `POST /api/runs/{id}/approve`, which refuses
-//! requests carrying an MCP client header, and from the foot switch ([`foot_switch_pressed`]). Nothing in the MCP
-//! server calls it.
+//! `Controller::run_parts` (which needs one). It is reachable only from `POST /api/runs/{id}/approve` and
+//! `POST /api/job/start`, which refuse requests carrying an MCP client header, and from the foot switch cycle
+//! (module `cycle`). Nothing in the MCP server calls it.
 //!
 //! **Who may approve** ([`Approver`], by the engine's [`ApprovalMode`], `--approval`): in the `pin` mode (the
 //! default) only a request with the operator PIN (module `pin`). In the `click` mode there is no PIN: the Start
-//! button of the web app (the endpoint first checks the browser's `Sec-Fetch-Site: same-origin` and `Origin`,
-//! `security::same_origin_browser_request`), or a release-then-press of the profile's Start Marking input (the foot
-//! switch), which approves the one pending, current run and does nothing (but send `foot_switch_ignored`) when none or
-//! several wait. The input is read by `libs::spawn_io_watch` only while no run or frame holds the board, so a press
-//! while a run waits for its start input belongs to that run, and a press approves only the run that was already the
-//! single one waiting when it began. A non-browser client could imitate the browser headers (on loopback no token is
-//! needed); the foot switch is the path backed by hardware. Every other gate (Stop At, the Job Checklist, Require
+//! button of the web app (the endpoints first check the browser's `Sec-Fetch-Site: same-origin` and `Origin`,
+//! `security::same_origin_browser_request`), which with [`start_now`] plans and approves the current document in one
+//! action (LightBurn's Start), or the foot switch cycle (module `cycle`: the first press frames the job, the next
+//! burns the revision that was framed). A non-browser client could imitate the browser headers (on loopback no token
+//! is needed); the foot switch is the path backed by hardware. Every other gate (Stop At, the Job Checklist, Require
 //! Framing, the door interlock, the stop epoch) is the same in both modes.
 //!
 //! Stop is never lost: [`approve`] captures the machine's stop epoch while it claims the machine (inside the runs
@@ -26,8 +24,8 @@
 //! pressed. Before every iteration after the first, the run ends when Stop At is reached or the operator asked to
 //! end after the current iteration. The job counter counts every iteration that ran to the end. A run approved with
 //! the foot switch counts that press as its first iteration's start-input press (it is the same input, released and
-//! pressed); later iterations wait for their own press. The physical confirmation (`--confirm-input`) still waits
-//! for its own press after any approval.
+//! pressed; the foot switch cycle's runs never ask for the start input); later iterations wait for their own press.
+//! The physical confirmation (`--confirm-input`) still waits for its own press after any approval.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -51,7 +49,7 @@ pub(crate) enum Approver<'a> {
     Pin(Option<&'a str>),
     /// The `click` mode: the web app's Start button (the endpoint checked the browser headers).
     Click,
-    /// The `click` mode: a press of the foot switch ([`foot_switch_pressed`]).
+    /// The `click` mode: a press of the foot switch (module `cycle`).
     FootSwitch,
 }
 
@@ -206,50 +204,80 @@ pub(crate) async fn approve(
     Ok(json!({ "ok": true, "id": id, "run_id": id, "state": state_name }))
 }
 
-/// The foot switch that approves runs: the profile's Start Marking input (`start_mark_input_bit`, at the level of
-/// `start_mark_active_low`) while the engine runs in the `click` approval mode; `None` otherwise.
+/// One-click Start (`POST /api/job/start`, the `click` mode only; the endpoint checked the browser headers): plan the
+/// current document into a run with `options` and approve it at once, as LightBurn's Start does. The gates are those
+/// of [`approve`] (Require Framing, the Job Checklist `checklist`, the door, Stop At, another run, the stop epoch) and
+/// the cheap ones are checked before planning, so an open door or a busy board answers at once. A run that is not
+/// approved is discarded (nothing is left waiting), and a Stop pressed at any moment after the request arrived (while
+/// the door is read or the job is planned) wins.
+///
+/// `revision`: the document revision the app showed when Start was clicked (the app always sends it). When the
+/// document is at another revision (an agent's or a script's edit came in just before the click), nothing is started:
+/// Start burns only the version the person was looking at.
+pub(crate) async fn start_now(
+    state: &Arc<AppState>,
+    options: RunOptions,
+    checklist: Option<&[bool]>,
+    revision: Option<u64>,
+) -> Result<Value, EngineError> {
+    if state.approval_mode() != ApprovalMode::Click {
+        return Err(EngineError::Approval {
+            code: "approval_mode",
+            message: "this engine approves runs with the operator PIN: request the run, then approve it with the PIN".into(),
+        });
+    }
+    // Captured first, so a Stop during the door read below cancels this Start too.
+    let epoch = state.machine.stop_epoch();
+    let changed = |shown: u64, now: u64| {
+        EngineError::Conflict(format!(
+            "the document changed since Start was clicked (revision {shown} -> {now}); nothing was started: check the \
+             job and press Start again"
+        ))
+    };
+    if let Some(shown) = revision
+        && state.revision() != shown
+    {
+        return Err(changed(shown, state.revision()));
+    }
+    if state.machine.is_running() {
+        return Err(EngineError::Conflict("another run is in progress".into()));
+    }
+    crate::libs::check_before_approve(state, revision.unwrap_or_else(|| state.revision()), checklist).await?;
+    let view = state.request_run_with(commands::Origin::Ui, options).await?;
+    let discard = || {
+        state.runs().discard(&view.id);
+        state.emit(Event::machine("run_discarded", Some(view.id.clone())));
+    };
+    if state.machine.stop_epoch() != epoch {
+        discard();
+        return Err(EngineError::Conflict("stopped while the job was being planned; nothing was started".into()));
+    }
+    if let Some(shown) = revision
+        && view.revision != shown
+    {
+        discard();
+        return Err(changed(shown, view.revision));
+    }
+    match approve(state, &view.id, Approver::Click, checklist).await {
+        Ok(mut v) => {
+            v["run"] = serde_json::to_value(&view).unwrap_or(Value::Null);
+            Ok(v)
+        }
+        Err(e) => {
+            discard();
+            Err(e)
+        }
+    }
+}
+
+/// The foot switch of the cycle (module `cycle`): the profile's Start Marking input (`start_mark_input_bit`, at the
+/// level of `start_mark_active_low`) while the engine runs in the `click` approval mode; `None` otherwise.
 pub(crate) fn foot_switch_port(st: &AppState) -> Option<machine::InputPort> {
     if st.approval_mode() != ApprovalMode::Click {
         return None;
     }
     let profile = st.machine.profile();
     profile.start_mark_input_bit.map(|bit| machine::InputPort { bit, active_low: profile.start_mark_active_low })
-}
-
-/// The runs a foot switch press could approve: the pending runs of the current document revision.
-pub(crate) fn foot_switch_candidates(st: &AppState) -> Vec<String> {
-    let rev = st.revision();
-    st.runs().pending(rev).into_iter().filter(|r| !r.stale).map(|r| r.id).collect()
-}
-
-/// The foot switch was released and then pressed while no run or frame held the board (`libs::spawn_io_watch`):
-/// approve the one pending run of the current document revision (requested in the app or by an agent), if it was
-/// also the only one waiting when the press began (`at_press`, from [`foot_switch_candidates`]). With none or
-/// several waiting nothing is approved and the machine event `foot_switch_ignored` (`no_pending` or
-/// `several_pending`) tells the UI to say so; when the waiting runs changed during the press (a run requested, or
-/// replaced, while the pedal went down) nothing is approved either (`changed_during_press`), so a press never
-/// approves a run that did not exist when it began. A refused approval (door open, checklist, Require Framing, Stop
-/// At, ...) sends `foot_switch_refused` with the reason. An approval sends `foot_switch_approved` with the run id.
-pub(crate) async fn foot_switch_pressed(st: &Arc<AppState>, at_press: &[String]) {
-    let waiting = foot_switch_candidates(st);
-    let [id] = waiting.as_slice() else {
-        let detail = if waiting.is_empty() { "no_pending" } else { "several_pending" };
-        tracing::info!(waiting = waiting.len(), "foot switch pressed; nothing approved");
-        st.emit(Event::machine("foot_switch_ignored", Some(detail.to_owned())));
-        return;
-    };
-    if at_press != waiting.as_slice() {
-        tracing::info!(run_id = %id, "foot switch pressed while the waiting runs changed; nothing approved");
-        st.emit(Event::machine("foot_switch_ignored", Some("changed_during_press".to_owned())));
-        return;
-    }
-    match approve(st, id, Approver::FootSwitch, None).await {
-        Ok(_) => st.emit(Event::machine("foot_switch_approved", Some(id.clone()))),
-        Err(e) => {
-            tracing::warn!(run_id = %id, error = %e, "foot switch: approval refused");
-            st.emit(Event::machine("foot_switch_refused", Some(e.to_string())));
-        }
-    }
 }
 
 /// Send `job_progress` events while the job of `run_id` holds the machine.
@@ -516,4 +544,4 @@ async fn wait_for_input(
 
 #[cfg(test)]
 #[path = "approve_tests.rs"]
-mod tests;
+pub(crate) mod tests;

@@ -134,7 +134,7 @@ impl RunOptions {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RunState {
-    /// Waiting for a person to approve it (the operator PIN in the UI, or Start / the foot switch without a PIN).
+    /// Waiting for a person to approve it (the operator PIN in the UI, or Start in the app without a PIN).
     Pending,
     /// Approved; about to start (or about to wait for the physical input).
     Approved,
@@ -321,6 +321,12 @@ impl RunStore {
             n += 1;
         }
         n
+    }
+
+    /// Forget a run that never left `pending` (or was cancelled before it was approved): one-click Start and the
+    /// foot switch cycle plan a run and approve it at once, and a refused approval leaves nothing waiting.
+    pub fn discard(&mut self, id: &str) {
+        self.runs.retain(|r| r.id != id || !matches!(r.state, RunState::Pending | RunState::Cancelled));
     }
 
     /// The state of a run that holds or is about to hold the machine (`approved`, `awaiting_confirm`, `running`),

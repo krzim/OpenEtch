@@ -1,5 +1,5 @@
-//! Approval modes (`--approval pin|click`) and the foot switch, through the whole router on the simulated board
-//! (inputs set with `POST /api/sim/inputs`).
+//! Approval modes (`--approval pin|click`) and one-click Start, through the whole router on the simulated board
+//! (inputs set with `POST /api/sim/inputs`). The helpers serve the foot switch cycle's tests too (`cycle_tests.rs`).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -14,24 +14,23 @@ use serde_json::{Value, json};
 use tokio::sync::broadcast::Receiver;
 use tower::ServiceExt;
 
-use super::foot_switch_pressed;
 use crate::hw::Machine;
-use crate::pin::{self, ApprovalConfig, ApprovalMode, PinStore};
+use crate::pin::{self, ApprovalConfig, ApprovalMode, PhysicalConfirm, PinStore};
 use crate::runs::{Run, RunState};
 use crate::security::SecurityConfig;
 use crate::{AppState, Event, api};
 
-const PIN: &str = "975310";
+pub(crate) const PIN: &str = "975310";
 /// The foot switch: the profile's Start Marking input, bit 14.
-const PEDAL: u16 = 1 << 14;
+pub(crate) const PEDAL: u16 = 1 << 14;
 /// The door interlock of [`door_profile`], bit 5 (open while set).
-const DOOR_OPEN: u16 = 1 << 5;
+pub(crate) const DOOR_OPEN: u16 = 1 << 5;
 
-fn pedal_profile() -> MachineProfile {
+pub(crate) fn pedal_profile() -> MachineProfile {
     MachineProfile { start_mark_input_bit: Some(14), ..MachineProfile::generic_lmc_fiber() }
 }
 
-fn door_profile() -> MachineProfile {
+pub(crate) fn door_profile() -> MachineProfile {
     let mut p = pedal_profile();
     p.io.door_protect = Some(InputPort { bit: 5, active_low: false });
     p
@@ -39,14 +38,20 @@ fn door_profile() -> MachineProfile {
 
 /// A connected simulator engine. In the `pin` mode the PIN is set and the mode is left at its default; in the
 /// `click` mode no PIN file exists.
-async fn state(profile: MachineProfile, mode: ApprovalMode) -> Arc<AppState> {
+pub(crate) async fn state(profile: MachineProfile, mode: ApprovalMode) -> Arc<AppState> {
+    state_with(profile, mode, None).await
+}
+
+/// [`state`] with the physical confirmation input (`--confirm-input`): an approved run then holds the board until
+/// that input is pressed.
+pub(crate) async fn state_with(profile: MachineProfile, mode: ApprovalMode, confirm: Option<u8>) -> Arc<AppState> {
     let machine = Arc::new(Machine::simulated(profile, None, PollConfig::immediate()));
     machine.connect().await.expect("sim connects");
     let dir = pin::temp_dir("approve-modes");
     if mode == ApprovalMode::Pin {
         pin::set_pin(&dir, PIN).expect("set PIN");
     }
-    let approval = ApprovalConfig { pin: PinStore::new(&dir), confirm: None };
+    let approval = ApprovalConfig { pin: PinStore::new(&dir), confirm: confirm.map(PhysicalConfirm::new) };
     let projects = crate::tests::test_projects();
     let st = AppState::new(Session::new(doc::Document::default()), machine, SecurityConfig::default(), approval, projects);
     if mode != ApprovalMode::Pin {
@@ -56,7 +61,7 @@ async fn state(profile: MachineProfile, mode: ApprovalMode) -> Arc<AppState> {
     st
 }
 
-fn req(method: &str, uri: &str, body: Option<Value>) -> Request<Body> {
+pub(crate) fn req(method: &str, uri: &str, body: Option<Value>) -> Request<Body> {
     let b = Request::builder().method(method).uri(uri).header("host", "localhost:7878");
     match body {
         Some(v) => b.header("content-type", "application/json").body(Body::from(v.to_string())).unwrap(),
@@ -65,13 +70,13 @@ fn req(method: &str, uri: &str, body: Option<Value>) -> Request<Body> {
 }
 
 /// `r` with the headers a browser adds to the app's own `fetch` (page scripts cannot set them).
-fn browser(mut r: Request<Body>) -> Request<Body> {
+pub(crate) fn browser(mut r: Request<Body>) -> Request<Body> {
     r.headers_mut().insert("sec-fetch-site", "same-origin".parse().unwrap());
     r.headers_mut().insert("origin", "http://localhost:7878".parse().unwrap());
     r
 }
 
-async fn send(app: &Router, r: Request<Body>) -> (StatusCode, Value) {
+pub(crate) async fn send(app: &Router, r: Request<Body>) -> (StatusCode, Value) {
     let res = app.clone().oneshot(r).await.unwrap();
     let status = res.status();
     let bytes = res.into_body().collect().await.unwrap().to_bytes();
@@ -79,39 +84,39 @@ async fn send(app: &Router, r: Request<Body>) -> (StatusCode, Value) {
     (status, v)
 }
 
-async fn rect(app: &Router) {
+pub(crate) async fn rect(app: &Router) {
     let body = json!({"id": "shape.rect", "params": {"width_mm": 10, "height_mm": 10}, "origin": "ui"});
     let (s, v) = send(app, req("POST", "/api/execute", Some(body))).await;
     assert_eq!((s, &v["ok"]), (StatusCode::OK, &json!(true)), "{v}");
 }
 
-async fn pending_run(app: &Router, options: Option<Value>) -> String {
+pub(crate) async fn pending_run(app: &Router, options: Option<Value>) -> String {
     let (s, v) = send(app, req("POST", "/api/runs", options)).await;
     assert_eq!(s, StatusCode::CREATED, "{v}");
     v["id"].as_str().unwrap().to_owned()
 }
 
-fn approve(id: &str, body: Option<Value>) -> Request<Body> {
+pub(crate) fn approve(id: &str, body: Option<Value>) -> Request<Body> {
     req("POST", &format!("/api/runs/{id}/approve"), body)
 }
 
-async fn set_inputs(app: &Router, bits: u16) {
+pub(crate) async fn set_inputs(app: &Router, bits: u16) {
     let (s, v) = send(app, req("POST", "/api/sim/inputs", Some(json!({"bits": bits})))).await;
     assert_eq!(s, StatusCode::OK, "{v}");
 }
 
 /// Release the pedal (long enough for the watcher to see it), then press it.
-async fn press(app: &Router, others: u16) {
+pub(crate) async fn press(app: &Router, others: u16) {
     set_inputs(app, others).await;
     tokio::time::sleep(Duration::from_millis(150)).await;
     set_inputs(app, others | PEDAL).await;
 }
 
-fn state_of(st: &AppState, id: &str) -> RunState {
+pub(crate) fn state_of(st: &AppState, id: &str) -> RunState {
     st.runs().get(id).expect("run exists").state
 }
 
-async fn wait_final(st: &AppState, id: &str) -> Run {
+pub(crate) async fn wait_final(st: &AppState, id: &str) -> Run {
     for _ in 0..1000 {
         let run = st.runs().get(id).cloned().expect("run exists");
         if run.state.is_final() {
@@ -123,7 +128,7 @@ async fn wait_final(st: &AppState, id: &str) -> Run {
 }
 
 /// The next machine event named `name` (its detail), waiting up to 3 s.
-async fn machine_event(rx: &mut Receiver<Event>, name: &str) -> Option<String> {
+pub(crate) async fn machine_event(rx: &mut Receiver<Event>, name: &str) -> Option<String> {
     let wait = async {
         loop {
             match rx.recv().await {
@@ -136,17 +141,33 @@ async fn machine_event(rx: &mut Receiver<Event>, name: &str) -> Option<String> {
     tokio::time::timeout(Duration::from_secs(3), wait).await.unwrap_or_else(|_| panic!("no {name} event"))
 }
 
-/// Foot-switch machine events received so far.
-fn foot_events(rx: &mut Receiver<Event>) -> Vec<String> {
+/// The foot switch machine events (`foot_cycle`, `foot_cycle_notice`) received so far.
+pub(crate) fn foot_events(rx: &mut Receiver<Event>) -> Vec<String> {
     let mut out = Vec::new();
     while let Ok(e) = rx.try_recv() {
         if let Event::Machine { event, .. } = e
-            && event.starts_with("foot_switch")
+            && event.starts_with("foot_")
         {
             out.push(event);
         }
     }
     out
+}
+
+/// `POST /api/job/start` with these run options (one-click Start).
+pub(crate) fn start(body: Option<Value>) -> Request<Body> {
+    req("POST", "/api/job/start", body)
+}
+
+/// The pending runs `GET /api/machine` lists.
+pub(crate) async fn pending(app: &Router) -> Vec<Value> {
+    let (_, m) = send(app, req("GET", "/api/machine", None)).await;
+    m["pending_runs"].as_array().cloned().unwrap_or_default()
+}
+
+/// How many runs the engine knows (one-click Start and the foot switch cycle create theirs).
+pub(crate) fn run_count(st: &AppState) -> usize {
+    st.runs().views(st.revision()).len()
 }
 
 #[tokio::test]
@@ -206,14 +227,21 @@ async fn pin_mode_is_unchanged_and_ignores_the_foot_switch() {
     let app = api::router(st.clone(), None);
     let (_, m) = send(&app, req("GET", "/api/machine", None)).await;
     assert_eq!((&m["approval"]["mode"], &m["approval"]["foot_switch"]), (&json!("pin"), &json!(null)), "{m}");
+    assert_eq!((&m["foot_cycle"]["available"], &m["foot_cycle"]["phase"]), (&json!(false), &json!("off")), "{m}");
     rect(&app).await;
     let id = pending_run(&app, None).await;
     let mut events = st.subscribe();
     press(&app, 0).await;
     tokio::time::sleep(Duration::from_millis(400)).await;
     assert_eq!(state_of(&st, &id), RunState::Pending, "the foot switch never approves in the PIN mode");
+    assert!(!st.machine.is_framing(), "nor frames");
     assert!(foot_events(&mut events).is_empty());
     set_inputs(&app, 0).await;
+
+    // One-click Start does not exist in the PIN mode, browser or not.
+    let (s, v) = send(&app, browser(start(None))).await;
+    assert_eq!((s, &v["code"]), (StatusCode::FORBIDDEN, &json!("approval_mode")), "{v}");
+    assert_eq!(run_count(&st), 1, "nothing planned");
 
     // The browser headers do not replace the PIN.
     let (s, v) = send(&app, browser(approve(&id, None))).await;
@@ -227,189 +255,166 @@ async fn pin_mode_is_unchanged_and_ignores_the_foot_switch() {
     watch.abort();
 }
 
+/// LightBurn's Start: one request plans and approves the current document, from the app in a browser only.
 #[tokio::test]
-async fn the_foot_switch_approves_exactly_one_pending_run() {
+async fn one_click_start_burns_from_the_app_and_refuses_everything_else() {
     let st = state(pedal_profile(), ApprovalMode::Click).await;
-    let watch = crate::libs::spawn_io_watch(st.clone());
     let app = api::router(st.clone(), None);
-    let (_, m) = send(&app, req("GET", "/api/machine", None)).await;
-    assert_eq!(m["approval"]["foot_switch"], json!({"input_bit": 14, "active_low": false}), "{m}");
     let counters = st.machine.sim_counters().unwrap().clone();
-    let mut events = st.subscribe();
-
-    // Nothing waiting.
-    press(&app, 0).await;
-    assert_eq!(machine_event(&mut events, "foot_switch_ignored").await.as_deref(), Some("no_pending"));
-
-    // Two waiting (one requested in the app, one as an agent would): nothing is approved.
+    // Nothing to burn: refused, nothing left waiting.
+    let (s, v) = send(&app, browser(start(None))).await;
+    assert!(s.is_client_error() && v["error"].as_str().unwrap().contains("nothing"), "{s} {v}");
+    assert_eq!(run_count(&st), 0);
     rect(&app).await;
-    let a = pending_run(&app, None).await;
-    let b = pending_run(&app, Some(json!({"origin": "agent:test"}))).await;
-    press(&app, 0).await;
-    assert_eq!(machine_event(&mut events, "foot_switch_ignored").await.as_deref(), Some("several_pending"));
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert_eq!((state_of(&st, &a), state_of(&st, &b)), (RunState::Pending, RunState::Pending));
-    assert_eq!(counters.emitting_packets(), 0);
 
-    // An edit makes both stale; the one run requested after it is the only one the switch can approve.
-    rect(&app).await;
-    let c = pending_run(&app, Some(json!({"origin": "agent:test"}))).await;
-    press(&app, 0).await;
-    assert_eq!(machine_event(&mut events, "foot_switch_approved").await.as_deref(), Some(c.as_str()));
-    let run = wait_final(&st, &c).await;
+    // No Origin and no fetch metadata (curl, an agent's HTTP client), MCP client headers, another site, a non-UI
+    // origin: refused before anything is planned.
+    let (s, v) = send(&app, start(Some(json!({})))).await;
+    assert_eq!((s, &v["code"]), (StatusCode::FORBIDDEN, &json!("browser_required")), "{v}");
+    for marker in ["mcp-session-id", "mcp-protocol-version", "x-galvo-agent"] {
+        let mut r = browser(start(None));
+        r.headers_mut().insert(marker, "x".parse().unwrap());
+        let (s, v) = send(&app, r).await;
+        assert_eq!(s, StatusCode::FORBIDDEN, "{marker}: {v}");
+    }
+    for site in ["cross-site", "same-site", "none"] {
+        let mut r = browser(start(None));
+        r.headers_mut().insert("sec-fetch-site", site.parse().unwrap());
+        assert_eq!(send(&app, r).await.0, StatusCode::FORBIDDEN, "{site}");
+    }
+    let mut r = browser(start(None));
+    r.headers_mut().insert("origin", "http://evil.example".parse().unwrap());
+    assert_eq!(send(&app, r).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(send(&app, browser(start(Some(json!({"origin": "agent:x"}))))).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(send(&app, browser(start(Some(json!({"bogus": 1}))))).await.0, StatusCode::BAD_REQUEST, "unknown options");
+    assert_eq!(run_count(&st), 0, "nothing planned");
+    assert_eq!(counters.emitting_packets(), 0, "nothing fired");
+
+    // The app's Start button: planned, approved and burned in one click, nothing left pending.
+    let (s, v) = send(&app, browser(start(Some(json!({"origin": "ui"}))))).await;
+    assert_eq!((s, &v["ok"]), (StatusCode::OK, &json!(true)), "{v}");
+    let id = v["id"].as_str().unwrap().to_owned();
+    assert_eq!(v["run"]["id"], json!(id), "{v}");
+    let run = wait_final(&st, &id).await;
     assert_eq!(run.state, RunState::Finished, "{:?}", run.error);
     assert!(counters.emitting_packets() > 0);
-    assert_eq!((state_of(&st, &a), state_of(&st, &b)), (RunState::Pending, RunState::Pending), "stale runs untouched");
-    // Still held after the run: no second approval without a release.
-    let d = {
-        rect(&app).await;
-        pending_run(&app, None).await
-    };
-    tokio::time::sleep(Duration::from_millis(400)).await;
-    assert_eq!(state_of(&st, &d), RunState::Pending, "a held pedal approves nothing");
-    watch.abort();
-}
-
-#[tokio::test]
-async fn the_foot_switch_does_nothing_while_a_run_holds_the_board() {
-    let st = state(pedal_profile(), ApprovalMode::Click).await;
-    let watch = crate::libs::spawn_io_watch(st.clone());
-    let app = api::router(st.clone(), None);
-    rect(&app).await;
-    let id = pending_run(&app, None).await;
-    let mut events = st.subscribe();
-    // Another run holds the machine.
-    assert!(st.machine.try_begin_run());
-    press(&app, 0).await;
-    tokio::time::sleep(Duration::from_millis(400)).await;
-    assert_eq!(state_of(&st, &id), RunState::Pending);
-    // It ends while the pedal is still held: that press is not counted afterwards.
-    st.machine.end_run();
-    tokio::time::sleep(Duration::from_millis(400)).await;
-    assert_eq!(state_of(&st, &id), RunState::Pending);
-    assert!(foot_events(&mut events).is_empty(), "no foot switch event while the board was held");
-    // Release and press: approved.
-    press(&app, 0).await;
-    assert_eq!(machine_event(&mut events, "foot_switch_approved").await.as_deref(), Some(id.as_str()));
-    assert_eq!(wait_final(&st, &id).await.state, RunState::Finished);
-    watch.abort();
-}
-
-/// The press that approves a run with `start_input` starts its first iteration; each later iteration waits for its
-/// own press (the run owns the input while it holds the board, so those presses approve nothing else).
-#[tokio::test]
-async fn a_foot_switch_approval_starts_the_first_iteration_and_later_ones_wait() {
-    let st = state(pedal_profile(), ApprovalMode::Click).await;
-    let watch = crate::libs::spawn_io_watch(st.clone());
-    let app = api::router(st.clone(), None);
-    rect(&app).await;
-    let id = pending_run(&app, Some(json!({"repeat": 2, "start_input": true}))).await;
-    let mut events = st.subscribe();
-    press(&app, 0).await;
-    assert_eq!(machine_event(&mut events, "foot_switch_approved").await.as_deref(), Some(id.as_str()));
-    assert_eq!(machine_event(&mut events, "waiting_for_start_input").await.as_deref(), Some(id.as_str()));
-    let run = st.runs().get(&id).cloned().unwrap();
-    assert_eq!((run.completed, run.state), (1, RunState::AwaitingConfirm), "first iteration ran without a second press");
-    press(&app, 0).await;
-    let run = wait_final(&st, &id).await;
+    assert!(pending(&app).await.is_empty());
+    // Run options as for POST /api/runs.
+    let (s, v) = send(&app, browser(start(Some(json!({"repeat": 2}))))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let run = wait_final(&st, v["id"].as_str().unwrap()).await;
     assert_eq!((run.state, run.completed), (RunState::Finished, 2), "{:?}", run.error);
-    assert!(foot_events(&mut events).is_empty(), "the second press belonged to the run");
-    watch.abort();
 }
 
+/// The door, the Job Checklist, Require Framing, a busy board and Stop At refuse one-click Start, and a refused
+/// Start leaves nothing waiting.
 #[tokio::test]
-async fn an_open_door_still_refuses_start_and_the_foot_switch() {
+async fn one_click_start_keeps_every_gate() {
     let st = state(door_profile(), ApprovalMode::Click).await;
-    let watch = crate::libs::spawn_io_watch(st.clone());
     let app = api::router(st.clone(), None);
+    let counters = st.machine.sim_counters().unwrap().clone();
     rect(&app).await;
-    let id = pending_run(&app, None).await;
     set_inputs(&app, DOOR_OPEN).await;
-    let (s, v) = send(&app, browser(approve(&id, None))).await;
+    let (s, v) = send(&app, browser(start(None))).await;
     assert_eq!(s, StatusCode::CONFLICT, "{v}");
     assert!(v["error"].as_str().unwrap().contains("door"), "{v}");
-    let mut events = st.subscribe();
-    press(&app, DOOR_OPEN).await;
-    let why = machine_event(&mut events, "foot_switch_refused").await.unwrap_or_default();
-    assert!(why.contains("door"), "{why}");
-    assert_eq!(state_of(&st, &id), RunState::Pending);
-    assert_eq!(st.machine.sim_counters().unwrap().emitting_packets(), 0);
-    // Door closed: the next press approves.
-    press(&app, 0).await;
-    assert_eq!(machine_event(&mut events, "foot_switch_approved").await.as_deref(), Some(id.as_str()));
-    assert_eq!(wait_final(&st, &id).await.state, RunState::Finished);
-    watch.abort();
-}
+    set_inputs(&app, 0).await;
 
-#[tokio::test]
-async fn stop_wins_over_a_foot_switch_approval() {
-    let st = state(pedal_profile(), ApprovalMode::Click).await;
-    let watch = crate::libs::spawn_io_watch(st.clone());
-    let app = api::router(st.clone(), None);
-    rect(&app).await;
-    let id = pending_run(&app, Some(json!({"repeat": 3, "start_input": true}))).await;
-    let mut events = st.subscribe();
-    press(&app, 0).await;
-    assert_eq!(machine_event(&mut events, "waiting_for_start_input").await.as_deref(), Some(id.as_str()));
-    let counters = st.machine.sim_counters().unwrap().clone();
-    let fired = counters.emitting_packets();
-    let (s, v) = send(&app, req("POST", "/api/machine/stop", None)).await;
-    assert_eq!(s, StatusCode::OK, "{v}");
-    let run = wait_final(&st, &id).await;
-    // Stop cancels a run that is not streaming (here: waiting for its second press).
-    assert_eq!((run.state, run.completed), (RunState::Cancelled, 1), "{:?}", run.error);
-    press(&app, 0).await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    assert_eq!(counters.emitting_packets(), fired, "nothing fires after Stop");
-    watch.abort();
-}
-
-/// A press approves only the run that was already the single one waiting when the press began: a run requested
-/// (e.g. by an agent) while the pedal goes down, or one that replaced the run the operator saw, is not approved. The
-/// watcher's side (what was waiting when the press began, read by read) is `libs::tests`; it is not timed through
-/// the watcher here, where the 50 ms polls would make the test depend on scheduling.
-#[tokio::test]
-async fn a_press_never_approves_a_run_requested_during_it() {
-    let st = state(pedal_profile(), ApprovalMode::Click).await;
-    let app = api::router(st.clone(), None);
-    rect(&app).await;
-    let a = pending_run(&app, Some(json!({"origin": "agent:test"}))).await;
-    let mut events = st.subscribe();
-    // The press began with nothing waiting.
-    foot_switch_pressed(&st, &[]).await;
-    assert_eq!(machine_event(&mut events, "foot_switch_ignored").await.as_deref(), Some("changed_during_press"));
-    // The press began while another run waited (since replaced).
-    foot_switch_pressed(&st, &["run-gone".to_owned()]).await;
-    assert_eq!(machine_event(&mut events, "foot_switch_ignored").await.as_deref(), Some("changed_during_press"));
-    // The press began while two waited and one was cancelled during it.
-    foot_switch_pressed(&st, &[a.clone(), "run-gone".to_owned()]).await;
-    assert_eq!(machine_event(&mut events, "foot_switch_ignored").await.as_deref(), Some("changed_during_press"));
-    assert_eq!(state_of(&st, &a), RunState::Pending);
-    assert_eq!(st.machine.sim_counters().unwrap().emitting_packets(), 0);
-    // The press began while it was the one waiting: approved.
-    foot_switch_pressed(&st, std::slice::from_ref(&a)).await;
-    assert_eq!(machine_event(&mut events, "foot_switch_approved").await.as_deref(), Some(a.as_str()));
-    assert_eq!(wait_final(&st, &a).await.state, RunState::Finished);
-}
-
-/// A Job Checklist cannot be ticked with a foot: with it on, a press is refused (Start with the ticks approves).
-#[tokio::test]
-async fn the_checklist_refuses_a_foot_switch_press() {
-    let st = state(pedal_profile(), ApprovalMode::Click).await;
-    let app = api::router(st.clone(), None);
     let device = st.active_device().id;
     crate::libs::lock(&st.libs.prefs).device_mut(&device).checklist =
         crate::prefs::Checklist { enabled: true, items: vec!["Eyewear on".into()] };
-    rect(&app).await;
-    let id = pending_run(&app, None).await;
-    let mut events = st.subscribe();
-    foot_switch_pressed(&st, std::slice::from_ref(&id)).await;
-    let why = machine_event(&mut events, "foot_switch_refused").await.unwrap_or_default();
-    assert!(why.contains("Checklist"), "{why}");
-    assert_eq!(state_of(&st, &id), RunState::Pending);
-    let (s, v) = send(&app, browser(approve(&id, Some(json!({"checklist": [true]}))))).await;
+    let (s, v) = send(&app, browser(start(None))).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+    assert!(v["error"].as_str().unwrap().contains("Checklist"), "{v}");
+    let (s, v) = send(&app, browser(start(Some(json!({"checklist": [false]}))))).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+
+    crate::libs::lock(&st.libs.prefs).device_mut(&device).require_framing = true;
+    let (s, v) = send(&app, browser(start(Some(json!({"checklist": [true]}))))).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+    assert!(v["error"].as_str().unwrap().contains("Require Framing"), "{v}");
+    let (s, v) = send(&app, req("POST", "/api/machine/frame", Some(json!({"continuous": false})))).await;
     assert_eq!(s, StatusCode::OK, "{v}");
-    assert_eq!(wait_final(&st, &id).await.state, RunState::Finished);
+
+    // Another run holds the machine.
+    assert!(st.machine.try_begin_run());
+    let (s, v) = send(&app, browser(start(Some(json!({"checklist": [true]}))))).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+    st.machine.end_run();
+    assert_eq!(run_count(&st), 0, "refused Starts leave nothing");
+    assert_eq!(counters.emitting_packets(), 0);
+
+    // Framed, ticked, door closed: started.
+    let (s, v) = send(&app, browser(start(Some(json!({"checklist": [true]}))))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(wait_final(&st, v["id"].as_str().unwrap()).await.state, RunState::Finished);
+
+    // Stop At reached.
+    let (s, v) = send(&app, req("PUT", "/api/job/settings", Some(json!({"stop_at": 1})))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (s, v) = send(&app, browser(start(Some(json!({"checklist": [true]}))))).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+    assert!(v["error"].as_str().unwrap().contains("Stop At"), "{v}");
+    assert_eq!(run_count(&st), 1);
+}
+
+/// Start burns only the document revision the app showed: an edit that came in just before the click (an agent's,
+/// over MCP or HTTP) refuses the Start, and nothing is planned, left waiting or fired.
+#[tokio::test]
+async fn one_click_start_burns_only_the_revision_the_app_showed() {
+    let st = state(pedal_profile(), ApprovalMode::Click).await;
+    let app = api::router(st.clone(), None);
+    let counters = st.machine.sim_counters().unwrap().clone();
+    rect(&app).await;
+    let shown = st.revision();
+    // An agent's edit lands between the person looking at the job and clicking Start.
+    let body = json!({"id": "shape.rect", "params": {"width_mm": 30, "height_mm": 30}, "origin": "agent:test"});
+    let (s, v) = send(&app, req("POST", "/api/execute", Some(body))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_ne!(st.revision(), shown);
+    let (s, v) = send(&app, browser(start(Some(json!({"revision": shown}))))).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+    assert!(v["error"].as_str().unwrap().contains("changed since Start was clicked"), "{v}");
+    assert_eq!(run_count(&st), 0, "nothing planned or left waiting");
+    assert_eq!(counters.emitting_packets(), 0, "nothing fired");
+    assert_eq!(send(&app, browser(start(Some(json!({"revision": "x"}))))).await.0, StatusCode::BAD_REQUEST);
+    // The revision the app shows now: started.
+    let (s, v) = send(&app, browser(start(Some(json!({"revision": st.revision()}))))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let run = wait_final(&st, v["id"].as_str().unwrap()).await;
+    assert_eq!((run.state, run.revision), (RunState::Finished, st.revision()), "{:?}", run.error);
+}
+
+/// A Stop that comes in while Start still checks its gates (here: held at the device preferences, before the door is
+/// read) cancels that Start: nothing fires after a Stop.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_stop_while_start_checks_the_door_cancels_the_start() {
+    let st = state(door_profile(), ApprovalMode::Click).await;
+    let app = api::router(st.clone(), None);
+    let counters = st.machine.sim_counters().unwrap().clone();
+    rect(&app).await;
+    let (locked_tx, locked_rx) = std::sync::mpsc::channel::<()>();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let held = st.clone();
+    let holder = std::thread::spawn(move || {
+        let _prefs = crate::libs::lock(&held.libs.prefs);
+        locked_tx.send(()).unwrap();
+        release_rx.recv().unwrap();
+    });
+    locked_rx.recv().unwrap();
+    let app2 = app.clone();
+    let click = tokio::spawn(async move { send(&app2, browser(start(None))).await });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    st.stop().await.expect("stop");
+    release_tx.send(()).unwrap();
+    holder.join().unwrap();
+    let (s, v) = click.await.unwrap();
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+    assert!(v["error"].as_str().unwrap().contains("stopped"), "{v}");
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(counters.emitting_packets(), 0, "nothing fired after the Stop");
+    assert!(!st.machine.is_running());
+    assert_eq!(run_count(&st), 0, "nothing left waiting");
 }
 
 #[test]
