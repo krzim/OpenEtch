@@ -46,11 +46,15 @@ const settings = (extra: Record<string, unknown> = {}): CutSettings =>
   }) as CutSettings;
 
 test("cut options resolve with the engine's defaults", () => {
-  const r = resolveOptions(settings({ options: {} }));
+  const r = resolveOptions(settings({ options: { fill_grouping: "all_at_once" } }));
   assert.equal(r.output, true);
-  assert.equal(r.fill_grouping, "individually");
+  assert.equal(r.fill_grouping, "all_at_once");
   assert.equal(r.dot_mode, null);
-  assert.equal(activeOptionCount(r), 0);
+  assert.equal(activeOptionCount(r), 0, "a new layer's options");
+  // Options saved without a fill grouping fill shapes individually, which differs from a new layer.
+  const old = resolveOptions(settings({ options: {} }));
+  assert.equal(old.fill_grouping, "individually");
+  assert.equal(activeOptionCount(old), 1);
   const s = resolveOptions(settings({ options: { output: false, pause_after_ms: 20, wobble: { step_mm: 0.2, size_mm: 0.5 }, tabs: { size_mm: 1, count: 3 }, fill_grouping: "by_group" } }));
   assert.equal(s.output, false);
   assert.deepEqual(s.wobble, { step_mm: 0.2, size_mm: 0.5 });

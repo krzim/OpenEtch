@@ -753,6 +753,8 @@ fn pass_polylines(
                     groups.into_iter().map(|(_, m)| m).collect()
                 }
             };
+            // One hatch marks at one power: shapes with different power scales do not share one.
+            let groups: Vec<Vec<&ShapeIn>> = groups.into_iter().flat_map(by_scale).collect();
             let mut chunks: Vec<(Chunk, f64)> = Vec::new();
             for group in groups {
                 let rings: Vec<Vec<Point>> =
@@ -819,6 +821,18 @@ fn pass_polylines(
         }
     }
     Ok((out, scales, pos))
+}
+
+/// `group` split by power scale, in order of each scale's first shape (one group when all share one).
+fn by_scale<'s, 'a>(group: Vec<&'s ShapeIn<'a>>) -> Vec<Vec<&'s ShapeIn<'a>>> {
+    let mut out: Vec<(f64, Vec<&ShapeIn>)> = Vec::new();
+    for s in group {
+        match out.iter_mut().find(|(k, _)| *k == s.scale) {
+            Some((_, members)) => members.push(s),
+            None => out.push((s.scale, vec![s])),
+        }
+    }
+    out.into_iter().map(|(_, m)| m).collect()
 }
 
 /// A shape's outlines as line chunks: closed outlines offset by the kerf (LightBurn's Kerf Offset; open ones stay

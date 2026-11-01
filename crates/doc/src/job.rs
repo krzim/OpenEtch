@@ -19,15 +19,22 @@ fn is_zero(v: &f64) -> bool {
     *v == 0.0
 }
 
-/// How a fill layer groups shapes into one hatch (LightBurn's Fill Grouping).
+/// How a fill layer groups shapes into one hatch (LightBurn's Fill Grouping, `scanOpt`).
+///
+/// New settings ([`CutOptions::default`], so every new layer) fill `all_at_once`, LightBurn's default. In JSON the
+/// field is left out while `individually`, and a missing field reads as `individually` (this type's `Default`), which
+/// is what every document saved before new layers changed to `all_at_once` meant by leaving it out; so those load
+/// unchanged.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FillGrouping {
-    /// Each object is hatched on its own (even-odd within the object). OpenEtch's default, kept for older files;
-    /// LightBurn's default is `all_at_once`.
+    /// Each object is hatched on its own (even-odd within the object), shape after shape. What a missing field means
+    /// (older files).
     #[default]
     Individually,
-    /// Every shape of the layer in one hatch (even-odd across shapes: overlaps cancel, as in LightBurn).
+    /// Every shape of the layer in one hatch (even-odd across shapes: overlaps cancel, as in LightBurn): one sweep of
+    /// scanlines across the layer (shapes with different power scales are hatched apart). LightBurn's default and
+    /// that of new settings.
     AllAtOnce,
     /// The shapes of each top-level group in one hatch; ungrouped objects on their own.
     ByGroup,
@@ -82,7 +89,8 @@ pub struct Tabs {
     pub size_mm: f64,
 }
 
-/// Per-pass cut options (LightBurn's layer settings beyond the laser parameters). Defaults change nothing.
+/// Per-pass cut options (LightBurn's layer settings beyond the laser parameters). The defaults change nothing; they
+/// fill all at once ([`FillGrouping`]), as LightBurn does.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct CutOptions {
@@ -103,7 +111,8 @@ pub struct CutOptions {
     /// Fill: shorten both ends of every hatch line by half this width, mm (LightBurn's Dot Width Adjust for fills).
     #[serde(skip_serializing_if = "is_zero")]
     pub fill_dot_width_mm: f64,
-    #[serde(skip_serializing_if = "FillGrouping::is_default")]
+    /// Fill grouping. `all_at_once` in new settings; missing in JSON reads as `individually` (see [`FillGrouping`]).
+    #[serde(default, skip_serializing_if = "FillGrouping::is_default")]
     pub fill_grouping: FillGrouping,
     /// Fill: turn the hatch by `hatch.angle_increment_deg` on every run of the job instead of every pass
     /// (LightBurn's Auto-rotate).
@@ -138,7 +147,7 @@ impl Default for CutOptions {
             dot_mode: None,
             wobble: None,
             fill_dot_width_mm: 0.0,
-            fill_grouping: FillGrouping::Individually,
+            fill_grouping: FillGrouping::AllAtOnce,
             auto_rotate: false,
             flood_fill: false,
             perforation: None,
@@ -156,6 +165,12 @@ pub const MAX_PAUSE_MS: f64 = 600_000.0;
 impl CutOptions {
     pub fn is_default(&self) -> bool {
         *self == CutOptions::default()
+    }
+
+    /// The options of settings saved without any (`{}` or no `options` at all): the defaults, but filling
+    /// shapes individually as OpenEtch did before new settings filled all at once.
+    pub fn absent() -> Self {
+        CutOptions { fill_grouping: FillGrouping::Individually, ..CutOptions::default() }
     }
 
     /// Why these options cannot be planned, if they cannot (the field and the rule).
@@ -433,7 +448,12 @@ mod tests {
 
     #[test]
     fn defaults_serialise_to_nothing_and_round_trip() {
-        assert_eq!(serde_json::to_value(CutOptions::default()).unwrap(), serde_json::json!({}));
+        // New settings fill all at once (LightBurn's default); options saved empty keep filling shapes individually.
+        assert_eq!(serde_json::to_value(CutOptions::default()).unwrap(), serde_json::json!({"fill_grouping": "all_at_once"}));
+        assert_eq!(serde_json::to_value(CutOptions::absent()).unwrap(), serde_json::json!({}));
+        assert_eq!(serde_json::from_value::<CutOptions>(serde_json::json!({})).unwrap(), CutOptions::absent());
+        let back: CutOptions = serde_json::from_value(serde_json::to_value(CutOptions::default()).unwrap()).unwrap();
+        assert_eq!(back, CutOptions::default());
         let o = CutOptions {
             output: false,
             pause_after_ms: 50.0,

@@ -137,11 +137,34 @@ fn power_scale_lowers_a_shapes_power() {
 }
 
 #[test]
+fn power_scale_holds_for_fills_filled_together() {
+    // New layers fill all at once; a shape with its own power scale still marks at its own power (shapes of one scale
+    // share a hatch), for all at once and by group alike.
+    let objects = vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0)), rect("obj-2", 10.0, 10.0, (20.0, 0.0)), rect("obj-3", 10.0, 10.0, (40.0, 0.0))];
+    for grouping in [FillGrouping::AllAtOnce, FillGrouping::ByGroup] {
+        let o = CutOptions { fill_grouping: grouping, ..CutOptions::default() };
+        let mut d = doc_with(objects.clone(), with_options(CutSettings { power_pct: 40.0, ..fill(0.5) }, o));
+        d.object_options.insert("obj-2".into(), ObjectOptions { priority: None, power_scale_pct: 50.0, ..ObjectOptions::default() });
+        let plan = plan_job(&d, &target()).unwrap();
+        let pass = &plan.passes[0];
+        let power_at = |x: f64| -> Vec<f64> {
+            (0..pass.polylines.len()).filter(|&i| pass.polylines[i].iter().all(|p| (p[0] - x).abs() <= 5.0)).map(|i| pass.power_of(i)).collect()
+        };
+        for (x, power) in [(0.0, 40.0), (20.0, 20.0), (40.0, 40.0)] {
+            let p = power_at(x);
+            assert!(!p.is_empty() && p.iter().all(|&v| v == power), "{grouping:?}: the square at x {x} marks at {p:?}, not {power}");
+        }
+    }
+}
+
+#[test]
 fn fill_grouping_all_at_once_cancels_overlaps() {
     let objects = vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0)), rect("obj-2", 10.0, 10.0, (5.0, 0.0))];
-    let individually = plan_job(&doc_with(objects.clone(), fill(0.5)), &target()).unwrap();
-    let o = CutOptions { fill_grouping: FillGrouping::AllAtOnce, ..CutOptions::default() };
-    let at_once = plan_job(&doc_with(objects, with_options(fill(0.5), o)), &target()).unwrap();
+    let o = CutOptions { fill_grouping: FillGrouping::Individually, ..CutOptions::default() };
+    let individually = plan_job(&doc_with(objects.clone(), with_options(fill(0.5), o)), &target()).unwrap();
+    // New settings fill all at once, as LightBurn does.
+    assert_eq!(fill(0.5).options.fill_grouping, FillGrouping::AllAtOnce);
+    let at_once = plan_job(&doc_with(objects, fill(0.5)), &target()).unwrap();
     // Individually: 200 mm² of hatch; at once (even-odd): 100 mm² (the 50 mm² overlap cancels, twice).
     assert!((individually.stats.mark_length_mm / at_once.stats.mark_length_mm - 2.0).abs() < 0.1);
 }

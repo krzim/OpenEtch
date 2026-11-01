@@ -16,7 +16,11 @@ export const CUT_CMD = {
 
 export type FillGrouping = "individually" | "all_at_once" | "by_group";
 
-/** `doc::CutOptions`: every field optional on the wire (defaults are left out of JSON). */
+/**
+ * `doc::CutOptions`: every field optional on the wire (defaults are left out of JSON). `fill_grouping` is the
+ * exception: a missing one means `individually` (settings saved before new layers filled all at once), so the
+ * engine writes `all_at_once`, LightBurn's default and that of new layers, explicitly.
+ */
 export interface CutOptions {
   output?: boolean;
   pause_before_ms?: number;
@@ -95,7 +99,7 @@ export function resolveOptions(settings: CutSettings | null | undefined): Resolv
   };
 }
 
-/** How many options differ from the defaults (for the collapsed section's badge). */
+/** How many options differ from a new layer's (for the collapsed section's badge). */
 export function activeOptionCount(r: ResolvedOptions): number {
   let c = 0;
   if (!r.output) c++;
@@ -104,7 +108,7 @@ export function activeOptionCount(r: ResolvedOptions): number {
   if (r.dot_mode) c++;
   if (r.wobble) c++;
   if (r.fill_dot_width_mm) c++;
-  if (r.fill_grouping !== "individually") c++;
+  if (r.fill_grouping !== "all_at_once") c++;
   if (r.auto_rotate) c++;
   if (r.flood_fill) c++;
   if (r.perforation) c++;

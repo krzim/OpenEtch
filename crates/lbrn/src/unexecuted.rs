@@ -3,23 +3,30 @@
 //! (and `"lbrn2.subN.<tag>"` for sub-layer N) so they round-trip, but planning never reads extras. So a job can mark
 //! differently from LightBurn without notice; [`unexecuted_settings`] lists, per layer, what that is:
 //!
-//! - **Off in OpenEtch, on in the file**: LightBurn switches whose effect OpenEtch models with its own cut option but
-//!   which the import does not turn on: `wobbleEnable` (Wobble), `perforate` (Perforation, `perfLen`/`perfSkip`),
-//!   `tabsEnabled` (Tabs), `floodFill` (Flood Fill), `autoRotate` (Auto-rotate), `kerf` (Kerf Offset, non-zero),
-//!   `dotMode` (Dot Mode). Listed while the switch is on in the kept tags and OpenEtch's option is still off; setting
+//! - **On in the file, off in OpenEtch**: LightBurn switches whose effect OpenEtch has its own cut option for.
+//!   The import turns on those that mean the same (the `options` module: `floodFill` Flood Fill, `autoRotate`
+//!   Auto-rotate, `wobbleEnable` Wobble, `perforate` Perforation, `dotMode` Dot Mode, and `scanOpt` Fill Grouping),
+//!   so they are listed only when their values could not be used (e.g. Dot Mode with LightBurn's default `dotTime` of
+//!   0) or the option was turned off since. Two are never turned on, because OpenEtch's option does not mean the same:
+//!   `tabsEnabled` (LightBurn's tabs are placed by hand by default, can skip inner shapes and cut at a power; OpenEtch
+//!   spaces gaps evenly on every closed outline) and `kerf` (Kerf Offset: LightBurn's documentation does not say how
+//!   holes or fill layers are offset; OpenEtch grows parts and shrinks holes on line passes only, and no sample file
+//!   has one to compare). Listed while the switch is on in the kept tags and OpenEtch's option is still off; setting
 //!   the option (`layer.update settings.options`) clears the entry.
-//! - **Unknown**: any other kept tag OpenEtch has no meaning for (LightBurn versions add settings). Listed with
-//!   `active: null`, since whether it changes the output is not known.
+//! - **Unknown**: any other kept tag OpenEtch has no meaning for (LightBurn versions add settings), and a `scanOpt`
+//!   value the import did not recognise. Listed with `active: null`, since whether it changes the output is not
+//!   known.
 //!
 //! Tags that never change a galvo job are not listed: gantry-only values (`minPower` of a vector layer, `minPower2`,
 //! `maxPower2`, `PPI`, `overscan`, `overscanPercent`), the per-layer `JumpSpeed` (galvo jumps use the device's), the
-//! parameters of a switch that is off (`perfLen`, `tabCount`, `dotTime`, ...), the library link (`LinkPath`), names
+//! parameters of a switch (`perfLen`, `tabCount`, `dotTime`, ...), the library link (`LinkPath`), names
 //! and bookkeeping (`subname`, `cleanupPass`, `isCleanup`, `dotWidth` and `useDotCorrection` of a vector layer).
 
 use doc::{CutSettings, Layer};
 use serde::Serialize;
 
 use crate::convert::EXTRA_PREFIX;
+use crate::options::{fill_grouping_of, on};
 
 /// One setting a layer keeps that the job will not execute.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -40,17 +47,30 @@ pub struct UnexecutedSetting {
     pub note: String,
 }
 
-/// Switches OpenEtch has its own option for: (tag, LightBurn's name, whether OpenEtch's option is on, parameters).
-type Switch = (&'static str, &'static str, fn(&CutSettings) -> bool, &'static [&'static str]);
+/// Switches OpenEtch has its own option for: (tag, LightBurn's name, whether OpenEtch's option is on, parameters,
+/// why the import does not turn it on: `None` when it does, see the module docs).
+type Switch = (&'static str, &'static str, fn(&CutSettings) -> bool, &'static [&'static str], Option<&'static str>);
 
 const SWITCHES: &[Switch] = &[
-    ("wobbleEnable", "Wobble", |s| s.options.wobble.is_some(), &["wobbleStep", "wobbleSize"]),
-    ("perforate", "Perforation", |s| s.options.perforation.is_some(), &["perfLen", "perfSkip"]),
-    ("tabsEnabled", "Tabs", |s| s.options.tabs.is_some(), &["tabCount", "tabCountMax", "tabSpacing", "tabSize"]),
-    ("floodFill", "Flood Fill", |s| s.options.flood_fill, &[]),
-    ("autoRotate", "Auto-rotate", |s| s.options.auto_rotate, &[]),
-    ("kerf", "Kerf Offset", |s| s.options.kerf_offset_mm != 0.0, &[]),
-    ("dotMode", "Dot Mode", |s| s.options.dot_mode.is_some(), &["dotTime", "dotSpacing"]),
+    ("wobbleEnable", "Wobble", |s| s.options.wobble.is_some(), &["wobbleStep", "wobbleSize"], None),
+    ("perforate", "Perforation", |s| s.options.perforation.is_some(), &["perfLen", "perfSkip"], None),
+    (
+        "tabsEnabled",
+        "Tabs",
+        |s| s.options.tabs.is_some(),
+        &["tabCount", "tabCountMax", "tabSpacing", "tabSize", "tabsUseSpacing", "manualTabs", "skipInnerTabs", "tabCutPower"],
+        Some("LightBurn's tabs, hand-placed by default and able to skip inner shapes or cut at a power, differ from OpenEtch's evenly spaced gaps"),
+    ),
+    ("floodFill", "Flood Fill", |s| s.options.flood_fill, &[], None),
+    ("autoRotate", "Auto-rotate", |s| s.options.auto_rotate, &[], None),
+    (
+        "kerf",
+        "Kerf Offset",
+        |s| s.options.kerf_offset_mm != 0.0,
+        &[],
+        Some("how LightBurn offsets holes and fill layers is not known, so the offset is not copied"),
+    ),
+    ("dotMode", "Dot Mode", |s| s.options.dot_mode.is_some(), &["dotTime", "dotSpacing"], None),
 ];
 
 /// Kept tags that never change a galvo job (see the module docs).
@@ -70,13 +90,6 @@ const HARMLESS: &[&str] = &[
     "useDotCorrection",
     "frequency_absent",
 ];
-
-fn on(value: &str) -> bool {
-    match value.trim() {
-        "1" | "true" | "True" => true,
-        v => v.parse::<f64>().is_ok_and(|x| x != 0.0),
-    }
-}
 
 /// Every kept LightBurn setting of `layer` the job will not execute (see the module docs), main settings first,
 /// then each sub-layer's, each in tag order. Empty for a layer that did not come from LightBurn.
@@ -111,21 +124,32 @@ pub fn unexecuted_settings(layer: &Layer) -> Vec<UnexecutedSetting> {
     };
     let params: Vec<&str> = SWITCHES.iter().flat_map(|s| s.3.iter().copied()).collect();
     for &(sub, tag, value) in &kept {
-        if let Some((_, name, has, _)) = SWITCHES.iter().find(|s| s.0 == tag) {
+        if let Some((_, name, has, _, why)) = SWITCHES.iter().find(|s| s.0 == tag) {
             let Some(settings) = settings_of(sub) else { continue };
             if on(value) && !has(settings) {
+                let note = match why {
+                    Some(why) => format!(
+                        "{name} is on in the LightBurn file but OpenEtch does not do it for this layer ({why}); set \
+                         it in the layer's cut options to mark like LightBurn"
+                    ),
+                    None => format!(
+                        "{name} is on in the LightBurn file but off for this layer in OpenEtch (its values could not \
+                         be used, or it was turned off); set it in the layer's cut options to mark like LightBurn"
+                    ),
+                };
                 out.push(UnexecutedSetting {
                     tag: tag.into(),
                     setting: (*name).into(),
                     value: value.into(),
                     sub_layer: sub,
                     active: Some(true),
-                    note: format!(
-                        "{name} is on in the LightBurn file but OpenEtch does not do it for this layer; set it in the \
-                         layer's cut options to mark like LightBurn"
-                    ),
+                    note,
                 });
             }
+            continue;
+        }
+        // Fill Grouping is executed (the `options` module) when its value is known.
+        if tag == "scanOpt" && fill_grouping_of(value).is_some() {
             continue;
         }
         if HARMLESS.contains(&tag) || params.contains(&tag) {
@@ -198,6 +222,43 @@ mod tests {
         l.sub_layers[0].options.flood_fill = true;
         let u = unexecuted_settings(&l);
         assert_eq!(u.iter().map(|s| s.tag.as_str()).collect::<Vec<_>>(), ["futureThing", "tabsEnabled"]);
+    }
+
+    #[test]
+    fn imported_switches_that_mean_the_same_are_executed_not_listed() {
+        let cs = crate::parse(
+            r#"<LightBurnProject AppVersion="2.1.04" FormatVersion="1">
+    <CutSetting type="Scan">
+        <index Value="0"/>
+        <name Value="C00"/>
+        <maxPower Value="50"/>
+        <speed Value="1000"/>
+        <floodFill Value="1"/>
+        <autoRotate Value="1"/>
+        <scanOpt Value="byGroup"/>
+        <tabsEnabled Value="1"/>
+        <SubLayer type="Cut" index="1">
+            <maxPower Value="20"/>
+            <speed Value="800"/>
+            <dotMode Value="1"/>
+            <wobbleEnable Value="1"/>
+            <scanOpt Value="sideways"/>
+        </SubLayer>
+    </CutSetting>
+</LightBurnProject>"#,
+        )
+        .unwrap()
+        .cut_settings
+        .remove(0);
+        let (l, warnings) = crate::cut_setting_to_layer(&cs, "layer-1");
+        assert!(l.settings.options.flood_fill && l.settings.options.auto_rotate);
+        assert!(l.sub_layers[0].options.wobble.is_some(), "the sub-layer's wobble at LightBurn's defaults");
+        let u = unexecuted_settings(&l);
+        let tags: Vec<(&str, Option<usize>, Option<bool>)> = u.iter().map(|s| (s.tag.as_str(), s.sub_layer, s.active)).collect();
+        // Tabs differ from OpenEtch's; Dot Mode's default time of 0 ms cannot be used; the grouping is not known.
+        assert_eq!(tags, [("tabsEnabled", None, Some(true)), ("dotMode", Some(0), Some(true)), ("scanOpt", Some(0), None)], "{u:?}");
+        assert!(u[0].note.contains("hand-placed"), "{}", u[0].note);
+        assert!(warnings.iter().any(|w| w.contains("Dot Mode is on")), "{warnings:?}");
     }
 
     #[test]

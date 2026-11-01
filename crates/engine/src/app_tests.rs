@@ -722,14 +722,14 @@ async fn device_details_report_every_io_bit_and_the_red_dot() {
 
 // ---------------------------------------------------------------- LAY-034 and LAY-042
 
-const WOBBLE_LBRN: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+const TABS_LBRN: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <LightBurnProject AppVersion="1.7.08" FormatVersion="1" MaterialHeight="0" MirrorX="False" MirrorY="False">
     <CutSetting type="Cut">
         <index Value="0"/>
         <name Value="Outline"/>
         <maxPower Value="20"/>
         <speed Value="500"/>
-        <wobbleEnable Value="1"/>
+        <tabsEnabled Value="1"/>
         <priority Value="0"/>
     </CutSetting>
     <CutSetting type="Tool">
@@ -749,20 +749,20 @@ const WOBBLE_LBRN: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 async fn unexecuted_lightburn_settings_are_reported_per_layer() {
     let st = state().await;
     let app = api::router(st.clone(), None);
-    let r = exec(&app, "doc.import_lbrn2", json!({"content": WOBBLE_LBRN, "field_mm": 150})).await;
+    let r = exec(&app, "doc.import_lbrn2", json!({"content": TABS_LBRN, "field_mm": 150})).await;
     let warnings = r["warnings"].to_string();
-    assert!(warnings.contains("Wobble is on in the file but will not be executed"), "{warnings}");
-    assert_eq!(r["unsupported_settings"][0]["unsupported"][0]["tag"], "wobbleEnable", "{r}");
+    assert!(warnings.contains("Tabs is on in the file but will not be executed"), "{warnings}");
+    assert_eq!(r["unsupported_settings"][0]["unsupported"][0]["tag"], "tabsEnabled", "{r}");
     let (_, u) = send(&app, req("GET", "/api/layers/unsupported", None)).await;
     assert_eq!(u["layers"].as_array().unwrap().len(), 1, "only the Outline layer (T1 is a tool layer): {u}");
     assert_eq!(u["layers"][0]["name"], "Outline");
     let lid = u["layers"][0]["layer_id"].as_str().unwrap().to_owned();
     let (_, p) = send(&app, req("GET", "/api/preview", None)).await;
     let layer = p["layers"].as_array().unwrap().iter().find(|l| l["layer_id"] == lid.as_str()).cloned().unwrap();
-    assert_eq!(layer["unsupported"][0]["setting"], "Wobble", "{layer}");
+    assert_eq!(layer["unsupported"][0]["setting"], "Tabs", "{layer}");
     assert_eq!(layer["unsupported"][0]["active"], true);
-    // Turning OpenEtch's wobble on clears it.
-    exec(&app, "layer.update", json!({"id": lid, "settings": {"options": {"wobble": {"step_mm": 0.2, "size_mm": 0.5}}}})).await;
+    // Turning OpenEtch's tabs on clears it.
+    exec(&app, "layer.update", json!({"id": lid, "settings": {"options": {"tabs": {"count": 4, "size_mm": 0.5}}}})).await;
     let (_, u) = send(&app, req("GET", "/api/layers/unsupported", None)).await;
     assert_eq!(u["layers"], json!([]));
 }
@@ -771,7 +771,7 @@ async fn unexecuted_lightburn_settings_are_reported_per_layer() {
 async fn tool_layers_never_output_frame_with_the_job_and_export_as_tool_layers() {
     let st = state().await;
     let app = api::router(st.clone(), None);
-    exec(&app, "doc.import_lbrn2", json!({"content": WOBBLE_LBRN, "field_mm": 150})).await;
+    exec(&app, "doc.import_lbrn2", json!({"content": TABS_LBRN, "field_mm": 150})).await;
     let d = st.document();
     let t1 = d.layers.iter().find(|l| l.tool == Some(doc::ToolLayer::T1)).expect("the import made T1 a tool layer").id.clone();
     assert!(!d.layer(&t1).unwrap().output);

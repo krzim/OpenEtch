@@ -506,6 +506,7 @@ fn layer_from(index: u32, cs: Option<&CutSetting>, id: String, w: &mut Warnings)
     }
     let no_frequency = |p: &CutParams| p.frequency.is_none() && !p.other.contains_key("frequency");
     let (mut settings, mut rest) = to_settings(&cs.kind, p, &label, w);
+    settings.options = crate::options::options_from(&rest, &label, &mut |m| w.push(m));
     if cs.image {
         settings.image = crate::image::image_from(p, &mut rest, &crate::image::lightburn_base(), &label, &mut |m| w.push(m));
     }
@@ -523,6 +524,7 @@ fn layer_from(index: u32, cs: Option<&CutSetting>, id: String, w: &mut Warnings)
         let sub_label = format!("{label} sub-layer {}", n + 1);
         let (mut s, mut rest) = to_settings(&sub.kind, &sub.params, &sub_label, w);
         sub_layer_fields(&mut s, &mut rest);
+        s.options = crate::options::options_from(&rest, &sub_label, &mut |m| w.push(m));
         s.image = if cs.image {
             let parent = &layer.settings.image;
             crate::image::image_from(&sub.params, &mut rest, parent, &sub_label, &mut |m| w.push(m))
@@ -1337,6 +1339,9 @@ pub fn from_document_in(d: &Document, frame: Frame) -> Result<(LbrnProject, Vec<
         let src = source.as_deref();
         let in_source = |t: &str| src.is_some_and(|v| v.iter().any(|(k, _)| k == t));
         let mut values = if tool { base } else { settings_values(&l.settings, base, frequency_absent, src) };
+        if !tool {
+            crate::options::options_values(&l.settings.options, &mut values);
+        }
         // The source's own spelling while it still gives this name (e.g. an empty name shown as `C00`).
         let src_tag = |t: &str| src.and_then(|v| v.iter().find(|(k, _)| k == t)).map(|(_, v)| v.as_str());
         let name = match src_tag("name") {
@@ -1396,6 +1401,7 @@ pub fn from_document_in(d: &Document, frame: Frame) -> Result<(LbrnProject, Vec<
                 }
                 let sub_source = source_tags(l, &format!("sub{}.", n + 1));
                 let mut values = settings_values(s, base, frequency_absent, sub_source.as_deref());
+                crate::options::options_values(&s.options, &mut values);
                 let sub_label = format!("layer \"{}\" sub-layer {}", l.name, n + 1);
                 sub_layer_values(s, &mut values, sub_source.as_deref(), &sub_label, &mut w);
                 if is_image

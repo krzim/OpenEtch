@@ -113,6 +113,7 @@
 //! | `SubLayer`s | `sub_layers` (their other values in `extras["lbrn2.subN.<tag>"]`, N the 1-based position) |
 //! | sub-layer `subname` | `sub_layers[i].name` (the main settings' `subname` stays in `extras["lbrn2.subname"]`) |
 //! | sub-layer `isCleanup 1` + `numPasses` | `sub_layers[i].cleanup = {every_n_passes: numPasses}`, `passes` 1 (LightBurn's "Clean after # of passes"; see [`doc::Cleanup`]); the parent's `cleanupPass` ("Enable cleanup pass") stays in `extras` and is written as `1` while a cleanup sub-layer exists and dropped when none does |
+//! | `scanOpt` (absent: all at once), `floodFill`, `autoRotate`, `wobbleEnable`, `perforate`, `dotMode` and their parameters (main settings and sub-layers) | `options` `fill_grouping`, `flood_fill`, `auto_rotate`, `wobble`, `perforation`, `dot_mode` (the `options` module); the tags also stay in `extras` and are rewritten only when the option changes |
 //! | every other child (`minPower`, `PPI`, `tabCount`, ...) | `extras["lbrn2.<tag>"]`, written back verbatim (only tags matching `[A-Za-z_][A-Za-z0-9_.-]*`; others are dropped with a warning) |
 //! | Rect / Ellipse | `Geometry::Rect` / `Ellipse`, transform = shift · groups · XForm |
 //! | Polygon / Star (`N Rx Ry`, `Bu Ra`; see [`ShapeKind::Polygon`]) | `Geometry::Polygon` with `half_step` (and `ry_mm` when Ry ≠ Rx, `star_ratio` = Ra), transform = shift · groups · XForm; a star with `Bu` ≠ 0 or a dual star is kept as an unknown shape |
@@ -155,6 +156,8 @@ mod convert;
 mod image;
 pub mod library;
 mod model;
+// LightBurn cut options OpenEtch executes (Fill Grouping, Flood Fill, Wobble, ...) <-> CutOptions.
+mod options;
 pub mod palette;
 mod parse;
 mod path;

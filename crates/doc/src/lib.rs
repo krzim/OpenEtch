@@ -647,8 +647,10 @@ pub struct CutSettings {
     /// width, timing and passes are shared.
     pub image: ImageSettings,
     /// Cut options beyond the laser parameters: sub-layer output, pauses, dot mode, wobble, fill grouping and dot
-    /// width, auto-rotate, flood fill, perforation, tabs, Z offset and step ([`CutOptions`]; empty JSON object while
-    /// default).
+    /// width, auto-rotate, flood fill, perforation, tabs, Z offset and step ([`CutOptions`]; JSON holds only what
+    /// differs from [`CutOptions::absent`], so new settings write `{"fill_grouping": "all_at_once"}`). Settings saved
+    /// without `options` read as [`CutOptions::absent`], as `{}` does.
+    #[serde(default = "CutOptions::absent")]
     pub options: CutOptions,
 }
 
