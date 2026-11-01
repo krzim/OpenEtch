@@ -304,6 +304,12 @@ impl Command for DocLoad {
         }
         loaded.field_mm = loaded.field_mm.or(doc.field_mm);
         loaded.revision = doc.revision;
+        // Projects saved before variable text was modelled keep LightBurn's counter only in the kept element.
+        if loaded.variables.is_default()
+            && let Some(v) = lbrn::text::variables_from_extras(&loaded.extras)
+        {
+            loaded.variables = v;
+        }
         let summary = format!("loaded project \"{}\" ({} object(s))", loaded.name, loaded.objects.len());
         *doc = loaded;
         let mut r = util::edit_result(doc, &object_ids(doc), &[]);
@@ -473,7 +479,7 @@ impl Command for ImportLbrn2 {
                 lbrn::Frame::Bed { width_mm, height_mm, mirror_x, mirror_y }
             }
         };
-        let lbrn::Imported { layers, objects, groups, mut extras, warnings } =
+        let lbrn::Imported { layers, objects, groups, mut extras, variables, warnings } =
             lbrn::to_document_in(&project, frame).map_err(|e| invalid(id, e.to_string()))?;
         // A square size for what needs one (the field of a galvo; the bed's smaller side).
         let (field_mm, workspace_mm) = match lay {
@@ -497,6 +503,7 @@ impl Command for ImportLbrn2 {
                     layers,
                     objects,
                     groups,
+                    variables,
                     extras,
                     ..Document::default()
                 };

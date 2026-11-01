@@ -17,6 +17,9 @@ mod builtin;
 mod session;
 
 pub use builtin::{ORIGIN_KEY, WorkspaceOrigin, lbrn2_device_name};
+/// Text hooks for the engine: plan runs from [`prepare_output`]; after a finished run, when [`auto_advance_due`],
+/// execute `var.advance {"auto": true}`.
+pub use builtin::text::{BARCODE_KEY, auto_advance_due, prepare_output};
 pub use session::{HistoryEntry, HistoryStep, HistoryView, MAX_STEPS, MarkerMove, Session, StepState};
 
 /// What a command can affect. Machine actions (`Pointer`, `Emit`) are not document commands; they are listed here so

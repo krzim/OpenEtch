@@ -155,7 +155,7 @@ fn odd_device_is_clamped_and_reported() {
         ("mark_speed.max_mm_s", "hard limit stays"),
         ("frequency_khz_max", "limit stays"),
         ("red_light_port_bit", "not applied"),
-        ("(LightBurn FieldAngle)", "not modelled"),
+        ("calibration.angle_deg", "not applied"),
         ("cor_file", "kept"),
     ] {
         let d = diff(&diffs, field).unwrap_or_else(|| panic!("{field}: {diffs:?}"));

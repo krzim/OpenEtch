@@ -143,6 +143,7 @@ fn import_document(name: &str, text: &str) -> (Document, Vec<String>) {
         objects: imported.objects,
         groups: imported.groups,
         extras: imported.extras,
+        variables: imported.variables,
         field_mm: Some(FIELD_MM),
         next_id: 1_000_000,
         ..Document::default()

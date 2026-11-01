@@ -215,6 +215,7 @@ mod tests {
                 pass: Some(0),
                 emits: true,
                 power_pct: None,
+                t_s: 0.0,
             }],
             stats: Stats::default(),
             ..Preview::default()

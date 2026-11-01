@@ -21,6 +21,9 @@ harfrust = "0.12"
 # Date/time variable text (MIT OR Apache-2.0); the clock only with `system`.
 chrono = { version = "0.4", default-features = false, features = ["alloc"] }
 # Barcode encoding, a ZXing port (Apache-2.0): encoders only.
-rxing = { version = "0.9.3", default-features = false, features = ["encoders", "qrcode", "datamatrix", "aztec", "pdf417", "oned"] }
+rxing = { version = "0.9.3", default-features = false, features = ["encoders", "encoding_rs", "qrcode", "datamatrix", "aztec", "pdf417", "oned"] }
 # Installed fonts (MIT).
 fontdb = { version = "0.24", optional = true }
+
+[dev-dependencies]
+lbrn = { workspace = true }

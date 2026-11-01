@@ -117,7 +117,8 @@
 //! | Rect / Ellipse | `Geometry::Rect` / `Ellipse`, transform = shift · groups · XForm |
 //! | Path | `Geometry::Path` (exact lines and cubics), transform = shift · groups · XForm; ids and the lists it carried in `extras` |
 //! | Group | `doc::Group` (nested through `parent`; members point at their innermost group), its XForm and attributes in its `extras` |
-//! | Text | an object drawn as its BackupPath outline, named after the text; `Str`, `Font`, `H`, ... in `extras["lbrn2.<attr>"]`, exported as `Type="Text"` with a BackupPath of the current outline |
+//! | Text | live text ([`doc::Geometry::Text`], named after the text) whose outline is the BackupPath; `Font`, `Str`, `H`, `LS`, `LnS`, `Ah`, `Av`, `Weld` read into its settings (see the [`text`] module) and all attributes kept in `extras["lbrn2.<attr>"]`; exported as `Type="Text"` with the modelled attributes written back (source spelling while unchanged) and a BackupPath of the current outline |
+//! | `VariableText` (root) | [`Imported::variables`] / `Document::variables` (Start, End, Current, Increment, AutoAdvance); the element stays in `extras` and export writes the current values into it |
 //! | Bitmap | `Geometry::Image` (`W`x`H`, `Data` byte for byte; `Gamma Contrast Brightness Enhance*` as its `adjust`), the other attributes in `extras` |
 //! | other types, Text without outline, unusable shapes | kept as XML in the extras of the object before them (`lbrn2._after.N`), exported again after it |
 //! | every object | its attribute order (`lbrn2._attrs`), XForm text (`lbrn2._xform`) and unknown children (`lbrn2._child.N`) |
@@ -154,6 +155,7 @@ mod model;
 pub mod palette;
 mod parse;
 mod path;
+pub mod text;
 mod write;
 
 pub use convert::{

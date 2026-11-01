@@ -121,8 +121,10 @@ pub enum DeviceSource {
     LightburnPrefs,
     /// A LightBurn `.lbdev` file.
     Lbdev,
-    /// Made by hand.
+    /// Made by hand (or copied from another device in OpenEtch).
     Manual,
+    /// Imported from an EzCad `markcfg7` file.
+    Markcfg,
 }
 
 impl DeviceSource {
@@ -132,6 +134,7 @@ impl DeviceSource {
             DeviceSource::LightburnPrefs => "lightburn-prefs",
             DeviceSource::Lbdev => "lbdev",
             DeviceSource::Manual => "manual",
+            DeviceSource::Markcfg => "markcfg",
         }
     }
 }
@@ -520,10 +523,100 @@ impl Device {
     }
 }
 
+/// Merge `patch` into `target` (RFC 7386 JSON merge patch: objects merge key by key, `null` removes a key, anything
+/// else replaces).
+pub fn merge_patch(target: &mut Value, patch: &Value) {
+    let Value::Object(changes) = patch else {
+        *target = patch.clone();
+        return;
+    };
+    if !target.is_object() {
+        *target = Value::Object(serde_json::Map::new());
+    }
+    let map = target.as_object_mut().expect("made an object above");
+    for (k, v) in changes {
+        if v.is_null() {
+            map.remove(k);
+        } else {
+            merge_patch(map.entry(k.clone()).or_insert(Value::Null), v);
+        }
+    }
+}
+
+/// A device profile edited in the UI (LightBurn's Device Settings): `patch` is a JSON merge patch over the profile's
+/// JSON (unknown keys are refused, a `null` resets an optional value). The result must validate, its correction file
+/// must be a bare file name, and no hard limit may rise above `limits` (the profile the device was built on, or the
+/// built-in one): `max_power_pct`, `max_jump_speed_mm_s`, `max_delay_us`, `mark_speed.max_mm_s`, the frequency range
+/// (only narrowed) and the pulse-width table (only entries of the base). Every refusal names the field.
+pub fn edit_profile(profile: &MachineProfile, patch: &Value, limits: &MachineProfile) -> Result<MachineProfile, String> {
+    if !patch.is_object() {
+        return Err("the settings must be a JSON object of profile fields".into());
+    }
+    let mut v = serde_json::to_value(profile).map_err(|e| e.to_string())?;
+    merge_patch(&mut v, patch);
+    let p: MachineProfile = serde_json::from_value(v).map_err(|e| format!("settings: {e}"))?;
+    p.validate().map_err(|e| e.to_string())?;
+    if let Some(cor) = &p.cor_file
+        && cor.components().count() != 1
+    {
+        return Err(format!("cor_file: \"{}\" must be a file name without folders", cor.display()));
+    }
+    let raised = |field: &str, v: f64, cap: f64| {
+        if v > cap { Err(format!("{field}: {v} is above the limit of {cap} (limits are never raised)")) } else { Ok(()) }
+    };
+    raised("max_power_pct", p.max_power_pct, limits.max_power_pct)?;
+    raised("max_jump_speed_mm_s", p.max_jump_speed_mm_s, limits.max_jump_speed_mm_s)?;
+    raised("max_delay_us", p.max_delay_us, limits.max_delay_us)?;
+    raised("mark_speed.max_mm_s", p.mark_speed.max_mm_s, limits.mark_speed.max_mm_s)?;
+    raised("frequency_khz_max", p.frequency_khz_max, limits.frequency_khz_max)?;
+    if p.frequency_khz_min < limits.frequency_khz_min {
+        return Err(format!(
+            "frequency_khz_min: {} is below the limit of {} (limits are never widened)",
+            p.frequency_khz_min, limits.frequency_khz_min
+        ));
+    }
+    if let Some(ns) = p.pulse_widths_ns.iter().find(|ns| !limits.pulse_widths_ns.contains(ns)) {
+        return Err(format!("pulse_widths_ns: {ns} ns is not in the source's table"));
+    }
+    if p.red_light_port_bit != limits.red_light_port_bit || p.laser_enable_port_bit != limits.laser_enable_port_bit {
+        return Err("red_light_port_bit and laser_enable_port_bit cannot be changed".into());
+    }
+    Ok(p)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::lightburn::{parse_devices, parse_lbdev};
+
+    #[test]
+    fn profiles_are_edited_without_raising_limits() {
+        let b6 = MachineProfile::from_toml(B6).unwrap();
+        let patch = json!({"calibration": {"scale_x": 1.01}, "red_dot": {"offset_x_mm": 0.3}, "timing": {"laser_on_delay_us": -200.0}, "focus_light_port_bit": 9, "name": "Mine"});
+        let p = edit_profile(&b6, &patch, &b6).unwrap();
+        assert_eq!((p.calibration.scale_x, p.red_dot.offset_x_mm, p.timing.laser_on_delay_us), (1.01, 0.3, -200.0));
+        assert_eq!((p.focus_light_port_bit, p.name.as_str()), (Some(9), "Mine"));
+        assert_eq!(p.timing.laser_off_delay_us, b6.timing.laser_off_delay_us, "untouched values stay");
+        // null resets an optional value.
+        let back = edit_profile(&p, &json!({"focus_light_port_bit": null}), &b6).unwrap();
+        assert_eq!(back.focus_light_port_bit, None);
+        // Lowering a limit is fine; raising one, unknown keys, paths and invalid values are refused.
+        assert_eq!(edit_profile(&b6, &json!({"max_power_pct": 50.0}), &b6).unwrap().max_power_pct, 50.0);
+        let low = MachineProfile { max_power_pct: 50.0, ..b6.clone() };
+        for (patch, word) in [
+            (json!({"max_power_pct": 60.0}), "max_power_pct"),
+            (json!({"mark_speed": {"max_mm_s": 20000.0}}), "mark_speed"),
+            (json!({"frequency_khz_min": 0.5}), "frequency"),
+            (json!({"cor_file": "../x.cor"}), "cor_file"),
+            (json!({"max_powr": 1}), "unknown field"),
+            (json!({"calibration": {"angle_deg": 80.0}}), "calibration"),
+            (json!({"red_light_port_bit": 9}), "red_light_port_bit"),
+        ] {
+            let e = edit_profile(&low, &patch, &low).unwrap_err();
+            assert!(e.contains(word), "{patch}: {e}");
+        }
+        assert!(edit_profile(&b6, &json!([1]), &b6).is_err());
+    }
 
     const B6: &str = include_str!("../../../fixtures/b6-mopa-60w.toml");
     const PREFS: &str = include_str!("../tests/fixtures/lightburn-prefs.json");

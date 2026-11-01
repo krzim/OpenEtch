@@ -23,6 +23,11 @@ use crate::stroke::{StrokeFont, StrokeGlyph};
 const MAX_SHAPES: usize = 0x1_0000;
 /// Most commands one glyph may run (subshapes included), so a looping file cannot hang.
 const MAX_STEPS: usize = 100_000;
+/// Scale factors (codes 3 and 4) are kept within this range of 1, and arcs with a larger radius (font units) are
+/// drawn as nothing: real fonts scale by a few times at most, while a file that scales by 255 over and over would
+/// otherwise reach infinite coordinates or arcs that never finish flattening.
+const MAX_SCALE: f64 = 1e6;
+const MAX_RADIUS: f64 = 1e7;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
@@ -79,6 +84,9 @@ struct Pen<'a> {
 impl Pen<'_> {
     fn move_by(&mut self, d: Vec2) {
         let to = self.pos + d * self.scale;
+        if !(to.x.is_finite() && to.y.is_finite()) {
+            return;
+        }
         if self.down {
             if !self.open {
                 self.path.move_to(self.pos);
@@ -96,6 +104,14 @@ impl Pen<'_> {
         let r = (self.pos - center).hypot();
         let start = (self.pos - center).atan2();
         let end = center + Vec2::from_angle(start + sweep) * r;
+        if !(r <= MAX_RADIUS && sweep.is_finite() && end.x.is_finite() && end.y.is_finite()) {
+            // Too large to draw (see MAX_RADIUS): the pen moves on, lifted, when it can.
+            if end.x.is_finite() && end.y.is_finite() {
+                self.pos = end;
+                self.open = false;
+            }
+            return;
+        }
         if self.down && r > 0.0 {
             if !self.open {
                 self.path.move_to(self.pos);
@@ -171,7 +187,8 @@ impl Pen<'_> {
             3 | 4 => {
                 let f = f64::from(Self::byte(spec, i + 1)?);
                 if run && f > 0.0 {
-                    if b == 3 { self.scale /= f } else { self.scale *= f }
+                    let s = if b == 3 { self.scale / f } else { self.scale * f };
+                    self.scale = s.clamp(1.0 / MAX_SCALE, MAX_SCALE);
                 }
                 Some(i + 2)
             }

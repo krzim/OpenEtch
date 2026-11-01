@@ -54,13 +54,18 @@
 //!    the B6 is unverified on hardware.
 //! 5. `WritePort(0)`, `EndOfList`.
 //!
+//! Cut options: a pass's Pause Before / Pause After are `DelayTime`s (in 655.35 ms words) before its settings and
+//! after its last polyline; in dot mode each one-point polyline is a `JumpTo` and a `LaserOnPoint` of the dot time
+//! (in 655.35 ms words). A multi-part job ([`crate::JobPlan::parts`]: rotary strips, Z positions) is encoded with
+//! [`encode_parts`], one list per part, each laid out as above (the machine moves the axis between them).
+//!
 //! - `machine` postlude (singles), once the board is idle: `Fiber_SetMo(0)`, `WritePort(0)`, `GetMarkTime(3)`.
 
 use doc::GalvoTiming;
 use lmc::units::{delay_time_units, delay_word, frequency_to_period, polygon_delay_units, power_to_mark_current, pulse_width_word, speed_to_units};
 use lmc::{DelayWord, LASER_ENABLE_BIT, LmcError, MarkingList, Packet};
 
-use crate::job::{JobPlan, PassSettings};
+use crate::job::{JobPlan, PassPlan, PassSettings};
 use crate::{PlanError, Result, Target};
 
 /// One pass's settings as board words.
@@ -109,12 +114,60 @@ pub fn jump_delay_us(t: &GalvoTiming, distance_mm: f64) -> f64 {
     }
 }
 
+/// One list of a multi-part job ([`encode_parts`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct EncodedPart {
+    /// Rotary position (motor steps from the job's start) to move to before this list.
+    pub rotary_steps: Option<i64>,
+    /// Z position (mm) to move to before this list.
+    pub z_mm: Option<f64>,
+    pub packets: Vec<Packet>,
+}
+
 /// Encode `plan` for `target` as one marking list (see the module docs for the layout).
 ///
-/// Refused: a plan with nothing to mark, a point the target cannot encode, and settings that do not convert.
-/// The plan is not trusted to be in-limits: power above `target.max_power_pct` and pulse widths not in the table
-/// are checked again here.
+/// Refused: a plan with nothing to mark, a point the target cannot encode, settings that do not convert, and a
+/// multi-part plan (use [`encode_parts`]). The plan is not trusted to be in-limits: power above
+/// `target.max_power_pct` and pulse widths not in the table are checked again here.
 pub fn encode(plan: &JobPlan, target: &Target) -> Result<Vec<Packet>> {
+    if plan.parts.len() > 1 {
+        return Err(PlanError::Target(format!("the job has {} parts (rotary strips or Z positions); encode its parts", plan.parts.len())));
+    }
+    encode_passes(plan.passes.iter(), target)
+}
+
+/// Encode every part of `plan` as its own list (one part for a plan without parts). Parts with nothing to mark are
+/// left out; a plan with nothing to mark at all is refused.
+pub fn encode_parts(plan: &JobPlan, target: &Target) -> Result<Vec<EncodedPart>> {
+    if plan.parts.is_empty() {
+        return Ok(vec![EncodedPart { rotary_steps: None, z_mm: None, packets: encode(plan, target)? }]);
+    }
+    let mut out = Vec::new();
+    for (i, part) in plan.parts.iter().enumerate() {
+        match encode_passes(plan.passes.iter().filter(|p| p.part == i), target) {
+            Ok(packets) => out.push(EncodedPart { rotary_steps: part.rotary_steps, z_mm: part.z_mm, packets }),
+            Err(PlanError::Empty) => {}
+            Err(e) => return Err(e),
+        }
+    }
+    if out.is_empty() {
+        return Err(PlanError::Empty);
+    }
+    Ok(out)
+}
+
+/// `DelayTime`s for `us` µs (each word at most 655.35 ms).
+fn delay(list: &mut MarkingList, us: f64) -> Result<()> {
+    let mut left = us.max(0.0);
+    while left >= 5.0 {
+        let chunk = left.min(655_350.0);
+        list.delay_time(delay_time_units(chunk)?);
+        left -= chunk;
+    }
+    Ok(())
+}
+
+fn encode_passes<'a>(passes: impl Iterator<Item = &'a PassPlan>, target: &Target) -> Result<Vec<Packet>> {
     target.validate()?;
     let open_mo = delay_time_units(target.open_mo_delay_us)?;
     let mut list = MarkingList::new();
@@ -123,8 +176,9 @@ pub fn encode(plan: &JobPlan, target: &Target) -> Result<Vec<Packet>> {
     let mut marks = 0usize;
     let mut pos_mm = [0.0, 0.0];
     let mut jump_delay: Option<DelayWord> = None;
-    for pass in &plan.passes {
+    for pass in passes {
         let s = &pass.settings;
+        delay(&mut list, pass.pause_before_us)?;
         if s.power_pct > target.max_power_pct {
             return Err(PlanError::PowerTooHigh { layer: pass.layer_id.clone(), power_pct: s.power_pct, max_pct: target.max_power_pct });
         }
@@ -164,6 +218,19 @@ pub fn encode(plan: &JobPlan, target: &Target) -> Result<Vec<Packet>> {
                 current = mc;
             }
             pos_mm = first;
+            if rest.is_empty() {
+                // A dot (dot mode): fire in place.
+                if let Some(us) = pass.dot_time_us.filter(|us| *us > 0.0) {
+                    let mut left = us;
+                    while left >= 5.0 {
+                        let chunk = left.min(655_350.0);
+                        list.laser_on_point(delay_time_units(chunk)?);
+                        left -= chunk;
+                    }
+                    marks += 1;
+                }
+                continue;
+            }
             for &p in rest {
                 let to = to_galvo(target, p, &pass.layer_id)?;
                 pos_mm = p;
@@ -177,6 +244,7 @@ pub fn encode(plan: &JobPlan, target: &Target) -> Result<Vec<Packet>> {
                 list.delay_time(w.end_delay);
             }
         }
+        delay(&mut list, pass.pause_after_us)?;
     }
     if marks == 0 {
         return Err(PlanError::Empty);

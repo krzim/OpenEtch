@@ -149,7 +149,7 @@ impl OutlinePen for Pen {
 
     fn curve_to(&mut self, cx0: f32, cy0: f32, cx1: f32, cy1: f32, x: f32, y: f32) {
         self.at = Point::new(f64::from(x), f64::from(y));
-        self.path.curve_to((f64::from(cx0), f64::from(cy0)), (f64::from(cx1), f64::from(cy1)), self.at);
+        self.path.curve_to(Point::new(f64::from(cx0), f64::from(cy0)), Point::new(f64::from(cx1), f64::from(cy1)), self.at);
     }
 
     fn close(&mut self) {

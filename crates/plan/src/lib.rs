@@ -11,6 +11,7 @@
 //! axis swap and negate appear only inside [`Target::to_galvo`] / [`Target::from_galvo`].
 #![forbid(unsafe_code)]
 
+mod cutopts;
 mod encode;
 mod geom;
 mod hatch;
@@ -19,17 +20,20 @@ mod job;
 mod order;
 mod preview;
 mod regions;
+mod rotary;
 mod target;
 
-pub use encode::{encode, jump_delay_us};
+pub use encode::{EncodedPart, encode, encode_parts, jump_delay_us};
 pub use geom::{FLATTEN_TOLERANCE_MM, Point};
 pub use hatch::MAX_SCANLINES;
 pub use image::{MAX_IMAGE_DOTS, MAX_SOURCE_PIXELS};
 pub use job::{
-    JobPlan, MAX_LAYER_PASSES, MAX_PASSES, MAX_SEGMENTS, PassPlan, PassSettings, Stats, layer_schedule, plan_job,
+    JobOptions, JobPlan, MAX_LAYER_PASSES, MAX_PASSES, MAX_SEGMENTS, PartPlan, PassPlan, PassSettings, Stats, layer_schedule,
+    plan_job, plan_job_with,
 };
 pub use preview::{
     LayerPreview, PassPreview, Preview, PreviewSegment, SegmentKind, SubLayerPreview, preview_document, preview_plan, simulate,
+    start_at,
 };
 pub use regions::{DISPLAY_TOLERANCE_MM, FillRegions, LayerFill, fill_regions};
 pub use target::Target;
@@ -83,6 +87,9 @@ pub enum PlanError {
     Target(String),
     #[error("the job has nothing to mark")]
     Empty,
+    /// A selection that names no object or group of the document.
+    #[error("{0}")]
+    Selection(String),
     #[error(transparent)]
     Lmc(#[from] LmcError),
 }
@@ -91,3 +98,5 @@ pub type Result<T, E = PlanError> = std::result::Result<T, E>;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod options_tests;

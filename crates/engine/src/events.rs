@@ -48,6 +48,9 @@ pub enum Event {
     DeviceChanged { id: String },
     /// Devices were imported or removed; clients refetch `GET /api/devices`.
     DevicesChanged,
+    /// While a job holds the machine, every 500 ms: `status` is `GET /api/job`'s answer (iteration, packets sent,
+    /// paused, time remaining, count).
+    JobProgress { status: serde_json::Value },
 }
 
 impl Event {

@@ -291,16 +291,18 @@ impl GalvoMcp {
             tool::<NoArgs>(
                 "machine_status",
                 "Machine status",
-                "Laser connection (or simulator), state, field size (mm), profile, and runs (pending ones wait for a \
-                 person to approve them in the UI).",
+                "Laser connection (or simulator), state, field size (mm), profile, runs (pending ones wait for a \
+                 person to approve them in the UI) and job (the running job's progress and the job counter).",
                 true,
             ),
             tool::<FrameRequest>(
                 "frame_start",
                 "Frame with the red pointer",
                 "Trace the job outline with the red aiming pointer so the person can check placement on the stock. \
-                 Never fires the laser. ids: objects to frame (default: the whole job); mode: \"bounds\" (default) or \
-                 \"outline\". Keeps tracing until frame_stop, machine_stop, or 2 minutes.",
+                 Never fires the laser. ids: objects to frame (default: the whole job); mode: \"bounds\" (default), \
+                 \"hull\" or \"outline\"; individually, outside_only, tool_layers_only, continuous (default true), \
+                 speed_mm_s, pointer (red|focus|both), live (follow edits), max_seconds (default 120). Keeps tracing \
+                 until frame_stop, machine_stop, or the time limit.",
                 false,
             ),
             tool::<NoArgs>("frame_stop", "Stop framing", "Stop the red-pointer frame.", false),

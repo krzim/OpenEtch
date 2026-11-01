@@ -11,8 +11,13 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 pub mod file;
+pub mod job;
 pub mod text;
 
+pub use job::{
+    CutDirection, CutOptions, DotMode, FillGrouping, ObjectOptions, Optimization, OrderBy, Perforation, Rotary, RotaryKind,
+    Tabs, Taper, Wobble,
+};
 pub use text::{AlignH, AlignV, CsvData, FontKind, FontSpec, Text, TextPath, VarMode, VarText, VariableState};
 
 pub type ObjectId = String;
@@ -79,6 +84,16 @@ pub struct Document {
     /// [`Text`]. Left out of JSON while it is the default.
     #[serde(default, skip_serializing_if = "VariableState::is_default")]
     pub variables: VariableState,
+    /// LightBurn's Optimization Settings (cut order), saved with the project. Left out of JSON while default.
+    #[serde(default, skip_serializing_if = "Optimization::is_default")]
+    pub optimization: Optimization,
+    /// Per-object cut properties (cut order priority, power scale), by object id. Kept on the document, like
+    /// `locked`, so every `Object { .. }` literal stays valid; ids that no longer name an object mean nothing.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub object_options: BTreeMap<ObjectId, ObjectOptions>,
+    /// Galvo rotary setup saved with the project (LightBurn's "Save/Load Rotary Settings with Project Files").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotary: Option<Rotary>,
 }
 
 impl Default for Document {
@@ -96,6 +111,9 @@ impl Default for Document {
             extras: BTreeMap::new(),
             locked: BTreeSet::new(),
             variables: VariableState::default(),
+            optimization: Optimization::default(),
+            object_options: BTreeMap::new(),
+            rotary: None,
         };
         let id = doc.alloc_id("layer").expect("a new document has ids to spare");
         doc.layers.push(Layer::new(id, "Layer 1", "#1f77b4"));
@@ -354,6 +372,10 @@ pub struct Layer {
     /// Excluded from jobs when false.
     pub output: bool,
     pub settings: CutSettings,
+    /// The whole layer (main settings and sub-layers, in their burn order) runs this many times (LightBurn's global
+    /// passes). Missing in older files: 1 (left out of JSON).
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub global_passes: u32,
     /// Extra passes with their own settings (LightBurn sub-layers), run after `settings` in order; a sub-layer with
     /// [`CutSettings::cleanup`] runs between the main passes instead (see [`Cleanup`]).
     pub sub_layers: Vec<CutSettings>,
@@ -361,6 +383,14 @@ pub struct Layer {
     /// round-trip. Keys are prefixed with the format they came from. Never used for planning.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub extras: BTreeMap<String, String>,
+}
+
+fn one() -> u32 {
+    1
+}
+
+fn is_one(v: &u32) -> bool {
+    *v == 1
 }
 
 impl Layer {
@@ -372,6 +402,7 @@ impl Layer {
             visible: true,
             output: true,
             settings: CutSettings::default(),
+            global_passes: 1,
             sub_layers: vec![],
             extras: BTreeMap::new(),
         }
@@ -415,6 +446,10 @@ pub struct CutSettings {
     /// a layer always use these settings while its vectors keep [`CutSettings::mode`]; power, speed, frequency, pulse
     /// width, timing and passes are shared.
     pub image: ImageSettings,
+    /// Cut options beyond the laser parameters: sub-layer output, pauses, dot mode, wobble, fill grouping and dot
+    /// width, auto-rotate, flood fill, perforation, tabs, Z offset and step ([`CutOptions`]; empty JSON object while
+    /// default).
+    pub options: CutOptions,
 }
 
 /// A cleanup sub-layer: LightBurn's "Enable cleanup pass" (3D Sliced image mode) adds a Cleanup sub-layer that runs
@@ -488,6 +523,7 @@ impl Default for CutSettings {
             name: None,
             cleanup: None,
             image: ImageSettings::default(),
+            options: CutOptions::default(),
         }
     }
 }

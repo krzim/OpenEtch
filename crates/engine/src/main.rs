@@ -209,6 +209,7 @@ async fn run(config: Config) -> Result<(), String> {
     tracing::info!(path = %config.projects_dir.display(), "projects directory");
     let state = AppState::new(Session::new(document), machine.clone(), security, approval, projects);
     state.install_devices(registry);
+    state.job.open(config.config_dir.join(engine::job::COUNTERS_FILE));
     let lightburn = engine::lightburn::LightBurnConfig {
         prefs_paths: match &config.lightburn_prefs {
             Some(p) => vec![p.clone()],

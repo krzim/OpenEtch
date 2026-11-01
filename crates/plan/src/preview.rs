@@ -10,7 +10,7 @@ use doc::{Cleanup, Document, FillMode, LayerId};
 
 use crate::geom::{Point, dist};
 use crate::job::{JobPlan, Stats, pass_stats};
-use crate::Target;
+use crate::{PlanError, Target};
 
 /// What the galvo does along a segment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -37,10 +37,14 @@ pub struct PreviewSegment {
     /// A mark that fires: the master oscillator is open and the laser-enable port bit is set. A mark with
     /// `emits == false` moves the galvo at mark speed without light (a list bug if it ever shows up).
     pub emits: bool,
-    /// The mark's own power in %, when it differs from its pass's (grayscale image runs); `None` from
+    /// The mark's own power in %, when it differs from its pass's (grayscale image runs, power scale); `None` from
     /// [`simulate`] and for marks at the pass's power.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub power_pct: Option<f64>,
+    /// Estimated time from the start of the job to the end of this segment, s (the plan's time model: motion at the
+    /// set speeds plus delays, pauses and dots; 0 from [`simulate`]). For a time slider and "start here".
+    #[serde(default)]
+    pub t_s: f64,
 }
 
 /// A previewed job (`GET /api/preview`).
@@ -129,11 +133,25 @@ pub struct LayerPreview {
 }
 
 /// Draw `plan` without encoding: a jump from the field centre (or the previous polyline's end) to each polyline's
-/// start, then its marks. Zero-length jumps are left out.
+/// start, then its marks (a dot is a zero-length mark). Zero-length jumps are left out. Every segment carries the
+/// estimated time at its end ([`PreviewSegment::t_s`]), in the same model as the plan's stats.
 pub fn preview_plan(plan: &JobPlan) -> Preview {
     let mut segments = Vec::new();
     let mut passes = Vec::with_capacity(plan.passes.len());
     let mut pos: Point = [0.0, 0.0];
+    // The time before the first pass (the open-MO waits): what the stats have beyond the passes' own time.
+    let pass_total: f64 = {
+        let mut p: Point = [0.0, 0.0];
+        plan.passes
+            .iter()
+            .map(|pass| {
+                let (_, t, end) = pass_stats(pass, p);
+                p = end;
+                t
+            })
+            .sum()
+    };
+    let mut t_us = (plan.stats.estimated_time_s * 1e6 - pass_total).max(0.0);
     for (index, pass) in plan.passes.iter().enumerate() {
         let (s, _, _) = pass_stats(pass, pos);
         passes.push(PassPreview {
@@ -146,7 +164,7 @@ pub fn preview_plan(plan: &JobPlan) -> Preview {
             estimated_time_s: s.estimated_time_s,
         });
         let layer = Some(pass.layer_id.clone());
-        let at = |kind, from, to, emits, power_pct| PreviewSegment {
+        let at = |kind, from, to, emits, power_pct, t_us: f64| PreviewSegment {
             kind,
             from,
             to,
@@ -154,18 +172,40 @@ pub fn preview_plan(plan: &JobPlan) -> Preview {
             pass: Some(index),
             emits,
             power_pct,
+            t_s: t_us / 1e6,
         };
+        let tm = &pass.settings.timing;
+        t_us += pass.pause_before_us;
         for (i, poly) in pass.polylines.iter().enumerate() {
             let Some(&first) = poly.first() else { continue };
+            let jump = dist(pos, first);
+            if jump > 0.0 {
+                t_us += jump / tm.jump_speed_mm_s * 1e6 + crate::encode::jump_delay_us(tm, jump).max(0.0);
+            }
             if first != pos {
-                segments.push(at(SegmentKind::Jump, pos, first, false, None));
+                segments.push(at(SegmentKind::Jump, pos, first, false, None, t_us));
             }
             let power = Some(pass.power_of(i)).filter(|p| *p != pass.settings.power_pct);
-            for w in poly.windows(2) {
-                segments.push(at(SegmentKind::Mark, w[0], w[1], true, power));
+            t_us += tm.laser_on_delay_us.max(0.0);
+            if poly.len() == 1 {
+                t_us += pass.dot_time_us.unwrap_or(0.0);
+                segments.push(at(SegmentKind::Mark, first, first, true, power, t_us));
+            }
+            let polygon = (tm.polygon_delay_us.max(0.0) / 10.0).trunc() * 10.0;
+            for (k, w) in poly.windows(2).enumerate() {
+                if k > 0 {
+                    t_us += polygon;
+                }
+                t_us += dist(w[0], w[1]) / pass.settings.speed_mm_s * 1e6;
+                segments.push(at(SegmentKind::Mark, w[0], w[1], true, power, t_us));
+            }
+            t_us += tm.laser_off_delay_us.max(0.0) + tm.end_delay_us.max(0.0);
+            if let Some(last) = segments.last_mut().filter(|s| s.kind == SegmentKind::Mark) {
+                last.t_s = t_us / 1e6;
             }
             pos = poly.last().copied().unwrap_or(first);
         }
+        t_us += pass.pause_after_us;
     }
     Preview { segments, passes, stats: plan.stats, layers: Vec::new(), warnings: plan.warnings.clone() }
 }
@@ -241,6 +281,50 @@ fn sub_layer_label(n: usize, s: &doc::CutSettings) -> String {
     }
 }
 
+/// The rest of `plan` from preview segment `segment` on ([`preview_plan`]'s numbering: LightBurn's "Start Here" on
+/// the preview slider). A jump starts the job at the polyline it travels to; a mark starts it at that mark's start
+/// point, on the same polyline. Earlier passes and polylines are dropped; the stats are recomputed for `target`.
+/// Refused for a multi-part plan (rotary or Z) and for an index past the end.
+pub fn start_at(plan: &JobPlan, segment: usize, target: &Target) -> Result<JobPlan, PlanError> {
+    if plan.parts.len() > 1 {
+        return Err(PlanError::Target("start here is not available for rotary or Z-stepped jobs".into()));
+    }
+    let mut n = 0usize;
+    let mut pos: Point = [0.0, 0.0];
+    for (pi, pass) in plan.passes.iter().enumerate() {
+        for (li, poly) in pass.polylines.iter().enumerate() {
+            let Some(&first) = poly.first() else { continue };
+            // (first point index of the remainder) if `segment` falls in this polyline.
+            let mut cut: Option<usize> = None;
+            if first != pos {
+                if n == segment {
+                    cut = Some(0);
+                }
+                n += 1;
+            }
+            let marks = poly.len().saturating_sub(1).max(usize::from(poly.len() == 1));
+            if cut.is_none() && segment < n + marks {
+                cut = Some(if poly.len() == 1 { 0 } else { segment - n });
+            }
+            if let Some(k) = cut {
+                let mut out = JobPlan { passes: plan.passes[pi..].to_vec(), stats: Stats::default(), warnings: plan.warnings.clone(), parts: plan.parts.clone() };
+                let p = &mut out.passes[0];
+                p.polylines.drain(..li);
+                if !p.powers.is_empty() {
+                    p.powers.drain(..li);
+                }
+                p.polylines[0].drain(..k);
+                p.pause_before_us = 0.0;
+                out.stats = crate::job::plan_stats(&out, target);
+                return Ok(out);
+            }
+            n += marks;
+            pos = poly.last().copied().unwrap_or(first);
+        }
+    }
+    Err(PlanError::Target(format!("segment {segment} is past the end of the job ({n} segments)")))
+}
+
 impl Preview {
     /// Keep only the segments and layer entries of `layers` (stats stay those of the whole job, and `passes` stays
     /// whole so the segments' pass indices still point into it).
@@ -270,6 +354,7 @@ pub fn simulate(packets: &[Packet], target: &Target) -> Preview {
             pass: None,
             emits: s.emits(),
             power_pct: None,
+            t_s: 0.0,
         })
         .collect();
     let mut stats = Stats::default();

@@ -62,7 +62,7 @@ pub fn parse(name: &str, data: &str) -> Result<StrokeFont, String> {
         let (left, right) = (coord(body[0]), coord(body[1]));
         let mut path = kurbo::BezPath::new();
         let mut stroke: Vec<(f64, f64)> = Vec::new();
-        for pair in body[2..count * 2].chunks_exact(2) {
+        for pair in body[2..count * 2].as_chunks::<2>().0 {
             if pair == b" R" {
                 path.extend(polyline(&stroke));
                 stroke.clear();

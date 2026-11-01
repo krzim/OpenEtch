@@ -79,6 +79,9 @@ pub struct Imported {
     pub groups: Vec<Group>,
     /// File-level LightBurn data for [`Document::extras`].
     pub extras: BTreeMap<String, String>,
+    /// The serial number counter of the file's `<VariableText>` (defaults when it has none), for
+    /// [`Document::variables`]; the element itself stays in `extras` and export writes these values into it.
+    pub variables: doc::VariableState,
     pub warnings: Vec<String>,
 }
 
@@ -442,6 +445,7 @@ fn to_settings(kind: &str, p: &CutParams, label: &str, w: &mut Warnings) -> (Cut
         name: None,
         cleanup: None,
         image: ImageSettings::default(),
+        options: doc::CutOptions::default(),
     };
     (s, rest)
 }
@@ -865,8 +869,8 @@ fn to_document_within(p: &LbrnProject, frame: Frame, max_elements: usize) -> Res
     let Document { objects, groups, .. } = tidy;
     if texts > 0 {
         w.push(format!(
-            "{texts} text object(s) are shown and burned as LightBurn's saved outline; their text, font and size are \
-             kept for LightBurn but cannot be edited in OpenEtch"
+            "{texts} text object(s) are shown and burned as LightBurn's saved outline until they are edited; editing \
+             one renders it again with its font, which must be installed"
         ));
     }
     let outside = objects.iter().filter(|o| !frame.contains(o.bounds())).count();
@@ -928,7 +932,8 @@ fn to_document_within(p: &LbrnProject, frame: Frame, max_elements: usize) -> Res
     for (k, xml) in lead.into_iter().enumerate() {
         extras.insert(format!("{EXTRA_PREFIX}{}{k}", keys::LEAD), xml);
     }
-    Ok(Imported { layers, objects, groups, extras, warnings: w.into_vec() })
+    let variables = crate::text::variables_from_extras(&extras).unwrap_or_default();
+    Ok(Imported { layers, objects, groups, extras, variables, warnings: w.into_vec() })
 }
 
 /// An element as XML text (for elements without source text).
@@ -1024,6 +1029,7 @@ impl ToDoc {
     ) -> Result<bool, LbrnError> {
         let elements = match &geometry {
             Geometry::Path { path } => path.elements().len(),
+            Geometry::Text(t) => t.outline.elements().len(),
             Geometry::Rect { .. } | Geometry::Ellipse { .. } | Geometry::Image { .. } => FIXED_SHAPE_ELEMENTS,
         };
         self.elements = self.elements.saturating_add(elements);
@@ -1132,7 +1138,15 @@ impl ToDoc {
                 let text = text.trim();
                 let name = if text.is_empty() { self.name("Text") } else { text.chars().take(100).collect() };
                 // The Text's own XForm is the live one; the backup's copy can be stale (see crate docs).
-                if self.path_object(s, name, &b.path, xf, &group, e)? {
+                let outline = b.path.to_bez();
+                let live = crate::text::from_attributes(&|k| s.attribute(k).map(str::to_string), outline.clone());
+                let made = match live {
+                    Some(t) if outline.segments().next().is_some() => {
+                        self.push(s, name, Geometry::Text(Box::new(t)), xf, &group, e)?
+                    }
+                    _ => self.path_object(s, name, &b.path, xf, &group, e)?,
+                };
+                if made {
                     self.texts += 1;
                 }
             }
@@ -1482,14 +1496,15 @@ fn root(d: &Document, cut_settings: Vec<CutSetting>, mut kept_images: BTreeMap<u
             attributes: vec![("Value".into(), v.into())],
             ..Element::default()
         };
+        let v = &d.variables;
         p.extra_elements.push(Element {
             name: "VariableText".into(),
             children: vec![
-                value("Start", "0"),
-                value("End", "999"),
-                value("Current", "0"),
-                value("Increment", "1"),
-                value("AutoAdvance", "0"),
+                value("Start", &v.start.to_string()),
+                value("End", &v.end.to_string()),
+                value("Current", &v.current.to_string()),
+                value("Increment", &v.advance_by.to_string()),
+                value("AutoAdvance", if v.auto_advance { "1" } else { "0" }),
             ],
             ..Element::default()
         });
@@ -1527,7 +1542,12 @@ fn root(d: &Document, cut_settings: Vec<CutSetting>, mut kept_images: BTreeMap<u
             "E" => {
                 if let Some(xml) = d.extras.get(&format!("{EXTRA_PREFIX}{}{rest}", keys::ROOT_ELEMENT)) {
                     order.push(RootItem::Element(p.extra_elements.len()));
-                    p.extra_elements.push(raw_element(xml));
+                    // The variable text counter is modelled (`Document::variables`): write its current values in.
+                    let xml = match crate::text::variables_from_xml(xml) {
+                        Some(_) => crate::text::variables_into_xml(xml, &d.variables),
+                        None => xml.clone(),
+                    };
+                    p.extra_elements.push(raw_element(&xml));
                 }
             }
             "C" | "I" => {
@@ -1705,6 +1725,33 @@ impl<'a> FromDoc<'a> {
         PathData::from_bez(path)
     }
 
+    /// A LightBurn Text shape's body: its `BackupPath` (`outline`, with the kept ids and lists while unchanged) and
+    /// the backup's `XForm` (the kept one while the text's own did not change).
+    fn text_shape(
+        &mut self,
+        e: &BTreeMap<String, String>,
+        outline: &BezPath,
+        index: u32,
+        xform: &Affine,
+        xform_text: Option<&str>,
+    ) -> ShapeKind {
+        let path = self.path_data(e, outline, true);
+        let unchanged =
+            xform_text.is_some_and(|t| crate::parse::parse_xform(t).is_ok_and(|x| x.as_coeffs() == xform.as_coeffs()));
+        let kept = ex(e, keys::BACKUP_XFORM).and_then(|t| crate::parse::parse_xform(t).ok().map(|x| (x, t)));
+        let (bxform, btext) = match kept {
+            Some((x, t)) if unchanged => (x, Some(t.to_string())),
+            _ => (*xform, None),
+        };
+        let mut battrs = Self::attributes(e, ex(e, keys::BACKUP_ATTRS), keys::BACKUP_ATTR);
+        if ex(e, keys::BACKUP_ATTRS).is_none() {
+            // A text made in OpenEtch: LightBurn's backup carries only its CutIndex.
+            battrs.push(("CutIndex".into(), String::new()));
+        }
+        let cut_index = battrs.iter().any(|(k, _)| k == "CutIndex").then_some(index);
+        ShapeKind::Text { backup: Some(Backup { cut_index, xform: bxform, xform_text: btext, attributes: battrs, path }) }
+    }
+
     /// One object, plus the kept shapes that followed it, into `out` (the top level when `None`).
     fn object(&mut self, o: &Object, parent: Affine, out: Option<&mut Vec<Shape>>, w: &mut Warnings) {
         let mut local_out = Vec::new();
@@ -1721,22 +1768,22 @@ impl<'a> FromDoc<'a> {
                 ShapeKind::Rect { w: *width_mm, h: *height_mm, cr: *corner_radius_mm }
             }
             Geometry::Ellipse { rx_mm, ry_mm } => ShapeKind::Ellipse { rx: *rx_mm, ry: *ry_mm },
-            Geometry::Path { path } if ex(e, keys::TYPE) == Some("Text") => {
-                let path = self.path_data(e, path, true);
-                let unchanged = xform_text.as_deref().is_some_and(|t| {
-                    crate::parse::parse_xform(t).is_ok_and(|x| x.as_coeffs() == xform.as_coeffs())
-                });
-                let kept = ex(e, keys::BACKUP_XFORM).and_then(|t| crate::parse::parse_xform(t).ok().map(|x| (x, t)));
-                let (bxform, btext) = match kept {
-                    Some((x, t)) if unchanged => (x, Some(t.to_string())),
-                    _ => (xform, None),
-                };
-                let battrs = Self::attributes(e, ex(e, keys::BACKUP_ATTRS), keys::BACKUP_ATTR);
-                let cut_index = battrs.iter().any(|(k, _)| k == "CutIndex").then_some(index);
-                ShapeKind::Text {
-                    backup: Some(Backup { cut_index, xform: bxform, xform_text: btext, attributes: battrs, path }),
+            Geometry::Text(t) => {
+                if ex(e, keys::TYPE) != Some("Text") {
+                    attributes.clear();
                 }
+                let lost = crate::text::to_attributes(t, &mut attributes);
+                if !lost.is_empty() {
+                    w.push(format!(
+                        "text \"{}\": {} not written (LightBurn's attribute names for them are unknown); its saved \
+                         outline shows them, but LightBurn renders the text again from its attributes when it has the font",
+                        o.name,
+                        lost.join(", ")
+                    ));
+                }
+                self.text_shape(e, &t.outline, index, &xform, xform_text.as_deref())
             }
+            Geometry::Path { path } if ex(e, keys::TYPE) == Some("Text") => self.text_shape(e, path, index, &xform, xform_text.as_deref()),
             Geometry::Path { path } => {
                 let data = self.path_data(e, path, false);
                 if data.vertices.is_empty() {

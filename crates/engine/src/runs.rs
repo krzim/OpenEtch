@@ -1,15 +1,19 @@
 //! Pending runs. `POST /api/runs` and the MCP tool `job_request_run` plan and encode the current document into a
 //! [`Run`] that waits here; only the UI approval endpoint (module `approve`) can start one.
+//!
+//! A run carries its [`RunOptions`] (LightBurn's Laser window: repeat N times, run continuously, wait for the start
+//! input, cut selected graphics, start here). One approval covers every iteration the options ask for; stop ends
+//! them all.
 
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use commands::Origin;
 use doc::Document;
-use lmc::Packet;
-use machine::{MachineProfile, RunReport};
-use plan::{Stats, Target};
-use serde::Serialize;
+use machine::{AxisRole, MachineProfile, RunPart, RunReport};
+use plan::{JobOptions, Stats, Target};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 use crate::EngineError;
 
@@ -17,6 +21,67 @@ use crate::EngineError;
 pub const MAX_PENDING: usize = 8;
 /// Finished runs kept for the status page.
 pub const KEEP_FINISHED: usize = 20;
+/// Most iterations `repeat` may ask for.
+pub const MAX_REPEAT: u32 = 10_000;
+
+/// How a run is run (LightBurn's Laser window and Cut Selected Graphics / Start Here). All optional; the default is
+/// one run of the whole document.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RunOptions {
+    /// Run the job this many times in a row (1..=10000; LightBurn's Repeat). One approval covers them all.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repeat: Option<u32>,
+    /// Run again after every run until stopped, until the job counter reaches Stop At, or until "end after the
+    /// current run" (LightBurn's Run Continuously). One approval.
+    #[serde(default)]
+    pub continuous: bool,
+    /// Wait for the profile's start-marking input (a foot pedal) before every run (LightBurn's Start Marking
+    /// input).
+    #[serde(default)]
+    pub start_input: bool,
+    /// With `start_input`: the input must be released and then pressed (a full pulse, the default) rather than
+    /// merely seen pressed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub full_pulse: Option<bool>,
+    /// Cut Selected Graphics: only these object or group ids.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection: Option<Vec<String>>,
+    /// Start Here: begin at this preview segment (`GET /api/preview` `segments` index).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_segment: Option<usize>,
+}
+
+impl RunOptions {
+    /// How many iterations: `None` for continuous.
+    pub fn iterations(&self) -> Option<u32> {
+        if self.continuous { None } else { Some(self.repeat.unwrap_or(1)) }
+    }
+
+    /// Refuse impossible combinations.
+    pub fn check(&self) -> Result<(), EngineError> {
+        if let Some(n) = self.repeat
+            && !(1..=MAX_REPEAT).contains(&n)
+        {
+            return Err(EngineError::BadRequest(format!("repeat must be within 1..={MAX_REPEAT} (got {n})")));
+        }
+        if self.continuous && self.repeat.is_some_and(|n| n != 1) {
+            return Err(EngineError::BadRequest("give repeat or continuous, not both".into()));
+        }
+        if self.full_pulse.is_some() && !self.start_input {
+            return Err(EngineError::BadRequest("full_pulse needs start_input".into()));
+        }
+        if self.selection.as_ref().is_some_and(Vec::is_empty) {
+            return Err(EngineError::BadRequest("selection is empty".into()));
+        }
+        // Segment numbers come from `GET /api/preview`, which plans the whole document: with a selection they
+        // would point into a different job.
+        if self.selection.is_some() && self.from_segment.is_some() {
+            return Err(EngineError::BadRequest("give selection or from_segment, not both".into()));
+        }
+        Ok(())
+    }
+}
 
 /// Where a run is in its life: `pending` -> `approved` -> (`awaiting_confirm` ->) `running` -> `finished` |
 /// `failed` | `aborted` (stopped while streaming), or `cancelled` (stopped or refused before streaming).
@@ -59,13 +124,24 @@ pub struct Run {
     pub revision: u64,
     pub summary: String,
     pub stats: Stats,
-    pub packets: Arc<Vec<Packet>>,
+    /// The job as lists, each after an optional extension-axis move (one part for a plain job).
+    pub parts: Arc<Vec<RunPart>>,
     pub created_unix_s: u64,
     pub error: Option<String>,
     pub report: Option<RunReport>,
     /// The machine configuration generation the packets were made for (`hw::MachineConfig::generation`); a run of
     /// another generation (planned for another device) is never approved.
     pub generation: u64,
+    pub options: RunOptions,
+    /// Iterations that ran to the end.
+    pub completed: u32,
+}
+
+impl Run {
+    /// List packets over all parts.
+    pub fn packet_count(&self) -> usize {
+        self.parts.iter().map(|p| p.packets.len()).sum()
+    }
 }
 
 /// The JSON view of a [`Run`] (no packets).
@@ -85,6 +161,11 @@ pub struct RunView {
     pub error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub report: Option<RunReport>,
+    pub options: RunOptions,
+    /// Lists the job is split into (rotary strips, Z positions; 1 for a plain job).
+    pub parts: usize,
+    /// Iterations that ran to the end.
+    pub completed: u32,
 }
 
 impl Run {
@@ -97,10 +178,13 @@ impl Run {
             stale: self.state == RunState::Pending && self.revision != current_revision,
             summary: self.summary.clone(),
             stats: self.stats,
-            packet_count: self.packets.len(),
+            packet_count: self.packet_count(),
             created_unix_s: self.created_unix_s,
             error: self.error.clone(),
             report: self.report.clone(),
+            options: self.options.clone(),
+            parts: self.parts.len(),
+            completed: self.completed,
         }
     }
 }
@@ -129,11 +213,13 @@ impl RunStore {
             revision,
             summary: prepared.summary,
             stats: prepared.stats,
-            packets: Arc::new(prepared.packets),
+            parts: Arc::new(prepared.parts),
             created_unix_s,
             error: None,
             report: None,
             generation: prepared.generation,
+            options: prepared.options,
+            completed: 0,
         });
         self.prune();
         Ok(self.runs.last().expect("just pushed"))
@@ -165,7 +251,7 @@ impl RunStore {
         for r in self.runs.iter_mut().filter(waiting) {
             r.state = RunState::Cancelled;
             r.error = Some(reason.to_owned());
-            r.packets = Arc::new(Vec::new());
+            r.parts = Arc::new(Vec::new());
             n += 1;
         }
         n
@@ -177,7 +263,7 @@ impl RunStore {
         for r in self.runs.iter_mut().filter(|r| r.state == RunState::Pending) {
             r.state = RunState::Cancelled;
             r.error = Some(reason.to_owned());
-            r.packets = Arc::new(Vec::new());
+            r.parts = Arc::new(Vec::new());
             n += 1;
         }
         n
@@ -222,7 +308,7 @@ impl RunStore {
             r.state = state;
             r.report = report;
             r.error = error;
-            r.packets = Arc::new(Vec::new());
+            r.parts = Arc::new(Vec::new());
         }
         self.prune();
     }
@@ -231,11 +317,12 @@ impl RunStore {
 /// A job ready to be stored as a run.
 #[derive(Debug, Clone)]
 pub struct PreparedJob {
-    pub packets: Vec<Packet>,
+    pub parts: Vec<RunPart>,
     pub stats: Stats,
     pub summary: String,
     /// The machine configuration generation it was planned for (set by the caller; 0 from [`prepare_job`]).
     pub generation: u64,
+    pub options: RunOptions,
 }
 
 /// The layers' names as people see them (`"Fill", "Outline"`), each once, in first-use order; a layer the document
@@ -262,23 +349,90 @@ fn layer_names<'a>(doc: &Document, ids: impl Iterator<Item = &'a str>) -> String
 /// Besides `plan`'s own refusals, the packets go through [`machine::check_job`] (the profile's hard limits) and a
 /// read-back with [`plan::simulate`], so a run that would be refused at approval time is refused now instead.
 pub fn prepare_job(doc: &Document, target: &Target, profile: &MachineProfile) -> Result<PreparedJob, EngineError> {
-    let job = plan::plan_job(doc, target)?;
-    let packets = plan::encode(&job, target)?;
-    machine::check_job(profile, &packets)?;
-    let sim = plan::simulate(&packets, target);
-    let marks = sim.segments.iter().filter(|s| s.kind == plan::SegmentKind::Mark).count();
+    prepare_job_with(doc, target, profile, &RunOptions::default(), 0)
+}
+
+/// [`prepare_job`] with [`RunOptions`] (selection, start here) and the job counter (`run_index`, for auto-rotating
+/// fills). A rotary job's strips and a Z job's positions become [`RunPart`]s with the axis position as the board's
+/// step word (rotary: steps from the start, which must fit 0..=65535; Z: the profile axis's `z_steps`), and a
+/// rotary job ends with a move back to step 0.
+pub fn prepare_job_with(
+    doc: &Document,
+    target: &Target,
+    profile: &MachineProfile,
+    options: &RunOptions,
+    run_index: u64,
+) -> Result<PreparedJob, EngineError> {
+    options.check()?;
+    if options.start_input && profile.start_mark_input_bit.is_none() {
+        return Err(EngineError::BadRequest("start_input: the machine profile names no start-marking input bit".into()));
+    }
+    if options.start_input && profile.start_mark_input_bit == profile.stop_mark_input_bit {
+        return Err(EngineError::BadRequest(
+            "start_input: the profile's start- and stop-marking inputs are the same bit (each run would stop as it starts)".into(),
+        ));
+    }
+    let job_options = JobOptions { selection: options.selection.clone(), run_index, preview: false };
+    let mut job = plan::plan_job_with(doc, target, &job_options)?;
+    if let Some(n) = options.from_segment {
+        job = plan::start_at(&job, n, target)?;
+    }
+    let encoded = plan::encode_parts(&job, target)?;
+    let mut parts = Vec::with_capacity(encoded.len());
+    let mut rotary = false;
+    for e in encoded {
+        machine::check_job(profile, &e.packets)?;
+        let axis_position = match (e.rotary_steps, e.z_mm) {
+            (Some(steps), _) => {
+                rotary = true;
+                if profile.axis.as_ref().is_none_or(|a| a.role != AxisRole::Rotary) {
+                    return Err(EngineError::BadRequest("the job turns a rotary but the profile has no rotary axis".into()));
+                }
+                Some(u16::try_from(steps).map_err(|_| {
+                    EngineError::BadRequest(format!("rotary position {steps} steps does not fit one 16-bit word (0..=65535)"))
+                })?)
+            }
+            (None, Some(z)) => {
+                let axis = profile.axis.as_ref().ok_or_else(|| EngineError::BadRequest("the job sets Z but the profile has no Z axis".into()))?;
+                Some(axis.z_steps(z).map_err(EngineError::BadRequest)?)
+            }
+            (None, None) => None,
+        };
+        parts.push(RunPart { axis_position, packets: e.packets });
+    }
+    if rotary {
+        parts.push(RunPart::axis_only(0));
+    }
+    let marks: usize = parts
+        .iter()
+        .map(|p| plan::simulate(&p.packets, target).segments.iter().filter(|s| s.kind == plan::SegmentKind::Mark).count())
+        .sum();
     if marks == 0 {
         return Err(EngineError::Plan(plan::PlanError::Empty));
     }
     let stats = job.stats;
-    let summary = format!(
+    let mut summary = format!(
         "{} polylines on {}, {:.1} mm marked, about {:.1} s",
         stats.polyline_count,
         layer_names(doc, job.passes.iter().map(|p| p.layer_id.as_str())),
         stats.mark_length_mm,
         stats.estimated_time_s
     );
-    Ok(PreparedJob { packets, stats, summary, generation: 0 })
+    if job.parts.len() > 1 {
+        summary.push_str(&format!(", in {} parts", job.parts.len()));
+    }
+    match options.iterations() {
+        None => summary.push_str(", continuously"),
+        Some(n) if n > 1 => summary.push_str(&format!(", {n} times")),
+        _ => {}
+    }
+    if options.selection.is_some() {
+        summary.push_str(" (selected graphics)");
+    }
+    if let Some(n) = options.from_segment {
+        summary.push_str(&format!(" (from segment {n})"));
+    }
+    Ok(PreparedJob { parts, stats, summary, generation: 0, options: options.clone() })
 }
 
 #[cfg(test)]
@@ -287,7 +441,31 @@ mod tests {
     use serde_json::Value;
 
     fn prepared() -> PreparedJob {
-        PreparedJob { packets: vec![Packet::empty()], stats: Stats::default(), summary: "s".into(), generation: 0 }
+        PreparedJob {
+            parts: vec![RunPart::list(vec![lmc::Packet::empty()])],
+            stats: Stats::default(),
+            summary: "s".into(),
+            generation: 0,
+            options: RunOptions::default(),
+        }
+    }
+
+    #[test]
+    fn run_options_are_checked() {
+        assert!(RunOptions::default().check().is_ok());
+        assert_eq!(RunOptions::default().iterations(), Some(1));
+        assert_eq!(RunOptions { continuous: true, ..RunOptions::default() }.iterations(), None);
+        assert_eq!(RunOptions { repeat: Some(5), ..RunOptions::default() }.iterations(), Some(5));
+        for bad in [
+            RunOptions { repeat: Some(0), ..RunOptions::default() },
+            RunOptions { repeat: Some(3), continuous: true, ..RunOptions::default() },
+            RunOptions { full_pulse: Some(false), ..RunOptions::default() },
+            RunOptions { selection: Some(vec![]), ..RunOptions::default() },
+            RunOptions { selection: Some(vec!["obj-1".into()]), from_segment: Some(3), ..RunOptions::default() },
+        ] {
+            assert!(bad.check().is_err(), "{bad:?}");
+        }
+        assert!(serde_json::from_value::<RunOptions>(serde_json::json!({"repeats": 2})).is_err());
     }
 
     #[test]

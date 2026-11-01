@@ -29,6 +29,7 @@ const ALL_IDS: &[&str] = &[
     "layer.add",
     "layer.update",
     "layer.delete",
+    "layer.move",
     "layer.sub_add",
     "layer.sub_update",
     "layer.sub_delete",
@@ -54,6 +55,9 @@ const ALL_IDS: &[&str] = &[
     "group.rename",
     "art.import_image",
     "image.adjust",
+    "job.set_optimization",
+    "object.set_cut_properties",
+    "job.set_rotary",
     "art.import_dxf",
     "path.boolean",
     "path.weld",
@@ -87,6 +91,20 @@ const ALL_IDS: &[&str] = &[
     "object.make_same",
     "object.rotate_to",
     "object.scale_to",
+    // Text, variable text, barcodes, fonts.
+    "shape.text",
+    "text.update",
+    "text.apply_path",
+    "text.detach_path",
+    "text.convert_to_path",
+    "text.refresh",
+    "var.set_serial",
+    "var.advance",
+    "var.load_csv",
+    "var.clear_csv",
+    "var.preview_row",
+    "shape.barcode",
+    "font.list",
 ];
 
 #[test]
@@ -97,7 +115,10 @@ fn registry_lists_every_command_with_documented_schema() {
     for spec in s.registry().specs() {
         assert!(!spec.description.is_empty() && spec.description.len() < 700, "{}", spec.id);
         assert!(!spec.description.contains("  "), "{}: a line continuation lost its backslash", spec.id);
-        let query = matches!(spec.id, "doc.inspect" | "doc.save" | "doc.export_lbrn2" | "node.list");
+        let query = matches!(
+            spec.id,
+            "doc.inspect" | "doc.save" | "doc.export_lbrn2" | "node.list" | "var.preview_row" | "font.list"
+        );
         assert_eq!(spec.risk == Risk::Query, query, "{}", spec.id);
         let props = spec.input_schema["properties"].as_object();
         for (name, p) in props.into_iter().flatten() {

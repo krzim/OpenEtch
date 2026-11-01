@@ -4,6 +4,7 @@ use doc::{CutSettings, Document, FillMode, Geometry, Object};
 use kurbo::Affine;
 use lmc::{LASER_ENABLE_BIT, ListCommand, decode, emits_light_only};
 
+use crate::job::JobOptions;
 use crate::target::tests::target;
 use crate::*;
 
@@ -276,10 +277,10 @@ fn passes_above_the_limit_are_refused() {
 fn segment_budget_is_enforced() {
     // 100 hatch lines per pass: one pass fits a 150-segment budget, two do not; a 50-line budget stops the hatcher.
     let one = doc_with(vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0))], fill(0.1, false));
-    assert_eq!(crate::job::plan_job_within(&one, &target(), 150).map(|p| p.stats.segment_count), Ok(100));
+    assert_eq!(crate::job::plan_job_within(&one, &target(), 150, &JobOptions::default()).map(|p| p.stats.segment_count), Ok(100));
     let two = doc_with(vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0))], CutSettings { passes: 2, ..fill(0.1, false) });
-    assert_eq!(crate::job::plan_job_within(&two, &target(), 150), Err(PlanError::TooManySegments { max: 150 }));
-    assert_eq!(crate::job::plan_job_within(&one, &target(), 50), Err(PlanError::TooManySegments { max: 50 }));
+    assert_eq!(crate::job::plan_job_within(&two, &target(), 150, &JobOptions::default()), Err(PlanError::TooManySegments { max: 150 }));
+    assert_eq!(crate::job::plan_job_within(&one, &target(), 50, &JobOptions::default()), Err(PlanError::TooManySegments { max: 50 }));
     assert_eq!(MAX_SEGMENTS, 2_000_000);
 }
 
@@ -385,8 +386,8 @@ fn image_budgets_and_bad_images_are_refused_with_clear_errors() {
     // A checkerboard at 1 mm: 8 runs per pass of 4 x 4.
     let checker = image_object("obj-7", 4.0, 4.0, png(4, 4, |x, y| if (x + y) % 2 == 0 { 0 } else { 255 }), Affine::IDENTITY);
     let d = doc_with(vec![checker], coarse(doc::DitherMode::Threshold));
-    assert_eq!(crate::job::plan_job_within(&d, &target(), 8).unwrap().stats.segment_count, 8);
-    let err = crate::job::plan_job_within(&d, &target(), 7).unwrap_err();
+    assert_eq!(crate::job::plan_job_within(&d, &target(), 8, &JobOptions::default()).unwrap().stats.segment_count, 8);
+    let err = crate::job::plan_job_within(&d, &target(), 7, &JobOptions::default()).unwrap_err();
     assert_eq!(err, PlanError::ImageSegments { object: "obj-7".into(), max: 7 });
     assert!(err.to_string().contains("image obj-7"), "{err}");
     // Too many dots: 100 mm at 0.001 mm.

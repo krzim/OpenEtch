@@ -69,8 +69,9 @@ pub fn router(state: Arc<AppState>, web_dir: Option<&Path>) -> Router {
             "/devices/import",
             post(devices_import).layer(DefaultBodyLimit::max(crate::lightburn::MAX_PREFS_UPLOAD_BYTES)),
         )
-        .route("/devices/{id}", get(device_details).delete(device_remove))
+        .route("/devices/{id}", get(device_details).delete(device_remove).put(crate::api_machine::device_edit))
         .route("/devices/{id}/activate", post(device_activate))
+        .merge(crate::api_machine::routes())
         .fallback(api_not_found)
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES));
     let mut app = Router::new().nest("/api", api).nest_service("/mcp", mcp::service(state.clone()));
@@ -289,10 +290,14 @@ struct OriginBody {
     origin: Option<Value>,
 }
 
+/// Body of `POST /api/runs`: the origin plus [`crate::runs::RunOptions`] (repeat, continuous, start_input,
+/// full_pulse, selection, from_segment); unknown keys are refused.
 async fn request_run(State(st): State<Arc<AppState>>, body: Bytes) -> Result<Response, EngineError> {
-    let b: OriginBody = body_or_default(&body)?;
-    let origin = parse_origin(b.origin.as_ref())?;
-    let view = st.request_run(origin).await?;
+    let mut b: serde_json::Map<String, Value> = body_or_default(&body)?;
+    let origin = parse_origin(b.remove("origin").as_ref())?;
+    let options: crate::runs::RunOptions =
+        serde_json::from_value(Value::Object(b)).map_err(|e| EngineError::BadRequest(format!("bad run options: {e}")))?;
+    let view = st.request_run_with(origin, options).await?;
     let body = json!({ "ok": true, "id": view.id, "run": view, "message": crate::state::APPROVAL_MESSAGE });
     Ok((StatusCode::CREATED, Json(body)).into_response())
 }

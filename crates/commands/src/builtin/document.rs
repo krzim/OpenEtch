@@ -75,14 +75,22 @@ fn inspect(doc: &Document) -> Value {
         .map(|o| {
             let b = o.bounds();
             let kind = o.geometry.kind_name();
-            json!({
+            let mut v = json!({
                 "id": o.id,
                 "name": o.name,
                 "layer": o.layer,
                 "kind": kind,
                 "bounds": util::rect_json(b),
                 "size_mm": [r4(b.width()), r4(b.height())],
-            })
+            });
+            if let doc::Geometry::Text(t) = &o.geometry {
+                v["text"] = json!(t.text);
+                v["shown"] = json!(t.shown.as_deref().unwrap_or(&t.text));
+                v["font"] = json!(t.font);
+                v["height_mm"] = json!(t.height_mm);
+                v["variable"] = json!(t.variable);
+            }
+            v
         })
         .collect();
 

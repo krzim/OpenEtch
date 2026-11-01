@@ -399,6 +399,165 @@ impl DeviceRegistry {
         Ok(v)
     }
 
+    /// The profile a device's hard limits come from: the base it was built on, else (the built-in device, devices
+    /// made by hand or from EzCad) its own profile, so limits can only go down.
+    fn limits_for(&self, d: &Device) -> Option<MachineProfile> {
+        match d.base {
+            Some(b) => Some(self.bases.get(b).clone()),
+            None => d.profile.clone(),
+        }
+    }
+
+    /// Edit a device's profile with a JSON merge patch (`PUT /api/devices/{id}`, see `machine::edit_profile`) and
+    /// optionally rename it. The built-in device is read-only (duplicate it first).
+    pub fn edit(&mut self, id: &str, patch: Option<&Value>, display_name: Option<&str>) -> Result<Device, EngineError> {
+        if id == self.builtin.id {
+            return Err(EngineError::Conflict(
+                "the built-in device is read-only; duplicate it (POST /api/devices/{id}/duplicate) and edit the copy".into(),
+            ));
+        }
+        let d = self.get(id).cloned().ok_or_else(|| EngineError::NotFound(format!("no device with id '{id}'")))?;
+        let mut next = d.clone();
+        if let Some(patch) = patch {
+            let (Some(profile), Some(limits)) = (&d.profile, self.limits_for(&d)) else {
+                return Err(EngineError::BadRequest("this device has no machine profile to edit (design-only)".into()));
+            };
+            let p = machine::edit_profile(profile, patch, &limits).map_err(EngineError::BadRequest)?;
+            if d.kind.is_galvo() {
+                next.workspace_mm = [p.field_mm, p.field_mm];
+            }
+            next.profile = Some(p);
+        }
+        if let Some(name) = display_name {
+            let name = name.trim();
+            if name.is_empty() || name.chars().count() > 100 || name.chars().any(char::is_control) {
+                return Err(EngineError::BadRequest("the device name must be 1-100 printable characters".into()));
+            }
+            next.display_name = name.to_owned();
+        }
+        if next == d {
+            return Ok(d);
+        }
+        self.save_device(&next).map_err(EngineError::Internal)?;
+        if let Some(slot) = self.devices.iter_mut().find(|e| e.id == id) {
+            *slot = next.clone();
+        }
+        Ok(next)
+    }
+
+    /// Add a device made in OpenEtch (a copy, an EzCad import) under a fresh id; returns it.
+    pub fn add_manual(&mut self, mut d: Device) -> Result<Device, EngineError> {
+        if self.devices.len() >= MAX_DEVICES {
+            return Err(EngineError::Conflict(format!("at most {MAX_DEVICES} devices are kept")));
+        }
+        d.id = self.unique_id(&d.display_name);
+        self.save_device(&d).map_err(EngineError::Internal)?;
+        self.order.push(d.id.clone());
+        self.devices.push(d.clone());
+        if let Err(e) = self.save_index() {
+            self.devices.pop();
+            self.order.pop();
+            return Err(EngineError::Internal(e));
+        }
+        Ok(d)
+    }
+
+    /// `POST /api/devices/{id}/duplicate`: an editable copy ("<name> copy", source `manual`). The copy keeps the
+    /// original's limits (its base, or the original profile).
+    pub fn duplicate(&mut self, id: &str) -> Result<Device, EngineError> {
+        let d = self.get(id).cloned().ok_or_else(|| EngineError::NotFound(format!("no device with id '{id}'")))?;
+        let limits_base = if d.id == self.builtin.id { Some(machine::ProfileBase::Builtin) } else { d.base };
+        let copy = Device {
+            display_name: format!("{} copy", d.display_name),
+            source: machine::DeviceSource::Manual,
+            base: limits_base,
+            ..d
+        };
+        self.add_manual(copy)
+    }
+
+    /// `POST /api/devices/import/markcfg`: a device from an EzCad `markcfg7` (latin-1 bytes) named `name`. Its
+    /// correction file is looked up by name like any other device's.
+    pub fn import_markcfg(&mut self, bytes: &[u8], name: &str) -> Result<Device, EngineError> {
+        let profile = MachineProfile::from_markcfg_bytes(bytes).map_err(|e| EngineError::BadRequest(e.to_string()))?;
+        let name = name.trim();
+        let name = if name.is_empty() { "EzCad galvo" } else { name };
+        let d = Device {
+            id: String::new(),
+            name: "JCZFiber".into(),
+            display_name: name.into(),
+            source: machine::DeviceSource::Markcfg,
+            kind: machine::DeviceKind::JczGalvo,
+            lightburn_type: "LibUSB".into(),
+            workspace_mm: [profile.field_mm, profile.field_mm],
+            origin: machine::Origin::Center,
+            controllable: true,
+            base: None,
+            profile: Some(profile),
+            lightburn: None,
+        };
+        self.add_manual(d)
+    }
+
+    /// Store a lens correction file for device `id` as `<devices dir>/<file name>` (validated first) and point its
+    /// profile at it; `None` clears the device's correction file. The built-in device is read-only.
+    pub fn set_cor(&mut self, id: &str, file: Option<(&str, &[u8])>) -> Result<Device, EngineError> {
+        let patch = match file {
+            None => serde_json::json!({ "cor_file": null }),
+            Some((name, bytes)) => {
+                let name = name.trim();
+                let ok_name = !name.is_empty()
+                    && name.len() <= 100
+                    && name.to_ascii_lowercase().ends_with(".cor")
+                    && name.chars().all(|c| c.is_ascii_alphanumeric() || " -_.()".contains(c))
+                    && !name.starts_with('.');
+                if !ok_name {
+                    return Err(EngineError::BadRequest("the correction file name must be a plain name ending in .cor".into()));
+                }
+                corfile::CorTable::parse(bytes).map_err(|e| EngineError::BadRequest(format!("not a usable correction file: {e}")))?;
+                if id == self.builtin.id {
+                    return Err(EngineError::Conflict("the built-in device is read-only; duplicate it first".into()));
+                }
+                let dir = self.dir.as_ref().ok_or_else(|| EngineError::Conflict("no config directory to keep correction files in".into()))?;
+                // Files are found by name, so replacing one another device uses would change that device's lens
+                // correction behind its back (and a running job's on its next activation).
+                let users: Vec<&str> = self
+                    .devices
+                    .iter()
+                    .filter(|d| d.id != id)
+                    .filter(|d| {
+                        d.profile.as_ref().and_then(|p| p.cor_file.as_ref()).and_then(|f| f.file_name()).is_some_and(|f| f.to_string_lossy().eq_ignore_ascii_case(name))
+                    })
+                    .map(|d| d.display_name.as_str())
+                    .collect();
+                let same = [Some(dir), self.profile_dir.as_ref()]
+                    .into_iter()
+                    .flatten()
+                    .map(|d| d.join(name))
+                    .find(|p| p.is_file())
+                    .is_none_or(|p| std::fs::read(p).is_ok_and(|b| b == bytes));
+                if !users.is_empty() && !same {
+                    return Err(EngineError::Conflict(format!(
+                        "a different correction file named \"{name}\" is used by {}; give this one another name",
+                        users.join(", ")
+                    )));
+                }
+                std::fs::create_dir_all(dir).map_err(|e| EngineError::Internal(e.to_string()))?;
+                let tmp = dir.join(format!(".{name}.tmp"));
+                std::fs::write(&tmp, bytes).and_then(|()| std::fs::rename(&tmp, dir.join(name))).map_err(|e| EngineError::Internal(e.to_string()))?;
+                serde_json::json!({ "cor_file": name })
+            }
+        };
+        self.edit(id, Some(&patch), None)
+    }
+
+    /// `GET /api/devices/{id}/lbdev`: the device as a LightBurn `.lbdev` and a file name for it.
+    pub fn lbdev(&self, id: &str) -> Result<(String, String), EngineError> {
+        let d = self.get(id).ok_or_else(|| EngineError::NotFound(format!("no device with id '{id}'")))?;
+        let text = machine::to_lbdev(&d.display_name, d.lightburn.as_ref(), d.profile.as_ref());
+        Ok((format!("{}.lbdev", d.id), text))
+    }
+
     /// Write `index.json` (when the registry has a directory).
     fn save_index(&self) -> Result<(), String> {
         let Some(dir) = &self.dir else { return Ok(()) };
@@ -775,5 +934,46 @@ mod tests {
         let d = device::from_lightburn(&prefs.devices[0], DeviceSource::LightburnPrefs, r.bases()).unwrap();
         let (cor, warning) = r.correction_for(&d);
         assert!(cor.is_none() && warning.unwrap().contains("jcz150.cor not found"));
+    }
+
+    #[test]
+    fn devices_are_edited_duplicated_exported_and_imported_from_ezcad() {
+        let dir = crate::pin::temp_dir("devedit");
+        let (mut r, _) = open(&dir, None);
+        let builtin = r.active().id.clone();
+        assert!(matches!(r.edit(&builtin, Some(&serde_json::json!({"max_power_pct": 50})), None), Err(EngineError::Conflict(_))));
+        let copy = r.duplicate(&builtin).unwrap();
+        assert!(copy.display_name.ends_with("copy") && copy.source == machine::DeviceSource::Manual);
+        let edited = r.edit(&copy.id, Some(&serde_json::json!({"calibration": {"angle_deg": 0.5}, "max_power_pct": 60})), Some("Mine")).unwrap();
+        let p = edited.profile.as_ref().unwrap();
+        assert_eq!((p.calibration.angle_deg, p.max_power_pct, edited.display_name.as_str()), (0.5, 60.0, "Mine"));
+        assert!(r.edit(&copy.id, Some(&serde_json::json!({"max_power_pct": 101})), None).is_err());
+        // Stored: a reopened registry has the edit.
+        let (again, _) = open(&dir, None);
+        assert_eq!(again.get(&copy.id).unwrap().profile.as_ref().unwrap().calibration.angle_deg, 0.5);
+        let (name, text) = r.lbdev(&copy.id).unwrap();
+        assert!(name.ends_with(".lbdev") && text.contains("\"FieldAngle\": 0.5"), "{text}");
+        let markcfg = include_bytes!("../../../fixtures/markcfg7.ini");
+        let ez = r.import_markcfg(markcfg, "Shop B6").unwrap();
+        assert_eq!((ez.source, ez.controllable, ez.workspace_mm[0]), (machine::DeviceSource::Markcfg, true, 153.75));
+        assert!(r.import_markcfg(b"nothing here", "x").is_err());
+        let cor = include_bytes!("../../../fixtures/jcz150.cor");
+        let with_cor = r.set_cor(&ez.id, Some(("lens 150.cor", cor))).unwrap();
+        assert_eq!(with_cor.profile.as_ref().unwrap().cor_file.as_deref(), Some(std::path::Path::new("lens 150.cor")));
+        assert!(dir.join(DEVICES_DIR).join("lens 150.cor").is_file() || dir.join("lens 150.cor").is_file());
+        assert!(r.correction_for(&with_cor).0.is_some(), "found by name");
+        assert!(r.set_cor(&ez.id, Some(("../x.cor", cor))).is_err());
+        assert!(r.set_cor(&ez.id, Some(("bad.cor", b"junk"))).is_err());
+        // Another device's file of the same name is not replaced by different content (the same content is fine).
+        let other = r.duplicate(&ez.id).unwrap();
+        assert_eq!(other.profile.as_ref().unwrap().cor_file.as_deref(), Some(std::path::Path::new("lens 150.cor")));
+        let mut changed = cor.to_vec();
+        let last = changed.len() - 1;
+        changed[last] ^= 1;
+        assert!(corfile::CorTable::parse(&changed).is_ok());
+        assert!(matches!(r.set_cor(&other.id, Some(("LENS 150.cor", &changed))), Err(EngineError::Conflict(_))));
+        assert!(r.set_cor(&other.id, Some(("lens 150.cor", cor))).is_ok());
+        let cleared = r.set_cor(&ez.id, None).unwrap();
+        assert!(cleared.profile.unwrap().cor_file.is_none());
     }
 }

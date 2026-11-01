@@ -1,28 +1,38 @@
 //! Run approval: the only code in the engine that creates a `machine::Armed`, and so the only path to
-//! `Controller::run` (which needs one). It is reachable only from `POST /api/runs/{id}/approve`, which refuses requests
-//! carrying an MCP client header; [`approve`] itself requires the operator PIN (module `pin`). Nothing in the MCP
-//! server calls it.
+//! `Controller::run_parts` (which needs one). It is reachable only from `POST /api/runs/{id}/approve`, which refuses
+//! requests carrying an MCP client header; [`approve`] itself requires the operator PIN (module `pin`). Nothing in
+//! the MCP server calls it.
 //!
 //! Stop is never lost: [`approve`] captures the machine's stop epoch while it claims the machine (inside the runs
-//! lock, which `AppState::stop` also takes to bump the epoch), and the run never starts streaming once the epoch has
+//! lock, which `AppState::stop` also takes to bump the epoch), and no iteration starts streaming once the epoch has
 //! changed, even if the stop's abort sequence won the controller lock first and cleared the abort request. A run
 //! stopped before it holds the controller ends `cancelled` (nothing was sent for it); one stopped after it has
 //! become `running` ends `aborted`.
+//!
+//! **Iterations** (LightBurn's Repeat, Run Continuously and Start Marking input, module `job`): one approval covers
+//! the iterations the run's options ask for: `repeat` times, or until stopped for `continuous`; each iteration gets
+//! its own arming token here, after (when the run asks for it) the start-marking input has been released and
+//! pressed. Before every iteration after the first, the run ends when Stop At is reached or the operator asked to
+//! end after the current iteration. The job counter counts every iteration that ran to the end.
 
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use lmc::Packet;
-use machine::{Armed, ControllerError, RunReport};
+use machine::{Armed, ControllerError, RunPart, RunReport};
 use serde_json::{Value, json};
 
 use crate::hw::Machine;
-use crate::pin::{CONFIRM_READS, PhysicalConfirm};
-use crate::runs::RunState;
+use crate::pin::{CONFIRM_POLL, CONFIRM_READS, PhysicalConfirm};
+use crate::runs::{RunOptions, RunState};
 use crate::{AppState, EngineError, Event};
 
+/// Longest wait for the start-marking input before one iteration (LightBurn waits without limit; an armed run
+/// waiting for ever is not wanted, so it ends after an hour).
+pub const START_INPUT_TIMEOUT: Duration = Duration::from_secs(3600);
+
 /// Check the operator PIN, then arm and start pending run `id` in a background task. Refused unless the PIN is
-/// right, the run is pending, made from the current document revision, and no other run holds the machine.
+/// right, the run is pending, made from the current document revision, no other run holds the machine, and the job
+/// counter has not reached Stop At.
 pub(crate) async fn approve(state: &Arc<AppState>, id: &str, pin: Option<&str>) -> Result<Value, EngineError> {
     if let Err((e, locked_until)) = state.approval.pin.verify_reporting(pin) {
         if let Some(until_unix_s) = locked_until {
@@ -32,7 +42,14 @@ pub(crate) async fn approve(state: &Arc<AppState>, id: &str, pin: Option<&str>) 
     }
     let confirm = state.approval.confirm;
     let current = state.revision();
-    let (packets, epoch, run_state) = {
+    let device = state.active_device().id;
+    if state.job.at_stop(&device) {
+        return Err(EngineError::Conflict(format!(
+            "the job counter reached Stop At ({}); reset the count or change Stop At",
+            state.job.stop_at().unwrap_or_default()
+        )));
+    }
+    let (parts, epoch, run_state, options, estimate) = {
         let mut store = state.runs();
         let run = store.get_mut(id).ok_or_else(|| EngineError::NotFound(format!("no run with id '{id}'")))?;
         if run.state != RunState::Pending {
@@ -59,18 +76,26 @@ pub(crate) async fn approve(state: &Arc<AppState>, id: &str, pin: Option<&str>) 
         }
         // Captured after claiming the machine, still under the runs lock (see the module docs).
         let epoch = state.machine.stop_epoch();
-        run.state = if confirm.is_some() { RunState::AwaitingConfirm } else { RunState::Approved };
-        (run.packets.clone(), epoch, run.state)
+        run.state = if confirm.is_some() || run.options.start_input { RunState::AwaitingConfirm } else { RunState::Approved };
+        (run.parts.clone(), epoch, run.state, run.options.clone(), run.stats.estimated_time_s)
     };
-    // End any frame loop; `Controller::run` stops a frame still on the board itself.
+    // End any frame loop; `Controller::run_parts` stops a frame still on the board itself.
     state.machine.bump_frame_gen();
-    tracing::warn!(run_id = id, physical_confirm = confirm.is_some(), "run approved with the operator PIN");
+    // A pause asked for before this approval (e.g. as the previous job ended) does not carry over.
+    state.machine.clear_pause();
+    tracing::warn!(run_id = id, physical_confirm = confirm.is_some(), iterations = ?options.iterations(), "run approved with the operator PIN");
+    state.job.begin(id, &device, options.iterations(), estimate);
     state.emit(Event::machine("run_approved", Some(id.to_owned())));
 
     let st = state.clone();
     let run_id = id.to_owned();
+    tokio::spawn(progress_ticker(state.clone(), id.to_owned()));
     tokio::spawn(async move {
-        let (final_state, report, error) = execute(&st, &run_id, packets, epoch, confirm).await;
+        let job = Job { id: &run_id, device: &device, parts, epoch, confirm, options };
+        let (final_state, report, error) = execute(&st, job).await;
+        // The job's progress is cleared before the machine is released, so a job approved right after this one
+        // never has its progress wiped by this task.
+        st.job.end(&run_id);
         st.machine.end_run();
         if let Some(e) = &error {
             tracing::warn!(run_id = %run_id, state = ?final_state, error = %e, "run did not finish");
@@ -80,6 +105,11 @@ pub(crate) async fn approve(state: &Arc<AppState>, id: &str, pin: Option<&str>) 
         }
         st.runs().finish(&run_id, final_state, report, error.clone());
         let ok = final_state == RunState::Finished;
+        if ok {
+            // Serial numbers / CSV rows move on once per finished job (the job's packets were rendered at request
+            // time, so repeats of one job share its values).
+            st.advance_variables_after_run();
+        }
         st.emit(Event::RunFinished { id: run_id.clone(), ok, state: final_state, error });
         st.emit(Event::machine("run_finished", Some(run_id)));
     });
@@ -87,24 +117,42 @@ pub(crate) async fn approve(state: &Arc<AppState>, id: &str, pin: Option<&str>) 
     Ok(json!({ "ok": true, "id": id, "run_id": id, "state": state_name }))
 }
 
+/// Send `job_progress` events while the job of `run_id` holds the machine.
+async fn progress_ticker(st: Arc<AppState>, run_id: String) {
+    loop {
+        tokio::time::sleep(crate::job::PROGRESS_INTERVAL).await;
+        if st.job.active_run().as_deref() != Some(run_id.as_str()) {
+            break;
+        }
+        st.job.tick(st.machine.is_paused());
+        st.emit(Event::JobProgress { status: st.job_status() });
+    }
+}
+
 type Outcome = (RunState, Option<RunReport>, Option<String>);
 
-/// Wait for the physical input (if configured), then stream the run unless a stop came in since approval.
-async fn execute(
-    st: &Arc<AppState>,
-    id: &str,
-    packets: Arc<Vec<Packet>>,
+/// What one approval runs.
+struct Job<'a> {
+    id: &'a str,
+    device: &'a str,
+    parts: Arc<Vec<RunPart>>,
     epoch: u64,
     confirm: Option<PhysicalConfirm>,
-) -> Outcome {
-    if let Some(c) = confirm {
+    options: RunOptions,
+}
+
+/// Wait for the physical confirmation (if configured), then run the iterations the options ask for, each after the
+/// start input when asked, unless a stop came in since approval.
+async fn execute(st: &Arc<AppState>, job: Job<'_>) -> Outcome {
+    let id = job.id;
+    if let Some(c) = job.confirm {
         st.emit(Event::machine("awaiting_confirm", Some(id.to_owned())));
-        match wait_for_confirm(&st.machine, epoch, c).await {
-            ConfirmEnd::Confirmed => {}
-            ConfirmEnd::Stopped => {
+        match wait_for_input(&st.machine, job.epoch, c.input_bit, true, c.timeout, c.poll).await {
+            InputEnd::Confirmed => {}
+            InputEnd::Stopped => {
                 return (RunState::Cancelled, None, Some("stopped while waiting for the physical confirmation".into()));
             }
-            ConfirmEnd::TimedOut => {
+            InputEnd::TimedOut => {
                 let msg = format!(
                     "input {} was not pressed within {} s of approval; request and approve the run again",
                     c.input_bit,
@@ -112,12 +160,90 @@ async fn execute(
                 );
                 return (RunState::Cancelled, None, Some(msg));
             }
-            ConfirmEnd::Failed(e) => return (RunState::Failed, None, Some(format!("physical confirmation: {e}"))),
-            ConfirmEnd::Panicked(e) => return panicked(st, e).await,
+            InputEnd::Failed(e) => return (RunState::Failed, None, Some(format!("physical confirmation: {e}"))),
+            InputEnd::Panicked(e) => return panicked(st, e).await,
         }
     }
+    let iterations = job.options.iterations();
+    let start_bit = if job.options.start_input { st.machine.profile().start_mark_input_bit } else { None };
+    let mut completed = 0u32;
+    let mut last: Option<RunReport> = None;
+    loop {
+        let iteration = completed + 1;
+        if completed > 0 {
+            if st.machine.stop_epoch() != job.epoch {
+                return (RunState::Aborted, last, Some(format!("stopped after {completed} run(s)")));
+            }
+            if st.job.ending() {
+                return (RunState::Finished, last, None);
+            }
+            if st.job.at_stop(job.device) {
+                return (RunState::Finished, last, None);
+            }
+        }
+        if let Some(bit) = start_bit {
+            st.job.waiting(iteration);
+            st.runs().set_state(id, RunState::AwaitingConfirm);
+            st.emit(Event::machine("awaiting_start_input", Some(id.to_owned())));
+            let full = job.options.full_pulse.unwrap_or(true);
+            match wait_for_input(&st.machine, job.epoch, bit, full, START_INPUT_TIMEOUT, CONFIRM_POLL).await {
+                InputEnd::Confirmed => {}
+                InputEnd::Stopped if completed == 0 => {
+                    return (RunState::Cancelled, None, Some("stopped while waiting for the start input".into()));
+                }
+                InputEnd::Stopped => return (RunState::Aborted, last, Some(format!("stopped after {completed} run(s)"))),
+                InputEnd::TimedOut if completed == 0 => {
+                    return (RunState::Cancelled, None, Some(format!("start input {bit} was not pressed within an hour")));
+                }
+                InputEnd::TimedOut => return (RunState::Finished, last, None),
+                InputEnd::Failed(e) => return (RunState::Failed, last, Some(format!("start input: {e}"))),
+                InputEnd::Panicked(e) => return panicked(st, e).await,
+            }
+        }
+        // Pause pressed while no run streams (between iterations, while waiting for the start input or the
+        // physical confirmation): hold here, before the MO is opened, until resumed or stopped.
+        hold_while_paused(st, job.epoch).await;
+        match run_once(st, id, &job.parts, job.epoch, iteration).await {
+            Once::Done(report) => {
+                completed += 1;
+                last = Some(report);
+                let count = st.job.increment(job.device);
+                st.job.completed(completed);
+                if let Some(r) = st.runs().get_mut(id) {
+                    r.completed = completed;
+                }
+                st.emit(Event::machine("job_count", Some(count.to_string())));
+                if iterations.is_some_and(|n| completed >= n) {
+                    return (RunState::Finished, last, None);
+                }
+            }
+            Once::NotStarted if completed == 0 => {
+                return (RunState::Cancelled, None, Some("cancelled by stop before streaming".into()));
+            }
+            Once::NotStarted => return (RunState::Aborted, last, Some(format!("stopped after {completed} run(s)"))),
+            Once::Ended(outcome) => return outcome,
+        }
+    }
+}
+
+/// Wait while a pause is asked for, unless a stop came in (the caller's next step sees the stop).
+async fn hold_while_paused(st: &Arc<AppState>, epoch: u64) {
+    while st.machine.pause_requested() && st.machine.stop_epoch() == epoch {
+        tokio::time::sleep(CONFIRM_POLL).await;
+    }
+}
+
+enum Once {
+    Done(RunReport),
+    /// A stop came in before this iteration took the controller; nothing was sent for it.
+    NotStarted,
+    Ended(Outcome),
+}
+
+/// One iteration: arm, claim the controller, run every part.
+async fn run_once(st: &Arc<AppState>, id: &str, parts: &Arc<Vec<RunPart>>, epoch: u64, iteration: u32) -> Once {
     let armed = Armed::approved_in_ui(id.to_owned());
-    let (task_state, run_id) = (st.clone(), id.to_owned());
+    let (task_state, run_id, parts) = (st.clone(), id.to_owned(), parts.clone());
     let result = st
         .machine
         .blocking(move |m, ctl| {
@@ -131,17 +257,19 @@ async fn execute(
                 }
                 runs.set_state(&run_id, RunState::Running);
             }
+            task_state.job.started(iteration);
             task_state.emit(Event::machine("run_started", Some(run_id)));
-            Some(m.ensure_ready(ctl).and_then(|()| ctl.run(&packets, armed)))
+            Some(m.ensure_ready(ctl).and_then(|()| ctl.run_parts(&parts, armed)))
         })
         .await;
     match result {
-        Ok(None) => (RunState::Cancelled, None, Some("cancelled by stop before streaming".into())),
-        Ok(Some(Ok(report))) => (RunState::Finished, Some(report), None),
-        Ok(Some(Err(ControllerError::Aborted))) => (RunState::Aborted, None, Some("aborted by stop".into())),
-        Ok(Some(Err(e))) => (RunState::Failed, None, Some(e.to_string())),
+        Ok(None) => Once::NotStarted,
+        Ok(Some(Ok(report))) => Once::Done(report),
+        Ok(Some(Err(ControllerError::Aborted))) => Once::Ended((RunState::Aborted, None, Some("aborted by stop".into()))),
+        Ok(Some(Err(e @ ControllerError::StopInput(_)))) => Once::Ended((RunState::Aborted, None, Some(e.to_string()))),
+        Ok(Some(Err(e))) => Once::Ended((RunState::Failed, None, Some(e.to_string()))),
         // The blocking task panicked: the controller may have left the MO open or the laser-enable bit set.
-        Err(e) => panicked(st, e.to_string()).await,
+        Err(e) => Once::Ended(panicked(st, e.to_string()).await),
     }
 }
 
@@ -155,7 +283,7 @@ async fn panicked(st: &Arc<AppState>, e: String) -> Outcome {
     (RunState::Failed, None, Some(format!("internal error ({e}); {abort}")))
 }
 
-enum ConfirmEnd {
+enum InputEnd {
     Confirmed,
     Stopped,
     TimedOut,
@@ -163,18 +291,19 @@ enum ConfirmEnd {
     Panicked(String),
 }
 
-/// Poll `ReadPort` until input `c.input_bit` has been seen released and then pressed for [`CONFIRM_READS`] reads in a
-/// row. Ends early on a stop (epoch change), a read error or the timeout.
-async fn wait_for_confirm(machine: &Arc<Machine>, epoch: u64, c: PhysicalConfirm) -> ConfirmEnd {
-    let deadline = Instant::now() + c.timeout;
-    let mask = 1u16 << (c.input_bit & 15);
-    let (mut released, mut pressed) = (false, 0);
+/// Poll `ReadPort` until input `bit` is pressed for [`CONFIRM_READS`] reads in a row; with `full_pulse` it must
+/// first be seen released (so a stuck, held or inverted input never starts anything). Ends early on a stop (epoch
+/// change), a read error or the timeout.
+async fn wait_for_input(machine: &Arc<Machine>, epoch: u64, bit: u8, full_pulse: bool, timeout: Duration, poll: Duration) -> InputEnd {
+    let deadline = Instant::now() + timeout;
+    let mask = 1u16 << (bit & 15);
+    let (mut released, mut pressed) = (!full_pulse, 0);
     loop {
         if machine.stop_epoch() != epoch {
-            return ConfirmEnd::Stopped;
+            return InputEnd::Stopped;
         }
         if Instant::now() >= deadline {
-            return ConfirmEnd::TimedOut;
+            return InputEnd::TimedOut;
         }
         let read = machine
             .blocking(move |m, ctl| {
@@ -190,14 +319,14 @@ async fn wait_for_confirm(machine: &Arc<Machine>, epoch: u64, c: PhysicalConfirm
             Ok(Ok(Some(_))) if released => {
                 pressed += 1;
                 if pressed >= CONFIRM_READS {
-                    return ConfirmEnd::Confirmed;
+                    return InputEnd::Confirmed;
                 }
             }
             Ok(Ok(Some(_))) => {}
-            Ok(Ok(None)) => return ConfirmEnd::Stopped,
-            Ok(Err(e)) => return ConfirmEnd::Failed(e.to_string()),
-            Err(e) => return ConfirmEnd::Panicked(e.to_string()),
+            Ok(Ok(None)) => return InputEnd::Stopped,
+            Ok(Err(e)) => return InputEnd::Failed(e.to_string()),
+            Err(e) => return InputEnd::Panicked(e.to_string()),
         }
-        tokio::time::sleep(c.poll).await;
+        tokio::time::sleep(poll).await;
     }
 }

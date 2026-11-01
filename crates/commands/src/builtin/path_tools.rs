@@ -426,8 +426,8 @@ impl Command for ConvertToPath {
     type Input = IdsInput;
     const ID: &'static str = "path.convert";
     const TITLE: &'static str = "Convert to path";
-    const DESCRIPTION: &'static str = "Turn rectangles and ellipses into plain paths (lines and Bézier curves, same \
-        shape and placement), so their nodes can be edited; their size parameters are gone afterwards. Paths are \
+    const DESCRIPTION: &'static str = "Turn rectangles, ellipses and text into plain paths (lines and Bézier curves, \
+        same shape and placement), so their nodes can be edited; their size or text settings are gone afterwards. Paths are \
         left as they are; images cannot be converted. Fails when nothing converts. Returns affected ids, `skipped` \
         and bounds.";
     const RISK: Risk = Risk::Edit;
@@ -442,7 +442,7 @@ impl Command for ConvertToPath {
             for id in &ids {
                 let o = util::object(doc, id)?;
                 match o.geometry {
-                    Geometry::Rect { .. } | Geometry::Ellipse { .. } => {
+                    Geometry::Rect { .. } | Geometry::Ellipse { .. } | Geometry::Text(_) => {
                         let local = pathutil::clean_local(&o.geometry);
                         pathutil::set_local_path(doc, id, local)?;
                         affected.push(id.clone());
@@ -452,7 +452,7 @@ impl Command for ConvertToPath {
                 }
             }
             if affected.is_empty() {
-                return Err(CommandError::Failed(format!("{cmd}: nothing to convert (only rectangles and ellipses convert)")));
+                return Err(CommandError::Failed(format!("{cmd}: nothing to convert (only rectangles, ellipses and text convert)")));
             }
             let mut r = util::edit_result(doc, &[], &affected);
             r["skipped"] = json!(skipped);

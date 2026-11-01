@@ -139,6 +139,11 @@ pub struct RunPart {
 }
 
 impl RunPart {
+    /// An axis move with no list (a rotary's return to its start); a job needs at least one part with packets.
+    pub fn axis_only(position: u16) -> Self {
+        RunPart { axis_position: Some(position), packets: Vec::new() }
+    }
+
     /// A part without an axis move.
     pub fn list(packets: Vec<Packet>) -> Self {
         RunPart { axis_position: None, packets }
@@ -172,7 +177,9 @@ struct RunShared {
 /// Pause, resume and progress of the controller's runs, usable from another thread while [`Controller::run`]
 /// holds the controller (like [`AbortHandle`]). Pausing sends `StopList` at the next packet or status poll and
 /// resuming `RestartList` (galvoplotter's and meerk40t's `pause()` / `resume()`); an abort request ends a paused run
-/// too. A pause requested while no run streams is dropped when the next run starts.
+/// too. A pause requested before a run streams is kept: that run pauses before its first packet (so a pause pressed
+/// between two runs of a repeating job, or while the next run is being started, is never lost). [`Controller::abort`]
+/// and [`RunControl::clear_pause`] drop a pending request.
 #[derive(Debug, Clone, Default)]
 pub struct RunControl(Arc<RunShared>);
 
@@ -182,6 +189,11 @@ impl RunControl {
     }
 
     pub fn request_resume(&self) {
+        self.0.pause_requested.store(false, Ordering::SeqCst);
+    }
+
+    /// Drop a pending pause request (a new job is approved, or a stop ended the last one).
+    pub fn clear_pause(&self) {
         self.0.pause_requested.store(false, Ordering::SeqCst);
     }
 
@@ -206,7 +218,7 @@ impl RunControl {
     }
 
     fn start(&self, parts: &[RunPart]) {
-        self.0.pause_requested.store(false, Ordering::SeqCst);
+        // `pause_requested` is kept (see the type docs).
         self.0.paused.store(false, Ordering::SeqCst);
         self.0.packets_sent.store(0, Ordering::SeqCst);
         self.0.packets_total.store(parts.iter().map(|p| p.packets.len()).sum(), Ordering::SeqCst);
@@ -568,10 +580,10 @@ impl<L: Link> Controller<L> {
         if self.state == ControllerState::Running {
             return Err(ControllerError::Busy(self.state));
         }
-        if parts.is_empty() {
+        if parts.iter().all(|p| p.packets.is_empty()) {
             return Err(ControllerError::Job(JobCheckError::Empty));
         }
-        for part in parts {
+        for part in parts.iter().filter(|p| !p.packets.is_empty() || p.axis_position.is_none()) {
             check_job(&profile, &part.packets)?;
         }
         if parts.iter().any(|p| p.axis_position.is_some()) && profile.axis.is_none() {
@@ -602,21 +614,31 @@ impl<L: Link> Controller<L> {
 
     fn run_inner(&mut self, profile: &MachineProfile, parts: &[RunPart]) -> Result<Option<Reply>> {
         let invert = profile.axis.as_ref().is_some_and(|a| a.invert);
+        let mut mo_open = false;
         for (i, part) in parts.iter().enumerate() {
             self.control.0.part.store(i, Ordering::SeqCst);
             if let Some(position) = part.axis_position {
-                if i > 0 {
+                if mo_open {
                     self.single(Single::fiber_set_mo(false))?;
+                    mo_open = false;
                 }
                 self.check_abort()?;
                 self.axis_to(position, invert)?;
+            }
+            if part.packets.is_empty() {
+                // An axis move only (e.g. the rotary's return to its start).
+                continue;
             }
             self.single(Single::reset_list())?;
             if i == 0 {
                 self.single(Single::write_port(profile.laser_enable_mask()))?;
             }
-            if i == 0 || part.axis_position.is_some() {
+            if !mo_open {
+                if i > 0 {
+                    self.single(Single::write_port(profile.laser_enable_mask()))?;
+                }
                 self.single(Single::fiber_set_mo(true))?;
+                mo_open = true;
             }
             self.stream(&part.packets)?;
             self.wait_idle()?;
@@ -640,6 +662,8 @@ impl<L: Link> Controller<L> {
             Single::goto_xy(CENTER, CENTER, 0),
         ]);
         self.abort.clear();
+        // A stop ends a pause too; a request left over would pause the next run.
+        self.control.clear_pause();
         self.state = if self.profile.is_some() { ControllerState::Idle } else { ControllerState::Uninitialized };
         result
     }
@@ -1246,11 +1270,18 @@ mod tests {
         input_at: Option<(usize, u16)>,
         packets: usize,
         polls_paused: usize,
+        stopped: bool,
     }
 
     impl Link for ScriptedLink {
         fn send_single(&mut self, cmd: Single) -> Result<Option<Reply>, LinkError> {
-            if cmd == Single::get_version() && self.inner.paused() {
+            if cmd == Single::stop_list() {
+                self.stopped = true;
+            }
+            if cmd == Single::restart_list() {
+                self.stopped = false;
+            }
+            if cmd == Single::get_version() && self.stopped {
                 self.polls_paused += 1;
                 if self.polls_paused >= self.resume_after
                     && let Some(c) = self.control.lock().unwrap().as_ref()
@@ -1287,6 +1318,7 @@ mod tests {
             input_at,
             packets: 0,
             polls_paused: 0,
+            stopped: false,
         };
         let mut c = Controller::with_settings(link, InitSettings::default(), PollConfig::immediate());
         *control.lock().unwrap() = Some(c.run_control());
@@ -1328,6 +1360,26 @@ mod tests {
         assert_eq!(r, Err(ControllerError::Aborted));
         assert!(!c.link().inner.mo_open() && c.link().inner.port() == 0);
         assert!(!c.run_control().is_paused());
+    }
+
+    #[test]
+    fn a_pause_requested_before_the_run_holds_it_before_the_first_packet() {
+        // pause_at 0: the link never pauses by itself; the request is made before `run`.
+        let mut c = scripted(0, 3, None, &b6());
+        c.run_control().request_pause();
+        let packets = job();
+        c.run(&packets, Armed::approved_in_ui("run-early".into())).unwrap();
+        let traffic = c.link().inner.traffic();
+        let stop = traffic.iter().position(|t| matches!(t, Traffic::Single(s) if s.opcode() == op::STOP_LIST)).expect("paused");
+        let restart = traffic.iter().position(|t| matches!(t, Traffic::Single(s) if s.opcode() == op::RESTART_LIST)).expect("resumed");
+        let first_packet = traffic.iter().position(|t| matches!(t, Traffic::Packet(_))).expect("packets");
+        assert!(stop < restart && restart < first_packet, "nothing was sent while paused");
+        assert_eq!(c.link().inner.packets(), packets);
+        // An abort drops a pending pause, so the next run is not paused by a stale request.
+        let control = c.run_control();
+        control.request_pause();
+        c.abort().unwrap();
+        assert!(!control.pause_requested());
     }
 
     #[test]
@@ -1376,6 +1428,16 @@ mod tests {
         assert!(singles[moves[1]..].contains(&Single::fiber_set_mo(true)));
         assert_eq!(c.link().axis_position(), 200);
         assert!(!c.link().mo_open());
+        // A move-only part at the end returns the axis without opening the MO again.
+        c.link_mut().clear_traffic();
+        let mut with_return = parts.clone();
+        with_return.push(RunPart::axis_only(0));
+        c.run_parts(&with_return, Armed::approved_in_ui("run-z".into())).unwrap();
+        assert_eq!(c.link().axis_position(), 0);
+        let singles = c.link().singles_without_polls();
+        let last_move = singles.iter().rposition(|s| s.opcode() == op::MOVE_AXIS_TO).unwrap();
+        assert!(!singles[last_move..].contains(&Single::fiber_set_mo(true)));
+        assert!(matches!(c.run_parts(&[RunPart::axis_only(5)], Armed::approved_in_ui("e".into())), Err(ControllerError::Job(JobCheckError::Empty))));
         // Without an axis in the profile, a part with a move is refused before anything is sent.
         let mut c = ready();
         let r = c.run_parts(&parts, Armed::approved_in_ui("run-x".into()));

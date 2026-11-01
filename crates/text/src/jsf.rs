@@ -90,7 +90,7 @@ fn glyph(d: &[u8], o: usize) -> Option<BezPath> {
         match kind {
             3 if count >= 4 && (count - 1) % 3 == 0 => {
                 path.move_to(pts[0]);
-                for c in pts[1..].chunks_exact(3) {
+                for c in pts[1..].as_chunks::<3>().0 {
                     path.curve_to(c[0], c[1], c[2]);
                 }
             }
@@ -175,7 +175,7 @@ pub(crate) mod tests {
         put_f(&mut d, 0xC2, 3.2);
         put_u(&mut d, 0xC6, 0x11A + 4 * entries);
         d.resize(0x11A + 4 * entries as usize, 0);
-        let mut glyph = |d: &mut Vec<u8>, code: u32, strokes: &[(u8, &[(f32, f32)])]| {
+        let glyph = |d: &mut Vec<u8>, code: u32, strokes: &[(u8, &[(f32, f32)])]| {
             let at = d.len() as u32;
             d[0x11A + 4 * code as usize..0x11A + 4 * code as usize + 4].copy_from_slice(&at.to_le_bytes());
             d.extend((strokes.len() as u16).to_le_bytes());
@@ -204,7 +204,7 @@ pub(crate) mod tests {
         assert_eq!((b.x0, b.y0, b.y1), (0.0, 0.0, 26.0), "moved to x 0");
         assert!((a.advance - (20.0 + 3.2)).abs() < 1e-5, "{}", a.advance);
         assert!(a.path.elements().iter().any(|e| matches!(e, kurbo::PathEl::CurveTo(..))), "kind 3 is a cubic");
-        assert_eq!(f.cap_height, 26.0);
+        assert!((f.cap_height - 25.6 * 0.7).abs() < 1e-9, "no H or X: 70 % of the ascent");
         assert!((f.ascent - 25.6).abs() < 1e-9);
     }
 

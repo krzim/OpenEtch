@@ -16,6 +16,7 @@
 #![forbid(unsafe_code)]
 
 pub mod api;
+mod api_machine;
 mod approve;
 pub mod cli;
 pub mod devices;
@@ -23,6 +24,7 @@ pub mod error;
 pub mod events;
 pub mod frame;
 pub mod hw;
+pub mod job;
 pub mod lightburn;
 pub mod mcp;
 pub mod pin;
@@ -38,3 +40,5 @@ pub use state::AppState;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod job_tests;

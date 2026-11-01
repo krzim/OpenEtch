@@ -43,9 +43,9 @@ pub use init::InitSettings;
 pub use link::{Link, LinkError, Reply};
 pub use lightburn::{
     LightBurnDevice, LightBurnError, LightBurnPrefs, LightBurnSettings, ProfileDiff, find_device, parse_devices,
-    parse_lbdev, profile_from_lightburn,
+    parse_lbdev, profile_from_lightburn, to_lbdev,
 };
-pub use device::{Bases, Device, DeviceKind, DeviceSource, Origin, ProfileBase};
+pub use device::{Bases, Device, DeviceKind, DeviceSource, Origin, ProfileBase, edit_profile, merge_patch};
 pub use markcfg::MarkcfgImport;
 pub use profile::{
     AxisRole, DEFAULT_MAX_DELAY_US, DEFAULT_MAX_JUMP_SPEED_MM_S, DEFAULT_OPEN_MO_DELAY_US, ExtensionAxis, FiberKind,

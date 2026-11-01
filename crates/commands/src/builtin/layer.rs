@@ -1,4 +1,5 @@
-//! Layer commands: `layer.add`, `layer.update`, `layer.delete`, and the partial cut-settings patch they share.
+//! Layer commands: `layer.add`, `layer.update`, `layer.delete`, `layer.move`, and the partial cut-settings patch they
+//! share.
 
 use doc::{CutSettings, DitherMode, Document, FillMode, GalvoTiming, Layer, LayerId};
 use schemars::JsonSchema;
@@ -41,6 +42,12 @@ pub struct SettingsPatch {
     pub timing: Option<Option<GalvoTiming>>,
     /// Image mode settings, used for the layer's images whatever its mode (partial: only the fields given change).
     pub image: Option<ImagePatch>,
+    /// Cut options (partial, merged like a JSON merge patch; `null` resets one): output (sub-layer output toggle),
+    /// pause_before_ms / pause_after_ms, dot_mode {dot_time_ms, dot_spacing_mm}, wobble {step_mm, size_mm},
+    /// fill_dot_width_mm, fill_grouping (individually | all_at_once | by_group), auto_rotate, flood_fill,
+    /// perforation {cut_mm, skip_mm}, tabs {count, spacing_mm, size_mm}, z_offset_mm, z_step_mm.
+    #[schemars(with = "Option<doc::CutOptions>")]
+    pub options: Option<Value>,
 }
 
 /// A partial [`doc::ImageSettings`] (LightBurn's Image mode).
@@ -156,6 +163,28 @@ pub struct HatchPatch {
     pub cross_hatch: Option<bool>,
     /// Mark alternate hatch lines in opposite directions.
     pub bidirectional: Option<bool>,
+    /// Lines per inch (LightBurn's LPI entry): sets interval_mm to 25.4 / lines_per_inch (give one of the two).
+    pub lines_per_inch: Option<f64>,
+}
+
+/// RFC 7386 JSON merge patch: objects merge key by key, `null` removes a key (back to its default), anything else
+/// replaces.
+pub(super) fn json_merge_patch(target: &mut Value, patch: &Value) {
+    let Value::Object(changes) = patch else {
+        *target = patch.clone();
+        return;
+    };
+    if !target.is_object() {
+        *target = Value::Object(serde_json::Map::new());
+    }
+    let map = target.as_object_mut().expect("made an object above");
+    for (k, v) in changes {
+        if v.is_null() {
+            map.remove(k);
+        } else {
+            json_merge_patch(map.entry(k.clone()).or_insert(Value::Null), v);
+        }
+    }
 }
 
 /// Distinguishes an absent field (`None`) from an explicit `null` (`Some(None)`).
@@ -186,8 +215,15 @@ impl SettingsPatch {
             n.passes = v;
         }
         if let Some(h) = self.hatch {
+            if h.interval_mm.is_some() && h.lines_per_inch.is_some() {
+                return Err(invalid(cmd, "give hatch.interval_mm or hatch.lines_per_inch, not both"));
+            }
             if let Some(v) = h.interval_mm {
                 n.hatch.interval_mm = v;
+            }
+            if let Some(lpi) = h.lines_per_inch {
+                util::positive(cmd, "hatch.lines_per_inch", lpi)?;
+                n.hatch.interval_mm = 25.4 / lpi;
             }
             if let Some(v) = h.angle_deg {
                 n.hatch.angle_deg = v;
@@ -208,6 +244,11 @@ impl SettingsPatch {
         if let Some(p) = self.image {
             p.apply(cmd, &mut n.image)?;
             validate_image(cmd, &n.image)?;
+        }
+        if let Some(patch) = self.options {
+            let mut v = serde_json::to_value(&n.options).map_err(|e| CommandError::Failed(e.to_string()))?;
+            json_merge_patch(&mut v, &patch);
+            n.options = serde_json::from_value(v).map_err(|e| invalid(cmd, format!("options: {e}")))?;
         }
         validate_settings(cmd, &n)?;
         *s = n;
@@ -233,6 +274,9 @@ pub(super) fn validate_settings(cmd: &str, s: &CutSettings) -> Result<()> {
     util::finite(cmd, "hatch.angle_increment_deg", s.hatch.angle_increment_deg)?;
     if let Some(c) = &s.cleanup {
         check_cleanup(cmd, c)?;
+    }
+    if let Some(p) = s.options.problem() {
+        return Err(invalid(cmd, p));
     }
     if let Some(t) = &s.timing {
         let fields = [
@@ -332,6 +376,8 @@ pub struct LayerUpdateInput {
     pub output: Option<bool>,
     /// Partial cut settings merged into the current ones: {"power_pct": 40} changes only power.
     pub settings: Option<SettingsPatch>,
+    /// Run the whole layer (main settings and sub-layers) this many times, 1..=1000 (LightBurn's global passes).
+    pub global_passes: Option<u32>,
 }
 
 /// `layer.update`.
@@ -372,6 +418,13 @@ impl Command for LayerUpdate {
                 layer.output = v;
                 changed.push("output");
             }
+            if let Some(g) = input.global_passes {
+                if !(1..=MAX_PASSES).contains(&g) {
+                    return Err(invalid(Self::ID, format!("global_passes must be within 1..={MAX_PASSES} (got {g})")));
+                }
+                layer.global_passes = g;
+                changed.push("global_passes");
+            }
             if let Some(p) = input.settings {
                 let sets_frequency = p.frequency_khz.is_some();
                 p.apply(Self::ID, &mut layer.settings)?;
@@ -384,7 +437,7 @@ impl Command for LayerUpdate {
             if changed.is_empty() {
                 return Err(invalid(
                     Self::ID,
-                    "nothing to change: give at least one of name, color, visible, output, settings",
+                    "nothing to change: give at least one of name, color, visible, output, global_passes, settings",
                 ));
             }
             let mut result = layer_result(doc, &id);
@@ -463,6 +516,56 @@ impl Command for LayerDelete {
     }
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LayerMoveInput {
+    /// Exact id of the layer to move, e.g. "layer-2".
+    pub id: String,
+    /// 0-based position the layer ends up at in the layer list; the other layers keep their order.
+    pub to_index: usize,
+}
+
+/// `layer.move`.
+pub struct LayerMove;
+
+impl Command for LayerMove {
+    type Input = LayerMoveInput;
+    const ID: &'static str = "layer.move";
+    const TITLE: &'static str = "Move layer";
+    const DESCRIPTION: &'static str = "Move a layer to another position in the layer list (LightBurn's Cuts / Layers \
+        order). Jobs burn layer by layer in this order, so this changes the cut order. The other layers keep their \
+        order; objects and settings are unchanged. Returns the new `order` of layer ids.";
+    const RISK: Risk = Risk::Edit;
+
+    fn apply(doc: &mut Document, input: LayerMoveInput) -> Result<(Value, String)> {
+        transact(doc, |doc| {
+            let id = util::layer(doc, &input.id)?.id.clone();
+            let n = doc.layers.len();
+            if input.to_index >= n {
+                return Err(invalid(
+                    Self::ID,
+                    format!("to_index must be within 0..={} (got {})", n - 1, input.to_index),
+                ));
+            }
+            let from = doc
+                .layers
+                .iter()
+                .position(|l| l.id == id)
+                .ok_or_else(|| CommandError::Failed(format!("layer {id} vanished")))?;
+            if from == input.to_index {
+                return Err(invalid(Self::ID, format!("layer {id} is already at position {from}")));
+            }
+            let layer = doc.layers.remove(from);
+            doc.layers.insert(input.to_index, layer);
+            let order: Vec<&str> = doc.layers.iter().map(|l| l.id.as_str()).collect();
+            let mut result = layer_result(doc, &id);
+            result["order"] = json!(order);
+            result["index"] = json!(input.to_index);
+            Ok((result, format!("moved layer {id} from position {from} to {}", input.to_index)))
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -525,12 +628,37 @@ mod tests {
         let schema = serde_json::to_value(schemars::schema_for!(SettingsPatch)).unwrap();
         assert_eq!(keys(&settings), keys(&schema["properties"]));
         let hatch_schema = serde_json::to_value(schemars::schema_for!(HatchPatch)).unwrap();
-        assert_eq!(keys(&settings["hatch"]), keys(&hatch_schema["properties"]));
+        let mut hatch_keys = keys(&settings["hatch"]);
+        hatch_keys.push("lines_per_inch".into());
+        hatch_keys.sort();
+        assert_eq!(hatch_keys, keys(&hatch_schema["properties"]));
         let image_schema = serde_json::to_value(schemars::schema_for!(ImagePatch)).unwrap();
         let mut image_keys = keys(&settings["image"]);
         image_keys.push("dpi".into());
         image_keys.sort();
         assert_eq!(image_keys, keys(&image_schema["properties"]));
+    }
+
+    #[test]
+    fn lpi_cut_options_and_global_passes() {
+        let mut s = CutSettings::default();
+        patch(json!({"hatch": {"lines_per_inch": 254}})).apply("t", &mut s).unwrap();
+        assert!((s.hatch.interval_mm - 0.1).abs() < 1e-12);
+        assert!(patch(json!({"hatch": {"lines_per_inch": 254, "interval_mm": 0.1}})).apply("t", &mut s).is_err());
+        assert!(patch(json!({"hatch": {"lines_per_inch": 0}})).apply("t", &mut s).is_err());
+        patch(json!({"options": {"pause_after_ms": 20, "wobble": {"step_mm": 0.2, "size_mm": 0.5}}})).apply("t", &mut s).unwrap();
+        assert_eq!(s.options.pause_after_ms, 20.0);
+        patch(json!({"options": {"output": false, "wobble": null}})).apply("t", &mut s).unwrap();
+        assert!(!s.options.output && s.options.wobble.is_none() && s.options.pause_after_ms == 20.0);
+        let before = s.clone();
+        assert!(patch(json!({"options": {"pause_after_ms": -1}})).apply("t", &mut s).is_err());
+        assert!(patch(json!({"options": {"wobel": 1}})).apply("t", &mut s).is_err());
+        assert_eq!(s, before, "a refused patch changes nothing");
+        let mut session = crate::Session::new(Document::default());
+        let id = session.document().layers[0].id.clone();
+        run(&mut session, "layer.update", json!({"id": id, "global_passes": 3})).unwrap();
+        assert_eq!(session.document().layers[0].global_passes, 3);
+        assert!(run(&mut session, "layer.update", json!({"id": id, "global_passes": 0})).is_err());
     }
 
     #[test]
@@ -556,5 +684,64 @@ mod tests {
         assert_eq!(s, before, "a refused patch changes nothing");
         assert!(serde_json::from_value::<SettingsPatch>(json!({"image": {"dither": "3dslice"}})).is_err());
         assert!(serde_json::from_value::<SettingsPatch>(json!({"image": {"gamma": 2}})).is_err(), "adjust is per image");
+    }
+
+    fn run(s: &mut crate::Session, id: &str, params: Value) -> Result<Value> {
+        s.execute(crate::Invocation { id: id.into(), params }, crate::Origin::Ui).map(|o| o.result)
+    }
+
+    fn order(s: &crate::Session) -> Vec<String> {
+        s.document().layers.iter().map(|l| l.id.clone()).collect()
+    }
+
+    #[test]
+    fn layer_move_reorders_in_one_undo_step() {
+        let mut s = crate::Session::new(Document::default());
+        let first = s.document().layers[0].id.clone();
+        let b = run(&mut s, "layer.add", json!({"name": "B"})).unwrap()["id"].as_str().unwrap().to_string();
+        let c = run(&mut s, "layer.add", json!({"name": "C"})).unwrap()["id"].as_str().unwrap().to_string();
+        let obj = run(&mut s, "shape.rect", json!({"width_mm": 5, "height_mm": 5, "layer": c})).unwrap()["created"][0]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let before = order(&s);
+        let steps = s.history().len();
+
+        // Last to first: C now burns before the others, which keep their order.
+        let r = run(&mut s, "layer.move", json!({"id": c, "to_index": 0})).unwrap();
+        assert_eq!(order(&s), [c.clone(), first.clone(), b.clone()]);
+        assert_eq!(r["order"], json!([c, first, b]));
+        assert_eq!(r["affected"], json!([c]));
+        assert_eq!(r["objects"], json!([obj]));
+        assert_eq!(s.history().len(), steps + 1, "one undo step");
+        assert_eq!(s.document().object(&obj).unwrap().layer, c, "objects keep their layer");
+
+        // First to last.
+        run(&mut s, "layer.move", json!({"id": c, "to_index": 2})).unwrap();
+        assert_eq!(order(&s), [first.clone(), b.clone(), c.clone()]);
+        run(&mut s, "layer.move", json!({"id": first, "to_index": 1})).unwrap();
+        assert_eq!(order(&s), [b.clone(), first.clone(), c.clone()]);
+
+        s.undo().unwrap();
+        s.undo().unwrap();
+        s.undo().unwrap();
+        assert_eq!(order(&s), before);
+    }
+
+    #[test]
+    fn layer_move_refuses_bad_positions() {
+        let mut s = crate::Session::new(Document::default());
+        let first = s.document().layers[0].id.clone();
+        run(&mut s, "layer.add", json!({"name": "B"})).unwrap();
+        let before = order(&s);
+        let rev = s.document().revision;
+        let e = run(&mut s, "layer.move", json!({"id": first, "to_index": 2})).unwrap_err().to_string();
+        assert!(e.contains("0..=1"), "{e}");
+        let e = run(&mut s, "layer.move", json!({"id": first, "to_index": 0})).unwrap_err().to_string();
+        assert!(e.contains("already at position 0"), "{e}");
+        assert!(run(&mut s, "layer.move", json!({"id": "layer-99", "to_index": 0})).is_err());
+        assert!(run(&mut s, "layer.move", json!({"id": first, "to_index": -1})).is_err());
+        assert!(run(&mut s, "layer.move", json!({"id": first, "index": 1})).is_err());
+        assert_eq!((order(&s), s.document().revision), (before, rev), "refusals change nothing");
     }
 }

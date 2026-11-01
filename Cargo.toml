@@ -17,6 +17,7 @@ commands = { path = "crates/commands" }
 plan = { path = "crates/plan" }
 machine = { path = "crates/machine" }
 lbrn = { path = "crates/lbrn" }
+text = { path = "crates/text" }
 
 # shared
 serde = { version = "1", features = ["derive", "rc"] }

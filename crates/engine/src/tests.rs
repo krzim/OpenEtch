@@ -1836,3 +1836,42 @@ async fn activating_a_device_swaps_the_machine_and_is_refused_while_busy() {
     assert_eq!(again.active().id, "test-bed-400");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Runs are planned with variable text as of the request (`commands::prepare_output`), a text that cannot be
+/// rendered refuses the run, and `advance_variables_after_run` advances the counter only with auto-advance on.
+#[tokio::test]
+async fn runs_render_variable_text_and_auto_advance() {
+    let st = test_state().await;
+    let app = app(&st);
+    let font = json!({ "family": "Hershey Sans", "kind": "stroke" });
+    let text = json!({ "text": "0ddd", "font": font, "height_mm": 5, "variable": { "mode": "serial" } });
+    let (s, v) = send(&app, exec("shape.text", text)).await;
+    assert_eq!((s, v["ok"].clone()), (StatusCode::OK, json!(true)), "{v}");
+    let id = v["result"]["created"][0].as_str().unwrap().to_string();
+    let (s, v) = send(&app, req("POST", "/api/runs", None)).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+
+    // Auto-advance off: nothing changes after a run.
+    let rev = st.revision();
+    st.advance_variables_after_run();
+    assert_eq!(st.revision(), rev);
+    let (_, v) = send(&app, exec("var.set_serial", json!({ "auto_advance": true, "current": 41 }))).await;
+    assert_eq!(v["ok"], true, "{v}");
+    st.advance_variables_after_run();
+    assert_eq!(st.document().variables.current, 42);
+    let doc = st.document();
+    let doc::Geometry::Text(t) = &doc.object(&id).unwrap().geometry else { panic!() };
+    assert_eq!(t.shown.as_deref(), Some("042"));
+
+    // A variable text whose font is gone refuses the run instead of burning a stale number.
+    let mut broken = st.document();
+    if let doc::Geometry::Text(t) = &mut broken.object_mut(&id).unwrap().geometry {
+        t.font.family = "Missing Font".into();
+    }
+    let content = doc::file::try_to_openetch_json(&broken).unwrap();
+    let (_, v) = send(&app, exec("doc.load", json!({ "content": content }))).await;
+    assert_eq!(v["ok"], true, "{v}");
+    let (s, v) = send(&app, req("POST", "/api/runs", None)).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
+    assert!(v["error"].as_str().unwrap().contains("not installed"), "{v}");
+}

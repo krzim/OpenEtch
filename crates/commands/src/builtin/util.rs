@@ -103,12 +103,11 @@ pub fn color(cmd: &str, s: &str) -> Result<String> {
 pub fn check_unlocked(cmd: &str, doc: &Document, ids: &[ObjectId]) -> Result<()> {
     match ids.iter().find(|id| doc.is_locked(id)) {
         None => Ok(()),
-        Some(id) => {
-            let name = doc.object(id).map_or("", |o| o.name.as_str());
-            Err(CommandError::Failed(format!(
-                "{cmd}: object {id} (\"{name}\") is locked; unlock it first with object.lock {{\"ids\": [\"{id}\"], \"locked\": false}}"
-            )))
-        }
+        // The id appears bare and once (no JSON, no quoted name), so a client that swaps ids for quoted names (the
+        // web UI) reads `object "Rectangle" is locked` rather than doubled quotes.
+        Some(id) => Err(CommandError::Failed(format!(
+            "{cmd}: object {id} is locked; unlock it first (object.lock with locked: false)"
+        ))),
     }
 }
 
@@ -288,6 +287,17 @@ mod tests {
         let d = doc_with(&["a"]);
         assert_eq!(object_ids("t", &d, &["obj-2".into(), "obj-2".into()]).unwrap(), vec!["obj-2".to_string()]);
         assert!(object_ids("t", &d, &[]).is_err());
+    }
+
+    #[test]
+    fn locked_message_names_the_id_once_without_json_quoting() {
+        let mut d = doc_with(&["Rectangle"]);
+        assert!(check_unlocked("t", &d, &["obj-2".into()]).is_ok());
+        d.locked.insert("obj-2".into());
+        let e = check_unlocked("object.transform", &d, &["obj-2".into()]).unwrap_err().to_string();
+        assert!(e.contains("object obj-2 is locked"), "{e}");
+        assert_eq!(e.matches("obj-2").count(), 1, "{e}");
+        assert!(!e.contains('"') && !e.contains('{'), "{e}");
     }
 
     #[test]

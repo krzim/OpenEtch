@@ -24,6 +24,7 @@ fn import_document(text: &str) -> Document {
         objects: i.objects,
         groups: i.groups,
         extras: i.extras,
+        variables: i.variables,
         field_mm: Some(FIELD),
         next_id: 100,
         ..Document::default()
@@ -226,9 +227,12 @@ fn imports_shapes_in_the_field_frame() {
     assert_eq!(g.layer, layers[2].id);
     let gp = obj(&objects, "Path 4");
     assert!(rect_close(gp.bounds(), Rect::new(35.0, 35.0, 37.0, 35.0), 1e-9), "{:?}", gp.bounds());
-    // The text is drawn as its outline and keeps what LightBurn needs to show it as text.
+    // The text is live text drawn as its saved outline, and keeps what LightBurn needs to show it as text.
     let t = obj(&objects, "Hi");
-    assert!(matches!(t.geometry, Geometry::Path { .. }));
+    let Geometry::Text(live) = &t.geometry else { panic!("{:?}", t.geometry) };
+    assert_eq!((live.text.as_str(), live.font.family.as_str()), ("Hi
+there", "Arial"));
+    assert!(live.outline.elements().len() > 2);
     assert!(rect_close(t.bounds(), Rect::new(-1.0, -47.0, 1.0, -43.0), 1e-9));
     let tx = |k: &str| t.extras.get(k).map(String::as_str);
     assert_eq!(tx("lbrn2._type"), Some("Text"));
@@ -249,7 +253,7 @@ fn imports_shapes_in_the_field_frame() {
     assert_eq!(obj(&objects, "Rectangle 3").layer, layers[4].id, "tool shape on the tool layer");
 
     let has = |s: &str| warnings.iter().any(|w| w.contains(s));
-    assert!(has("1 text object(s) are shown and burned as LightBurn's saved outline"), "{warnings:?}");
+    assert!(has("1 text object(s) are shown and burned as LightBurn's saved outline until they are edited"), "{warnings:?}");
     assert!(has("text \"No outline\" has no saved outline"), "{warnings:?}");
     assert!(has("'Star' shape was kept for LightBurn export"), "{warnings:?}");
     assert!(!has("image"), "images engrave now: {warnings:?}");
@@ -1010,4 +1014,18 @@ fn cleanup_sub_layers_map_to_cleanup_and_round_trip() {
     assert!(at("isCleanup") < at("angle") && at("angle") < at("subname"), "{sub}");
     let (back, _, _) = import(&out);
     assert_eq!(back[0].sub_layers, fresh.layers[0].sub_layers);
+}
+
+#[test]
+fn variable_text_counter_maps_to_the_document() {
+    let src = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<LightBurnProject AppVersion=\"1.4.00\" FormatVersion=\"1\">\n    <VariableText>\n        <Start Value=\"100\"/>\n        <End Value=\"200\"/>\n        <Current Value=\"105\"/>\n        <Increment Value=\"2\"/>\n        <AutoAdvance Value=\"1\"/>\n    </VariableText>\n    <CutSetting type=\"Cut\">\n        <index Value=\"0\"/>\n        <name Value=\"C00\"/>\n        <maxPower Value=\"20\"/>\n        <speed Value=\"100\"/>\n        <priority Value=\"0\"/>\n    </CutSetting>\n    <Shape Type=\"Rect\" CutIndex=\"0\" W=\"4\" H=\"2\" Cr=\"0\">\n        <XForm>1 0 0 1 70 75</XForm>\n    </Shape>\n</LightBurnProject>\n";
+    let mut d = import_document(src);
+    let v = &d.variables;
+    assert_eq!((v.start, v.end, v.current, v.advance_by, v.auto_advance), (100, 200, 105, 2, true));
+    let (p, _) = from_document(&d, FIELD).unwrap();
+    assert_eq!(write(&p), src, "unchanged: byte for byte");
+    d.variables.current = 107;
+    let (p, _) = from_document(&d, FIELD).unwrap();
+    let out = write(&p);
+    assert!(out.contains("<Current Value=\"107\"/>") && out.contains("<Start Value=\"100\"/>"), "{out}");
 }

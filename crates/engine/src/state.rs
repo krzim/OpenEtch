@@ -31,13 +31,14 @@ use serde_json::{Value, json};
 use tokio::sync::broadcast;
 
 use crate::devices::{DeviceRegistry, ImportFilter, ImportReport};
-use crate::frame::{self, FrameRequest};
+use crate::frame::{self, FrameRequest, FrameRun, Pointer};
+use crate::job::JobTracker;
 use crate::hw::{AbortOutcome, Machine};
 use crate::lightburn::LightBurn;
 use crate::pin::ApprovalConfig;
 use crate::projects::{self, LBRN2_EXT, PROJECT_EXT, ProjectDir, ProjectInfo, ProjectState};
 use crate::render::{self, RenderOptions};
-use crate::runs::{self, RunStore, RunView};
+use crate::runs::{self, RunOptions, RunStore, RunView};
 use crate::security::SecurityConfig;
 use crate::{EngineError, Event};
 
@@ -103,6 +104,8 @@ pub struct AppState {
     /// OpenEtch's devices and the active one ([`AppState::install_devices`]; until then only the built-in device for
     /// the machine's profile). Never locked while the session or runs lock is held.
     devices: Mutex<DeviceRegistry>,
+    /// Job counter, Stop At and the progress of the job holding the machine (module `job`).
+    pub job: JobTracker,
 }
 
 /// How an invocation changes which project the document belongs to.
@@ -321,6 +324,7 @@ impl AppState {
             project: Mutex::new(project),
             lightburn: LightBurn::default(),
             devices: Mutex::new(devices),
+            job: JobTracker::default(),
         })
     }
 
@@ -460,6 +464,48 @@ impl AppState {
         tracing::info!(device = %device.id, controllable = device.controllable, "device activated");
         self.emit(Event::DeviceChanged { id: device.id.clone() });
         Ok(json!({ "ok": true, "active": self.devices().active().summary(), "warnings": warnings }))
+    }
+
+    /// `PUT /api/devices/{id}`: edit a device's settings (see `DeviceRegistry::edit`). Refused while the device is
+    /// active and a run holds the machine or framing is on; when it is active the machine is set up again with the
+    /// new profile (as on activation).
+    pub async fn edit_device(self: &Arc<Self>, id: &str, patch: Option<Value>, display_name: Option<String>) -> Result<Value, EngineError> {
+        self.check_device_editable(id)?;
+        let target = id.to_owned();
+        let d = self.blocking(move |st| st.devices().edit(&target, patch.as_ref(), display_name.as_deref())).await?;
+        let mut v = self.device_settings_changed(id).await?;
+        v["device"] = d.summary();
+        Ok(v)
+    }
+
+    /// Refuse (409) changing the stored settings of the active device while a job holds the machine or framing is
+    /// on: the change would be stored but the machine could not be set up again with it. Checked before anything
+    /// is written (`PUT /api/devices/{id}`, its correction file, an applied lens calibration).
+    pub fn check_device_editable(&self, id: &str) -> Result<(), EngineError> {
+        if self.active_device().id != id {
+            return Ok(());
+        }
+        if let Some(state) = self.runs().busy_state() {
+            return Err(EngineError::Conflict(format!("a run is {state}; change the active device's settings when it has ended")));
+        }
+        if self.machine.is_running() {
+            return Err(EngineError::Conflict("a job holds the machine; change the active device's settings when it has ended".into()));
+        }
+        if self.machine.is_framing() {
+            return Err(EngineError::Conflict("framing is on; stop framing before changing the active device's settings".into()));
+        }
+        Ok(())
+    }
+
+    /// After a device's stored settings changed: emit `devices_changed`, and set the machine up again when it is the
+    /// active device. Returns `{ok, reactivated, warnings}`.
+    pub async fn device_settings_changed(self: &Arc<Self>, id: &str) -> Result<Value, EngineError> {
+        self.emit(Event::DevicesChanged);
+        if self.active_device().id != id {
+            return Ok(json!({ "ok": true, "reactivated": false, "warnings": [] }));
+        }
+        let r = self.activate_device(id).await?;
+        Ok(json!({ "ok": true, "reactivated": true, "warnings": r["warnings"] }))
     }
 
     /// A receiver for every future event.
@@ -932,11 +978,14 @@ impl AppState {
         let target = self.machine.target();
         let shared = self.previews.clone();
         let design_only = self.active_device().not_controllable_reason();
+        // The next run's index (the job counter), as `request_run_with` plans it: auto-rotating fills preview at the
+        // angle they will be marked at, and Start Here segment numbers match the run.
+        let run_index = self.job.count(&self.active_device().id);
         Ok(tokio::task::spawn_blocking(move || {
             let preview = match design_only {
                 // Still a result, so the SVG preview renders the document.
                 Some(reason) => Err(PlanError::Target(reason)),
-                None => match plan::plan_job(&doc, &target) {
+                None => match plan::plan_job_with(&doc, &target, &plan::JobOptions { preview: true, run_index, ..Default::default() }) {
                     Ok(job) => Ok(plan::preview_document(&doc, &job)),
                     Err(PlanError::Empty) => Ok(Preview::default()),
                     Err(e) => Err(e),
@@ -985,15 +1034,39 @@ impl AppState {
         Ok((svg, result))
     }
 
+    /// After a run finished: advance the serial number / CSV row when the document's auto-advance is on and some
+    /// variable text uses it (LightBurn advances on every Start). One undo step from origin `script`; a failure is
+    /// logged, never fatal to the run. Called when a run ends in `finished`.
+    pub fn advance_variables_after_run(&self) {
+        if !commands::auto_advance_due(lock(&self.session).document()) {
+            return;
+        }
+        let inv = Invocation { id: "var.advance".into(), params: json!({ "auto": true }) };
+        if let Err(e) = self.execute(inv, Origin::Script) {
+            tracing::warn!(error = %e, "could not advance variable text after the run");
+        }
+    }
+
     /// Plan, encode and check the current document and store it as a pending run. Never touches the machine.
     pub async fn request_run(&self, origin: Origin) -> Result<RunView, EngineError> {
+        self.request_run_with(origin, RunOptions::default()).await
+    }
+
+    /// [`AppState::request_run`] with [`RunOptions`] (repeat, continuous, start input, selection, start here). The
+    /// active device's job count is the run index for auto-rotating fills.
+    pub async fn request_run_with(&self, origin: Origin, options: RunOptions) -> Result<RunView, EngineError> {
         self.require_controllable()?;
         let doc = self.document();
         let revision = doc.revision;
         let config = self.machine.config();
         let generation = config.generation;
-        let mut prepared =
-            tokio::task::spawn_blocking(move || runs::prepare_job(&doc, &config.target, &config.profile)).await??;
+        let run_index = self.job.count(&self.active_device().id);
+        let mut prepared = tokio::task::spawn_blocking(move || {
+            // Variable text (serial numbers, CSV rows, dates, cut settings) and text on paths as of now.
+            let doc = commands::prepare_output(&doc).map_err(|e| EngineError::BadRequest(format!("text: {e}")))?;
+            runs::prepare_job_with(&doc, &config.target, &config.profile, &options, run_index)
+        })
+        .await??;
         prepared.generation = generation;
         let view = {
             let mut store = self.runs();
@@ -1018,14 +1091,81 @@ impl AppState {
         let store = self.runs();
         v["pending_runs"] = json!(store.pending(rev));
         v["runs"] = json!(store.views(rev));
+        drop(store);
+        v["job"] = self.job_status();
         v
     }
 
-    /// Start red-pointer framing of the selection (or the whole job). Light only.
-    pub async fn frame_start(&self, req: FrameRequest) -> Result<Value, EngineError> {
+    /// `GET /api/job`: the job counter of the active device, Stop At, and the progress of the job holding the
+    /// machine.
+    pub fn job_status(&self) -> Value {
+        self.job.status(&self.machine, &self.active_device().id)
+    }
+
+    /// Start red-pointer framing of the selection (or the whole job, or the tool layers). Light only. With `live`,
+    /// the frame follows document edits.
+    pub async fn frame_start(self: &Arc<Self>, req: FrameRequest) -> Result<Value, EngineError> {
         self.require_controllable()?;
-        let outline = frame::outline_for(&self.document(), &req)?;
-        frame::start(&self.machine, &self.events, outline).await
+        let doc = self.document();
+        let outline = frame::outline_for(&doc, &req)?;
+        let live: Option<(u64, frame::LiveSource)> = req.live.then(|| {
+            let weak = Arc::downgrade(self);
+            let req = req.clone();
+            let source: frame::LiveSource = Arc::new(move |since: u64| {
+                let st = weak.upgrade()?;
+                let doc = st.document();
+                if doc.revision == since {
+                    return None;
+                }
+                frame::outline_for(&doc, &req).ok().map(|o| (doc.revision, o))
+            });
+            (doc.revision, source)
+        });
+        let run = self.frame_run(&req, live)?;
+        frame::start(&self.machine, &self.events, outline, run).await
+    }
+
+    /// How a frame request runs: pointer outputs, blanking, speed, once or looping, time limit.
+    fn frame_run(&self, req: &FrameRequest, live: Option<(u64, frame::LiveSource)>) -> Result<FrameRun, EngineError> {
+        let profile = self.machine.profile();
+        let focus = || {
+            profile
+                .focus_light_port_bit
+                .and_then(|b| lmc::PointerBits::bit(b).ok())
+                .ok_or_else(|| EngineError::BadRequest("the machine profile has no focus light port (focus_light_port_bit)".into()))
+        };
+        let pointer = match req.pointer {
+            Pointer::Red => lmc::PointerBits::RED,
+            Pointer::Focus => focus()?,
+            Pointer::Both => lmc::PointerBits::RED.with(focus()?),
+        };
+        if let Some(v) = req.speed_mm_s
+            && !(v.is_finite() && v > 0.0 && v <= profile.max_jump_speed_mm_s)
+        {
+            return Err(EngineError::BadRequest(format!(
+                "speed_mm_s must be within 0..={} mm/s (the profile's jump speed limit)",
+                profile.max_jump_speed_mm_s
+            )));
+        }
+        let max_secs = req.max_seconds.unwrap_or(frame::FRAME_MAX_SECS);
+        if !(1..=frame::FRAME_LIMIT_SECS).contains(&max_secs) {
+            return Err(EngineError::BadRequest(format!("max_seconds must be within 1..={}", frame::FRAME_LIMIT_SECS)));
+        }
+        Ok(FrameRun {
+            style: machine::FrameStyle { pointer, blanking: req.blanking.unwrap_or(profile.blanking), speed_mm_s: req.speed_mm_s },
+            continuous: req.continuous.unwrap_or(true),
+            max_secs,
+            live,
+        })
+    }
+
+    /// Red-dot jog: hold the pointer at `(x, y)` field mm (after the red-dot alignment) until frame stop, stop, a
+    /// run or `max_seconds` (default 120). Light only.
+    pub async fn pointer_to(&self, x: f64, y: f64, max_seconds: Option<u64>, pointer: Pointer) -> Result<Value, EngineError> {
+        self.require_controllable()?;
+        let req = FrameRequest { pointer, max_seconds, ..FrameRequest::default() };
+        let run = self.frame_run(&req, None)?;
+        frame::start(&self.machine, &self.events, frame::point_outline(x, y), run).await
     }
 
     /// End framing only. Pending and approved runs are left alone (that is [`AppState::stop`]). `{ok: true}`, or

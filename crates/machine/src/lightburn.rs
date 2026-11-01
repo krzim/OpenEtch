@@ -31,6 +31,8 @@
 //! | `StartMarkPortBit` | `start_mark_input_bit` (-1 = none) | |
 //! | `FrameSpeed` | `red_light_speed_mm_s` | Clamped to `max_jump_speed_mm_s`. |
 //! | `RedLightPortBit` | `red_light_port_bit` | -1 is LightBurn's default; any other bit than 8 is reported and not applied (`lmc` drives bit 8). |
+//! | `FieldOffsetX/Y`, `FieldAngle` | `calibration.offset_*_mm`, `calibration.angle_deg` | |
+//! | `Galvo_n_Scale`, `_Bulge`, `_Skew`, `_Trapezoid` | `calibration.{scale,bulge,skew,trapezoid}_{x,y}` | Galvo 2 is field X unless swapped (as for the signs). OpenEtch's correction model (`lmc::calibration`) is its own: same neutral values and direction, exact effect **unverified against LightBurn**. Values outside its accepted range are reported and not applied. |
 //!
 //! Hard limits (`max_power_pct`, `max_jump_speed_mm_s`, `max_delay_us`, the pulse-width table) are never raised by an
 //! import, and every change is checked with [`MachineProfile::validate`] one field at a time: a value it refuses is
@@ -45,9 +47,11 @@
 //! out mirrored across the diagonal, both mappings are wrong together; the signs are 1 on the B6, so their
 //! assignment is untested.
 //!
-//! Not modelled (reported when not at their defaults): `FieldAngle`, `FieldOffsetX/Y`, galvo `Scale`, `Skew`,
-//! `Trapezoid`, `Bulge` (correction-file territory), `CorScaleOverride`, `Laser_PWMEnabled`, `StartMarkBitHigh`,
+//! Not modelled (reported when not at their defaults): `CorScaleOverride`, `Laser_PWMEnabled`, `StartMarkBitHigh`,
 //! `StartMarkPulseMode`, `RedLightJumpDelay`. Written from scratch from the owner's own prefs files.
+//!
+//! **Export** ([`to_lbdev`]): a device back as a LightBurn `.lbdev` (`{"DeviceList": [...]}`) with the same keys,
+//! from the profile's current values (so device settings edited in OpenEtch go back to LightBurn).
 
 use std::path::PathBuf;
 
@@ -849,14 +853,23 @@ pub fn profile_from_lightburn(dev: &LightBurnDevice, base: &MachineProfile) -> (
         let base_v = j(base.start_mark_input_bit);
         match v {
             -1 => im.set("start_mark_input_bit", base_v, j(v), "", |p| p.start_mark_input_bit = None),
+            // An active-low input reads "pressed" while the pedal is up: taken as active high it would start a run
+            // that does not wait for the full pulse with nobody pressing anything. Polarity is not modelled, so such
+            // an input is not used at all.
+            0..=15 if s.start_mark_bit_high == Some(false) => im.set(
+                "start_mark_input_bit",
+                base_v,
+                j(v),
+                "StartMarkBitHigh is false (active low), which OpenEtch does not model; no start input",
+                |p| p.start_mark_input_bit = None,
+            ),
             0..=15 => {
                 let bit = v as u8;
                 im.set("start_mark_input_bit", base_v, j(v), "", |p| p.start_mark_input_bit = Some(bit));
             }
             _ => im.diff("start_mark_input_bit", base_v, j(v), "not an input bit 0-15; not applied"),
         }
-    }
-    if s.start_mark_bit_high == Some(false) {
+    } else if s.start_mark_bit_high == Some(false) {
         im.diff("start_mark_input_bit", Value::Null, j(false), "StartMarkBitHigh is false (active low); not modelled");
     }
 
@@ -872,23 +885,27 @@ pub fn profile_from_lightburn(dev: &LightBurnDevice, base: &MachineProfile) -> (
         im.diff("red_light_port_bit", j(base.red_light_port_bit), j(bit), "unsupported: lmc drives the red pointer on bit 8; not applied");
     }
 
-    // Not modelled.
-    for (key, v, neutral) in [
-        ("FieldAngle", s.field_angle_deg, 0.0),
-        ("FieldOffsetX", s.field_offset_x_mm, 0.0),
-        ("FieldOffsetY", s.field_offset_y_mm, 0.0),
-        ("Galvo_1_Scale", s.galvo_1_shape[0], 1.0),
-        ("Galvo_1_Skew", s.galvo_1_shape[1], 1.0),
-        ("Galvo_1_Trapezoid", s.galvo_1_shape[2], 1.0),
-        ("Galvo_1_Bulge", s.galvo_1_shape[3], 1.0),
-        ("Galvo_2_Scale", s.galvo_2_shape[0], 1.0),
-        ("Galvo_2_Skew", s.galvo_2_shape[1], 1.0),
-        ("Galvo_2_Trapezoid", s.galvo_2_shape[2], 1.0),
-        ("Galvo_2_Bulge", s.galvo_2_shape[3], 1.0),
-    ] {
-        if let Some(v) = v.filter(|v| *v != neutral) {
-            im.diff(&format!("(LightBurn {key})"), Value::Null, j(v), "not modelled by OpenEtch; ignored");
-        }
+    // Lens corrections (see the module docs). Galvo 2 carries field X unless swapped.
+    let (x_shape, y_shape) = if swapped { (s.galvo_1_shape, s.galvo_2_shape) } else { (s.galvo_2_shape, s.galvo_1_shape) };
+    let cal = base.calibration;
+    type Field = fn(&mut lmc::Calibration) -> &mut f64;
+    let corrections: [(&str, &str, Option<f64>, f64, Field); 11] = [
+        ("calibration.offset_x_mm", "FieldOffsetX", s.field_offset_x_mm, cal.offset_x_mm, |c| &mut c.offset_x_mm),
+        ("calibration.offset_y_mm", "FieldOffsetY", s.field_offset_y_mm, cal.offset_y_mm, |c| &mut c.offset_y_mm),
+        ("calibration.angle_deg", "FieldAngle", s.field_angle_deg, cal.angle_deg, |c| &mut c.angle_deg),
+        ("calibration.scale_x", "Galvo_n_Scale", x_shape[0], cal.scale_x, |c| &mut c.scale_x),
+        ("calibration.skew_x", "Galvo_n_Skew", x_shape[1], cal.skew_x, |c| &mut c.skew_x),
+        ("calibration.trapezoid_x", "Galvo_n_Trapezoid", x_shape[2], cal.trapezoid_x, |c| &mut c.trapezoid_x),
+        ("calibration.bulge_x", "Galvo_n_Bulge", x_shape[3], cal.bulge_x, |c| &mut c.bulge_x),
+        ("calibration.scale_y", "Galvo_n_Scale", y_shape[0], cal.scale_y, |c| &mut c.scale_y),
+        ("calibration.skew_y", "Galvo_n_Skew", y_shape[1], cal.skew_y, |c| &mut c.skew_y),
+        ("calibration.trapezoid_y", "Galvo_n_Trapezoid", y_shape[2], cal.trapezoid_y, |c| &mut c.trapezoid_y),
+        ("calibration.bulge_y", "Galvo_n_Bulge", y_shape[3], cal.bulge_y, |c| &mut c.bulge_y),
+    ];
+    for (field, key, v, base_v, at) in corrections {
+        let Some(v) = v else { continue };
+        let note = if v != base_v { format!("LightBurn {key}; OpenEtch's correction model, unverified against LightBurn") } else { String::new() };
+        im.set(field, j(base_v), j(v), note, |p| *at(&mut p.calibration) = v);
     }
     if s.pwm_enabled == Some(false) {
         im.diff("(LightBurn Laser_PWMEnabled)", Value::Null, j(false), "not modelled by OpenEtch; ignored");
@@ -903,6 +920,113 @@ pub fn profile_from_lightburn(dev: &LightBurnDevice, base: &MachineProfile) -> (
     p.notes.push("LightBurn Galvo_1_is_X / galvo signs / Mirror mapping onto swap_xy and negate is unverified".into());
     debug_assert!(base.validate().is_err() || p.validate().is_ok());
     (p, diffs)
+}
+
+/// A LightBurn `.lbdev` file (`{"DeviceList": [device]}`, pretty JSON) for a device: the typed LightBurn settings it
+/// was made from (`lightburn`, may be empty), overridden by the values of `profile` where OpenEtch has them (field,
+/// axes, correction file name, timing, speeds, frequency range, pulse width, open-MO delay, start-mark bit, frame
+/// speed, lens corrections). Nothing else is written: no paths, macros or secrets. Galvo 2 is written as field X
+/// (see the module docs).
+pub fn to_lbdev(display_name: &str, lightburn: Option<&LightBurnDevice>, profile: Option<&MachineProfile>) -> String {
+    use serde_json::{Map, json};
+    let lb = lightburn.cloned().unwrap_or_default();
+    let mut dev = Map::new();
+    let name = if lb.name.is_empty() { "JCZFiber".to_owned() } else { lb.name.clone() };
+    dev.insert("Name".into(), json!(name));
+    dev.insert("DisplayName".into(), json!(display_name));
+    dev.insert("Type".into(), json!(if lb.kind.is_empty() { "LibUSB" } else { lb.kind.as_str() }));
+    let width = profile.map(|p| p.field_mm).or(lb.width_mm);
+    let height = profile.map(|p| p.field_mm).or(lb.height_mm).or(width);
+    // LightBurn shows the field to 0.1 mm and the B6 profile keeps EzCad's 153.75: keep LightBurn's own value
+    // when it is the same lens.
+    let same = |a: Option<f64>, b: Option<f64>| matches!((a, b), (Some(a), Some(b)) if (a - b).abs() <= SAME_FIELD_MM);
+    let width = if same(width, lb.width_mm) { lb.width_mm } else { width };
+    let height = if same(height, lb.height_mm) { lb.height_mm } else { height };
+    if let Some(w) = width {
+        dev.insert("Width".into(), json!(w));
+    }
+    if let Some(h) = height {
+        dev.insert("Height".into(), json!(h));
+    }
+    for (key, v) in [("MirrorX", lb.mirror_x), ("MirrorY", lb.mirror_y), ("HomeOnStartup", lb.home_on_startup)] {
+        if let Some(v) = v {
+            dev.insert(key.into(), json!(v));
+        }
+    }
+    let st = &lb.settings;
+    let mut set = Map::new();
+    let mut put = |key: &str, v: Value| {
+        if !v.is_null() {
+            set.insert(key.into(), v);
+        }
+    };
+    put("CorrectionFile", json!(profile.and_then(|p| p.cor_file.as_ref()).map(|c| c.display().to_string()).or(lb.correction_file.clone())));
+    match profile {
+        Some(p) => {
+            put("Galvo_1_is_X", json!(p.swap_xy));
+            let (g1_neg, g2_neg) = if p.swap_xy { (p.negate_x, p.negate_y) } else { (p.negate_y, p.negate_x) };
+            // Signs XOR the mirror flags on import; write the sign that gives the same negate back.
+            let mirror = |m: Option<bool>| m.unwrap_or(false);
+            let (mx, my) = (mirror(lb.mirror_x), mirror(lb.mirror_y));
+            let (g1_mirror, g2_mirror) = if p.swap_xy { (mx, my) } else { (my, mx) };
+            put("Galvo_1_Sign", json!(if g1_neg ^ g1_mirror { -1 } else { 1 }));
+            put("Galvo_2_Sign", json!(if g2_neg ^ g2_mirror { -1 } else { 1 }));
+            let t = &p.timing;
+            put("Default_LaserOn_TC", json!(t.laser_on_delay_us));
+            put("Default_LaserOff_TC", json!(t.laser_off_delay_us));
+            put("Default_Polygon_TC", json!(t.polygon_delay_us));
+            put("Default_End_TC", json!(t.end_delay_us));
+            put("Default_JumpSpeed", json!(t.jump_speed_mm_s));
+            put("Default_MinJumpDelay", json!(t.jump_delay_min_us));
+            put("Default_MaxJumpDelay", json!(t.jump_delay_max_us));
+            put("Default_MaxJumpDistance", json!(t.jump_distance_limit_mm));
+            put("MaxSpeed", json!(p.mark_speed.max_mm_s));
+            put("Laser_MinFreq", json!(p.frequency_khz_min));
+            put("Laser_MaxFreq", json!(p.frequency_khz_max));
+            put("Laser_QPulseWidthEnabled", json!(p.pulse_width_enabled));
+            put("Laser_OpenMODelay", json!(p.open_mo_delay_us));
+            put("StartMarkPortBit", json!(p.start_mark_input_bit.map_or(-1, i64::from)));
+            put("FrameSpeed", json!(p.red_light_speed_mm_s));
+            let c = &p.calibration;
+            put("FieldOffsetX", json!(c.offset_x_mm));
+            put("FieldOffsetY", json!(c.offset_y_mm));
+            put("FieldAngle", json!(c.angle_deg));
+            let (g1, g2) = if p.swap_xy {
+                ([c.scale_x, c.skew_x, c.trapezoid_x, c.bulge_x], [c.scale_y, c.skew_y, c.trapezoid_y, c.bulge_y])
+            } else {
+                ([c.scale_y, c.skew_y, c.trapezoid_y, c.bulge_y], [c.scale_x, c.skew_x, c.trapezoid_x, c.bulge_x])
+            };
+            for (n, shape) in [(1, g1), (2, g2)] {
+                for (k, v) in ["Scale", "Skew", "Trapezoid", "Bulge"].iter().zip(shape) {
+                    put(&format!("Galvo_{n}_{k}"), json!(v));
+                }
+            }
+        }
+        None => {
+            put("Galvo_1_is_X", json!(st.galvo_1_is_x));
+            put("Galvo_1_Sign", json!(st.galvo_1_sign));
+            put("Galvo_2_Sign", json!(st.galvo_2_sign));
+            put("FieldOffsetX", json!(st.field_offset_x_mm));
+            put("FieldOffsetY", json!(st.field_offset_y_mm));
+            put("FieldAngle", json!(st.field_angle_deg));
+            put("FrameSpeed", json!(st.frame_speed_mm_s));
+            put("MaxSpeed", json!(st.max_speed_mm_s));
+        }
+    }
+    // Typed values OpenEtch keeps but does not model, passed through as read.
+    put("Laser_Type", json!(st.laser_type));
+    put("Laser_FiberType", json!(st.laser_fiber_type));
+    put("Laser_PWMEnabled", json!(st.pwm_enabled));
+    put("RedLightPortBit", json!(st.red_light_port_bit));
+    put("RedLightJumpDelay", json!(st.red_light_jump_delay_us));
+    put("StartMarkBitHigh", json!(st.start_mark_bit_high));
+    put("StartMarkPulseMode", json!(st.start_mark_pulse_mode));
+    put("CorScaleOverride", json!(st.cor_scale_override));
+    put("CutOrigin", json!(st.cut_origin));
+    put("EnableBoundsCheck", json!(st.bounds_check));
+    dev.insert("Settings".into(), Value::Object(set));
+    let file = json!({ "DeviceList": [Value::Object(dev)] });
+    serde_json::to_string_pretty(&file).unwrap_or_default()
 }
 
 /// The diffs as a plain-text table (`field | profile | LightBurn | note`).
@@ -1028,5 +1152,60 @@ mod tests {
         let t = diff_table(&[ProfileDiff { field: "field_mm".into(), base_value: j(150.0), lightburn_value: j(153.8), note: String::new() }]);
         assert!(t.lines().nth(2).unwrap().starts_with("field_mm | 150.0   | 153.8"), "{t}");
         assert!(diff_table(&[]).contains("(no differences)"));
+    }
+
+    #[test]
+    fn lens_corrections_are_imported_onto_the_calibration() {
+        let mut d = LightBurnDevice { name: "JCZFiber".into(), width_mm: Some(150.0), ..Default::default() };
+        d.settings.field_angle_deg = Some(1.5);
+        d.settings.field_offset_x_mm = Some(0.25);
+        d.settings.galvo_1_is_x = Some(false);
+        d.settings.galvo_2_shape = [Some(1.01), Some(1.002), Some(0.995), Some(1.003)];
+        d.settings.galvo_1_shape = [Some(0.99), None, None, None];
+        let (p, diffs) = profile_from_lightburn(&d, &MachineProfile::generic_jcz_galvo());
+        let c = p.calibration;
+        assert_eq!((c.angle_deg, c.offset_x_mm), (1.5, 0.25));
+        assert_eq!((c.scale_x, c.skew_x, c.trapezoid_x, c.bulge_x), (1.01, 1.002, 0.995, 1.003), "galvo 2 is X");
+        assert_eq!(c.scale_y, 0.99);
+        assert!(diffs.iter().any(|d| d.field == "calibration.angle_deg"));
+        // A value outside the model's range is reported, not applied.
+        d.settings.field_angle_deg = Some(90.0);
+        let (p, diffs) = profile_from_lightburn(&d, &MachineProfile::generic_jcz_galvo());
+        assert_eq!(p.calibration.angle_deg, 0.0);
+        assert!(diffs.iter().any(|d| d.field == "calibration.angle_deg" && d.note.contains("not applied")), "{diffs:?}");
+    }
+
+    #[test]
+    fn lbdev_export_reads_back_to_the_same_profile() {
+        let mut base = MachineProfile::generic_jcz_galvo();
+        base.calibration.scale_x = 1.01;
+        base.calibration.angle_deg = -0.5;
+        base.timing.laser_on_delay_us = -150.0;
+        base.start_mark_input_bit = Some(14);
+        base.negate_y = true;
+        let text = to_lbdev("My galvo", None, Some(&base));
+        assert!(!text.contains("Secret") && !text.contains(":\\\\"), "{text}");
+        let prefs = parse_lbdev(&text).unwrap();
+        let d = &prefs.devices[0];
+        assert_eq!((d.name.as_str(), d.display_name.as_str(), d.width_mm), ("JCZFiber", "My galvo", Some(base.field_mm)));
+        let (back, _) = profile_from_lightburn(d, &MachineProfile::generic_jcz_galvo());
+        assert_eq!(back.calibration, base.calibration);
+        assert_eq!(back.timing, base.timing);
+        assert_eq!((back.negate_x, back.negate_y, back.swap_xy), (base.negate_x, base.negate_y, base.swap_xy));
+        assert_eq!(back.start_mark_input_bit, Some(14));
+    }
+
+    #[test]
+    fn an_active_low_start_input_is_not_used() {
+        let mut d = LightBurnDevice { name: "JCZFiber".into(), width_mm: Some(150.0), ..Default::default() };
+        d.settings.start_mark_port_bit = Some(14);
+        d.settings.start_mark_bit_high = Some(false);
+        let mut base = MachineProfile::generic_jcz_galvo();
+        base.start_mark_input_bit = Some(14);
+        let (p, diffs) = profile_from_lightburn(&d, &base);
+        assert_eq!(p.start_mark_input_bit, None);
+        assert!(diffs.iter().any(|d| d.field == "start_mark_input_bit" && d.note.contains("active low")), "{diffs:?}");
+        d.settings.start_mark_bit_high = Some(true);
+        assert_eq!(profile_from_lightburn(&d, &MachineProfile::generic_jcz_galvo()).0.start_mark_input_bit, Some(14));
     }
 }

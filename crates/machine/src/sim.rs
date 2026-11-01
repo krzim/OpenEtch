@@ -298,7 +298,8 @@ mod tests {
         }
         l.send_single(Single::restart_list()).unwrap();
         assert!(status(&mut l).busy());
-        assert!(status(&mut l).idle());
+        assert!(status(&mut l).busy());
+        assert!(status(&mut l).idle(), "the busy polls count down again once restarted");
         l.send_single(Single::move_axis_to(1234, false)).unwrap();
         assert!(status(&mut l).axis());
         assert!(status(&mut l).axis());

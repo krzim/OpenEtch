@@ -17,8 +17,8 @@ use std::sync::{Arc, Mutex, PoisonError, RwLock, TryLockError};
 use corfile::CorTable;
 use lmc::{LASER_ENABLE_BIT, Packet, Single};
 use machine::{
-    AbortHandle, Controller, ControllerError, ControllerState, InitSettings, Link, LinkError, MachineProfile,
-    PollConfig, Reply, SimLink,
+    AbortHandle, AxisRole, BoardInfo, Controller, ControllerError, ControllerState, FiberKind, InitSettings, Link, LinkError,
+    MachineProfile, PollConfig, Reply, RunControl, RunProgress, SimLink,
 };
 use plan::Target;
 use serde_json::{Value, json};
@@ -28,8 +28,6 @@ use crate::EngineError;
 /// The controller type the engine drives: any link, boxed.
 pub type Ctl = Controller<Box<dyn Link>>;
 
-/// galvoplotter's `delay_open_mo` (8 ms), the wait after opening the MO inside a list.
-pub const OPEN_MO_DELAY_US: f64 = 8000.0;
 
 /// Which board the engine talks to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,7 +38,9 @@ pub enum LinkKind {
     Usb,
 }
 
-/// The planning target for a machine profile. Hard limits come only from the profile.
+/// The planning target for a machine profile. Hard limits come only from the profile; so do the open-MO delay,
+/// the lens correction, whether pulse widths are sent (Q-pulse enabled on a MOPA) and which extension axis the board
+/// drives.
 pub fn target_from_profile(p: &MachineProfile) -> Target {
     Target {
         field_mm: p.field_mm,
@@ -59,7 +59,11 @@ pub fn target_from_profile(p: &MachineProfile) -> Target {
             max_jump_delay_us: p.timing.jump_delay_max_us,
             jump_distance_limit_mm: p.timing.jump_distance_limit_mm,
         },
-        open_mo_delay_us: OPEN_MO_DELAY_US,
+        open_mo_delay_us: p.open_mo_delay_us,
+        calibration: p.calibration,
+        pulse_width_enabled: p.pulse_width_enabled && p.fiber_kind == FiberKind::Mopa,
+        z_axis: p.axis.as_ref().is_some_and(|a| a.role == AxisRole::Z),
+        rotary_axis: p.axis.as_ref().is_some_and(|a| a.role == AxisRole::Rotary),
     }
 }
 
@@ -201,6 +205,8 @@ pub struct MachineConfig {
 pub struct Machine {
     ctl: Arc<Mutex<Ctl>>,
     abort: AbortHandle,
+    /// Pause, resume and progress of the controller's runs (usable while a run holds the controller).
+    control: RunControl,
     /// The current [`MachineConfig`]; replaced only with the controller lock held.
     config: RwLock<Arc<MachineConfig>>,
     kind: LinkKind,
@@ -242,6 +248,7 @@ impl Machine {
         let ctl = Controller::with_settings(link, InitSettings::default(), poll);
         Machine {
             abort: ctl.abort_handle(),
+            control: ctl.run_control(),
             ctl: Arc::new(Mutex::new(ctl)),
             config: RwLock::new(Arc::new(MachineConfig { target: target_from_profile(&profile), profile, cor, generation: 0 })),
             kind,
@@ -315,6 +322,47 @@ impl Machine {
 
     pub(crate) fn end_run(&self) {
         self.running.store(false, Ordering::SeqCst);
+    }
+
+    /// Ask a running job to pause (`StopList` at its next packet or poll). Never waits; harmless without a run.
+    pub fn pause(&self) {
+        self.control.request_pause();
+    }
+
+    /// Ask a paused job to continue (`RestartList`).
+    pub fn resume(&self) {
+        self.control.request_resume();
+    }
+
+    /// Drop a pending pause request (a new job was approved).
+    pub fn clear_pause(&self) {
+        self.control.clear_pause();
+    }
+
+    /// Whether the running job's list is paused.
+    pub fn is_paused(&self) -> bool {
+        self.control.is_paused()
+    }
+
+    /// Whether a pause is asked for (it may not have reached the board yet).
+    pub fn pause_requested(&self) -> bool {
+        self.control.pause_requested()
+    }
+
+    /// Packets sent of the current (or last) run.
+    pub fn progress(&self) -> RunProgress {
+        self.control.progress()
+    }
+
+    /// The board's identification: read again when the board is idle, else the copy from its init. `None` when no
+    /// board has been initialised.
+    pub fn board_info(&self, ctl: &mut Ctl) -> Option<BoardInfo> {
+        if ctl.state() == ControllerState::Idle
+            && let Ok(info) = ctl.refresh_info()
+        {
+            return Some(info);
+        }
+        ctl.board_info().cloned()
     }
 
     /// The stop epoch (see the field docs).
@@ -495,6 +543,16 @@ mod tests {
         assert_eq!(t.field_mm, p.field_mm);
         assert_eq!(t.max_power_pct, p.max_power_pct);
         assert_eq!(t.timing.max_jump_delay_us, p.timing.jump_delay_max_us);
+        assert_eq!(t.open_mo_delay_us, p.open_mo_delay_us);
+        assert!(t.pulse_width_enabled && !t.z_axis && !t.rotary_axis);
+        let mut q = p.clone();
+        q.open_mo_delay_us = 2000.0;
+        q.fiber_kind = FiberKind::QSwitched;
+        q.calibration.scale_x = 1.01;
+        q.axis = Some(machine::ExtensionAxis { role: AxisRole::Rotary, steps_per_mm: 0.0, min_mm: 0.0, max_mm: 0.0, invert: false });
+        let t = target_from_profile(&q);
+        assert_eq!((t.open_mo_delay_us, t.calibration.scale_x), (2000.0, 1.01));
+        assert!(!t.pulse_width_enabled && t.rotary_axis && !t.z_axis);
     }
 
     #[test]

@@ -28,8 +28,25 @@ pub struct Target {
     pub pulse_widths_ns: Vec<u16>,
     /// Timing used by layers whose `settings.timing` is `None`. Its `jump_speed_mm_s` is the default jump speed.
     pub timing: GalvoTiming,
-    /// Wait after opening the master oscillator before the first motion (galvoplotter's `delay_open_mo`, 8 ms).
+    /// Wait after opening the master oscillator before the first motion (the profile's `open_mo_delay_us`;
+    /// galvoplotter's `delay_open_mo` is 8 ms).
     pub open_mo_delay_us: f64,
+    /// Lens corrections applied with the field transform (the same as the frame's). Neutral by default.
+    #[serde(default, skip_serializing_if = "lmc::Calibration::is_neutral")]
+    pub calibration: lmc::Calibration,
+    /// The source takes a pulse width (Q-pulse enabled, a MOPA): when false, passes send none (with a warning).
+    #[serde(default = "yes")]
+    pub pulse_width_enabled: bool,
+    /// The board drives a Z axis: Z offsets and steps per pass make parts. Without one they are ignored (warning).
+    #[serde(default)]
+    pub z_axis: bool,
+    /// The board drives a rotary: rotary jobs are split into strips. Without one they are refused (except previews).
+    #[serde(default)]
+    pub rotary_axis: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 impl Target {
@@ -48,9 +65,15 @@ impl Target {
         p.iter().all(|v| v.is_finite() && v.abs() < h)
     }
 
-    /// The field size, swap and negate settings as `lmc`'s shared transform.
+    /// The field size, swap, negate and lens correction as `lmc`'s shared transform.
     pub fn transform(&self) -> FieldTransform {
-        FieldTransform { field_mm: self.field_mm, swap_xy: self.swap_xy, negate_x: self.negate_x, negate_y: self.negate_y }
+        FieldTransform {
+            field_mm: self.field_mm,
+            swap_xy: self.swap_xy,
+            negate_x: self.negate_x,
+            negate_y: self.negate_y,
+            calibration: self.calibration,
+        }
     }
 
     /// Field-frame mm -> galvo words with `lmc::units::field_to_galvo`: negate in the field frame, then swap, then
@@ -110,6 +133,10 @@ pub(crate) mod tests {
                 jump_distance_limit_mm: 10.0,
             },
             open_mo_delay_us: 8000.0,
+            calibration: lmc::Calibration::default(),
+            pulse_width_enabled: true,
+            z_axis: false,
+            rotary_axis: false,
         }
     }
 
