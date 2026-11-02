@@ -1,7 +1,7 @@
 // "Use as an app" (docs/ux/ui-plan-2026-11.md 1.3, P4): which platform this is and the steps that give OpenEtch its
 // own window there. Pure, so it is unit-tested without a DOM (appMode.test.ts); the dialog is AppModeDialog.tsx.
 //
-// What works over plain http (the Pi's http://192.168.1.20:7878): Safari's File > Add to Dock (macOS Sonoma+), Add
+// What works over plain http (the Pi's http://<pi-ip>:7878): Safari's File > Add to Dock (macOS Sonoma+), Add
 // to Home Screen on iPad and iPhone, and Chrome/Edge's Create shortcut > Open as window. A real install in
 // Chrome/Edge/Android, and the title-bar layout (window-controls-overlay), need a secure origin (docs/https-on-the-pi.md).
 

@@ -147,8 +147,8 @@ computer while nobody watches it; the foot switch is the approval path that need
     token stays the network guard, and on loopback any local process could already talk to the engine (see above);
     a same-origin script (an agent driving the browser) is a Start click. Browsers send `Sec-Fetch-*` only to secure
     origins (`https://`, `localhost`, `127.0.0.1`): from the app opened as `http://<lan-name>:7878` on another device
-    (the owner's PC or iPad) there is no `Sec-Fetch-Site`, and the `Origin` check alone decides (browsers set it on
-    every `fetch` POST; a page of another site is still refused).
+    (the operator's computer or iPad) there is no `Sec-Fetch-Site`, and the `Origin` check alone decides (browsers
+    set it on every `fetch` POST; a page of another site is still refused).
   - **The foot switch cycle**, the hardware-backed path (module `cycle`, LightBurn's production loop): the profile's
     Start Marking input (`start_mark_input_bit`, at the level of `start_mark_active_low`; on the owner's B6, input 14,
     active low, read on the machine on 2026-11-01). `libs::spawn_io_watch` reads it every 50 ms while the board is
@@ -956,8 +956,8 @@ install, the title-bar layout (window-controls-overlay), the browser camera, Wak
 `--listen 127.0.0.1:7878 --require-token --allow-host <pi>.<tailnet>.ts.net`. Alternative: Caddy with `tls internal`
 (its root CA installed once per device). Engine-native `--tls-cert/--tls-key` is planned, not built. A plain
 self-signed certificate that users click through is not an option (no install, no service worker, no iOS Home Screen
-app). Stopgap for the owner's own PC or Mac in Chrome/Edge: `chrome://flags` > "Insecure origins treated as secure" >
-`http://192.168.1.20:7878`.
+app). Stopgap for a computer that runs Chrome/Edge: `chrome://flags` > "Insecure origins treated as secure" >
+`http://<pi-ip>:7878` (for example `http://192.168.1.20:7878`).
 
 Default listen address `127.0.0.1:7878`. Other options: `--profile`, `--web-dir`, `--usb`, `--token`,
 `--require-token`, `--allow-host`, `--config-dir`, `--approval pin|click` (see "Safety model"), `--confirm-input`, `--projects-dir`, `--lightburn-prefs <path>` (default the OS

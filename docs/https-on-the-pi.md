@@ -1,8 +1,8 @@
 # HTTPS for OpenEtch on the Raspberry Pi
 
-OpenEtch works over plain http (`http://192.168.1.20:7878`). That is enough for the editor, framing, Start and STOP, the
-full-screen toggle, Safari's **File > Add to Dock**, **Add to Home Screen** on iPad and iPhone, and Chrome/Edge's
-**Create shortcut > Open as window**.
+OpenEtch works over plain http (`http://<pi-ip>:7878`, for example `http://192.168.1.20:7878`). That is enough for
+the editor, framing, Start and STOP, the full-screen toggle, Safari's **File > Add to Dock**, **Add to Home Screen** on
+iPad and iPhone, and Chrome/Edge's **Create shortcut > Open as window**.
 
 Browsers keep some features for secure origins (`https://`, or `localhost` on the same computer):
 
@@ -82,7 +82,7 @@ No Tailscale, but the Caddy root certificate has to be trusted once on every dev
 1. Install Caddy on the Pi (`sudo apt install caddy`) and put this in `/etc/caddy/Caddyfile`:
 
    ```
-   openetch.local, 192.168.1.20 {
+   <pi-name>.local, <pi-ip> {
        tls internal
        reverse_proxy 127.0.0.1:7878
    }
@@ -91,7 +91,7 @@ No Tailscale, but the Caddy root certificate has to be trusted once on every dev
    `sudo systemctl reload caddy`. Caddy proxies the event WebSocket and compresses on its own.
 
 2. Run the engine on loopback with the token required and the name allowed:
-   `--listen 127.0.0.1:7878 --require-token --allow-host openetch.local` (as in route (a), step 3).
+   `--listen 127.0.0.1:7878 --require-token --allow-host <pi-name>.local` (as in route (a), step 3).
 
 3. Copy Caddy's root certificate from the Pi,
    `/var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt`, and trust it on each device:
@@ -102,14 +102,14 @@ No Tailscale, but the Caddy root certificate has to be trusted once on every dev
    - **Android:** Settings > Security > Encryption & credentials > Install a certificate > CA certificate.
    - **Firefox** uses the system's roots on Windows and macOS by default.
 
-4. Open `https://openetch.local` (or `https://192.168.1.20`) and pair the device as above. `openetch.local` needs
-   mDNS (avahi on the Pi, which Raspberry Pi OS runs by default).
+4. Open `https://<pi-name>.local` (or `https://<pi-ip>`) and pair the device as above. `<pi-name>` is the Pi's
+   hostname; a `.local` name needs mDNS (avahi on the Pi, which Raspberry Pi OS runs by default).
 
 ## Stopgap for your own computer: a Chrome/Edge flag
 
-On the owner's own PC or Mac, Chrome and Edge can treat the Pi's http address as secure, with no infrastructure:
+On a computer of your own, Chrome and Edge can treat the Pi's http address as secure, with no infrastructure:
 open `chrome://flags` (or `edge://flags`), find **Insecure origins treated as secure**, enter
-`http://192.168.1.20:7878`, enable it and relaunch. Install, the title-bar layout, the camera and Wake Lock then work
+`http://<pi-ip>:7878`, enable it and relaunch. Install, the title-bar layout, the camera and Wake Lock then work
 in that browser profile. It does nothing for other devices or browsers.
 
 ## Checking it

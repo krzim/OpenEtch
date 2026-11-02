@@ -70,9 +70,9 @@ pub fn has_mcp_marker(headers: &HeaderMap) -> bool {
 /// the same two headers, with no token on loopback and with the access token off it. The token stays the network
 /// guard, and the foot switch is the approval path backed by hardware. Browsers send `Sec-Fetch-*` only to secure
 /// origins (`https://`, or `localhost`/`127.0.0.1`): from a page opened as `http://<lan-name>:7878` on another device
-/// (the owner's PC or iPad) the request has no `Sec-Fetch-Site`, and the `Origin` check alone decides. Browsers set
-/// `Origin` on every `fetch` POST and page scripts cannot change it, so a script in another site's page is still
-/// refused; a non-browser program could send it, exactly as it could send `Sec-Fetch-Site`.
+/// (the operator's computer or iPad) the request has no `Sec-Fetch-Site`, and the `Origin` check alone decides.
+/// Browsers set `Origin` on every `fetch` POST and page scripts cannot change it, so a script in another site's page
+/// is still refused; a non-browser program could send it, exactly as it could send `Sec-Fetch-Site`.
 pub fn same_origin_browser_request(headers: &HeaderMap, cfg: &SecurityConfig) -> Result<(), String> {
     const HOW: &str = "starting a run without the PIN needs the Start button of the OpenEtch app in a browser, or the \
                        foot switch";
