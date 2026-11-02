@@ -27,6 +27,7 @@ import {
   parseScan,
   parseUpdateCheck,
   printCutProblem,
+  shutdownNotice,
   simPinActive,
   startMarks,
   tableBody,
@@ -198,6 +199,20 @@ test("preferences, the Job Checklist and approval texts", () => {
   assert.equal(simPinActive({ connected: true, approval: { pin_set: true, physical_confirm: null, sim_pin: true } as never }), true);
   assert.equal(simPinActive({ connected: true }), false);
   assert.equal(simPinActive(null), false);
+});
+
+test("shutdown notice", () => {
+  assert.equal(shutdownNotice(null), null);
+  assert.equal(shutdownNotice({ connected: true }), null);
+  assert.equal(shutdownNotice({ connected: true, shutting_down: false, shutdown: null }), null);
+  assert.deepEqual(shutdownNotice({ connected: true, shutting_down: true, shutdown: null }), { waiting: null, aborting: false });
+  const shutdown = { signal: "SIGTERM", since_unix_s: 1, grace_s: 3600, abort_at_unix_s: 3601, aborting: false, waiting_for_run: "run-3" };
+  assert.deepEqual(shutdownNotice({ connected: true, shutting_down: true, shutdown }), { waiting: "run-3", aborting: false });
+  assert.deepEqual(shutdownNotice({ connected: true, shutting_down: true, shutdown: { ...shutdown, aborting: true } }), {
+    waiting: "run-3",
+    aborting: true,
+  });
+  assert.match(approvalRefusalText("the engine is shutting down: approving a run is refused") ?? "", /shutting down/);
 });
 
 test("IO ports and the repeat table", () => {

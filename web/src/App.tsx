@@ -42,7 +42,7 @@ import { FileDialogs, FileMenu, useFileActions } from "./components/FileMenu.tsx
 import { ENGINE_ACCEPT, importTargetLayer } from "./files/fileFormats.ts";
 import { filesState } from "./files/filesStore.ts";
 import { useFilesUi } from "./files/useFilesUi.tsx";
-import { SimPinBadge } from "./libs/JobSafety.tsx";
+import { ShutdownBadge, SimPinBadge } from "./libs/JobSafety.tsx";
 import { LaserExtras } from "./libs/LaserExtras.tsx";
 import { useLibsUi } from "./libs/useLibsUi.tsx";
 import { useDesignUi } from "./design/useDesignUi.tsx";
@@ -1098,6 +1098,7 @@ export function App() {
           <>
             <WindowMenu />
             <SimPinBadge machine={machine} />
+            <ShutdownBadge machine={machine} />
             <TopActions machine={machine} onHotkeys={() => ws.open("hotkeys")} onPreferences={() => ws.open("prefs")} helpExtra={libsUi.helpItems} />
           </>
         }

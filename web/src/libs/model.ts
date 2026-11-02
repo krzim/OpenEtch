@@ -411,6 +411,16 @@ export function simPinActive(m: MachineStatus | null): boolean {
   return a?.sim_pin === true;
 }
 
+/** A graceful shutdown of the engine (GET /api/machine `shutting_down`): what the notice says, or null. */
+export function shutdownNotice(m: MachineStatus | null): { waiting: string | null; aborting: boolean } | null {
+  if (m?.shutting_down !== true) return null;
+  const s = obj(m.shutdown);
+  return {
+    waiting: typeof s?.waiting_for_run === "string" ? s.waiting_for_run : null,
+    aborting: s?.aborting === true,
+  };
+}
+
 /** What the approval card shows besides the PIN: the gates of the active device. */
 export interface ApprovalGates {
   requireFraming: boolean;
@@ -436,6 +446,9 @@ export function approvalRefusalText(detail: string): string | null {
   }
   if (d.includes("another run is in progress")) return "Another run holds the machine. Wait for it to end (or STOP it), then try again.";
   if (d.includes("sim_pin_real_link") || d.includes("simulator test pin")) return "The simulator test PIN cannot approve runs on a real laser.";
+  if (d.includes("shutting_down") || d.includes("the engine is shutting down")) {
+    return "The engine is shutting down (a restart or stop): nothing new starts until it is back.";
+  }
   return null;
 }
 

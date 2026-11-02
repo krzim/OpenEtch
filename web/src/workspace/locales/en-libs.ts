@@ -219,6 +219,11 @@ export const EN_LIBS = {
   // ---- approval gates ----
   "safe.simPin": "SIMULATOR TEST PIN",
   "safe.simPinTitle": "The engine was started with --sim-pin: approvals use a test PIN and only ever drive the simulator.",
+  "safe.shutdown": "ENGINE SHUTTING DOWN",
+  "safe.shutdownTitle": "The engine is restarting or stopping: new runs, Start and frames are refused until it is back.",
+  "safe.shutdownWaitingTitle": "The engine is restarting or stopping. It lets run {run} finish first (Stop still works); nothing new starts until it is back.",
+  "safe.shutdownAborting": "ENGINE ABORTING JOB",
+  "safe.shutdownAbortingTitle": "The engine is shutting down and aborting the running job (a second signal or the grace limit).",
   "safe.requireFramingOn": "Require Framing is on: frame the job since its last edit before approving.",
   "safe.doorOn": "Door Protect on {input}: approval is refused while the enclosure is open.",
   "safe.checklist": "Job Checklist",

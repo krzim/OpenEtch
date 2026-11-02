@@ -407,7 +407,23 @@ export interface MachineStatus {
   approval?: ApprovalInfo;
   /** The foot switch cycle (no-PIN mode): press to frame the job, press again to burn what was framed. */
   foot_cycle?: FootCycle;
+  /** The engine is shutting down (SIGTERM / SIGINT): new runs, Start and frames are refused; a running job finishes. */
+  shutting_down?: boolean;
+  shutdown?: ShutdownInfo | null;
   [key: string]: unknown;
+}
+
+/** GET /api/machine `shutdown`: a graceful shutdown in progress. */
+export interface ShutdownInfo {
+  signal: string;
+  since_unix_s: number;
+  /** How long the engine waits for a running job before aborting it. */
+  grace_s: number;
+  abort_at_unix_s: number;
+  /** A second signal or the grace limit is aborting the job. */
+  aborting: boolean;
+  /** The run the engine waits for, or null. */
+  waiting_for_run: string | null;
 }
 
 /** GET /api/machine `foot_cycle`. */

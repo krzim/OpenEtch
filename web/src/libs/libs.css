@@ -288,6 +288,10 @@
   letter-spacing: 0.04em;
   white-space: nowrap;
 }
+.lx-shutdown-badge {
+  background: var(--danger);
+  color: #fff;
+}
 .lx-gates {
   margin: 6px 0;
 }

@@ -1,6 +1,6 @@
 // The approval gates of the active device (ARCHITECTURE.md "Safety model"): Require Framing Before Start, the Job
 // Checklist (every item ticked before "Confirm and fire"), Door Protect (approval refused while the enclosure is open)
-// and the refusal texts, the "SIMULATOR TEST PIN" badge, Play Sound on Job Finished (the engine's
+// and the refusal texts, the "SIMULATOR TEST PIN" and "ENGINE SHUTTING DOWN" badges, Play Sound on Job Finished (the engine's
 // `job_finished_sound` event; muted per browser), and the device's job settings page (Device Settings > Job).
 // Preferences are per device and UI only (PUT /api/prefs); the engine checks every gate again on approval.
 
@@ -18,6 +18,7 @@ import {
   checklistProblem,
   inputText,
   ioPorts,
+  shutdownNotice,
   simPinActive,
   type Checklist,
 } from "./model.ts";
@@ -32,6 +33,19 @@ export function SimPinBadge({ machine, className }: { machine: MachineStatus | n
   return (
     <span className={`lx-sim-badge${className ? ` ${className}` : ""}`} role="status" title={t("safe.simPinTitle")}>
       {t("safe.simPin")}
+    </span>
+  );
+}
+
+/** The badge shown while the engine shuts down (a restart or stop): new work is refused, a running job finishes. */
+export function ShutdownBadge({ machine }: { machine: MachineStatus | null }) {
+  const t = useT();
+  const n = shutdownNotice(machine);
+  if (!n) return null;
+  const title = n.aborting ? t("safe.shutdownAbortingTitle") : n.waiting ? t("safe.shutdownWaitingTitle", { run: n.waiting }) : t("safe.shutdownTitle");
+  return (
+    <span className="lx-sim-badge lx-shutdown-badge" role="status" title={title}>
+      {n.aborting ? t("safe.shutdownAborting") : t("safe.shutdown")}
     </span>
   );
 }
