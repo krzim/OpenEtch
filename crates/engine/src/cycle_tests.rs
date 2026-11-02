@@ -181,6 +181,21 @@ async fn stop_ends_the_cycle_and_the_red_pointer() {
     watch.abort();
 }
 
+/// The input reads a frame took while it streamed never outlive a Stop (a press read just before it must not start
+/// framing again after it; review of 2026-11-02). No watcher here, so nothing takes them first.
+#[tokio::test]
+async fn stop_discards_the_reads_a_streaming_frame_took() {
+    let st = state(pedal_profile(), ApprovalMode::Click).await;
+    let app = api::router(st.clone(), None);
+    rect(&app).await;
+    set_inputs(&app, 1 << 14).await;
+    let (s, v) = send(&app, req("POST", "/api/machine/frame", Some(json!({})))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert!(st.machine.has_input_samples(), "the frame read the input while it streamed");
+    st.stop().await.expect("stop");
+    assert!(!st.machine.has_input_samples(), "Stop discards them");
+}
+
 /// A burn that holds the board (here: waiting for the physical confirmation input 3) is not disturbed by presses,
 /// and they never queue a second burn.
 #[tokio::test]

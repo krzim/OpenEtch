@@ -342,16 +342,16 @@ const SAMPLE_EVERY: Duration = Duration::from_millis(20);
 /// Most input reads [`InputSamples`] keeps; older ones are dropped.
 const SAMPLES_KEPT: usize = 256;
 
-/// Input port reads (`ReadPort` word 1) taken while a frame streams its list. Streaming holds the controller for as
-/// long as the board takes to accept the list (about a second per call), so a foot switch read by the engine between
-/// calls alone misses most presses; these reads, oldest first, fill that gap. Taken only while framing, at most every
-/// [`SAMPLE_EVERY`], never while a run streams.
+/// Input port reads (`ReadPort` word 1, with the time of each read) taken while a frame streams its list. Streaming
+/// holds the controller for as long as the board takes to accept the list (about a second per call), so a foot switch
+/// read by the engine between calls alone misses most presses; these reads, oldest first, fill that gap. Taken only
+/// while framing, at most every [`SAMPLE_EVERY`], never while a run streams; [`Controller::abort`] discards them.
 #[derive(Debug, Clone, Default)]
-pub struct InputSamples(Arc<Mutex<VecDeque<u16>>>);
+pub struct InputSamples(Arc<Mutex<VecDeque<(Instant, u16)>>>);
 
 impl InputSamples {
     /// The reads since the last call, oldest first.
-    pub fn take(&self) -> Vec<u16> {
+    pub fn take(&self) -> Vec<(Instant, u16)> {
         self.0.lock().unwrap_or_else(PoisonError::into_inner).drain(..).collect()
     }
 
@@ -359,12 +359,16 @@ impl InputSamples {
         self.0.lock().unwrap_or_else(PoisonError::into_inner).clear();
     }
 
-    fn push(&self, bits: u16) {
+    pub fn is_empty(&self) -> bool {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner).is_empty()
+    }
+
+    fn push(&self, at: Instant, bits: u16) {
         let mut q = self.0.lock().unwrap_or_else(PoisonError::into_inner);
         if q.len() >= SAMPLES_KEPT {
             q.pop_front();
         }
-        q.push_back(bits);
+        q.push_back((at, bits));
     }
 }
 
@@ -769,9 +773,11 @@ impl<L: Link> Controller<L> {
     /// Emergency stop, always callable (no init needed): `StopExecute`, `Fiber_SetMo(0)`, `ResetList`,
     /// `WritePort(0)` (laser enable and pointer off), `GotoXY(centre)`. Every step is tried even if an earlier one
     /// fails; the first error is returned. Clears any pending [`AbortHandle`] request and leaves the controller idle
-    /// (no run state survives it: an [`Armed`] token is consumed by the run it was given to). Not gated by anything;
-    /// the engine's stop epoch, which keeps an approved run from starting after a stop, lives in the engine.
+    /// (no run state survives it: an [`Armed`] token is consumed by the run it was given to) and discards the
+    /// [`InputSamples`] (a press read before the stop must not act after it). Not gated by anything; the engine's
+    /// stop epoch, which keeps an approved run from starting after a stop, lives in the engine.
     pub fn abort(&mut self) -> Result<()> {
+        self.samples.clear();
         let mut cmds = vec![
             Single::stop_execute(),
             Single::fiber_set_mo(false),
@@ -886,9 +892,10 @@ impl<L: Link> Controller<L> {
         if self.state != ControllerState::Framing || self.last_sample.is_some_and(|t| t.elapsed() < SAMPLE_EVERY) {
             return;
         }
-        self.last_sample = Some(Instant::now());
+        let at = Instant::now();
+        self.last_sample = Some(at);
         if let Ok(reply) = self.reply(Single::read_port()) {
-            self.samples.push(reply[1]);
+            self.samples.push(at, reply[1]);
         }
     }
 
@@ -898,9 +905,11 @@ impl<L: Link> Controller<L> {
         }
     }
 
-    /// Wait for READY; returns how many polls found the board not ready. While the board executes a list (BUSY), a
-    /// full buffer frees up as it marks, however long one packet takes (slow, dense fills), so only time spent not
-    /// ready and not executing counts toward [`PollConfig::ready_timeout`]. Abort and Stop are checked on every poll.
+    /// Wait for READY; returns how many polls found the board not ready. While a run's list executes (BUSY), a full
+    /// buffer frees up as the board marks, however long one packet takes (slow, dense fills), so only time spent not
+    /// ready and not executing counts toward [`PollConfig::ready_timeout`]; abort, Stop and the stop/door inputs are
+    /// checked on every poll. A frame (only jumps at pointer speed) keeps the bounded wait: nothing but an abort
+    /// request would end it otherwise, and the engine's frame stop does not raise one.
     fn wait_ready(&mut self) -> Result<usize> {
         let mut start = Instant::now();
         let mut refused = 0;
@@ -912,7 +921,7 @@ impl<L: Link> Controller<L> {
                 return Ok(refused);
             }
             refused += 1;
-            if status.busy() {
+            if status.busy() && self.state == ControllerState::Running {
                 start = Instant::now();
             } else if start.elapsed() >= self.poll.ready_timeout {
                 return Err(ControllerError::NotReady(self.poll.ready_timeout));
@@ -1198,12 +1207,15 @@ mod tests {
         c.link_mut().set_inputs(1 << 14);
         c.frame(&[vec![(0.0, 0.0), (5.0, 0.0)]], 40).unwrap();
         let read = samples.take();
-        assert!(!read.is_empty() && read.iter().all(|&b| b == 1 << 14), "{read:?}");
+        assert!(!read.is_empty() && read.iter().all(|&(_, b)| b == 1 << 14), "{read:?}");
         assert!(samples.take().is_empty(), "taken once");
         c.stop_frame().unwrap();
         std::thread::sleep(SAMPLE_EVERY);
         c.run(&job(), Armed::approved_in_ui("run-1".into())).unwrap();
         assert!(samples.take().is_empty(), "a run never samples");
+        c.frame(&[vec![(0.0, 0.0), (5.0, 0.0)]], 40).unwrap();
+        c.abort().unwrap();
+        assert!(samples.take().is_empty(), "a stop discards them");
     }
 
     #[test]
@@ -1533,11 +1545,18 @@ mod tests {
         let mut c = controller(board);
         c.poll.ready_timeout = Duration::ZERO;
         c.init(&b6(), None).unwrap();
-        let sent = c.frame_styled(&[(0..2000).map(|i| (f64::from(i) * 0.01, 0.0)).collect()], 1, &FrameStyle::for_profile(&b6())).unwrap();
-        assert!(sent > 5, "packets sent after execution started: {sent}");
-        assert_eq!(c.state(), ControllerState::Framing);
-        c.stop_frame().unwrap();
-        c.run(&job(), Armed::approved_in_ui("run-1".into())).unwrap();
+        let mut l = MarkingList::new();
+        l.mark_power(units::power_to_mark_current(20.0).unwrap()).unwrap();
+        l.jump_to(30000, 30000);
+        for i in 0..4000u16 {
+            l.mark_to(30000 + i, 31000);
+        }
+        let job = l.finish();
+        assert!(job.len() > 5, "packets: {}", job.len());
+        c.run(&job, Armed::approved_in_ui("run-1".into())).unwrap();
+        // A frame keeps the bounded wait (only an abort request would end it otherwise): the same full buffer times out.
+        let frame = [(0..2000).map(|i| (f64::from(i) * 0.01, 0.0)).collect()];
+        assert!(matches!(c.frame_styled(&frame, 1, &FrameStyle::for_profile(&b6())), Err(ControllerError::NotReady(_))));
     }
 
     /// A link that pauses the run (through its [`RunControl`]) when packet `pause_at` is sent and resumes it after

@@ -191,11 +191,18 @@ pub(crate) fn after_run(st: &Arc<AppState>, run_id: &str, device: &str, state: R
     }
 }
 
+/// How long the foot switch must read pressed (after a release) to count: [`crate::pin::CONFIRM_READS`] reads
+/// [`crate::pin::CONFIRM_POLL`] apart span this. Timed, not only counted, because the reads a streaming frame takes
+/// come every 20 ms.
+const FOOT_HOLD: Duration = crate::pin::CONFIRM_POLL.saturating_mul(crate::pin::CONFIRM_READS - 1);
+
 /// Release-then-press detection for an input read by [`spawn_io_watch`].
 #[derive(Debug, Default)]
 struct Edge {
     released: bool,
     pressed: u32,
+    /// When the current run of pressed reads began.
+    since: Option<Instant>,
 }
 
 impl Edge {
@@ -205,18 +212,19 @@ impl Edge {
         *self = Edge::default();
     }
 
-    /// One read: true once the input, seen released, has read pressed `reads` times in a row (then a release is
-    /// needed again).
-    fn update(&mut self, active: bool, reads: u32) -> bool {
+    /// One read, taken at `at`: true once the input, seen released, has read pressed `reads` times in a row spanning
+    /// at least `hold` (then a release is needed again).
+    fn update(&mut self, active: bool, at: Instant, reads: u32, hold: Duration) -> bool {
         if !active {
-            *self = Edge { released: true, pressed: 0 };
+            *self = Edge { released: true, pressed: 0, since: None };
             return false;
         }
         if !self.released {
             return false;
         }
+        let since = *self.since.get_or_insert(at);
         self.pressed += 1;
-        if self.pressed < reads {
+        if self.pressed < reads || at.saturating_duration_since(since) < hold {
             return false;
         }
         self.reset();
@@ -245,10 +253,11 @@ impl FootWatch {
         self.edge.reset();
     }
 
-    /// One read of the port: true once a press is complete (`pin::CONFIRM_READS` pressed reads after a release).
-    fn update(&mut self, bits: u16) -> bool {
+    /// One read of the port, taken at `at`: true once a press is complete (`pin::CONFIRM_READS` pressed reads after
+    /// a release, spanning [`FOOT_HOLD`]).
+    fn update(&mut self, bits: u16, at: Instant) -> bool {
         let Some(port) = self.port else { return false };
-        self.edge.update(port.active(bits), crate::pin::CONFIRM_READS)
+        self.edge.update(port.active(bits), at, crate::pin::CONFIRM_READS, FOOT_HOLD)
     }
 }
 
@@ -256,9 +265,11 @@ impl FootWatch {
 /// input, `approve::foot_switch_port`). Start Framing starts framing (the last frame request, else the whole job's
 /// bounds) when it is pressed after being seen released, while the board is idle. The foot switch drives the foot
 /// switch cycle (module `cycle`: frame, then burn what was framed, then frame again) when it is seen released and then
-/// pressed for `pin::CONFIRM_READS` reads in a row; a changed foot switch port (bit or polarity) needs a fresh
-/// release. It is read every `pin::CONFIRM_POLL` while watched, else every [`IO_POLL`]; the reads a frame took while
-/// it streamed (`machine::InputSamples`, when the controller was held too long for these) count first, in order.
+/// pressed for `pin::CONFIRM_READS` reads in a row spanning [`FOOT_HOLD`]; a changed foot switch port (bit or
+/// polarity) needs a fresh release. It is read every `pin::CONFIRM_POLL` while watched, else every [`IO_POLL`]; the
+/// reads a frame took while it streamed (`machine::InputSamples`, when the controller was held too long for these)
+/// count first, in order. Those belong to the frame showing now (a new frame loop discards older ones) and never
+/// survive a stop: a stop discards them, and a read that a stop overlapped is dropped whole.
 /// Reads only while the board is initialised and not running (a run claimed by an approval, including one waiting
 /// for its start input or physical confirmation, owns the input; a press then is not seen at all), and while
 /// framing only when the foot switch is watched (the cycle's second press comes while it frames); sends nothing but
@@ -283,6 +294,7 @@ pub fn spawn_io_watch(st: Arc<AppState>) -> tokio::task::JoinHandle<()> {
                 st.machine.clear_input_samples();
                 continue;
             }
+            let epoch = st.machine.stop_epoch();
             let read = st
                 .machine
                 .blocking(|m, ctl| {
@@ -291,17 +303,18 @@ pub fn spawn_io_watch(st: Arc<AppState>) -> tokio::task::JoinHandle<()> {
                     // or out of order), then this one.
                     let streamed = m.take_input_samples();
                     (!m.is_running() && ctl.state() != machine::ControllerState::Uninitialized)
-                        .then(|| ctl.read_port().ok())
+                        .then(|| ctl.read_port().ok().map(|bits| (Instant::now(), bits)))
                         .flatten()
-                        .map(|bits| (streamed, bits))
+                        .map(|now| (streamed, now))
                 })
                 .await;
-            let Ok(Some((streamed, bits))) = read else {
+            // A stop during the read: nothing read around it counts.
+            let (Ok(Some((streamed, (now, bits)))), true) = (read, st.machine.stop_epoch() == epoch) else {
                 framing.reset();
                 foot.reset();
                 continue;
             };
-            if streamed.into_iter().chain([bits]).any(|b| foot.update(b)) {
+            if streamed.into_iter().chain([(now, bits)]).any(|(at, b)| foot.update(b, at)) {
                 framing.reset();
                 crate::cycle::pressed(&st).await;
                 continue;
@@ -312,7 +325,7 @@ pub fn spawn_io_watch(st: Arc<AppState>) -> tokio::task::JoinHandle<()> {
                 continue;
             }
             if let Some(port) = frame_port
-                && framing.update(port.active(bits), 1)
+                && framing.update(port.active(bits), now, 1, Duration::ZERO)
             {
                 let req = lock(&st.libs.last_frame).clone().unwrap_or_default();
                 match st.frame_start(req).await {
@@ -411,60 +424,108 @@ pub fn apply_startup_defaults(st: &AppState) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Edge, FootWatch};
+    use std::time::{Duration, Instant};
+
+    use super::{Edge, FOOT_HOLD, FootWatch};
     use machine::InputPort;
 
     const HIGH: Option<InputPort> = Some(InputPort { bit: 14, active_low: false });
     const LOW: Option<InputPort> = Some(InputPort { bit: 14, active_low: true });
     const PEDAL: u16 = 1 << 14;
 
+    /// Reads `step` apart, as the watcher (50 ms) or a streaming frame (20 ms) takes them.
+    struct Clock(Instant, Duration);
+
+    impl Clock {
+        fn at(step_ms: u64) -> Self {
+            Clock(Instant::now(), Duration::from_millis(step_ms))
+        }
+
+        fn next(&mut self) -> Instant {
+            self.0 += self.1;
+            self.0
+        }
+    }
+
+    impl FootWatch {
+        fn read(&mut self, bits: u16, clock: &mut Clock) -> bool {
+            self.update(bits, clock.next())
+        }
+    }
+
+    impl Edge {
+        fn read(&mut self, active: bool, reads: u32, clock: &mut Clock) -> bool {
+            let hold = if reads > 1 { FOOT_HOLD } else { Duration::ZERO };
+            self.update(active, clock.next(), reads, hold)
+        }
+    }
+
     #[test]
     fn a_foot_press_needs_a_release_then_three_reads() {
         let mut f = FootWatch::default();
+        let c = &mut Clock::at(50);
         f.watch(HIGH);
-        assert!(!f.update(PEDAL), "held since the start: never");
-        assert!(!f.update(0));
-        assert!(!f.update(PEDAL) && !f.update(PEDAL));
-        assert!(f.update(PEDAL), "third pressed read");
-        assert!(!f.update(PEDAL), "held: no new press");
-        assert!(!f.update(0) && !f.update(PEDAL) && !f.update(PEDAL));
-        assert!(f.update(PEDAL));
+        assert!(!f.read(PEDAL, c), "held since the start: never");
+        assert!(!f.read(0, c));
+        assert!(!f.read(PEDAL, c) && !f.read(PEDAL, c));
+        assert!(f.read(PEDAL, c), "third pressed read");
+        assert!(!f.read(PEDAL, c), "held: no new press");
+        assert!(!f.read(0, c) && !f.read(PEDAL, c) && !f.read(PEDAL, c));
+        assert!(f.read(PEDAL, c));
     }
 
     #[test]
     fn a_changed_foot_switch_port_needs_a_fresh_release() {
         let mut f = FootWatch::default();
+        let c = &mut Clock::at(50);
         f.watch(HIGH);
-        assert!(!f.update(0), "released");
+        assert!(!f.read(0, c), "released");
         // The polarity is flipped (a device edit): the released pedal now reads pressed. Not a press.
         f.watch(LOW);
         for _ in 0..5 {
-            assert!(!f.update(0));
+            assert!(!f.read(0, c));
         }
         // Real press (reads high, inactive for active-low) and release (low, active): a press after the release.
-        assert!(!f.update(PEDAL));
-        assert!(!f.update(0) && !f.update(0));
-        assert!(f.update(0));
+        assert!(!f.read(PEDAL, c));
+        assert!(!f.read(0, c) && !f.read(0, c));
+        assert!(f.read(0, c));
         // Same port again: nothing forgotten; no port: never.
         f.watch(LOW);
         f.watch(None);
-        assert!(!f.update(PEDAL) && !f.update(0) && !f.update(0) && !f.update(0));
+        assert!(!f.read(PEDAL, c) && !f.read(0, c) && !f.read(0, c) && !f.read(0, c));
     }
 
     #[test]
     fn an_edge_needs_a_release_then_enough_presses() {
         let mut e = Edge::default();
-        assert!(!e.update(true, 3), "held since the start: never");
-        assert!(!e.update(true, 3));
-        assert!(!e.update(false, 3));
-        assert!(!e.update(true, 3) && !e.update(true, 3));
-        assert!(e.update(true, 3), "third read in a row");
-        assert!(!e.update(true, 3), "still held: needs a release again");
-        assert!(!e.update(false, 3) && !e.update(true, 3) && !e.update(false, 3), "a bounce restarts the count");
-        assert!(!e.update(true, 3) && !e.update(true, 3));
+        let c = &mut Clock::at(50);
+        assert!(!e.read(true, 3, c), "held since the start: never");
+        assert!(!e.read(true, 3, c));
+        assert!(!e.read(false, 3, c));
+        assert!(!e.read(true, 3, c) && !e.read(true, 3, c));
+        assert!(e.read(true, 3, c), "third read in a row");
+        assert!(!e.read(true, 3, c), "still held: needs a release again");
+        assert!(!e.read(false, 3, c) && !e.read(true, 3, c) && !e.read(false, 3, c), "a bounce restarts the count");
+        assert!(!e.read(true, 3, c) && !e.read(true, 3, c));
         e.reset();
-        assert!(!e.update(true, 3), "after a reset a release comes first");
-        assert!(!e.update(false, 1));
-        assert!(e.update(true, 1), "one read for the framing switch");
+        assert!(!e.read(true, 3, c), "after a reset a release comes first");
+        assert!(!e.read(false, 1, c));
+        assert!(e.read(true, 1, c), "one read for the framing switch");
+    }
+
+    #[test]
+    fn streamed_reads_twenty_ms_apart_still_need_the_full_hold() {
+        let mut f = FootWatch::default();
+        f.watch(HIGH);
+        let c = &mut Clock::at(20);
+        assert!(!f.read(0, c));
+        // A 45 ms closure (three 20 ms reads) is a bounce, not a press.
+        assert!(!f.read(PEDAL, c) && !f.read(PEDAL, c) && !f.read(PEDAL, c));
+        assert!(!f.read(0, c));
+        // Held 100 ms (six reads): a press, on the read that completes the hold.
+        for _ in 0..5 {
+            assert!(!f.read(PEDAL, c));
+        }
+        assert!(f.read(PEDAL, c));
     }
 }

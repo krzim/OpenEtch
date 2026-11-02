@@ -383,6 +383,8 @@ impl Machine {
         self.stop_epoch.fetch_add(1, Ordering::SeqCst);
         self.abort.request();
         self.bump_frame_gen();
+        // A press read before the stop must not act after it (`Controller::abort` clears again under the lock).
+        self.samples.clear();
     }
 
     /// True while a frame loop is tracing (and has not been superseded or stopped).
@@ -468,12 +470,17 @@ impl Machine {
 
     /// The input port reads taken while frames streamed since the last call, oldest first
     /// ([`machine::InputSamples`]).
-    pub(crate) fn take_input_samples(&self) -> Vec<u16> {
+    pub(crate) fn take_input_samples(&self) -> Vec<(std::time::Instant, u16)> {
         self.samples.take()
     }
 
     pub(crate) fn clear_input_samples(&self) {
         self.samples.clear();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_input_samples(&self) -> bool {
+        !self.samples.is_empty()
     }
 
     /// [`Machine::request_stop`] (noticed by a running job at its next packet or poll), then send the abort sequence
