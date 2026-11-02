@@ -125,10 +125,28 @@ test("every action id a menu item names in the source is a hotkeys.ts action", (
       const p = join(dir, name);
       if (statSync(p).isDirectory()) walk(p);
       else if (/\.tsx?$/.test(p) && !p.endsWith(".test.ts")) {
-        for (const m of readFileSync(p, "utf8").matchAll(/actionId: "([\w.]+)"/g)) if (!ACTION_BY_ID.has(m[1])) bad.push(`${name}: ${m[1]}`);
+        for (const m of readFileSync(p, "utf8").matchAll(/(?:actionId: |data-action-id=)"([\w.]+)"/g)) if (!ACTION_BY_ID.has(m[1])) bad.push(`${name}: ${m[1]}`);
       }
     }
   };
   walk(src);
   assert.deepEqual(bad, []);
+});
+
+test("the Laser Tools items and the File menu's New tab row carry their action ids (one entry each)", () => {
+  // Seen in the app: "Material Library" was listed twice (File › Laser and Laser Tools), and "New tab" beside
+  // "New document tab".
+  const src = join(fileURLToPath(new URL(".", import.meta.url)), "..");
+  const libs = readFileSync(join(src, "libs", "useLibsUi.tsx"), "utf8");
+  const laserTools = libs.slice(libs.indexOf("const laserTools: DropItem[]"), libs.indexOf("];", libs.indexOf("const laserTools: DropItem[]")));
+  for (const id of ["laser.materialTest", "laser.intervalTest", "laser.focusTest", "tool.startPoint", "laser.printCut", "window.library"]) {
+    assert.ok(laserTools.includes(`actionId: "${id}"`), id);
+  }
+  assert.ok(!/hint: hk\(/.test(laserTools), "no item names its chord without its action");
+  assert.ok(readFileSync(join(src, "App.tsx"), "utf8").includes('data-action-id="window.newTab"'));
+  const menu = mergeCommands([cmd("window.library", "Material Library")], [
+    cmd("menu:File › Laser/Material Library", "Material Library", { actionId: "window.library" }),
+    cmd("menu:Laser Tools/Material Library", "Material Library", { actionId: "window.library" }),
+  ]);
+  assert.equal(menu.length, 1);
 });

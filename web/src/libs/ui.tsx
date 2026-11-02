@@ -9,7 +9,10 @@ import { WsModal } from "../workspace/WsModal.tsx";
 import { useT } from "../workspace/usePrefs.ts";
 import "./libs.css";
 
-export type DropItem = { sep: true } | { label: string; hint?: string; disabled?: boolean; danger?: boolean; action: () => void; sep?: false };
+export type DropItem =
+  | { sep: true }
+  // actionId: the hotkeys.ts action the item runs (its chord is the hint; command search lists the command once).
+  | { label: string; hint?: string; actionId?: string; disabled?: boolean; danger?: boolean; action: () => void; sep?: false };
 
 /** A button that opens a menu of actions (LightBurn's "Manage Library" button), on the Menu primitive. */
 export function DropMenu(p: { label: ReactNode; title?: string; items: DropItem[]; className?: string; align?: "left" | "right"; up?: boolean; disabled?: boolean }) {

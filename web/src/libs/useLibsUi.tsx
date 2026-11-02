@@ -14,7 +14,6 @@ import { boxCenter, objectBounds, unionBoxes } from "../geometry.ts";
 import { parseNodeList, type NodeList } from "../nodes.ts";
 import { updatePrefs } from "../workspace/prefs.ts";
 import { usePrefs, useT } from "../workspace/usePrefs.ts";
-import { hintFor } from "../workspace/hotkeys.ts";
 import { CameraWindow, useCameraSupported } from "./Camera.tsx";
 import { FindLaserWizard } from "./FindLaser.tsx";
 import { BugReportDialog, UpdatesDialog } from "./HelpExtras.tsx";
@@ -64,7 +63,7 @@ export function useLibsUi(p: LibsUiProps) {
   const sp = startPointTool.use();
   const ov = cameraOverlay.use();
   const { prefs } = useDevicePrefs();
-  const { hotkeys, beginnerMode } = usePrefs();
+  const { beginnerMode } = usePrefs();
   const P = useRef(p);
   P.current = p;
   setLibsToast(p.notify);
@@ -225,18 +224,17 @@ export function useLibsUi(p: LibsUiProps) {
 
   // ---- menus ----
   const open = (k: LibsWindow) => () => openLibsWindow(k);
-  const hk = (id: string) => hintFor(id, hotkeys) || undefined;
   const laserTools: DropItem[] = [
-    { label: t("ltest.materialTitle"), hint: hk("laser.materialTest"), action: open("materialTest") },
-    { label: t("ltest.intervalTitle"), hint: hk("laser.intervalTest"), action: open("intervalTest") },
-    { label: t("ltest.focusTitle"), hint: hk("laser.focusTest"), action: open("focusTest") },
+    { label: t("ltest.materialTitle"), actionId: "laser.materialTest", action: open("materialTest") },
+    { label: t("ltest.intervalTitle"), actionId: "laser.intervalTest", action: open("intervalTest") },
+    { label: t("ltest.focusTitle"), actionId: "laser.focusTest", action: open("focusTest") },
     { sep: true },
     // Beginner Mode hides Set Start Point, as LightBurn's does (a running tool can still be stopped).
-    ...(beginnerMode && !sp ? [] : [{ label: sp ? t("sp.stop") : t("sp.tool"), hint: hk("tool.startPoint"), action: toggleStartPoint } as DropItem]),
-    { label: t("pc.title"), hint: hk("laser.printCut"), action: open("printCut") },
-    ...(cam ? [{ label: t("cam.title"), hint: hk("window.camera"), action: open("camera") } as DropItem] : []),
+    ...(beginnerMode && !sp ? [] : [{ label: sp ? t("sp.stop") : t("sp.tool"), actionId: "tool.startPoint", action: toggleStartPoint } as DropItem]),
+    { label: t("pc.title"), actionId: "laser.printCut", action: open("printCut") },
+    ...(cam ? [{ label: t("cam.title"), actionId: "window.camera", action: open("camera") } as DropItem] : []),
     { sep: true },
-    { label: t("lib.title"), hint: hk("window.library"), action: open("library") },
+    { label: t("lib.title"), actionId: "window.library", action: open("library") },
   ];
   usePublish("menu.laserTools", { label: t("lx.laserTools"), items: laserTools });
   const toolbar: ReactNode = (

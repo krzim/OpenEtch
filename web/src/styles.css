@@ -252,6 +252,9 @@ textarea {
   /* The last row stays above the home indicator. */
   padding-bottom: var(--safe-bottom);
   overflow: hidden;
+  /* clip, not just hidden: a hidden box can still be scrolled (focus, scrollIntoView, a drag), which slid the top bar
+     and STOP up out of the window when a row's content stood a few px taller than the row. */
+  overflow: clip;
 }
 
 .app > * {
@@ -3310,6 +3313,11 @@ image.pixelated {
 
 .tl-pin.active {
   color: var(--accent);
+}
+
+.bottom-row[data-bottom="merged"] .tl-pin {
+  min-width: min(36px, calc(var(--bar-timeline) - 4px));
+  min-height: min(36px, calc(var(--bar-timeline) - 4px));
 }
 
 .bottom-row[data-bottom="split"] .tl-pin {

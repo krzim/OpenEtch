@@ -27,6 +27,7 @@
 // subscribe to, so moving the pointer does not re-render the whole app.
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { canvasKeysFocused } from "../workspace/keyFocus.ts";
 import { execute, type Invocation } from "../api/client.ts";
 import * as G from "../api/geomCommands.ts";
 import type { GDocument, Vec2 } from "../api/types.ts";
@@ -258,8 +259,7 @@ function typingIn(t: EventTarget | null): boolean {
 
 /** The canvas or nothing in particular has the keyboard (LightBurn's single-letter keys are canvas keys). */
 function canvasFocused(): boolean {
-  const a = document.activeElement;
-  return !a || a === document.body || !!a.closest?.(".viewport");
+  return canvasKeysFocused();
 }
 
 /** The display length unit, read when a readout is written (Preferences can change between drags). */

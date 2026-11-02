@@ -131,6 +131,7 @@ import { fixedLength, fixedNumber, formatLength, lengthDigits, lengthToDisplay, 
 import { onRevealSelection, onViewCommand, publishViewStatus, revealShift } from "../workspace/viewStatus.ts";
 import { useT } from "../workspace/usePrefs.ts";
 import { HeadMarker } from "./HeadMarker.tsx";
+import { canvasKeysFocused } from "../workspace/keyFocus.ts";
 
 export type Tool = "select" | "rect" | "ellipse" | "circle" | CanvasToolId;
 
@@ -468,10 +469,7 @@ export function Viewport(props: ViewportProps) {
       const el = t as HTMLElement | null;
       return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || !!el.isContentEditable);
     };
-    const canvasKeys = () => {
-      const a = document.activeElement;
-      return !a || a === document.body || !!a.closest?.(".viewport");
-    };
+    const canvasKeys = canvasKeysFocused;
     const set = (on: boolean) => {
       if (spaceRef.current === on) return;
       spaceRef.current = on;

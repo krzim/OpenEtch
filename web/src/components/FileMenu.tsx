@@ -539,7 +539,9 @@ export function collectFileParts(node: ReactNode, t: T, out: Partial<Record<File
     if (el.props.role === "menuitem") {
       const onClick = el.props.onClick as ((e: unknown) => void) | undefined;
       const label = textOf(el.props.children as ReactNode);
-      return add("top", [{ label, disabled: !!el.props.disabled, action: onClick ? () => onClick({}) : undefined }]);
+      // data-action-id: the hotkeys.ts action the row runs, so command search lists it once.
+      const actionId = typeof el.props["data-action-id"] === "string" ? (el.props["data-action-id"] as string) : undefined;
+      return add("top", [{ label, actionId, disabled: !!el.props.disabled, action: onClick ? () => onClick({}) : undefined }]);
     }
     // Anything else is shown as it is.
     add("top", [{ label: "", content: () => el }]);

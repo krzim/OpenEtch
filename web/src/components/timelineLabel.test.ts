@@ -48,3 +48,14 @@ test("timelineLabel: translated with the language's table", () => {
   assert.equal(timelineLabel(step("shape.rect"), es).text, "Rectángulo");
   assert.equal(timelineLabel(step("object.transform", "move [1, 1] on o1"), es).text, "Mover");
 });
+
+test("timelineLabel: the Tools menu extras have names, not the engine's short label", () => {
+  // Seen in the app: adding a tab with the Add Tabs tool left a chip reading "add".
+  assert.equal(timelineLabel(step("tabs.add", "added a tab on o1", "add"), t).text, "Add tab");
+  assert.equal(timelineLabel(step("tabs.move", "moved tab 0 on o1", "move"), t).text, "Move tab");
+  assert.equal(timelineLabel(step("tabs.remove", "removed tab 0 on o1", "remove"), t).text, "Remove tabs");
+  assert.equal(timelineLabel(step("tabs.clear", "cleared tabs on C01", "clear"), t).text, "Remove tabs");
+  assert.equal(timelineLabel(step("path.dogbone", "dogbone on o1", "dogbone"), t).text, "Dogbone");
+  assert.equal(timelineLabel(step("path.resize_slots", "resized slots", "resize_slots"), t).text, "Resize slots");
+  assert.equal(timelineLabel(step("image.trace_files", "traced 3 files", "trace_files"), t).text, "Trace");
+});

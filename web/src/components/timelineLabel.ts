@@ -89,6 +89,21 @@ function labelFor(cmd: string, summary: string, t: T): StepLabel | null {
       return { text: t("tlx.place"), icon: "place" };
     case "art.array":
       return { text: t("tlx.array"), icon: "array" };
+    // The Tools menu extras merged from main (tools/toolsApi.ts TOOLS_CMD).
+    case "tabs.add":
+      return { text: t("tlx.addTab"), icon: "plus" };
+    case "tabs.move":
+      return { text: t("tlx.moveTab"), icon: "move" };
+    case "tabs.remove":
+    case "tabs.clear":
+      return { text: t("tlx.removeTabs"), icon: "minus" };
+    case "path.dogbone":
+      return { text: t("tlx.dogbone"), icon: "path" };
+    case "path.resize_slots":
+      return { text: t("tlx.resizeSlots"), icon: "path" };
+    case "image.trace_many":
+    case "image.trace_files":
+      return { text: t("tlx.trace"), icon: "image" };
     case "doc.new":
       return { text: t("tlx.newDoc"), icon: "file" };
     case "doc.rename":

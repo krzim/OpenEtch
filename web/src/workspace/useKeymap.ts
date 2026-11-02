@@ -6,6 +6,7 @@
 import { useEffect, useRef } from "react";
 import { chordOf, eventInitOf, isBareKey, resolveKey } from "./hotkeys.ts";
 import { getPrefs } from "./prefs.ts";
+import { canvasKeysFocused } from "./keyFocus.ts";
 
 /** A workspace action handler, given the chord that was pressed ("Ctrl+."); returning false lets the key through
  * (nothing to do in this state). */
@@ -29,8 +30,7 @@ function typingIn(t: EventTarget | null): boolean {
 }
 
 function canvasOrBody(): boolean {
-  const a = document.activeElement;
-  return !a || a === document.body || !!a.closest?.(".viewport");
+  return canvasKeysFocused();
 }
 
 export interface KeymapConfig {

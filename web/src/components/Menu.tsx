@@ -308,7 +308,9 @@ function MenuPanel(p: PanelProps) {
                     else openSub(i, e.currentTarget, e.detail === 0);
                     return;
                   }
-                  p.closeAll(true);
+                  // The keyboard gets its focus back on the opener; a pointer pick leaves it free, so the canvas
+                  // letter keys work at once (workspace/keyFocus.ts), as after a LightBurn menu.
+                  p.closeAll(e.detail === 0);
                   it.action?.();
                 }}
               >

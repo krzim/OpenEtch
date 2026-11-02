@@ -101,6 +101,8 @@ import { requestRotarySetup } from "./workspace/LaserDock.tsx";
 import { MoveTogetherDialog } from "./design/DesignDialogs.tsx";
 import { jobApi, saveBlob } from "./api/jobApi.ts";
 import { gcodeFileName, isGrblMachine } from "./api/grbl.ts";
+import { noteHeadPosition } from "./api/grblPositions.ts";
+import { canvasKeysFocused } from "./workspace/keyFocus.ts";
 import { GrblConsole } from "./components/GrblConsole.tsx";
 import { GrblMove } from "./components/GrblMove.tsx";
 import { RuidaFiles } from "./components/RuidaFiles.tsx";
@@ -163,8 +165,7 @@ function typingIn(t: EventTarget | null): boolean {
 
 /** Whether the canvas (or nothing in particular) has keyboard focus, for LightBurn's canvas-only keys. */
 function canvasFocused(): boolean {
-  const a = document.activeElement;
-  return !a || a === document.body || !!a.closest?.(".viewport");
+  return canvasKeysFocused();
 }
 
 export function App() {
@@ -253,6 +254,12 @@ export function App() {
   const device = activeDevice(devices.list) ?? machineDevice(machine);
   const [wsW, wsH] = canvasWorkspace(device, machineFieldMm, DEFAULT_FIELD_MM);
   const workspaceMm = useMemo<Vec2>(() => [wsW, wsH], [wsW, wsH]);
+  // Show Last Position belongs to a GRBL gantry: on any other device the canvas forgets the head (the Move window that
+  // would have cleared it on device_changed leaves with the GRBL device).
+  const grblDevice = isGrblMachine(machine);
+  useEffect(() => {
+    if (!grblDevice) noteHeadPosition(null);
+  }, [grblDevice]);
   // The LightBurn dialogs match files against the device registry (the active device is the engine's own); engines
   // without it fall back to LightBurn's devices.
   const lightburnDevices = useMemo(
@@ -1230,6 +1237,7 @@ export function App() {
             <button
               role="menuitem"
               className="menu-item"
+              data-action-id="window.newTab"
               onClick={() => {
                 close();
                 tabs.api.newTab();
