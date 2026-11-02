@@ -16,6 +16,7 @@ import { installEscape, layers } from "./dialogStack.ts";
 import { formatChord } from "./formatChord.ts";
 import { menuNav, placeMenu, typeAhead, type NavItem, type Placement } from "./menuModel.ts";
 import { Icon } from "./ui.tsx";
+import { safeInsets } from "../hud/safeInsets.ts";
 import "./menu.css";
 
 /** A menu entry: today's ContextMenu item, plus submenus, a hotkey action id, a danger style and a check mark. */
@@ -150,9 +151,17 @@ function MenuPanel(p: PanelProps) {
     const a = p.anchor;
     const frame = el.offsetHeight - el.clientHeight;
     const size = { width: el.offsetWidth, height: el.scrollHeight + frame };
-    const anchor = isPoint(a) ? { x: a.x, y: a.y } : { left: (a as DOMRect).left, top: (a as DOMRect).top, right: (a as DOMRect).right, bottom: (a as DOMRect).bottom };
-    const r = placeMenu(anchor, size, { width: window.innerWidth, height: window.innerHeight }, p.placement, 4, p.align);
-    setPos({ left: r.left, top: r.top, maxHeight: r.maxHeight });
+    // Inside the safe area (clear of the notch and the home indicator); a menu at a point (a context menu) also stays
+    // below the top bar, so it never opens over STOP's row and scrolls when it is taller than what is left.
+    const safe = safeInsets();
+    let top = safe.top;
+    if (isPoint(a)) top = Math.max(top, document.querySelector(".topbar")?.getBoundingClientRect().bottom ?? 0);
+    const view = { width: Math.max(0, window.innerWidth - safe.left - safe.right), height: Math.max(0, window.innerHeight - top - safe.bottom) };
+    const shifted = isPoint(a)
+      ? { x: a.x - safe.left, y: a.y - top }
+      : { left: (a as DOMRect).left - safe.left, top: (a as DOMRect).top - top, right: (a as DOMRect).right - safe.left, bottom: (a as DOMRect).bottom - top };
+    const r = placeMenu(shifted, size, view, p.placement, 4, p.align);
+    setPos({ left: r.left + safe.left, top: r.top + top, maxHeight: r.maxHeight });
     // Re-place when the content changes size (Open Recent's list arriving).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [p.anchor, p.placement, p.items]);

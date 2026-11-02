@@ -6,6 +6,7 @@
 // Nothing here acts on the machine: tabs, dogbones, slots and traces are document commands, and a user tool either
 // opens a web page in a new tab or runs document commands through the batch endpoint, which refuses machine actions.
 
+import { HudItem } from "../hud/CanvasHud.tsx";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Invocation } from "../api/client.ts";
 import { onEngineEvent } from "../api/events.ts";
@@ -217,12 +218,14 @@ export function useToolsUi(p: ToolsUiProps) {
         <>
           {inner.overlay(r)}
           {tabTool && (
-            <div className="vp-overlay lx-sp-bar" role="status">
-              <span>{t("tabs.bar")}</span>
-              <button className="btn small" onClick={() => setTabTool(false)}>
-                {t("tabs.done")}
-              </button>
-            </div>
+            <HudItem id="tabs-bar" slot="tc" rank={25} minW={200}>
+              <div className="vp-overlay lx-sp-bar" role="status">
+                <span>{t("tabs.bar")}</span>
+                <button className="btn small" onClick={() => setTabTool(false)}>
+                  {t("tabs.done")}
+                </button>
+              </div>
+            </HudItem>
           )}
         </>
       ),

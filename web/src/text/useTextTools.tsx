@@ -29,6 +29,7 @@ import { unitsOf, type Selection } from "../selection.ts";
 import { useT, useUnitConversion } from "../workspace/usePrefs.ts";
 import { trimNumber } from "../workspace/units.ts";
 import { ContextStripPortal } from "../workspace/contextStrip.tsx";
+import { HudItem } from "../hud/CanvasHud.tsx";
 import { BarcodeDialog, NEW_BARCODE } from "./Barcode.tsx";
 import { FontPicker } from "./FontPicker.tsx";
 import { ApplyPathCard, BarcodeSection, Segmented, TextSection, alignOptions, warnFrom } from "./TextProperties.tsx";
@@ -654,7 +655,12 @@ function TextOverlay(p: {
         );
       })}
       {edit}
-      {bar}
+      {/* The Text Options bar goes to the context strip itself; Apply to Path and Barcode float in the canvas HUD. */}
+      {bar && (
+        <HudItem id="text-bar" slot="tl" rank={21} minW={200}>
+          {bar}
+        </HudItem>
+      )}
     </>
   );
 }

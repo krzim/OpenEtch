@@ -13,6 +13,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { commandHostReady, openCommandSearch } from "../components/commandBus.ts";
 import { OPEN_LASER_EVENT } from "../laser/laserContext.ts";
 import { BottomSheet } from "./BottomSheet.tsx";
+import { HudItem } from "../hud/CanvasHud.tsx";
 import { SNAP_FRACTION, type SheetSnap } from "./phone.ts";
 import { sendRevealSelection } from "./viewStatus.ts";
 import { useT } from "./usePrefs.ts";
@@ -161,12 +162,15 @@ export function PhoneShell(p: PhoneShellProps) {
       {p.banner}
       <div className="phone-main">
         {p.canvas}
-        <div className="phone-hud">
-          {p.canvasHud}
-          <button type="button" className="icon-btn phone-hud-btn" title={t("shell.phoneTools")} aria-label={t("shell.phoneTools")} onClick={() => show("canvas")}>
-            <Icon name="pencil" />
-          </button>
-        </div>
+        {/* The canvas HUD's bottom-right slot: clear of the modifier bar, the player row and the sheet. */}
+        <HudItem id="phone-fabs" slot="br" rank={10} optional>
+          <div className="phone-hud">
+            {p.canvasHud}
+            <button type="button" className="icon-btn phone-hud-btn" title={t("shell.phoneTools")} aria-label={t("shell.phoneTools")} onClick={() => show("canvas")}>
+              <Icon name="pencil" />
+            </button>
+          </div>
+        </HudItem>
         <BottomSheet
           open={open}
           snap={snap}

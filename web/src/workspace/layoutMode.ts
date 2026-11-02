@@ -77,6 +77,26 @@ export function sameLayout(a: LayoutState, b: LayoutState): boolean {
   return a.layout === b.layout && a.pointer === b.pointer && a.density === b.density;
 }
 
+/**
+ * The on-screen keyboard: while a text field has focus, a viewport that only got shorter (same width) is the keyboard
+ * opening, not a new device or window size, so the layout stays (the tablet layout used to flip to the phone shell
+ * mid-typing, and the field lost its place).
+ */
+export function keyboardResize(prev: { w: number; h: number }, next: { w: number; h: number }, typing: boolean): boolean {
+  return typing && Math.abs(next.w - prev.w) < 1 && next.h < prev.h;
+}
+
+/** A focused element that brings up the on-screen keyboard. */
+export function isTextEntry(el: Element | null): boolean {
+  if (!el) return false;
+  const tag = el.tagName;
+  if (tag === "TEXTAREA") return true;
+  if ((el as HTMLElement).isContentEditable) return true;
+  if (tag !== "INPUT") return false;
+  const type = ((el as HTMLInputElement).type || "text").toLowerCase();
+  return !["button", "checkbox", "radio", "range", "color", "file", "submit", "reset", "image", "hidden"].includes(type);
+}
+
 /** Write the three attributes on `root` (default: <html>). */
 export function applyLayoutAttributes(s: LayoutState, root?: { dataset: DOMStringMap }): void {
   const el = root ?? (typeof document === "undefined" ? null : document.documentElement);
@@ -113,9 +133,23 @@ function compute(): LayoutState {
 let current: LayoutState = compute();
 const listeners = new Set<() => void>();
 let detach: (() => void) | null = null;
+/** The viewport the current layout was chosen for (before an on-screen keyboard shrank it). */
+let chosenFor = typeof window === "undefined" ? { w: 1920, h: 1080 } : { w: window.innerWidth, h: window.innerHeight };
 
 /** Recompute; when the result changed, write the attributes and notify subscribers. */
 function refresh(): void {
+  if (typeof window !== "undefined") {
+    const size = { w: window.innerWidth, h: window.innerHeight };
+    const typing = typeof document !== "undefined" && isTextEntry(document.activeElement);
+    const keyboard = keyboardResize(chosenFor, size, typing);
+    // <html data-keyboard>: the on-screen keyboard is up (the phone shell hides its tab bar to leave the field room).
+    if (typeof document !== "undefined") {
+      if (keyboard) document.documentElement.dataset.keyboard = "";
+      else delete document.documentElement.dataset.keyboard;
+    }
+    if (keyboard) return;
+    chosenFor = size;
+  }
   const next = compute();
   if (sameLayout(next, current)) return;
   current = next;

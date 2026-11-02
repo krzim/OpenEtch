@@ -286,6 +286,27 @@
   min-width: 44px;
   min-height: 44px;
 }
+.status-chip.compact .status-chip-act {
+  justify-content: center;
+  padding: 0;
+  min-width: 36px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+}
+/* Stop frame / Pause / Resume: a full touch target with a coarse pointer. */
+[data-pointer="coarse"] .status-chip-act {
+  min-width: 44px;
+  min-height: 44px;
+}
+[data-pointer="coarse"] .status-chip.compact .status-chip-act {
+  min-width: 44px;
+}
+[data-pointer="coarse"] .status-chip:not(.compact) {
+  height: auto;
+  min-height: 44px;
+}
+.status-chip.compact .status-chip-act-text,
 [data-layout="compact"] .status-chip-act-text,
 [data-layout="tablet"] .status-chip-act-text {
   /* Icon only where the top bar is tight; the button keeps its aria-label. */
@@ -466,6 +487,23 @@
 }
 [data-layout="phone"] .empty-card-actions {
   grid-template-columns: 1fr;
+}
+/* A short canvas (a phone in landscape): the five actions in two rows of a wide card, without the drop line, so they
+   fit the HUD's free stretch instead of scrolling inside the card. */
+@media (max-height: 500px) and (min-width: 560px) {
+  [data-layout="phone"] .empty-card {
+    padding: 12px;
+  }
+  [data-layout="phone"] .empty-card-actions {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  [data-layout="phone"] .empty-card-actions .btn-primary {
+    grid-column: auto;
+  }
+  [data-layout="phone"] .empty-card-drop,
+  [data-layout="phone"] .empty-card-laser {
+    display: none;
+  }
 }
 
 /* ---- Beginner Mode step bar --------------------------------------------------------------------------------------- */

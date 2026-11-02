@@ -6,15 +6,18 @@
 //   Always, Never): Copy, Paste, Duplicate, Delete, Group / Ungroup, Rotate 90, Flip and ⋯ (the full context menu).
 // P1 mounts it in `.center-stage`: `<TouchHud tool={tool} selectionCount={n} onAction={runTouchAction} />`
 // (touch/actions.ts runs each id through the action's own hotkey, so App.tsx keeps the one implementation).
-// The action bar hides while a bottom sheet covers the selection (hudState coverTop). The bars never cover STOP
-// (they sit inside the canvas at --z-float, below --z-stop) and fade during a gesture.
+// Both bars are canvas HUD items (hud/CanvasHud.tsx): the modifier bar in the bottom-left slot, the action bar
+// anchored above the selection, so neither covers another floating control. The action bar hides while a bottom sheet
+// covers the selection (hudState coverTop). The bars never cover STOP (the HUD sits inside the canvas, below --z-stop)
+// and fade during a gesture.
 
-import { useLayoutEffect, useRef, useState } from "react";
+import { useRef } from "react";
 import type { Tool } from "../components/Viewport.tsx";
 import { usePrefs, useT } from "../workspace/usePrefs.ts";
 import { useLayoutMode } from "../workspace/layoutMode.ts";
 import { useHud } from "./hudState.ts";
-import { actionBarSpot, barActions, modToggles } from "./hudModel.ts";
+import { barActions, modToggles, selectionCovered } from "./hudModel.ts";
+import { HudItem } from "../hud/CanvasHud.tsx";
 import { latch, lock, useVirtualMods, type VirtualMod } from "./virtualMods.ts";
 import "./touch.css";
 import { Icon } from "../components/ui.tsx";
@@ -57,70 +60,58 @@ export function TouchHud({ tool, selectionCount, onAction }: TouchHudProps) {
     latch(mod);
   };
 
-  // The action bar's size, for its placement above the selection.
-  const barRef = useRef<HTMLDivElement>(null);
-  const [barSize, setBarSize] = useState<[number, number]>([360, 52]);
-  useLayoutEffect(() => {
-    const el = barRef.current;
-    if (!el) return;
-    const w = el.offsetWidth;
-    const h = el.offsetHeight;
-    if (w !== barSize[0] || h !== barSize[1]) setBarSize([w, h]);
-  });
-  const canvas = hud.canvasRect;
-  // Hidden while a sheet (the phone's Layers, Job or More) covers the selection; kept above the sheet otherwise.
-  const at = showBar && canvas ? actionBarSpot(hud.selRect, canvas, barSize[0], barSize[1], hud.coverTop) : null;
+  // Hidden while a sheet (the phone's Layers, Job or More) covers the selection. The canvas HUD places it above the
+  // selection (or below it), clear of the HUD's other controls and of the sheet.
+  const at = showBar && hud.selRect && !selectionCovered(hud.selRect, hud.coverTop) ? hud.selRect : null;
 
   if (!toggles.length && !actions.length) return null;
   return (
     <>
       {toggles.length > 0 && (
-        <div className={`touch-mods${hud.busy ? " busy" : ""}`} role="toolbar" aria-label={t("touch.modBar")} title={t("touch.modHint")}>
-          {toggles.map((g) => {
-            const locked = vm.locked.includes(g.mod);
-            const on = vm[g.mod];
-            const label = t(g.label);
-            return (
-              <button
-                key={`${g.mod}-${g.label}`}
-                type="button"
-                className={`touch-mod${on ? " on" : ""}${locked ? " locked" : ""}`}
-                aria-pressed={on}
-                title={t(g.tip)}
-                aria-label={locked ? t("touch.locked", { name: label }) : label}
-                // Keep the keyboard focus on the canvas.
-                onPointerDown={(e) => e.preventDefault()}
-                onClick={() => tap(g.mod)}
-              >
-                <span className="touch-mod-label">{label}</span>
-                {g.sub && <span className="touch-mod-sub">{t(g.sub)}</span>}
-              </button>
-            );
-          })}
-        </div>
+        <HudItem id="touch-mods" slot="bl" rank={30} optional>
+          <div className={`touch-mods${hud.busy ? " busy" : ""}`} role="toolbar" aria-label={t("touch.modBar")} title={t("touch.modHint")}>
+            {toggles.map((g) => {
+              const locked = vm.locked.includes(g.mod);
+              const on = vm[g.mod];
+              const label = t(g.label);
+              return (
+                <button
+                  key={`${g.mod}-${g.label}`}
+                  type="button"
+                  className={`touch-mod${on ? " on" : ""}${locked ? " locked" : ""}`}
+                  aria-pressed={on}
+                  title={t(g.tip)}
+                  aria-label={locked ? t("touch.locked", { name: label }) : label}
+                  // Keep the keyboard focus on the canvas.
+                  onPointerDown={(e) => e.preventDefault()}
+                  onClick={() => tap(g.mod)}
+                >
+                  <span className="touch-mod-label">{label}</span>
+                  {g.sub && <span className="touch-mod-sub">{t(g.sub)}</span>}
+                </button>
+              );
+            })}
+          </div>
+        </HudItem>
       )}
       {at && actions.length > 0 && (
-        <div
-          ref={barRef}
-          className={`touch-actions${hud.busy ? " busy" : ""}`}
-          role="toolbar"
-          aria-label={t("touch.actionBar")}
-          style={{ left: at.left, top: at.top }}
-        >
-          {actions.map((a) => (
-            <button
-              key={a.id}
-              type="button"
-              className={`touch-action${a.id === "delete" ? " danger" : ""}`}
-              title={t(a.label)}
-              aria-label={t(a.label)}
-              onPointerDown={(e) => e.preventDefault()}
-              onClick={() => onAction(a.id)}
-            >
-              <Icon name={a.icon} size={24} />
-            </button>
-          ))}
-        </div>
+        <HudItem id="touch-actions" slot="bc" rank={80} minW={44 * 4 + 16} optional anchor={{ rect: at, side: "above" }}>
+          <div className={`touch-actions${hud.busy ? " busy" : ""}`} role="toolbar" aria-label={t("touch.actionBar")}>
+            {actions.map((a) => (
+              <button
+                key={a.id}
+                type="button"
+                className={`touch-action${a.id === "delete" ? " danger" : ""}`}
+                title={t(a.label)}
+                aria-label={t(a.label)}
+                onPointerDown={(e) => e.preventDefault()}
+                onClick={() => onAction(a.id)}
+              >
+                <Icon name={a.icon} size={24} />
+              </button>
+            ))}
+          </div>
+        </HudItem>
       )}
     </>
   );

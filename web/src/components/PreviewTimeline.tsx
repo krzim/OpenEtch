@@ -14,6 +14,7 @@ import { useLaserSource } from "../laser/laserContext.ts";
 import { startCtxOf, startFlow, startState } from "../laser/startFlow.ts";
 import { useLaserLive } from "../laser/useLaserLive.ts";
 import { Icon } from "./ui.tsx";
+import { HudItem } from "../hud/CanvasHud.tsx";
 import type { PreviewOptions } from "./Viewport.tsx";
 import "./job.css";
 
@@ -121,52 +122,57 @@ export function PreviewTimeline(p: {
       .finally(() => setBusy(false));
   };
   return (
-    <div className="pv-player pv-timeline" role="group" aria-label={t("pvt.label")}>
-      <button
-        className="icon-btn small"
-        title={playing ? t("pvt.pause") : t("pvt.play")}
-        aria-label={playing ? t("pvt.pause") : t("pvt.play")}
-        onClick={() => {
-          if (!playing && options.upTo === null) setClock(0);
-          setPlaying((v) => !v);
-        }}
-      >
-        <Icon name={playing ? "pause" : "play"} size={16} />
-      </button>
-      <input
-        type="range"
-        min={0}
-        max={duration > 0 ? duration : total}
-        step={step}
-        value={duration > 0 ? Math.min(at, duration) : done}
-        aria-label={t("pvt.time")}
-        aria-valuetext={`${clockText(at)} / ${clockText(duration)}`}
-        onChange={(e) => scrub(Number(e.target.value))}
-      />
-      <span className="pv-count" title={t("pvt.segments", { done, total })}>
-        {clockText(Math.min(at, duration))} / {clockText(duration)}
-      </span>
-      <select value={speed} onChange={(e) => setSpeed(Number(e.target.value))} aria-label={t("pvt.speed")} title={t("pvt.speedTitle")}>
-        {PLAYBACK_SPEEDS.map((s) => (
-          <option key={s} value={s}>
-            {s}x
-          </option>
-        ))}
-      </select>
-      <button
-        className="btn small btn-start btn-start-here"
-        disabled={busy || startAt === null || !startSt.enabled}
-        title={
-          startSt.reason ??
-          (startAt === null ? t("pvt.startHereEnd") : noPinMode(facts.machine) ? t("lz.startHereTitle", { segment: startAt }) : t("lz.requestHereTitle", { segment: startAt }))
-        }
-        onClick={startHere}
-      >
-        {t("pvt.startHere")}
-      </button>
-      <button className="icon-btn small" disabled={busy} title={t("pvt.saveImage")} aria-label={t("pvt.saveImage")} onClick={saveImage}>
-        <Icon name="image" size={16} />
-      </button>
-    </div>
+    // The canvas HUD's bottom centre: it shrinks (and wraps to two rows) beside the corner controls, or stacks above them.
+    // Optional: over a small phone's half-open Job sheet (which has its own Start) it gives way to the warnings and
+    // toasts rather than have them cover it, and comes back when there is room.
+    <HudItem id="pv-timeline" slot="bc" rank={20} minW={250} maxW={680} optional>
+      <div className="pv-player pv-timeline" role="group" aria-label={t("pvt.label")}>
+        <button
+          className="icon-btn small"
+          title={playing ? t("pvt.pause") : t("pvt.play")}
+          aria-label={playing ? t("pvt.pause") : t("pvt.play")}
+          onClick={() => {
+            if (!playing && options.upTo === null) setClock(0);
+            setPlaying((v) => !v);
+          }}
+        >
+          <Icon name={playing ? "pause" : "play"} size={16} />
+        </button>
+        <input
+          type="range"
+          min={0}
+          max={duration > 0 ? duration : total}
+          step={step}
+          value={duration > 0 ? Math.min(at, duration) : done}
+          aria-label={t("pvt.time")}
+          aria-valuetext={`${clockText(at)} / ${clockText(duration)}`}
+          onChange={(e) => scrub(Number(e.target.value))}
+        />
+        <span className="pv-count" title={t("pvt.segments", { done, total })}>
+          {clockText(Math.min(at, duration))} / {clockText(duration)}
+        </span>
+        <select value={speed} onChange={(e) => setSpeed(Number(e.target.value))} aria-label={t("pvt.speed")} title={t("pvt.speedTitle")}>
+          {PLAYBACK_SPEEDS.map((s) => (
+            <option key={s} value={s}>
+              {s}x
+            </option>
+          ))}
+        </select>
+        <button
+          className="btn small btn-start btn-start-here"
+          disabled={busy || startAt === null || !startSt.enabled}
+          title={
+            startSt.reason ??
+            (startAt === null ? t("pvt.startHereEnd") : noPinMode(facts.machine) ? t("lz.startHereTitle", { segment: startAt }) : t("lz.requestHereTitle", { segment: startAt }))
+          }
+          onClick={startHere}
+        >
+          {t("pvt.startHere")}
+        </button>
+        <button className="icon-btn small" disabled={busy} title={t("pvt.saveImage")} aria-label={t("pvt.saveImage")} onClick={saveImage}>
+          <Icon name="image" size={16} />
+        </button>
+      </div>
+    </HudItem>
   );
 }

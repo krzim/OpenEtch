@@ -89,7 +89,7 @@ export function Rulers(props: {
   const gd = props.guideDrag;
   return (
     <>
-      <div className="et-ruler et-ruler-top" title={t("ru.dragDownToPlaceAHorizontal")} {...dragHandlers("y")}>
+      <div className="et-ruler et-ruler-top" data-hud-obstacle="" title={t("ru.dragDownToPlaceAHorizontal")} {...dragHandlers("y")}>
         <svg width={Math.max(0, w - RULER_PX)} height={RULER_PX}>
           {xs.map((t) => {
             const x = r.toScreen([t.v, 0])[0] - RULER_PX;
@@ -107,7 +107,7 @@ export function Rulers(props: {
           {gd && gd.axis === "x" && !gd.remove && <line className="guide-mark" x1={r.toScreen([gd.v, 0])[0] - RULER_PX} x2={r.toScreen([gd.v, 0])[0] - RULER_PX} y1={0} y2={RULER_PX} />}
         </svg>
       </div>
-      <div className="et-ruler et-ruler-left" title={t("ru.dragRightToPlaceAVertical")} {...dragHandlers("x")}>
+      <div className="et-ruler et-ruler-left" data-hud-obstacle="" title={t("ru.dragRightToPlaceAVertical")} {...dragHandlers("x")}>
         <svg width={RULER_PX} height={Math.max(0, h - RULER_PX)}>
           {ys.map((t) => {
             const y = r.toScreen([0, t.v])[1] - RULER_PX;
@@ -127,6 +127,7 @@ export function Rulers(props: {
       </div>
       <button
         className="et-ruler-corner"
+        data-hud-obstacle=""
         title={props.guides ? `Clear ${props.guides} guide${props.guides === 1 ? "" : "s"}` : `Rulers in ${unit === "in" ? "inches" : "mm"}. Drag out of a ruler to place a guide.`}
         aria-label={t("ru.clearGuides")}
         disabled={!props.guides}

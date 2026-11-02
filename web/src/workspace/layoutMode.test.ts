@@ -3,7 +3,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { applyLayoutAttributes, autoDensity, autoLayout, getLayoutMode, resolveLayout, sameLayout } from "./layoutMode.ts";
+import { applyLayoutAttributes, autoDensity, autoLayout, getLayoutMode, isTextEntry, keyboardResize, resolveLayout, sameLayout } from "./layoutMode.ts";
 
 test("the plan's test viewports land in their modes", () => {
   const cases: [number, number, boolean, string][] = [
@@ -76,4 +76,18 @@ test("attributes and the store outside a browser", () => {
   assert.equal(getLayoutMode(), a);
   assert.ok(sameLayout(a, { ...a }));
   assert.ok(!sameLayout(a, { ...a, density: "touch" }));
+});
+
+test("the on-screen keyboard (same width, shorter, while typing) keeps the layout", () => {
+  const ipad = { w: 1180, h: 746 };
+  assert.equal(keyboardResize(ipad, { w: 1180, h: 400 }, true), true);
+  assert.equal(keyboardResize(ipad, { w: 1180, h: 400 }, false), false, "not typing: a real resize");
+  assert.equal(keyboardResize(ipad, { w: 820, h: 400 }, true), false, "rotated");
+  assert.equal(keyboardResize(ipad, { w: 1180, h: 800 }, true), false, "taller");
+  const el = (tagName: string, extra: Record<string, unknown> = {}) => ({ tagName, ...extra }) as unknown as Element;
+  assert.equal(isTextEntry(el("INPUT", { type: "number" })), true);
+  assert.equal(isTextEntry(el("INPUT", { type: "checkbox" })), false);
+  assert.equal(isTextEntry(el("TEXTAREA")), true);
+  assert.equal(isTextEntry(el("BUTTON")), false);
+  assert.equal(isTextEntry(null), false);
 });

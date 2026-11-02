@@ -4,6 +4,7 @@
 // point marks, the camera image), and the job-finished chime. App renders `dock`, `dialogs`, `toolbar` and wraps its
 // canvas tool with `wrap`.
 
+import { HudItem } from "../hud/CanvasHud.tsx";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { execute, type Invocation } from "../api/client.ts";
 import { onEngineEvent } from "../api/events.ts";
@@ -209,12 +210,14 @@ export function useLibsUi(p: LibsUiProps) {
         <>
           {inner.overlay(r)}
           {sp && (
-            <div className="vp-overlay lx-sp-bar" role="status">
-              <span>{t("sp.bar")}</span>
-              <button className="btn small" onClick={() => startPointTool.set(false)}>
-                {t("sp.done")}
-              </button>
-            </div>
+            <HudItem id="startpoint-bar" slot="tc" rank={25} minW={200}>
+              <div className="vp-overlay lx-sp-bar" role="status">
+                <span>{t("sp.bar")}</span>
+                <button className="btn small" onClick={() => startPointTool.set(false)}>
+                  {t("sp.done")}
+                </button>
+              </div>
+            </HudItem>
           )}
         </>
       ),

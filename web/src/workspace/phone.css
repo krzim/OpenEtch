@@ -20,15 +20,18 @@
   min-height: 0;
 }
 
-/* Undo, redo and the tools button over the canvas, bottom right (above the touch HUD's bars on the left). */
+/* Undo, redo and the tools button over the canvas: the canvas HUD's bottom-right slot (hud/CanvasHud.tsx). */
 .phone-hud {
-  position: absolute;
-  right: 8px;
-  bottom: 8px;
-  z-index: var(--z-canvas-ui);
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+/* A short canvas (landscape): the three buttons in a row, so they fit beside the other controls. */
+@media (max-height: 500px) {
+  .phone-hud {
+    flex-direction: row;
+  }
 }
 
 .phone-hud .icon-btn {
@@ -39,6 +42,15 @@
   border: 1px solid var(--border);
   box-shadow: var(--shadow-pop);
   color: var(--text);
+}
+
+/* The on-screen keyboard is up (layoutMode.ts sets data-keyboard): the tabs give their room to the sheet and the
+   field being typed in, and the home-indicator padding goes (the keyboard covers it). */
+:root[data-layout="phone"][data-keyboard] .phone-tabs {
+  display: none;
+}
+:root[data-layout="phone"][data-keyboard] {
+  --safe-bottom: 0px;
 }
 
 /* Bottom tabs: 56 px above the home indicator (.app pads the safe area). */
@@ -283,6 +295,9 @@
 :root[data-layout="phone"] .modal-backdrop {
   top: calc(var(--bar-top) + var(--safe-top));
   padding: 0;
+  /* Landscape: clear of the notch's bands on either side. */
+  padding-left: var(--safe-left);
+  padding-right: var(--safe-right);
   align-items: stretch;
 }
 

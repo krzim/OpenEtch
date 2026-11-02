@@ -1,0 +1,63 @@
+/* The canvas HUD (hud/CanvasHud.tsx): one layer over the canvas whose items hud/hudLayout.ts places in named slots.
+   Above the canvas and its own overlays; below the phone's bottom sheet, dock overlays and their scrim (z-drawer),
+   floating windows, menus, dialogs, toasts and STOP. */
+
+.canvas-hud {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  pointer-events: none;
+}
+
+/* An item: left / top / width come from the layout; hidden until it has been placed once. */
+.hud-item {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: max-content;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  pointer-events: none;
+  visibility: hidden;
+}
+.hud-item[data-hud-placed] {
+  visibility: visible;
+}
+.hud-item[data-hud-hidden] {
+  visibility: hidden;
+}
+.hud-item[data-hud-hidden] * {
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+/* The item's own box: no positioning of its own (the slot places it), filling the width it was given. */
+.canvas-hud > .hud-item.hud-item > * {
+  position: relative;
+  inset: auto;
+  left: auto;
+  right: auto;
+  top: auto;
+  bottom: auto;
+  transform: none;
+  margin: 0;
+  width: auto;
+  max-width: 100%;
+  box-sizing: border-box;
+  z-index: auto;
+}
+/* The wrapper lets taps through around its item; the item itself takes them, at zero specificity so an item that is
+   itself click-through (.vp-overlay: only its buttons take taps) keeps that. */
+:where(.canvas-hud > .hud-item) > * {
+  pointer-events: auto;
+}
+.canvas-hud > .hud-item.hud-pass > *,
+.canvas-hud > .hud-item.hud-pass > * * {
+  pointer-events: none;
+}
+/* A centre item (the empty-document card) scrolls inside a shorter box. */
+.canvas-hud > .hud-item[data-hud-slot="c"] > * {
+  max-height: inherit;
+  overflow: auto;
+}

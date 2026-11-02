@@ -20,6 +20,22 @@ export interface LongPressHandlers {
   onContextMenu?: (e: ReactMouseEvent<Element>) => void;
 }
 
+/**
+ * Run `fn` after the input events already queued: on the next animation frame (the browser dispatches pending pointer
+ * moves before it), or at once where there are no frames. Returns a handle for `cancelAfterQueuedInput`.
+ */
+export function afterQueuedInput(fn: () => void): number {
+  if (typeof requestAnimationFrame !== "function") {
+    fn();
+    return 0;
+  }
+  return requestAnimationFrame(() => fn());
+}
+
+export function cancelAfterQueuedInput(handle: number): void {
+  if (handle && typeof cancelAnimationFrame === "function") cancelAnimationFrame(handle);
+}
+
 /** The long-press timing of one element: a press, moves, a lift, and when the long-press fires. Pure. */
 export class LongPressTracker {
   private id: number | null = null;
@@ -81,9 +97,32 @@ export function useLongPress(cb: LongPressCallback): LongPressHandlers {
     const tr = new LongPressTracker();
     let timer: ReturnType<typeof setTimeout> | null = null;
     let lastTouch = -Infinity;
+    let pendingFrame: number | null = null;
+    let detachUp: (() => void) | null = null;
     const clear = () => {
       if (timer) clearTimeout(timer);
       timer = null;
+      if (pendingFrame !== null) cancelAfterQueuedInput(pendingFrame);
+      pendingFrame = null;
+      detachUp?.();
+      detachUp = null;
+    };
+    /** The lift ends the press wherever it lands: a row re-rendered under the finger (a tap that selects it, the
+     *  first tap of a double-tap) no longer gets its own pointerup, and the long-press then fired over the dialog
+     *  the double-tap opened. */
+    const watchLift = (id: number) => {
+      if (typeof window === "undefined") return;
+      const end = (ev: PointerEvent) => {
+        if (ev.pointerId !== id) return;
+        tr.up(id);
+        clear();
+      };
+      window.addEventListener("pointerup", end, true);
+      window.addEventListener("pointercancel", end, true);
+      detachUp = () => {
+        window.removeEventListener("pointerup", end, true);
+        window.removeEventListener("pointercancel", end, true);
+      };
     };
     /** Swallow the click that a lifted long-press produces (once, in the capture phase). */
     const swallowNextClick = () => {
@@ -109,13 +148,21 @@ export function useLongPress(cb: LongPressCallback): LongPressHandlers {
         }
         const target = e.currentTarget;
         clear();
+        watchLift(e.pointerId);
         timer = setTimeout(() => {
           timer = null;
-          if (!tr.due(performance.now() + 1)) return;
-          navigator.vibrate?.(10);
-          swallowNextClick();
-          const [x, y] = tr.at;
-          cbRef.current(x, y, target);
+          // Decide on the next frame: pointer moves queued while the main thread was busy (a heavy document) are
+          // handled before it, so a drag that started in time is not taken for a long-press.
+          pendingFrame = afterQueuedInput(() => {
+            pendingFrame = null;
+            if (!tr.due(performance.now() + 1)) return;
+            detachUp?.();
+            detachUp = null;
+            navigator.vibrate?.(10);
+            swallowNextClick();
+            const [x, y] = tr.at;
+            cbRef.current(x, y, target);
+          });
         }, tr.ms);
       },
       onPointerMove: (e) => {

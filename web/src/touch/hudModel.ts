@@ -1,5 +1,6 @@
 // The touch HUD's model (docs/ux/ui-plan-2026-11.md 1.2): which modifier toggles each tool offers, which actions the
-// selection bar shows, and where the bar goes. Pure, so `npm test` covers it (hudModel.test.ts); TouchHud.tsx draws it.
+// selection bar shows, and when a sheet hides it (the canvas HUD, hud/hudLayout.ts, places the bar). Pure, so
+// `npm test` covers it (hud.test.ts); TouchHud.tsx draws it.
 
 import type { MsgKey } from "../workspace/i18n.ts";
 import type { VirtualMod } from "./virtualMods.ts";
@@ -91,25 +92,6 @@ export interface Rect {
 }
 
 /**
- * Where the action bar goes (client px, its top-left): centred above the selection with a gap, below it when there is
- * no room above, and kept inside the canvas with a margin; with no selection rect, at the canvas's bottom centre.
- */
-export function placeActionBar(sel: Rect | null, canvas: Rect, w: number, h: number, gap = 12, margin = 8): { left: number; top: number } {
-  const minL = canvas.left + margin;
-  const maxL = Math.max(minL, canvas.right - margin - w);
-  const minT = canvas.top + margin;
-  const maxT = Math.max(minT, canvas.bottom - margin - h);
-  if (!sel) return { left: clamp((canvas.left + canvas.right - w) / 2, minL, maxL), top: maxT };
-  const left = clamp((sel.left + sel.right - w) / 2, minL, maxL);
-  const above = sel.top - gap - h;
-  if (above >= minT) return { left, top: Math.min(above, maxT) };
-  const below = sel.bottom + gap;
-  if (below <= maxT) return { left, top: below };
-  // The selection fills the canvas: the top edge.
-  return { left, top: minT };
-}
-
-/**
  * Whether a sheet whose top edge is at client y `coverTop` hides the selection: less than half of it (and less than
  * 16 px) is left above the sheet. A selection fully above the sheet is not covered.
  */
@@ -119,17 +101,3 @@ export function selectionCovered(sel: Rect, coverTop: number | null): boolean {
   return visible < Math.max(16, (sel.bottom - sel.top) / 2);
 }
 
-/**
- * Where the action bar goes with a sheet over the canvas (`coverTop`, client y, or null): nowhere while the sheet
- * covers the selection (it would float over the sheet, next to nothing), else `placeActionBar` within the part of
- * the canvas above the sheet.
- */
-export function actionBarSpot(sel: Rect | null, canvas: Rect, w: number, h: number, coverTop: number | null): { left: number; top: number } | null {
-  if (sel && selectionCovered(sel, coverTop)) return null;
-  const visible = coverTop === null ? canvas : { ...canvas, bottom: Math.max(canvas.top, Math.min(canvas.bottom, coverTop)) };
-  return placeActionBar(sel, visible, w, h);
-}
-
-function clamp(v: number, lo: number, hi: number): number {
-  return Math.min(hi, Math.max(lo, v));
-}

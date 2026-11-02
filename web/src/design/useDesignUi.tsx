@@ -19,6 +19,7 @@
 //   a marker and pasted from the internal copy. Keyboard copy and paste use the page's copy/paste events (they work
 //   without a permission prompt and outside secure contexts); the menu entries use the async Clipboard API.
 
+import { HudItem } from "../hud/CanvasHud.tsx";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { execute, type Invocation } from "../api/client.ts";
 import * as C from "../api/commands.ts";
@@ -686,20 +687,22 @@ export function useDesignUi(p: DesignUiProps): DesignUi {
       return (
         <>
           {inner.overlay(r)}
-          <SessionBar
-            sess={sess}
-            onApply={applyWarp}
-            onCancel={() => sess.set(null)}
-            onReset={() => {
-              const s = sess.get();
-              if (s?.kind === "warp") sess.set({ ...s, handles: identityHandles(s.box, s.mode) });
-            }}
-            onMode={(mode) => {
-              const s = sess.get();
-              if (s?.kind === "warp") sess.set({ ...s, mode, handles: mode === "grid" || s.mode === "grid" ? identityHandles(s.box, mode) : s.handles });
-            }}
-            onCreateAll={() => createTangent("all")}
-          />
+          <HudItem id="design-session" slot="tl" rank={22} minW={200}>
+            <SessionBar
+              sess={sess}
+              onApply={applyWarp}
+              onCancel={() => sess.set(null)}
+              onReset={() => {
+                const s = sess.get();
+                if (s?.kind === "warp") sess.set({ ...s, handles: identityHandles(s.box, s.mode) });
+              }}
+              onMode={(mode) => {
+                const s = sess.get();
+                if (s?.kind === "warp") sess.set({ ...s, mode, handles: mode === "grid" || s.mode === "grid" ? identityHandles(s.box, mode) : s.handles });
+              }}
+              onCreateAll={() => createTangent("all")}
+            />
+          </HudItem>
           <ArtDropTarget
             ctx={dropCtx}
             onDrop={(library, id, f) => insertArt(library, id, f)}

@@ -119,6 +119,8 @@ export function BottomSheet(p: BottomSheetProps) {
     <section
       ref={root}
       className={`bottom-sheet snap-${p.snap}${live !== null ? " dragging" : ""}`}
+      // The canvas HUD keeps its controls above the sheet at its current height (hud/CanvasHud.tsx).
+      data-hud-obstacle=""
       style={live !== null ? { height: live } : undefined}
       role="dialog"
       aria-modal="false"

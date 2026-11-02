@@ -2436,8 +2436,12 @@ kbd {
   /* Below STOP (--z-stop), which stays clickable over every dialog (V5). */
   z-index: var(--z-modal);
   padding: 16px;
-  /* Dialogs start below the top bar, so its status chip and STOP never sit on a dialog's title row or close button. */
+  /* Dialogs start below the top bar, so its status chip and STOP never sit on a dialog's title row or close button;
+     and they stay out of the safe-area bands (the notch in landscape, the home indicator). */
   padding-top: calc(var(--bar-top) + var(--safe-top) + 8px);
+  padding-left: calc(16px + var(--safe-left));
+  padding-right: calc(16px + var(--safe-right));
+  padding-bottom: calc(16px + var(--safe-bottom));
 }
 
 .modal {
@@ -3292,9 +3296,12 @@ image.pixelated {
 
 /* ---- touch, focus and density (docs/ux/ui-plan-2026-11.md 1.2, 1.5) -------------------------------------------- */
 
-/* No double-tap zoom delay; pinch zoom on the page stays possible outside the canvas (the canvas takes its own). */
+/* No page zoom at all: a pinch that starts on the chrome (the top bar, tabs, rails, the canvas HUD) used to zoom the
+   whole page and push STOP off screen. The canvas has its own pinch zoom, and Preferences > UI scale makes the chrome
+   larger. Pan values only, so scrolling still works everywhere (a scroller re-allows panning but not pinch-zoom), and
+   no double-tap zoom delay. iOS Safari also gets its gesture events cancelled outside the canvas (Viewport.tsx). */
 html {
-  touch-action: manipulation;
+  touch-action: pan-x pan-y;
 }
 
 /* Pressed states, for touch screens that have no hover. */
@@ -3567,4 +3574,28 @@ html {
   height: 44px;
   align-items: flex-start;
   padding-top: 9px;
+}
+
+/* Touch: the history marker is a full 44 px target (it reaches over the timeline's top border to make the height). */
+:root[data-density="touch"] .tl-marker {
+  width: 44px;
+  margin: -1px -18px 0;
+  align-self: flex-start;
+  height: calc(100% + 1px);
+}
+:root[data-density="touch"] .tl-marker::before {
+  left: 20px;
+}
+:root[data-density="touch"] .tl-grip {
+  left: 15px;
+}
+
+/* Touch: a toast is a 44 px target (a tap dismisses it). */
+:root[data-density="touch"] .toast {
+  min-height: 44px;
+}
+
+/* Touch: a text link button (Preferences > Default moves) is a 44 px target too. */
+:root[data-density="touch"] .link-btn {
+  min-height: 44px;
 }

@@ -367,6 +367,20 @@ function stepsFor(d) {
       row = await find(page, "tr.cuts-row");
     }
     if (!row) throw new Error("no Cuts / Layers row");
+    // A spot on the row that is not one of its buttons (its centre can be the ⋯ menu button).
+    const spot = await page.evaluate(() => {
+      const tr = document.querySelector("tr.cuts-row");
+      if (!tr) return null;
+      const r = tr.getBoundingClientRect();
+      for (let f = 0.15; f < 0.95; f += 0.05) {
+        const x = r.left + r.width * f;
+        const y = r.top + r.height / 2;
+        const h = document.elementFromPoint(x, y);
+        if (h && tr.contains(h) && !h.closest("button, input, select, [role=button]")) return { x, y };
+      }
+      return null;
+    });
+    if (spot) Object.assign(row, spot);
     if (touch) {
       await page.tap(row.x, row.y);
       await sleep(80);
@@ -588,6 +602,11 @@ function stepsFor(d) {
     await page.press(inp.x, inp.y);
     await sleep(200);
     await page.setViewportHeight(d.height - (d.keyboard ?? 300));
+    // The keyboard covers the home indicator: no bottom safe-area band while it is up.
+    if (d.safe) {
+      ctx.safeNow = { ...d.safe, bottom: 0 };
+      await applySafeArea(page, ctx.safeNow);
+    }
     await sleep(600);
   }, ["phone", "tablet"]);
   return S;
@@ -610,7 +629,7 @@ async function runDevice(browser, d, theme, ctxBase) {
       const shot = join(dir, `${String(results.length).padStart(2, "0")}-${name}.png`);
       await page.settle(250);
       await page.screenshot(shot);
-      const c = await runCheck(page, { touch: d.touch, safe: d.safe }).catch((e) => ({ error: String(e), problems: [] }));
+      const c = await runCheck(page, { touch: d.touch, safe: ctx.safeNow ?? d.safe }).catch((e) => ({ error: String(e), problems: [] }));
       results.push({ step: name, shot, ...extra, layout: c.layout, counts: c.counts, problems: c.problems, error: extra.error ?? c.error });
     };
     await check("first-visit");
@@ -638,6 +657,10 @@ async function runDevice(browser, d, theme, ctxBase) {
       if (s.name === "keyboard-input") {
         await page.setViewportHeight(d.height);
         await page.evaluate(() => document.activeElement?.blur?.());
+        if (ctx.safeNow) {
+          ctx.safeNow = undefined;
+          await applySafeArea(page, d.safe);
+        }
       }
     }
     if (page.errors.length) results.push({ step: "console-errors", errors: page.errors.slice(0, 20), problems: [] });

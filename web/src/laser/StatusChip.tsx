@@ -1,6 +1,7 @@
 // The machine status chip left of STOP in every layout (owner: P5, docs/ux/ui-plan-2026-11.md P5): Idle, Framing (pulse
 // plus an inline Stop frame), Running 42% · 3:12 (plus Pause), Paused (plus Resume), Offline. A tap opens the Laser
-// panel or the Job sheet. `compact` (phone): just the status dot, still a button. While framing, Esc stops the frame.
+// panel or the Job sheet. `compact` (phone): the status dot, still a button, and the action as an icon. While framing,
+// Esc stops the frame.
 
 import { useCallback } from "react";
 import { jobApi } from "../api/jobApi.ts";
@@ -62,7 +63,9 @@ export function StatusChip({ compact = false }: StatusChipProps) {
           </span>
         )}
       </button>
-      {!compact && st.action && (
+      {/* On the phone too (icon only): Stop frame, Pause and Resume stay one tap away beside STOP, whatever the Job
+          sheet scrolled to. */}
+      {st.action && (
         <button
           className="status-chip-act"
           onClick={act}

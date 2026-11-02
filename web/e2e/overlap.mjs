@@ -34,7 +34,10 @@ export function checkLayout(opts) {
   const BACKDROP = ".modal-backdrop, [class*=backdrop]";
   const ALLOWED_COVERS = `${COVERS_2}, ${COVERS_1}`;
   // Pairs that are one control by design (documented allowlist): [top selector, under selector, reason].
-  const ALLOWED_PAIRS = [[".tl-marker", ".tl-entry", "the history marker sits on the timeline entries"]];
+  const ALLOWED_PAIRS = [
+    [".tl-marker", ".tl-entry", "the history marker sits on the timeline entries"],
+    ["[role=menu], [role=menu] *", ".ribbon-flyout", "a ribbon flyout's dropdown menu opens over the flyout's own edge"],
+  ];
 
   const label = (el) => {
     const tag = el.tagName.toLowerCase();
@@ -220,7 +223,13 @@ export function checkLayout(opts) {
     if (safe.right && b.right > vw - safe.right + 0.5 && b.left < vw) bands.push("right");
     if (bands.length) problems.push({ type: "safe-area", severity: "medium", a: it.label, box: rnd(b), detail: `${it.label} reaches into the ${bands.join("+")} safe-area band` });
     if (o.touch && it.kind === "control") {
-      const r = it.el.getBoundingClientRect();
+      let r = it.el.getBoundingClientRect();
+      // A check box or radio button is tapped through its label too: the label's box is the target when larger.
+      if (it.el.matches?.("input[type=checkbox], input[type=radio]")) {
+        const lab = it.el.closest("label") ?? (it.el.id ? document.querySelector(`label[for="${CSS.escape(it.el.id)}"]`) : null);
+        const lr = lab?.getBoundingClientRect();
+        if (lr && lr.width * lr.height > r.width * r.height) r = lr;
+      }
       // A control scrolled half out of its list keeps its real size: measure the element, not the clipped box.
       if (r.width < o.minTarget - 0.5 || r.height < o.minTarget - 0.5) {
         const disabled = it.el.disabled || it.el.getAttribute("aria-disabled") === "true";

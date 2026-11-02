@@ -102,6 +102,8 @@ import { runTouchAction } from "../touch/actions.ts";
 import { clearLatched, getVirtualMods, subscribeVirtualMods } from "../touch/virtualMods.ts";
 import { newWheelLatch, wheelIntent, wheelPanDelta } from "../touch/wheelIntent.ts";
 import { ContextStripPortal } from "../workspace/contextStrip.tsx";
+import { HudItem } from "../hud/CanvasHud.tsx";
+import { afterQueuedInput, cancelAfterQueuedInput } from "../touch/useLongPress.ts";
 import { useLayoutMode } from "../workspace/layoutMode.ts";
 import "../touch/touch.css";
 import { useDitheredHref } from "./ImageSettings.tsx";
@@ -313,6 +315,7 @@ export function Viewport(props: ViewportProps) {
   /** The long-press ring under a resting finger, screen px. */
   const [lpRing, setLpRing] = useState<Vec2 | null>(null);
   const lpTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lpFrame = useRef<number | null>(null);
   /** Space is held: a drag pans (grab cursor). */
   const [spacePan, setSpacePan] = useState(false);
   const spaceRef = useRef(false);
@@ -654,16 +657,24 @@ export function Viewport(props: ViewportProps) {
   const armTimer = () => {
     if (lpTimer.current) clearTimeout(lpTimer.current);
     lpTimer.current = null;
+    if (lpFrame.current !== null) cancelAfterQueuedInput(lpFrame.current);
+    lpFrame.current = null;
     const due = arb.nextDeadline();
     if (due === null) return;
     lpTimer.current = setTimeout(() => {
       lpTimer.current = null;
-      effectsRef.current(arb.feed({ kind: "tick", t: performance.now() }));
+      // The tick waits for the pointer moves queued behind a busy main thread (a heavy document): a drag that began in
+      // time moves first and is not taken for a long-press.
+      lpFrame.current = afterQueuedInput(() => {
+        lpFrame.current = null;
+        effectsRef.current(arb.feed({ kind: "tick", t: performance.now() }));
+      });
     }, Math.max(0, due - performance.now()));
   };
   useEffect(
     () => () => {
       if (lpTimer.current) clearTimeout(lpTimer.current);
+      if (lpFrame.current !== null) cancelAfterQueuedInput(lpFrame.current);
       publishHud({ selRect: null, canvasRect: null, busy: false });
     },
     [],
@@ -1551,43 +1562,51 @@ export function Viewport(props: ViewportProps) {
         )}
       </svg>
 
-      <div className="vp-overlay vp-top-right">
-        <button className="icon-btn" title={t("vp.fitField")} aria-label={t("vp.fitField")} onClick={fitField}>
-          <Icon name="fit" />
-        </button>
-        <button
-          className="icon-btn"
-          title={t("vp.zoomToSelection")}
-          aria-label={t("vp.zoomToSelection")}
-          disabled={!selBounds && !stockBox}
-          onClick={() => {
-            const b = selBounds ?? stockBox;
-            if (b) {
-              autoFit.current = false;
-              fitBox(pad(b, 3));
-            }
-          }}
-        >
-          <Icon name="place" />
-        </button>
-      </div>
-      {outsideCount > 0 && (
-        <div className="vp-overlay vp-warn" role="status">
-          {outsideCount} object{outsideCount === 1 ? "" : "s"} outside the {galvo ? "galvo field" : "workspace"} (red). The laser cannot reach{" "}
-          {outsideCount === 1 ? "it" : "them"}.
+      {/* The canvas HUD's slots (hud/CanvasHud.tsx): view buttons top right, the off-field warning after them, the
+          readout bottom left; they stack instead of overlapping the other floating controls. */}
+      <HudItem id="vp-view" slot="tr" rank={10}>
+        <div className="vp-overlay vp-top-right">
+          <button className="icon-btn" title={t("vp.fitField")} aria-label={t("vp.fitField")} onClick={fitField}>
+            <Icon name="fit" />
+          </button>
+          <button
+            className="icon-btn"
+            title={t("vp.zoomToSelection")}
+            aria-label={t("vp.zoomToSelection")}
+            disabled={!selBounds && !stockBox}
+            onClick={() => {
+              const b = selBounds ?? stockBox;
+              if (b) {
+                autoFit.current = false;
+                fitBox(pad(b, 3));
+              }
+            }}
+          >
+            <Icon name="place" />
+          </button>
         </div>
+      </HudItem>
+      {outsideCount > 0 && (
+        <HudItem id="vp-warn" slot="tr" rank={60} minW={160} maxW={360}>
+          <div className="vp-overlay vp-warn" role="status">
+            {outsideCount} object{outsideCount === 1 ? "" : "s"} outside the {galvo ? "galvo field" : "workspace"} (red). The laser cannot reach{" "}
+            {outsideCount === 1 ? "it" : "them"}.
+          </div>
+        </HudItem>
       )}
-      <div className="vp-overlay vp-bottom-left">
-        {cursor
-          ? `X ${fixedNumber(cursor[0], lu)}  Y ${fixedLength(cursor[1], lu)}`
-          : galvo
-            ? `Field ${formatLength(wsW, lu, 3)}`
-            : `Workspace ${trimNumber(lengthToDisplay(wsW, lu), lengthDigits(lu, 3))} × ${formatLength(wsH, lu, 3)}`}
-        {draw && draw.tool === "circle"
-          ? `  ·  Ø ${fixedLength(2 * dist(draw.a, draw.b), lu)}`
-          : drawBox && `  ·  ${fixedNumber(drawBox.x1 - drawBox.x0, lu)} × ${fixedLength(drawBox.y1 - drawBox.y0, lu)}`}
-        {readout && `  ·  ${readout}`}
-      </div>
+      <HudItem id="vp-readout" slot="bl" rank={15} optional passThrough>
+        <div className="vp-overlay vp-bottom-left">
+          {cursor
+            ? `X ${fixedNumber(cursor[0], lu)}  Y ${fixedLength(cursor[1], lu)}`
+            : galvo
+              ? `Field ${formatLength(wsW, lu, 3)}`
+              : `Workspace ${trimNumber(lengthToDisplay(wsW, lu), lengthDigits(lu, 3))} × ${formatLength(wsH, lu, 3)}`}
+          {draw && draw.tool === "circle"
+            ? `  ·  Ø ${fixedLength(2 * dist(draw.a, draw.b), lu)}`
+            : drawBox && `  ·  ${fixedNumber(drawBox.x1 - drawBox.x0, lu)} × ${fixedLength(drawBox.y1 - drawBox.y0, lu)}`}
+          {readout && `  ·  ${readout}`}
+        </div>
+      </HudItem>
       {props.canvasTool?.overlay(renderCtx)}
       {isDrawTool(tool) && (
         <ContextStripPortal>
@@ -1598,15 +1617,27 @@ export function Viewport(props: ViewportProps) {
         </ContextStripPortal>
       )}
       {fingerAt && (snapShown?.label || readout) && (
-        <div className="vp-overlay snap-bubble" style={{ left: fingerAt[0], top: Math.max(4, fingerAt[1] - 60) }} aria-hidden="true">
-          {snapShown?.label}
-          {snapShown?.label && readout ? " · " : ""}
-          {readout}
-        </div>
+        // Above the finger (clear of the fingertip), or below it near the top; never over the HUD's controls.
+        <HudItem id="snap-bubble" slot="tc" rank={85} optional passThrough anchor={fingerAnchor(svgRef.current, fingerAt)}>
+          <div className="vp-overlay snap-bubble" aria-hidden="true">
+            {snapShown?.label}
+            {snapShown?.label && readout ? " · " : ""}
+            {readout}
+          </div>
+        </HudItem>
       )}
       {lpRing && <div className="lp-ring" style={{ left: lpRing[0], top: lpRing[1] }} aria-hidden="true" />}
     </div>
   );
+}
+
+/** The snap bubble's anchor: a fingertip-sized box around the touch point, in client px. */
+function fingerAnchor(svg: SVGSVGElement | null, at: Vec2): { rect: { left: number; top: number; right: number; bottom: number }; side: "above" } | null {
+  const r = svg?.getBoundingClientRect();
+  if (!r) return null;
+  const x = r.left + at[0];
+  const y = r.top + at[1];
+  return { rect: { left: x, top: y - 52, right: x, bottom: y + 52 }, side: "above" };
 }
 
 /** A grab position that is not a snap point (a selection with no snap points), as a reference point. */

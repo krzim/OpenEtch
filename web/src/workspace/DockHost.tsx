@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as RKeyboardEvent, type PointerEvent as RPointerEvent, type ReactNode } from "react";
 import { ContextMenu } from "../components/ContextMenu.tsx";
 import { Icon } from "../components/ui.tsx";
+import { invalidateHud } from "../hud/CanvasHud.tsx";
 import {
   applyPreset,
   areaUnits,
@@ -528,6 +529,8 @@ export function SidePanel(p: SidePanelProps) {
   const railVisible = rail && p.railVisible !== false;
   const overlayOpen = rail && p.overlay;
   const shown = p.mode === "pinned" || overlayOpen;
+  // The overlay is a canvas HUD obstacle (data-hud-obstacle): lay the HUD out again when it opens or closes.
+  useEffect(() => invalidateHud(), [overlayOpen, p.mode]);
   const lay = useLayout();
   const mounted = useMountedWindows();
   const caption = panelCaption(
@@ -572,6 +575,8 @@ export function SidePanel(p: SidePanelProps) {
       className={`panel panel-${p.side}`}
       data-mode={p.mode}
       data-overlay={overlayOpen ? "" : undefined}
+      // An open overlay lies over the canvas: the canvas HUD moves its controls clear of it.
+      data-hud-obstacle={overlayOpen ? "" : undefined}
       data-norail={rail && !railVisible ? "" : undefined}
       aria-label={p.label}
       onPointerEnter={() => window.clearTimeout(leave.current)}

@@ -37,13 +37,13 @@ Chromium-based browser.
     (`elementFromPoint`) is not an intended cover;
   - `offscreen`: partly or wholly outside the viewport;
   - `safe-area`: inside the device's safe-area bands;
-  - `small`: touch targets under 44 x 44 px on touch devices.
+  - `small`: touch targets under 44 x 44 px on touch devices (a check box or radio button counts its `<label>`'s box,
+    which takes the tap too).
 
   Intended layers (the allowlist): menus, list boxes, popovers, ribbon flyouts, tooltips and modal dialogs may cover
-  anything; the
-  phone's bottom sheet and the tablet's dock overlays may cover the canvas and its overlays; modal backdrops are not
-  panels; the history marker sits on the timeline. A covered control that pokes out above its cover is still reported.
-  What a toast covers is reported one step lower (medium): it goes away by itself. A pinch that zooms the whole page
+  anything; the phone's bottom sheet and the tablet's dock overlays may cover the canvas and its overlays; modal
+  backdrops are not panels; the history marker sits on the timeline; a ribbon flyout's dropdown menu may overlap the
+  flyout's edge. A covered control that pokes out above its cover is still reported. What a toast covers is reported one step lower (medium): it goes away by itself. A pinch that zooms the whole page
   is reported as `page-zoom` (critical when STOP leaves the visible area), and the harness then resets the zoom.
 - `scenarios.mjs`: the flows. Every device: first visit, empty document, heavy document fitted, a selection, the
   Rectangle tool (and a rectangle drawn) and the Line tool with the touch modifier bar, a context menu (right-click or
@@ -52,7 +52,8 @@ Chromium-based browser.
   dialogs, Cut settings. Tablet: the rail groups, the dock overlays, the Properties pill, the on-screen keyboard. Phone:
   the Canvas, Layers, Job and More tabs with their sheet at peek, half and full, Preferences and Devices from More, the
   Job tab with its sheet closed and a selection (the reference overlap case), the on-screen keyboard (the viewport
-  shrinks by the keyboard height while a field has focus).
+  shrinks by the keyboard height while a field has focus, and the bottom safe-area band goes: the keyboard covers the
+  home indicator).
 
 ## Emulation limits
 

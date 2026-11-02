@@ -185,8 +185,12 @@
   flex-wrap: wrap;
   row-gap: 4px;
 }
-.pv-timeline input[type="range"] {
+.pv-player.pv-timeline input[type="range"] {
   flex: 1 1 160px;
+  /* Wraps to a row of its own rather than being squeezed to a sliver; the width makes its max-content size match its
+     flex basis, so the row measured by the canvas HUD fits on one line (it wrapped Save image on its own). */
+  width: 160px;
+  min-width: 120px;
 }
 .pv-timeline select {
   min-height: 28px;

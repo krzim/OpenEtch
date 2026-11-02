@@ -106,6 +106,9 @@
   top: calc(var(--bar-top, 0px) + var(--safe-top, 0px));
   bottom: var(--vv-inset, 0px);
   padding: 0;
+  /* Landscape phones: the full-screen dialog keeps its title, close button and fields clear of the notch's bands. */
+  padding-left: var(--safe-left, 0px);
+  padding-right: var(--safe-right, 0px);
   align-items: stretch;
 }
 
@@ -122,6 +125,7 @@
   border-radius: 0;
   min-height: 48px;
 }
+
 
 :root[data-layout="phone"] .oe-dialog .modal-foot {
   position: sticky;

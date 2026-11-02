@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { actionBarSpot, barActions, modToggles, placeActionBar, selectionCovered } from "./hudModel.ts";
+import { barActions, modToggles, selectionCovered } from "./hudModel.ts";
 import { LongPressTracker } from "./useLongPress.ts";
 import { TOUCH_ACTIONS, chordForAction, keyInitFor } from "./actions.ts";
 
@@ -46,16 +46,6 @@ test("the action bar: Group with several loose objects, Ungroup with a group, al
   for (const a of barActions(3, false)) assert.ok(a.id === "menu" || a.id in TOUCH_ACTIONS, a.id);
 });
 
-test("the action bar sits above the selection, below it when there is no room, and inside the canvas", () => {
-  const canvas = { left: 0, top: 100, right: 400, bottom: 800 };
-  assert.deepEqual(placeActionBar({ left: 150, top: 400, right: 250, bottom: 450 }, canvas, 200, 50), { left: 100, top: 338 });
-  assert.deepEqual(placeActionBar({ left: 150, top: 120, right: 250, bottom: 200 }, canvas, 200, 50), { left: 100, top: 212 }, "below");
-  assert.deepEqual(placeActionBar({ left: -50, top: 400, right: 20, bottom: 450 }, canvas, 200, 50).left, 8, "clamped to the left edge");
-  assert.deepEqual(placeActionBar({ left: 380, top: 400, right: 500, bottom: 450 }, canvas, 200, 50).left, 192, "and the right");
-  assert.deepEqual(placeActionBar({ left: 0, top: 90, right: 400, bottom: 900 }, canvas, 200, 50), { left: 100, top: 108 }, "filling the canvas: top");
-  assert.deepEqual(placeActionBar(null, canvas, 200, 50), { left: 100, top: 742 }, "no rect: bottom centre");
-});
-
 test("long-press fires at 500 ms within the slop, once", () => {
   const tr = new LongPressTracker();
   assert.equal(tr.down(1, 10, 10, 0), true);
@@ -94,23 +84,15 @@ test("touch actions are sent as the action's current chord (rebinding follows)",
   assert.equal(keyInitFor("undo", {})?.key, "z");
 });
 
-test("the action bar hides while a sheet covers the selection, and stays above a sheet otherwise", () => {
-  const canvas = { left: 0, top: 50, right: 375, bottom: 700 };
+test("the action bar hides while a sheet covers the selection (the canvas HUD places it otherwise)", () => {
   const sel = { left: 100, top: 500, right: 200, bottom: 560 };
-  // No sheet: placed as before.
-  assert.deepEqual(actionBarSpot(sel, canvas, 200, 50, null), placeActionBar(sel, canvas, 200, 50));
-  // The Layers sheet at half height (top edge at y 400) covers the shape: no bar.
+  assert.equal(selectionCovered(sel, null), false, "no sheet");
+  // The Layers sheet at half height (top edge at y 400) covers the shape.
   assert.equal(selectionCovered(sel, 400), true);
-  assert.equal(actionBarSpot(sel, canvas, 200, 50, 400), null);
   // Covered by more than half (only 20 of 60 px show): still hidden.
-  assert.equal(actionBarSpot(sel, canvas, 200, 50, 520), null);
-  // Mostly above the sheet: shown, and inside the part of the canvas above it.
-  const spot = actionBarSpot(sel, canvas, 200, 50, 545);
-  assert.ok(spot);
-  assert.ok(spot.top + 50 <= 545, "the bar stays above the sheet");
-  // A shape well above the peek sheet keeps its bar above it.
-  const high = { left: 100, top: 200, right: 200, bottom: 260 };
-  assert.deepEqual(actionBarSpot(high, canvas, 200, 50, 500), { left: 50, top: 138 });
+  assert.equal(selectionCovered(sel, 520), true);
+  // Mostly above the sheet: shown.
+  assert.equal(selectionCovered(sel, 545), false);
   // A sheet at full height covers everything.
-  assert.equal(actionBarSpot(high, canvas, 200, 50, 50), null);
+  assert.equal(selectionCovered({ left: 100, top: 200, right: 200, bottom: 260 }, 50), true);
 });

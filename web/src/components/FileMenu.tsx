@@ -14,6 +14,7 @@
 // The dialog preselects Open (replace) when the design has no objects, Import (merge) otherwise (`defaultImportMode`).
 // The top bar and download names use the opened file's name, which the engine keeps as `display_name` across reloads.
 
+import { useHudFixed } from "../hud/CanvasHud.tsx";
 import { Fragment, isValidElement, useCallback, useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { api, execute } from "../api/client.ts";
@@ -686,8 +687,10 @@ export function FileDialogs({ file, docName }: { file: FileActions; docName: str
 function WarningsPanel(p: { title: string; items: string[]; onClose: () => void }) {
   const t = useT();
   const rows = groupWarnings(p.items);
+  // Placed by the canvas HUD after its controls (bottom left), so it never covers one.
+  const ref = useHudFixed<HTMLDivElement>({ id: "import-warnings", slot: "bl", rank: 95, minW: 240, late: true });
   return (
-    <div className="warn-panel" role="status" aria-live="polite">
+    <div ref={ref} className="warn-panel" role="status" aria-live="polite">
       <div className="warn-panel-head">
         <span>
           {p.title}: {t(p.items.length === 1 ? "fm.warning1" : "fm.warningN", { n: p.items.length })}

@@ -129,6 +129,8 @@ export function PagesDock(p: { doc: GDocument | null; has: (id: string) => boole
             <button
               type="button"
               className="icon-btn small row-more"
+              // A double-tap on ⋯ is two presses of ⋯, not the row's double-click (which opens its settings).
+              onDoubleClick={(e) => e.stopPropagation()}
               title={t("touch.rowMenu")}
               aria-label={t("touch.rowMenu")}
               onClick={(e) => {

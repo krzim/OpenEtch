@@ -3,6 +3,7 @@
 // mounts it in `.center-stage` while the document is empty; it also hides itself as soon as a source reports objects.
 // Only the card takes pointer events, so the canvas around it (and file drops) work as before.
 
+import { HudItem } from "../hud/CanvasHud.tsx";
 import { Icon } from "../components/ui.tsx";
 import { useT } from "../workspace/usePrefs.ts";
 import { chipState } from "./statusChip.ts";
@@ -32,7 +33,8 @@ export function EmptyCanvasCard(p: EmptyCanvasCardProps) {
   const chip = chipState(facts.machine, facts.link, null, facts.httpError);
   const device = deviceName(facts.machine);
   return (
-    <div className="empty-card-wrap">
+    // The centre slot of the canvas HUD: the largest free stretch, clear of the corner buttons (scrolls when shorter).
+    <HudItem id="empty-card" slot="c" rank={70} minW={260} maxW={620} minH={160}>
       <section className="empty-card" aria-labelledby="empty-card-title">
         <h2 id="empty-card-title" className="empty-card-title">
           {t("lz.emptyTitle")}
@@ -63,6 +65,6 @@ export function EmptyCanvasCard(p: EmptyCanvasCardProps) {
           {device ? t("lz.emptyLaser", { device, state: chip.text }) : t("lz.emptyLaserUnknown", { state: chip.text })}
         </p>
       </section>
-    </div>
+    </HudItem>
   );
 }

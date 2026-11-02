@@ -93,6 +93,7 @@ import { pickerAccept } from "./touch/filePick.ts";
 import { ConnectionBanner } from "./laser/ConnectionBanner.tsx";
 import { EmptyCanvasCard } from "./laser/EmptyCanvasCard.tsx";
 import { TouchHud } from "./touch/TouchHud.tsx";
+import { CanvasHud, HudItem, useHudFixed } from "./hud/CanvasHud.tsx";
 import { useDocTabs } from "./workspace/DocTabs.tsx";
 import { useDocking } from "./workspace/DockingTool.tsx";
 import { useFlash, withLayerFlash } from "./workspace/flash.tsx";
@@ -175,6 +176,9 @@ export function App() {
   const [dialog, setDialog] = useState<Dialog>(null);
   const [showPreview, setShowPreview] = useState(true);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  // Toasts take the canvas HUD's top centre after the required controls are placed (the optional ones make room for
+  // them), so they never cover one.
+  const toastsRef = useHudFixed<HTMLDivElement>({ id: "toasts", slot: "tc", rank: 90, minW: 200, late: true, stack: true });
   const [prefs, setPrefs] = useState<ViewPrefs>(loadPrefs);
   const [previewOptions, setPreviewOptions] = useState<PreviewOptions>({ hidden: new Set(), hiddenPasses: new Set(), upTo: null, shade: true, jumps: true });
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
@@ -1549,12 +1553,14 @@ export function App() {
           (pt) =>
             void machineAction(jobApi.pointer(roundMm(pt[0]), roundMm(pt[1])), t("poslaser.done", { x: roundMm(pt[0]), y: roundMm(pt[1]) })),
           (end) => (
-            <div className="vp-overlay lx-sp-bar" role="status">
-              <span>{t("poslaser.bar")}</span>
-              <button className="btn small" onClick={end}>
-                {t("common.cancel")}
-              </button>
-            </div>
+            <HudItem id="poslaser-bar" slot="tc" rank={25} minW={200}>
+              <div className="vp-overlay lx-sp-bar" role="status">
+                <span>{t("poslaser.bar")}</span>
+                <button className="btn small" onClick={end}>
+                  {t("common.cancel")}
+                </button>
+              </div>
+            </HudItem>
           ),
         )}
       />
@@ -1582,6 +1588,8 @@ export function App() {
       )}
       {/* Always mounted: it shows itself on touch, or everywhere with the selection bar set to Always. */}
       <TouchHud tool={tool} selectionCount={selection.objects.length} onAction={touchAction} />
+      {/* One layout for everything that floats over the canvas (hud/CanvasHud.tsx). */}
+      <CanvasHud />
     </div>
   );
 
@@ -1642,7 +1650,7 @@ export function App() {
       {layout !== "phone" && <FloatHost />}
       {menu && <ContextMenu x={menu.x} y={menu.y} items={forLayout(menuItems, layout)} onClose={() => setMenu(null)} />}
       {dropLabel && <DropOverlay label={dropLabel} />}
-      <div className="toasts">
+      <div className="toasts" ref={toastsRef}>
         {toasts.map((x) => (
           <button
             type="button"
@@ -1839,10 +1847,12 @@ export function App() {
   } as CSSProperties;
   // Tablet: a selection's settings open on request, from a pill over the canvas (selecting never opens a drawer).
   const propertiesPill = layout === "tablet" && workspace === "design" && rightMode === "rail" && overlay !== "right" && (selection.objects.length > 0 || selection.stock) && (
-    <button className="btn properties-pill" title={t("shell.propertiesPillTitle")} onClick={() => setOverlay("right")}>
-      <Icon name="sliders" size={16} />
-      {t("shell.propertiesPill")}
-    </button>
+    <HudItem id="properties-pill" slot="br" rank={12}>
+      <button className="btn properties-pill" title={t("shell.propertiesPillTitle")} onClick={() => setOverlay("right")}>
+        <Icon name="sliders" size={16} />
+        {t("shell.propertiesPill")}
+      </button>
+    </HudItem>
   );
 
   return (

@@ -3,10 +3,11 @@
 // `<ContextStripPortal>{bar}</ContextStripPortal>`; the shell renders `<ContextStripHost/>` inside the strip and asks
 // `useContextStripBusy()` whether a tool bar is showing (then it hides the numeric fields).
 //
-// Until a host is mounted the portal renders its children where it stands, so a bar wrapped in it looks and works as
-// it did before.
+// Where no strip is mounted (the phone) the bar goes into the canvas HUD's top-left slot (hud/CanvasHud.tsx), where it
+// shrinks and wraps beside the view buttons instead of running under them.
 
-import { useCallback, useEffect, useSyncExternalStore, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useSyncExternalStore, type ReactNode } from "react";
+import { HudItem } from "../hud/CanvasHud.tsx";
 import { createPortal } from "react-dom";
 
 let host: HTMLElement | null = null;
@@ -35,9 +36,10 @@ export function ContextStripHost(props: { className?: string }) {
   return <div ref={ref} className={props.className ?? "context-strip-slot"} />;
 }
 
-/** Shows a tool's option bar in the context strip (or in place while there is no strip). */
+/** Shows a tool's option bar in the context strip (or in the canvas HUD while there is no strip). */
 export function ContextStripPortal({ children }: { children: ReactNode }) {
   const target = useSyncExternalStore(subscribe, getHost, () => null);
+  const id = useId();
   useEffect(() => {
     mounted++;
     emit();
@@ -46,7 +48,13 @@ export function ContextStripPortal({ children }: { children: ReactNode }) {
       emit();
     };
   }, []);
-  return target ? createPortal(children, target) : <>{children}</>;
+  return target ? (
+    createPortal(children, target)
+  ) : (
+    <HudItem id={`strip-${id}`} slot="tl" rank={20} minW={200}>
+      {children}
+    </HudItem>
+  );
 }
 
 /** Whether a tool bar is in the context strip now (at least one ContextStripPortal is mounted). */
