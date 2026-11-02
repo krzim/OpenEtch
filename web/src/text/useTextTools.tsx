@@ -21,6 +21,8 @@ import type { CanvasCtx, CanvasTool, PointerInfo, RenderCtx } from "../canvasToo
 import type { MenuItem } from "../components/ContextMenu.tsx";
 import type { Tool } from "../components/Viewport.tsx";
 import { Icon } from "../components/ui.tsx";
+import { RibbonSlot } from "../components/Ribbon.tsx";
+import { openCommandSearch } from "../components/commandBus.ts";
 import type { Mods } from "../editing.ts";
 import { objectBounds } from "../geometry.ts";
 import { unitsOf, type Selection } from "../selection.ts";
@@ -405,8 +407,10 @@ export function useTextTools(p: TextToolsProps): TextTools {
   // ---- toolbar ----
   const toggleTool = (x: Tool) => p.setTool(tool === x ? "select" : x);
   const toolbar = design ? (
-    <div className="tool-group">
+    <RibbonSlot group="create" order={20}>
       <button
+        type="button"
+        aria-label={t("text.tool")}
         className={`tool-btn${tool === "text" ? " active" : ""}`}
         onClick={() => toggleTool("text")}
         disabled={!canText}
@@ -414,9 +418,11 @@ export function useTextTools(p: TextToolsProps): TextTools {
         title={canText ? t("text.toolTitle") : t("text.unsupported")}
       >
         <Icon name="text" size={20} />
-        <span>{t("text.tool")}</span>
+        <span className="tool-caption">{t("text.tool")}</span>
       </button>
       <button
+        type="button"
+        aria-label={t("barcode.tool")}
         className={`tool-btn${tool === "barcode" ? " active" : ""}`}
         onClick={() => toggleTool("barcode")}
         disabled={!canBarcode}
@@ -424,9 +430,9 @@ export function useTextTools(p: TextToolsProps): TextTools {
         title={canBarcode ? t("barcode.toolTitle") : t("barcode.unsupported")}
       >
         <Icon name="barcode" size={20} />
-        <span>{t("barcode.tool")}</span>
+        <span className="tool-caption">{t("barcode.tool")}</span>
       </button>
-    </div>
+    </RibbonSlot>
   ) : null;
 
   // ---- properties ----
@@ -509,6 +515,9 @@ export function useTextTools(p: TextToolsProps): TextTools {
       if (!design || !canBarcode) return false;
       p.setTool("barcode");
     },
+    // Command search (S, Fusion's key; components/CommandSearch.tsx). Hosted here because this hook's handlers reach
+    // the key map; in Edit Nodes plain S makes a node smooth, so it declines there.
+    "app.commandSearch": () => (tool === "node" || !openCommandSearch() ? false : undefined),
     "window.variableText": () => {
       if (!design) return false;
       setVarOpen((v) => !v);

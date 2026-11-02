@@ -28,6 +28,9 @@ import type { GDocument, Vec2, VirtualArray } from "../api/types.ts";
 import type { CanvasCtx, CanvasTool, RenderCtx } from "../canvasTool.ts";
 import type { MenuItem } from "../components/ContextMenu.tsx";
 import { Dropdown } from "../components/EditMenus.tsx";
+import { RibbonSlot, usePublish } from "../components/Ribbon.tsx";
+import { runHotkeyAction } from "../components/commands.ts";
+import { Icon } from "../components/ui.tsx";
 import { objectBounds, unionBoxes, type Box } from "../geometry.ts";
 import { circleOf } from "../snapping.ts";
 import { unitsOf, type Selection } from "../selection.ts";
@@ -735,17 +738,32 @@ export function useDesignUi(p: DesignUiProps): DesignUi {
       : [];
   void clipTick;
   const canPaste = !!clip.current || sysClip;
+  // Edit ▾ (docs/ux/ui-plan-2026-11.md P2): the clipboard and selection commands in one place. Undo, Redo, Duplicate,
+  // Delete, Select all and Invert run their hotkeys.ts actions (the same handlers as their keys).
+  const run = (id: string) => () => void runHotkeyAction(id);
   const editItems: MenuItem[] = [
+    { label: t("rb.undo"), icon: "undo", actionId: "edit.undo", action: run("edit.undo") },
+    { label: t("rb.redo"), icon: "redo", actionId: "edit.redo", action: run("edit.redo") },
+    { sep: true },
     { label: t("dz.menu.cut"), hint: "Ctrl+X", disabled: !nSel, action: () => copy(true) },
     { label: t("dz.menu.copy"), hint: "Ctrl+C", disabled: !nSel, action: () => copy(false) },
     { label: t("dz.menu.paste"), hint: "Ctrl+V", disabled: !canPaste, action: () => paste(false) },
     { label: t("dz.menu.pasteInPlace"), hint: "Alt+V", disabled: !canPaste, action: () => paste(true) },
-    { label: sysClip ? t("dz.menu.sysClipOn") : t("dz.menu.sysClipOff"), action: () => setSysClip(!sysClip) },
+    { label: t("rb.duplicate"), actionId: "edit.duplicate", disabled: !nSel, action: run("edit.duplicate") },
+    { label: t("rb.delete"), icon: "delete", actionId: "edit.delete", disabled: !nSel, danger: true, action: run("edit.delete") },
     { sep: true },
-    { label: t("dz.menu.selectOpen"), disabled: !has(DCMD.selectOpen), action: () => selectBy(DCMD.selectOpen) },
-    { label: t("dz.menu.selectOpenFill"), disabled: !has(DCMD.selectOpenOnFill), action: () => selectBy(DCMD.selectOpenOnFill) },
-    { label: t("dz.menu.selectContained"), disabled: !nSel || !has(DCMD.selectContained), action: () => selectBy(DCMD.selectContained) },
+    { label: t("rb.selectAll"), actionId: "edit.selectAll", disabled: !p.doc?.objects.length, action: run("edit.selectAll") },
+    { label: t("rb.invertSelection"), actionId: "edit.invert", disabled: !p.doc?.objects.length, action: run("edit.invert") },
+    {
+      label: t("rb.selectBy"),
+      submenu: [
+        { label: t("dz.menu.selectOpen"), actionId: "edit.selectOpen", disabled: !has(DCMD.selectOpen), action: () => selectBy(DCMD.selectOpen) },
+        { label: t("dz.menu.selectOpenFill"), disabled: !has(DCMD.selectOpenOnFill), action: () => selectBy(DCMD.selectOpenOnFill) },
+        { label: t("dz.menu.selectContained"), disabled: !nSel || !has(DCMD.selectContained), action: () => selectBy(DCMD.selectContained) },
+      ],
+    },
     { sep: true },
+    { label: t("rb.sysClip"), checked: sysClip, action: () => setSysClip(!sysClip) },
     { label: t("dz.menu.curveTolerance"), disabled: !p.doc || !has(DCMD.curveTolerance), action: () => setDlg({ kind: "curveTolerance" }) },
   ];
   const toolsItems: MenuItem[] = [
@@ -774,18 +792,28 @@ export function useDesignUi(p: DesignUiProps): DesignUi {
     ...arrayItems,
   ];
   const menuItems: MenuItem[] = [
-    { label: t("dz.menu.pasteInPlace"), hint: "Alt+V", disabled: !canPaste, action: () => paste(true) },
-    { label: t("dz.menu.warp"), disabled: !nSel || !has(DCMD.warp), action: () => startWarp("perspective") },
-    { label: t("dz.menu.deform"), disabled: !nSel || !has(DCMD.warp), action: () => startWarp("grid") },
-    { label: t("dz.menu.addArt"), disabled: !nSel, action: openArtDock },
-    ...arrayItems,
+    { label: t("dz.menu.pasteInPlace"), hint: "Alt+V", section: "top", disabled: !canPaste, action: () => paste(true) },
+    { label: t("dz.menu.warp"), section: "modify", disabled: !nSel || !has(DCMD.warp), action: () => startWarp("perspective") },
+    { label: t("dz.menu.deform"), section: "modify", disabled: !nSel || !has(DCMD.warp), action: () => startWarp("grid") },
+    { label: t("dz.menu.addArt"), section: "modify", disabled: !nSel, action: openArtDock },
+    ...arrayItems.map((it) => (it.sep ? it : { ...it, section: "arrange" })),
   ];
 
+  usePublish("menu.edit", { label: t("dz.edit"), items: editItems });
+  usePublish("menu.tools", { label: t("dz.tools"), items: toolsItems });
   const toolbar = p.design ? (
-    <div className="tool-group" role="group" aria-label={t("dz.editAndTools")}>
-      <Dropdown icon="edit" label={t("dz.edit")} title={t("dz.editTitle")} items={editItems} />
-      <Dropdown icon="tools" label={t("dz.tools")} title={t("dz.toolsTitle")} items={toolsItems} />
-    </div>
+    <>
+      <RibbonSlot group="modify" order={30}>
+        <Dropdown icon="edit" label={t("dz.edit")} title={t("dz.editTitle")} items={editItems} />
+        <Dropdown icon="tools" label={t("dz.tools")} title={t("dz.toolsTitle")} items={toolsItems} />
+      </RibbonSlot>
+      <RibbonSlot group="insert" order={10}>
+        <button type="button" className="tool-btn" onClick={openArtDock} title={t("rb.artTitle")} aria-label={t("rb.art")}>
+          <Icon name="art" size={20} />
+          <span className="tool-caption">{t("rb.art")}</span>
+        </button>
+      </RibbonSlot>
+    </>
   ) : null;
 
   const close = useCallback(() => setDlg(null), []);

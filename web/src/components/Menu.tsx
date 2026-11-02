@@ -83,6 +83,13 @@ function isPoint(a: MenuAnchor): boolean {
 /** Every panel of every open menu tree, for "is this press outside?". */
 const openPanels = new Set<HTMLElement>();
 
+/** Whether `node` is inside an open menu (a flyout that opened it should not count a press there as outside). */
+export function isInMenu(node: Node | null): boolean {
+  if (!node) return false;
+  for (const el of openPanels) if (el.contains(node)) return true;
+  return false;
+}
+
 const ROW_SEL = '[role="menuitem"],[role="menuitemcheckbox"],[role="menuitemradio"]';
 
 function rowsOf(panel: HTMLElement): HTMLElement[] {

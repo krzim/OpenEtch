@@ -389,8 +389,10 @@ export function useFilesUi(p: {
     }
     if (can.toBitmap && vectors.length) items.push({ label: t("files.toBitmap"), action: toBitmap });
     const send = sendToPageItems(doc, p.selection, has, run, report, (name) => t("files.sendToPage", { name }));
-    if (items.length) contextItems.push({ sep: true }, ...items);
-    if (send.length) contextItems.push({ sep: true }, ...send);
+    // A long canvas menu files these under Modify ▸ (components/contextMenu.ts).
+    const tag = (xs: MenuItem[]): MenuItem[] => xs.map((it) => (it.sep ? it : { ...it, section: "modify" }));
+    if (items.length) contextItems.push({ sep: true }, ...tag(items));
+    if (send.length) contextItems.push({ sep: true }, ...tag(send));
   }
 
   // ---- hotkeys ---------------------------------------------------------------------------------------------------
