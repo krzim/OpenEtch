@@ -374,7 +374,7 @@ pub async fn start(
     let (loops, call_time) = frame_timing(machine, &outline, speed, run.continuous);
     let outline = Arc::new(outline);
     let points: usize = outline.iter().map(Vec::len).sum();
-    let first = frame_once(machine, generation, outline.clone(), loops, run.style).await;
+    let first = frame_once(machine, generation, outline.clone(), loops, run.style, true).await;
     match first {
         Ok(Some(packets)) => {
             machine.set_framing_gen(generation);
@@ -386,7 +386,7 @@ pub async fn start(
             let live = run.live.is_some();
             tokio::spawn(async move { frame_loop(m, ev, generation, outline, (loops, call_time), run).await });
             Ok(json!({ "ok": true, "framing": true, "points": points, "loops_per_call": loops, "packets": packets,
-                "max_seconds": max_seconds, "continuous": continuous, "live": live }))
+                "max_seconds": max_seconds, "continuous": continuous, "live": live, "frame_gen": generation }))
         }
         Ok(None) => Err(EngineError::Conflict("framing was cancelled before it started".into())),
         Err(e) => {
@@ -404,17 +404,23 @@ fn single_time(outline: &[Vec<(f64, f64)>], speed: f64) -> Duration {
 }
 
 /// One `Controller::frame_styled` call, unless the loop `generation` has been superseded or a run holds the machine.
+/// `first`: the loop's first call, which discards the input reads earlier frames took while they streamed (with the
+/// controller held, so none of theirs is left): a press counts only for the frame that was showing.
 async fn frame_once(
     machine: &Arc<Machine>,
     generation: u64,
     outline: Arc<Vec<Vec<(f64, f64)>>>,
     loops: u32,
     style: FrameStyle,
+    first: bool,
 ) -> Result<Option<usize>, EngineError> {
     machine
         .blocking(move |m, ctl| {
             if m.frame_gen() != generation || m.is_running() {
                 return Ok(None);
+            }
+            if first {
+                m.clear_input_samples();
             }
             m.ensure_ready(ctl)?;
             Ok(Some(ctl.frame_styled(&outline, loops, &style)?))
@@ -474,7 +480,7 @@ async fn frame_loop(
             outline = Arc::new(new_outline);
             let _ = events.send(Event::machine("frame_updated", None));
         }
-        match frame_once(&machine, generation, outline.clone(), loops, run.style).await {
+        match frame_once(&machine, generation, outline.clone(), loops, run.style, false).await {
             Ok(Some(_)) => {}
             Ok(None) => break,
             Err(e) => {

@@ -1,6 +1,7 @@
 //! The B6 galvo path on the wire: every byte the engine sends the simulated LMC board for connect, a frame and an
-//! approved run of a fixed document, with the B6 profile and its lens correction, compared with a digest recorded
-//! before the machine-driver interface was introduced. Any change to what the galvo receives fails this test.
+//! approved run of a fixed document, with the B6 profile and its lens correction, compared with digests recorded
+//! on main (see [`GOLDEN`]); with the axis swap undone the run's bytes equal those recorded before the machine-driver
+//! interface was introduced. Any change to what the galvo receives fails this test.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -50,9 +51,9 @@ async fn exec(app: &Router, id: &str, params: Value) -> Value {
     v
 }
 
-/// (connect, frame, run) wire bytes of the fixed job.
-async fn b6_wire() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
-    let profile = MachineProfile::from_toml(B6).expect("B6 fixture");
+/// (connect, frame, run) wire bytes of the fixed job on the profile `toml`.
+async fn b6_wire(toml: &str) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    let profile = MachineProfile::from_toml(toml).expect("B6 fixture");
     let cor = corfile::CorTable::parse(COR).expect("cor fixture");
     let machine = Arc::new(Machine::simulated(profile, Some(cor), PollConfig::immediate()));
     let counters = machine.sim_counters().unwrap().clone();
@@ -98,13 +99,33 @@ async fn b6_wire() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     (connect, frame, counters.take_wire())
 }
 
-#[tokio::test]
-async fn the_b6_galvo_wire_is_unchanged() {
-    let (connect, frame, run) = b6_wire().await;
-    let got = [(connect.len(), fnv(&connect)), (frame.len(), fnv(&frame)), (run.len(), fnv(&run))];
-    // Recorded on main at 48f3c9d, before the machine-driver interface (branch gantry-grbl).
-    let golden: [(usize, u64); 3] = GOLDEN;
-    assert_eq!(got, golden, "the bytes sent to the galvo changed");
+fn digests(wire: &(Vec<u8>, Vec<u8>, Vec<u8>)) -> [(usize, u64); 3] {
+    let (connect, frame, run) = wire;
+    [(connect.len(), fnv(connect)), (frame.len(), fnv(frame)), (run.len(), fnv(run))]
 }
 
-const GOLDEN: [(usize, u64); 3] = [(50952, 18112136541962948892), (3216, 11237414082795531250), (6444, 3063143965411556796)];
+#[tokio::test]
+async fn the_b6_galvo_wire_is_unchanged() {
+    assert_eq!(digests(&b6_wire(B6).await), GOLDEN, "the bytes sent to the galvo changed");
+}
+
+/// The B6 profile as it was before main's hardware-verified axis swap (`swap_xy = false`): the run's bytes are those
+/// recorded before the machine-driver interface, so the interface changed nothing a run sends.
+#[tokio::test]
+async fn the_b6_run_wire_is_unchanged_by_the_driver_interface() {
+    let unswapped = B6.replacen("swap_xy = true ", "swap_xy = false", 1);
+    assert_ne!(unswapped, B6, "the fixture swaps the axes");
+    let got = digests(&b6_wire(&unswapped).await);
+    assert_eq!(got[0], GOLDEN[0], "connect");
+    assert_eq!(got[2], PRE_INTERFACE_RUN, "the run's bytes changed");
+}
+
+/// Recorded with this test on main at 8f91368 (the galvo fixes merged into gantry-grbl), and equal on the merge: the
+/// connect is the one first recorded at 48f3c9d, before the machine-driver interface. The frame and run differ from
+/// that first recording because of main's hardware-verified changes: the B6 fixture's `swap_xy = true` (transposes
+/// every frame and run coordinate, same lengths), the short jump delay along frame outlines (same packet count), and
+/// one `ReadPort` input sample while the frame streams (one 12-byte single more).
+const GOLDEN: [(usize, u64); 3] = [(50952, 18112136541962948892), (3228, 2872483029218445548), (6444, 12758818638159827868)];
+
+/// The run digest recorded at 48f3c9d, before the machine-driver interface, with `swap_xy = false`.
+const PRE_INTERFACE_RUN: (usize, u64) = (6444, 3063143965411556796);

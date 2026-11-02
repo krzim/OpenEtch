@@ -425,13 +425,16 @@ export function approvalGates(p: DevicePrefs, io: IoPorts | null): ApprovalGates
 /** A friendlier text for the engine's refusals of an approval that the PIN codes do not cover (409s), or null. */
 export function approvalRefusalText(detail: string): string | null {
   const d = detail.toLowerCase();
-  if (d.includes("require framing")) return "Require Framing is on: frame the job (Frame in the Laser window) since its last edit, on this device, then approve.";
-  if (d.includes("job checklist")) return "Tick every item of the Job Checklist before approving.";
+  if (d.includes("require framing")) return "Require Framing is on: frame the job (Frame in the Laser window) since its last edit, on this device, then try again.";
+  if (d.includes("job checklist")) return "Tick every item of the Job Checklist first.";
   if (d.includes("door interlock")) {
     const m = /input (\d+)/.exec(detail);
-    return `Door Protect: the enclosure is open${m ? ` (input ${m[1]})` : ""}. Close it, then approve again.`;
+    return `Door Protect: the enclosure is open${m ? ` (input ${m[1]})` : ""}. Close it, then try again.`;
   }
-  if (d.includes("another run is in progress")) return "Another run holds the machine. Wait for it to end (or STOP it), then approve.";
+  if (d.includes("changed since start was clicked")) {
+    return "The job changed just before Start (an edit was still arriving, e.g. an agent's). Nothing was burned: check it and press Start again.";
+  }
+  if (d.includes("another run is in progress")) return "Another run holds the machine. Wait for it to end (or STOP it), then try again.";
   if (d.includes("sim_pin_real_link") || d.includes("simulator test pin")) return "The simulator test PIN cannot approve runs on a real laser.";
   return null;
 }

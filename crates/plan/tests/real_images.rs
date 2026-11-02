@@ -64,6 +64,7 @@ fn target(field_mm: f64) -> Target {
             jump_distance_limit_mm: 10.0,
         },
         open_mo_delay_us: 8000.0,
+        motion_time_scale: 1.0,
         calibration: lmc::Calibration::default(),
         pulse_width_enabled: true,
         z_axis: false,

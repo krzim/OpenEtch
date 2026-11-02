@@ -11,6 +11,7 @@ publish = false
 [workspace.dependencies]
 # internal
 lmc = { path = "crates/lmc" }
+ruida = { path = "crates/ruida" }
 corfile = { path = "crates/corfile" }
 doc = { path = "crates/doc" }
 commands = { path = "crates/commands" }

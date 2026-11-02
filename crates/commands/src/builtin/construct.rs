@@ -523,6 +523,7 @@ fn permissive_target(field_mm: f64) -> plan::Target {
             jump_distance_limit_mm: 10.0,
         },
         open_mo_delay_us: 0.0,
+        motion_time_scale: 1.0,
         calibration: Default::default(),
         pulse_width_enabled: true,
         z_axis: false,

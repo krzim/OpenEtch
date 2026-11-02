@@ -1,7 +1,8 @@
 // HTTP calls for job control, framing, calibration and device settings (ARCHITECTURE.md, "Job control, calibration
 // and device settings"). Same auth and error handling as client.ts (bearer token, ApiError with the engine's `error`
-// text, `code` and HTTP status); kept apart so the machine side of the UI has its own module. Nothing here fires the
-// laser: `requestRun` only creates a pending run, which still needs the operator PIN in the Runs card.
+// text, `code` and HTTP status); kept apart so the machine side of the UI has its own module. `requestRun` only creates
+// a pending run, which still needs approval in the Runs card; `start` is the no-PIN engine's one-click Start (LightBurn's
+// Start), which the engine accepts only from this page in a browser.
 
 import { ApiError, authToken, UI_ORIGIN } from "./client.ts";
 import { contentDispositionName } from "./project.ts";
@@ -89,6 +90,8 @@ export const jobApi = {
   resume: () => call("POST", "/api/machine/resume", { origin: UI_ORIGIN }),
   /** Creates a pending run with these options (`api/job.ts` runRequestBody); nothing fires until it is approved. */
   requestRun: (body: Record<string, unknown>) => call("POST", "/api/runs", body),
+  /** One-click Start (engine `--approval click` only): plans the document with these options and burns it at once. */
+  start: (body: Record<string, unknown>) => call("POST", "/api/job/start", { origin: UI_ORIGIN, ...body }),
 
   // ---- framing and pointer (light only) ----
   frame: (body: Record<string, unknown>) => call("POST", "/api/machine/frame", body),

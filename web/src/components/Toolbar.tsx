@@ -58,6 +58,8 @@ export interface ToolbarProps {
   onFrame: () => void;
   onFrameStop: () => void;
   onRequestRun: () => void;
+  /** No PIN on the engine: the run button is Start and burns at once. */
+  startMode?: boolean;
   /** Why the active device can't frame or run (design-only device), or null. */
   designOnly?: string | null;
   onToggleLeft: () => void;
@@ -193,7 +195,14 @@ export function Toolbar(p: ToolbarProps) {
           <div className="tool-group">
             <Btn icon="frame" label={t("tb.frame")} onClick={p.onFrame} disabled={!!p.designOnly} title={p.designOnly ?? t("tb.frameTitle")} />
             <Btn icon="frameStop" label={t("tb.stopFrame")} onClick={p.onFrameStop} title={t("tb.stopFrameTitle")} />
-            <Btn icon="run" label={t("tb.requestRun")} onClick={p.onRequestRun} disabled={!!p.designOnly} title={p.designOnly ?? t("tb.requestRunTitle")} cls="tool-run" />
+            <Btn
+              icon="run"
+              label={p.startMode ? t("laser.start") : t("tb.requestRun")}
+              onClick={p.onRequestRun}
+              disabled={!!p.designOnly}
+              title={p.designOnly ?? (p.startMode ? t("laser.startTitle") : t("tb.requestRunTitle"))}
+              cls="tool-run"
+            />
           </div>
         </>
       )}

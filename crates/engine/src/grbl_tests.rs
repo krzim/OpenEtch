@@ -247,6 +247,29 @@ async fn switching_back_to_the_galvo_restores_the_lmc_driver() {
     assert_eq!(sim(&st).report().lines_received, 3, "init's queries only");
 }
 
+/// The galvo's input port features (main's foot switch sampling, `GET /api/machine/inputs`) are LMC-only: refused on a
+/// gantry, and back on the galvo the input reads a streaming frame takes reach the engine's handle (the controller
+/// rebuilt after the GRBL driver shares it).
+#[tokio::test]
+async fn input_port_features_are_galvo_only_and_survive_a_driver_switch() {
+    let (app, st, _grbl, galvo) = grbl_engine(false).await;
+    let (s, v) = send(&app, req("GET", "/api/machine/inputs", None)).await;
+    assert!(s.is_client_error(), "a gantry has no input port: {s} {v}");
+    assert!(crate::approve::foot_switch_port(&st).is_none());
+    let (s, v) = send(&app, req("POST", &format!("/api/devices/{galvo}/activate"), None)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (s, v) = send(&app, req("GET", "/api/machine/inputs", None)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    exec(&app, "shape.rect", json!({"width_mm": 10, "height_mm": 10})).await;
+    st.machine.sim_counters().unwrap().set_inputs(1 << 14);
+    let (s, v) = send(&app, req("POST", "/api/machine/frame", Some(json!({"continuous": false})))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let samples = st.machine.take_input_samples();
+    assert!(!samples.is_empty() && samples.iter().all(|&(_, b)| b == 1 << 14), "{samples:?}");
+    st.machine.request_stop();
+    assert!(!st.machine.has_input_samples(), "a stop discards them");
+}
+
 #[tokio::test]
 async fn grbl_profiles_are_edited_and_checked() {
     let (app, st, id, _) = grbl_engine(false).await;

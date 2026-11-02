@@ -18,6 +18,7 @@ import {
   normalizeFrameOptions,
   normalizeRunOptions,
   progressPct,
+  remainingLine,
   repeating,
   runOptionsSummary,
   runRequestBody,
@@ -81,6 +82,18 @@ test("job status from GET /api/job (the engine's idle answer and a running one)"
   assert.equal(iterationText(jobStatus({ active: true, iterations: 1, iteration: 1 })), "");
 });
 
+test("a running job past its estimate shows Finishing…, never 0 s left", () => {
+  const on = jobStatus({ active: true, state: "running", remaining_s: 12.4, finishing: false, estimate_correction: 1.05 });
+  assert.deepEqual(remainingLine(on), { key: "job.remaining", time: 12.4 });
+  assert.equal(on.estimate_correction, 1.05);
+  assert.deepEqual(remainingLine(jobStatus({ active: true, state: "running", remaining_s: 0, finishing: true })), { key: "job.finishing" });
+  // An engine that sends no `finishing`: under a second while marking is finishing too.
+  assert.deepEqual(remainingLine(jobStatus({ active: true, state: "running", remaining_s: 0.4 })), { key: "job.finishing" });
+  // Waiting for the pedal: the whole estimate is still to come.
+  assert.deepEqual(remainingLine(jobStatus({ active: true, state: "waiting_for_start_input", remaining_s: 23.6 })), { key: "job.remaining", time: 23.6 });
+  assert.equal(jobStatus({ active: true, estimate_correction: -2 }).estimate_correction, 1);
+});
+
 test("run request bodies follow LightBurn's Laser window options", () => {
   assert.deepEqual(runRequestBody(DEFAULT_RUN_OPTIONS), { origin: "ui" });
   assert.deepEqual(runRequestBody({ ...DEFAULT_RUN_OPTIONS, repeat: 5 }), { origin: "ui", repeat: 5 });
@@ -105,12 +118,12 @@ test("stored run options are clamped", () => {
 });
 
 test("frame request bodies leave out options that do not apply", () => {
-  assert.deepEqual(frameRequestBody(DEFAULT_FRAME_OPTIONS), { mode: "bounds", continuous: true });
+  assert.deepEqual(frameRequestBody(DEFAULT_FRAME_OPTIONS), { mode: "hull", continuous: true, live: true });
   const o = { ...DEFAULT_FRAME_OPTIONS, style: "outline" as const, individually: true, outsideOnly: true, pointer: "both" as const, blanking: false, live: true, speedMmS: 1500, continuous: false };
   assert.deepEqual(frameRequestBody(o), { mode: "outline", outside_only: true, continuous: false, speed_mm_s: 1500, pointer: "both", blanking: false, live: true });
-  assert.deepEqual(frameRequestBody({ ...DEFAULT_FRAME_OPTIONS, style: "hull", individually: true, outsideOnly: true }), { mode: "hull", individually: true, continuous: true });
-  assert.deepEqual(frameRequestBody({ ...DEFAULT_FRAME_OPTIONS, selectionOnly: true, toolLayersOnly: true }, ["obj-3"]), { mode: "bounds", ids: ["obj-3"], continuous: true });
-  assert.deepEqual(frameRequestBody({ ...DEFAULT_FRAME_OPTIONS, toolLayersOnly: true }), { mode: "bounds", tool_layers_only: true, continuous: true });
+  assert.deepEqual(frameRequestBody({ ...DEFAULT_FRAME_OPTIONS, style: "hull", individually: true, outsideOnly: true }), { mode: "hull", individually: true, continuous: true, live: true });
+  assert.deepEqual(frameRequestBody({ ...DEFAULT_FRAME_OPTIONS, selectionOnly: true, toolLayersOnly: true }, ["obj-3"]), { mode: "hull", ids: ["obj-3"], continuous: true, live: true });
+  assert.deepEqual(frameRequestBody({ ...DEFAULT_FRAME_OPTIONS, toolLayersOnly: true }), { mode: "hull", tool_layers_only: true, continuous: true, live: true });
   assert.throws(() => frameRequestBody({ ...DEFAULT_FRAME_OPTIONS, selectionOnly: true }, []), /Select shapes/);
   assert.equal(normalizeFrameOptions({ style: "contour" }).style, "outline");
   assert.equal(normalizeFrameOptions({ style: "star", pointer: "laser" }).pointer, "red");

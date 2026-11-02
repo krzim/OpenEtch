@@ -40,6 +40,11 @@ pub struct Target {
     /// Wait after opening the master oscillator before the first motion (the profile's `open_mo_delay_us`;
     /// galvoplotter's `delay_open_mo` is 8 ms).
     pub open_mo_delay_us: f64,
+    /// How much longer the board takes to move than distance / commanded speed (the profile's `motion_time_scale`,
+    /// see `machine::MachineProfile`): every jump and mark time of the estimate is multiplied by it. 1 means as
+    /// commanded. Only the time estimate uses it; what is sent never changes.
+    #[serde(default = "one")]
+    pub motion_time_scale: f64,
     /// Lens corrections applied with the field transform (the same as the frame's). Neutral by default.
     #[serde(default, skip_serializing_if = "lmc::Calibration::is_neutral")]
     pub calibration: lmc::Calibration,
@@ -64,6 +69,10 @@ pub struct Target {
 
 fn yes() -> bool {
     true
+}
+
+fn one() -> f64 {
+    1.0
 }
 
 impl Target {
@@ -148,6 +157,9 @@ impl Target {
         if !(self.open_mo_delay_us.is_finite() && self.open_mo_delay_us >= 0.0) {
             return Err(PlanError::Target(format!("open_mo_delay_us must be >= 0 (got {})", self.open_mo_delay_us)));
         }
+        if !(self.motion_time_scale.is_finite() && lmc::units::MOTION_TIME_SCALE_RANGE.contains(&self.motion_time_scale)) {
+            return Err(PlanError::Target(format!("motion_time_scale must be within 0.5..=2 (got {})", self.motion_time_scale)));
+        }
         Ok(())
     }
 }
@@ -179,6 +191,7 @@ pub(crate) mod tests {
                 jump_distance_limit_mm: 10.0,
             },
             open_mo_delay_us: 8000.0,
+            motion_time_scale: 1.0,
             calibration: lmc::Calibration::default(),
             pulse_width_enabled: true,
             z_axis: false,

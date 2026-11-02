@@ -27,7 +27,7 @@ import { friendlyError, outsideField } from "./api/laser.ts";
 import { activeDevice, asLightBurnDevices, canvasWorkspace, designOnlyReason, machineDevice } from "./api/devices.ts";
 import { engineLightBurnDevice } from "./api/lightburn.ts";
 import { MAX_UPLOAD_BYTES, commandResult, defaultImportMode, fileError, warningList } from "./api/project.ts";
-import { pendingRuns, stopToast } from "./api/runs.ts";
+import { noPinMode, pendingRuns, stopToast } from "./api/runs.ts";
 import type { Vec2 } from "./api/types.ts";
 import { useEngine } from "./api/useEngine.ts";
 import { BrowserPanel } from "./components/BrowserPanel.tsx";
@@ -48,7 +48,7 @@ import { useLibsUi } from "./libs/useLibsUi.tsx";
 import { useDesignUi } from "./design/useDesignUi.tsx";
 import { MachineCard, PreviewStatsCard, RunsCard } from "./components/LaserPanel.tsx";
 import { frameWithOptions } from "./components/FramingOptions.tsx";
-import { requestRunWithOptions, togglePause } from "./components/JobControls.tsx";
+import { runJob, togglePause } from "./components/JobControls.tsx";
 import { PreviewTimeline } from "./components/PreviewTimeline.tsx";
 import { LightBurnDevices, useLightBurn } from "./components/LightBurn.tsx";
 import { LayerSection, PropertiesPanel } from "./components/PropertiesPanel.tsx";
@@ -982,8 +982,10 @@ export function App() {
   // there is one, else the whole job; `style` overrides the frame style.
   const frameWith = (style?: "bounds" | "outline") =>
     void machineAction(frameWithOptions(selection.objects, { selectionOnly: selection.objects.length > 0, ...(style ? { style } : {}) }), t("app.framing"));
-  // Request run (hotkey, toolbar) with the Laser window's run options; it still needs PIN approval.
-  const requestRun = () => void requestRunWithOptions(selection.objects).then(notify).catch(report).finally(() => void engine.refreshMachine());
+  // Request run (hotkey, toolbar) with the Laser window's run options: it still needs PIN approval, or without a PIN
+  // (`--approval click`) it is LightBurn's Start and burns at once (the Job Checklist is ticked in the Laser window).
+  const requestRun = () =>
+    void runJob(noPinMode(machine), selection.objects, null, null, doc?.revision ?? null).then(notify).catch(report).finally(() => void engine.refreshMachine());
   const laserDisabled = designOnlyReason(device);
   // Workspace hotkeys (workspace/hotkeys.ts); App's own keys stay in the handler above.
   ws.keymap.current = {
@@ -1141,6 +1143,7 @@ export function App() {
         onFrame={() => void machineAction(frameWithOptions(selection.objects), t("app.framing"))}
         onFrameStop={() => void machineAction(api.frameStop(), t("app.frameStopped"))}
         onRequestRun={requestRun}
+        startMode={noPinMode(machine)}
         designOnly={designOnlyReason(device)}
         onToggleLeft={() => setLeftOpen((v) => !v)}
         onToggleRight={() => setRightOpen((v) => !v)}
@@ -1236,6 +1239,8 @@ export function App() {
               notify={notify}
               report={report}
               onRequested={() => void engine.refreshMachine()}
+              noPin={noPinMode(machine)}
+              docRevision={doc?.revision ?? null}
             />
           )}
           </div>

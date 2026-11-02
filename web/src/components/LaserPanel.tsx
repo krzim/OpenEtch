@@ -2,9 +2,10 @@
 // runs, and preview stats. Approval is the only way the UI can make the laser fire: it needs two separate taps plus the
 // operator PIN (set on the engine machine with `openetch set-pin`), shows what will fire, and is refused for stale runs,
 // a changed PIN file and a PIN lockout. The PIN lives only in this component's state while the confirm step is open and
-// goes only into the approve request body. When the engine runs without a PIN (`--approval click`) the confirm step has
-// no PIN field: Start approves (the engine checks that the request comes from this page in a browser), and the card
-// says when the foot switch can approve the single pending run instead.
+// goes only into the approve request body. When the engine runs without a PIN (`--approval click`) there is no confirm
+// step: a pending run (e.g. one an agent prepared) shows Start, which approves it at once (the engine checks that the
+// request comes from this page in a browser), with the Job Checklist and Require Framing inline when they are on. The
+// foot switch never approves pending runs: it frames and burns the current document (the Laser window shows it).
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, ApiError } from "../api/client.ts";
@@ -16,7 +17,6 @@ import {
   approvalNotice,
   approvalHowText,
   approveBlocker,
-  footSwitch,
   isStale,
   lockSecondsLeft,
   noPinMode,
@@ -271,9 +271,8 @@ function PendingRunRow(props: {
   const pinRef = useRef<HTMLInputElement>(null);
   const blocker = approveBlocker(run, machine, { docRevision: props.docRevision, nowUnixS: props.nowUnixS });
   const stale = isStale(run, props.docRevision);
-  // No PIN on this engine: Start alone approves (and the foot switch, when the profile has one).
+  // No PIN on this engine: Start alone approves.
   const noPin = noPinMode(machine);
-  const foot = footSwitch(machine);
   const hint = noPin ? null : pinHint(pin);
   // Require Framing, Door Protect and the Job Checklist of the active device (src/libs/JobSafety.tsx).
   const gates = useApprovalGates();
@@ -297,7 +296,8 @@ function PendingRunRow(props: {
     if (blocker && step === "confirm") setStep("idle");
   }, [blocker, step]);
 
-  const canFire = step === "confirm" && !blocker && (noPin || validPin(pin)) && gates.complete;
+  // Without a PIN, Start fires straight from the row (no confirm step); with it, the confirm step needs a valid PIN.
+  const canFire = !blocker && gates.complete && (noPin ? step === "idle" : step === "confirm" && validPin(pin));
   const approve = async () => {
     if (!canFire) return;
     const sent = noPin ? null : pin;
@@ -327,7 +327,15 @@ function PendingRunRow(props: {
       <RunFacts run={run} />
       {blocker && blocker !== props.notice && <p className="run-hint">{blocker}</p>}
       {error && <p className="run-error">{error}</p>}
-      {step === "idle" && (
+      {noPin && (
+        <>
+          <ApprovalChecks state={gates} disabled={step === "sending"} showDoor={false} />
+          <button className="btn btn-danger" onClick={() => void approve()} disabled={!canFire} title={t("laser.startTitle")}>
+            {step === "sending" ? t("rest.approving") : t("lp.start")}
+          </button>
+        </>
+      )}
+      {!noPin && step === "idle" && (
         <button
           className="btn btn-warn"
           onClick={() => {
@@ -339,7 +347,7 @@ function PendingRunRow(props: {
           {t("lp.approve")}
         </button>
       )}
-      {step !== "idle" && (
+      {!noPin && step !== "idle" && (
         <div className="confirm">
           <p>
             <strong>{t("lp.thisFiresTheLaser")}</strong> Enclosure closed, eyewear on, focus and stock checked?
@@ -381,7 +389,6 @@ function PendingRunRow(props: {
               {step === "sending" ? t("rest.approving") : noPin ? t("lp.start") : t("lp.confirmAndFire")}
             </button>
           </div>
-          {foot && <p className="muted">{t("lp.orPressTheFootSwitchV1", { v1: foot.input_bit })}</p>}
         </div>
       )}
     </div>

@@ -45,6 +45,8 @@ export const EN_REST = {
   "rest.passThrough": "Pass-through",
   "rest.reduced": "(reduced)",
   "rest.runRequested": "Run requested. Approve it in the Runs card.",
+  "rest.jobStarted": "Job started.",
+  "rest.jobStartedFrom": "Job started from segment {n}.",
   "rest.runFromRequested": "Run from segment {n} requested. Approve it in the Runs card.",
   "rest.running": "Running",
   "rest.approving": "Approving…",

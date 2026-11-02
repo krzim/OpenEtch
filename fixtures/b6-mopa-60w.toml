@@ -17,11 +17,21 @@
 # - pulse_width_enabled, open_mo_delay_us: the owner's LightBurn device JCZFiber (Laser_QPulseWidthEnabled,
 #   Laser_OpenMODelay). Informational. start_mark_input_bit: markcfg STARTMARKPORT=14 and LightBurn
 #   StartMarkPortBit=14 (unverified what is wired to it).
+# - motion_time_scale (time estimate only, nothing sent changes): the board's GetMarkTime after two runs on the owner's
+#   machine (2026-11-01; words 1-2 = list time in 10 us units, matched by the wall clock) against the motion time the
+#   list commands at the speeds its words give: a 30 x 30 mm fill at 1000 mm/s (600 lines, 18.04 s of motion, 0.25 s of
+#   delays) took 23.568 s, 1.292x; an "F" of three outlines at 300 mm/s (0.576 s of motion, 0.010 s of delays) took
+#   0.777 s, 1.33x (its jump path is not known exactly: ~35 mm more jumping would make it 1.29x too). A fixed cost per
+#   line or per corner alone does not fit both (64 ms per line on the F, 8.8 ms on the fill); a small one (1-2 ms)
+#   on top of the scale cannot be ruled out with two runs.
+#   UNVERIFIED whether the board really moves slower than commanded (then the burn speed is ~77 % of the setting) or
+#   only counts differently: the dot pitch of a line at 1000 mm/s and 1 kHz (1.0 mm commanded, ~0.77 mm if slower)
+#   or timing the same job in EzCad would tell.
 
 name = "ComMarker B6 MOPA 60W"
 laser_source = "JPT M7 MOPA 60W"
 field_mm = 153.75
-swap_xy = false
+swap_xy = true             # owner's B6, 2026-11-01: with false the red frame of an "F" came out transposed
 negate_x = false
 negate_y = false
 cor_file = "jcz150.cor"
@@ -32,10 +42,11 @@ max_power_pct = 100.0
 red_light_port_bit = 8
 laser_enable_port_bit = 0
 red_light_speed_mm_s = 3000.0
-max_jump_speed_mm_s = 4000.0   # LightBurn B6 library JumpSpeed=4000 (provisional)
+max_jump_speed_mm_s = 15000.0  # ComMarker's B6 rating: up to 15,000 mm/s
 max_delay_us = 2000.0          # provisional sanity cap
 pulse_width_enabled = true     # LightBurn Laser_QPulseWidthEnabled
 open_mo_delay_us = 8000.0      # LightBurn Laser_OpenMODelay (informational)
+motion_time_scale = 1.30       # time estimate only: the board took 1.29-1.33x the commanded motion time (see header)
 start_mark_input_bit = 14      # markcfg STARTMARKPORT; on the owner's B6 (2026-11-01) input 14 reads 1 at rest and 0 while
                                # the foot switch is pressed (active low)
 start_mark_active_low = true
@@ -47,6 +58,7 @@ notes = [
     "jump_distance_limit_mm is a placeholder",
     "max_jump_speed_mm_s (LightBurn B6 JumpSpeed=4000) and max_delay_us are provisional",
     "polygon delay encoding (one 10 us word, meerk40t) is unverified on hardware",
+    "motion_time_scale 1.30 fitted to two GetMarkTime readings (2026-11-01); whether the burn itself is slower is unverified",
 ]
 
 [io]

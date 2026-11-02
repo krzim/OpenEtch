@@ -85,6 +85,20 @@ export function FramingControls(p: {
     return () => window.removeEventListener("keydown", onKey, true);
   }, [framing, o.live]);
 
+  // A frame already running follows the options: changing the style (or any other option) while framing traces the
+  // frame again with the new options, as the Frame button would.
+  const shown = useRef(o);
+  useEffect(() => {
+    const before = shown.current;
+    shown.current = o;
+    if (!framing || before === o) return;
+    try {
+      jobApi.frame(frameRequestBody(o, ctx.current.selection)).catch(ctx.current.report).finally(ctx.current.onChanged);
+    } catch (e) {
+      ctx.current.notify(e instanceof Error ? e.message : String(e), "error");
+    }
+  }, [o, framing]);
+
   const start = () => {
     try {
       const body = frameRequestBody(o, p.selection);

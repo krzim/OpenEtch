@@ -198,6 +198,13 @@ async fn pause_between_iterations_holds_the_next_one() {
             let run = wait_final(&st, &id).await;
             assert_eq!((run.state, run.completed), (RunState::Cancelled, 0), "{:?}", run.error);
             assert_eq!(counters.emitting_packets(), before);
+            // The stop marks the run cancelled at once; its task releases the machine a moment later.
+            for _ in 0..1000 {
+                if !st.machine.is_running() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
         } else {
             assert_eq!(send(&app, req("POST", "/api/machine/resume", None)).await.0, StatusCode::OK);
             let run = wait_final(&st, &id).await;

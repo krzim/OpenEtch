@@ -5,7 +5,7 @@
 //! | Key | Profile field | Note |
 //! |---|---|---|
 //! | `FIELDSIZE` | `field_mm` | |
-//! | `GALVOX` | `swap_xy = (GALVOX == 0)` | **Unverified.** Read as EzCad's "Galvo 1 = X" checkbox (1 on the B6). |
+//! | `GALVOX` | `swap_xy = (GALVOX == 1)` | Verified on the owner's B6 (GALVOX = 1, needs the swap; 2026-11-01). |
 //! | `GALVONEGATE0` / `GALVONEGATE1` | `negate_x` / `negate_y` | **Unverified** that 0 is X. |
 //! | `ENABLECORFILE` + `CORFILE` | `cor_file` (basename only) | `None` when `ENABLECORFILE=0` or empty. |
 //! | `REDLIGHTSPEED` | `red_light_speed_mm_s` | |
@@ -85,8 +85,7 @@ pub(crate) fn import(text: &str, base: MachineProfile) -> Result<MarkcfgImport, 
                 true
             }
             "GALVOX" => {
-                p.swap_xy = !flag(key, raw)?;
-                unverified.push(key.clone());
+                p.swap_xy = flag(key, raw)?;
                 true
             }
             "GALVONEGATE0" => {
@@ -176,13 +175,13 @@ mod tests {
         let i = import(&latin1(MARKCFG), MachineProfile::generic_lmc_fiber()).unwrap();
         let p = &i.profile;
         assert_eq!(p.field_mm, 153.75);
-        assert!(!p.swap_xy && !p.negate_x && !p.negate_y);
+        assert!(p.swap_xy && !p.negate_x && !p.negate_y);
         assert_eq!(p.cor_file, Some(PathBuf::from("jcz150.cor")));
         assert_eq!(p.red_light_speed_mm_s, 3000.0);
         assert_eq!((p.mark_speed.min_mm_s, p.mark_speed.max_mm_s), (1.0, 10000.0));
         assert_eq!((p.frequency_khz_min, p.frequency_khz_max), (1.0, 4000.0));
         assert_eq!(p.start_mark_input_bit, Some(14));
-        assert_eq!(i.unverified, ["GALVONEGATE0", "GALVONEGATE1", "GALVOX", "STARTMARKPORT"]);
+        assert_eq!(i.unverified, ["GALVONEGATE0", "GALVONEGATE1", "STARTMARKPORT"]);
         assert!(i.ignored.contains(&"FPK".to_owned()));
         assert!(i.applied.contains(&"CORFILE".to_owned()));
     }
@@ -192,7 +191,7 @@ mod tests {
         let text = "[LMC_CFG]\nFIELDSIZE=110\nGALVOX=0\nGALVONEGATE0=1\nGALVONEGATE1=0\nENABLECORFILE=0\nCORFILE=C:\\x\\a.cor\n";
         let p = MachineProfile::from_markcfg(text).unwrap();
         assert_eq!(p.field_mm, 110.0);
-        assert!(p.swap_xy && p.negate_x && !p.negate_y);
+        assert!(!p.swap_xy && p.negate_x && !p.negate_y);
         assert_eq!(p.cor_file, None);
         assert_eq!(p.start_mark_input_bit, None);
         let p = MachineProfile::from_markcfg("[LMC_CFG]

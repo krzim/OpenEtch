@@ -282,7 +282,7 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
             break;
           case "machine": {
             void refreshMachine();
-            // The foot switch approves only when exactly one run waits (no-PIN mode); say what it did or why not.
+            // The foot switch cycle (no-PIN mode): why a press did not burn, or why the cycle ended.
             const foot = footSwitchToast(ev.event, ev.detail);
             if (foot) notifyRef.current(foot.msg, foot.kind);
             break;

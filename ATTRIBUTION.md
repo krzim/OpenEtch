@@ -47,6 +47,7 @@ listed here.
 | GRBL 1.1 documentation: the [gnea/grbl wiki](https://github.com/gnea/grbl/wiki) pages "Grbl v1.1 Interface" (character-counting streaming, the 127-byte receive buffer, realtime commands `?` `!` `~` 0x18 0x85, status reports, `ok`/`error:`/`ALARM:` responses), "Grbl v1.1 Commands" (`$$`, `$#`, `$G`, `$I`, `$N`, `$X`, `$H`, `$J=`, `$C`, `$SLP`, `$RST`), "Grbl v1.1 Laser Mode" (`$32`, M3/M4 behaviour, S scaled to `$30`/`$31`), "Grbl v1.1 Jogging", and the error and alarm code tables (`doc/csv/*.csv` in the repository, read as documentation) | Documentation (GRBL's code is GPL-3.0: none of it was read for implementation or copied) | Protocol facts only: the driver, the console policy and the GRBL simulator are OpenEtch's own | `crates/machine/src/grbl/` |
 | [de-vri-es/serial2-rs](https://github.com/de-vri-es/serial2-rs) (`serial2` 0.2) | BSD-2-Clause OR Apache-2.0 | Used as a dependency (not copied), optional feature `serial`: the GRBL driver's serial port. Chosen over `serialport` (MPL-2.0) because a permissive crate works and it needs no system library | `crates/machine/src/grbl/serial.rs` |
 | LinuxCNC G-code reference (linuxcnc.org/docs: "G-code overview", G2/G3 centre and radius formats, G92) and LightBurn documentation (Importing G-code, GRBL device settings, Save G-code) | Documentation | Behaviour and language facts only (no text or code copied): which moves an import draws, the R-form arc centre rule, G92 offsets; the GRBL profile fields | `crates/fileio/src/gcode_in.rs`, `crates/plan/src/gcode.rs`, `crates/machine/src/grbl/profile.rs` |
+| [meerk40t/meerk40t](https://github.com/meerk40t/meerk40t) @ `d511944` `meerk40t/ruida/` (`rdjob.py`, `emulator.py`, `udp_connection.py`, `ruidasession.py`, `usb_transport.py`) and `test/test_ruida.py` | MIT © 2021 meerk40t | Ruida protocol facts re-written in Rust (no code copied): the byte scrambling and key detection, the 14/35-bit number encodings and units, the command opcodes and parameter layouts, memory register addresses and status bits, UDP framing (ports, checksum, ACK/NAK/ERR, stop-and-wait), USB serial differences, the `.rd` header layout and file sum, the stored-document (`E8`) commands; the scrambled-key test vectors | `crates/ruida` (per-file headers; command table in the crate docs) |
 
 ## Fixtures
 
@@ -61,5 +62,6 @@ listed here.
 
 ## Never copied
 
-GPL, SSPL or unlicensed sources: Balor, balor-meerk40t, BurnCraft, LaserCraft, lmcv2u-loader, GRBL's source code (its documentation only, see above). No BJJCZ firmware. No
+GPL, SSPL, unlicensed or otherwise non-permissive sources: Balor, balor-meerk40t, BurnCraft, LaserCraft, lmcv2u-loader, jnweiger/ruida-laser
+(GPL-2.0), kkaempf/ruida (Ruby licence), GRBL's source code (its documentation only, see above). No BJJCZ firmware. No
 LightBurn code, assets or text.

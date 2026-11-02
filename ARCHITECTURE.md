@@ -16,6 +16,7 @@ Mac, PC, phone) and Claude are clients of the same live document. The engine is 
 | Crate | Role | Depends on | Native-only? |
 |---|---|---|---|
 | `lmc` | LMC wire protocol: opcodes, 12-byte single commands, 3072-byte list packets, unit conversions, list builders, decoder/disassembler. **Pure, no I/O.** | – | no (wasm-ok) |
+| `ruida` | Ruida DSP controller protocol (see "Ruida protocol"): byte scrambling, UDP/serial framing, commands, 7-bit number encodings, memory registers, `.rd` job files (read/write), controller simulator (feature `sim`). **Pure, no I/O** except a blocking UDP channel (feature `udp`). Not yet used by any other crate. | – | no (wasm-ok) |
 | `corfile` | EzCad lens correction files (`JCZ_COR_2_1`, `LMC1COR_1.0`): parse, produce the WriteCorLine upload sequence, host-side bilinear correction. **Pure.** | – | no |
 | `doc` | Document model: stock, layers with MOPA cut settings, objects (kurbo paths + affine transforms), guides, output curve tolerance. **Pure data + geometry helpers.** | kurbo, geom (polygon outlines) | no |
 | `lbrn` | LightBurn `.lbrn2` projects and `.clb` material libraries: parse, write, convert to and from `doc` for a galvo field or a gantry bed (`lbrn::Frame`, see "File formats"). **Pure.** | doc, kurbo, roxmltree | no |
@@ -69,8 +70,8 @@ against that. The optional physical confirmation input is enforced by the engine
 stolen PIN used through the engine's API, not against a process that restarts the engine or opens USB itself. In the
 no-PIN approval mode (`--approval click`) the browser check on Start keeps out MCP clients and scripts in other
 sites' pages, not a program that imitates a browser's headers: on loopback no token is needed, so any program on the
-engine's computer (an agent with a shell, curl, a script) can approve a pending run that way, and an agent that drives
-the browser can click Start itself. Use the PIN mode when agents with a shell or browser control run on the laser's
+engine's computer (an agent with a shell, curl, a script) can approve a pending run or start the current document
+that way, and an agent that drives the browser can click Start itself. Use the PIN mode when agents with a shell or browser control run on the laser's
 computer while nobody watches it; the foot switch is the approval path that needs a person at the machine.
 
 - Risk classes on every command: `Query`, `Edit`, `Pointer` (red light / motion, no emission), `Emit` (laser fires).
@@ -79,17 +80,28 @@ computer while nobody watches it; the foot switch is the approval path that need
   emits jumps and the red-pointer port bit.
 - An `Emit` action never runs from an API or MCP call directly. `POST /api/runs` / MCP `job_request_run` plan, encode
   and check the document into a *pending* run and send nothing. Only `POST /api/runs/{id}/approve` with the
-  **operator PIN** (or, in the no-PIN approval mode below, Start in the app in a browser or the foot switch) turns it
+  **operator PIN** (or, in the no-PIN approval mode below, Start in the app in a browser, `POST /api/job/start`, or
+  the foot switch cycle) turns it
   into an armed run (`approve` is the only engine module that creates `machine::Armed`, the token `Controller::run`
   needs). The endpoint refuses requests carrying MCP client headers or a non-`ui` origin, and a run whose document
   revision is stale.
 - **Approval modes** (`--approval pin|click`, fixed when the engine starts; no API, MCP tool or UI setting changes
   it; `GET /api/machine` reports `approval.mode`). `pin` (the default, also for a fresh install) is the operator PIN
   below. `click` has no PIN and needs no `operator-pin` file; a run is approved only by:
-  - **Start in the web app**: `POST /api/runs/{id}/approve` additionally requires the fetch-metadata headers a browser
-    adds to the page's own `fetch` and page scripts cannot set: `Sec-Fetch-Site: same-origin` and an `Origin` the
-    request guard accepts. Without them it answers **403** `code: "browser_required"` with what to do instead; MCP
-    client headers are refused as in the PIN mode, and a `pin` in the body is ignored. **What this does not prove:** a
+  - **Start in the web app**, one click like LightBurn's Start: `POST /api/job/start` plans the current document
+    with the run options in the body and approves it in the same request (`approve::start_now`); there is no
+    separate request step and no confirm dialog (the Job Checklist and Require Framing, when on, show inline above
+    Start). `POST /api/runs/{id}/approve` (Start on a pending run, e.g. one an agent prepared) stays. Both
+    additionally require the fetch-metadata headers a browser adds to the page's own `fetch` and page scripts cannot
+    set: `Sec-Fetch-Site: same-origin` and an `Origin` the request guard accepts. Without them they answer **403**
+    `code: "browser_required"` with what to do instead; MCP client headers and a non-`ui` origin are refused as in
+    the PIN mode, and a `pin` in the body is ignored. The app sends the document `revision` it shows: when the
+    document is at another revision (an agent's edit landed just before the click), the Start is refused (409) and
+    nothing is planned, so Start burns only the version the person was looking at. A Stop at any moment after the
+    request arrived (while the door is read or the job is planned) cancels the Start. A refused one-click Start (door
+    open, Require Framing, the Job Checklist, Stop At, an empty job, a busy board, a Stop, another revision) leaves
+    no pending run behind. In the PIN
+    mode `POST /api/job/start` answers **403** `code: "approval_mode"`. **What this does not prove:** a
     program that is not a browser (curl, a script, an agent with a shell) can send the same two headers: on
     loopback it needs nothing else (no token is required there), off loopback it needs the access token. The access
     token stays the network guard, and on loopback any local process could already talk to the engine (see above);
@@ -97,24 +109,44 @@ computer while nobody watches it; the foot switch is the approval path that need
     origins (`https://`, `localhost`, `127.0.0.1`): from the app opened as `http://<lan-name>:7878` on another device
     (the owner's PC or iPad) there is no `Sec-Fetch-Site`, and the `Origin` check alone decides (browsers set it on
     every `fetch` POST; a page of another site is still refused).
-  - **The foot switch**, the hardware-backed path: the profile's Start Marking input (`start_mark_input_bit`, at the
-    level of `start_mark_active_low`; on the owner's B6, input 14, active low, read on the machine on 2026-11-01). `libs::spawn_io_watch` reads it every 50 ms while the board is initialised and no run or frame holds it;
-    a release followed by 3 pressed reads in a row approves the single pending run of the current document revision
-    (requested in the app or prepared by an agent over MCP), if it was also the single run waiting when the press
-    began. With none or several waiting nothing is approved and the machine event `foot_switch_ignored` (`detail`:
-    `no_pending` or `several_pending`) lets the UI say "pick one in the app"; when the waiting runs changed during
-    the press (a run requested or replaced while the pedal went down) nothing is approved (`changed_during_press`);
-    a refused approval sends `foot_switch_refused` with the reason, a successful one `foot_switch_approved`. A pedal
-    held since before, or still held after a run, approves nothing until it is released, and a changed foot switch
-    port (another bit or polarity, after a device edit) needs a fresh release. Note that an agent may edit the
-    document and request a new run while you walk to the pedal: the old run then goes out of date and the press
-    approves the agent's run if it is the only current one, so look at the app before pressing.
+  - **The foot switch cycle**, the hardware-backed path (module `cycle`, LightBurn's production loop): the profile's
+    Start Marking input (`start_mark_input_bit`, at the level of `start_mark_active_low`; on the owner's B6, input 14,
+    active low, read on the machine on 2026-11-01). `libs::spawn_io_watch` reads it every 50 ms while the board is
+    initialised and no run holds it (also while framing); a press is a release followed by 3 pressed reads in a row.
+    A pedal held since before, or still held after a run, does nothing until it is released, and a changed foot
+    switch port (another bit or polarity, after a device edit) needs a fresh release.
+    - With no cycle, a press starts continuous red-pointer framing of the whole job (every object on an output layer,
+      in the style of the last frame request; never the focus light, never live framing). The cycle is `framing`.
+    - While the cycle frames, a press stops the frame and burns **exactly the document revision being framed**: the
+      document is planned into a run with the default run options (the whole job once, no start input) and approved
+      as `Approver::FootSwitch`; the cycle is `burning`. When the run finishes, framing starts again on the document
+      as it is then (a serial number advanced by the burn included), and every further press burns again. When
+      anything else edited the document during the burn (an agent), the new frame is announced
+      (`foot_cycle_notice`): the next press burns that version only because it is the one being framed.
+    - The cycle records the revision, device and frame loop of its own frame (returned by `AppState::frame_start`),
+      never those of a frame or edit that came in at the same moment; a press burns only while that frame still runs.
+    - If the document revision or the device changed since the frame started (an edit in the app or by an agent),
+      the press frames the new revision instead of burning and says so; a run planned from another revision is
+      discarded and the job re-framed.
+    - Every burn goes through `approve`: the door interlock (read before planning too; open: no burn, the cycle keeps
+      framing and says why), Require Framing (met by the cycle's own frame), Stop At, the stop epoch. A foot cannot
+      tick the Job Checklist, so with the checklist on every press is refused (Start in the app then).
+    - Stop (the app, Esc, MCP's `machine_stop`) ends the cycle and turns the red pointer off; Stop frame, another
+      frame, or a burn that does not finish (stopped, door opened, failed) ends it too.
+    - A press while a run holds the board is not read at all, so it never queues a second burn; a press in the
+      moment between a burn's end and the frame restarting is ignored.
+    - Runs waiting as `pending` (requested in the app, or prepared by an agent over MCP) are never approved by the
+      foot switch: the cycle only burns the current document it framed, and pending runs are started in the app.
+      This is deliberate: a press meant for the framed job can never start an agent's run.
+    - The cycle's frame stops after 10 minutes without a press (`cycle::IDLE_TIMEOUT_SECS`; each burn restarts the
+      clock), and the cycle ends with it.
+    - State: `GET /api/machine` `foot_cycle`; machine events `foot_cycle` (`framing` / `burning` / `off`) and
+      `foot_cycle_notice` (why a press did not burn or the cycle ended; the app shows it as a toast).
   - **How it combines with the per-iteration start input** (`start_input`, "Wait for foot pedal"): a run claimed by
     an approval holds the board, so while it waits for its start input (or the physical confirmation) the watcher
-    does not read the input and the press belongs to that run. A run approved with the foot switch counts that press
-    as its first iteration's start press; each later iteration waits for its own press. A run approved with Start in
-    the app and `start_input` still waits for a press before its first iteration. `--confirm-input` still waits for
-    its own release and press after either approval.
+    does not read the input and the press belongs to that run. The foot switch cycle's runs never ask for the start
+    input. A run started in the app with `start_input` still waits for a press before its first iteration.
+    `--confirm-input` still waits for its own release and press after either approval.
   Everything else applies unchanged in both modes: Stop At, the Job Checklist (a foot switch press cannot tick it, so
   with the checklist on the press is refused and the UI says why), Require Framing, the door interlock, the stop
   epoch, and that `approve` alone arms runs.
@@ -255,7 +287,7 @@ says otherwise. `origin` is `"ui"` (default), `"script"` or `"agent:<name>"`.
 | GET | `/api/preview` | planned job: `{ segments: [{kind: "jump"|"mark", layer, pass, from: [x,y], to: [x,y], emits, power_pct?}], passes: [{layer_id, sub_layer, repeat, segments, mark_length_mm, jump_length_mm, estimated_time_s}], stats, layers: [{layer_id, name, color, mode, output, visible, passes, segments, mark_length_mm, jump_length_mm, estimated_time_s, sub_layers: [{sub_layer, name, label, cleanup, mode, power_pct, speed_mm_s, frequency_khz, pulse_width_ns, passes, planned_passes, segments, mark_length_mm, jump_length_mm, estimated_time_s}]}], warnings }` in field mm. `pass` indexes `passes`, the job's passes in burn order (a jump belongs to the pass it travels into); `sub_layer` is 0 for a layer's main settings and n for `sub_layers[n - 1]`; `layers` lists every document layer in order (zeros for layers with nothing to mark or output off; layer times leave out the job's start-up delay), each with its main settings and sub-layers (`label` "Main", the name, "Cleanup" or "Sub-layer n"; `passes` asked for, `planned_passes` planned, and their share of the layer's totals); `power_pct` is set on marks whose power differs from their pass's (grayscale image runs); `warnings` are things the plan left out (none at present). `?layers=id1,id2` keeps only those layers' segments and entries (stats and `passes` stay the whole job's). An empty document is an empty preview; a planning error (out of field, power above the limit, too many passes/segments) is **422** |
 | GET | `/api/fill_regions` | `{ layers: [{layer_id, name, color, mode, visible, output, paths: [d], object_ids: [id]}] }`: for every layer whose mode is `fill` or `fill_then_line`, one SVG path per object (its closed subpaths, field mm, +Y up, flattened at 0.05 mm) to draw with `fill-rule: evenodd`, which is exactly the area the hatch covers. Display only |
 | GET | `/api/preview.svg` | rendered preview (stock, objects, toolpath; `?jumps=false` hides travel); still renders the document on a planning error |
-| GET | `/api/machine` | `connected`, `simulated`, `busy`, `state`, `running`, `framing`, `field_mm`, `profile`, `device` (the active device's summary, see `GET /api/devices`), `max_power_pct`, `last_error`, `sim_counters`, `approval: { pin_set, pin_changed, locked_until_unix_s: null \| n, sim_pin (the simulator test PIN is in use, see "Safety model"), physical_confirm: null \| { input_bit, timeout_s }, mode: "pin" \| "click" (no PIN: Start in the app or the foot switch), foot_switch: null \| { input_bit, active_low } (the input that approves the single pending run, in the click mode only) }`, `focus_light` (the active device can light a focus pointer: framing's `pointer: focus \| both` work), `lightburn: null \| { device, field_mm, diffs: [{field, base_value, lightburn_value, note}] }` (the active profile compared with the matched LightBurn device, see "LightBurn devices"), `pending_runs: [Run]`, `runs: [Run]` |
+| GET | `/api/machine` | `connected`, `simulated`, `busy`, `state`, `running`, `framing`, `field_mm`, `profile`, `device` (the active device's summary, see `GET /api/devices`), `max_power_pct`, `last_error`, `sim_counters`, `approval: { pin_set, pin_changed, locked_until_unix_s: null \| n, sim_pin (the simulator test PIN is in use, see "Safety model"), physical_confirm: null \| { input_bit, timeout_s }, mode: "pin" \| "click" (no PIN: Start in the app or the foot switch), foot_switch: null \| { input_bit, active_low } (the input that drives the foot switch cycle, in the click mode only) }`, `foot_cycle: { available, phase: "off" \| "framing" \| "burning", revision, run_id, since_unix_s, idle_timeout_s, notice }` (the foot switch cycle, see "Safety model"), `focus_light` (the active device can light a focus pointer: framing's `pointer: focus \| both` work), `lightburn: null \| { device, field_mm, diffs: [{field, base_value, lightburn_value, note}] }` (the active profile compared with the matched LightBurn device, see "LightBurn devices"), `pending_runs: [Run]`, `runs: [Run]` |
 | GET | `/api/lightburn` | `{ available, source: "file" \| "uploaded" \| null, default_device: name \| null, devices: [{name, display_name, field_mm, width_mm, height_mm}] }` (only these fields); `default_device` is the device used when a LightBurn file names none |
 | POST | `/api/lightburn/prefs` | LightBurn's `prefs.ini` as the raw body (at most 2 MB, else **413**): parses `DeviceList` in memory and stores only the parsed devices (`<config-dir>/lightburn-devices.json`), for an engine on a Pi without LightBurn; answers like `GET /api/lightburn`; no devices, not JSON or not UTF-8 is 400. Emits `machine` event `lightburn` |
 | DELETE | `/api/lightburn/prefs` | forgets the uploaded devices (the local `prefs.ini` is used again, if any); answers like `GET /api/lightburn`; emits `machine` event `lightburn` |
@@ -266,6 +298,7 @@ says otherwise. `origin` is `"ui"` (default), `"script"` or `"agent:<name>"`.
 | POST | `/api/devices/{id}/activate` | optional `{ "origin" }` → `{ ok, active: summary, warnings: [text] }`: makes the device active (stored; it is also the one used at the next start). Refused **409** while a run is approved, awaiting confirmation or running, or while framing; MCP headers or a non-`ui` origin **403**. Cancels pending runs, swaps the machine profile (JCZ galvos; the board is initialised again, the simulator gets a fresh `SimLink`), and new documents start at the device's workspace. Emits `device_changed`. A correction file that cannot be found is a warning (output is then uncorrected) |
 | POST | `/api/runs` | optional `{ "origin", "repeat"?: 1..=10000, "continuous"?: bool, "start_input"?: bool, "full_pulse"?: bool, "selection"?: [id], "from_segment"?: n }` → **201** `{ "ok": true, "id", "run": Run, "message" }`; plans, encodes and checks the document (with `selection` only those objects/groups, LightBurn's Cut Selected Graphics; with `from_segment` from that `GET /api/preview` segment on, Start Here, not combined with `selection` (400); the job counter is the run index of auto-rotating fills, and `GET /api/preview` plans with the same index; `start_input` when the profile's start- and stop-marking inputs are the same bit 400); sends nothing to the board; at most 8 pending; unknown keys 400 |
 | POST | `/api/runs/{id}/approve` | `{ "pin": "<operator PIN>" }` (no body needed with `--approval click`) → `{ "ok": true, "id", "state": "approved" \| "awaiting_confirm" }`; the run then starts in the background. PIN refusals are **403** `{ "ok": false, "error", "code": "pin_not_set" \| "pin_changed" \| "pin_required" \| "pin_invalid" \| "pin_locked" }`; with `--approval click` a request with a `Sec-Fetch-Site` other than `same-origin`, or without an accepted `Origin`, is **403** `code: "browser_required"` (see "Safety model"); MCP headers or a non-`ui` origin 403; unknown run 404; not pending, stale revision or another run active 409 |
+| POST | `/api/job/start` | `--approval click` only: one-click Start. Body: the run options of `POST /api/runs`, plus `origin: "ui"`, `checklist: [bool]` and `revision` (the document revision the app shows; another one now: 409, nothing started). Plans the current document and approves it at once → `{ "ok": true, "id", "state", "run" }`. Same guards as a no-PIN approve (MCP headers or a non-`ui` origin 403, `browser_required` 403); `approval_mode` 403 in the PIN mode; door, Require Framing, checklist, Stop At or another run 409, and nothing is left pending |
 | POST | `/api/machine/frame` | `{ "ids"?: [...], "mode"?: "bounds" \| "hull" \| "outline" (alias "contour"), "individually"?, "outside_only"?, "tool_layers_only"? (objects on layers with output off), "continuous"?: bool (default true), "speed_mm_s"?, "pointer"?: "red" \| "focus" \| "both", "blanking"?, "live"?: bool, "max_seconds"?: 1..=3600 (default 120) }` → red-pointer framing (light only) until frame stop, stop, a run, or the time limit; `live` traces the new outline whenever the document changes (`machine` event `frame_updated`); a focus pointer needs the profile's `focus_light_port_bit` (else 400) |
 | POST | `/api/machine/frame/stop` | ends framing only; pending and approved runs are untouched → `{ "ok": true }`; with no board connected **200** `{ "ok": true, "connected": false }` |
 | POST | `/api/machine/stop` | emergency stop: abort any run or frame, cancel every run not yet streaming (`pending`, `approved`, `awaiting_confirm`; `cancelled_runs` counts them) → `{ "ok": true, "connected": true, "cancelled_runs": n }`; with no board connected **200** `{ "ok": true, "connected": false, ... }`; no token needed |
@@ -282,7 +315,7 @@ says otherwise. `origin` is `"ui"` (default), `"script"` or `"agent:<name>"`.
 
 | Method | Path | Body / result |
 |---|---|---|
-| GET | `/api/job` | `{ active, run_id, state: "idle" \| "starting" \| "waiting_for_start_input" \| "running" \| "paused", iteration, iterations (null = continuous), completed, packets_sent, packets_acknowledged, packets_total, part, parts, paused, elapsed_s (stands still while paused, never goes back), estimated_time_s, remaining_s, progress (0..1: the time estimate held between the packets acknowledged and sent, `job::blended_progress`; below 1 until the job ends), progress_source ("time" \| "packets"), count, stop_at, end_after_current }` for the active device; also `GET /api/machine` `job` |
+| GET | `/api/job` | `{ active, run_id, state: "idle" \| "starting" \| "waiting_for_start_input" \| "running" \| "paused", iteration, iterations (null = continuous), completed, packets_sent, packets_acknowledged (packets the board has certainly finished: `machine::RunProgress::packets_done`, 0 until the board has shown how many it holds by refusing one), packets_total, part, parts, paused, elapsed_s (stands still while paused, never goes back), estimated_time_s (with the device's learned correction), estimate_correction, remaining_s, finishing (true, with `remaining_s` 0, once the estimate is used up or under 1 s is left while the job runs, unless the packets show the job behind, when `remaining_s` follows the measured rate: the UI shows "Finishing…", never "0 s left"), progress (0..1: the clock, slowing down past 90 % of the estimate and never arriving, held between the packets finished and sent, `job::blended_progress`; never goes back; at most 0.99 until the job ends), progress_source ("time" \| "packets"), count, stop_at, end_after_current }` for the active device; also `GET /api/machine` `job`. Time estimates: the planner's model (`plan::job::plan_stats`, motion at the speeds the board's words give times the profile's `motion_time_scale`, plus the list's delays) times a per-device correction learned from finished runs on a real board (`engine::marktime`, `<config-dir>/mark-times.json`: the board's `GetMarkTime` against the planner's estimate, none before 3 usable runs (estimated >= 1 s, ratio 0.5..2; paused, multi-list and simulator runs are not recorded), then the median of the last 10, pulled toward 1 as n/(n+2), kept within 0.8..1.25); previews, run summaries and job progress all use the corrected estimate |
 | PUT | `/api/job/settings` | `{ "stop_at": n \| null }` → the job status (Stop At) |
 | POST | `/api/job/count/reset` | Reset Count of the active device → the job status |
 | POST | `/api/job/end_after_current` | a repeating or continuous job ends after its current iteration → `{ ok, active }` |
@@ -820,8 +853,8 @@ File contents go through `execute` with `doc.save`, `doc.load`, `doc.import_lbrn
 surface is generated from the same command registry the UI uses; machine tools are separate so clients can approve
 them separately. No
 MCP tool can approve a run, press an input or touch the operator PIN (in either approval mode), and the server
-instructions say agents cannot and must not; they also tell agents that a foot switch press approves a single pending
-run, including one they requested.
+instructions say agents cannot and must not; they also tell agents that the foot switch never starts a run they
+requested (it frames the person's current document, then burns exactly what was framed).
 
 ## File formats
 
@@ -1166,6 +1199,31 @@ Origin), the public WAZER `.lbdev`, xTool/Creality `.lbdev` posts and the owner'
   A re-import of the same LightBurn device replaces the edits. Correction files can be loaded and cleared per device;
   `.lbdev` export writes the device back for LightBurn.
 
+## Ruida protocol
+
+`crates/ruida` is the protocol layer for Ruida DSP controllers (gantry CO2 machines driven by RDWorks or LightBurn),
+step 3 of the gantry roadmap (`docs/parity/ROADMAP.md`). It is protocol only: no driver, no engine integration yet
+(the gantry driver interface is built separately). Everything comes from MeerK40t's Ruida module (MIT, facts
+re-written in Rust; the crate docs list every command with its source). **It has never talked to Ruida hardware**:
+the in-crate simulator follows MeerK40t's emulator and client.
+
+- **Scrambling**: every byte is swapped (bit 7 with bit 0), XORed with a key (`0x88` usual, `0x11` RDC634XG) and
+  incremented; `.rd` files, UDP and serial all use it. The reader finds a file's key (histogram guess, then scoring).
+- **UDP**: host port 40200 ↔ controller port 50200; datagram = big-endian 16-bit sum of the scrambled payload, then the
+  scrambled payload (whole commands, ≤ 1470 bytes). Stop-and-wait: ACK `0xCC` (wire `0xC6`) or ERR `0xCD` (wire
+  `0x46`) / NAK `0xCF` → resend; no ACK → give up (only reads are sent again: a lost ACK must not run cuts twice);
+  memory reads get a second datagram with `DA 01 addr value`, one read per datagram. Keepalive = ENQ `0xCE`.
+  **USB serial** (FTDI 0403:6001): scrambled bytes only, no checksum, no ACK.
+- **Numbers**: 7 bits per byte. Absolute coordinates are 35-bit (µm), relative ones 14-bit signed (±8.191 mm), power
+  14-bit (`0x3FFF` = 100 %), speeds µm/s. Encoders refuse what they cannot represent.
+- **`.rd` files**: `rd::read_rd` gives the command list and polylines per layer with speed, min/max power (lasers 1
+  and 2) and colour; `rd::write_rd` writes polylines per layer in MeerK40t's layout (header with bounds and per-layer
+  settings, layers, file sum, `D7`). Real `.rd` files are read only by the env-gated test `OPENETCH_RD_SAMPLES`.
+- **Simulator** (`ruida::sim`, feature `sim`): ACKs datagrams (NAK on a bad checksum, as MeerK40t's emulator),
+  runs commands, tracks X/Y/Z/U, records every segment and whether the laser would be on (a cut while any laser 1/2
+  min or max power is non-zero), answers memory reads, stores named jobs (controller file list: count, names, run,
+  delete).
+
 ## CAD integrations
 
 `tools/fusion360-addin/OpenEtch` (Autodesk Fusion add-in, Python): "Send to OpenEtch" saves the selected sketch (or a
@@ -1178,4 +1236,5 @@ selection code is tested without Fusion or Inkscape (`python -I tools/tests/test
 ## Licensing and provenance
 
 Code ported from MIT/Apache projects keeps its notice in the file header and is listed in `ATTRIBUTION.md`. Never copy
-from GPL/SSPL/unlicensed sources (Balor, balor-meerk40t, BurnCraft, LaserCraft, lmcv2u-loader).
+from GPL/SSPL/unlicensed or other non-permissive sources (Balor, balor-meerk40t, BurnCraft, LaserCraft, lmcv2u-loader, and for Ruida
+jnweiger/ruida-laser (GPL-2.0) and kkaempf/ruida (Ruby licence, not MIT/BSD/Apache)).

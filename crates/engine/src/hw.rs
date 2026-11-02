@@ -23,8 +23,8 @@ use machine::grbl::{
     GrblController, GrblPoll, GrblProfile, GrblSnapshot, OfflineSerial, SerialLink, SimGrbl, SimGrblConfig, SimGrblHandle, SimGrblReport,
 };
 use machine::{
-    AbortHandle, AxisRole, BoardInfo, Controller, ControllerError, ControllerState, Driver, DriverKind, FiberKind, InitSettings, Link,
-    LinkError, MachineDriver, MachineProfile, PollConfig, Reply, RunControl, RunProgress, SimLink,
+    AbortHandle, AxisRole, BoardInfo, Controller, ControllerError, ControllerState, Driver, DriverKind, FiberKind, InitSettings,
+    InputSamples, Link, LinkError, MachineDriver, MachineProfile, PollConfig, Reply, RunControl, RunProgress, SimLink,
 };
 use plan::{GcodeSettings, Target};
 use serde_json::{Value, json};
@@ -68,6 +68,7 @@ pub fn target_from_profile(p: &MachineProfile) -> Target {
             jump_distance_limit_mm: p.timing.jump_distance_limit_mm,
         },
         open_mo_delay_us: p.open_mo_delay_us,
+        motion_time_scale: p.motion_time_scale,
         calibration: p.calibration,
         pulse_width_enabled: p.pulse_width_enabled && p.fiber_kind == FiberKind::Mopa,
         z_axis: p.axis.as_ref().is_some_and(|a| a.role == AxisRole::Z),
@@ -283,6 +284,8 @@ pub struct Machine {
     abort: AbortHandle,
     /// Pause, resume and progress of the controller's runs (usable while a run holds the controller).
     control: RunControl,
+    /// Input port reads taken while a frame streams (the foot switch watcher's reads in between).
+    samples: InputSamples,
     /// The current [`MachineConfig`]; replaced only with the controller lock held.
     config: RwLock<Arc<MachineConfig>>,
     kind: LinkKind,
@@ -331,6 +334,7 @@ impl Machine {
         Machine {
             abort: ctl.abort_handle(),
             control: ctl.run_control(),
+            samples: ctl.input_samples(),
             ctl: Arc::new(Mutex::new(Driver::Lmc(ctl))),
             config: RwLock::new(Arc::new(MachineConfig { target: target_from_profile(&profile), profile, cor, generation: 0, grbl: None })),
             kind,
@@ -389,7 +393,14 @@ impl Machine {
                 if let Some(counters) = &self.sim {
                     *counters.grbl.lock().unwrap_or_else(PoisonError::into_inner) = None;
                 }
-                *ctl = Driver::Lmc(Controller::with_handles(link, InitSettings::default(), self.poll, self.abort.clone(), self.control.clone()));
+                *ctl = Driver::Lmc(Controller::with_handles(
+                    link,
+                    InitSettings::default(),
+                    self.poll,
+                    self.abort.clone(),
+                    self.control.clone(),
+                    self.samples.clone(),
+                ));
             }
         }
         self.ensure_ready(ctl).map(|()| generation)
@@ -535,6 +546,8 @@ impl Machine {
         self.stop_epoch.fetch_add(1, Ordering::SeqCst);
         self.abort.request();
         self.bump_frame_gen();
+        // A press read before the stop must not act after it (`Controller::abort` clears again under the lock).
+        self.samples.clear();
     }
 
     /// True while a frame loop is tracing (and has not been superseded or stopped).
@@ -642,6 +655,21 @@ impl Machine {
     /// GRBL board has no input port (refused).
     pub fn read_inputs(&self, ctl: &mut Ctl) -> Result<u16, ControllerError> {
         ctl.read_port()
+    }
+
+    /// The input port reads taken while frames streamed since the last call, oldest first
+    /// ([`machine::InputSamples`]).
+    pub(crate) fn take_input_samples(&self) -> Vec<(std::time::Instant, u16)> {
+        self.samples.take()
+    }
+
+    pub(crate) fn clear_input_samples(&self) {
+        self.samples.clear();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_input_samples(&self) -> bool {
+        !self.samples.is_empty()
     }
 
     /// [`Machine::request_stop`] (noticed by a running job at its next packet or poll), then send the abort sequence

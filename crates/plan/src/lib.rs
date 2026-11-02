@@ -33,12 +33,12 @@ pub use geom::{FLATTEN_TOLERANCE_MM, Point};
 pub use hatch::MAX_SCANLINES;
 pub use image::{MAX_IMAGE_DOTS, MAX_PROCESSED_DOTS, MAX_SOURCE_PIXELS, ProcessedBitmap, processed_bitmap, processed_png, tone_factors};
 pub use job::{
-    JobOptions, JobPlan, MAX_LAYER_PASSES, MAX_PASSES, MAX_SEGMENTS, PartPlan, PassPlan, PassSettings, Stats, layer_schedule,
+    JobOptions, JobPlan, MAX_LAYER_PASSES, MAX_PASSES, MAX_SEGMENTS, MotionTime, PartPlan, PassPlan, PassSettings, Stats, layer_schedule,
     plan_job, plan_job_with,
 };
 pub use preview::{
-    LayerPreview, PassPreview, Preview, PreviewSegment, SegmentKind, SubLayerPreview, preview_document, preview_plan, simulate,
-    start_at,
+    LayerPreview, PassPreview, Preview, PreviewSegment, SegmentKind, SubLayerPreview, preview_document, preview_plan, scale_times,
+    simulate, start_at,
 };
 pub use regions::{DISPLAY_TOLERANCE_MM, FillRegions, LayerFill, fill_regions};
 pub use target::Target;

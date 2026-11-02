@@ -63,6 +63,8 @@ impl GcodeSettings {
                 jump_distance_limit_mm: 0.0,
             },
             open_mo_delay_us: 0.0,
+            // Moves timed as commanded (no acceleration model yet).
+            motion_time_scale: 1.0,
             calibration: lmc::Calibration::default(),
             pulse_width_enabled: false,
             z_axis: false,
@@ -214,6 +216,7 @@ mod tests {
                 pulse_width_ns: None,
                 timing: settings().target().timing,
                 hatch_angle_deg: 0.0,
+                motion: crate::job::MotionTime::default(),
             },
             polylines: polys,
             powers: Vec::new(),

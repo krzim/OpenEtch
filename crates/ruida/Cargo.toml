@@ -1,0 +1,20 @@
+[package]
+name = "ruida"
+description = "Ruida DSP controller protocol: byte scrambling, UDP/serial framing, commands, number encodings, .rd job files, simulator. Pure, no I/O (UDP behind the `udp` feature)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[features]
+# The in-crate controller simulator (always built for this crate's own tests).
+sim = []
+# A blocking std::net UDP channel to a controller (stop-and-wait with ACK/NAK). Off by default; native only.
+udp = []

@@ -135,7 +135,7 @@ impl RunOptions {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RunState {
-    /// Waiting for a person to approve it (the operator PIN in the UI, or Start / the foot switch without a PIN).
+    /// Waiting for a person to approve it (the operator PIN in the UI, or Start in the app without a PIN).
     Pending,
     /// Approved; about to start (or about to wait for the physical input).
     Approved,
@@ -188,6 +188,8 @@ pub struct Run {
     pub options: RunOptions,
     /// Iterations that ran to the end.
     pub completed: u32,
+    /// The learned correction applied to `stats.estimated_time_s` ([`PreparedJob::estimate_correction`]).
+    pub estimate_correction: f64,
 }
 
 impl Run {
@@ -297,6 +299,7 @@ impl RunStore {
             generation: prepared.generation,
             options: prepared.options,
             completed: 0,
+            estimate_correction: prepared.estimate_correction,
         });
         self.prune();
         Ok(self.runs.last_mut().expect("just pushed"))
@@ -344,6 +347,12 @@ impl RunStore {
             n += 1;
         }
         n
+    }
+
+    /// Forget a run that never left `pending` (or was cancelled before it was approved): one-click Start and the
+    /// foot switch cycle plan a run and approve it at once, and a refused approval leaves nothing waiting.
+    pub fn discard(&mut self, id: &str) {
+        self.runs.retain(|r| r.id != id || !matches!(r.state, RunState::Pending | RunState::Cancelled));
     }
 
     /// The state of a run that holds or is about to hold the machine (`approved`, `awaiting_confirm`, `running`),
@@ -402,6 +411,33 @@ pub struct PreparedJob {
     /// The machine configuration generation it was planned for (set by the caller; 0 from [`prepare_job`]).
     pub generation: u64,
     pub options: RunOptions,
+    /// The factor `stats.estimated_time_s` was multiplied by (the device's learned correction, module `marktime`);
+    /// 1 from [`prepare_job`]. The planner's own estimate is `stats.estimated_time_s / estimate_correction`.
+    pub estimate_correction: f64,
+}
+
+impl PreparedJob {
+    /// Apply the device's learned estimate correction (module `marktime`) to the estimate and the summary. A factor
+    /// that is not finite and positive is ignored.
+    pub fn with_correction(mut self, factor: f64) -> Self {
+        if factor.is_finite() && factor > 0.0 {
+            let before = about(self.stats.estimated_time_s);
+            self.stats.estimated_time_s *= factor;
+            self.estimate_correction *= factor;
+            self.summary = self.summary.replacen(&before, &about(self.stats.estimated_time_s), 1);
+        }
+        self
+    }
+
+    /// The planner's estimate before the learned correction, s.
+    pub fn planned_time_s(&self) -> f64 {
+        self.stats.estimated_time_s / self.estimate_correction
+    }
+}
+
+/// "about 12.3 s": the time in run summaries.
+fn about(seconds: f64) -> String {
+    format!("about {seconds:.1} s")
 }
 
 /// The layers' names as people see them (`"Fill", "Outline"`), each once, in first-use order; a layer the document
@@ -496,11 +532,11 @@ pub fn prepare_job_with(
     }
     let stats = job.stats;
     let mut summary = format!(
-        "{} polylines on {}, {:.1} mm marked, about {:.1} s",
+        "{} polylines on {}, {:.1} mm marked, {}",
         stats.polyline_count,
         layer_names(doc, job.passes.iter().map(|p| p.layer_id.as_str())),
         stats.mark_length_mm,
-        stats.estimated_time_s
+        about(stats.estimated_time_s)
     );
     if job.parts.len() > 1 {
         summary.push_str(&format!(", in {} parts", job.parts.len()));
@@ -516,7 +552,7 @@ pub fn prepare_job_with(
     if let Some(n) = options.from_segment {
         summary.push_str(&format!(" (from segment {n})"));
     }
-    Ok(PreparedJob { parts, gcode: None, stats, summary, generation: 0, options: options.clone() })
+    Ok(PreparedJob { parts, gcode: None, stats, summary, generation: 0, options: options.clone(), estimate_correction: 1.0 })
 }
 
 /// Plan `doc` for a GRBL gantry: the same planning as [`prepare_job_with`] on the bed's target, then G-code
@@ -550,11 +586,11 @@ pub fn prepare_gcode_job(
     machine::grbl::check_program(grbl, &program).map_err(|e| EngineError::BadRequest(e.to_string()))?;
     let stats = job.stats;
     let mut summary = format!(
-        "{} polylines on {}, {:.1} mm marked, about {:.1} s, {} G-code lines",
+        "{} polylines on {}, {:.1} mm marked, {}, {} G-code lines",
         stats.polyline_count,
         layer_names(doc, job.passes.iter().map(|p| p.layer_id.as_str())),
         stats.mark_length_mm,
-        stats.estimated_time_s,
+        about(stats.estimated_time_s),
         program.len()
     );
     match options.iterations() {
@@ -568,7 +604,15 @@ pub fn prepare_gcode_job(
     if let Some(n) = options.from_segment {
         summary.push_str(&format!(" (from segment {n})"));
     }
-    Ok(PreparedJob { parts: Vec::new(), gcode: Some(program), stats, summary, generation: 0, options: options.clone() })
+    Ok(PreparedJob {
+        parts: Vec::new(),
+        gcode: Some(program),
+        stats,
+        summary,
+        generation: 0,
+        options: options.clone(),
+        estimate_correction: 1.0,
+    })
 }
 
 /// Batch / run multiple files: plan every `(name, document)` on its own (as [`prepare_job_with`] does, without
@@ -601,19 +645,19 @@ pub fn prepare_queue(
     }
     let names: Vec<String> = docs.iter().map(|(n, _)| format!("\"{n}\"")).collect();
     let mut summary = format!(
-        "queue of {} projects ({}), {} polylines, {:.1} mm marked, about {:.1} s",
+        "queue of {} projects ({}), {} polylines, {:.1} mm marked, {}",
         docs.len(),
         names.join(", "),
         stats.polyline_count,
         stats.mark_length_mm,
-        stats.estimated_time_s
+        about(stats.estimated_time_s)
     );
     match options.iterations() {
         None => summary.push_str(", continuously"),
         Some(n) if n > 1 => summary.push_str(&format!(", {n} times")),
         _ => {}
     }
-    Ok(PreparedJob { parts, gcode: None, stats, summary, generation: 0, options: options.clone() })
+    Ok(PreparedJob { parts, gcode: None, stats, summary, generation: 0, options: options.clone(), estimate_correction: 1.0 })
 }
 
 #[cfg(test)]
@@ -629,7 +673,19 @@ mod tests {
             summary: "s".into(),
             generation: 0,
             options: RunOptions::default(),
+            estimate_correction: 1.0,
         }
+    }
+
+    #[test]
+    fn the_learned_correction_scales_the_estimate_and_the_summary() {
+        let mut p = prepared();
+        p.stats.estimated_time_s = 20.0;
+        p.summary = format!("600 polylines on Fill, 18000.0 mm marked, {}", about(20.0));
+        let c = p.with_correction(1.1).with_correction(f64::NAN);
+        assert!((c.stats.estimated_time_s - 22.0).abs() < 1e-9);
+        assert!((c.estimate_correction - 1.1).abs() < 1e-12 && (c.planned_time_s() - 20.0).abs() < 1e-9);
+        assert_eq!(c.summary, "600 polylines on Fill, 18000.0 mm marked, about 22.0 s");
     }
 
     #[test]

@@ -55,16 +55,20 @@ export function useApprovalGates() {
 
 export type ApprovalGatesState = ReturnType<typeof useApprovalGates>;
 
-/** Require Framing, Door Protect and the Job Checklist in the approval card's confirm step. */
-export function ApprovalChecks({ state, disabled }: { state: ApprovalGatesState; disabled?: boolean }) {
+/**
+ * Require Framing, Door Protect and the Job Checklist in the approval card's confirm step, or inline above Start
+ * (no-PIN engines; `showDoor` false there, as the door is simply checked on every Start).
+ */
+export function ApprovalChecks({ state, disabled, showDoor = true }: { state: ApprovalGatesState; disabled?: boolean; showDoor?: boolean }) {
   const t = useT();
   const { gates, ticks, setTicks } = state;
   const list = gates.checklist;
-  if (!gates.requireFraming && !gates.door && !list.enabled) return null;
+  const door = showDoor ? gates.door : null;
+  if (!gates.requireFraming && !door && !list.enabled) return null;
   return (
     <div className="lx-gates">
       {gates.requireFraming && <p className="lx-gate">{t("safe.requireFramingOn")}</p>}
-      {gates.door && <p className="lx-gate">{t("safe.doorOn", { input: inputText(gates.door) })}</p>}
+      {door && <p className="lx-gate">{t("safe.doorOn", { input: inputText(door) })}</p>}
       {list.enabled && (
         <fieldset className="lx-checklist" disabled={disabled}>
           <legend>{t("safe.checklist")}</legend>

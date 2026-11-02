@@ -57,8 +57,9 @@ OPTIONS:
                         How runs are approved (default pin). pin: the operator PIN (openetch set-pin), typed in
                         the app. click: no PIN; a run is approved only by Start in the OpenEtch app in a browser
                         (same-origin Origin header, and Sec-Fetch-Site when the browser sends it) or by pressing the
-                        foot switch (the profile's Start Marking input, start_mark_input_bit; B6: 14, active low), which
-                        approves the one pending run. Never by MCP. The checklist, Require Framing, the door
+                        foot switch (the profile's Start Marking input, start_mark_input_bit; B6: 14, active low): the
+                        first press frames the job, the next burns what was framed, then it frames again and each
+                        press burns. Never by MCP. The checklist, Require Framing, the door
                         interlock and Stop work the same in both modes.
   --confirm-input <bit> Also require a physical input (0-15, ReadPort) after approval: the run waits up to 30 s for
                         the input to be released and then pressed. The B6's markcfg suggests a foot pedal on 14
