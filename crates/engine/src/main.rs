@@ -1,5 +1,6 @@
 //! `openetch`: start the OpenEtch engine. See `openetch --help` and the `engine` library docs.
 
+use std::future::IntoFuture;
 use std::io::IsTerminal;
 use std::path::Path;
 use std::process::ExitCode;
@@ -296,6 +297,7 @@ async fn run(config: Config) -> Result<(), String> {
     if web_dir.is_none() {
         tracing::warn!(path = %config.web_dir.display(), "web UI not found (run `npm run build` in web/); serving the API only");
     }
+    let shutdown_state = state.clone();
     let app = api::router(state, web_dir);
 
     let listener = tokio::net::TcpListener::bind(config.listen)
@@ -314,15 +316,23 @@ async fn run(config: Config) -> Result<(), String> {
         if token.is_some() { " (Authorization: Bearer <token>)" } else { "" }
     );
 
-    let shutdown_machine = machine.clone();
-    axum::serve(listener, app)
+    // SIGTERM (systemd) and SIGINT (Ctrl-C): refuse new work, let a running job finish, then exit; a second signal
+    // or the grace limit aborts it (module `shutdown`). The server keeps serving meanwhile, so Stop works.
+    let (signals_tx, signals_rx) = tokio::sync::mpsc::unbounded_channel();
+    tokio::spawn(engine::shutdown::forward_signals(signals_tx));
+    let grace = std::time::Duration::from_secs(config.shutdown_grace_secs);
+    println!("openetch: on SIGTERM/SIGINT a running job may finish (up to {} s) before the engine exits", grace.as_secs());
+    let closing = shutdown_state.shutdown.closing();
+    let server = axum::serve(listener, app)
         .with_graceful_shutdown(async move {
-            let _ = tokio::signal::ctrl_c().await;
-            tracing::info!("shutting down: stopping the machine");
-            if let Err(e) = shutdown_machine.abort().await {
-                tracing::warn!(error = %e, "abort on shutdown failed");
-            }
+            engine::shutdown::run(shutdown_state, signals_rx, engine::shutdown::Options::new(grace)).await;
         })
-        .await
-        .map_err(|e| format!("server error: {e}"))
+        .into_future();
+    tokio::select! {
+        r = server => r.map_err(|e| format!("server error: {e}")),
+        () = engine::shutdown::closed_then_wait(closing) => {
+            tracing::info!("connections still open after the shutdown; exiting");
+            Ok(())
+        }
+    }
 }

@@ -310,7 +310,9 @@ pub fn spawn_io_watch(st: Arc<AppState>) -> tokio::task::JoinHandle<()> {
             }
             foot.watch(foot_port);
             let frame_now = st.machine.is_framing();
-            if (frame_port.is_none() && foot_port.is_none()) || st.machine.is_running() || (frame_now && foot_port.is_none()) {
+            // Nothing is read while the engine shuts down (module `shutdown`): no press starts a frame or a burn.
+            let idle = st.machine.is_running() || st.shutting_down();
+            if (frame_port.is_none() && foot_port.is_none()) || idle || (frame_now && foot_port.is_none()) {
                 framing.reset();
                 foot.reset();
                 st.machine.clear_input_samples();

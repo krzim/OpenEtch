@@ -14,7 +14,7 @@
 //! tells runs planned for an earlier device apart. The link kind (simulator or real hardware) never changes: a GRBL
 //! device on the simulator runs on `machine::grbl::SimGrbl`, on real hardware on the profile's serial port.
 
-use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock, TryLockError};
 
 use corfile::CorTable;
@@ -278,6 +278,11 @@ pub struct MachineConfig {
     pub grbl: Option<GrblProfile>,
 }
 
+/// `Machine::running`: a run holds the machine.
+const RUN_CLAIMED: u8 = 1;
+/// `Machine::running`: the engine is shutting down; no new claim.
+const SHUTTING_DOWN: u8 = 2;
+
 /// The laser as the engine sees it. See the module docs.
 pub struct Machine {
     ctl: Arc<Mutex<Ctl>>,
@@ -293,8 +298,10 @@ pub struct Machine {
     /// The galvo controller's and the GRBL controller's polling (kept for driver changes).
     poll: PollConfig,
     grbl_poll: GrblPoll,
-    /// An approved run holds this from approval until it ends.
-    running: AtomicBool,
+    /// [`RUN_CLAIMED`]: an approved run (or an axis move, a device change) holds the machine, from approval until it
+    /// ends. [`SHUTTING_DOWN`]: the engine is shutting down and no new claim is granted. One word, so a claim and the
+    /// start of a shutdown can never miss each other (module `shutdown`).
+    running: AtomicU8,
     /// Bumped by every stop. A run captures it when it claims the machine and never starts streaming once it has
     /// changed, so a stop can never be lost between approval and the run taking the controller lock.
     stop_epoch: AtomicU64,
@@ -341,7 +348,7 @@ impl Machine {
             sim,
             poll,
             grbl_poll,
-            running: AtomicBool::new(false),
+            running: AtomicU8::new(0),
             stop_epoch: AtomicU64::new(0),
             frame_gen: AtomicU64::new(0),
             frame_cancel: AbortHandle::default(),
@@ -482,16 +489,28 @@ impl Machine {
 
     /// True while an approved run holds the machine.
     pub fn is_running(&self) -> bool {
-        self.running.load(Ordering::SeqCst)
+        self.running.load(Ordering::SeqCst) & RUN_CLAIMED != 0
     }
 
-    /// Claim the machine for a run. False if a run already holds it.
+    /// Claim the machine for a run. False if a run already holds it, or the engine is shutting down
+    /// ([`Machine::is_shutting_down`] tells the two apart).
     pub(crate) fn try_begin_run(&self) -> bool {
-        self.running.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_ok()
+        self.running.compare_exchange(0, RUN_CLAIMED, Ordering::SeqCst, Ordering::SeqCst).is_ok()
     }
 
     pub(crate) fn end_run(&self) {
-        self.running.store(false, Ordering::SeqCst);
+        self.running.fetch_and(!RUN_CLAIMED, Ordering::SeqCst);
+    }
+
+    /// Refuse every later claim ([`Machine::try_begin_run`]) for good: the engine is shutting down. Returns whether a
+    /// run held the machine at that moment (it keeps it until it ends: a shutdown never cuts a run short by itself).
+    pub(crate) fn begin_shutdown(&self) -> bool {
+        self.running.fetch_or(SHUTTING_DOWN, Ordering::SeqCst) & RUN_CLAIMED != 0
+    }
+
+    /// True once the engine has started shutting down (SIGTERM, SIGINT; module `shutdown`).
+    pub fn is_shutting_down(&self) -> bool {
+        self.running.load(Ordering::SeqCst) & SHUTTING_DOWN != 0
     }
 
     /// Ask a running job to pause (`StopList` at its next packet or poll). Never waits; harmless without a run.

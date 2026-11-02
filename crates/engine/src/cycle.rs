@@ -31,6 +31,8 @@
 //!   foot switch: the cycle burns only the current document it framed. Pending runs are started in the app.
 //! - The cycle's framing stops after [`IDLE_TIMEOUT_SECS`] without a press (each burn restarts the clock), and the
 //!   cycle ends with it.
+//! - A shutdown of the engine (module `shutdown`) ends the cycle and its frame; a burn in progress is left to finish,
+//!   and presses are ignored from then on.
 //!
 //! State: `GET /api/machine` `foot_cycle` ([`status_json`]); machine events `foot_cycle` (detail: the new phase,
 //! `framing`, `burning` or `off`) and `foot_cycle_notice` (detail: what happened, for a toast).
@@ -160,6 +162,11 @@ fn owns_frame(st: &AppState, frame_gen: u64) -> bool {
 
 /// A press of the foot switch (released, then pressed; the watcher only reads it while no run holds the board).
 pub(crate) async fn pressed(st: &Arc<AppState>) {
+    // The watcher stops reading while the engine shuts down; a press read just before is ignored too.
+    if st.shutting_down() {
+        tracing::info!("foot switch pressed while the engine shuts down; ignored");
+        return;
+    }
     let (phase, id) = {
         let c = lock(&st.libs.foot_cycle);
         (c.phase.clone(), c.id)

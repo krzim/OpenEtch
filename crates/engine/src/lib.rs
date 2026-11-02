@@ -35,6 +35,7 @@ pub mod projects;
 pub mod render;
 pub mod runs;
 pub mod security;
+pub mod shutdown;
 pub mod state;
 // Libraries, preferences, job log, diagnostics, camera, updates (see `libs`).
 mod api_libs;

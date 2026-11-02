@@ -45,6 +45,10 @@ pub enum EngineError {
     /// `pin_locked` (see the `pin` module).
     #[error("{message}")]
     Approval { code: &'static str, message: String },
+    /// The engine is shutting down (module `shutdown`): no new run, approval, Start, frame or machine move is accepted
+    /// (503, `code: "shutting_down"`). Stop always works.
+    #[error("{0}")]
+    ShuttingDown(String),
     #[error("{0}")]
     Internal(String),
 }
@@ -73,17 +77,19 @@ impl EngineError {
             EngineError::Forbidden(_) | EngineError::Approval { .. } => StatusCode::FORBIDDEN,
             EngineError::TooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             EngineError::Unsupported(_) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            EngineError::ShuttingDown(_) => StatusCode::SERVICE_UNAVAILABLE,
             EngineError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 
     /// The JSON body: `{ok: false, error}`, plus `candidates` for a command that named a missing id and `code` for
-    /// an approval refusal.
+    /// an approval refusal or a shutdown (`shutting_down`).
     pub fn body(&self) -> Value {
         let mut body = json!({ "ok": false, "error": self.to_string() });
         match self {
             EngineError::Command(CommandError::NotFound { candidates, .. }) => body["candidates"] = json!(candidates),
             EngineError::Approval { code, .. } => body["code"] = json!(code),
+            EngineError::ShuttingDown(_) => body["code"] = json!("shutting_down"),
             _ => {}
         }
         body

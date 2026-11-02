@@ -121,6 +121,8 @@ pub struct AppState {
     pub libs: crate::libs::Libs,
     /// Autosave, backups, templates, preference export and bundles (module `userfiles`).
     pub files: crate::userfiles::UserFiles,
+    /// The graceful shutdown's state (module `shutdown`).
+    pub shutdown: crate::shutdown::ShutdownState,
 }
 
 /// How an invocation changes which project the document belongs to.
@@ -345,6 +347,7 @@ impl AppState {
             job: JobTracker::default(),
             libs: crate::libs::Libs::default(),
             files: crate::userfiles::UserFiles::default(),
+            shutdown: crate::shutdown::ShutdownState::default(),
         })
     }
 
@@ -424,6 +427,7 @@ impl AppState {
 
     /// Make device `id` active (see the module docs). Returns `{ok, active, warnings}`.
     pub async fn activate_device(self: &Arc<Self>, id: &str) -> Result<Value, EngineError> {
+        self.refuse_if_shutting_down("changing the device")?;
         let device = self.devices().get(id).cloned().ok_or_else(|| EngineError::NotFound(format!("no device with id '{id}'")))?;
         // Claim the machine as a run would, so no run starts and no frame traces while the profile changes.
         {
@@ -435,6 +439,7 @@ impl AppState {
                 return Err(EngineError::Conflict("framing is on; stop framing before changing the device".into()));
             }
             if !self.machine.try_begin_run() {
+                self.refuse_if_shutting_down("changing the device")?;
                 return Err(EngineError::Conflict("a run is in progress; let it finish before changing the device".into()));
             }
             runs.cancel_pending("cancelled: the device changed");
@@ -1126,6 +1131,7 @@ impl AppState {
     /// [`AppState::request_run`] with [`RunOptions`] (repeat, continuous, start input, selection, start here). The
     /// active device's job count is the run index for auto-rotating fills.
     pub async fn request_run_with(&self, origin: Origin, options: RunOptions) -> Result<RunView, EngineError> {
+        self.refuse_if_shutting_down("requesting a run")?;
         self.require_controllable()?;
         // The document and which open document it is, read together (module `documents`).
         let (doc, document_id) = {
@@ -1162,6 +1168,8 @@ impl AppState {
         prepared.generation = generation;
         let view = {
             let mut store = self.runs();
+            // Under the runs lock the shutdown cancels pending runs under: none is added after that.
+            self.refuse_if_shutting_down("requesting a run")?;
             if self.machine.generation() != generation {
                 return Err(EngineError::Conflict("the device changed while the run was planned; request it again".into()));
             }
@@ -1206,6 +1214,9 @@ impl AppState {
         );
         // The foot switch cycle (frame, burn what was framed, frame again; module `cycle`).
         v["foot_cycle"] = crate::cycle::status_json(self);
+        // A graceful shutdown (module `shutdown`): new work is refused while a running job is waited for.
+        v["shutting_down"] = json!(self.shutting_down());
+        v["shutdown"] = self.shutdown.status_json(self.job.active_run());
         // Whether framing can light a focus pointer (`pointer: focus | both`): a controllable active device whose
         // profile names a usable focus light output.
         v["focus_light"] = json!(
@@ -1230,6 +1241,7 @@ impl AppState {
     /// Start red-pointer framing of the selection (or the whole job, or the tool layers). Light only. With `live`,
     /// the frame follows document edits.
     pub async fn frame_start(self: &Arc<Self>, req: FrameRequest) -> Result<Value, EngineError> {
+        self.refuse_if_shutting_down("framing")?;
         self.require_controllable()?;
         let generation = self.machine.generation();
         let doc = self.document();
@@ -1249,6 +1261,11 @@ impl AppState {
         });
         let run = self.frame_run(&req, live)?;
         let mut started = frame::start(&self.machine, &self.events, outline, run).await?;
+        // A shutdown that began while the frame started: the pointer goes off again.
+        if self.shutting_down() {
+            self.frame_stop().await?;
+            return Err(crate::shutdown::shutting_down_error("framing"));
+        }
         // Require Framing Before Start: this revision has been framed.
         self.libs.framed(generation, doc.revision, &req);
         // What this frame shows (the foot switch cycle burns exactly this, module `cycle`).
@@ -1298,10 +1315,16 @@ impl AppState {
     /// Red-dot jog: hold the pointer at `(x, y)` field mm (after the red-dot alignment) until frame stop, stop, a
     /// run or `max_seconds` (default 120). Light only.
     pub async fn pointer_to(&self, x: f64, y: f64, max_seconds: Option<u64>, pointer: Pointer) -> Result<Value, EngineError> {
+        self.refuse_if_shutting_down("the red dot")?;
         self.require_controllable()?;
         let req = FrameRequest { pointer, max_seconds, ..FrameRequest::default() };
         let run = self.frame_run(&req, None)?;
-        frame::start(&self.machine, &self.events, frame::point_outline(x, y), run).await
+        let started = frame::start(&self.machine, &self.events, frame::point_outline(x, y), run).await?;
+        if self.shutting_down() {
+            self.frame_stop().await?;
+            return Err(crate::shutdown::shutting_down_error("the red dot"));
+        }
+        Ok(started)
     }
 
     /// End framing only. Pending and approved runs are left alone (that is [`AppState::stop`]). `{ok: true}`, or

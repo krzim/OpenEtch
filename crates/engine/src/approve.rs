@@ -26,6 +26,10 @@
 //! the foot switch counts that press as its first iteration's start-input press (it is the same input, released and
 //! pressed; the foot switch cycle's runs never ask for the start input); later iterations wait for their own press.
 //! The physical confirmation (`--confirm-input`) still waits for its own press after any approval.
+//!
+//! **Shutdown** (module `shutdown`): once the engine is shutting down every approval and Start is refused (503
+//! `shutting_down`); the machine claim refuses it atomically, so a run approved in that moment is either refused or
+//! waited for. A run already approved keeps every gate and is left to finish.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -77,6 +81,8 @@ pub(crate) async fn approve(
     approver: Approver<'_>,
     checklist: Option<&[bool]>,
 ) -> Result<Value, EngineError> {
+    // Before the PIN is looked at, so a refusal costs no attempt (checked again when the machine is claimed).
+    state.refuse_if_shutting_down("approving a run")?;
     match (state.approval_mode(), approver) {
         (ApprovalMode::Pin, Approver::Pin(pin)) => {
             // The simulator test PIN (`--sim-pin`) never approves anything on a real laser, whatever started the
@@ -149,6 +155,8 @@ pub(crate) async fn approve(
             )));
         }
         if !state.machine.try_begin_run() {
+            // The claim and a shutdown share one atomic word: a run claimed now is waited for, else it is refused.
+            state.refuse_if_shutting_down("approving a run")?;
             return Err(EngineError::Conflict("another run is in progress".into()));
         }
         // Captured after claiming the machine, still under the runs lock (see the module docs).
@@ -228,6 +236,7 @@ pub(crate) async fn start_now(
             message: "this engine approves runs with the operator PIN: request the run, then approve it with the PIN".into(),
         });
     }
+    state.refuse_if_shutting_down("Start")?;
     // Captured first, so a Stop during the door read below cancels this Start too.
     let epoch = state.machine.stop_epoch();
     let changed = |shown: u64, now: u64| {

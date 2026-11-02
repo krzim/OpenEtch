@@ -108,6 +108,7 @@ where
     F: FnOnce(&mut machine::GrblDriver) -> Result<R, machine::ControllerError> + Send + 'static,
 {
     st.require_grbl()?;
+    st.refuse_if_shutting_down("moving the machine")?;
     if st.machine.is_running() {
         return Err(EngineError::Conflict("a run is in progress".into()));
     }
@@ -384,6 +385,7 @@ async fn machine_axis(State(st): State<Arc<AppState>>, headers: HeaderMap, body:
     };
     // Claim the machine as a run would, so no run is approved while the axis moves (activate_device does the same).
     if !st.machine.try_begin_run() {
+        st.refuse_if_shutting_down("moving the axis")?;
         return Err(EngineError::Conflict("a run is in progress".into()));
     }
     struct Claim<'a>(&'a crate::hw::Machine);

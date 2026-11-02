@@ -76,12 +76,32 @@ pub fn channel() -> broadcast::Sender<Event> {
 /// `GET /api/events`: upgrade to a WebSocket and stream every event as JSON text.
 pub async fn events_ws(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> Response {
     let rx = state.subscribe();
-    ws.on_upgrade(move |socket| pump(socket, rx))
+    let closing = state.shutdown.closing();
+    ws.on_upgrade(move |socket| pump(socket, rx, closing))
 }
 
-async fn pump(mut socket: WebSocket, mut rx: broadcast::Receiver<Event>) {
+/// Resolves once the engine has shut down (never, should the state be gone).
+async fn shut_down(closing: &mut tokio::sync::watch::Receiver<bool>) {
+    if closing.wait_for(|c| *c).await.is_err() {
+        std::future::pending::<()>().await;
+    }
+}
+
+/// Stream events until the client goes away or the engine has shut down (module `shutdown`).
+async fn pump(mut socket: WebSocket, mut rx: broadcast::Receiver<Event>, mut closing: tokio::sync::watch::Receiver<bool>) {
     loop {
         tokio::select! {
+            () = shut_down(&mut closing) => {
+                // Send what is still queued (the `shutting_down` event), then close.
+                while let Ok(ev) = rx.try_recv() {
+                    let Ok(text) = serde_json::to_string(&ev) else { continue };
+                    if socket.send(Message::Text(text.into())).await.is_err() {
+                        break;
+                    }
+                }
+                let _ = socket.send(Message::Close(None)).await;
+                break;
+            }
             ev = rx.recv() => match ev {
                 Ok(ev) => {
                     let Ok(text) = serde_json::to_string(&ev) else { continue };

@@ -78,6 +78,11 @@ OPTIONS:
   --sim-pin <digits>    Simulator only: a test operator PIN (6-12 digits) for this run, held in memory and never
                         written to disk. Refused with --usb (or any real USB link), and in release builds unless
                         OPENETCH_ALLOW_SIM_PIN=1 is set. Never use it on a machine that drives a laser.
+  --shutdown-grace-secs <s>
+                        On SIGTERM/SIGINT (systemctl stop/restart, Ctrl-C) the engine refuses new work and waits
+                        up to this long for a running job to finish before it exits; a second signal or the limit
+                        aborts the job (default 3600; 0 aborts at once; at most 604800). Under systemd set
+                        TimeoutStopSec to at least this, or systemd kills the engine after 90 s.
   -h, --help            Show this help.";
 
 /// Parsed options.
@@ -109,6 +114,8 @@ pub struct Config {
     pub device: Option<String>,
     /// `--sim-pin`: the simulator test PIN (simulator only; see `pin::PinStore::simulator`).
     pub sim_pin: Option<String>,
+    /// `--shutdown-grace-secs`: how long a shutdown waits for a running job (module `shutdown`).
+    pub shutdown_grace_secs: u64,
 }
 
 /// What the command line asked for.
@@ -187,6 +194,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Parsed, String> 
     let mut lightburn_device = None;
     let mut device = None;
     let mut sim_pin = None;
+    let mut shutdown_grace_secs = crate::shutdown::DEFAULT_GRACE_SECS;
     let mut it = args;
     while let Some(arg) = it.next() {
         let (flag, inline) = match arg.split_once('=') {
@@ -249,6 +257,18 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Parsed, String> 
                 crate::pin::validate_pin(&v).map_err(|e| format!("--sim-pin: {e}"))?;
                 sim_pin = Some(v);
             }
+            "--shutdown-grace-secs" => {
+                let v = value("--shutdown-grace-secs")?;
+                match v.parse::<u64>() {
+                    Ok(s) if s <= crate::shutdown::MAX_GRACE_SECS => shutdown_grace_secs = s,
+                    _ => {
+                        return Err(format!(
+                            "--shutdown-grace-secs must be 0..={} seconds (got '{v}')",
+                            crate::shutdown::MAX_GRACE_SECS
+                        ));
+                    }
+                }
+            }
             "set-pin" | "profile" | "devices" => {
                 return Err(format!("{flag} is a command of its own and comes first (see --help)"));
             }
@@ -283,6 +303,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Parsed, String> 
         lightburn_device,
         device,
         sim_pin,
+        shutdown_grace_secs,
     }))
 }
 
@@ -501,6 +522,18 @@ mod tests {
         // Never with the real laser, in either order.
         assert!(p(&["--usb", "--sim-pin", "123456"]).unwrap_err().contains("--usb"));
         assert!(p(&["--sim-pin", "123456", "--usb"]).unwrap_err().contains("--usb"));
+    }
+
+    #[test]
+    fn shutdown_grace_option() {
+        assert_eq!(run(&[]).shutdown_grace_secs, crate::shutdown::DEFAULT_GRACE_SECS);
+        assert_eq!(run(&["--shutdown-grace-secs", "0"]).shutdown_grace_secs, 0, "0 aborts at once");
+        assert_eq!(run(&["--shutdown-grace-secs=7200"]).shutdown_grace_secs, 7200);
+        let p = |a: &[&str]| parse(a.iter().map(|s| s.to_string()));
+        for bad in ["-1", "1.5", "x", "", "604801"] {
+            assert!(p(&["--shutdown-grace-secs", bad]).unwrap_err().contains("--shutdown-grace-secs"), "{bad}");
+        }
+        assert!(p(&["--shutdown-grace-secs"]).is_err());
     }
 
     #[test]
