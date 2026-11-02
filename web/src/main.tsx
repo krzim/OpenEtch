@@ -8,6 +8,7 @@ import { createRoot } from "react-dom/client";
 import { initAuthToken } from "./api/client.ts";
 import { App } from "./App.tsx";
 import { ConnectGate } from "./app/ConnectScreen.tsx";
+import { CrashScreen } from "./app/CrashScreen.tsx";
 import { getPrefs } from "./workspace/prefs.ts";
 import { resolveTheme } from "./workspace/theme.ts";
 import "./styles.css";
@@ -28,9 +29,11 @@ const root = document.getElementById("root");
 if (root) {
   createRoot(root).render(
     <StrictMode>
-      <ConnectGate>
-        <App />
-      </ConnectGate>
+      <CrashScreen>
+        <ConnectGate>
+          <App />
+        </ConnectGate>
+      </CrashScreen>
     </StrictMode>,
   );
 }

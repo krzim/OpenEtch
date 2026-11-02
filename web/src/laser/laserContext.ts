@@ -124,7 +124,8 @@ const NO_FLOW: LaserFlow = { starting: false, refusal: null, ticks: [], gates: n
 // ---- the store ------------------------------------------------------------------------------------------------------
 
 const sources: Partial<Record<SourceId, LaserSource>> = {};
-let facts: LaserFacts = DEFAULT_FACTS;
+// A copy, never DEFAULT_FACTS itself: an unchanged source update swaps its functions into this object in place.
+let facts: LaserFacts = { ...DEFAULT_FACTS };
 let flow: LaserFlow = NO_FLOW;
 const subs = new Set<() => void>();
 
@@ -145,9 +146,14 @@ export function setLaserSource(id: SourceId, s: LaserSource | null): void {
   const changed = sourceChanged(before, s);
   if (s) sources[id] = s;
   else delete sources[id];
-  // Functions are read through `facts` at call time, so swap them in even when nothing visible changed.
-  facts = mergeSources(sources);
-  if (changed) emit();
+  // Functions are read through `facts` at call time, so swap them in even when nothing visible changed, but keep the
+  // snapshot's identity then: a component that publishes on every render and also reads the facts (LaserDock) would
+  // otherwise see a new snapshot after each commit and re-render forever (React error #185).
+  const merged = mergeSources(sources);
+  if (changed) {
+    facts = merged;
+    emit();
+  } else Object.assign(facts, merged);
 }
 
 export function getLaserFacts(): LaserFacts {
@@ -173,7 +179,7 @@ export function setLaserFlow(patch: Partial<LaserFlow>): void {
 /** Reset everything (tests). */
 export function resetLaserStore(): void {
   for (const id of ORDER) delete sources[id];
-  facts = DEFAULT_FACTS;
+  facts = { ...DEFAULT_FACTS };
   flow = NO_FLOW;
   emit();
 }

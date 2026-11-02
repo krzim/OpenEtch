@@ -733,8 +733,9 @@ a.menu-item {
 }
 
 .pref-row input[type="range"] {
-  flex: 1;
-  min-width: 120px;
+  /* Narrow enough that a long label ("Icon and toolbar size"), the slider and its value share one row. */
+  flex: 1 1 72px;
+  min-width: 72px;
   accent-color: var(--accent);
 }
 

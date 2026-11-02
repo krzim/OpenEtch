@@ -2505,6 +2505,8 @@ kbd {
   /* Below STOP (--z-stop), which stays clickable over every dialog (V5). */
   z-index: var(--z-modal);
   padding: 16px;
+  /* Dialogs start below the top bar, so its status chip and STOP never sit on a dialog's title row or close button. */
+  padding-top: calc(var(--bar-top) + var(--safe-top) + 8px);
 }
 
 .modal {
@@ -3440,3 +3442,45 @@ html {
   min-height: 44px;
 }
 
+
+/* ---- crash screen (app/CrashScreen.tsx): STOP stays on screen when a render throws --------------------------- */
+
+.crash-screen {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.crash-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: calc(var(--bar-top) + var(--safe-top));
+  padding: var(--safe-top) 8px 0;
+  background: var(--chrome);
+  border-bottom: 1px solid var(--border);
+}
+
+.crash-brand {
+  font-weight: 600;
+}
+
+.crash-body {
+  max-width: 640px;
+  margin: 48px auto;
+  padding: 0 16px;
+}
+
+.crash-error {
+  white-space: pre-wrap;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.crash-stopped {
+  font-weight: 600;
+}

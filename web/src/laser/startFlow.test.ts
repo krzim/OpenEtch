@@ -192,3 +192,19 @@ test("startFromHotkey reads the shared facts: offline only tells why, the checkl
   assert.equal(c.workspace, "design");
   resetLaserStore();
 });
+
+test("an unchanged source update keeps the facts snapshot (no render loop) but swaps its functions in", () => {
+  resetLaserStore();
+  const sel: string[] = [];
+  const first = () => undefined;
+  setLaserSource("dock", { workspace: "laser", selection: sel, notify: first });
+  const snap = getLaserFacts();
+  const second = () => undefined;
+  // What LaserDock does on every render: the same values in a new object, with new callbacks.
+  setLaserSource("dock", { workspace: "laser", selection: sel, notify: second });
+  assert.equal(getLaserFacts(), snap, "same snapshot when nothing visible changed");
+  assert.equal(getLaserFacts().notify, second, "the new callback is used");
+  setLaserSource("dock", { workspace: "design", selection: sel, notify: second });
+  assert.notEqual(getLaserFacts(), snap, "a visible change is a new snapshot");
+  resetLaserStore();
+});
