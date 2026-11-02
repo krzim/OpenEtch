@@ -9,6 +9,7 @@
 // A tap on the active tab opens or closes its sheet.
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { commandHostReady, openCommandSearch } from "../components/commandBus.ts";
 import { OPEN_LASER_EVENT } from "../laser/laserContext.ts";
 import { BottomSheet } from "./BottomSheet.tsx";
 import type { SheetSnap } from "./phone.ts";
@@ -18,6 +19,10 @@ import "./phone.css";
 
 export type PhoneTab = "canvas" | "layers" | "job" | "more";
 export const PHONE_TABS: readonly PhoneTab[] = ["canvas", "layers", "job", "more"];
+
+/** Window event: open command search from the More sheet. The search lives in the tool strip, which is mounted only
+ *  in the Canvas sheet, so the shell opens that sheet first and asks once the strip is there. */
+export const PHONE_SEARCH_EVENT = "openetch:phone-search";
 
 /** Each tab's sheet height when it opens. */
 const OPEN_AT: Record<PhoneTab, SheetSnap> = { canvas: "peek", layers: "half", job: "half", more: "full" };
@@ -72,6 +77,24 @@ export function PhoneShell(p: PhoneShellProps) {
     const open = () => showRef.current("job");
     window.addEventListener(OPEN_LASER_EVENT, open);
     return () => window.removeEventListener(OPEN_LASER_EVENT, open);
+  }, []);
+
+  useEffect(() => {
+    let timer = 0;
+    const search = () => {
+      showRef.current("canvas", "peek");
+      let tries = 0;
+      const ask = () => {
+        if (commandHostReady()) openCommandSearch();
+        else if (tries++ < 20) timer = window.setTimeout(ask, 25);
+      };
+      timer = window.setTimeout(ask, 0);
+    };
+    window.addEventListener(PHONE_SEARCH_EVENT, search);
+    return () => {
+      window.removeEventListener(PHONE_SEARCH_EVENT, search);
+      window.clearTimeout(timer);
+    };
   }, []);
 
   // Selecting a shape on the Canvas tab peeks the selection sheet open; clearing the selection closes it again.

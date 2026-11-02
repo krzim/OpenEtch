@@ -154,9 +154,9 @@
 }
 
 /* Tablet with touch targets (an iPad, or Density = Touch): rails and the merged bottom row wide and tall enough for
-   44 px buttons (the tool rail's 4 px padding and border, the dock rail's border). */
+   44 px buttons (the tool rail's 6 px padding and border, the dock rail's border). */
 :root[data-density="touch"][data-layout="tablet"] {
-  --tool-rail-w: 54px;
+  --tool-rail-w: 58px;
   --dock-rail-w: 46px;
   --bar-timeline: 48px;
   --bar-palette: 50px;

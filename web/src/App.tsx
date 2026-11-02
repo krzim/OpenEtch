@@ -61,7 +61,7 @@ import { Icon } from "./components/ui.tsx";
 import { Viewport, type PreviewOptions, type SnapSettings, type Tool, type ViewStyle } from "./components/Viewport.tsx";
 import { CutsLayers } from "./workspace/CutsLayers.tsx";
 import { AboutDialog, HelpItems, TopActions } from "./workspace/HelpMenu.tsx";
-import { PhoneShell } from "./workspace/PhoneShell.tsx";
+import { PHONE_SEARCH_EVENT, PhoneShell } from "./workspace/PhoneShell.tsx";
 import { LaserDock, machineState } from "./workspace/LaserDock.tsx";
 import { NumericBar } from "./workspace/NumericBar.tsx";
 import { PaletteBar } from "./workspace/PaletteBar.tsx";
@@ -1678,6 +1678,10 @@ export function App() {
         }}
         moreItems={
           <>
+            {/* Command search lives in the Canvas sheet's tool strip; this opens it from here (PhoneShell). */}
+            <div className="phone-more-body phone-more-search">
+              {moreRow(`${t("rb.searchTitle")}…`, () => window.dispatchEvent(new CustomEvent(PHONE_SEARCH_EVENT)))}
+            </div>
             <details open>
               <summary>
                 <ShellIcon name="file" />

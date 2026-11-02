@@ -105,3 +105,10 @@ test("bottom sheet: a drag settles on the nearest height, or closes well under t
   assert.equal(snapFor(0.1), null, "dragged well down: close");
   assert.ok(SNAP_FRACTION.peek < SNAP_FRACTION.half && SNAP_FRACTION.half < SNAP_FRACTION.full);
 });
+
+test("phone: the canvas column outweighs styles.css's `.app > * { flex: none }`, which loads after phone.css", () => {
+  const phone = readFileSync(new URL("./phone.css", import.meta.url), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  const rule = /\.app > \.phone-main\s*\{[^}]*\}/.exec(phone)?.[0] ?? "";
+  assert.match(rule, /flex:\s*1 1 0/);
+  assert.doesNotMatch(phone, /(^|\})\s*\.phone-main\s*\{/);
+});

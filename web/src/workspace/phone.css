@@ -5,7 +5,9 @@
   overflow: hidden;
 }
 
-.phone-main {
+/* `.app > .phone-main`, not `.phone-main`: styles.css's `.app > * { flex: none }` loads after this file and, at equal
+   weight, collapsed the canvas to 0 px high with the tab bar right under the top bar. */
+.app > .phone-main {
   position: relative;
   flex: 1 1 0;
   min-height: 0;
@@ -190,8 +192,13 @@
 }
 
 .phone-selection .numeric-bar {
-  height: 48px;
-  padding: 0;
+  /* Wraps on the phone: in one 374 px row H and rotation sat off screen behind a sideways scroll nobody finds. */
+  height: auto;
+  min-height: 48px;
+  flex-wrap: wrap;
+  row-gap: 4px;
+  overflow: visible;
+  padding: 4px 0;
   background: none;
 }
 
@@ -281,4 +288,10 @@
 
 :root[data-layout="phone"] .modal-foot {
   padding-bottom: calc(10px + var(--safe-bottom));
+}
+
+/* One status dot on the phone: the machine status chip already shows offline and connecting, so the separate
+   connection dot (two unlabeled green dots side by side) goes. */
+:root[data-layout="phone"] .topbar .conn {
+  display: none;
 }
