@@ -27,7 +27,6 @@ export const EN_LASER = {
   "lz.checklistOpened": "Tick the Job Checklist in the Laser window, then press Start again.",
   "lz.refused": "Start refused",
   "lz.dismiss": "Dismiss",
-  "lz.approveBelow": "Approve it with the PIN right below.",
   "lz.approvalsInDock": "Pending runs are approved in the Laser window, right under Request run.",
   "lz.pendingTitle": "Waiting for approval",
   // Status chip (laser/StatusChip.tsx)
@@ -58,7 +57,6 @@ export const EN_LASER = {
   "lz.lostNever": "Cannot reach the laser engine – retrying…",
   "lz.lostStop": "STOP may not reach the laser; use the hardware E-stop.",
   // Frame options (components/FramingOptions.tsx)
-  "lz.frameOptionsClose": "Close frame options",
   // Machine panel (laser/machineRows.ts, components/LaserPanel.tsx)
   "lz.mLink": "Link",
   "lz.mConnected": "Connected",
@@ -83,8 +81,6 @@ export const EN_LASER = {
   "lz.mShuttingDown": "Shutting down",
   "lz.mOn": "On",
   "lz.mOff": "Off",
-  "lz.mYes": "Yes",
-  "lz.mNo": "No",
   "lz.mIdle": "Idle",
   "lz.mBusy": "Busy",
   "lz.mFraming": "Framing (red pointer)",

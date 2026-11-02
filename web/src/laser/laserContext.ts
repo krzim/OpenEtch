@@ -32,8 +32,8 @@ export interface LaserFacts {
   revision: number | null;
   /** The preview's job estimate in seconds (whole job), when known. */
   estimateS: number | null;
-  /** The document has no objects. */
-  docEmpty: boolean;
+  /** The document has no objects (null: not known; the shell decides when to show the empty-canvas card). */
+  docEmpty: boolean | null;
   /** Open the Laser workspace and its Laser window (desktop) or the Job sheet (phone). */
   openLaser: () => void;
   notify: Notify;
@@ -64,7 +64,7 @@ export const DEFAULT_FACTS: LaserFacts = {
   selection: [],
   revision: null,
   estimateS: null,
-  docEmpty: false,
+  docEmpty: null,
   openLaser: () => {
     if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(OPEN_LASER_EVENT));
   },

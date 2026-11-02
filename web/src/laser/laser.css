@@ -382,3 +382,142 @@
 .machine-raw dd {
   overflow-wrap: anywhere;
 }
+
+/* ---- Empty canvas card -------------------------------------------------------------------------------------------- */
+
+.empty-card-wrap {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-canvas-ui, 5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-4, 16px);
+  pointer-events: none;
+}
+.empty-card {
+  pointer-events: auto;
+  width: min(420px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  padding: var(--sp-4, 16px);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg, 8px);
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: var(--shadow-pop, 0 4px 16px rgba(0, 0, 0, 0.18));
+}
+.empty-card-title {
+  margin: 0 0 4px;
+  font-size: var(--fs-xl, 18px);
+  font-weight: 600;
+}
+.empty-card-drop {
+  margin: 0 0 12px;
+  color: var(--text-2, var(--muted));
+}
+.empty-card-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.empty-card-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  min-height: max(36px, var(--hit, 28px));
+}
+.empty-card-actions .btn-primary {
+  grid-column: 1 / -1;
+  justify-content: center;
+}
+.empty-card-t {
+  display: inline-block;
+  width: 18px;
+  text-align: center;
+  font-weight: 700;
+  font-family: Georgia, "Times New Roman", serif;
+}
+.empty-card-laser {
+  --chip-dot: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 12px 0 0;
+  font-size: var(--fs-sm, 12px);
+  color: var(--text-2, var(--muted));
+}
+.empty-card-laser.tone-ok {
+  --chip-dot: var(--ok);
+}
+.empty-card-laser.tone-armed {
+  --chip-dot: var(--chip-framing);
+}
+.empty-card-laser.tone-run,
+.empty-card-laser.tone-bad {
+  --chip-dot: var(--danger);
+}
+[data-layout="phone"] .empty-card-actions {
+  grid-template-columns: 1fr;
+}
+
+/* ---- Beginner Mode step bar --------------------------------------------------------------------------------------- */
+
+.step-bar {
+  margin: 0 0 8px;
+}
+.step-bar-list {
+  display: flex;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.step {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  color: var(--text-2, var(--muted));
+  font-size: var(--fs-sm, 12px);
+}
+.step.done {
+  color: var(--text);
+}
+.step.current {
+  border-color: var(--start-bg);
+  background: var(--warn-bg);
+  color: var(--text);
+  font-weight: 600;
+}
+.step-n {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid currentColor;
+  font-size: 11px;
+}
+.step.current .step-n {
+  background: var(--start-bg);
+  border-color: var(--start-bg);
+  color: var(--start-fg);
+}
+.step-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.step-hint {
+  margin: 4px 0 0;
+  font-size: var(--fs-sm, 12px);
+  color: var(--text-2, var(--muted));
+}

@@ -17,7 +17,8 @@ import { JobCounter, JobProgress, RunOptionsPanel, useJobStatus } from "../compo
 import { PendingApprovals } from "../components/LaserPanel.tsx";
 import { footCycle, footCycleText, noPinMode } from "../api/runs.ts";
 import { ApprovalChecks, useSharedApprovalGates } from "../libs/JobSafety.tsx";
-import { useLaserSource } from "../laser/laserContext.ts";
+import { setLaserFlow, useLaserFacts, useLaserFlow, useLaserSource } from "../laser/laserContext.ts";
+import { StepBar } from "../laser/StepBar.tsx";
 import { StartButton } from "../laser/StartButton.tsx";
 import { StatusChip } from "../laser/StatusChip.tsx";
 import { ContextStripPortal } from "./contextStrip.tsx";
@@ -117,6 +118,14 @@ export function LaserDock(p: LaserDockProps) {
     refreshMachine: p.onChanged,
     approvalsInDock: pending,
   });
+  // Beginner Mode's step bar: a frame (from here, a hotkey or the foot switch) counts for the revision it traced.
+  const flow = useLaserFlow();
+  const facts = useLaserFacts();
+  const revision = p.doc?.revision ?? null;
+  const framingNow = !!p.machine?.framing;
+  useEffect(() => {
+    if (framingNow) setLaserFlow({ framedRevision: revision });
+  }, [framingNow, revision]);
   // Beginner Mode hides Optimization Settings and the rotary controls, as LightBurn's does.
   const beginnerMode = usePrefs().beginnerMode;
   const canOpt = p.has("job.set_optimization") && !beginnerMode;
@@ -151,6 +160,15 @@ export function LaserDock(p: LaserDockProps) {
         {p.pendingRuns > 0 && <span className="pill">{t("laser.pending", { count: p.pendingRuns })}</span>}
       </div>
       {p.designOnly && <p className="hint">{p.designOnly}</p>}
+      {beginnerMode && (
+        <StepBar
+          previewed={facts.estimateS !== null}
+          framing={framingNow}
+          framedRevision={flow.framedRevision}
+          revision={revision}
+          running={job.job.active || p.machine?.running === true}
+        />
+      )}
 
       <JobProgress state={job} notify={p.notify} report={p.report} />
 
