@@ -1,6 +1,12 @@
 // HTTP client for the engine API. Every request carries the bearer token in the Authorization header (the engine
 // accepts `?token=` only on the /api/events WebSocket). The UI never edits the document locally: edits go through
 // `execute`/`batch`, and callers refetch the document afterwards.
+//
+// Access token (docs/ux/ui-plan-2026-11.md 1.3): kept in localStorage ("Remember on this device"), or for this tab
+// only. An answer of 401 sets `needsToken`, and the app shows the Connect card (app/ConnectScreen.tsx) instead of a
+// broken UI; pasting the token there (`tryToken`) reconnects without a reload. The token never goes into a URL
+// except the WebSocket's, which browsers cannot give headers. App windows that cannot see the tab's localStorage
+// (Safari Add to Dock) are logged in by the engine's HttpOnly cookie, which `fetch` sends on its own.
 
 import type {
   CommandSpec,
@@ -13,7 +19,42 @@ import type {
 import { contentDispositionName, type FileFormat, type ImportMode, type UploadFormat } from "./project.ts";
 import { okError } from "./runs.ts";
 
-const TOKEN_KEY = "openetch.token";
+/** localStorage key of the remembered access token. */
+export const TOKEN_KEY = "openetch.token";
+
+/** A token pasted with "Remember on this device" off: kept for this tab only (in memory). */
+let tabToken: string | null = null;
+
+/** The engine refused the token (401): the Connect card replaces the app until a token is accepted. */
+let needsToken = false;
+const tokenListeners = new Set<() => void>();
+
+function setNeedsToken(v: boolean): void {
+  if (needsToken === v) return;
+  needsToken = v;
+  for (const fn of [...tokenListeners]) fn();
+}
+
+/** Whether the engine refused the token (an answer of 401 since the last accepted token). */
+export function needsTokenNow(): boolean {
+  return needsToken;
+}
+
+/** Call `fn` whenever `needsTokenNow()` changes (for useSyncExternalStore); returns the unsubscribe function. */
+export function subscribeNeedsToken(fn: () => void): () => void {
+  tokenListeners.add(fn);
+  return () => void tokenListeners.delete(fn);
+}
+
+/** The engine answered 401: show the Connect card. Any module that talks to /api may report it. */
+export function markUnauthorized(): void {
+  setNeedsToken(true);
+}
+
+/** A token was accepted: leave the Connect card. */
+export function markAuthorized(): void {
+  setNeedsToken(false);
+}
 
 /**
  * Read `?token=` from the page URL, persist it, and strip it from the address bar so it is not shared by accident.
@@ -34,13 +75,69 @@ export function initAuthToken(): string | null {
   return authToken();
 }
 
-/** The stored bearer token, or null. */
+/** The bearer token (this tab's, else the remembered one), or null. */
 export function authToken(): string | null {
+  if (tabToken) return tabToken;
   try {
     return localStorage.getItem(TOKEN_KEY);
   } catch {
     return null;
   }
+}
+
+/**
+ * Use `token` from now on: remembered on this device (localStorage), or with `remember` false for this tab only (a
+ * remembered one is then forgotten). An empty token forgets both.
+ */
+export function setToken(token: string, remember = true): void {
+  const t = token.trim();
+  tabToken = null;
+  try {
+    if (t && remember) localStorage.setItem(TOKEN_KEY, t);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    // Storage unavailable (private mode): keep it for this tab.
+    if (t) tabToken = t;
+  }
+  if (t && !remember) tabToken = t;
+}
+
+/** Forget the token on this device and in this tab. */
+export function clearToken(): void {
+  setToken("");
+}
+
+/**
+ * The token in what was pasted into the Connect card: the token itself, or a pairing URL (`…/?token=<t>`) or a line
+ * of `openetch token` output that carries one. Null when there is nothing token-like.
+ */
+export function tokenFromInput(text: string): string | null {
+  const s = text.trim();
+  const m = /[?&]token=([A-Za-z0-9_-]+)/.exec(s);
+  const t = m ? m[1] : s;
+  return /^[A-Za-z0-9_-]{16,}$/.test(t) ? t : null;
+}
+
+/** What `tryToken` found. */
+export type TokenCheck = { ok: true } | { ok: false; reason: "refused" | "unreachable"; detail?: string };
+
+/**
+ * Check a token against the engine (GET /api/machine): accepted, it stays in use and the Connect card goes away;
+ * refused, it is forgotten again. `token` null retries with what is stored (and the engine's cookie).
+ */
+export async function tryToken(token: string | null, remember = true): Promise<TokenCheck> {
+  if (token !== null) setToken(token, remember);
+  try {
+    await request<unknown>("GET", "/api/machine");
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 401) {
+      if (token !== null) clearToken();
+      return { ok: false, reason: "refused", detail: e.detail };
+    }
+    return { ok: false, reason: "unreachable", detail: e instanceof Error ? e.message : String(e) };
+  }
+  markAuthorized();
+  return { ok: true };
 }
 
 /** An HTTP or engine-level failure, with a message suitable for a toast. */
@@ -76,8 +173,10 @@ async function send(method: string, path: string, init: { headers: Record<string
   }
 }
 
-/** Turn a non-2xx answer into an ApiError carrying the engine's `error` text and `code`. */
+/** Turn a non-2xx answer into an ApiError carrying the engine's `error` text and `code`. A 401 also raises the
+ * Connect card (`needsToken`). */
 function httpError(method: string, path: string, res: Response, text: string): ApiError {
+  if (res.status === 401) markUnauthorized();
   const data = parseBody(text);
   const obj = data && typeof data === "object" ? (data as { error?: unknown; code?: unknown }) : null;
   const msg = obj && "error" in obj ? String(obj.error) : text || res.statusText;

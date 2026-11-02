@@ -1,5 +1,6 @@
 // Unit tests for api/client.ts against a fake fetch: the bearer header on every request, `?token=` only on the
-// WebSocket URL, undo/redo `{ok:false}` answers, Stop frame, and the approval body and error codes.
+// WebSocket URL, undo/redo `{ok:false}` answers, Stop frame, the approval body and error codes, and the access token
+// (401 raises the Connect card, a pasted token reconnects, and the token never goes into a URL).
 
 import assert from "node:assert/strict";
 import { beforeEach, test } from "node:test";
@@ -19,10 +20,11 @@ const g = globalThis as Record<string, unknown>;
 g.localStorage = {
   getItem: (k: string) => store.get(k) ?? null,
   setItem: (k: string, v: string) => void store.set(k, v),
+  removeItem: (k: string) => void store.delete(k),
 };
 g.window = { location: { protocol: "http:", host: "pi.local:7878", href: "http://pi.local:7878/" } };
-g.fetch = async (path: string, init: { method: string; headers: Record<string, string>; body?: string }) => {
-  calls.push({ method: init.method, path, headers: init.headers, body: init.body === undefined ? undefined : JSON.parse(init.body) });
+g.fetch = async (path: string, init: { method: string; headers: Record<string, string>; body?: unknown }) => {
+  calls.push({ method: init.method, path, headers: init.headers, body: typeof init.body === "string" ? JSON.parse(init.body) : init.body });
   return {
     ok: reply.status >= 200 && reply.status < 300,
     status: reply.status,
@@ -31,7 +33,8 @@ g.fetch = async (path: string, init: { method: string; headers: Record<string, s
   };
 };
 
-const { api, ApiError, eventsUrl } = await import("./client.ts");
+const client = await import("./client.ts");
+const { api, ApiError, eventsUrl } = client;
 
 beforeEach(() => {
   calls.length = 0;
@@ -149,4 +152,78 @@ test("device routes: list, details, import (file or LightBurn on the engine comp
   await assert.rejects(api.deviceActivate("wazer"), (e: unknown) => e instanceof ApiError && e.status === 409 && e.detail === "a run is active");
   reply = { status: 200, body: { ok: false, error: "no devices in DeviceList" } };
   await assert.rejects(api.deviceImport(body, "all"), /no devices in DeviceList/);
+});
+
+test("a 401 raises the Connect card (needsToken) and nothing else does", async () => {
+  client.markAuthorized();
+  let changes = 0;
+  const off = client.subscribeNeedsToken(() => void changes++);
+  reply = { status: 403, body: { ok: false, error: "origin not allowed" } };
+  await assert.rejects(api.machine(), (e: unknown) => e instanceof ApiError && e.status === 403);
+  reply = { status: 500, body: { ok: false, error: "boom" } };
+  await assert.rejects(api.document());
+  assert.equal(client.needsTokenNow(), false);
+  reply = { status: 401, body: { ok: false, error: "missing or wrong access token" } };
+  await assert.rejects(api.machine(), (e: unknown) => e instanceof ApiError && e.status === 401);
+  assert.equal(client.needsTokenNow(), true);
+  // Every route reports it, uploads and downloads included.
+  client.markAuthorized();
+  await assert.rejects(api.download("svg"));
+  assert.equal(client.needsTokenNow(), true);
+  client.markAuthorized();
+  await assert.rejects(api.upload(new Blob(["x"]), "svg"));
+  assert.equal(client.needsTokenNow(), true);
+  off();
+  assert.ok(changes >= 2);
+  client.markAuthorized();
+});
+
+test("a pasted token is checked, kept on success and forgotten when refused; never in a URL", async () => {
+  client.markUnauthorized();
+  reply = { status: 401, body: { ok: false, error: "missing or wrong access token" } };
+  const refused = await client.tryToken("wrong-token-0123456789");
+  assert.deepEqual(refused.ok ? null : refused.reason, "refused");
+  assert.equal(client.needsTokenNow(), true);
+  assert.equal(store.has("openetch.token"), false, "a refused token is not kept");
+  assert.equal(calls.at(-1)?.headers.Authorization, "Bearer wrong-token-0123456789");
+
+  reply = { status: 200, body: { connected: true } };
+  assert.deepEqual(await client.tryToken("good-token-0123456789"), { ok: true });
+  assert.equal(client.needsTokenNow(), false, "accepted: the app comes back without a reload");
+  assert.equal(store.get("openetch.token"), "good-token-0123456789");
+  await api.machine();
+  assert.equal(calls.at(-1)?.headers.Authorization, "Bearer good-token-0123456789");
+
+  // "Remember on this device" off: this tab only, nothing stored.
+  assert.deepEqual(await client.tryToken("tab-token-0123456789", false), { ok: true });
+  assert.equal(store.has("openetch.token"), false);
+  assert.equal(client.authToken(), "tab-token-0123456789");
+  assert.equal(eventsUrl(), "ws://pi.local:7878/api/events?token=tab-token-0123456789");
+
+  // The engine down is not a refusal.
+  const fetchOk = g.fetch;
+  g.fetch = async () => {
+    throw new Error("connection refused");
+  };
+  const down = await client.tryToken(null);
+  assert.deepEqual(down.ok ? null : down.reason, "unreachable");
+  g.fetch = fetchOk;
+
+  for (const c of calls) {
+    assert.ok(!c.path.includes("token"), `no token in ${c.path}`);
+  }
+  client.setToken("tok-123");
+  assert.equal(client.authToken(), "tok-123");
+  assert.deepEqual([...store.keys()], ["openetch.token"]);
+});
+
+test("tokenFromInput takes a token, a pairing URL or a line of `openetch token`", () => {
+  const t = "0123456789abcdef0123456789abcdef";
+  assert.equal(client.tokenFromInput(`  ${t}
+`), t);
+  assert.equal(client.tokenFromInput(`http://192.168.1.20:7878/?token=${t}`), t);
+  assert.equal(client.tokenFromInput(`openetch: pair a device by opening http://pi:7878/?a=1&token=${t}`), t);
+  assert.equal(client.tokenFromInput("short"), null);
+  assert.equal(client.tokenFromInput("two words here and more"), null);
+  assert.equal(client.tokenFromInput(""), null);
 });
