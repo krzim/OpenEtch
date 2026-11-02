@@ -144,6 +144,15 @@ anywhere else.
   (`POST /api/machine/frame/stop`) ends it without touching pending runs. **STOP** (`POST /api/machine/stop`) is the
   emergency stop: it sits in the top bar in every workspace, is never gated, aborts any run or frame and cancels
   every run that has not started streaming.
+- **GRBL gantry windows** (only while the active device is a GRBL gantry, `GET /api/machine` `driver: "grbl"`;
+  `components/GrblMove.tsx`, `GrblConsole.tsx`, pure logic in `api/grbl.ts`; unverified on hardware, tested against
+  the engine's GRBL simulator): **Move** (LightBurn's Move window: position from `GET /api/machine/grbl?refresh=true`
+  polled every second, jog buttons with distance and speed, arrow keys while the window has the focus (Shift x10,
+  Alt /10, Esc stops the jog), Home, Unlock, Go to origin, Move to a machine position; every move is a laser-off jog),
+  **Console** (lines to `POST /api/machine/console`, the board's answers, Up/Down history, Status, and macros saved
+  with the device through `PUT /api/prefs` `console_macros`; the engine refuses anything that could turn the laser
+  on, typed or from a macro), **File > Save G-code** (`GET /api/export/gcode`), and the GRBL layer options in the
+  pass's More settings (constant power M3, air assist M8, overscan, overcut).
 - **Laser window and machine** (LightBurn's Laser window, Live Framing, Preview, Device Settings, Calibrate Galvo Lens,
   Rotary Setup and Optimization Settings; `workspace/LaserDock.tsx`, `components/JobControls.tsx`,
   `FramingOptions.tsx`, `PreviewTimeline.tsx`, `DeviceEditor.tsx`, `LensWizard.tsx`, `RotaryDialog.tsx`,
@@ -312,6 +321,8 @@ src/
   api/job.ts, api/deviceProfile.ts, api/cutOptions.ts   job status and run/frame bodies, timeline maths; the device
                       settings model and merge patch; cut options, optimization, rotary, shape properties (pure; tested)
   api/jobApi.ts, api/events.ts   job, framing, calibration and device-setting routes; the engine event bus
+  api/grbl.ts         a GRBL gantry's Move / Console windows and Save G-code: status, coordinates, jogs, console
+                      log and history, macros (pure; tested)
   api/useEngine.ts    React hook: fetching, WebSocket events, refetch coalescing
   geometry.ts         affine maths, geometry -> SVG path, bounds (pure; tested)
   sceneLayers.ts      canvas layer maths: view matrix, grid spacing, image smoothing, per-frame view coalescing,

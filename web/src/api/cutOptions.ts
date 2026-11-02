@@ -37,6 +37,14 @@ export interface CutOptions {
   z_step_mm?: number;
   /** Kerf Offset: closed outlines of line passes traced outward (+) or inward (-), -50..=50 mm. */
   kerf_offset_mm?: number;
+  /** GRBL gantries only: constant power (M3) for these passes even when the device uses dynamic power (M4). */
+  constant_power?: boolean;
+  /** GRBL gantries only: air assist (M8) while these passes mark. */
+  air_assist?: boolean;
+  /** GRBL gantries only: laser-off run-in and run-out of every scan line (fills, images), 0..=50 mm. */
+  overscan_mm?: number;
+  /** GRBL gantries only: closed outlines cut on past their start, 0..=50 mm. */
+  overcut_mm?: number;
 }
 
 /** The resolved options of a pass (defaults filled in). */
@@ -55,7 +63,14 @@ export interface ResolvedOptions {
   z_offset_mm: number;
   z_step_mm: number;
   kerf_offset_mm: number;
+  constant_power: boolean;
+  air_assist: boolean;
+  overscan_mm: number;
+  overcut_mm: number;
 }
+
+/** Longest overscan and overcut, mm (`doc::MAX_GANTRY_EXTRA_MM`). */
+export const MAX_GANTRY_EXTRA_MM = 50;
 
 /** LightBurn-like starting values when an option is switched on. */
 export const OPTION_DEFAULTS = {
@@ -96,11 +111,18 @@ export function resolveOptions(settings: CutSettings | null | undefined): Resolv
     z_offset_mm: n(r.z_offset_mm, 0),
     z_step_mm: n(r.z_step_mm, 0),
     kerf_offset_mm: n(r.kerf_offset_mm, 0),
+    constant_power: r.constant_power === true,
+    air_assist: r.air_assist === true,
+    overscan_mm: n(r.overscan_mm, 0),
+    overcut_mm: n(r.overcut_mm, 0),
   };
 }
 
-/** How many options differ from a new layer's (for the collapsed section's badge). */
-export function activeOptionCount(r: ResolvedOptions): number {
+/**
+ * How many options differ from a new layer's (for the collapsed section's badge). The GRBL layer options count only
+ * when `gantry` (the active device is a GRBL gantry, the only one that shows and uses them).
+ */
+export function activeOptionCount(r: ResolvedOptions, gantry = false): number {
   let c = 0;
   if (!r.output) c++;
   if (r.pause_before_ms) c++;
@@ -116,6 +138,12 @@ export function activeOptionCount(r: ResolvedOptions): number {
   if (r.z_offset_mm) c++;
   if (r.z_step_mm) c++;
   if (r.kerf_offset_mm) c++;
+  if (gantry) {
+    if (r.constant_power) c++;
+    if (r.air_assist) c++;
+    if (r.overscan_mm) c++;
+    if (r.overcut_mm) c++;
+  }
   return c;
 }
 
