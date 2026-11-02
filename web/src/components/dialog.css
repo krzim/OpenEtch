@@ -77,7 +77,7 @@
    over the on-screen keyboard (--vv-inset from visualViewport). */
 @media (max-width: 600px) {
   .oe-dialog-backdrop {
-    top: var(--bar-top, 0px);
+    top: calc(var(--bar-top, 0px) + var(--safe-top, 0px));
     bottom: var(--vv-inset, 0px);
     padding: 0;
     align-items: stretch;
@@ -103,7 +103,7 @@
 }
 
 :root[data-layout="phone"] .oe-dialog-backdrop {
-  top: var(--bar-top, 0px);
+  top: calc(var(--bar-top, 0px) + var(--safe-top, 0px));
   bottom: var(--vv-inset, 0px);
   padding: 0;
   align-items: stretch;

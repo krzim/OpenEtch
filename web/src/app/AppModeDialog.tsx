@@ -65,6 +65,11 @@ export function openAppModeDialog(): void {
   emit();
 }
 
+/** Whether it is open (it renders in its own root, so the app's key handlers ask here and hold their keys). */
+export function appModeDialogOpen(): boolean {
+  return open;
+}
+
 /** Close it. */
 export function closeAppModeDialog(): void {
   if (!open) return;

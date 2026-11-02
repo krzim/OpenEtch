@@ -77,7 +77,7 @@ import { DockAreaHost, FloatHost, SidePanel, Splitter, WindowMenu, WindowMenuEnt
 import { dockPolicy, setAreaMode, updateLayout, type AreaMode, type SideArea } from "./workspace/layout.ts";
 import { useLayout } from "./workspace/windows.ts";
 import { useFullscreen } from "./workspace/fullscreen.ts";
-import { openAppModeDialog } from "./app/AppModeDialog.tsx";
+import { appModeDialogOpen, openAppModeDialog } from "./app/AppModeDialog.tsx";
 import { useLayoutMode } from "./workspace/layoutMode.ts";
 import { ContextStripHost, useContextStripBusy } from "./workspace/contextStrip.tsx";
 import { bottomRow, windowTitle } from "./workspace/shell.ts";
@@ -771,7 +771,7 @@ export function App() {
         return;
       }
       if (typingIn(e.target)) return;
-      if (dialog || fileModalOpen || filesUi.modalOpen || libsUi.modalOpen || designRef.current.modalOpen) return;
+      if (dialog || fileModalOpen || filesUi.modalOpen || libsUi.modalOpen || designRef.current.modalOpen || appModeDialogOpen()) return;
       const d = docRef.current;
       const design = workspace === "design";
       const m = { shift: e.shiftKey, ctrl: mod, alt: e.altKey };
@@ -1063,7 +1063,7 @@ export function App() {
   });
   // Workspace hotkeys (workspace/hotkeys.ts); App's own keys stay in the handler above.
   ws.keymap.current = {
-    blocked: () => !!dialog || fileModalOpen || devicesOpen || filesUi.modalOpen || libsUi.modalOpen || designUi.modalOpen,
+    blocked: () => !!dialog || fileModalOpen || devicesOpen || filesUi.modalOpen || libsUi.modalOpen || designUi.modalOpen || appModeDialogOpen(),
     modalOpen: () => ws.dialog !== null,
     handlers: {
       "app.preferences": () => ws.open("prefs"),
