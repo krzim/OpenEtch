@@ -175,3 +175,112 @@
     transition: none;
   }
 }
+
+/* ---- touch rows: grips, ⋯ and rename buttons, drop lines (BrowserPanel, CutsLayers, PagesDock, ArtLibrary) ---------- */
+
+/* The reorder grip: pointer events, so it works for a finger as for the mouse (touch/reorder.ts). */
+.row-grip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 20px;
+  margin: 0 2px 0 -4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted, #8a8e95);
+  cursor: grab;
+  touch-action: none;
+  vertical-align: middle;
+}
+.row-grip:active {
+  cursor: grabbing;
+}
+.dragging {
+  opacity: 0.6;
+}
+
+/* ⋯ and rename: always there on touch; with a mouse on the hovered or selected row (right-click and double-click stay). */
+.row-more,
+.row-rename {
+  display: none;
+}
+.tree-row.selected .row-more,
+.cuts-row.selected .row-more,
+.pages-row.active .row-more,
+.pages-row.active .row-rename,
+.tree-head .row-rename {
+  display: inline-flex;
+}
+@media (hover: hover) {
+  .tree-row:hover .row-more,
+  .cuts-row:hover .row-more,
+  .pages-row:hover .row-more,
+  .pages-row:hover .row-rename {
+    display: inline-flex;
+  }
+}
+:root[data-pointer="coarse"] .row-more,
+:root[data-pointer="coarse"] .row-rename,
+:root[data-density="touch"] .row-more,
+:root[data-density="touch"] .row-rename {
+  display: inline-flex;
+}
+.cuts-row .row-more {
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+/* Where a dragged page lands. */
+.pages-row.drop-before {
+  box-shadow: inset 0 2px 0 var(--accent, #0a73ad);
+}
+.pages-row.drop-after {
+  box-shadow: inset 0 -2px 0 var(--accent, #0a73ad);
+}
+
+.row-actions {
+  margin-top: 4px;
+}
+
+/* Coarse pointers: 44 px grips and row buttons, 40 px order buttons (T13, T14). */
+:root[data-pointer="coarse"] .row-grip,
+:root[data-density="touch"] .row-grip {
+  width: 44px;
+  height: 44px;
+  margin: 0;
+}
+:root[data-pointer="coarse"] .row-more,
+:root[data-pointer="coarse"] .row-rename,
+:root[data-density="touch"] .row-more,
+:root[data-density="touch"] .row-rename {
+  min-width: 44px;
+  min-height: 44px;
+}
+:root[data-pointer="coarse"] .c-order,
+:root[data-density="touch"] .c-order {
+  width: auto;
+  white-space: nowrap;
+}
+:root[data-pointer="coarse"] .c-order .tog,
+:root[data-density="touch"] .c-order .tog {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+}
+:root[data-pointer="coarse"] .folder-twisty,
+:root[data-density="touch"] .folder-twisty {
+  min-width: 40px;
+  min-height: 40px;
+}
+@media (pointer: coarse) {
+  .tree-rename,
+  .dz-art-search,
+  .lx-search {
+    font-size: max(16px, 1em);
+  }
+}
