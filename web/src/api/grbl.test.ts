@@ -64,6 +64,13 @@ test("jogs: screen directions, keys, limits", () => {
   assert.deepEqual(G.jogKey({ key: "ArrowDown", altKey: true }, 1), { dir: "s", step: 0.1 });
   assert.equal(G.jogKey({ key: "ArrowUp", ctrlKey: true }, 1), null, "Ctrl+arrows stay with the canvas");
   assert.equal(G.jogKey({ key: "a" }, 1), null);
+  assert.equal(G.jogKey({ key: "ArrowLeft", repeat: true }, 1), null, "a held key jogs once, not once per auto-repeat");
+  // The Move window keeps its arrows also when it does not jog, so they never nudge the canvas selection.
+  assert.equal(G.moveWindowOwnsKey({ key: "ArrowLeft" }), true);
+  assert.equal(G.moveWindowOwnsKey({ key: "ArrowUp", shiftKey: true, repeat: true } as { key: string }), true);
+  assert.equal(G.moveWindowOwnsKey({ key: "Escape" }), false, "Escape stops the jog and still reaches the app");
+  assert.equal(G.moveWindowOwnsKey({ key: "ArrowUp", ctrlKey: true }), false, "Ctrl+arrows stay with the canvas");
+  assert.equal(G.moveWindowOwnsKey({ key: "z", ctrlKey: true }), false, "undo still works from the Move window");
   const p = G.parseGrblProfile(status.profile)!;
   assert.equal(G.jogProblem(p, 10, 3000), null);
   assert.match(G.jogProblem(p, 0, 3000) ?? "", /distance/);

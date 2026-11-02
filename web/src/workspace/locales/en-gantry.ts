@@ -29,7 +29,7 @@ export const EN_GANTRY = {
   "move.goTitle": "Move the head to this machine position (mm from the origin corner) with the laser off",
   "move.x": "X",
   "move.y": "Y",
-  "move.keys": "Arrow keys jog while this window has the focus (Shift ×10, Alt ÷10); Esc stops the jog.",
+  "move.keys": "Arrow keys jog one step per press while this window has the focus (Shift ×10, Alt ÷10); Esc stops the jog.",
   "move.hint": "Every move here runs with the laser off. Positions are machine coordinates from the origin corner.",
   "move.busy": "A job or a frame is running: moves wait until it ends.",
   "move.startup": "A start-up block could turn the laser on; clear it in the Console ($N0= / $N1=) before moving.",

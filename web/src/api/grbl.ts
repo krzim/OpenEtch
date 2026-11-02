@@ -154,12 +154,28 @@ export function jogDelta(dir: JogDir, step: number): { dx: number; dy: number } 
   return { dx: x * step + 0, dy: y * step + 0 };
 }
 
-/** The jog a key asks for while the Move window has the focus (arrow keys; Shift ×10, Alt ÷10), or null. */
-export function jogKey(e: { key: string; shiftKey?: boolean; altKey?: boolean; ctrlKey?: boolean; metaKey?: boolean }, step: number): { dir: JogDir; step: number } | null {
-  if (e.ctrlKey || e.metaKey) return null;
+/**
+ * The jog a key asks for while the Move window has the focus (arrow keys; Shift ×10, Alt ÷10), or null. One jog per key
+ * press: a held key's auto-repeat is ignored, since each repeat would queue another step in GRBL's planner and the head
+ * would keep going after the key is released.
+ */
+export function jogKey(
+  e: { key: string; shiftKey?: boolean; altKey?: boolean; ctrlKey?: boolean; metaKey?: boolean; repeat?: boolean },
+  step: number,
+): { dir: JogDir; step: number } | null {
+  if (e.ctrlKey || e.metaKey || e.repeat) return null;
   const dir = ({ ArrowUp: "n", ArrowDown: "s", ArrowLeft: "w", ArrowRight: "e" } as Record<string, JogDir>)[e.key];
   if (!dir) return null;
   return { dir, step: e.shiftKey ? step * 10 : e.altKey ? step / 10 : step };
+}
+
+/**
+ * Whether the Move window keeps a key to itself (never passed on to the canvas, where arrows nudge the selection):
+ * the arrow keys it jogs with, also while a jog is in flight or the key auto-repeats. Escape stops a jog and still
+ * goes on to the app (which, among other things, turns the position laser off).
+ */
+export function moveWindowOwnsKey(e: { key: string; ctrlKey?: boolean; metaKey?: boolean }): boolean {
+  return !e.ctrlKey && !e.metaKey && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key);
 }
 
 /** Why a jog step or feed cannot be used, or null. */

@@ -6,7 +6,19 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { onEngineEvent } from "../api/events.ts";
-import { JOG_STEPS, fieldToMachine, jogDelta, jogKey, jogProblem, machineToField, parseGrblStatus, positionProblem, type GrblStatusView, type JogDir } from "../api/grbl.ts";
+import {
+  JOG_STEPS,
+  fieldToMachine,
+  jogDelta,
+  jogKey,
+  jogProblem,
+  machineToField,
+  moveWindowOwnsKey,
+  parseGrblStatus,
+  positionProblem,
+  type GrblStatusView,
+  type JogDir,
+} from "../api/grbl.ts";
 import { jobApi } from "../api/jobApi.ts";
 import { useT } from "../workspace/usePrefs.ts";
 import { NumberField } from "./ui.tsx";
@@ -93,6 +105,12 @@ export function GrblMove(p: { notify: Notify; report: (e: unknown) => void }) {
   };
   const onKey = (e: React.KeyboardEvent) => {
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
+    // Arrows stay here even when they do not jog (a jog in flight, a held key's auto-repeat): passed on, the app's
+    // key handler would nudge the canvas selection.
+    if (moveWindowOwnsKey(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     if (e.key === "Escape") {
       e.preventDefault();
       void jobApi.jogCancel().catch(p.report);
@@ -100,8 +118,6 @@ export function GrblMove(p: { notify: Notify; report: (e: unknown) => void }) {
     }
     const k = jogKey(e, step);
     if (!k || blocked) return;
-    e.preventDefault();
-    e.stopPropagation();
     jog(k.dir, k.step);
   };
 

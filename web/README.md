@@ -147,8 +147,8 @@ anywhere else.
 - **GRBL gantry windows** (only while the active device is a GRBL gantry, `GET /api/machine` `driver: "grbl"`;
   `components/GrblMove.tsx`, `GrblConsole.tsx`, pure logic in `api/grbl.ts`; unverified on hardware, tested against
   the engine's GRBL simulator): **Move** (LightBurn's Move window: position from `GET /api/machine/grbl?refresh=true`
-  polled every second, jog buttons with distance and speed, arrow keys while the window has the focus (Shift x10,
-  Alt /10, Esc stops the jog), Home, Unlock, Go to origin, Move to a machine position; every move is a laser-off jog),
+  polled every second, jog buttons with distance and speed, arrow keys while the window has the focus (one jog per
+  press, auto-repeat ignored; Shift x10, Alt /10, Esc stops the jog; arrows never reach the canvas from there), Home, Unlock, Go to origin, Move to a machine position; every move is a laser-off jog),
   **Console** (lines to `POST /api/machine/console`, the board's answers, Up/Down history, Status, and macros saved
   with the device through `PUT /api/prefs` `console_macros`; the engine refuses anything that could turn the laser
   on, typed or from a macro), **File > Save G-code** (`GET /api/export/gcode`), and the GRBL layer options in the
