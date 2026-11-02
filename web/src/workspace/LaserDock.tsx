@@ -19,6 +19,9 @@ import { footCycle, footCycleText, noPinMode } from "../api/runs.ts";
 import { ApprovalChecks, useSharedApprovalGates } from "../libs/JobSafety.tsx";
 import { useLaserSource } from "../laser/laserContext.ts";
 import { StartButton } from "../laser/StartButton.tsx";
+import { StatusChip } from "../laser/StatusChip.tsx";
+import { ContextStripPortal } from "./contextStrip.tsx";
+import { useLayoutMode } from "./layoutMode.ts";
 import { OptimizationDialog } from "../components/OptimizationDialog.tsx";
 import { RotaryDialog } from "../components/RotaryDialog.tsx";
 import { Icon } from "../components/ui.tsx";
@@ -118,8 +121,29 @@ export function LaserDock(p: LaserDockProps) {
   const beginnerMode = usePrefs().beginnerMode;
   const canOpt = p.has("job.set_optimization") && !beginnerMode;
   const canRotary = p.has("job.set_rotary") && !beginnerMode;
+  // Tablet: the status chip, Frame and Start in the context strip, reachable without opening the drawer (P5).
+  const tablet = useLayoutMode().layout === "tablet";
   return (
     <Dock id="laser" title={t("laser.title")}>
+      {tablet && (
+        <ContextStripPortal>
+          <div className="laser-strip" role="toolbar" aria-label={t("laser.title")}>
+            <StatusChip />
+            <FramingControls
+              compact
+              machine={p.machine}
+              doc={p.doc}
+              selection={p.selection}
+              designOnly={p.designOnly}
+              run={p.run}
+              notify={p.notify}
+              report={p.report}
+              onChanged={p.onChanged}
+            />
+            <StartButton variant="toolbar" />
+          </div>
+        </ContextStripPortal>
+      )}
       {p.device && <div className="laser-device">{p.device}</div>}
       <div className="laser-status" role="status">
         <span className={`dot ${dotClass}`} />

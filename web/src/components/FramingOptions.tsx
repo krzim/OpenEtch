@@ -5,14 +5,17 @@
 // (arrows 5 mm, Shift 20 mm, Ctrl 0.5 mm; Page Up/Down scale; . and , rotate 15°, Shift 1.5°, Ctrl 45°), each key one
 // `object.transform`. The engine's framing code path can never open the laser.
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
 import type { Invocation } from "../api/client.ts";
 import * as C from "../api/commands.ts";
-import { frameKeyEdit, frameRequestBody, type FramePointer, type FrameStyle } from "../api/job.ts";
+import { frameKeyEdit, frameRequestBody, type FrameOptions, type FramePointer, type FrameStyle } from "../api/job.ts";
 import { jobApi } from "../api/jobApi.ts";
 import type { GDocument, MachineStatus } from "../api/types.ts";
 import { useT } from "../workspace/usePrefs.ts";
 import { getFrameOptions, setFrameOptions, useFrameOptions } from "./jobStore.ts";
+import { useEscStopsFraming } from "../laser/escFraming.ts";
+import { placePopover, type Rect } from "../laser/placePopover.ts";
 import { Icon, NumberField } from "./ui.tsx";
 import "./job.css";
 
@@ -22,6 +25,20 @@ type Notify = (msg: string, kind?: "info" | "error") => void;
 export async function frameWithOptions(selection: readonly string[], override: { style?: FrameStyle; selectionOnly?: boolean } = {}): Promise<void> {
   const o = { ...getFrameOptions(), ...override };
   await jobApi.frame(frameRequestBody(o, selection));
+}
+
+/** The options a running frame was last re-traced with (several Frame controls may be mounted: the dock and the
+ * tablet's context strip; only one re-traces per change). */
+let reframedFor: FrameOptions | null = null;
+
+function rectOf(el: Element): Rect {
+  const b = el.getBoundingClientRect();
+  return { left: b.left, top: b.top, right: b.right, bottom: b.bottom };
+}
+
+/** What the frame popover must never cover (V13): every visible Start and STOP. */
+function startStopRects(): Rect[] {
+  return [...document.querySelectorAll(".btn-start, .btn-stop")].map(rectOf).filter((r) => r.right > r.left && r.bottom > r.top);
 }
 
 /** Whether a key event belongs to a text field (those keep their keys). */
@@ -39,27 +56,84 @@ export function FramingControls(p: {
   notify: Notify;
   report: (e: unknown) => void;
   onChanged: () => void;
+  /** The tablet's context strip: no summary text. */
+  compact?: boolean;
 }) {
   const t = useT();
   const o = useFrameOptions();
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
+  const pop = useRef<HTMLDivElement>(null);
+  const caret = useRef<HTMLButtonElement>(null);
+  const [place, setPlace] = useState<CSSProperties>({ visibility: "hidden" });
   const framing = !!p.machine?.framing;
 
-  // Close the popover on an outside press or Escape.
+  // Close the popover on an outside press or Escape (Escape closes only the popover: it never reaches the shell, and
+  // never stops the frame while the popover is open).
   useEffect(() => {
     if (!open) return;
     const down = (e: PointerEvent) => {
-      if (box.current && !box.current.contains(e.target as Node)) setOpen(false);
+      const n = e.target as Node;
+      if (box.current?.contains(n) || pop.current?.contains(n)) return;
+      setOpen(false);
     };
-    const key = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    const key = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      setOpen(false);
+      caret.current?.focus();
+    };
     window.addEventListener("pointerdown", down, true);
-    window.addEventListener("keydown", key);
+    window.addEventListener("keydown", key, true);
     return () => {
       window.removeEventListener("pointerdown", down, true);
-      window.removeEventListener("keydown", key);
+      window.removeEventListener("keydown", key, true);
     };
   }, [open]);
+
+  // A floating popover (docs/ux/ui-plan-2026-11.md P5, V13): below the Frame button, else above, else beside the
+  // panel towards the canvas; inside the window with a max-height, never over Start or STOP. Placed again when the
+  // window or a scroll container moves the button.
+  const placeNow = useCallback(() => {
+    const el = pop.current;
+    const anchorEl = box.current;
+    if (!el || !anchorEl) return;
+    const panel = anchorEl.closest(".panel, .dock, aside, .context-strip-slot") ?? anchorEl;
+    const natural = { w: el.offsetWidth, h: el.scrollHeight + 2 };
+    const at = placePopover(rectOf(anchorEl), natural, { w: window.innerWidth, h: window.innerHeight }, startStopRects(), { sideOf: rectOf(panel) });
+    setPlace({ left: at.left, top: at.top, maxHeight: at.maxHeight });
+  }, []);
+  useLayoutEffect(() => {
+    if (!open) {
+      setPlace({ visibility: "hidden" });
+      return;
+    }
+    placeNow();
+    pop.current?.focus({ preventScroll: true });
+    const again = () => placeNow();
+    window.addEventListener("resize", again);
+    window.addEventListener("scroll", again, true);
+    return () => {
+      window.removeEventListener("resize", again);
+      window.removeEventListener("scroll", again, true);
+    };
+  }, [open, placeNow]);
+  // The content changes height with some options (Live framing adds a hint): place it again.
+  useLayoutEffect(() => {
+    if (open) placeNow();
+  }, [open, o, placeNow]);
+
+  // Esc stops framing (owner decision 4; never a burn). The status chip installs the same key; each press stops once.
+  const afterEscStop = useCallback(
+    (err: unknown | null) => {
+      if (err) ctx.current.report(err);
+      else ctx.current.notify(t("frame.stoppedToast"));
+      ctx.current.onChanged();
+    },
+    [t],
+  );
+  useEscStopsFraming(framing, afterEscStop);
 
   // Live framing: keys move, scale and rotate what is framed (the selection, else every shape that is output).
   const ctx = useRef(p);
@@ -91,7 +165,8 @@ export function FramingControls(p: {
   useEffect(() => {
     const before = shown.current;
     shown.current = o;
-    if (!framing || before === o) return;
+    if (!framing || before === o || reframedFor === o) return;
+    reframedFor = o;
     try {
       jobApi.frame(frameRequestBody(o, ctx.current.selection)).catch(ctx.current.report).finally(ctx.current.onChanged);
     } catch (e) {
@@ -137,6 +212,7 @@ export function FramingControls(p: {
         </button>
         <button
           className={`btn frame-caret${open ? " active" : ""}`}
+          ref={caret}
           aria-haspopup="dialog"
           aria-expanded={open}
           aria-label={t("frame.options")}
@@ -149,13 +225,16 @@ export function FramingControls(p: {
       <button className="btn" onClick={stop} title={t("laser.frameStopTitle")}>
         <Icon name="frameStop" size={18} /> {t("laser.frameStop")}
       </button>
-      <span className="frame-summary muted">
-        {styles.find((s) => s.v === o.style)?.label}
-        {o.live ? ` · ${t("frame.live")}` : ""}
-        {o.selectionOnly ? ` · ${t("laser.selectionOnly")}` : ""}
-      </span>
-      {open && (
-        <div className="frame-pop" role="dialog" aria-label={t("frame.options")}>
+      {!p.compact && (
+        <span className="frame-summary muted">
+          {styles.find((s) => s.v === o.style)?.label}
+          {o.live ? ` · ${t("frame.live")}` : ""}
+          {o.selectionOnly ? ` · ${t("laser.selectionOnly")}` : ""}
+        </span>
+      )}
+      {open &&
+        createPortal(
+        <div className="frame-pop" role="dialog" aria-label={t("frame.options")} ref={pop} tabIndex={-1} style={place}>
           <div className="frame-pop-h">{t("frame.style")}</div>
           <div className="segmented" role="radiogroup" aria-label={t("frame.style")}>
             {styles.map((s) => (
@@ -233,8 +312,9 @@ export function FramingControls(p: {
           </label>
           {o.live && <p className="hint">{t("frame.liveKeys")}</p>}
           <p className="hint">{t("frame.lightOnly")}</p>
-        </div>
-      )}
+        </div>,
+          document.body,
+        )}
     </div>
   );
 }

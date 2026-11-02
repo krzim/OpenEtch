@@ -147,14 +147,16 @@
 .frame-summary {
   font-size: 0.9em;
 }
+/* A floating popover placed by laser/placePopover.ts (left/top/max-height inline): inside the window, scrolling
+   inside, never over Start or STOP (V13). Below STOP in the stacking order (--z-stop is above everything). */
 .frame-pop {
-  position: absolute;
-  z-index: 40;
-  top: calc(100% + 4px);
-  left: 0;
-  width: min(300px, calc(100vw - 32px));
-  max-height: min(70vh, 560px);
+  position: fixed;
+  z-index: var(--z-float, 60);
+  width: min(300px, calc(100vw - 16px));
+  max-height: calc(100dvh - 16px);
   overflow-y: auto;
+  overscroll-behavior: contain;
+  outline: none;
   padding: 8px 10px 10px;
   background: var(--panel);
   color: var(--text);
