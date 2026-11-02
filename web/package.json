@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "node --test \"src/**/*.test.ts\"",
     "bench": "node src/bench/vectorScene.bench.ts",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "e2e:devices": "node e2e/scenarios.mjs"
   },
   "dependencies": {
     "react": "18.3.1",
