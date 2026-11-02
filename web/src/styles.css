@@ -3547,3 +3547,8 @@ html {
   flex: 0 0 44px;
   min-height: 44px;
 }
+
+/* Touch: no hovering pointer to read out, so the X/Y cell gives its room to the selection and zoom cells. */
+:root[data-density="touch"] .statusbar .sb-xy {
+  display: none;
+}
