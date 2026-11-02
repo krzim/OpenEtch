@@ -29,3 +29,9 @@
   opacity: 0.4;
   cursor: default;
 }
+
+/* Two stepper fields side by side (W and H in Shape Properties) left a 300 px panel a 16 px input and pushed the +
+   past its edge (a sideways scrollbar under Density = Touch): each takes its own row when the pair does not fit. */
+.field-grid:has(.field-step) {
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+}

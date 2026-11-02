@@ -37,6 +37,8 @@ export interface StartCtx {
   selection: readonly string[];
   /** The document revision the run is for. */
   revision: number | null;
+  /** The document has no objects: nothing to burn (null or absent: not known). */
+  docEmpty?: boolean | null;
   /** The job checklist is on and not every item is ticked (default: from the shared ticks, laser/laserContext.ts). */
   checklistIncomplete?: boolean;
   /** Estimated job time in seconds, when the preview knows it. */
@@ -59,7 +61,7 @@ export interface StartState {
   label: string;
 }
 
-export type StartBlock = "offline" | "loading" | "shutdown" | "noLaser" | "designOnly" | "running" | "framing" | "checklist";
+export type StartBlock = "offline" | "loading" | "shutdown" | "noLaser" | "designOnly" | "running" | "framing" | "empty" | "checklist";
 export type StartDecision = "blocked" | "openChecklist" | "openLaserAndFire" | "fire";
 
 /** The checklist sources that show it inline next to Start (an unticked list disables Start there). */
@@ -97,6 +99,8 @@ export function startBlock(ctx: StartCtx): StartBlock | null {
   if (m.connected === false) return "noLaser";
   if (runUnderWay(m)) return "running";
   if (m.framing === true) return "framing";
+  // An empty document: Start was enabled and only the engine's refusal said why.
+  if (ctx.docEmpty === true) return "empty";
   if (checklistIncomplete(ctx)) return "checklist";
   return null;
 }
@@ -118,6 +122,8 @@ export function blockReason(b: StartBlock, ctx: StartCtx): string {
       return tr("lz.whyRunning");
     case "framing":
       return tr("lz.whyFraming");
+    case "empty":
+      return tr("lz.whyEmpty");
     case "checklist":
       return INLINE_CHECKLIST.has(ctx.source) ? tr("lz.whyChecklist") : tr("lz.whyChecklistOpen");
   }
@@ -196,6 +202,7 @@ export function startCtxOf(f: LaserFacts, source: StartSource, extra: Partial<St
     selection: f.selection,
     revision: f.revision,
     estimateS: f.estimateS,
+    docEmpty: f.docEmpty,
     openLaser: f.openLaser,
     notify: (m) => f.notify(m),
     report: f.report,

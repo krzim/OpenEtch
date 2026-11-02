@@ -3572,3 +3572,78 @@ html {
 :root[data-density="touch"] .statusbar .sb-xy {
   display: none;
 }
+
+/* The context strip with a selection (X, Y, W, H, Rot): fields as tall as the strip, 44 px unit buttons, and no 9 px
+   anchor grid (no finger can hit it; Properties keeps the 44 px one). */
+:root[data-density="touch"] .numeric-bar .field-input {
+  min-height: var(--bar-context);
+}
+
+:root[data-density="touch"] .numeric-bar .field-input input {
+  align-self: stretch;
+  min-height: var(--bar-context);
+}
+
+:root[data-density="touch"] .numeric-bar .anchor-grid.small {
+  display: none;
+}
+
+:root[data-density="touch"] .numeric-bar .unit-toggle button {
+  min-width: 44px;
+}
+
+/* A side panel opened under Density = Touch (Cuts / Layers, Shape Properties): 44 px window headers, fields, layer
+   toggles and the Properties anchor grid (the small-target check with a panel open). */
+:root[data-density="touch"] .dock-head,
+:root[data-density="touch"] .dock-toggle {
+  min-height: 44px;
+}
+
+:root[data-density="touch"] .field-input :is(input:not([type="checkbox"]):not([type="radio"]), select) {
+  min-height: 44px;
+}
+
+:root[data-density="touch"] .anchor-grid.small {
+  grid-template-columns: repeat(3, 44px);
+  gap: 4px;
+}
+
+:root[data-density="touch"] .anchor-grid.small button {
+  width: 44px;
+  height: 44px;
+}
+
+:root[data-pointer="coarse"] .cuts-table .tog,
+:root[data-density="touch"] .cuts-table .tog,
+:root[data-pointer="coarse"] .cuts-table .th-btn,
+:root[data-density="touch"] .cuts-table .th-btn {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+/* The Laser window and the phone's Job sheet under Density = Touch: 22 px check boxes in 44 px rows, 44 px number
+   fields and preview layer chips, and a 44 px sheet handle (its grip stays where it was). */
+:root[data-density="touch"] .laser-check,
+:root[data-density="touch"] .pv-layer label,
+:root[data-density="touch"] .pv-opts label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+}
+
+:root[data-density="touch"] :is(.laser-check, .pv-layer label, .pv-opts label) input[type="checkbox"] {
+  width: 22px;
+  height: 22px;
+}
+
+:root[data-density="touch"] .job-num,
+:root[data-density="touch"] .pv-layer .chip {
+  min-height: 44px;
+}
+
+:root[data-density="touch"] .sheet-handle {
+  height: 44px;
+  align-items: flex-start;
+  padding-top: 9px;
+}

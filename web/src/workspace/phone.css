@@ -309,3 +309,16 @@
 :root[data-layout="phone"] .topbar .conn {
   display: none;
 }
+
+/* The colour palette in the Layers sheet: the phone's --bar-palette is 0 (no palette row under the canvas), which left
+   the sheet's palette a 2 px stripe. Here it is a row of 44 px swatches that scrolls sideways. */
+.phone-palette .palette-bar {
+  height: auto;
+  padding: 6px;
+}
+
+.phone-palette .palette-bar .pal-swatch {
+  flex: 0 0 44px;
+  max-width: none;
+  height: 44px;
+}

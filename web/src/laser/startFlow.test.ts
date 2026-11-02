@@ -209,3 +209,15 @@ test("an unchanged source update keeps the facts snapshot (no render loop) but s
   assert.notEqual(getLaserFacts(), snap, "a visible change is a new snapshot");
   resetLaserStore();
 });
+
+test("Start is disabled with a visible reason while the document is empty", () => {
+  // Seen in the app: an empty document left Start enabled ("Start · all"); only the engine's refusal said why.
+  const c = ctx({ docEmpty: true });
+  assert.equal(startBlock(c), "empty");
+  const st = startState(c);
+  assert.equal(st.enabled, false);
+  assert.match(st.reason ?? "", /empty/i);
+  assert.equal(startBlock(ctx({ docEmpty: false })), null);
+  assert.equal(startBlock(ctx({ docEmpty: null })), null, "not known: the engine decides");
+  assert.equal(startBlock(ctx({ docEmpty: true, machine: machine({ running: true }) })), "running", "a run under way says so first");
+});

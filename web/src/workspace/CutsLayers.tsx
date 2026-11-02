@@ -516,16 +516,19 @@ export function CutsLayers(p: CutsLayersProps) {
             <span className="cuts-quick-name">{sel.name}</span>
             {/* The mode, which a narrow table leaves out of its columns. */}
             <span className="muted">{sel.tool ? t("layers.modeTool") : passSettings ? modeText(passSettings.mode) : ""}</span>
-            <span className="tool-spacer" />
-            <button className="btn small" onClick={() => copy(sel)} title={t("layers.copySettings")}>
-              {t("layers.copy")}
-            </button>
-            <button className="btn small" disabled={!clipboard} onClick={() => paste(sel)} title={clipboard ? t("layers.pasteSettingsFrom", { name: clipboard.from }) : t("layers.pasteSettings")}>
-              {t("layers.paste")}
-            </button>
-            <button className="btn small" onClick={() => setEditing(sel.id)}>
-              {t("layers.more")}
-            </button>
+            {/* The buttons move under the name together when the dock is too narrow for both (the name read "Lay…"
+                in a 320 px dock). */}
+            <span className="cuts-quick-actions">
+              <button className="btn small" onClick={() => copy(sel)} title={t("layers.copySettings")}>
+                {t("layers.copy")}
+              </button>
+              <button className="btn small" disabled={!clipboard} onClick={() => paste(sel)} title={clipboard ? t("layers.pasteSettingsFrom", { name: clipboard.from }) : t("layers.pasteSettings")}>
+                {t("layers.paste")}
+              </button>
+              <button className="btn small" onClick={() => setEditing(sel.id)}>
+                {t("layers.more")}
+              </button>
+            </span>
           </div>
           {subCount > 0 && (
             <div className="cuts-tabs" role="tablist" aria-label={t("layers.subTabs")} ref={tabsRef}>

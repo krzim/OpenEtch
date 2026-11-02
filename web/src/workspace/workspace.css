@@ -250,16 +250,28 @@
 
 .cuts-quick-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: 4px 6px;
   margin-bottom: 4px;
 }
 
 .cuts-quick-name {
+  /* Never cut to a few letters: the buttons wrap first; only a name longer than the dock is cut. */
+  flex: 0 0 auto;
+  max-width: 100%;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Right-aligned beside the name, or on their own line under it when the name would be cut to a few letters. */
+.cuts-quick-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+  flex: none;
 }
 
 .cuts-quick-grid {
@@ -1148,4 +1160,22 @@ a.menu-item {
 .docking-btn {
   font-size: calc(18px * var(--ui-scale, 1));
   justify-content: center;
+}
+
+/* Preferences under Density = Touch: 44 px sliders, check rows and segment buttons (the small-target check). */
+:root[data-density="touch"] .pref-row input[type="range"] {
+  min-height: 44px;
+}
+
+:root[data-density="touch"] .pref-check {
+  min-height: 44px;
+}
+
+:root[data-density="touch"] .pref-check input {
+  width: 22px;
+  height: 22px;
+}
+
+:root[data-density="touch"] .segmented button {
+  min-width: 44px;
 }

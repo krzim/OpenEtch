@@ -204,6 +204,20 @@
   flex: 1;
 }
 
+/* Frame ▾ on the tablet rail: the caret under the button. Side by side the two were 88 px wide under Density = Touch,
+   in a 57 px rail: the job group slid half out of the window, Start with it. */
+.ribbon-vertical .rb-split {
+  flex-direction: column;
+}
+
+.ribbon-vertical .rb-split .tool-btn:first-child {
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+
+.ribbon-vertical .tool-btn.rb-split-caret {
+  border-radius: 0 0 var(--radius) var(--radius);
+}
+
 /* Start on the tablet rail: the play icon only (the label is the button's aria-label and title). Its label, scope and
    time, and any reason it is disabled, are in the context strip beside it. */
 .ribbon-vertical .start-toolbar {
