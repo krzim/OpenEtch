@@ -116,3 +116,6 @@ These are `na` today because OpenEtch only drives JCZ/BJJCZ galvos. They become 
 5. **Dual-source galvos** (`LAY-018`) when someone with such a machine can test.
 6. **Generic generators** that need no hardware and can land any time: tabs and slot resize (`DES-024`), dogbone
    (`OTH-003`), web/user tools menu (`OTH-019`), multi-file trace (`OTH-026`).
+   *Status (branch `tools`, 2026-11-02):* all four done (see ARCHITECTURE.md "Tabs and joinery", "User Tools" and
+   "Multi-File Trace"); tabs are unverified on hardware (no cut-through run), and LightBurn's tab tags are still not
+   imported from `.lbrn2` (no sample with hand-placed tabs).

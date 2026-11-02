@@ -608,8 +608,8 @@ hatch over every shape of the pass (shapes with different power scales apart), s
 `individually`, shape after shape, which a missing field means so documents saved before keep filling that way;
 `by_group`), `auto_rotate` (the hatch turns by the increment per
 run of the job, the job counter, instead of per pass; repeats of one approval keep one angle), `flood_fill` (the hatch
-split into connected regions), `perforation` {cut_mm, skip_mm}, `tabs` {count | spacing_mm, size_mm} (gaps on
-closed outlines), `z_offset_mm` / `z_step_mm` (needs a board-driven Z axis, else a plan warning; each Z position is a
+split into connected regions), `perforation` {cut_mm, skip_mm}, `tabs` (LightBurn's Tabs / Bridges, see "Tabs
+and joinery" below), `z_offset_mm` / `z_step_mm` (needs a board-driven Z axis, else a plan warning; each Z position is a
 part), and the GRBL layer options (`constant_power`, `air_assist`, `overscan_mm` and `overcut_mm` 0..=50; G-code
 output only, carried to the G-code writer as `plan::PassPlan.gantry`, never read by the LMC encoder; the UI shows them
 only while a GRBL gantry is active; see Devices, "GRBL gantries"). Line options apply in that order after ordering: tabs, perforation, wobble, dots. `hatch.lines_per_inch` sets
@@ -989,6 +989,55 @@ requested (it frames the person's current document, then burns exactly what was 
   `LibEntry::to_layer` convert. `lbrn::parse_library` (flat entries) stays for the older callers. LightBurn's
   `Offset Fill` cut type maps to mode `offset_fill`.
 
+## Tabs and joinery
+
+LightBurn's Tabs / Bridges, Resize Slots and a Dogbone tool (DES-024, OTH-003). Pure geometry and plan-time
+options; nothing here reaches the machine except through a normal, approved run.
+
+- **Tabs** (`doc::Tabs`, a pass's `options.tabs`): `enabled` (the Tabs / Bridges switch; off keeps the settings and
+  the hand-placed tabs), `generation` `auto` (default) | `manual`, `count` per outline or `spacing_mm` (with
+  `max_tabs`, LightBurn's Limit Max Tabs), `size_mm` (the gap), `skip_inner` (no automatic tabs on closed outlines
+  inside another closed outline of the pass, LightBurn's Skip Inner Shapes; holes included) and `cut_power_pct`
+  (Tab Cut Power: the tabs are marked at that share of the pass's power instead of left out). Older documents' tabs
+  (`{count, spacing_mm, size_mm}`) read as on and automatic. **Hand-placed tabs** (LightBurn's Add Tabs tool) are
+  points in the object's own frame in `object_options[id].tabs` (at most 1000), so they follow the shape:
+  `tabs.add {id, points, max_distance_mm?}` (onto the nearest point of the shape's closed outlines; refused closer
+  than the tab size to another tab, or on a layer with no line pass; switches the layer's tabs on, new settings being
+  `manual`, as LightBurn does), `tabs.move {id, index, to, to_id?}`, `tabs.remove {ids, near?, within_mm?}`,
+  `tabs.clear {layer}` (LightBurn's Clear Tabs) and `tabs.list` (Query). At plan time (`plan::cutopts::tab_pieces`,
+  after ordering, before perforation, wobble and dots) every closed outline of a line pass gets gaps centred on its
+  hand-placed tabs (each belongs to the shape's outline nearest it) and, in `auto` generation on shapes without
+  hand-placed tabs, on evenly spread positions (`count`, or `spacing_mm` rounded to fit, the first half a step from
+  the outline's start, as OpenEtch always did; LightBurn's own placement rule is documented loosely and not copied).
+  Gaps across the start are split, overlapping ones merged. Open paths get no tabs. Galvo and gantry alike.
+- **Resize Slots** (`path.resize_slots {ids, old_thickness_mm, new_thickness_mm, tolerance_mm = 0.1,
+  adjust_slot_depth = true, adjust_slot_width, adjust_tab_height}`, `geom::slots`): LightBurn documents the effect,
+  not the detection, so the rule is OpenEtch's. On closed outlines of straight lines (collinear nodes merged first) a
+  *step* is a line of `old ± tolerance` between a convex and a reflex corner whose two neighbours are perpendicular to
+  it and run the same way (the side of a slot or a finger). Slot depth moves the line at each step's reflex end (the
+  slot bottoms, keeping the outer size), tab height the line at its convex end (the tab tops, keeping the inner
+  size); both together move each half. Slot width moves the two sides of U-shaped slots of that width apart around
+  their centre. Moved lines keep their direction and corners are re-intersected. Holes (internal slots, mortises,
+  as in LightBurn), outlines with curves and results that would fold an outline (a reversed line, or two lines
+  crossing, checked up to 4000 corners) are skipped with the reason.
+- **Dogbone** (`path.dogbone {ids, diameter_mm, style: dogbone | tbone_longer | tbone_shorter}`, `geom::dogbone`;
+  MillMage's / CNC CAM's tool, not in LightBurn's documentation): every inside corner between two straight lines
+  (reflex corners of parts and every corner of holes, by even-odd nesting) gets a circle of the tool diameter that
+  passes through the corner: on the bisector (dogbone, biting into both walls) or tangent to one wall and biting into
+  the longer or shorter line (T-bone). Arcs are cubic Béziers; a relief that does not fit on its lines is skipped
+  with the reason; open paths and corners at curves are left alone.
+
+## User Tools
+
+LightBurn 2.2's Web Tools menu and Manage User Tools window (OTH-019; `crate::user_tools`). Entries live in the
+engine's `preferences.json` (`user_tools`, the same menu on every browser) and change only through `PUT /api/prefs
+{user_tools}` (UI only, like every preference; MCP has no tool for them) or a preferences import, both checked the
+same way. An entry is `{name, category?, kind: "url", url}` (opened in a new tab with `noopener`; only `http:` and
+`https:`) or `{name, category?, kind: "commands", steps: [{id, params}]}` (OpenEtch's addition: a saved sequence the
+web app runs as one `POST /api/batch`). Saving refuses any step that is not a registered document command of risk
+`query` or `edit`, and the batch endpoint refuses machine actions again, so a user tool can never frame, fire,
+request or approve a run. At most 50 entries, 50 steps each.
+
 ## Files and image tools
 
 Crate `fileio` (pure and wasm-ok except PDF reading), commands in `crates/commands/src/builtin/{files,image_tools,
@@ -1069,6 +1118,14 @@ Pages, Show Notes, Managing Preferences, User Bundles, Import 3D Model, 3D Slice
   midpoints. `centerline` (LightBurn 2.2): Zhang-Suen thinning, the skeleton walked into open polylines between ends
   and junctions, spurs shorter than `ignore_less_than` pruned. The result is one path object on the image's layer
   (`layer`, `name`), following the image's transform; `delete_image`.
+- **Multi-File Trace** (LightBurn's Multi-File Trace Image; `crates/commands/src/builtin/trace_many.rs`): one set of
+  Trace Image settings (`settings {cutoff, threshold, ignore_less_than, smoothness, optimize, centerline, sketch,
+  transparency}`) for several images. `image.trace_many {ids, settings?, delete_images?, layer?}` traces image
+  objects (groups stand for their images; at most 100), one path object each, one undo step; images with nothing to
+  trace are listed in `empty`. `image.trace_files {files: [{name, data_base64}], settings?, dpi? = 254, zip?}`
+  (Query) traces image files without touching the document and returns one SVG per file sized in mm from the file's
+  resolution (`<stem>.svg`, numbered when names repeat), with `zip_base64` when asked: LightBurn writes the SVGs next
+  to the images, which a browser cannot, so the web app downloads the zip or imports the SVGs (`art.import_svg`).
 - **Convert to Bitmap** (`art.convert_to_bitmap {ids, dpi = 254, render: cut_settings|fill_all|outlines, gray = 128,
   line_width_mm?, keep_original?}`): an anti-aliased grey PNG of the vectors' bounds (drawn pixels at LightBurn's 50 %
   grey by default, white never fires); the vectors are deleted unless `keep_original`, as LightBurn.
