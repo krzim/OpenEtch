@@ -1777,6 +1777,8 @@ function EditOverlay(props: {
   const st = useLive(props.store);
   const { tool, r } = props;
   const units = usePrefs().units;
+  // The phone has no keyboard: its hints leave out the keys (they took half of a landscape phone's canvas).
+  const phone = useLayoutMode().layout === "phone";
   let bar: ReactNode = null;
   const btn = (label: string, onClick: () => void, title?: string, disabled?: boolean) => (
     <button key={label} className="btn btn-small" onClick={onClick} title={title} disabled={disabled}>
@@ -1821,7 +1823,10 @@ function EditOverlay(props: {
       bar = (
         <>
           <span>
-            <b>{tool === "line" ? t("et.lineTool") : t("et.penTool")}</b>: {tool === "line" ? t("et.lineHow") : t("et.penHow")} · {t("et.lineKeys")}
+            <b>{tool === "line" ? t("et.lineTool") : t("et.penTool")}</b>:{" "}
+            {phone
+              ? t(tool === "line" ? "et.lineHowTouch" : "et.penHowTouch")
+              : `${tool === "line" ? t("et.lineHow") : t("et.penHow")} · ${t("et.lineKeys")}`}
           </span>
           {btn(t("touch.undoPoint"), props.onUndoPoint, "Backspace", !st.pen.length)}
           {btn(t("et.finish"), () => props.onFinishLine(false), "Enter", st.pen.length < 2)}

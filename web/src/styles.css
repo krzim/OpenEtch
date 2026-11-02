@@ -1372,7 +1372,17 @@ textarea {
 .field-check input {
   width: 22px;
   height: 22px;
+  flex: none;
   accent-color: var(--accent);
+}
+
+/* A check box's label is a sentence more often than a field name ("Check for updates (asks GitHub's releases;
+   opt-in)"): it keeps the 84 px column when short, grows when long, so the box sits right after it instead of the
+   label wrapping word by word in the column (the phone's Check for updates and Debug log dialogs). */
+.field-check .field-label {
+  width: auto;
+  min-width: 84px;
+  flex: 0 1 auto;
 }
 
 .field-grid {
@@ -3472,8 +3482,10 @@ html {
   min-width: 44px;
 }
 
-/* The ruler corner (Clear guides): a visible 44 px button over the rulers' start (20 px with a fine pointer). */
-:root[data-density="touch"] .et-ruler-corner {
+/* The ruler corner (Clear guides): a visible 44 px button over the rulers' start (20 px with a fine pointer). With no
+   guides to clear it is only the unit label, and it stays the rulers' own 20 px corner: at 44 px it hid the first
+   labels of both rulers (the "100" of a phone's left ruler) for nothing. */
+:root[data-density="touch"] .et-ruler-corner:not(:disabled) {
   width: 44px;
   height: 44px;
   display: inline-flex;

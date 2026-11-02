@@ -581,6 +581,9 @@ function TextOverlay(p: {
       <textarea
         ref={p.areaRef}
         className="vp-overlay tx-editor"
+        // The canvas HUD keeps clear of the field being typed in (on a phone with the keyboard up the Text options
+        // and the off-field warning covered it: the text was typed blind).
+        data-hud-obstacle=""
         autoFocus
         spellCheck={false}
         wrap="off"
@@ -655,9 +658,10 @@ function TextOverlay(p: {
         );
       })}
       {edit}
-      {/* The Text Options bar goes to the context strip itself; Apply to Path and Barcode float in the canvas HUD. */}
+      {/* The Text Options bar goes to the context strip itself; Apply to Path and Barcode float in the canvas HUD.
+          While a text is being typed the bar gives way when there is no room beside the field (optional). */}
       {bar && (
-        <HudItem id="text-bar" slot="tl" rank={21} minW={200}>
+        <HudItem id="text-bar" slot="tl" rank={21} minW={200} optional={!!editor}>
           {bar}
         </HudItem>
       )}

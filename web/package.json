@@ -11,7 +11,8 @@
     "test": "node --test \"src/**/*.test.ts\"",
     "bench": "node src/bench/vectorScene.bench.ts",
     "preview": "vite preview",
-    "e2e:devices": "node e2e/scenarios.mjs"
+    "e2e:devices": "node e2e/scenarios.mjs",
+    "e2e:journeys": "node e2e/journeys.mjs"
   },
   "dependencies": {
     "react": "18.3.1",

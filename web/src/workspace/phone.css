@@ -103,12 +103,15 @@
   box-shadow: 0 -6px 24px var(--shadow);
 }
 
+/* The peek always shows the header and the first row under it (the Job sheet's Start, the selection's X / Y): 30 %
+   of a landscape phone's space is under 70 px, which cut Start in half behind the tab bar. */
 .bottom-sheet.snap-peek {
-  height: 30%;
+  height: max(30%, 116px);
 }
 
+/* Never shorter than the peek. */
 .bottom-sheet.snap-half {
-  height: 55%;
+  height: max(55%, 116px);
 }
 
 .bottom-sheet.snap-full {

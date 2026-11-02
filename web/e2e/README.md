@@ -54,6 +54,15 @@ Chromium-based browser.
   Job tab with its sheet closed and a selection (the reference overlap case), the on-screen keyboard (the viewport
   shrinks by the keyboard height while a field has focus, and the bottom safe-area band goes: the keyboard covers the
   home indicator).
+- `journeys.mjs` (`npm run e2e:journeys -- --url ... [--doc ...] [--only rotate,grbl]`): longer sequences on one
+  device each, with a screenshot and a check per step, under `target/ux-evidence/journeys/`: a phone turned mid-task,
+  sheets over an active tool, a long-press inside a pinch, select all and a marquee, text with the keyboard up, every
+  dialog of the phone's More sheet, a GRBL device added, made active and back (phone and MacBook), the theme switched
+  in the app, Beginner Mode, a very long project name, warnings and toasts together, framing in the iPad's Laser
+  workspace, a MacBook at 1280 x 720 with every dock open, iPad split view and Slide Over, a job run on the simulator
+  from the phone, context menus at the screen edges, a large UI scale, a desktop window resized mid-session, the iPad
+  turned with the keyboard up, undo past the import and redo, ruler guides and the corner's Clear guides. The layout
+  check passing is not the verdict: look at the screenshots.
 
 ## Emulation limits
 

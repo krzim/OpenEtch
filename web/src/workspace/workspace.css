@@ -683,6 +683,11 @@
 
 .laser-stop {
   margin-left: auto;
+  /* The Laser dock's own STOP works over a dialog's backdrop too, like the top bar's (V5): under the backdrop it
+     still showed, dimmed, and a press on it only reached the backdrop. No ancestor of the dock makes a stacking
+     context, so --z-stop counts against the backdrop's --z-modal. */
+  position: relative;
+  z-index: var(--z-stop);
 }
 
 .laser-progress {
@@ -1178,4 +1183,16 @@ a.menu-item {
 
 :root[data-density="touch"] .segmented button {
   min-width: 44px;
+}
+
+/* Preferences: a choice never shrinks below its label ("Compact", "Comfortable" were cut off on a phone). The row
+   wraps the group under its label first, and a group still too wide for the dialog wraps its own choices. */
+.pref-row .segmented {
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+
+.pref-row .segmented button {
+  flex: 1 0 auto;
+  padding-inline: 10px;
 }

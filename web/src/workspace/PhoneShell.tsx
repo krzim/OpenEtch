@@ -103,8 +103,15 @@ export function PhoneShell(p: PhoneShellProps) {
     };
   }, []);
 
-  // A shape in the bottom 30 % of the canvas would sit under the peek sheet it opens: the canvas pans it clear.
-  const revealAbovePeek = () => window.setTimeout(() => sendRevealSelection(1 - SNAP_FRACTION.peek), 0);
+  // A shape in the bottom 30 % of the canvas would sit under the peek sheet it opens: the canvas pans it clear. The
+  // peek has a least height (phone.css), so on a short screen (landscape) it covers more: measure where it ends up.
+  const revealAbovePeek = () =>
+    window.setTimeout(() => {
+      const sheet = document.querySelector(".bottom-sheet")?.getBoundingClientRect();
+      const vp = document.querySelector(".viewport")?.getBoundingClientRect();
+      const measured = sheet && vp && vp.height > 0 ? (sheet.top - vp.top) / vp.height : NaN;
+      sendRevealSelection(Number.isFinite(measured) ? Math.min(Math.max(measured, 0.2), 1 - SNAP_FRACTION.peek) : 1 - SNAP_FRACTION.peek);
+    }, 0);
 
   // Selecting a shape on the Canvas tab peeks the selection sheet open; clearing the selection closes it again.
   useEffect(() => {
@@ -162,8 +169,11 @@ export function PhoneShell(p: PhoneShellProps) {
       {p.banner}
       <div className="phone-main">
         {p.canvas}
-        {/* The canvas HUD's bottom-right slot: clear of the modifier bar, the player row and the sheet. */}
-        <HudItem id="phone-fabs" slot="br" rank={10} optional>
+        {/* The canvas HUD's bottom-right slot: clear of the modifier bar, the player row and the sheet. With no sheet
+            open it is required: the phone has no keyboard, so these are its only Undo / Redo on the canvas (as an
+            optional item the column gave way to the empty-document card, so an import undone by mistake could not be
+            redone). Over a sheet's short leftover it gives way to the messages instead. */}
+        <HudItem id="phone-fabs" slot="br" rank={10} optional={open}>
           <div className="phone-hud">
             {p.canvasHud}
             <button type="button" className="icon-btn phone-hud-btn" title={t("shell.phoneTools")} aria-label={t("shell.phoneTools")} onClick={() => show("canvas")}>

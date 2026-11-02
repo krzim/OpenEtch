@@ -3,7 +3,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { applyLayoutAttributes, autoDensity, autoLayout, getLayoutMode, isTextEntry, keyboardResize, resolveLayout, sameLayout } from "./layoutMode.ts";
+import { applyLayoutAttributes, autoDensity, autoLayout, getLayoutMode, isTextEntry, keyboardResize, resolveLayout, sameLayout, typingLayoutSize } from "./layoutMode.ts";
 
 test("the plan's test viewports land in their modes", () => {
   const cases: [number, number, boolean, string][] = [
@@ -90,4 +90,23 @@ test("the on-screen keyboard (same width, shorter, while typing) keeps the layou
   assert.equal(isTextEntry(el("TEXTAREA")), true);
   assert.equal(isTextEntry(el("BUTTON")), false);
   assert.equal(isTextEntry(null), false);
+});
+
+test("a tablet turned with the keyboard up keeps the tablet layout; a phone stays a phone", () => {
+  // iPad Air turned to landscape mid-typing: the viewport is 1180 wide and only ~350 high above the keyboard.
+  const ipadScreen = { width: 820, height: 1180 };
+  const turned = typingLayoutSize({ w: 1180, h: 346 }, ipadScreen, true);
+  assert.deepEqual(turned, { w: 1180, h: 720 });
+  assert.equal(autoLayout(turned.w, turned.h, true), "tablet");
+  assert.equal(autoLayout(1180, 346, true), "phone", "what the keyboard's leftover alone would pick");
+  // The same screen reported in landscape (most browsers but iOS).
+  assert.deepEqual(typingLayoutSize({ w: 1180, h: 346 }, { width: 1180, height: 820 }, true), { w: 1180, h: 720 });
+  // An iPhone turned to landscape with the keyboard up is still a phone.
+  const phone = typingLayoutSize({ w: 852, h: 130 }, { width: 393, height: 852 }, true);
+  assert.equal(autoLayout(phone.w, phone.h, true), "phone");
+  // Not typing, a taller viewport, or a desktop window narrower than its screen: the viewport as it is.
+  assert.deepEqual(typingLayoutSize({ w: 1180, h: 346 }, ipadScreen, false), { w: 1180, h: 346 });
+  assert.deepEqual(typingLayoutSize({ w: 1180, h: 800 }, ipadScreen, true), { w: 1180, h: 800 });
+  assert.deepEqual(typingLayoutSize({ w: 1000, h: 500 }, { width: 2560, height: 1440 }, true), { w: 1000, h: 500 });
+  assert.deepEqual(typingLayoutSize({ w: 1000, h: 500 }, null, true), { w: 1000, h: 500 });
 });

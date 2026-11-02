@@ -60,4 +60,8 @@ export const EN_REST = {
   "rest.drawEllipse": "Drag to draw an ellipse (Shift: circle, Ctrl: from the centre)",
   "rest.drawTail": "tap for {size} · Alt: guides only · Esc to cancel",
   "rest.drawTailCircle": "tap for {size} · Ctrl: no snap · Alt: guides only · Esc to cancel",
+  // The phone: no keyboard, and the touch modifier bar under the hint has Square / From centre.
+  "rest.drawRectTouch": "Drag to draw a rectangle",
+  "rest.drawEllipseTouch": "Drag to draw an ellipse",
+  "rest.drawTailTouch": "tap for {size}",
 } as const;

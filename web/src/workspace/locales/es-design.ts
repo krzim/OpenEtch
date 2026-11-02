@@ -385,6 +385,9 @@ export const ES_DESIGN: Messages = {
   "rest.drawEllipse": "Arrastre para dibujar una elipse (Mayús: círculo, Ctrl: desde el centro)",
   "rest.drawTail": "toque para {size} · Alt: solo guías · Esc para cancelar",
   "rest.drawTailCircle": "toque para {size} · Ctrl: sin ajuste · Alt: solo guías · Esc para cancelar",
+  "rest.drawRectTouch": "Arrastre para dibujar un rectángulo",
+  "rest.drawEllipseTouch": "Arrastre para dibujar una elipse",
+  "rest.drawTailTouch": "toque para {size}",
   // ---- Grid array extras and virtual arrays (DES-011), LightBurn preferences import (UX-067) ----
   "dz.editArray": "Editar matriz",
   "dz.apply2": "Aplicar",

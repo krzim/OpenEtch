@@ -86,6 +86,21 @@ export function keyboardResize(prev: { w: number; h: number }, next: { w: number
   return typing && Math.abs(next.w - prev.w) < 1 && next.h < prev.h;
 }
 
+/**
+ * The size to choose a layout for while a text field has focus. A device turned with the on-screen keyboard up gets a
+ * viewport as short as the keyboard leaves it (an iPad in landscape: 1180 x ~350), which alone would pick the phone
+ * shell, drop the field and close the keyboard. The screen tells the real height for that orientation: when the
+ * viewport is as wide as one of the screen's sides, the height is taken as the other side less the browser's bars
+ * (`bars`), unless the viewport is taller. Browsers report `screen` in either orientation (iOS keeps it portrait),
+ * hence both sides are tried. Not typing, or a window narrower than the screen (a desktop): the viewport as it is.
+ */
+export function typingLayoutSize(next: { w: number; h: number }, screen: { width: number; height: number } | null, typing: boolean, bars = 100): { w: number; h: number } {
+  if (!typing || !screen || !(screen.width > 0 && screen.height > 0)) return next;
+  const other = Math.abs(next.w - screen.width) < 2 ? screen.height : Math.abs(next.w - screen.height) < 2 ? screen.width : null;
+  if (other === null) return next;
+  return { w: next.w, h: Math.max(next.h, other - bars) };
+}
+
 /** A focused element that brings up the on-screen keyboard. */
 export function isTextEntry(el: Element | null): boolean {
   if (!el) return false;
@@ -118,12 +133,12 @@ function coarseQuery(): MediaQueryList | null {
   }
 }
 
-function compute(): LayoutState {
+function compute(size?: { w: number; h: number }): LayoutState {
   const p = getPrefs();
   const hasWindow = typeof window !== "undefined";
   return resolveLayout({
-    w: hasWindow ? window.innerWidth : 1920,
-    h: hasWindow ? window.innerHeight : 1080,
+    w: size?.w ?? (hasWindow ? window.innerWidth : 1920),
+    h: size?.h ?? (hasWindow ? window.innerHeight : 1080),
     coarse: !!coarseQuery()?.matches,
     override: p.layoutOverride,
     density: p.density,
@@ -148,9 +163,11 @@ function refresh(): void {
       else delete document.documentElement.dataset.keyboard;
     }
     if (keyboard) return;
-    chosenFor = size;
+    // Turned (or resized) while typing: the layout for the screen's height, not the keyboard's leftover.
+    // Touch screens only: a desktop window is not turned, and its keyboard takes no room.
+    chosenFor = typingLayoutSize(size, typeof screen === "undefined" ? null : screen, typing && !!coarseQuery()?.matches);
   }
-  const next = compute();
+  const next = compute(typeof window === "undefined" ? undefined : chosenFor);
   if (sameLayout(next, current)) return;
   current = next;
   applyLayoutAttributes(current);

@@ -38,7 +38,7 @@ function args(argv) {
 
 // --- engine ------------------------------------------------------------------------------------------------------
 
-async function api(url, path, init) {
+export async function api(url, path, init) {
   const r = await fetch(`${url}${path}`, init);
   const text = await r.text();
   try {
@@ -48,7 +48,7 @@ async function api(url, path, init) {
   }
 }
 
-async function execute(url, id, params = {}) {
+export async function execute(url, id, params = {}) {
   return api(url, "/api/execute", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id, params, origin: "ui" }) });
 }
 
@@ -72,7 +72,7 @@ function syntheticSvg() {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="140mm" height="140mm" viewBox="0 0 140 140">${parts.join("")}</svg>`;
 }
 
-async function loadHeavy(url, doc) {
+export async function loadHeavy(url, doc) {
   await execute(url, "doc.new");
   if (doc) {
     const ext = extname(doc).slice(1).toLowerCase();
@@ -87,7 +87,7 @@ async function loadHeavy(url, doc) {
 // --- page helpers ------------------------------------------------------------------------------------------------
 
 /** Find a visible, hit-testable element by selector and label (exact, then prefix, then substring). */
-async function find(page, selector, text) {
+export async function find(page, selector, text) {
   return page.evaluate(
     (sel, txt) => {
       const norm = (s) => (s || "").replace(/\s+/g, " ").trim().toLowerCase();
@@ -137,7 +137,7 @@ async function find(page, selector, text) {
 }
 
 /** Open a menu path: the first label is a button, the rest menu items (submenus open on press). */
-async function menuPath(page, labels) {
+export async function menuPath(page, labels) {
   await pressFind(page, "button", labels[0]);
   for (const l of labels.slice(1)) {
     await sleep(350);
@@ -146,7 +146,7 @@ async function menuPath(page, labels) {
   await sleep(500);
 }
 
-async function pressFind(page, selector, text) {
+export async function pressFind(page, selector, text) {
   const c = await find(page, selector, text);
   if (!c) throw new Error(`not found: ${selector}${text ? ` "${text}"` : ""}`);
   // Never tap blindly: a control under something else would send the tap to whatever covers it.
@@ -156,7 +156,7 @@ async function pressFind(page, selector, text) {
 }
 
 /** Field millimetres to viewport px, from the rulers' major ticks. */
-async function mmToPx(page) {
+export async function mmToPx(page) {
   return page.evaluate(() => {
     const ticks = (sel, axis) => {
       const out = [];
@@ -184,7 +184,7 @@ async function mmToPx(page) {
   });
 }
 
-async function canvasPoint(page, xmm, ymm) {
+export async function canvasPoint(page, xmm, ymm) {
   const m = await mmToPx(page);
   if (!m.fx || !m.fy) {
     if (!m.vp) throw new Error("no canvas");
@@ -194,7 +194,7 @@ async function canvasPoint(page, xmm, ymm) {
 }
 
 /** A point on the bare canvas (nothing floating over it), near the middle of the view. */
-async function canvasCenter(page) {
+export async function canvasCenter(page) {
   const p = await page.evaluate(() => {
     const vp = document.querySelector(".viewport");
     if (!vp) return null;
@@ -212,7 +212,7 @@ async function canvasCenter(page) {
   return p;
 }
 
-async function applySafeArea(page, safe) {
+export async function applySafeArea(page, safe) {
   await page.evaluate((s) => {
     let st = document.getElementById("e2e-safe-area");
     if (!st) {
@@ -226,7 +226,7 @@ async function applySafeArea(page, safe) {
 
 /** Escape until no menu, modal dialog or drawer is open (the harness's housekeeping, also on touch devices); a drawer
  *  that stays gets a tap on its scrim. */
-async function escape(page) {
+export async function escape(page) {
   const layers = () =>
     page.evaluate(() =>
       [...document.querySelectorAll("[role=menu], .ctx-menu, [role=dialog][aria-modal=true], .modal-backdrop, .drawer-scrim")].some(
@@ -246,7 +246,7 @@ async function escape(page) {
 }
 
 /** Open a collapsed section of the phone's More sheet. */
-async function openSection(page, title) {
+export async function openSection(page, title) {
   const open = await page.evaluate((t) => {
     const s = [...document.querySelectorAll(".phone-more details > summary")].find((x) => x.textContent.trim().toLowerCase().startsWith(t.toLowerCase()));
     return s ? s.parentElement.open : null;
@@ -258,19 +258,19 @@ async function openSection(page, title) {
   }
 }
 
-async function moreSheet(page) {
+export async function moreSheet(page) {
   const more = await page.evaluate(() => !!document.querySelector(".phone-more"));
   if (!more) await phoneTab(page, "More");
   if (!(await page.evaluate(() => !!document.querySelector(".phone-more")))) await phoneTab(page, "More");
   await sheetTo(page, "full");
 }
 
-async function warnText(page) {
+export async function warnText(page) {
   return page.evaluate(() => document.querySelector(".vp-warn")?.textContent?.trim() ?? null);
 }
 
 /** Tap the phone sheet's handle until it is at `snap` (peek, half, full). */
-async function sheetTo(page, snap) {
+export async function sheetTo(page, snap) {
   for (let i = 0; i < 4; i++) {
     const cur = await page.evaluate(() => {
       const s = document.querySelector(".bottom-sheet");
@@ -286,12 +286,12 @@ async function sheetTo(page, snap) {
   return false;
 }
 
-async function phoneTab(page, name) {
+export async function phoneTab(page, name) {
   await pressFind(page, "button.phone-tab", name);
   await sleep(500);
 }
 
-async function sheetOpen(page) {
+export async function sheetOpen(page) {
   return page.evaluate(() => !!document.querySelector(".bottom-sheet"));
 }
 
@@ -299,14 +299,14 @@ async function sheetOpen(page) {
 
 // Target positions in field mm (tried in order until something is selected): a 2 x 3 jig layout centred near the
 // origin, and the generated SVG.
-const TARGETS = [
+export const TARGETS = [
   [-11.9, -9.9],
   [28.1, -9.9],
   [-51.9, -9.9],
   [0, 0],
 ];
 
-async function selectSomething(page) {
+export async function selectSomething(page) {
   for (const [x, y] of TARGETS) {
     const p = await canvasPoint(page, x, y);
     await page.press(p.x, p.y);
@@ -318,7 +318,7 @@ async function selectSomething(page) {
 }
 
 /** Objects selected on the canvas: the selection box the viewport draws (0 or 1, enough for the flows). */
-async function selectionCount(page) {
+export async function selectionCount(page) {
   return page.evaluate(() => (document.querySelector(".viewport .sel-box, .viewport .sel-bounds") ? 1 : 0));
 }
 
@@ -721,7 +721,9 @@ async function main() {
   console.log(`report: ${join(out, "report.md")}`);
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+// Run only as a script: journeys.mjs imports the helpers above.
+if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url)))
+  main().catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });

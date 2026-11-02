@@ -161,6 +161,9 @@ test("a centre item takes the largest free rectangle and scrolls when it is shor
   noOverlaps(out);
   assert.ok(out.card.w >= 260 && out.card.w <= 393 - 16);
   assert.ok(out.card.maxH !== undefined && out.card.maxH < 600);
+  // The phone's Undo / Redo column is required: the card leaves it room (an import undone by mistake can be redone).
+  assert.equal(out.fabs.hidden, false);
+  assert.ok(out.card.x + out.card.w <= out.fabs.x, "the card stays left of the column");
 });
 
 test("ranks decide the stacking order, not the list order", () => {

@@ -370,10 +370,18 @@
   width: auto;
   flex-wrap: nowrap;
 }
+/* Start keeps its size; the reason beside it is what gives way, with an ellipsis (the strip's own overflow cut it
+   mid-letter on an iPad in portrait: "Framing: stop the frame first (S"). The full text is Start's tooltip. */
 .laser-strip .start-toolbar {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.laser-strip .start-toolbar .btn-start {
   flex: none;
 }
 .laser-strip .start-toolbar .start-reason {
+  flex: 0 1 auto;
+  min-width: 0;
   max-width: 220px;
 }
 

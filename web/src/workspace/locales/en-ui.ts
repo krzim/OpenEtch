@@ -380,6 +380,9 @@ export const EN_UI = {
   "et.penTool": "Pen",
   "et.lineHow": "click points",
   "et.penHow": "click for corners, drag for curves",
+  // The phone: taps, and the bar's own Undo point / Finish / Close buttons instead of the keys.
+  "et.lineHowTouch": "tap points, then Finish or tap the first point to close",
+  "et.penHowTouch": "tap for corners, drag for curves, then Finish or Close",
   "et.lineKeys": "double-click or Enter finishes · C or the first point closes · Shift: 15° · Backspace: undo point · Esc: cancel",
   "et.points": "Points",
   "et.sides": "Sides",

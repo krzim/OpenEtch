@@ -1611,8 +1611,11 @@ export function Viewport(props: ViewportProps) {
       {isDrawTool(tool) && (
         <ContextStripPortal>
           <div className="vp-overlay vp-top-left hint">
-            {tool === "circle" ? t("rest.drawCircle") : tool === "rect" ? t("rest.drawRect") : t("rest.drawEllipse")} ·{" "}
-            {t(tool === "circle" ? "rest.drawTailCircle" : "rest.drawTail", { size: formatLength(20, lu) })}
+            {/* The phone has no keyboard: no key hints (they covered half of a landscape phone's canvas); its touch
+                modifier bar has Square / From centre. */}
+            {layout.layout === "phone"
+              ? `${tool === "circle" ? t("rest.drawCircle") : tool === "rect" ? t("rest.drawRectTouch") : t("rest.drawEllipseTouch")} · ${t("rest.drawTailTouch", { size: formatLength(20, lu) })}`
+              : `${tool === "circle" ? t("rest.drawCircle") : tool === "rect" ? t("rest.drawRect") : t("rest.drawEllipse")} · ${t(tool === "circle" ? "rest.drawTailCircle" : "rest.drawTail", { size: formatLength(20, lu) })}`}
           </div>
         </ContextStripPortal>
       )}
