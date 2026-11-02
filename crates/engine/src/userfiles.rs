@@ -929,6 +929,9 @@ fn set_prefs(st: &AppState, prefs: Value, files: Option<FileSettings>) -> Result
             return Err(EngineError::BadRequest(format!("bad preferences: device {device}: {problem}")));
         }
     }
+    if let Some(problem) = crate::api_libs::user_tools_problem(st, &p.user_tools) {
+        return Err(EngineError::BadRequest(format!("bad preferences: user tools: {problem}")));
+    }
     if let Some(problem) = files.as_ref().and_then(FileSettings::problem) {
         return Err(EngineError::BadRequest(format!("bad file settings: {problem}")));
     }

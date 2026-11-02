@@ -128,6 +128,9 @@ pub struct Preferences {
     pub debug_log: bool,
     /// Check GitHub for a newer release when asked or at start (opt-in; nothing is sent but the request itself).
     pub check_for_updates: bool,
+    /// The User Tools menu (`crate::user_tools`): web pages and document command sequences, never machine actions.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub user_tools: Vec<crate::user_tools::UserTool>,
 }
 
 /// The preference store: in memory, saved to `path` when there is one.

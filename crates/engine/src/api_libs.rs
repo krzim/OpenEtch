@@ -20,7 +20,7 @@
 //! | POST | `/api/library/{name}/entries/{id}/duplicate` | Duplicate → `{id}` |
 //! | DELETE | `/api/library/{name}/entries/{id}` | Delete (layers linked to it are unlinked) |
 //! | POST | `/api/library/{name}/entries/{id}/apply` | `{layer, link?: bool}`: Assign (default) or Link |
-//! | GET / PUT | `/api/prefs` | the active device's preferences and the global ones; PUT `{require_framing?, play_sound?, checklist?, load_defaults_on_new?, console_macros?, debug_log?, check_for_updates?}` (UI only; `console_macros` `[{name, lines}]` replaces the device's macros, every line checked against the GRBL console policy) |
+//! | GET / PUT | `/api/prefs` | the active device's preferences and the global ones; PUT `{require_framing?, play_sound?, checklist?, load_defaults_on_new?, console_macros?, debug_log?, check_for_updates?, user_tools?}` (UI only; `console_macros` `[{name, lines}]` replaces the device's macros, every line checked against the GRBL console policy; `user_tools` `[{name, category?, kind: url, url} | {name, category?, kind: commands, steps: [{id, params}]}]` replaces the User Tools menu, refused unless every step is a document command of risk query or edit, `crate::user_tools`) |
 //! | POST | `/api/layers/{id}/default` | `{all?}`: Make Default (for the layer's colour) / Make Default for All |
 //! | POST | `/api/layers/{id}/reset` | `{builtin?}`: Reset to Default (`builtin`: OpenEtch's defaults, LightBurn's Shift+Reset) |
 //! | POST / DELETE | `/api/optimization/default` | Set as Defaults / forget them |
@@ -478,7 +478,14 @@ fn prefs_json(st: &AppState) -> Value {
         "device_prefs": p.device(&device),
         "debug_log": p.prefs.debug_log,
         "check_for_updates": p.prefs.check_for_updates,
+        "user_tools": p.prefs.user_tools,
     })
+}
+
+/// Why the User Tools cannot be saved (`crate::user_tools::problem` against the registered document commands).
+pub(crate) fn user_tools_problem(st: &AppState, tools: &[crate::user_tools::UserTool]) -> Option<String> {
+    let specs = st.specs();
+    crate::user_tools::problem(tools, |id| specs.iter().find(|s| s.id == id).map(|s| s.risk))
 }
 
 async fn prefs_view(State(st): State<Arc<AppState>>) -> Json<Value> {
@@ -503,6 +510,8 @@ struct PrefsBody {
     #[serde(default)]
     check_for_updates: Option<bool>,
     #[serde(default)]
+    user_tools: Option<Vec<crate::user_tools::UserTool>>,
+    #[serde(default)]
     origin: Option<Value>,
 }
 
@@ -516,6 +525,11 @@ async fn prefs_edit(State(st): State<Arc<AppState>>, headers: HeaderMap, b: Byte
     }
     if let Some(m) = &b.console_macros
         && let Some(p) = crate::prefs::macros_problem(m)
+    {
+        return Err(EngineError::BadRequest(p));
+    }
+    if let Some(t) = &b.user_tools
+        && let Some(p) = user_tools_problem(&st, t)
     {
         return Err(EngineError::BadRequest(p));
     }
@@ -544,6 +558,9 @@ async fn prefs_edit(State(st): State<Arc<AppState>>, headers: HeaderMap, b: Byte
         }
         if let Some(v) = b.check_for_updates {
             p.prefs.check_for_updates = v;
+        }
+        if let Some(t) = b.user_tools {
+            p.prefs.user_tools = t;
         }
         p.save()?;
     }
