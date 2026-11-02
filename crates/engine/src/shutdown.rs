@@ -9,7 +9,8 @@
 //!   Pending runs are cancelled, the foot switch cycle ends, and any frame stops (pointer off).
 //! - A run that holds the machine (approved, waiting for its confirmation or start input, running, paused) is left to
 //!   end by itself. It still obeys Stop, the door and the stop input while the engine waits. A continuous run is
-//!   asked to end after its current iteration (it would never end otherwise); a run with a fixed number of
+//!   asked to end after its current iteration (it would never end otherwise; waiting for its start input between
+//!   iterations, it ends there without firing, module `approve`); a run with a fixed number of
 //!   iterations finishes all of them. The log says what is waited for, with the time estimate, every
 //!   [`Options::report_every`].
 //! - Then the engine exits cleanly: the pointer off and the board left idle (no abort sequence is sent to an idle
@@ -17,7 +18,8 @@
 //!
 //! A second signal, or the grace limit (`--shutdown-grace-secs`, default [`DEFAULT_GRACE_SECS`]; 0 aborts at once)
 //! running out, aborts the run with the normal abort sequence (`AppState::stop`) before exiting. Stop in the app
-//! works throughout.
+//! works throughout. The abort is bounded by [`Options::abort_wait`]: a stuck board that holds the controller never
+//! keeps the engine from exiting, and then the exit status is a failure ([`Outcome::failed`]).
 //!
 //! State: `GET /api/machine` `shutting_down` and `shutdown` ([`ShutdownState::status_json`]); machine event
 //! `shutting_down` (detail: what the engine waits for). systemd kills the process `TimeoutStopSec` after SIGTERM
@@ -79,6 +81,14 @@ pub enum Outcome {
     RunEnded,
     /// The run was aborted. `released`: it let go of the machine within [`Options::abort_wait`].
     Aborted { reason: AbortReason, released: bool },
+}
+
+impl Outcome {
+    /// Whether the engine should exit with a failure status: an aborted run that never let go of the machine (the
+    /// board may still be busy; `systemctl status` then shows the failure).
+    pub fn failed(&self) -> bool {
+        matches!(self, Outcome::Aborted { released: false, .. })
+    }
 }
 
 /// What `GET /api/machine` shows of a shutdown.
@@ -161,10 +171,8 @@ pub async fn run(st: Arc<AppState>, mut signals: mpsc::UnboundedReceiver<&'stati
     };
     let outcome = shut_down(&st, first, &mut signals, opts).await;
     // Turn the pointer off and leave the board idle (never an abort sequence on an idle board).
-    if !st.machine.is_running()
-        && let Err(e) = st.frame_stop().await
-    {
-        tracing::warn!(error = %e, "shutdown: could not turn the pointer off");
+    if !st.machine.is_running() {
+        frame_off(&st, opts).await;
     }
     tracing::info!(?outcome, "shutdown: the engine exits");
     st.emit(Event::machine("shutting_down", Some("exiting".into())));
@@ -187,9 +195,7 @@ async fn shut_down(
         Some(Info { signal, since_unix_s: now_unix(), grace_s: opts.grace.as_secs(), aborting: false });
     crate::cycle::end(st, None, Some("The engine is shutting down: the foot switch cycle ended."));
     // Any frame stops (with a run on the board, only the frame loop ends: the run already ended it).
-    if let Err(e) = st.frame_stop().await {
-        tracing::warn!(error = %e, "shutdown: could not stop framing");
-    }
+    frame_off(st, opts).await;
     let waiting = describe(st);
     tracing::warn!(
         signal,
@@ -225,7 +231,7 @@ async fn shut_down(
         }
         // A frame cannot start now (refused), but never leave one lit.
         if st.machine.is_framing() {
-            let _ = st.frame_stop().await;
+            frame_off(st, opts).await;
         }
         let nap = opts.poll.min(deadline - now);
         tokio::select! {
@@ -238,6 +244,16 @@ async fn shut_down(
     }
     tracing::info!("shutdown: the run ended; exiting");
     Outcome::RunEnded
+}
+
+/// Stop any frame (pointer off), bounded by [`Options::abort_wait`] like the abort: a stuck board that holds the
+/// controller never holds the shutdown (the frame loop has been told to end at once either way).
+async fn frame_off(st: &AppState, opts: Options) {
+    match tokio::time::timeout(opts.abort_wait, st.frame_stop()).await {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => tracing::warn!(error = %e, "shutdown: could not turn the pointer off"),
+        Err(_) => tracing::error!("shutdown: the board did not take the frame stop (it is busy or stuck)"),
+    }
 }
 
 /// A continuous run never ends by itself: ask it to end after its current iteration (Repeat and a fixed count run to
@@ -293,10 +309,17 @@ async fn abort(st: &Arc<AppState>, reason: AbortReason, opts: Options) -> Outcom
         describe(st).as_deref().unwrap_or("the machine is busy")
     );
     st.emit(Event::machine("shutting_down", Some(format!("aborting the run: {why}"))));
-    if let Err(e) = st.stop().await {
-        tracing::error!(error = %e, "shutdown: the abort sequence failed; use the hardware E-stop");
-    }
     let until = Instant::now() + opts.abort_wait;
+    // Bounded: a board stuck under the run holds the controller, and the abort sequence would wait behind it for
+    // ever (the stop epoch has moved on at once, so the run still stops should the board come back).
+    match tokio::time::timeout(opts.abort_wait, st.stop()).await {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => tracing::error!(error = %e, "shutdown: the abort sequence failed; use the hardware E-stop"),
+        Err(_) => tracing::error!(
+            wait_s = opts.abort_wait.as_secs(),
+            "shutdown: the abort sequence could not reach the board (it is busy or stuck); use the hardware E-stop"
+        ),
+    }
     while st.machine.is_running() && Instant::now() < until {
         tokio::time::sleep(opts.poll.min(Duration::from_millis(50))).await;
     }

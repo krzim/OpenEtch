@@ -325,9 +325,9 @@ async fn execute(st: &Arc<AppState>, job: Job<'_>) -> Outcome {
     let id = job.id;
     if let Some(c) = job.confirm {
         st.emit(Event::machine("awaiting_confirm", Some(id.to_owned())));
-        match wait_for_input(&st.machine, job.epoch, c.input_bit, false, true, c.timeout, c.poll).await {
+        match wait_for_input(&st.machine, job.epoch, c.input_bit, false, true, c.timeout, c.poll, &|| false).await {
             InputEnd::Confirmed => {}
-            InputEnd::Stopped => {
+            InputEnd::Stopped | InputEnd::Ended => {
                 return (RunState::Cancelled, None, Some("stopped while waiting for the physical confirmation".into()));
             }
             InputEnd::TimedOut => {
@@ -370,8 +370,16 @@ async fn execute(st: &Arc<AppState>, job: Job<'_>) -> Outcome {
             st.emit(Event::machine("waiting_for_start_input", Some(id.to_owned())));
             st.emit(Event::machine("awaiting_start_input", Some(id.to_owned())));
             let full = job.options.full_pulse.unwrap_or(true);
-            match wait_for_input(&st.machine, job.epoch, bit, start_low, full, START_INPUT_TIMEOUT, CONFIRM_POLL).await {
+            // While the engine shuts down (module `shutdown`), a run asked to end after its current iteration (a
+            // continuous run) does not wait for another press: its last iteration has finished, so it ends here
+            // instead of holding the restart until the grace limit.
+            let between = completed > 0;
+            let end_early = || between && st.shutting_down() && st.job.ending();
+            match wait_for_input(&st.machine, job.epoch, bit, start_low, full, START_INPUT_TIMEOUT, CONFIRM_POLL, &end_early)
+                .await
+            {
                 InputEnd::Confirmed => {}
+                InputEnd::Ended => return (RunState::Finished, last, None),
                 InputEnd::Stopped if completed == 0 => {
                     return (RunState::Cancelled, None, Some("stopped while waiting for the start input".into()));
                 }
@@ -527,6 +535,8 @@ async fn panicked(st: &Arc<AppState>, e: String) -> Outcome {
 enum InputEnd {
     Confirmed,
     Stopped,
+    /// `end_early` asked to end the wait (nothing was pressed; nothing fires).
+    Ended,
     TimedOut,
     Failed(String),
     Panicked(String),
@@ -535,7 +545,8 @@ enum InputEnd {
 /// Poll `ReadPort` until input `bit` is pressed (high, or low when `active_low`) for [`CONFIRM_READS`] reads in a
 /// row; with `full_pulse` it must
 /// first be seen released (so a stuck, held or inverted input never starts anything). Ends early on a stop (epoch
-/// change), a read error or the timeout.
+/// change), `end_early`, a read error or the timeout.
+#[allow(clippy::too_many_arguments)]
 async fn wait_for_input(
     machine: &Arc<Machine>,
     epoch: u64,
@@ -544,6 +555,7 @@ async fn wait_for_input(
     full_pulse: bool,
     timeout: Duration,
     poll: Duration,
+    end_early: &(dyn Fn() -> bool + Sync),
 ) -> InputEnd {
     let deadline = Instant::now() + timeout;
     let port = machine::InputPort { bit, active_low };
@@ -551,6 +563,9 @@ async fn wait_for_input(
     loop {
         if machine.stop_epoch() != epoch {
             return InputEnd::Stopped;
+        }
+        if end_early() {
+            return InputEnd::Ended;
         }
         if Instant::now() >= deadline {
             return InputEnd::TimedOut;

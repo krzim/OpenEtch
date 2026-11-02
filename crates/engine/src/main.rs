@@ -69,7 +69,11 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    match runtime.block_on(run(config)) {
+    let result = runtime.block_on(run(config));
+    // A blocking task stuck on the board (a hung USB or serial call) must not keep the process alive once the engine
+    // is done (dropping the runtime would wait for it for ever).
+    runtime.shutdown_timeout(std::time::Duration::from_secs(5));
+    match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("openetch: {e}");
@@ -323,16 +327,23 @@ async fn run(config: Config) -> Result<(), String> {
     let grace = std::time::Duration::from_secs(config.shutdown_grace_secs);
     println!("openetch: on SIGTERM/SIGINT a running job may finish (up to {} s) before the engine exits", grace.as_secs());
     let closing = shutdown_state.shutdown.closing();
+    let (outcome_tx, outcome_rx) = tokio::sync::oneshot::channel();
     let server = axum::serve(listener, app)
         .with_graceful_shutdown(async move {
-            engine::shutdown::run(shutdown_state, signals_rx, engine::shutdown::Options::new(grace)).await;
+            let outcome = engine::shutdown::run(shutdown_state, signals_rx, engine::shutdown::Options::new(grace)).await;
+            let _ = outcome_tx.send(outcome);
         })
         .into_future();
     tokio::select! {
-        r = server => r.map_err(|e| format!("server error: {e}")),
+        r = server => r.map_err(|e| format!("server error: {e}"))?,
         () = engine::shutdown::closed_then_wait(closing) => {
             tracing::info!("connections still open after the shutdown; exiting");
-            Ok(())
         }
+    }
+    match outcome_rx.await {
+        Ok(o) if o.failed() => {
+            Err("the job was aborted at shutdown but did not end on the board; use the hardware E-stop".into())
+        }
+        _ => Ok(()),
     }
 }

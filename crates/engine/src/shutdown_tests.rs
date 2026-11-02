@@ -315,3 +315,125 @@ async fn the_claim_and_the_shutdown_never_miss_each_other() {
     assert!(!idle.begin_shutdown(), "nothing held it");
     assert!(!idle.try_begin_run());
 }
+
+/// The foot switch burn (the case that ruined a coin): a restart while the cycle burns lets the burn finish, then
+/// the engine exits; the cycle does not frame again afterwards (pointer off).
+#[tokio::test]
+async fn a_foot_switch_burn_finishes_and_nothing_frames_after_it() {
+    let st = engine(pedal_profile(), 150).await;
+    crate::cycle::pressed(&st).await;
+    assert_eq!(st.machine_status()["foot_cycle"]["phase"], "framing");
+    crate::cycle::pressed(&st).await;
+    until("the foot switch burn to stream", || st.job_status()["state"] == "running").await;
+    let id = st.job.active_run().expect("the burn holds the machine");
+    let epoch = st.machine.stop_epoch();
+    let (tx, done) = coordinator(&st, opts(Duration::from_secs(60)));
+    tx.send("SIGTERM").unwrap();
+    until("the shutdown to begin", || st.shutting_down()).await;
+    assert_eq!(state_of(&st, &id), RunState::Running, "the burn goes on");
+    let outcome = tokio::time::timeout(Duration::from_secs(20), done).await.expect("exits").unwrap();
+    assert_eq!(outcome, Outcome::RunEnded);
+    let run = st.runs().get(&id).cloned().unwrap();
+    assert_eq!((run.state, run.completed), (RunState::Finished, 1), "{:?}", run.error);
+    assert_eq!(st.machine.stop_epoch(), epoch, "no stop and no abort");
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(!st.machine.is_framing(), "the cycle does not frame again");
+    assert_eq!(st.machine_status()["foot_cycle"]["phase"], "off");
+}
+
+/// A continuous run between iterations, waiting for its start input (the pedal), ends there at a shutdown: its last
+/// iteration has finished, nothing more fires, and the restart is not held until the grace limit.
+#[tokio::test]
+async fn a_continuous_run_waiting_for_its_start_input_ends_there() {
+    let st = engine_on(Arc::new(Machine::simulated(pedal_profile(), None, PollConfig::immediate())), None).await;
+    let counters = st.machine.sim_counters().unwrap().clone();
+    let (tx, done) = coordinator(&st, opts(Duration::from_secs(60)));
+    let id = start(&st, RunOptions { continuous: true, start_input: true, ..RunOptions::default() }).await;
+    until("the first wait for the pedal", || st.job_status()["state"] == "waiting_for_start_input").await;
+    counters.set_inputs(1 << 14);
+    until("the first iteration", || st.runs().get(&id).is_some_and(|r| r.completed >= 1)).await;
+    counters.set_inputs(0);
+    until("the wait for the next press", || {
+        let j = st.job_status();
+        j["state"] == "waiting_for_start_input" && j["completed"] == 1
+    })
+    .await;
+    let (fired, epoch) = (counters.emitting_packets(), st.machine.stop_epoch());
+    tx.send("SIGTERM").unwrap();
+    let outcome = tokio::time::timeout(Duration::from_secs(5), done).await.expect("not held until the grace limit").unwrap();
+    assert_eq!(outcome, Outcome::RunEnded);
+    let run = st.runs().get(&id).cloned().unwrap();
+    assert_eq!((run.state, run.completed), (RunState::Finished, 1), "{:?}", run.error);
+    assert_eq!(counters.emitting_packets(), fired, "nothing more fired");
+    assert_eq!(st.machine.stop_epoch(), epoch, "ended, not aborted");
+}
+
+/// A paused run is waited for: it neither aborts nor ends; resumed, it finishes and the engine exits.
+#[tokio::test]
+async fn a_paused_run_is_waited_for_until_resumed() {
+    let st = engine_on(Arc::new(Machine::simulated(pedal_profile(), None, PollConfig::immediate())), None).await;
+    let counters = st.machine.sim_counters().unwrap().clone();
+    let (tx, done) = coordinator(&st, opts(Duration::from_secs(60)));
+    let id = start(&st, RunOptions { start_input: true, ..RunOptions::default() }).await;
+    until("the wait for the pedal", || st.job_status()["state"] == "waiting_for_start_input").await;
+    st.machine.pause();
+    // The pedal is pressed while paused: the iteration is held before anything is sent (module `approve`).
+    counters.set_inputs(1 << 14);
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    counters.set_inputs(0);
+    assert_eq!(st.job_status()["state"], "paused");
+    let before = counters.emitting_packets();
+    tx.send("SIGTERM").unwrap();
+    until("the shutdown to begin", || st.shutting_down()).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(!done.is_finished(), "the paused run is waited for");
+    assert!(!state_of(&st, &id).is_final());
+    assert_eq!(counters.emitting_packets(), before, "nothing fires while paused");
+    st.machine.resume();
+    let outcome = tokio::time::timeout(Duration::from_secs(20), done).await.expect("exits").unwrap();
+    assert_eq!(outcome, Outcome::RunEnded);
+    assert_eq!(state_of(&st, &id), RunState::Finished);
+}
+
+/// A stuck board (a board call that never returns holds the controller) never keeps the engine from exiting: the
+/// abort is bounded, and the outcome is a failure (the exit status says so).
+#[tokio::test]
+async fn a_stuck_board_never_keeps_the_engine_from_exiting() {
+    let st = engine(MachineProfile::generic_lmc_fiber(), 3).await;
+    // A run that holds the machine, its board call hung inside the controller lock.
+    assert!(st.machine.try_begin_run());
+    let m = st.machine.clone();
+    let stuck = tokio::spawn(async move { m.blocking(|_, _| std::thread::sleep(Duration::from_millis(2500))).await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let o = Options { abort_wait: Duration::from_millis(300), ..opts(Duration::ZERO) };
+    let (tx, done) = coordinator(&st, o);
+    tx.send("SIGTERM").unwrap();
+    let outcome = tokio::time::timeout(Duration::from_secs(2), done).await.expect("the abort is bounded").unwrap();
+    assert_eq!(outcome, Outcome::Aborted { reason: AbortReason::GraceExpired, released: false });
+    assert!(outcome.failed(), "a failure exit status");
+    assert!(*st.shutdown.closing().borrow(), "the engine exits");
+    assert!(!Outcome::RunEnded.failed() && !Outcome::Idle.failed());
+    assert!(!Outcome::Aborted { reason: AbortReason::GraceExpired, released: true }.failed());
+    stuck.await.unwrap().unwrap();
+    st.machine.end_run();
+}
+
+/// A stuck board while framing (no run): the frame stop is bounded too, so the engine still exits; the frame loop
+/// has been told to end, and the pointer goes off once the board answers.
+#[tokio::test]
+async fn a_stuck_board_while_framing_never_keeps_the_engine_from_exiting() {
+    let st = engine(MachineProfile::generic_lmc_fiber(), 3).await;
+    st.frame_start(FrameRequest { continuous: Some(true), ..FrameRequest::default() }).await.unwrap();
+    until("framing", || st.machine.is_framing()).await;
+    let m = st.machine.clone();
+    let stuck = tokio::spawn(async move { m.blocking(|_, _| std::thread::sleep(Duration::from_millis(2500))).await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let o = Options { abort_wait: Duration::from_millis(300), ..opts(Duration::from_secs(60)) };
+    let (tx, done) = coordinator(&st, o);
+    tx.send("SIGTERM").unwrap();
+    let outcome = tokio::time::timeout(Duration::from_secs(2), done).await.expect("the frame stop is bounded").unwrap();
+    assert_eq!(outcome, Outcome::Idle);
+    assert!(!outcome.failed());
+    stuck.await.unwrap().unwrap();
+    until("the frame loop to end", || !st.machine.is_framing()).await;
+}

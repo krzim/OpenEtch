@@ -17,11 +17,14 @@ for good (approvals, Start, the foot switch, run requests including MCP's `job_r
 jog, axis and GRBL moves, device changes: **503** `code: "shutting_down"`), cancels pending runs, ends the foot switch
 cycle and stops any frame (pointer off). A run that already holds the machine (approved, waiting for its confirmation
 or start input, running, paused) is left to end by itself, still obeying Stop, the door and the stop input; a
-continuous run is asked to end after its current iteration, a run of N iterations finishes all N. The log says what
-it waits for, with the time estimate, every 30 s. Then the engine exits with the pointer off and the board idle (an
+continuous run is asked to end after its current iteration (one waiting for its start input between iterations
+ends there, without firing), a run of N iterations finishes all N. The log says what it waits for, with the time
+estimate, every 30 s. Then the engine exits with the pointer off and the board idle (an
 idle board gets no abort sequence; the next start's board init is harmless then). A **second signal**, or the grace
 limit `--shutdown-grace-secs` (default 3600 s, at most 604800; **0** aborts at once) running out, aborts the run with
-the normal abort sequence (as Stop) before exiting. The HTTP server keeps serving until the engine exits, so Stop
+the normal abort sequence (as Stop) before exiting; should the board not take it within 30 s (a stuck board holds the
+controller), the engine exits anyway with a failure status and logs to use the hardware E-stop (exit status 1; else
+0). The HTTP server keeps serving until the engine exits, so Stop
 works throughout and `GET /api/machine` reports `shutting_down: true` and `shutdown` (signal, since, grace,
 `abort_at_unix_s`, `aborting`, `waiting_for_run`); the web app shows an "ENGINE SHUTTING DOWN" badge. The run claim
 and the shutdown share one atomic word (`hw::Machine::begin_shutdown`), so an approval racing a signal is either
