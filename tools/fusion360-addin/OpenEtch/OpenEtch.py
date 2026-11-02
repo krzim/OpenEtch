@@ -9,7 +9,7 @@ Settings live in openetch-settings.json next to this file (created on first use)
     {"engine": "http://127.0.0.1:7878", "token": ""}
 
 The token is only needed when the engine listens off loopback (it prints it at startup). It is sent as
-"Authorization: Bearer <token>" and never logged. Licence: MIT (part of OpenEtch).
+"Authorization: Bearer <token>" and never logged. Licence: MIT OR Apache-2.0 (part of OpenEtch).
 """
 
 import json

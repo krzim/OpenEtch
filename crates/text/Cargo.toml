@@ -3,6 +3,8 @@ name = "text"
 description = "Text like LightBurn: fonts (system TTF/OTF, Hershey, AutoCAD SHX, EzCad JSF), layout, variable text, barcodes"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 

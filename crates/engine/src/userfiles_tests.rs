@@ -267,6 +267,26 @@ async fn hostile_bundles_are_contained() {
     let (s, _, _) = raw(&app, req("POST", "/api/prefs/import", Body::from(bad_files.to_string()), true)).await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
     assert_eq!(crate::libs::lock(&st.libs.prefs).prefs, before, "nothing changed by a half-valid file");
+    // An import is held to the rules of PUT /api/prefs: console macros pass the console policy, saved Move positions
+    // belong to a GRBL gantry's bed (the active device here is a galvo) and have sane names.
+    let id = st.active_device().id;
+    for d in [
+        json!({"console_macros": [{"name": "Fire", "lines": ["M3 S1000"]}]}),
+        json!({"move_positions": [{"name": "Jig", "x_mm": 10.0, "y_mm": 10.0}]}),
+    ] {
+        let mut devices = serde_json::Map::new();
+        devices.insert(id.clone(), d);
+        let file = json!({"format": "openetch-prefs", "version": 1, "preferences": {"devices": devices}});
+        let (s, _, b) = raw(&app, req("POST", "/api/prefs/import", Body::from(file.to_string()), true)).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{}", String::from_utf8_lossy(&b));
+        assert_eq!(crate::libs::lock(&st.libs.prefs).prefs, before);
+    }
+    // A device this engine does not know keeps its positions if their names are sane.
+    let unknown = |name: &str| json!({"format": "openetch-prefs", "version": 1, "preferences": {"devices": {"elsewhere": {"move_positions": [{"name": name, "x_mm": 10.0, "y_mm": 10.0}]}}}});
+    let (s, _, _) = raw(&app, req("POST", "/api/prefs/import", Body::from(unknown(" ").to_string()), true)).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    let (s, _, b) = raw(&app, req("POST", "/api/prefs/import", Body::from(unknown("Jig").to_string()), true)).await;
+    assert_eq!(s, StatusCode::OK, "{}", String::from_utf8_lossy(&b));
 }
 
 #[tokio::test]

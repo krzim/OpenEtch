@@ -375,6 +375,12 @@ impl AppState {
         }
     }
 
+    /// Refused (409) unless the active machine is a Ruida gantry.
+    pub(crate) fn require_ruida(&self) -> Result<(), EngineError> {
+        self.require_controllable()?;
+        if self.machine.is_ruida() { Ok(()) } else { Err(EngineError::Conflict("the active machine is not a Ruida gantry".into())) }
+    }
+
     /// Refused (409) unless the active machine is a GRBL gantry.
     pub(crate) fn require_grbl(&self) -> Result<(), EngineError> {
         self.require_controllable()?;
@@ -468,8 +474,10 @@ impl AppState {
         enum Swap {
             Galvo(Box<machine::MachineProfile>, Option<corfile::CorTable>),
             Grbl(machine::grbl::GrblProfile),
+            Ruida(machine::ruida::RuidaProfile),
         }
         let swap = match (device.profile.clone(), device.grbl.clone()) {
+            _ if device.controllable && device.ruida.is_some() => device.ruida.clone().map(Swap::Ruida),
             (_, Some(grbl)) if device.controllable => Some(Swap::Grbl(grbl)),
             (Some(profile), _) if device.controllable => Some(Swap::Galvo(Box::new(profile), cor)),
             _ => None,
@@ -483,6 +491,7 @@ impl AppState {
                     match swap {
                         Swap::Galvo(profile, cor) => m.swap_config(ctl, *profile, cor),
                         Swap::Grbl(grbl) => m.swap_grbl(ctl, grbl),
+                        Swap::Ruida(ruida) => m.swap_ruida(ctl, ruida),
                     }
                 })
                 .await;
@@ -1149,6 +1158,9 @@ impl AppState {
             None => None,
         };
         let mut prepared = tokio::task::spawn_blocking(move || {
+            if let Some(ruida) = &config.ruida {
+                return crate::ruida_dsp::prepare_ruida_job(&doc, &config.target, ruida, &options, run_index);
+            }
             if let Some(grbl) = &config.grbl {
                 if queue.is_some() {
                     return Err(EngineError::BadRequest("queue (batch of projects) is not available on a GRBL machine yet".into()));
@@ -1277,14 +1289,14 @@ impl AppState {
     /// How a frame request runs: pointer outputs, blanking, speed, once or looping, time limit.
     fn frame_run(&self, req: &FrameRequest, live: Option<(u64, frame::LiveSource)>) -> Result<FrameRun, EngineError> {
         let profile = self.machine.profile();
-        let grbl = self.machine.is_grbl();
+        let grbl = self.machine.is_gantry();
         let focus = || {
             profile
                 .focus_light_port_bit
                 .and_then(|b| lmc::PointerBits::bit(b).ok())
                 .ok_or_else(|| EngineError::BadRequest("the machine profile has no focus light port (focus_light_port_bit)".into()))
         };
-        // A GRBL gantry frames by moving the head with the laser off: there is no pointer to choose.
+        // A gantry (GRBL, Ruida) frames by moving the head with the laser off: there is no pointer to choose.
         let pointer = match req.pointer {
             _ if grbl => lmc::PointerBits::RED,
             Pointer::Red => lmc::PointerBits::RED,
@@ -1297,7 +1309,7 @@ impl AppState {
         {
             return Err(EngineError::BadRequest(format!(
                 "speed_mm_s must be within 0..={max_speed} mm/s (the profile's {} limit)",
-                if grbl { "feed" } else { "jump speed" }
+                if grbl { "speed" } else { "jump speed" }
             )));
         }
         let max_secs = req.max_seconds.unwrap_or(frame::FRAME_MAX_SECS);

@@ -105,14 +105,26 @@ These are `na` today because OpenEtch only drives JCZ/BJJCZ galvos. They become 
    keys, Home, Unlock, Go to origin, Move to position, position readout), the Console window with history and macros
    saved per device (checked against the console policy when saved and when sent), File > Save G-code, and the GRBL
    layer options constant power (M3), air assist (M8/M9), overscan and overcut, all shown only for GRBL devices.
-   Still open: ramps, lead-in/out, saved Move positions, the last-position crosshair, backlash, scanning offsets and
-   framing with the laser on.
+   *Also on branch `grbl-extras` (unverified on hardware, no gantry):* the fill ramp (`LAY-053`), lead-in/out and
+   start/end pauses (`LAY-054`), saved Move positions (`UX-075`) and Show Last Position (`JOB-064`).
+   Still open: the ramp on Threshold images, Cut Through pauses, a user origin, backlash, scanning offsets and framing
+   with the laser on.
 3. **Ruida (UDP and USB).** The most common DSP controller. The protocol is publicly documented by community
    projects (MIT/BSD ones only). Unlocks controller file lists (`OTH-017`), Send / machine files (`JOB-065`),
    RDWorks `.rd` import (`UX-037`), rotary mode on gantries (`OTH-014`), auto-focus (`JOB-073`) and feeders
    (`OTH-016`).
+   *Status (unverified on hardware, no Ruida controller; tested on `ruida::sim`):* the Ruida driver
+   (`machine::ruida::RuidaController`, `Driver::Ruida`) over UDP, a Ruida device kind (Devices window, New Ruida),
+   runs planned to checked `.rd` programs and approved like any run, light-only framing with rapid moves, Stop as stop
+   process; the File List window (list, Start through approval, Delete) and Send (`OTH-017`, `JOB-065`); File > Save
+   RD file (`UX-007`); `.rd` import with round-trip tests (`UX-037`; SmoothieCut and MillMage files not read).
+   Still open for Ruida: rotary, auto-focus, feeders, layer pauses, air assist and the other layer options, the
+   Move window (jogging) and a real controller.
 4. **Gantry camera features** (head camera, Camera Print and Cut; `OTH-018`) and the Center Finder (`OTH-015`) once
    a gantry can move the head.
 5. **Dual-source galvos** (`LAY-018`) when someone with such a machine can test.
 6. **Generic generators** that need no hardware and can land any time: tabs and slot resize (`DES-024`), dogbone
    (`OTH-003`), web/user tools menu (`OTH-019`), multi-file trace (`OTH-026`).
+   *Status (branch `tools`, 2026-11-02):* all four done (see ARCHITECTURE.md "Tabs and joinery", "User Tools" and
+   "Multi-File Trace"); tabs are unverified on hardware (no cut-through run), and LightBurn's tab tags are still not
+   imported from `.lbrn2` (no sample with hand-placed tabs).

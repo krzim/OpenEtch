@@ -8,8 +8,8 @@
 //!   Auto-rotate, `wobbleEnable` Wobble, `perforate` Perforation, `dotMode` Dot Mode, and `scanOpt` Fill Grouping),
 //!   so they are listed only when their values could not be used (e.g. Dot Mode with LightBurn's default `dotTime` of
 //!   0) or the option was turned off since. Two are never turned on, because OpenEtch's option does not mean the same:
-//!   `tabsEnabled` (LightBurn's tabs are placed by hand by default, can skip inner shapes and cut at a power; OpenEtch
-//!   spaces gaps evenly on every closed outline) and `kerf` (Kerf Offset: LightBurn's documentation does not say how
+//!   `tabsEnabled` (OpenEtch now has LightBurn's tab settings, hand-placed tabs, Skip Inner Shapes and Tab Cut Power,
+//!   but where a file keeps the hand-placed tabs is not known: no sample has one, and tabs default to hand-placed) and `kerf` (Kerf Offset: LightBurn's documentation does not say how
 //!   holes or fill layers are offset; OpenEtch grows parts and shrinks holes on line passes only, and no sample file
 //!   has one to compare). Listed while the switch is on in the kept tags and OpenEtch's option is still off; setting
 //!   the option (`layer.update settings.options`) clears the entry.
@@ -59,7 +59,7 @@ const SWITCHES: &[Switch] = &[
         "Tabs",
         |s| s.options.tabs.is_some(),
         &["tabCount", "tabCountMax", "tabSpacing", "tabSize", "tabsUseSpacing", "manualTabs", "skipInnerTabs", "tabCutPower"],
-        Some("LightBurn's tabs, hand-placed by default and able to skip inner shapes or cut at a power, differ from OpenEtch's evenly spaced gaps"),
+        Some("where LightBurn stores hand-placed tabs in a file is not known (no sample has one), so the tabs are not turned on; set them with layer.update options.tabs and tabs.add"),
     ),
     ("floodFill", "Flood Fill", |s| s.options.flood_fill, &[], None),
     ("autoRotate", "Auto-rotate", |s| s.options.auto_rotate, &[], None),

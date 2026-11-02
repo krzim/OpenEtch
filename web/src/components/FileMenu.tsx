@@ -562,12 +562,15 @@ export function FileMenu({
   extra,
   files,
   onSaveGcode,
+  onSaveRd,
 }: {
   file: FileActions;
   onImport: () => void;
   onDevices?: () => void;
   /** Save G-code (LightBurn's Save GCode): given only while the active device is a GRBL gantry. */
   onSaveGcode?: () => void;
+  /** Save RD file (LightBurn's Save RD file): given only while the active device is a Ruida gantry. */
+  onSaveRd?: () => void;
   /** Recent projects (workspace/RecentProjects.tsx), given a function that closes the menu. */
   recent?: (close: () => void) => ReactNode;
   /** More entries (Preferences, Edit hotkeys, New tab, the Laser entries), given a function that closes the menu. */
@@ -589,6 +592,7 @@ export function FileMenu({
     exportLightBurn: () => file.setModal({ kind: "export" }),
     downloadOpenetch: file.downloadOpenetch,
     saveGcode: onSaveGcode,
+    saveRd: onSaveRd,
     devices: onDevices,
     parts,
     labels: {
@@ -601,6 +605,7 @@ export function FileMenu({
       export: t("rb.export"),
       exportLightBurn: t("fm.exportLb"),
       saveGcode: t("fm.saveGcode"),
+      saveRd: t("fm.saveRd"),
       downloadOpenetch: t("fm.downloadOpenetch"),
       project: t("rb.project"),
       lightburn: t("rb.lightburn"),

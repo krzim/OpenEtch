@@ -3,6 +3,8 @@ name = "lbrn"
 description = "LightBurn .lbrn2 project files: parse, write, and convert to and from the OpenEtch document"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 

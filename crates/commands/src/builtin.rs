@@ -23,6 +23,10 @@ mod shape;
 mod stock;
 mod sub_layer;
 mod svg_import;
+// Tabs placed by hand, dogbones, slot resizing and tracing several images (LightBurn's Tools menu extras).
+mod joinery;
+mod tabs;
+mod trace_many;
 // Text, variable text and barcodes (crates/text).
 pub(crate) mod text;
 mod util;
@@ -43,6 +47,7 @@ mod testgen;
 pub mod testgen_presets;
 // Files and image tools (crate fileio): exports, further imports, trace, masks, pages, notes.
 pub(crate) mod files;
+mod rd_import;
 mod image_tools;
 mod pages;
 
@@ -119,6 +124,20 @@ pub(crate) fn register_all(r: &mut Registry) {
     register_text(r);
     register_libs(r);
     register_files(r);
+    register_tools(r);
+}
+
+/// Tabs, dogbones, Resize Slots and Multi-File Trace (`tabs`, `joinery`, `trace_many`).
+fn register_tools(r: &mut Registry) {
+    r.register::<tabs::AddTabs>();
+    r.register::<tabs::MoveTab>();
+    r.register::<tabs::RemoveTabs>();
+    r.register::<tabs::ClearTabs>();
+    r.register::<tabs::ListTabs>();
+    r.register::<joinery::Dogbone>();
+    r.register::<joinery::ResizeSlots>();
+    r.register::<trace_many::TraceMany>();
+    r.register::<trace_many::TraceFiles>();
 }
 
 /// Exports, imports, image tools, pages and notes (`files`, `image_tools`, `pages`).
@@ -132,6 +151,7 @@ fn register_files(r: &mut Registry) {
     r.register::<files::ImportEzd>();
     r.register::<files::ImportHpgl>();
     r.register::<files::ImportGcode>();
+    r.register::<rd_import::ImportRd>();
     r.register::<files::ImportGerber>();
     r.register::<files::ImportModel>();
     r.register::<files::EditModel>();

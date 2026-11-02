@@ -31,7 +31,9 @@ export type EngineFormat =
   | "model"
   | "lbrn"
   /** A LightBurn template: opened as a new untitled document. */
-  | "lbt";
+  | "lbt"
+  /** An RDWorks .rd job (a Ruida controller's file). */
+  | "rd";
 
 /** Bitmaps browsers show themselves (sent as `format=image` with their MIME type). */
 const BITMAP_MIME: Record<string, string> = {
@@ -64,6 +66,7 @@ export function engineFormatOf(name: string): EngineFormat | null {
   if (MODEL_EXT.includes(ext)) return "model";
   if (ext === "lbrn") return "lbrn";
   if (ext === "lbt") return "lbt";
+  if (ext === "rd") return "rd";
   return null;
 }
 
@@ -134,14 +137,15 @@ export function formatLabel(f: EngineFormat): string {
       model: "3D model",
       lbrn: "LightBurn (.lbrn)",
       lbt: "LightBurn template",
+      rd: "RDWorks (.rd)",
     } as const
   )[f];
 }
 
 /** Formats whose import takes `keep_position` (the others are always centred by the engine). */
-const KEEPS_POSITION: ReadonlySet<EngineFormat> = new Set(["dxf", "pdf", "ai", "eps", "ezd", "hpgl", "plt", "gcode", "gerber", "drill"]);
+const KEEPS_POSITION: ReadonlySet<EngineFormat> = new Set(["dxf", "pdf", "ai", "eps", "ezd", "hpgl", "plt", "gcode", "gerber", "drill", "rd"]);
 /** Formats whose import takes `split` (one object per path in a group). */
-const SPLITS: ReadonlySet<EngineFormat> = new Set(["svg", "dxf", "pdf", "ai", "eps", "ezd", "hpgl", "plt", "gcode", "gerber", "drill"]);
+const SPLITS: ReadonlySet<EngineFormat> = new Set(["svg", "dxf", "pdf", "ai", "eps", "ezd", "hpgl", "plt", "gcode", "gerber", "drill", "rd"]);
 
 export function takesKeepPosition(f: EngineFormat): boolean {
   return KEEPS_POSITION.has(f);
@@ -175,6 +179,7 @@ export const ENGINE_ACCEPT = [
   ...MODEL_EXT.map((e) => `.${e}`),
   ".lbrn",
   ".lbt",
+  ".rd",
 ].join(",");
 
 // --- import options -----------------------------------------------------------------------------------------------

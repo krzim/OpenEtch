@@ -3,6 +3,8 @@ name = "commands"
 description = "Command registry, session, undo/redo and history"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
@@ -31,3 +33,5 @@ text = { workspace = true, features = ["system"] }
 
 [dev-dependencies]
 image = { workspace = true }
+# .rd files for the art.import_rd tests.
+ruida = { workspace = true }

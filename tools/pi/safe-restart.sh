@@ -16,7 +16,7 @@
 # Exit status: 0 restarted, 1 error, 2 usage, 3 refused (a job is running, or the state could not be read).
 # `systemctl restart` returns once the engine has stopped, which can take as long as the job it lets finish.
 #
-# Needs curl, and jq or python3 to read the JSON. POSIX sh. Licence: MIT (part of OpenEtch).
+# Needs curl, and jq or python3 to read the JSON. POSIX sh. Licence: MIT OR Apache-2.0 (part of OpenEtch).
 
 set -u
 # Never trace: `sh -x safe-restart.sh` would print the printf line below with the token expanded.

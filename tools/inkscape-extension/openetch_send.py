@@ -7,7 +7,7 @@ document's size and viewBox, so they keep their place and size, and posts it to 
 fires: marking still needs a person to approve the run in OpenEtch.
 
 The token is only needed when the engine listens off loopback (the engine prints it at startup); it is sent as
-"Authorization: Bearer <token>". Licence: MIT (part of OpenEtch).
+"Authorization: Bearer <token>". Licence: MIT OR Apache-2.0 (part of OpenEtch).
 """
 
 import copy

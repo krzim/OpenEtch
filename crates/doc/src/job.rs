@@ -75,18 +75,108 @@ pub struct Perforation {
     pub skip_mm: f64,
 }
 
-/// Tabs (bridges) left unmarked on closed shapes so cut parts stay in place.
+fn yes() -> bool {
+    true
+}
+
+fn is_zero_u32(v: &u32) -> bool {
+    *v == 0
+}
+
+/// How a layer's tabs are made (LightBurn's Tab Generation).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TabGeneration {
+    /// Spread evenly on every closed outline (by `count` or `spacing_mm`); a shape with tabs placed by hand
+    /// ([`ObjectOptions::tabs`]) uses those instead. Default (what OpenEtch's tabs always did).
+    #[default]
+    Auto,
+    /// Only the tabs placed by hand.
+    Manual,
+}
+
+impl TabGeneration {
+    fn is_auto(&self) -> bool {
+        *self == TabGeneration::Auto
+    }
+}
+
+/// Tabs (bridges) left unmarked on closed shapes so cut parts stay in place (LightBurn's Tabs / Bridges).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Tabs {
+    /// The layer's Tabs / Bridges switch: off keeps these settings and the hand-placed tabs but cuts through
+    /// (default on).
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub enabled: bool,
+    /// auto (default) or manual (hand-placed tabs only).
+    #[serde(default, skip_serializing_if = "TabGeneration::is_auto")]
+    pub generation: TabGeneration,
     /// Tabs per shape, spread evenly (used when `spacing_mm` is 0).
     #[serde(default)]
     pub count: u32,
     /// Distance between tabs along the outline, mm; 0 uses `count`.
     #[serde(default)]
     pub spacing_mm: f64,
+    /// With `spacing_mm`: at most this many tabs per outline (LightBurn's Limit Max Tabs); 0 is no limit.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub max_tabs: u32,
     /// Length of each tab (the gap left), mm.
     pub size_mm: f64,
+    /// No automatic tabs on closed outlines inside another closed outline of the same pass (LightBurn's Skip Inner
+    /// Shapes; hand-placed tabs are kept).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub skip_inner: bool,
+    /// Mark the tabs at this percentage of the pass's power instead of leaving them uncut (LightBurn's Tab Cut
+    /// Power), 0..=100; 0 (default) leaves a gap.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub cut_power_pct: f64,
+}
+
+impl Default for Tabs {
+    fn default() -> Self {
+        Tabs {
+            enabled: true,
+            generation: TabGeneration::Auto,
+            count: 4,
+            spacing_mm: 0.0,
+            max_tabs: 0,
+            size_mm: 0.5,
+            skip_inner: false,
+            cut_power_pct: 0.0,
+        }
+    }
+}
+
+/// Most tabs placed by hand on one shape.
+pub const MAX_MANUAL_TABS: usize = 1000;
+
+/// The shape of a lead-in or lead-out (LightBurn's Lead-In / Lead-Out style).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LeadStyle {
+    /// A straight line.
+    #[default]
+    Line,
+    /// A short arc that meets the cut along its direction.
+    Arc,
+}
+
+/// A lead-in or lead-out (LightBurn's Line-mode Lead-In / Lead-Out, GRBL gantries only): a short cut added before the
+/// start (or after the end) of every path, so the mark a cut leaves where it starts and stops lands off the shape.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Lead {
+    #[serde(default)]
+    pub style: LeadStyle,
+    /// Length of the lead, mm (straight-line distance from the path's start or end to the lead's far end), > 0 and at
+    /// most [`MAX_GANTRY_EXTRA_MM`].
+    pub length_mm: f64,
+    /// Angle between the lead and the path's own direction, degrees, -90..=90: positive puts the lead outside a closed
+    /// shape (for a hole, an outline inside another one of the same pass, inside the hole: the waste side) and above
+    /// an open path (to the left of its direction), negative on the other side; 90 meets the path square, 0 runs
+    /// along it.
+    pub angle_deg: f64,
 }
 
 /// Per-pass cut options (LightBurn's layer settings beyond the laser parameters). The defaults change nothing; they
@@ -156,6 +246,31 @@ pub struct CutOptions {
     /// jobs.
     #[serde(skip_serializing_if = "is_zero")]
     pub overcut_mm: f64,
+    /// GRBL gantries only (LightBurn's Fill-mode Ramp Length, for stamps): the power of a fill rises from
+    /// `ramp_min_power_pct` at the edge of the design to the layer's power this far into the fill, in steps, so the
+    /// engraving's sides slope. Only the edges inside the fill (holes, the design's own outlines) ramp unless
+    /// `ramp_outer_edge`. 0..=50 mm; 0 is off. Ignored by galvo jobs and by non-fill passes.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub ramp_length_mm: f64,
+    /// GRBL ramp: also ramp the outermost edges of the fill (LightBurn's Ramp Outer Edge).
+    #[serde(skip_serializing_if = "is_false")]
+    pub ramp_outer_edge: bool,
+    /// GRBL ramp: the power at the edge, % (LightBurn ramps from Min Power to Max Power); at most the layer's power.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub ramp_min_power_pct: f64,
+    /// GRBL gantries only, line passes: a lead-in cut before each path's start (LightBurn's Lead-In).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lead_in: Option<Lead>,
+    /// GRBL gantries only, line passes: a lead-out cut after each path's end (LightBurn's Lead-Out).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lead_out: Option<Lead>,
+    /// GRBL gantries only, line passes: a dwell with the laser off before each path is cut (after the travel to it),
+    /// ms (LightBurn's Start Pause Time without Cut Through). 0..=60,000 ms.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub start_pause_ms: f64,
+    /// GRBL line passes: a dwell with the laser off after each path, ms (LightBurn's End Pause Time).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub end_pause_ms: f64,
 }
 
 impl Default for CutOptions {
@@ -179,6 +294,13 @@ impl Default for CutOptions {
             air_assist: false,
             overscan_mm: 0.0,
             overcut_mm: 0.0,
+            ramp_length_mm: 0.0,
+            ramp_outer_edge: false,
+            ramp_min_power_pct: 0.0,
+            lead_in: None,
+            lead_out: None,
+            start_pause_ms: 0.0,
+            end_pause_ms: 0.0,
         }
     }
 }
@@ -187,6 +309,8 @@ impl Default for CutOptions {
 pub const MAX_PAUSE_MS: f64 = 600_000.0;
 /// Longest overscan and overcut, mm ([`CutOptions::overscan_mm`], [`CutOptions::overcut_mm`]).
 pub const MAX_GANTRY_EXTRA_MM: f64 = 50.0;
+/// Longest start or end pause of a GRBL path, ms ([`CutOptions::start_pause_ms`]).
+pub const MAX_PATH_PAUSE_MS: f64 = 60_000.0;
 
 impl CutOptions {
     pub fn is_default(&self) -> bool {
@@ -213,6 +337,19 @@ impl CutOptions {
             .or_else(|| range("kerf_offset_mm", self.kerf_offset_mm, -50.0, 50.0))
             .or_else(|| range("overscan_mm", self.overscan_mm, 0.0, MAX_GANTRY_EXTRA_MM))
             .or_else(|| range("overcut_mm", self.overcut_mm, 0.0, MAX_GANTRY_EXTRA_MM))
+            .or_else(|| range("ramp_length_mm", self.ramp_length_mm, 0.0, MAX_GANTRY_EXTRA_MM))
+            .or_else(|| range("ramp_min_power_pct", self.ramp_min_power_pct, 0.0, 100.0))
+            .or_else(|| range("start_pause_ms", self.start_pause_ms, 0.0, MAX_PATH_PAUSE_MS))
+            .or_else(|| range("end_pause_ms", self.end_pause_ms, 0.0, MAX_PATH_PAUSE_MS))
+            .or_else(|| {
+                [("lead_in", &self.lead_in), ("lead_out", &self.lead_out)].into_iter().find_map(|(name, l)| {
+                    l.as_ref().and_then(|l| {
+                        (!(l.length_mm.is_finite() && l.length_mm > 0.0 && l.length_mm <= MAX_GANTRY_EXTRA_MM))
+                            .then(|| format!("options.{name}.length_mm must be within 0..={MAX_GANTRY_EXTRA_MM} and > 0 (got {})", l.length_mm))
+                            .or_else(|| range(&format!("{name}.angle_deg"), l.angle_deg, -90.0, 90.0))
+                    })
+                })
+            })
             .or_else(|| {
                 self.dot_mode.as_ref().and_then(|d| {
                     range("dot_mode.dot_time_ms", d.dot_time_ms, 0.01, 1000.0)
@@ -231,8 +368,13 @@ impl CutOptions {
                 self.tabs.as_ref().and_then(|t| {
                     positive("tabs.size_mm", t.size_mm)
                         .or_else(|| range("tabs.spacing_mm", t.spacing_mm, 0.0, 1e6))
-                        .or_else(|| (t.count == 0 && t.spacing_mm == 0.0).then(|| "options.tabs needs a count or a spacing".to_owned()))
+                        .or_else(|| range("tabs.cut_power_pct", t.cut_power_pct, 0.0, 100.0))
+                        .or_else(|| {
+                            (t.generation == TabGeneration::Auto && t.count == 0 && t.spacing_mm == 0.0)
+                                .then(|| "options.tabs needs a count or a spacing (or generation \"manual\")".to_owned())
+                        })
                         .or_else(|| (t.count > 1000).then(|| format!("options.tabs.count must be at most 1000 (got {})", t.count)))
+                        .or_else(|| (t.max_tabs > 1000).then(|| format!("options.tabs.max_tabs must be at most 1000 (got {})", t.max_tabs)))
                 })
             })
     }
@@ -345,6 +487,11 @@ pub struct ObjectOptions {
     /// those options may override it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start: Option<StartPoint>,
+    /// Tabs placed by hand (LightBurn's Add Tabs tool), each a point in the object's own (local) coordinates, mm:
+    /// the tab is centred on the nearest point of the shape's closed outlines. Used while the layer's tabs are on
+    /// ([`Tabs`]), in both generations; at most [`MAX_MANUAL_TABS`].
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tabs: Vec<[f64; 2]>,
 }
 
 /// A user-defined start point of a shape (LightBurn's Set Start Point).
@@ -363,7 +510,7 @@ pub struct StartPoint {
 
 impl Default for ObjectOptions {
     fn default() -> Self {
-        ObjectOptions { priority: None, power_scale_pct: 100.0, start: None }
+        ObjectOptions { priority: None, power_scale_pct: 100.0, start: None, tabs: Vec::new() }
     }
 }
 
@@ -487,7 +634,7 @@ mod tests {
             pause_after_ms: 50.0,
             dot_mode: Some(DotMode { dot_time_ms: 1.0, dot_spacing_mm: 0.5 }),
             fill_grouping: FillGrouping::AllAtOnce,
-            tabs: Some(Tabs { count: 4, spacing_mm: 0.0, size_mm: 0.5 }),
+            tabs: Some(Tabs { generation: TabGeneration::Manual, skip_inner: true, cut_power_pct: 20.0, ..Tabs::default() }),
             ..CutOptions::default()
         };
         let v = serde_json::to_value(&o).unwrap();
@@ -501,8 +648,16 @@ mod tests {
         assert!(CutOptions::default().problem().is_none());
         let bad = CutOptions { pause_before_ms: -1.0, ..CutOptions::default() };
         assert!(bad.problem().unwrap().contains("pause_before_ms"));
-        let bad = CutOptions { tabs: Some(Tabs { count: 0, spacing_mm: 0.0, size_mm: 1.0 }), ..CutOptions::default() };
+        let bad = CutOptions { tabs: Some(Tabs { count: 0, spacing_mm: 0.0, size_mm: 1.0, ..Tabs::default() }), ..CutOptions::default() };
         assert!(bad.problem().unwrap().contains("tabs"));
+        let manual = Tabs { count: 0, generation: TabGeneration::Manual, ..Tabs::default() };
+        assert!(CutOptions { tabs: Some(manual), ..CutOptions::default() }.problem().is_none(), "manual tabs need no count");
+        let bad = CutOptions { tabs: Some(Tabs { cut_power_pct: 101.0, ..Tabs::default() }), ..CutOptions::default() };
+        assert!(bad.problem().unwrap().contains("cut_power_pct"));
+        // Tabs saved before the switch and the generation existed read as on and automatic, and write back the same.
+        let old: Tabs = serde_json::from_value(serde_json::json!({"count": 3, "spacing_mm": 0.0, "size_mm": 1.0})).unwrap();
+        assert_eq!(old, Tabs { count: 3, size_mm: 1.0, ..Tabs::default() });
+        assert_eq!(serde_json::to_value(&old).unwrap(), serde_json::json!({"count": 3, "spacing_mm": 0.0, "size_mm": 1.0}));
         let bad = CutOptions { wobble: Some(Wobble { step_mm: 0.0, size_mm: 1.0 }), ..CutOptions::default() };
         assert!(bad.problem().unwrap().contains("wobble.step_mm"));
         let bad = CutOptions { overscan_mm: 51.0, ..CutOptions::default() };

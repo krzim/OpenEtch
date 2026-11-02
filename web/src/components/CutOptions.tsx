@@ -14,6 +14,7 @@ import { useEffect, useState } from "react";
 import { api, type Invocation } from "../api/client.ts";
 import {
   MAX_GANTRY_EXTRA_MM,
+  MAX_PATH_PAUSE_MS,
   OPTION_DEFAULTS,
   TIMING_KEYS,
   activeOptionCount,
@@ -30,12 +31,14 @@ import {
   timingPatch,
   type FillGrouping,
   type GalvoTiming,
+  type Lead,
   type PassRef,
 } from "../api/cutOptions.ts";
 import { onEngineEvent } from "../api/events.ts";
 import type { CutSettings, GDocument, Layer } from "../api/types.ts";
 import { useT } from "../workspace/usePrefs.ts";
 import { CheckField, NumberField } from "./ui.tsx";
+import { TabFields } from "../tools/TabFields.tsx";
 import "./job.css";
 
 type Run = (inv: Invocation | Invocation[]) => Promise<unknown>;
@@ -169,32 +172,15 @@ export function CutOptionsSection(p: {
               <NumberField label={t("cut.perfSkip")} unit="mm" value={r.perforation.skip_mm} min={0.001} digits={3} onCommit={num((v) => opt({ perforation: { ...r.perforation, skip_mm: v } }))} />
             </div>
           )}
-          <CheckField label={t("cut.tabs")} checked={r.tabs !== null} onChange={(on) => opt({ tabs: on ? OPTION_DEFAULTS.tabs : null })} />
-          {r.tabs && (
-            <div className="job-indent">
-              <NumberField label={t("cut.tabSize")} unit="mm" value={r.tabs.size_mm} min={0.001} digits={3} onCommit={num((v) => opt({ tabs: { ...r.tabs, size_mm: v } }))} />
-              <NumberField
-                label={t("cut.tabCount")}
-                value={r.tabs.spacing_mm > 0 ? null : r.tabs.count}
-                min={1}
-                max={1000}
-                digits={0}
-                placeholder={t("cut.bySpacing")}
-                onCommit={num((v) => opt({ tabs: { ...r.tabs, count: Math.round(v), spacing_mm: 0 } }))}
-              />
-              <NumberField
-                label={t("cut.tabSpacing")}
-                unit="mm"
-                value={r.tabs.spacing_mm > 0 ? r.tabs.spacing_mm : null}
-                min={0}
-                digits={3}
-                allowEmpty
-                placeholder={t("cut.byCount")}
-                onCommit={(v) => opt({ tabs: { ...r.tabs, spacing_mm: v ?? 0, count: v ? (r.tabs?.count ?? 0) : Math.max(1, r.tabs?.count || 4) } })}
-              />
-            </div>
+          <CheckField
+            label={t("cut.tabs")}
+            checked={r.tabs?.enabled === true}
+            onChange={(on) => opt({ tabs: r.tabs ? { ...r.tabs, enabled: on } : on ? OPTION_DEFAULTS.tabs : null })}
+          />
+          {r.tabs?.enabled && (
+            <TabFields tabs={r.tabs} onChange={(tabs) => opt({ tabs })} />
           )}
-          {(r.dot_mode || r.wobble || r.perforation || r.tabs) && <p className="hint">{t("cut.lineOrder")}</p>}
+          {(r.dot_mode || r.wobble || r.perforation || r.tabs?.enabled) && <p className="hint">{t("cut.lineOrder")}</p>}
           <NumberField label={t("cut.kerf")} unit="mm" value={r.kerf_offset_mm} min={-50} max={50} digits={3} onCommit={num((kerf_offset_mm) => opt({ kerf_offset_mm }))} />
           {r.kerf_offset_mm !== 0 && <p className="hint">{t("cut.kerfHint")}</p>}
         </fieldset>
@@ -216,6 +202,28 @@ export function CutOptionsSection(p: {
             <>
               <NumberField label={t("cut.overcut")} unit="mm" value={r.overcut_mm} min={0} max={MAX_GANTRY_EXTRA_MM} digits={2} onCommit={num((overcut_mm) => opt({ overcut_mm }))} />
               {r.overcut_mm > 0 && <p className="hint">{t("cut.overcutHint")}</p>}
+            </>
+          )}
+          {(p.settings.mode === "fill" || p.settings.mode === "fill_then_line") && (
+            <>
+              <NumberField label={t("cut.ramp")} unit="mm" value={r.ramp_length_mm} min={0} max={MAX_GANTRY_EXTRA_MM} digits={2} onCommit={num((ramp_length_mm) => opt({ ramp_length_mm }))} />
+              {r.ramp_length_mm > 0 && (
+                <>
+                  <NumberField label={t("cut.rampMin")} unit="%" value={r.ramp_min_power_pct} min={0} max={100} digits={1} onCommit={num((ramp_min_power_pct) => opt({ ramp_min_power_pct }))} />
+                  <CheckField label={t("cut.rampOuter")} checked={r.ramp_outer_edge} onChange={(ramp_outer_edge) => opt({ ramp_outer_edge })} />
+                  <p className="hint">{t("cut.rampHint")}</p>
+                </>
+              )}
+            </>
+          )}
+          {p.settings.mode === "line" && (
+            <>
+              <LeadFields label={t("cut.leadIn")} lead={r.lead_in} onChange={(lead_in) => opt({ lead_in })} />
+              <LeadFields label={t("cut.leadOut")} lead={r.lead_out} onChange={(lead_out) => opt({ lead_out })} />
+              {(r.lead_in || r.lead_out) && <p className="hint">{t("cut.leadHint")}</p>}
+              <NumberField label={t("cut.startPause")} unit="ms" value={r.start_pause_ms} min={0} max={MAX_PATH_PAUSE_MS} digits={1} onCommit={num((start_pause_ms) => opt({ start_pause_ms }))} />
+              <NumberField label={t("cut.endPause")} unit="ms" value={r.end_pause_ms} min={0} max={MAX_PATH_PAUSE_MS} digits={1} onCommit={num((end_pause_ms) => opt({ end_pause_ms }))} />
+              {(r.start_pause_ms > 0 || r.end_pause_ms > 0) && <p className="hint">{t("cut.pathPauseHint")}</p>}
             </>
           )}
         </fieldset>
@@ -293,5 +301,31 @@ export function ShapeCutProperties(p: { doc: GDocument; ids: string[]; run: Run;
       />
       <p className="hint">{t("shape.hint")}</p>
     </section>
+  );
+}
+
+/** A GRBL lead-in or lead-out: on/off, then its style, length and angle (LightBurn's Lead-In / Lead-Out). */
+function LeadFields(p: { label: string; lead: Lead | null; onChange: (lead: Lead | null) => void }) {
+  const t = useT();
+  const l = p.lead;
+  return (
+    <>
+      <CheckField label={p.label} checked={l !== null} onChange={(on) => p.onChange(on ? OPTION_DEFAULTS.lead : null)} />
+      {l && (
+        <div className="job-indent">
+          <label className="field">
+            <span className="field-label">{t("cut.leadStyle")}</span>
+            <span className="field-input">
+              <select value={l.style} onChange={(e) => p.onChange({ ...l, style: e.target.value === "arc" ? "arc" : "line" })}>
+                <option value="line">{t("cut.leadLine")}</option>
+                <option value="arc">{t("cut.leadArc")}</option>
+              </select>
+            </span>
+          </label>
+          <NumberField label={t("cut.leadLength")} unit="mm" value={l.length_mm} min={0.01} max={MAX_GANTRY_EXTRA_MM} digits={2} onCommit={(v) => v !== null && p.onChange({ ...l, length_mm: v })} />
+          <NumberField label={t("cut.leadAngle")} unit="°" value={l.angle_deg} min={-90} max={90} digits={1} onCommit={(v) => v !== null && p.onChange({ ...l, angle_deg: v })} />
+        </div>
+      )}
+    </>
   );
 }

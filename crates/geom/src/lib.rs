@@ -16,6 +16,7 @@
 //! wrapped in [`guard`], so an internal failure there becomes a [`GeomError`] on native builds.
 
 pub mod construct;
+pub mod dogbone;
 pub mod extend;
 pub mod fillet;
 pub mod fit;
@@ -27,6 +28,7 @@ pub mod offset;
 pub mod ops;
 pub mod region;
 pub mod shapes;
+pub mod slots;
 pub mod subpath;
 pub mod unfillet;
 pub mod warp;

@@ -1,10 +1,11 @@
 // LightBurn's Move window for a GRBL gantry (shown only while one is active): the head's position from the board's
 // status reports, jog buttons with a distance and a speed, arrow-key jogging while the window has the focus, Home,
-// Unlock, Go to origin and Move to a position. Every move is a GRBL jog (`$J=`) or the homing cycle, which the engine
+// Unlock, Go to origin, Move to a position, saved positions (stored with the device in the engine's preferences, UI
+// only) and Show Last Position (a crosshair on the canvas at the head's last known position). Every move is a GRBL jog (`$J=`) or the homing cycle, which the engine
 // sends only with the laser off (POST /api/machine/jog, /home, /unlock: UI only, refused while a run or a frame holds
 // the machine). The pure parts live in api/grbl.ts.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { onEngineEvent } from "../api/events.ts";
 import {
   JOG_STEPS,
@@ -19,10 +20,24 @@ import {
   type GrblStatusView,
   type JogDir,
 } from "../api/grbl.ts";
+import {
+  headState,
+  nextPositionName,
+  noteHeadPosition,
+  parsePositions,
+  positionsPatch,
+  positionsProblem,
+  setShowLastPosition,
+  subscribeHead,
+  withPosition,
+  type MovePosition,
+} from "../api/grblPositions.ts";
 import { jobApi } from "../api/jobApi.ts";
+import { libsApi } from "../libs/api.ts";
 import { useT } from "../workspace/usePrefs.ts";
-import { NumberField } from "./ui.tsx";
+import { CheckField, NumberField } from "./ui.tsx";
 import "./job.css";
+import "./grblMove.css";
 
 type Notify = (msg: string, kind?: "info" | "error") => void;
 
@@ -40,7 +55,14 @@ export function useGrblStatus(poll: boolean): { status: GrblStatusView | null; r
   const reload = useCallback(() => {
     jobApi
       .grblStatus(true)
-      .then((v) => alive.current && setStatus(parseGrblStatus(v)))
+      .then((v) => {
+        const s = parseGrblStatus(v);
+        // The canvas's last-position crosshair follows every report that carries a position (and forgets it when
+        // the device is no gantry); a failed or position-less report keeps the last known one.
+        if (!s) noteHeadPosition(null);
+        else if (s.field) noteHeadPosition(s.field);
+        if (alive.current) setStatus(s);
+      })
       .catch(() => alive.current && setStatus(null));
   }, []);
   useEffect(() => {
@@ -63,6 +85,30 @@ export function useGrblStatus(poll: boolean): { status: GrblStatusView | null; r
 
 const fmt = (v: number) => v.toFixed(2);
 
+/** The device's saved Move positions, reloaded when the device or the preferences change. */
+function useSavedPositions(): [MovePosition[], () => void] {
+  const [list, setList] = useState<MovePosition[]>([]);
+  const [seq, setSeq] = useState(0);
+  useEffect(
+    () =>
+      onEngineEvent(
+        (ev) => (ev.type === "device_changed" || (ev.type === "machine" && ev.event === "prefs")) && setSeq((n) => n + 1),
+      ),
+    [],
+  );
+  useEffect(() => {
+    let alive = true;
+    libsApi
+      .prefs()
+      .then((v) => alive && setList(parsePositions(v)))
+      .catch(() => alive && setList([]));
+    return () => {
+      alive = false;
+    };
+  }, [seq]);
+  return [list, () => setSeq((n) => n + 1)];
+}
+
 const GRID: (JogDir | null)[] = ["nw", "n", "ne", "w", null, "e", "sw", "s", "se"];
 const ARROW: Record<JogDir, string> = { n: "↑", s: "↓", e: "→", w: "←", ne: "↗", nw: "↖", se: "↘", sw: "↙" };
 
@@ -78,6 +124,9 @@ export function GrblMove(p: { notify: Notify; report: (e: unknown) => void }) {
   const held = !!status && (status.running || status.framing);
   const startup = (status?.unsafeStartup.length ?? 0) > 0;
   const blocked = !profile || held || startup || busy;
+  const head = useSyncExternalStore(subscribeHead, headState);
+  const [saved, reloadSaved] = useSavedPositions();
+  const [newName, setNewName] = useState("");
 
   const act = (fn: () => Promise<unknown>, ok?: string) => {
     setBusy(true);
@@ -124,6 +173,24 @@ export function GrblMove(p: { notify: Notify; report: (e: unknown) => void }) {
   const jogTitle = (d: JogDir) =>
     d === "n" ? t("move.up") : d === "s" ? t("move.down") : d === "w" ? t("move.left") : d === "e" ? t("move.right") : t("move.diag");
   const pos = status?.machine ?? (status?.field && profile ? fieldToMachine(profile, status.field) : null);
+  const savePositions = (list: MovePosition[], ok: string) => {
+    if (!profile) return;
+    const why = positionsProblem(profile, list);
+    if (why) return p.notify(why, "error");
+    libsApi
+      .prefsEdit(positionsPatch(list))
+      .then(() => {
+        p.notify(ok);
+        reloadSaved();
+      })
+      .catch(p.report);
+  };
+  const saveHere = () => {
+    if (!pos) return;
+    const name = newName.trim() || nextPositionName(saved, t("move.positionBase"));
+    savePositions(withPosition(saved, { name, x_mm: pos[0], y_mm: pos[1] }), t("move.positionSaved", { name }));
+    setNewName("");
+  };
   return (
     <div className="grbl-move" tabIndex={0} onKeyDown={onKey} aria-label={t("win.move")}>
       <div className="grbl-pos">
@@ -175,6 +242,50 @@ export function GrblMove(p: { notify: Notify; report: (e: unknown) => void }) {
           {t("move.origin")}
         </button>
       </div>
+
+      <CheckField label={t("move.showLast")} checked={head.show} onChange={(v) => setShowLastPosition(v)} />
+      {head.show && !head.field && <p className="hint">{t("move.showLastUnknown")}</p>}
+
+      <fieldset className="job-fieldset">
+        <legend>{t("move.saved")}</legend>
+        <div className="grbl-macros">
+          {saved.length === 0 && <span className="hint">{t("move.noSaved")}</span>}
+          {saved.map((m, i) => (
+            <span key={i} className="grbl-saved">
+              <button
+                className="btn small"
+                disabled={blocked}
+                title={t("move.goSavedTitle", { x: fmt(m.x_mm), y: fmt(m.y_mm) })}
+                onClick={() => goTo([m.x_mm, m.y_mm])}
+              >
+                {m.name}
+              </button>
+              <button
+                className="btn small"
+                title={t("move.removeSaved", { name: m.name })}
+                aria-label={t("move.removeSaved", { name: m.name })}
+                onClick={() => savePositions(saved.filter((_, k) => k !== i), t("move.positionRemoved", { name: m.name }))}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+        <div className="grbl-save-row">
+          <input
+            type="text"
+            value={newName}
+            maxLength={40}
+            placeholder={nextPositionName(saved, t("move.positionBase"))}
+            aria-label={t("move.positionName")}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && saveHere()}
+          />
+          <button className="btn small" disabled={!pos || !profile} title={t("move.saveHereTitle")} onClick={saveHere}>
+            {t("move.saveHere")}
+          </button>
+        </div>
+      </fieldset>
 
       <fieldset className="job-fieldset" disabled={blocked}>
         <legend>{t("move.goTo")}</legend>

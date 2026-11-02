@@ -331,6 +331,28 @@ pub fn start_at(plan: &JobPlan, segment: usize, target: &Target) -> Result<JobPl
                 }
                 p.polylines[0].drain(..k);
                 p.pause_before_us = 0.0;
+                p.gantry.image_runs = p.gantry.image_runs.saturating_sub(li);
+                if k > 0 && (p.gantry.lead_in.is_some() || p.gantry.lead_out.is_some()) {
+                    // A GRBL lead at a path resumed part-way would be measured from the resume point, and for a
+                    // closed outline (now open) on the wrong side, into the part: that polyline is cut on its own,
+                    // without leads.
+                    let mut head = p.clone();
+                    head.polylines.truncate(1);
+                    head.powers.truncate(1);
+                    head.gantry.lead_in = None;
+                    head.gantry.lead_out = None;
+                    p.polylines.remove(0);
+                    if !p.powers.is_empty() {
+                        p.powers.remove(0);
+                    }
+                    p.gantry.image_runs = p.gantry.image_runs.saturating_sub(1);
+                    if p.polylines.is_empty() {
+                        out.passes[0] = head;
+                    } else {
+                        head.pause_after_us = 0.0;
+                        out.passes.insert(0, head);
+                    }
+                }
                 out.stats = crate::job::plan_stats(&out, target);
                 return Ok(out);
             }

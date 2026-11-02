@@ -32,7 +32,7 @@ export interface CutOptions {
   auto_rotate?: boolean;
   flood_fill?: boolean;
   perforation?: { cut_mm: number; skip_mm: number } | null;
-  tabs?: { count?: number; spacing_mm?: number; size_mm: number } | null;
+  tabs?: Partial<TabSettings> | null;
   z_offset_mm?: number;
   z_step_mm?: number;
   /** Kerf Offset: closed outlines of line passes traced outward (+) or inward (-), -50..=50 mm. */
@@ -45,6 +45,25 @@ export interface CutOptions {
   overscan_mm?: number;
   /** GRBL gantries only: closed outlines cut on past their start, 0..=50 mm. */
   overcut_mm?: number;
+  /** GRBL gantries only, fills: power ramps up from `ramp_min_power_pct` at the design's edges over this distance, 0..=50 mm. */
+  ramp_length_mm?: number;
+  /** GRBL ramp: also ramp the outermost edges (LightBurn's Ramp Outer Edge). */
+  ramp_outer_edge?: boolean;
+  /** GRBL ramp: power at the edge, %. */
+  ramp_min_power_pct?: number;
+  /** GRBL gantries only, line passes: lead-in / lead-out of every path. */
+  lead_in?: Lead | null;
+  lead_out?: Lead | null;
+  /** GRBL gantries only, line passes: laser-off dwell before / after every path, ms (0..=60000). */
+  start_pause_ms?: number;
+  end_pause_ms?: number;
+}
+
+/** A lead-in or lead-out (`doc::Lead`): angle -90..=90 (positive outside a closed shape), length 0..=50 mm. */
+export interface Lead {
+  style: "line" | "arc";
+  length_mm: number;
+  angle_deg: number;
 }
 
 /** The resolved options of a pass (defaults filled in). */
@@ -59,7 +78,7 @@ export interface ResolvedOptions {
   auto_rotate: boolean;
   flood_fill: boolean;
   perforation: { cut_mm: number; skip_mm: number } | null;
-  tabs: { count: number; spacing_mm: number; size_mm: number } | null;
+  tabs: TabSettings | null;
   z_offset_mm: number;
   z_step_mm: number;
   kerf_offset_mm: number;
@@ -67,18 +86,50 @@ export interface ResolvedOptions {
   air_assist: boolean;
   overscan_mm: number;
   overcut_mm: number;
+  ramp_length_mm: number;
+  ramp_outer_edge: boolean;
+  ramp_min_power_pct: number;
+  lead_in: Lead | null;
+  lead_out: Lead | null;
+  start_pause_ms: number;
+  end_pause_ms: number;
 }
 
-/** Longest overscan and overcut, mm (`doc::MAX_GANTRY_EXTRA_MM`). */
+/** A pass's tabs (`doc::Tabs`, LightBurn's Tabs / Bridges). */
+export interface TabSettings {
+  /** The Tabs / Bridges switch: off keeps the settings and the hand-placed tabs. */
+  enabled: boolean;
+  /** "auto": spread evenly (shapes with hand-placed tabs use those); "manual": hand-placed tabs only. */
+  generation: "auto" | "manual";
+  count: number;
+  spacing_mm: number;
+  /** With a spacing: at most this many per outline (0: no limit). */
+  max_tabs: number;
+  size_mm: number;
+  skip_inner: boolean;
+  /** Tab Cut Power, % of the pass's power (0: leave a gap). */
+  cut_power_pct: number;
+}
+
+/** Longest overscan, overcut, ramp and lead, mm (`doc::MAX_GANTRY_EXTRA_MM`). */
 export const MAX_GANTRY_EXTRA_MM = 50;
+/** Longest start or end pause of a GRBL path, ms (`doc::MAX_PATH_PAUSE_MS`). */
+export const MAX_PATH_PAUSE_MS = 60000;
 
 /** LightBurn-like starting values when an option is switched on. */
 export const OPTION_DEFAULTS = {
   dot_mode: { dot_time_ms: 0.5, dot_spacing_mm: 0.1 },
   wobble: { step_mm: 0.1, size_mm: 0.5 },
   perforation: { cut_mm: 1, skip_mm: 1 },
-  tabs: { count: 4, spacing_mm: 0, size_mm: 0.5 },
+  tabs: { enabled: true, generation: "auto", count: 4, spacing_mm: 0, max_tabs: 0, size_mm: 0.5, skip_inner: false, cut_power_pct: 0 } as TabSettings,
+  lead: { style: "line", length_mm: 2, angle_deg: 90 } as Lead,
 };
+
+function lead(v: unknown): Lead | null {
+  const l = o(v);
+  if (!l) return null;
+  return { style: l.style === "arc" ? "arc" : "line", length_mm: n(l.length_mm, 2), angle_deg: n(l.angle_deg, 90) };
+}
 
 function o(v: unknown): Record<string, unknown> | null {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
@@ -107,7 +158,18 @@ export function resolveOptions(settings: CutSettings | null | undefined): Resolv
     auto_rotate: r.auto_rotate === true,
     flood_fill: r.flood_fill === true,
     perforation: per ? { cut_mm: n(per.cut_mm, 1), skip_mm: n(per.skip_mm, 1) } : null,
-    tabs: tabs ? { count: Math.round(n(tabs.count, 0)), spacing_mm: n(tabs.spacing_mm, 0), size_mm: n(tabs.size_mm, 0.5) } : null,
+    tabs: tabs
+      ? {
+          enabled: tabs.enabled !== false,
+          generation: tabs.generation === "manual" ? "manual" : "auto",
+          count: Math.round(n(tabs.count, 0)),
+          spacing_mm: n(tabs.spacing_mm, 0),
+          max_tabs: Math.round(n(tabs.max_tabs, 0)),
+          size_mm: n(tabs.size_mm, 0.5),
+          skip_inner: tabs.skip_inner === true,
+          cut_power_pct: n(tabs.cut_power_pct, 0),
+        }
+      : null,
     z_offset_mm: n(r.z_offset_mm, 0),
     z_step_mm: n(r.z_step_mm, 0),
     kerf_offset_mm: n(r.kerf_offset_mm, 0),
@@ -115,6 +177,13 @@ export function resolveOptions(settings: CutSettings | null | undefined): Resolv
     air_assist: r.air_assist === true,
     overscan_mm: n(r.overscan_mm, 0),
     overcut_mm: n(r.overcut_mm, 0),
+    ramp_length_mm: n(r.ramp_length_mm, 0),
+    ramp_outer_edge: r.ramp_outer_edge === true,
+    ramp_min_power_pct: n(r.ramp_min_power_pct, 0),
+    lead_in: lead(r.lead_in),
+    lead_out: lead(r.lead_out),
+    start_pause_ms: n(r.start_pause_ms, 0),
+    end_pause_ms: n(r.end_pause_ms, 0),
   };
 }
 
@@ -134,7 +203,7 @@ export function activeOptionCount(r: ResolvedOptions, gantry = false): number {
   if (r.auto_rotate) c++;
   if (r.flood_fill) c++;
   if (r.perforation) c++;
-  if (r.tabs) c++;
+  if (r.tabs?.enabled) c++;
   if (r.z_offset_mm) c++;
   if (r.z_step_mm) c++;
   if (r.kerf_offset_mm) c++;
@@ -143,6 +212,11 @@ export function activeOptionCount(r: ResolvedOptions, gantry = false): number {
     if (r.air_assist) c++;
     if (r.overscan_mm) c++;
     if (r.overcut_mm) c++;
+    if (r.ramp_length_mm) c++;
+    if (r.lead_in) c++;
+    if (r.lead_out) c++;
+    if (r.start_pause_ms) c++;
+    if (r.end_pause_ms) c++;
   }
   return c;
 }

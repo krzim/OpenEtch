@@ -238,6 +238,14 @@ async fn run(config: Config) -> Result<(), String> {
             Err(e) => return Err(e.to_string()),
         }
     }
+    // A Ruida gantry likewise (UDP to its controller, or the Ruida simulator).
+    if let Some(ruida) = active.ruida.clone().filter(|_| active.controllable) {
+        match machine.blocking(move |m, ctl| m.swap_ruida(ctl, ruida)).await {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => tracing::warn!(error = %e, "Ruida controller not ready; framing and runs will retry the connection"),
+            Err(e) => return Err(e.to_string()),
+        }
+    }
     // Again against the machine actually built: never a simulator PIN on a USB link.
     check_sim_pin(&config, machine.kind() == engine::hw::LinkKind::Simulated)?;
     match machine.connect().await {

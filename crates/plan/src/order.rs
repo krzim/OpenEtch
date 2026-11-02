@@ -235,7 +235,7 @@ fn corner_vertices(p: &[Point]) -> Vec<usize> {
 }
 
 /// Even-odd point in polygon.
-fn inside(p: Point, ring: &[Point]) -> bool {
+pub(crate) fn inside(p: Point, ring: &[Point]) -> bool {
     let mut c = false;
     let n = ring.len();
     for i in 0..n {

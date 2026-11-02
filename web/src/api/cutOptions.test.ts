@@ -58,7 +58,11 @@ test("cut options resolve with the engine's defaults", () => {
   const s = resolveOptions(settings({ options: { output: false, pause_after_ms: 20, wobble: { step_mm: 0.2, size_mm: 0.5 }, tabs: { size_mm: 1, count: 3 }, fill_grouping: "by_group" } }));
   assert.equal(s.output, false);
   assert.deepEqual(s.wobble, { step_mm: 0.2, size_mm: 0.5 });
-  assert.deepEqual(s.tabs, { count: 3, spacing_mm: 0, size_mm: 1 });
+  assert.deepEqual(s.tabs, { enabled: true, generation: "auto", count: 3, spacing_mm: 0, max_tabs: 0, size_mm: 1, skip_inner: false, cut_power_pct: 0 });
+  // The switch, the generation and the LightBurn extras read back as saved.
+  const m = resolveOptions(settings({ options: { tabs: { enabled: false, generation: "manual", size_mm: 0.8, skip_inner: true, cut_power_pct: 20, max_tabs: 3 } } }));
+  assert.deepEqual(m.tabs, { enabled: false, generation: "manual", count: 0, spacing_mm: 0, max_tabs: 3, size_mm: 0.8, skip_inner: true, cut_power_pct: 20 });
+  assert.equal(activeOptionCount(m), 1, "switched-off tabs do not count (fill grouping does)");
   assert.equal(activeOptionCount(s), 5);
   // The GRBL layer options: read like the others, counted only for a gantry (a galvo never uses them).
   const g = resolveOptions(settings({ options: { constant_power: true, air_assist: true, overscan_mm: 2.5, overcut_mm: 1 } }));
@@ -66,6 +70,17 @@ test("cut options resolve with the engine's defaults", () => {
   assert.equal(activeOptionCount(g), 1, "only the missing fill grouping, on a galvo");
   assert.equal(activeOptionCount(g, true), 5);
   assert.deepEqual([r.constant_power, r.air_assist, r.overscan_mm, r.overcut_mm], [false, false, 0, 0]);
+  // Ramp, leads and path pauses (GRBL): read with their defaults, counted only for a gantry.
+  const x = resolveOptions(
+    settings({
+      options: { ramp_length_mm: 1.5, ramp_outer_edge: true, ramp_min_power_pct: 8, lead_in: { style: "arc", length_mm: 3, angle_deg: -45 }, lead_out: { length_mm: 1 }, start_pause_ms: 20 },
+    }),
+  );
+  assert.deepEqual([x.ramp_length_mm, x.ramp_outer_edge, x.ramp_min_power_pct, x.start_pause_ms, x.end_pause_ms], [1.5, true, 8, 20, 0]);
+  assert.deepEqual(x.lead_in, { style: "arc", length_mm: 3, angle_deg: -45 });
+  assert.deepEqual(x.lead_out, { style: "line", length_mm: 1, angle_deg: 90 });
+  assert.equal(activeOptionCount(x, true) - activeOptionCount(x), 4);
+  assert.deepEqual([r.ramp_length_mm, r.lead_in, r.lead_out, r.start_pause_ms], [0, null, null, 0]);
   assert.deepEqual(optionsPatch({ layer: "layer-1", sub: 0 }, { air_assist: true }), {
     id: "layer.sub_update",
     params: { layer: "layer-1", index: 0, settings: { options: { air_assist: true } } },

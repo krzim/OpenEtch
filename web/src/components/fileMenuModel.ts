@@ -23,6 +23,8 @@ export interface FileMenuInput {
   exportLightBurn: () => void;
   downloadOpenetch: () => void;
   saveGcode?: () => void;
+  /** Save RD file: only while the active device is a Ruida gantry. */
+  saveRd?: () => void;
   devices?: () => void;
   /** Entries other layers contribute, by section. */
   parts: Partial<Record<FileSection, MenuItem[]>>;
@@ -37,6 +39,7 @@ export interface FileMenuInput {
     export: string;
     exportLightBurn: string;
     saveGcode: string;
+    saveRd: string;
     downloadOpenetch: string;
     project: string;
     lightburn: string;
@@ -61,6 +64,7 @@ export function buildFileMenu(i: FileMenuInput): MenuItem[] {
   const exportItems: MenuItem[] = [
     ...parts("export"),
     ...(i.saveGcode ? [{ label: L.saveGcode, hint: ".gcode", disabled: d, action: i.saveGcode } as MenuItem] : []),
+    ...(i.saveRd ? [{ label: L.saveRd, hint: ".rd", disabled: d, action: i.saveRd } as MenuItem] : []),
     { sep: true },
     { label: L.downloadOpenetch, hint: ".openetch", disabled: d, action: i.downloadOpenetch },
   ];

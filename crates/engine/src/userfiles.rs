@@ -10,7 +10,7 @@
 //! | GET | `/api/print` | `?format=pdf\|svg&colors=black\|layers&line_width_mm=&paper=w,h&margin_mm=&area=&ids=` → the print-ready file, inline (`doc.print`) |
 //! | GET | `/api/images/{id}/file` | the image object's file (`image.export`) |
 //! | GET | `/api/images/{id}/processed.png` | `?sub_layer=n`: Save Processed Bitmap (`image.processed`) |
-//! | POST | `/api/document/import` | `?format=svg\|dxf\|image\|tiff\|tga\|pdf\|ai\|eps\|ezd\|hpgl\|plt\|gcode\|nc\|gerber\|drill\|model\|lbrn&mode=merge\|replace&name=` + the command's options as query parameters, the raw file as the body (≤ 100 MB) → like `/api/execute`; `mode=replace` opens the file as a new, unsaved project (`doc.new` then the import, one undo step; downloads are named after `name`). `tool_layers=true` (LightBurn's "Allow Importing to Tool Layers", default off) allows `layer=T1`/`T2` (added in the same step when missing); off, those names are refused and an import without `layer` skips a tool layer listed first; a `layer` id is used as given |
+//! | POST | `/api/document/import` | `?format=svg\|dxf\|image\|tiff\|tga\|pdf\|ai\|eps\|ezd\|hpgl\|plt\|gcode\|nc\|gerber\|drill\|model\|lbrn\|rd&mode=merge\|replace&name=` + the command's options as query parameters, the raw file as the body (≤ 100 MB) → like `/api/execute`; `mode=replace` opens the file as a new, unsaved project (`doc.new` then the import, one undo step; downloads are named after `name`). `tool_layers=true` (LightBurn's "Allow Importing to Tool Layers", default off) allows `layer=T1`/`T2` (added in the same step when missing); off, those names are refused and an import without `layer` skips a tool layer listed first; a `layer` id is used as given |
 //! | GET | `/api/projects/{name}/thumbnail.png` | `?width=32..=1024` (default 256): the saved project rendered |
 //! | GET | `/api/backups` | `?project=`: `{autosaves: [{file, project, saved_unix_s, size}], backups: [...]}` newest first |
 //! | POST | `/api/backups/restore` | `{kind: "autosave"\|"backup", file, origin?}`: opens it as an unsaved document → like `/api/projects/open` |
@@ -417,6 +417,9 @@ fn gantry_options_note(job: &plan::JobPlan) -> String {
         (g(|p| p.air_assist), "air assist M8/M9"),
         (g(|p| p.overscan_mm > 0.0), "overscan"),
         (g(|p| p.overcut_mm > 0.0), "overcut"),
+        (g(|p| p.lead_in.is_some()), "lead-in"),
+        (g(|p| p.lead_out.is_some()), "lead-out"),
+        (g(|p| p.start_pause_us > 0.0 || p.end_pause_us > 0.0), "start/end pauses"),
     ]
     .into_iter()
     .filter_map(|(on, n)| on.then_some(n))
@@ -425,6 +428,10 @@ fn gantry_options_note(job: &plan::JobPlan) -> String {
 }
 
 /// The name downloads get: the project, else the opened file, else the document.
+pub(crate) fn download_stem(st: &AppState) -> String {
+    stem(st)
+}
+
 fn stem(st: &AppState) -> String {
     let p = st.project_status();
     p["name"].as_str().or(p["display_name"].as_str()).map(str::to_owned).unwrap_or_else(|| st.document().name)
@@ -590,6 +597,10 @@ pub(crate) fn import_invocation(format: &str, bytes: Vec<u8>, q: &HashMap<String
             params.insert("content".into(), json!(text(bytes)?));
             "art.import_gcode"
         }
+        "rd" => {
+            params.insert("data_base64".into(), json!(STANDARD.encode(&bytes)));
+            "art.import_rd"
+        }
         "gerber" | "drill" => {
             params.insert("content".into(), json!(text(bytes)?));
             if format == "drill" {
@@ -625,7 +636,7 @@ pub(crate) fn import_invocation(format: &str, bytes: Vec<u8>, q: &HashMap<String
         }
         other => {
             return Err(EngineError::BadRequest(format!(
-                "unknown format '{other}' (svg, dxf, image, tiff, tga, pdf, ai, eps, ezd, hpgl, plt, gcode, nc, gerber, drill, model, lbrn)"
+                "unknown format '{other}' (svg, dxf, image, tiff, tga, pdf, ai, eps, ezd, hpgl, plt, gcode, nc, gerber, drill, model, lbrn, rd)"
             )));
         }
     };
@@ -643,6 +654,9 @@ pub(crate) fn import_invocation(format: &str, bytes: Vec<u8>, q: &HashMap<String
             "model_format" => {
                 params.insert("format".into(), json!(v));
             }
+            "rd_origin" => {
+                params.insert("origin".into(), json!(v));
+            }
             _ => {
                 params.insert(k.clone(), qvalue(k, v)?);
             }
@@ -657,7 +671,8 @@ async fn import(State(st): State<Arc<AppState>>, q: Q, body: Result<Bytes, Bytes
         &[
             "format", "mode", "name", "layer", "width_mm", "keep_position", "split", "page", "hidden_layers", "units_per_mm",
             "invert", "kind", "model_format", "dpi", "outline", "sixteen_bit", "transparent_background", "depth_cutoff_mm",
-            "equalize", "rotation_deg", "mime", "field_mm", "tool_layers", "pen_layers",
+            "equalize", "rotation_deg", "mime", "field_mm", "tool_layers", "pen_layers", "rd_origin", "bed_width_mm",
+            "bed_height_mm", "rd_layers",
         ],
     )?;
     let mut q = q;
@@ -686,6 +701,12 @@ async fn import(State(st): State<Arc<AppState>>, q: Q, body: Result<Bytes, Bytes
             // The file's name without its extension names the document (and the import's group).
             let display = q.get("name").and_then(|n| projects::display_name(n.rsplit_once('.').map_or(n.as_str(), |(stem, _)| stem)));
             let mut q = q;
+            if format == "rd" {
+                // The active Ruida gantry's origin corner and bed, unless the request names them.
+                for (k, v) in crate::ruida_dsp::import_params(st) {
+                    q.entry(k).or_insert(v);
+                }
+            }
             let before = if lightburn { Vec::new() } else { import_layer(st, &mut q, tool_layers, replace)? };
             let mut inv = import_invocation(&format, Vec::from(body), &q)?;
             if lightburn {
@@ -923,11 +944,23 @@ fn prefs_value(st: &AppState) -> Result<Value, EngineError> {
 fn set_prefs(st: &AppState, prefs: Value, files: Option<FileSettings>) -> Result<(), EngineError> {
     let p: crate::prefs::Preferences = serde_json::from_value(prefs).map_err(|e| EngineError::BadRequest(format!("bad preferences: {e}")))?;
     // Everything is checked before anything changes: the same rules as `PUT /api/prefs` (a Job Checklist that can
-    // be ticked) and `PUT /api/files/settings`.
+    // be ticked, console macros that pass the GRBL console policy, saved Move positions on the device's bed, User
+    // Tools of document commands only) and `PUT /api/files/settings`.
     for (device, d) in &p.devices {
-        if let Some(problem) = d.checklist.problem() {
+        // A saved position must be on that device's bed when it is a GRBL gantry here; a device this engine does not
+        // know (preferences from another machine) only gets the name and count checks.
+        let bed = st.devices().get(device).map(|dev| dev.grbl.as_ref().map(|g| g.work_area_mm));
+        let problem = d.checklist.problem().or_else(|| crate::prefs::macros_problem(&d.console_macros)).or_else(|| match bed {
+            Some(None) if !d.move_positions.is_empty() => Some("saved Move positions need a GRBL gantry".to_owned()),
+            Some(Some(bed)) => crate::prefs::move_positions_problem(&d.move_positions, bed),
+            _ => crate::prefs::move_positions_problem(&d.move_positions, [f64::MAX, f64::MAX]),
+        });
+        if let Some(problem) = problem {
             return Err(EngineError::BadRequest(format!("bad preferences: device {device}: {problem}")));
         }
+    }
+    if let Some(problem) = crate::api_libs::user_tools_problem(st, &p.user_tools) {
+        return Err(EngineError::BadRequest(format!("bad preferences: user tools: {problem}")));
     }
     if let Some(problem) = files.as_ref().and_then(FileSettings::problem) {
         return Err(EngineError::BadRequest(format!("bad file settings: {problem}")));

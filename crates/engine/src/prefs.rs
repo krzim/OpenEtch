@@ -88,6 +88,42 @@ pub fn macros_problem(macros: &[ConsoleMacro]) -> Option<String> {
     None
 }
 
+/// A named head position of a GRBL gantry's Move window (LightBurn's saved positions), in machine mm from the origin
+/// corner. Going there is an ordinary jog (`POST /api/machine/jog`, laser off, UI only); saving one is `PUT /api/prefs`
+/// `move_positions` (UI only, never MCP).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MovePosition {
+    pub name: String,
+    pub x_mm: f64,
+    pub y_mm: f64,
+}
+
+/// Most saved Move positions per device.
+pub const MAX_MOVE_POSITIONS: usize = 32;
+
+/// Why `positions` cannot be saved for a bed of `work_area_mm`, if they cannot: names 1..=40 printable characters,
+/// at most [`MAX_MOVE_POSITIONS`], every position on the bed.
+pub fn move_positions_problem(positions: &[MovePosition], work_area_mm: [f64; 2]) -> Option<String> {
+    if positions.len() > MAX_MOVE_POSITIONS {
+        return Some(format!("at most {MAX_MOVE_POSITIONS} saved positions"));
+    }
+    for m in positions {
+        let n = m.name.trim().chars().count();
+        if n == 0 || n > MAX_MACRO_NAME_CHARS || m.name.chars().any(char::is_control) {
+            return Some(format!("position name \"{}\" must be 1..={MAX_MACRO_NAME_CHARS} printable characters", m.name));
+        }
+        let on = |v: f64, max: f64| v.is_finite() && (0.0..=max).contains(&v);
+        if !(on(m.x_mm, work_area_mm[0]) && on(m.y_mm, work_area_mm[1])) {
+            return Some(format!(
+                "position \"{}\" ({}, {}) mm is off the {} x {} mm bed",
+                m.name, m.x_mm, m.y_mm, work_area_mm[0], work_area_mm[1]
+            ));
+        }
+    }
+    None
+}
+
 /// Per-device preferences.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -109,6 +145,9 @@ pub struct DevicePrefs {
     /// A GRBL gantry's console macros ([`ConsoleMacro`]), in button order.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub console_macros: Vec<ConsoleMacro>,
+    /// A GRBL gantry's saved Move positions ([`MovePosition`]), in button order.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub move_positions: Vec<MovePosition>,
 }
 
 impl DevicePrefs {
@@ -128,6 +167,9 @@ pub struct Preferences {
     pub debug_log: bool,
     /// Check GitHub for a newer release when asked or at start (opt-in; nothing is sent but the request itself).
     pub check_for_updates: bool,
+    /// The User Tools menu (`crate::user_tools`): web pages and document command sequences, never machine actions.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub user_tools: Vec<crate::user_tools::UserTool>,
 }
 
 /// The preference store: in memory, saved to `path` when there is one.

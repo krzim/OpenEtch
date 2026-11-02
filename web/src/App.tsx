@@ -47,6 +47,7 @@ import { useFilesUi } from "./files/useFilesUi.tsx";
 import { ShutdownBadge, SimPinBadge } from "./libs/JobSafety.tsx";
 import { LaserExtras } from "./libs/LaserExtras.tsx";
 import { useLibsUi } from "./libs/useLibsUi.tsx";
+import { useToolsUi } from "./tools/useToolsUi.tsx";
 import { useDesignUi } from "./design/useDesignUi.tsx";
 import { MachineCard, PreviewStatsCard, RunsCard } from "./components/LaserPanel.tsx";
 import { frameWithOptions } from "./components/FramingOptions.tsx";
@@ -100,6 +101,8 @@ import { jobApi, saveBlob } from "./api/jobApi.ts";
 import { gcodeFileName, isGrblMachine } from "./api/grbl.ts";
 import { GrblConsole } from "./components/GrblConsole.tsx";
 import { GrblMove } from "./components/GrblMove.tsx";
+import { RuidaFiles } from "./components/RuidaFiles.tsx";
+import { isRuidaMachine, rdFileName } from "./api/ruida.ts";
 import { usePrefs, useT } from "./workspace/usePrefs.ts";
 import { alignMoves, distributeMoves, nudgeDelta, nudgeKeyId, queueNudge, rotateKeyDeg, roundMm, type AlignX, type AlignY } from "./editing.ts";
 import { boxCenter, objectBounds, unionBoxes, type Box } from "./geometry.ts";
@@ -288,6 +291,18 @@ export function App() {
     refreshMachine: () => void engine.refreshMachine(),
     onStartPointTool: () => setTool("select"),
   });
+  // Tabs, dogbone, Resize Slots, Multi-File Trace and the Web Tools (User Tools) menu (src/tools/).
+  const toolsUi = useToolsUi({
+    doc,
+    selection: selection.objects,
+    activeLayer,
+    design: workspace === "design",
+    run: engine.run,
+    notify,
+    report,
+    selectIds,
+    onTabTool: () => setTool("select"),
+  });
   // Shape Properties, warp / deform, tangent circle, rubber band, toolpath to path, selection queries, page positions,
   // grid array, curve tolerance, the Art Library and the clipboard (src/design/).
   const designUi = useDesignUi({
@@ -297,13 +312,14 @@ export function App() {
     activeLayer,
     workspaceMm,
     design: workspace === "design",
-    blocked: !!dialog || fileModalOpen || devicesOpen || filesUi.modalOpen || libsUi.modalOpen,
+    blocked: !!dialog || fileModalOpen || devicesOpen || filesUi.modalOpen || libsUi.modalOpen || toolsUi.modalOpen,
     has,
     run: engine.run,
     notify,
     report,
     cursor,
     refreshDoc: () => void engine.refreshDoc(),
+    extraTools: toolsUi.toolsItems,
   });
   // The key handler reads the design layer through a ref (a new object each render would re-install it every time).
   const designRef = useRef(designUi);
@@ -771,7 +787,7 @@ export function App() {
         return;
       }
       if (typingIn(e.target)) return;
-      if (dialog || fileModalOpen || filesUi.modalOpen || libsUi.modalOpen || designRef.current.modalOpen || appModeDialogOpen()) return;
+      if (dialog || fileModalOpen || filesUi.modalOpen || libsUi.modalOpen || toolsUi.modalOpen || designRef.current.modalOpen || appModeDialogOpen()) return;
       const d = docRef.current;
       const design = workspace === "design";
       const m = { shift: e.shiftKey, ctrl: mod, alt: e.altKey };
@@ -922,6 +938,7 @@ export function App() {
     fileModalOpen,
     filesUi.modalOpen,
     libsUi.modalOpen,
+    toolsUi.modalOpen,
     saveFile,
     file,
     tool,
@@ -1063,7 +1080,7 @@ export function App() {
   });
   // Workspace hotkeys (workspace/hotkeys.ts); App's own keys stay in the handler above.
   ws.keymap.current = {
-    blocked: () => !!dialog || fileModalOpen || devicesOpen || filesUi.modalOpen || libsUi.modalOpen || designUi.modalOpen || appModeDialogOpen(),
+    blocked: () => !!dialog || fileModalOpen || devicesOpen || filesUi.modalOpen || libsUi.modalOpen || toolsUi.modalOpen || designUi.modalOpen || appModeDialogOpen(),
     modalOpen: () => ws.dialog !== null,
     handlers: {
       "app.preferences": () => ws.open("prefs"),
@@ -1236,6 +1253,19 @@ export function App() {
                 .catch(report)
           : undefined
       }
+      onSaveRd={
+        isRuidaMachine(machine)
+          ? () =>
+              void jobApi
+                .exportRd()
+                .then(({ blob, filename }) => {
+                  const name = rdFileName(filename, file.projectName ?? file.openedName ?? doc?.name ?? null);
+                  saveBlob(blob, name);
+                  notify(t("fm.rdSaved", { name }));
+                })
+                .catch(report)
+          : undefined
+      }
     />
   );
 
@@ -1311,6 +1341,7 @@ export function App() {
           {edit.toolbar}
           {designUi.toolbar}
           {libsUi.toolbar}
+          {toolsUi.toolbar}
         </>
       }
     />
@@ -1430,6 +1461,12 @@ export function App() {
               </Dock>
             </>
           )}
+          {/* A Ruida gantry's File List window (LightBurn's): stored files, Send, Start (through approval). */}
+          {isRuidaMachine(machine) && (
+            <Dock id="files" title={t("win.files")}>
+              <RuidaFiles notify={notify} projectName={file.projectName ?? file.openedName ?? doc?.name ?? null} selection={selection.objects} />
+            </Dock>
+          )}
           <Dock id="machine" title={t("win.machine")}>
           <MachineCard machine={machine} httpError={engine.httpError}>
             {/* Engines without the device registry: LightBurn's devices and the profile diffs. */}
@@ -1488,7 +1525,7 @@ export function App() {
         notify={notify}
         report={report}
         canvasTool={withPositionLaser(
-          withLayerFlash(designUi.wrap(libsUi.wrap(text.wrap(edit.canvas))), doc, flash),
+          withLayerFlash(designUi.wrap(toolsUi.wrap(libsUi.wrap(text.wrap(edit.canvas)))), doc, flash),
           positioning,
           (pt) =>
             void machineAction(jobApi.pointer(roundMm(pt[0]), roundMm(pt[1])), t("poslaser.done", { x: roundMm(pt[0]), y: roundMm(pt[1]) })),
@@ -1566,6 +1603,7 @@ export function App() {
       {edit.dialogs}
       {filesUi.dialogs}
       {libsUi.dialogs}
+      {toolsUi.dialogs}
       {designUi.dialogs}
       {text.dialogs}
       {ws.dialogs}

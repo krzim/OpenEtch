@@ -179,6 +179,9 @@ pub struct Run {
     pub parts: Arc<Vec<RunPart>>,
     /// The job as G-code, for a GRBL gantry (`parts` is then empty).
     pub gcode: Option<Arc<GcodeProgram>>,
+    /// The job for a Ruida gantry (`parts` is then empty): a program planned from the document, or a file stored on
+    /// the controller (`DriverJob::Ruida` / `DriverJob::RuidaFile`, module `ruida_dsp`).
+    pub ruida: Option<DriverJob>,
     pub created_unix_s: u64,
     pub error: Option<String>,
     pub report: Option<RunReport>,
@@ -195,14 +198,31 @@ pub struct Run {
 impl Run {
     /// List packets over all parts (G-code lines for a GRBL job).
     pub fn packet_count(&self) -> usize {
-        self.parts.iter().map(|p| p.packets.len()).sum::<usize>() + self.gcode.as_ref().map_or(0, |g| g.len())
+        let ruida = match &self.ruida {
+            Some(DriverJob::Ruida(p)) => p.datagram_count(),
+            Some(_) => 1,
+            None => 0,
+        };
+        self.parts.iter().map(|p| p.packets.len()).sum::<usize>() + self.gcode.as_ref().map_or(0, |g| g.len()) + ruida
     }
 
     /// What the driver runs: the G-code of a GRBL job, else the LMC parts.
     pub fn driver_job(&self) -> DriverJob {
+        if let Some(r) = &self.ruida {
+            return r.clone();
+        }
         match &self.gcode {
             Some(g) => DriverJob::Grbl(g.clone()),
             None => DriverJob::Lmc(self.parts.clone()),
+        }
+    }
+
+    /// The `driver` of [`RunView`]: `lmc`, `grbl` or `ruida`.
+    fn driver_name(&self) -> &'static str {
+        match (&self.ruida, &self.gcode) {
+            (Some(_), _) => "ruida",
+            (None, Some(_)) => "grbl",
+            (None, None) => "lmc",
         }
     }
 
@@ -210,6 +230,7 @@ impl Run {
     fn drop_job(&mut self) {
         self.parts = Arc::new(Vec::new());
         self.gcode = None;
+        self.ruida = None;
     }
 }
 
@@ -228,7 +249,7 @@ pub struct RunView {
     pub stats: Stats,
     /// LMC list packets, or G-code lines for a GRBL job.
     pub packet_count: usize,
-    /// `lmc` or `grbl`: the driver the run was planned for.
+    /// `lmc`, `grbl` or `ruida`: the driver the run was planned for.
     pub driver: &'static str,
     pub created_unix_s: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -254,7 +275,7 @@ impl Run {
             summary: self.summary.clone(),
             stats: self.stats,
             packet_count: self.packet_count(),
-            driver: if self.gcode.is_some() { "grbl" } else { "lmc" },
+            driver: self.driver_name(),
             created_unix_s: self.created_unix_s,
             error: self.error.clone(),
             report: self.report.clone(),
@@ -293,6 +314,7 @@ impl RunStore {
             stats: prepared.stats,
             parts: Arc::new(prepared.parts),
             gcode: prepared.gcode.map(Arc::new),
+            ruida: prepared.ruida,
             created_unix_s,
             error: None,
             report: None,
@@ -406,6 +428,8 @@ pub struct PreparedJob {
     pub parts: Vec<RunPart>,
     /// The G-code of a GRBL job (`parts` is then empty).
     pub gcode: Option<GcodeProgram>,
+    /// The job of a Ruida gantry (`parts` is then empty; module `ruida_dsp`).
+    pub ruida: Option<DriverJob>,
     pub stats: Stats,
     pub summary: String,
     /// The machine configuration generation it was planned for (set by the caller; 0 from [`prepare_job`]).
@@ -552,7 +576,7 @@ pub fn prepare_job_with(
     if let Some(n) = options.from_segment {
         summary.push_str(&format!(" (from segment {n})"));
     }
-    Ok(PreparedJob { parts, gcode: None, stats, summary, generation: 0, options: options.clone(), estimate_correction: 1.0 })
+    Ok(PreparedJob { parts, gcode: None, ruida: None, stats, summary, generation: 0, options: options.clone(), estimate_correction: 1.0 })
 }
 
 /// Plan `doc` for a GRBL gantry: the same planning as [`prepare_job_with`] on the bed's target, then G-code
@@ -607,6 +631,7 @@ pub fn prepare_gcode_job(
     Ok(PreparedJob {
         parts: Vec::new(),
         gcode: Some(program),
+        ruida: None,
         stats,
         summary,
         generation: 0,
@@ -657,7 +682,7 @@ pub fn prepare_queue(
         Some(n) if n > 1 => summary.push_str(&format!(", {n} times")),
         _ => {}
     }
-    Ok(PreparedJob { parts, gcode: None, stats, summary, generation: 0, options: options.clone(), estimate_correction: 1.0 })
+    Ok(PreparedJob { parts, gcode: None, ruida: None, stats, summary, generation: 0, options: options.clone(), estimate_correction: 1.0 })
 }
 
 #[cfg(test)]
@@ -669,6 +694,7 @@ mod tests {
         PreparedJob {
             parts: vec![RunPart::list(vec![lmc::Packet::empty()])],
             gcode: None,
+            ruida: None,
             stats: Stats::default(),
             summary: "s".into(),
             generation: 0,

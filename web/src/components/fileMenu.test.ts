@@ -18,6 +18,7 @@ const LABELS: FileMenuInput["labels"] = {
   export: "Export",
   exportLightBurn: "Export to LightBurn…",
   saveGcode: "Save G-code…",
+  saveRd: "Save RD file…",
   downloadOpenetch: "Download .openetch",
   project: "Project",
   lightburn: "LightBurn",
@@ -41,6 +42,7 @@ function full(): FileMenuInput {
     exportLightBurn: a,
     downloadOpenetch: a,
     saveGcode: a,
+    saveRd: a,
     devices: a,
     labels: LABELS,
     parts: {
@@ -73,7 +75,7 @@ test("no entry is listed twice and the moved entries are in their submenus", () 
   const paths = labelPaths(buildFileMenu(full()));
   assert.equal(new Set(paths).size, paths.length);
   for (const p of ["Laser › Devices…", "Laser › Material Library", "Laser › Find My Laser / Add galvo…", "Laser › Batch run…", "Laser › Job log…"]) assert.ok(paths.includes(p), p);
-  for (const p of ["Export › Print…", "Export › Save G-code…", "Export › Download .openetch", "LightBurn › Import LightBurn…", "LightBurn › Export to LightBurn…", "Settings › Preferences…"])
+  for (const p of ["Export › Print…", "Export › Save G-code…", "Export › Save RD file…", "Export › Download .openetch", "LightBurn › Import LightBurn…", "LightBurn › Export to LightBurn…", "Settings › Preferences…"])
     assert.ok(paths.includes(p), p);
 });
 
@@ -82,6 +84,7 @@ test("empty submenus are left out; a lone settings entry stays a plain row", () 
   i.parts = { settings: [it("Preferences…", { actionId: "app.preferences" })] };
   i.devices = undefined;
   i.saveGcode = undefined;
+  i.saveRd = undefined;
   i.recent = undefined;
   const m = buildFileMenu(i);
   const labels = m.filter((x) => !x.sep).map((x) => !x.sep && x.label);

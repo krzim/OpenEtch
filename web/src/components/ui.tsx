@@ -991,6 +991,14 @@ const ICONS: Record<string, ReactNode> = {
       <path d="M7 3v4a1 1 0 0 0 1 1h7" />
     </>
   ),
+  // L [globe]
+  web: (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
+      <path d="M2 12h20" />
+    </>
+  ),
 };
 
 /** Every registered icon name. */

@@ -352,7 +352,7 @@ fn loops_per_call(outline: &[Vec<(f64, f64)>], speed_mm_s: f64) -> (u32, Duratio
 /// call holds about [`TARGET_CALL_SECS`] of tracing; a GRBL board takes lines only as fast as it moves, so its call
 /// returns when the last line is in the board's buffer (one trace per call, no wait).
 fn frame_timing(machine: &Machine, outline: &[Vec<(f64, f64)>], speed: f64, continuous: bool) -> (u32, Duration) {
-    if machine.is_grbl() {
+    if machine.is_gantry() {
         return (1, Duration::ZERO);
     }
     if continuous { loops_per_call(outline, speed) } else { (1, single_time(outline, speed)) }

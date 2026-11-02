@@ -109,6 +109,9 @@ pub enum ControllerError {
     /// A GRBL board's error, alarm or refusal (the GRBL driver).
     #[error(transparent)]
     Grbl(#[from] crate::grbl::GrblError),
+    /// A Ruida controller's refusal or protocol error (the Ruida driver).
+    #[error(transparent)]
+    Ruida(#[from] crate::ruida::RuidaDriverError),
 }
 
 type Result<T, E = ControllerError> = std::result::Result<T, E>;

@@ -110,8 +110,13 @@ pub(crate) async fn approve(
         }
     }
     let confirm = state.approval.confirm;
-    let pending_revision = state.runs().get(id).filter(|r| r.state == RunState::Pending).map(|r| r.revision);
-    if let Some(rev) = pending_revision {
+    let pending = state.runs().get(id).filter(|r| r.state == RunState::Pending).map(|r| (r.revision, r.ruida.clone()));
+    // A file stored on a Ruida controller cannot be framed: with Require Framing on it is refused (module
+    // `ruida_dsp`).
+    if let Some((_, Some(DriverJob::RuidaFile { .. }))) = &pending {
+        crate::ruida_dsp::check_stored_run(state)?;
+    }
+    if let Some(rev) = pending.map(|p| p.0) {
         crate::libs::check_before_approve(state, rev, checklist).await?;
     }
     let (current, active_document) = state.active_revision_and_document();
@@ -284,7 +289,7 @@ pub(crate) async fn start_now(
 /// The foot switch of the cycle (module `cycle`): the profile's Start Marking input (`start_mark_input_bit`, at the
 /// level of `start_mark_active_low`) while the engine runs in the `click` approval mode; `None` otherwise.
 pub(crate) fn foot_switch_port(st: &AppState) -> Option<machine::InputPort> {
-    if st.approval_mode() != ApprovalMode::Click || st.machine.is_grbl() {
+    if st.approval_mode() != ApprovalMode::Click || st.machine.is_gantry() {
         return None;
     }
     let profile = st.machine.profile();

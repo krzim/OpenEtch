@@ -3,6 +3,8 @@ name = "ruida"
 description = "Ruida DSP controller protocol: byte scrambling, UDP/serial framing, commands, number encodings, .rd job files, simulator. Pure, no I/O (UDP behind the `udp` feature)."
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 

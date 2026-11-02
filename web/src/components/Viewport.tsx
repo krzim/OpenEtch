@@ -130,6 +130,7 @@ import { usePrefs, useResolvedTheme } from "../workspace/usePrefs.ts";
 import { fixedLength, fixedNumber, formatLength, lengthDigits, lengthToDisplay, trimNumber } from "../workspace/units.ts";
 import { onRevealSelection, onViewCommand, publishViewStatus, revealShift } from "../workspace/viewStatus.ts";
 import { useT } from "../workspace/usePrefs.ts";
+import { HeadMarker } from "./HeadMarker.tsx";
 
 export type Tool = "select" | "rect" | "ellipse" | "circle" | CanvasToolId;
 
@@ -1480,6 +1481,7 @@ export function Viewport(props: ViewportProps) {
       >
         <g transform={matrix}>
           {toolpath?.head && <circle className="tp-head" cx={toolpath.head[0]} cy={toolpath.head[1]} r={px(4)} strokeWidth={px(1.5)} pointerEvents="none" />}
+          <HeadMarker px={px} />
 
           {selectedGroups.map((b, i) => (
             <rect

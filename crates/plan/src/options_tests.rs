@@ -2,7 +2,7 @@
 
 use doc::{
     CutOptions, CutSettings, Document, DotMode, FillGrouping, FillMode, Geometry, Group, Object, ObjectOptions, OrderBy,
-    Rotary, Tabs,
+    Rotary, TabGeneration, Tabs,
 };
 use kurbo::Affine;
 use lmc::{ListCommand, decode};
@@ -111,7 +111,7 @@ fn dot_mode_fires_points() {
 
 #[test]
 fn tabs_perforation_and_wobble_shape_the_lines() {
-    let o = CutOptions { tabs: Some(Tabs { count: 4, spacing_mm: 0.0, size_mm: 1.0 }), ..CutOptions::default() };
+    let o = CutOptions { tabs: Some(Tabs { count: 4, spacing_mm: 0.0, size_mm: 1.0, ..Tabs::default() }), ..CutOptions::default() };
     let d = doc_with(vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0))], with_options(CutSettings::default(), o));
     let plan = plan_job(&d, &target()).unwrap();
     assert!((plan.stats.mark_length_mm - 36.0).abs() < 1e-6);
@@ -122,6 +122,79 @@ fn tabs_perforation_and_wobble_shape_the_lines() {
     let o = CutOptions { wobble: Some(doc::Wobble { step_mm: 0.5, size_mm: 0.4 }), ..CutOptions::default() };
     let d = doc_with(vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0))], with_options(CutSettings::default(), o));
     assert!(plan_job(&d, &target()).unwrap().stats.mark_length_mm > 40.0 * 2.0);
+}
+
+#[test]
+fn hand_placed_tabs_skip_inner_and_tab_cut_power() {
+    // A 10 x 10 square at the origin (local frame centred) with a hole: a 4 x 4 square inside it.
+    let mut outer = rect("obj-1", 10.0, 10.0, (0.0, 0.0));
+    outer.geometry = Geometry::Path {
+        path: {
+            let mut p = kurbo::BezPath::new();
+            for ring in [[(-5.0, -5.0), (5.0, -5.0), (5.0, 5.0), (-5.0, 5.0)], [(-2.0, -2.0), (2.0, -2.0), (2.0, 2.0), (-2.0, 2.0)]] {
+                p.move_to(ring[0]);
+                for q in &ring[1..] {
+                    p.line_to(*q);
+                }
+                p.close_path();
+            }
+            p
+        },
+    };
+    let base = CutSettings { power_pct: 40.0, ..CutSettings::default() };
+    let marked = |d: &Document| plan_job(d, &target()).unwrap().stats.mark_length_mm;
+    // Automatic: 4 tabs of 1 mm on both outlines (40 + 16 mm of outline).
+    let tabs = Tabs { count: 4, size_mm: 1.0, ..Tabs::default() };
+    let d = doc_with(vec![outer.clone()], with_options(base.clone(), CutOptions { tabs: Some(tabs.clone()), ..CutOptions::default() }));
+    assert!((marked(&d) - 48.0).abs() < 1e-6, "{}", marked(&d));
+    // Skip Inner Shapes: the hole is cut through.
+    let skip = Tabs { skip_inner: true, ..tabs.clone() };
+    let d = doc_with(vec![outer.clone()], with_options(base.clone(), CutOptions { tabs: Some(skip), ..CutOptions::default() }));
+    assert!((marked(&d) - 52.0).abs() < 1e-6, "{}", marked(&d));
+    // The switch off cuts everything; the settings stay.
+    let off = Tabs { enabled: false, ..tabs.clone() };
+    let d = doc_with(vec![outer.clone()], with_options(base.clone(), CutOptions { tabs: Some(off), ..CutOptions::default() }));
+    assert!((marked(&d) - 56.0).abs() < 1e-6);
+    // Hand-placed tabs (moved with the object): a shape with them gets only those, on the outline nearest each.
+    let mut moved = outer.clone();
+    moved.transform = Affine::translate((20.0, 0.0));
+    let mut d = doc_with(vec![moved], with_options(base.clone(), CutOptions { tabs: Some(tabs.clone()), ..CutOptions::default() }));
+    d.object_options.insert("obj-1".into(), ObjectOptions { tabs: vec![[0.0, -5.2], [2.1, 0.0]], ..ObjectOptions::default() });
+    let plan = plan_job(&d, &target()).unwrap();
+    assert!((plan.stats.mark_length_mm - 54.0).abs() < 1e-6, "{}", plan.stats.mark_length_mm);
+    let ends: Vec<[f64; 2]> = plan.passes[0].polylines.iter().flat_map(|p| [p[0], p[p.len() - 1]]).collect();
+    assert!(ends.iter().any(|e| (e[0] - 19.5).abs() < 1e-9 && (e[1] + 5.0).abs() < 1e-9), "a gap centred under the bottom edge's middle: {ends:?}");
+    // Manual generation: shapes without hand-placed tabs are cut through.
+    let manual = Tabs { generation: TabGeneration::Manual, ..tabs.clone() };
+    let mut d = doc_with(vec![outer.clone(), rect("obj-2", 10.0, 10.0, (30.0, 0.0))], with_options(base.clone(), CutOptions { tabs: Some(manual), ..CutOptions::default() }));
+    d.object_options.insert("obj-1".into(), ObjectOptions { tabs: vec![[5.0, 0.0]], ..ObjectOptions::default() });
+    assert!((marked(&d) - 95.0).abs() < 1e-6, "{}", marked(&d));
+    // Tab Cut Power: the tabs are marked at that share of the power.
+    let powered = Tabs { cut_power_pct: 25.0, ..tabs };
+    let d = doc_with(vec![rect("obj-2", 10.0, 10.0, (0.0, 0.0))], with_options(base, CutOptions { tabs: Some(powered), ..CutOptions::default() }));
+    let plan = plan_job(&d, &target()).unwrap();
+    let pass = &plan.passes[0];
+    assert!((plan.stats.mark_length_mm - 40.0).abs() < 1e-6);
+    let tab_len: f64 = (0..pass.polylines.len()).filter(|&i| pass.power_of(i) == 10.0).map(|i| crate::geom::polyline_length(&pass.polylines[i])).sum();
+    assert!((tab_len - 4.0).abs() < 1e-6, "4 tabs of 1 mm at 25 % of 40 %: {tab_len}");
+}
+
+#[test]
+fn hostile_tab_settings_neither_hang_nor_cut_where_unintended() {
+    // A spacing of a micrometre with smaller tabs would be 40 million gaps on a 10 mm square: refused at once.
+    let tiny = Tabs { count: 0, spacing_mm: 1e-6, size_mm: 1e-7, ..Tabs::default() };
+    let d = doc_with(vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0))], with_options(CutSettings::default(), CutOptions { tabs: Some(tiny), ..CutOptions::default() }));
+    assert!(matches!(plan_job(&d, &target()), Err(PlanError::TooManySegments { .. })));
+    // A hand-edited document: tabs that are not numbers are ignored; the others still leave their gaps, and only
+    // there (the bottom edge's middle, at x = 0 of the centred local frame).
+    let manual = Tabs { generation: TabGeneration::Manual, size_mm: 1.0, ..Tabs::default() };
+    let mut d = doc_with(vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0))], with_options(CutSettings::default(), CutOptions { tabs: Some(manual), ..CutOptions::default() }));
+    d.object_options.insert("obj-1".into(), ObjectOptions { tabs: vec![[f64::NAN, 0.0], [0.0, f64::INFINITY], [0.0, -5.0]], ..ObjectOptions::default() });
+    let plan = plan_job(&d, &target()).unwrap();
+    assert!((plan.stats.mark_length_mm - 39.0).abs() < 1e-6, "{}", plan.stats.mark_length_mm);
+    let pts: Vec<[f64; 2]> = plan.passes[0].polylines.iter().flatten().copied().collect();
+    assert!(!pts.iter().any(|p| p[1] < -4.999 && p[0].abs() < 0.499), "nothing is cut inside the tab: {pts:?}");
+    assert!(pts.iter().any(|p| (p[0] - 0.5).abs() < 1e-9 && (p[1] + 5.0).abs() < 1e-9));
 }
 
 #[test]
@@ -394,7 +467,7 @@ fn gantry_layer_options_reach_the_passes_and_never_the_galvo_list() {
     let objects = || vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0))];
     let line = plan_job(&doc_with(objects(), with_options(CutSettings::default(), o.clone())), &target()).unwrap();
     // Overscan is for scan lines only: a line layer has none.
-    assert_eq!(line.passes[0].gantry, GantryPass { constant_power: true, air_assist: true, overscan_mm: 0.0, overcut_mm: 1.5 });
+    assert_eq!(line.passes[0].gantry, GantryPass { constant_power: true, air_assist: true, overscan_mm: 0.0, overcut_mm: 1.5, ..GantryPass::default() });
     let filled = plan_job(&doc_with(objects(), with_options(fill(1.0), o.clone())), &target()).unwrap();
     assert_eq!(filled.passes[0].gantry.overscan_mm, 2.0);
     // The galvo's list is the same with or without them.
@@ -402,4 +475,128 @@ fn gantry_layer_options_reach_the_passes_and_never_the_galvo_list() {
     assert_eq!(encode(&filled, &target()).unwrap(), encode(&plain, &target()).unwrap());
     assert!(plain.passes[0].gantry.is_default());
     assert!(serde_json::to_value(&plain.passes[0]).unwrap().get("gantry").is_none(), "left out of JSON while off");
+}
+
+#[test]
+fn a_gantry_fill_ramps_its_power_near_the_inner_edges_only() {
+    let gantry = Target { gantry: true, ..target() };
+    // A 20 mm square with a 4 mm hole, filled at 50 %; ramp 1 mm from 10 % at the hole's edge.
+    let objects = || vec![rect("obj-1", 20.0, 20.0, (0.0, 0.0)), rect("obj-2", 4.0, 4.0, (0.0, 0.0))];
+    let mut settings = fill(0.5);
+    settings.power_pct = 50.0;
+    let o = CutOptions { ramp_length_mm: 1.0, ramp_min_power_pct: 10.0, ..CutOptions::default() };
+    let ramped = plan_job(&doc_with(objects(), with_options(settings.clone(), o.clone())), &gantry).unwrap();
+    let plain = plan_job(&doc_with(objects(), settings.clone()), &gantry).unwrap();
+    let p = &ramped.passes[0];
+    assert!(p.polylines.len() > plain.passes[0].polylines.len(), "hatch lines split into ramp pieces");
+    let powers: Vec<f64> = (0..p.polylines.len()).map(|i| p.power_of(i)).collect();
+    assert!(powers.iter().all(|w| (10.0 - 1e-9..=50.0 + 1e-9).contains(w)), "{powers:?}");
+    assert!(powers.iter().any(|w| (*w - 10.0).abs() < 1e-9) && powers.contains(&50.0), "{powers:?}");
+    // The ramp is only near the hole: a hatch line far from it (near the outer edge) keeps the full power.
+    for (i, q) in p.polylines.iter().enumerate() {
+        if q.iter().all(|pt| pt[1].abs() > 4.0) {
+            assert_eq!(p.power_of(i), 50.0, "{q:?}");
+        }
+    }
+    // Ramp Outer Edge ramps the outer square's sides too.
+    let outer = plan_job(&doc_with(objects(), with_options(settings.clone(), CutOptions { ramp_outer_edge: true, ..o.clone() })), &gantry).unwrap();
+    let q = &outer.passes[0];
+    assert!(q.polylines.len() > p.polylines.len());
+    // A galvo job ignores the ramp: the same list as without it.
+    let galvo = plan_job(&doc_with(objects(), with_options(settings.clone(), o)), &target()).unwrap();
+    assert_eq!(encode(&galvo, &target()).unwrap(), encode(&plan_job(&doc_with(objects(), settings), &target()).unwrap(), &target()).unwrap());
+}
+
+#[test]
+fn leads_and_path_pauses_reach_line_passes_only() {
+    let lead = doc::Lead { style: doc::LeadStyle::Arc, length_mm: 2.0, angle_deg: 45.0 };
+    let o = CutOptions { lead_in: Some(lead), lead_out: Some(lead), start_pause_ms: 5.0, end_pause_ms: 2.0, ..CutOptions::default() };
+    let objects = || vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0))];
+    let line = plan_job(&doc_with(objects(), with_options(CutSettings::default(), o.clone())), &target()).unwrap();
+    let g = line.passes[0].gantry;
+    assert_eq!((g.lead_in, g.lead_out, g.start_pause_us, g.end_pause_us), (Some(lead), Some(lead), 5000.0, 2000.0));
+    let filled = plan_job(&doc_with(objects(), with_options(fill(1.0), o.clone())), &target()).unwrap();
+    assert!(filled.passes[0].gantry.is_default(), "fills get no leads");
+    // A lead longer than 50 mm or steeper than 90 degrees is refused.
+    let bad = CutOptions { lead_in: Some(doc::Lead { angle_deg: 91.0, ..lead }), ..CutOptions::default() };
+    assert!(plan_job(&doc_with(objects(), with_options(CutSettings::default(), bad)), &target()).is_err());
+    let bad = CutOptions { lead_out: Some(doc::Lead { length_mm: 0.0, ..lead }), ..CutOptions::default() };
+    assert!(plan_job(&doc_with(objects(), with_options(CutSettings::default(), bad)), &target()).is_err());
+}
+
+#[test]
+fn grbl_leads_and_path_pauses_refuse_tabs_and_perforation() {
+    // Tabs and perforation cut each path into pieces: a lead at every piece would cut across the bridges and skips.
+    let gantry = Target { gantry: true, ..target() };
+    let lead = Some(doc::Lead { style: doc::LeadStyle::Line, length_mm: 2.0, angle_deg: 90.0 });
+    let objects = || vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0))];
+    let tabs = Some(Tabs { count: 4, spacing_mm: 0.0, size_mm: 1.0, ..Tabs::default() });
+    let perf = Some(doc::Perforation { cut_mm: 1.0, skip_mm: 1.0 });
+    for o in [
+        CutOptions { lead_in: lead, tabs: tabs.clone(), ..CutOptions::default() },
+        CutOptions { lead_out: lead, perforation: perf.clone(), ..CutOptions::default() },
+        CutOptions { start_pause_ms: 5.0, tabs: tabs.clone(), ..CutOptions::default() },
+    ] {
+        let d = doc_with(objects(), with_options(CutSettings::default(), o));
+        assert!(matches!(plan_job(&d, &gantry), Err(PlanError::Target(m)) if m.contains("tabs or perforation")));
+        // A galvo ignores the GRBL-only settings.
+        plan_job(&d, &target()).unwrap();
+    }
+    plan_job(&doc_with(objects(), with_options(CutSettings::default(), CutOptions { tabs: tabs.clone(), ..CutOptions::default() })), &gantry).unwrap();
+    // Hand-placed tabs (manual generation) split the outline as well: refused with a lead.
+    let manual = Some(Tabs { generation: TabGeneration::Manual, size_mm: 1.0, ..Tabs::default() });
+    let mut d = doc_with(objects(), with_options(CutSettings::default(), CutOptions { lead_in: lead, tabs: manual, ..CutOptions::default() }));
+    d.object_options.insert("obj-1".into(), ObjectOptions { tabs: vec![[0.0, -5.0]], ..ObjectOptions::default() });
+    assert!(matches!(plan_job(&d, &gantry), Err(PlanError::Target(m)) if m.contains("tabs or perforation")));
+    // Tab settings kept with the Tabs / Bridges switch off cut no tabs: the lead is allowed and the outline is whole.
+    let off = Some(Tabs { enabled: false, count: 4, size_mm: 1.0, ..Tabs::default() });
+    let d = doc_with(objects(), with_options(CutSettings::default(), CutOptions { lead_in: lead, tabs: off, ..CutOptions::default() }));
+    let plan = plan_job(&d, &gantry).unwrap();
+    assert_eq!((plan.passes[0].polylines.len(), plan.passes[0].gantry.lead_in), (1, lead));
+}
+
+#[test]
+fn start_here_part_way_along_a_path_drops_that_paths_grbl_leads() {
+    // Resuming in the middle of a closed outline: the rest of it is an open path, and a lead measured from there
+    // would land on the wrong side (into the part). It is cut on its own without leads; later paths keep theirs.
+    let gantry = Target { gantry: true, ..target() };
+    let lead = Some(doc::Lead { style: doc::LeadStyle::Line, length_mm: 2.0, angle_deg: 90.0 });
+    let o = CutOptions { lead_in: lead, lead_out: lead, ..CutOptions::default() };
+    let d = doc_with(vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0)), rect("obj-2", 10.0, 10.0, (30.0, 0.0))], with_options(CutSettings::default(), o));
+    let plan = plan_job(&d, &gantry).unwrap();
+    let mid = start_at(&plan, 3, &gantry).unwrap();
+    assert_eq!(mid.passes.len(), 2, "{:?}", mid.passes);
+    assert_eq!((mid.passes[0].gantry.lead_in, mid.passes[0].gantry.lead_out), (None, None));
+    assert_eq!(mid.passes[0].polylines.len(), 1);
+    assert_eq!((mid.passes[1].gantry.lead_in, mid.passes[1].polylines.len()), (lead, 1));
+    assert!((mid.stats.mark_length_mm - 60.0).abs() < 1e-9, "{}", mid.stats.mark_length_mm);
+    // From a path's start (a jump), nothing is split.
+    let from_second = start_at(&plan, 5, &gantry).unwrap();
+    assert_eq!((from_second.passes.len(), from_second.passes[0].gantry.lead_in), (1, lead));
+    // The last path resumed part-way: its pass is replaced, keeping the pass's pause after.
+    let last = start_at(&plan, 8, &gantry).unwrap();
+    assert_eq!((last.passes.len(), last.passes[0].gantry.lead_in), (1, None));
+}
+
+#[test]
+fn tabs_survive_remove_overlapping_lines() {
+    // Two 10 mm squares sharing an edge: the second loses that edge to the first and is cut as an open line, but
+    // keeps its tabs. Without overlaps removed: 80 mm, 8 tabs of 1 mm.
+    let o = CutOptions { tabs: Some(Tabs { count: 4, size_mm: 1.0, ..Tabs::default() }), ..CutOptions::default() };
+    let mut d = doc_with(vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0)), rect("obj-2", 10.0, 10.0, (10.0, 0.0))], with_options(CutSettings::default(), o));
+    assert!((plan_job(&d, &target()).unwrap().stats.mark_length_mm - 72.0).abs() < 1e-6);
+    // Overlaps removed: 70 mm of line, less the first square's 4 tabs and the 3 of the second's not on the shared
+    // edge (the tabs sit mid-edge, so one of the second square's is on the line the first one cuts).
+    d.optimization.remove_overlaps = true;
+    let plan = plan_job(&d, &target()).unwrap();
+    assert!((plan.stats.mark_length_mm - 63.0).abs() < 1e-6, "{}", plan.stats.mark_length_mm);
+    // A tab placed by hand on the second square's far edge is honoured too.
+    let manual = CutOptions { tabs: Some(Tabs { generation: TabGeneration::Manual, size_mm: 2.0, ..Tabs::default() }), ..CutOptions::default() };
+    let mut d = doc_with(vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0)), rect("obj-2", 10.0, 10.0, (10.0, 0.0))], with_options(CutSettings::default(), manual));
+    d.optimization.remove_overlaps = true;
+    d.object_options.insert("obj-2".into(), ObjectOptions { tabs: vec![[5.0, 0.0]], ..ObjectOptions::default() });
+    let plan = plan_job(&d, &target()).unwrap();
+    assert!((plan.stats.mark_length_mm - 68.0).abs() < 1e-6, "{}", plan.stats.mark_length_mm);
+    let pts: Vec<[f64; 2]> = plan.passes[0].polylines.iter().flatten().copied().collect();
+    assert!(!pts.iter().any(|p| (p[0] - 15.0).abs() < 0.999 && p[1].abs() < 0.999), "the gap at x = 15 is uncut: {pts:?}");
 }
