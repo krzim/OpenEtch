@@ -46,7 +46,7 @@ pub enum ConsoleKind {
     Unlock,
     /// `$J=`: a jog (moves, never fires).
     Jog,
-    /// A G-code line; `moves` when it has a motion word or code.
+    /// A G-code line; `moves` when it has a motion word or code, or dwells (`G4`): sent only with the spindle off.
     Gcode { moves: bool },
 }
 
@@ -61,7 +61,8 @@ fn gcode_rule(words: &[Word]) -> Result<bool, String> {
             'G' if !G_ALLOWED.iter().any(|c| w.is('G', *c)) => return Err(format!("G{} is not allowed in the console", w.value)),
             'S' if w.value > 0.0 => return Err(format!("S{} sets laser power; only an approved run may", w.value)),
             'S' if w.value < 0.0 => return Err("S must not be negative".into()),
-            'G' => moves |= [0.0, 1.0, 2.0, 3.0, 28.0, 30.0].iter().any(|c| w.is('G', *c)) || (38.0..39.0).contains(&w.value),
+            // A dwell counts as moving: in constant power (M3) GRBL keeps the laser on through it.
+            'G' => moves |= [0.0, 1.0, 2.0, 3.0, 4.0, 28.0, 30.0].iter().any(|c| w.is('G', *c)) || (38.0..39.0).contains(&w.value),
             'X' | 'Y' | 'Z' => moves = true,
             'M' | 'S' | 'F' | 'I' | 'J' | 'K' | 'L' | 'N' | 'P' | 'R' | 'T' => {}
             c => return Err(format!("word letter '{c}' is not allowed in the console")),
@@ -157,6 +158,7 @@ mod tests {
             ("G0 X10 Y10", ConsoleKind::Gcode { moves: true }),
             ("G1 X10 F500 S0", ConsoleKind::Gcode { moves: true }),
             ("M5", ConsoleKind::Gcode { moves: false }),
+            ("G4 P1", ConsoleKind::Gcode { moves: true }),
             ("G90 G21", ConsoleKind::Gcode { moves: false }),
             ("G92 X0 Y0", ConsoleKind::Gcode { moves: true }),
             ("M8", ConsoleKind::Gcode { moves: false }),

@@ -400,3 +400,83 @@ fn the_grbl_driver_behind_the_interface() {
     d.abort().unwrap();
     assert_eq!(d.state(), ControllerState::Idle);
 }
+
+/// A start-up block that turned the spindle on (run by init's soft reset) and was then cleared leaves `M3 S1000` in
+/// the parser state: nothing unarmed may move or dwell until the board reports `M5`.
+#[test]
+fn a_cleared_start_up_block_leaves_nothing_unarmed_moving_until_m5() {
+    let cfg = SimGrblConfig { startup: ["M3 S1000".into(), String::new()], ..SimGrblConfig::default() };
+    let (mut c, h) = connected(&cfg, &profile());
+    assert!(c.console("$N0=").unwrap().ok);
+    assert!(c.snapshot().unsafe_startup.is_empty() && !c.snapshot().spindle_off);
+    let before = h.report().lines_received;
+    for e in [c.jog(5.0, 0.0, None).unwrap_err(), c.jog_to(10.0, 10.0, None).unwrap_err()] {
+        assert!(e.to_string().contains("not M5"), "{e}");
+    }
+    for line in ["G4 P1", "G0 X10", "$J=G91 X5 F500"] {
+        let e = c.console(line).unwrap_err();
+        assert!(e.to_string().contains("not M5"), "{line}: {e}");
+    }
+    let r = h.report();
+    // Only the `$G` reads went out.
+    assert!(r.lines[r.lines.len() - (r.lines_received - before)..].iter().all(|l| l == "$G"), "{:?}", r.lines);
+    assert!(c.console("M5").unwrap().ok);
+    c.jog(5.0, 0.0, None).unwrap();
+    assert!(c.console("G4 P0.1").unwrap().ok);
+    while !c.poll_idle().unwrap() {}
+    let r = h.report();
+    assert!(r.fires.is_empty() && !r.lit_now, "{:?}", r.fires);
+}
+
+/// A stop whose `!` and soft reset never reached the board (a flaky cable): the board finishes what it had buffered
+/// and keeps `M4 S400`. The controller must not assume the reset happened: unarmed moves are refused until the
+/// parser state says `M5`.
+#[test]
+fn a_stop_that_never_arrived_leaves_unarmed_moves_refused() {
+    let (mut c, h) = connected(&SimGrblConfig::default(), &profile());
+    let abort = c.abort_handle();
+    let sim = h.clone();
+    let runner = thread::spawn(move || {
+        let r = c.run_program(&square(200), armed());
+        (r, c)
+    });
+    let start = Instant::now();
+    while sim.report().cuts() < 3 {
+        assert!(start.elapsed() < Duration::from_secs(5));
+        thread::yield_now();
+    }
+    sim.lose_stop_bytes(true);
+    abort.request();
+    let (result, mut c) = runner.join().unwrap();
+    assert_eq!(result.unwrap_err(), ControllerError::Aborted);
+    assert!(!c.snapshot().spindle_off, "the reset was never confirmed");
+    // The board ran out its buffer and sits idle with the laser mode's spindle still on.
+    while !c.poll_idle().unwrap() {}
+    let fires = h.report().fires.len();
+    for e in [c.jog(5.0, 0.0, None).unwrap_err(), c.console("G1 X20 Y20 F600").unwrap_err(), c.console("G4 P1").unwrap_err()] {
+        assert!(e.to_string().contains("not M5"), "{e}");
+    }
+    while !c.poll_idle().unwrap() {}
+    let r = h.report();
+    assert_eq!(r.fires.len(), fires, "nothing unarmed fired: {:?}", &r.fires[fires..]);
+    assert!(!r.lines.iter().any(|l| l.starts_with("$J=") || l == "G1 X20 Y20 F600"), "{:?}", r.lines);
+    // A stop that does arrive resets the board, and moves work again.
+    sim.lose_stop_bytes(false);
+    c.abort().unwrap();
+    assert!(c.snapshot().spindle_off);
+    c.jog(5.0, 0.0, None).unwrap();
+}
+
+/// GRBL's check mode (`$C`) parses lines without moving or firing: a run there would report success with nothing
+/// marked, so it is refused.
+#[test]
+fn runs_are_refused_in_check_mode() {
+    let (mut c, h) = connected(&SimGrblConfig::default(), &profile());
+    assert!(c.console("$C").unwrap().ok);
+    let e = c.run_program(&square(1), armed()).unwrap_err();
+    assert!(e.to_string().contains("check mode"), "{e}");
+    assert!(!h.report().lines.iter().any(|l| l.starts_with("M4")));
+    assert!(c.console("$C").unwrap().ok);
+    c.run_program(&square(1), armed()).unwrap();
+    assert_eq!(h.report().cuts(), 4);
+}

@@ -210,22 +210,26 @@ computer while nobody watches it; the foot switch is the approval path that need
     (`check_program`: only `G0`/`G1`/`G4`/`G21`/`G90`/`M3`/`M4`/`M5`, `S` within `max_power_pct` of `$30`, feeds within
     `max_feed_mm_min`, every point on the bed, no dwell with `M3` and `S > 0`, the laser off at the end); it then
     re-reads the board and refuses unless laser mode is on (`$32=1`, so `G0` never burns), `$30`/`$31` equal the
-    profile's, the board is idle and unlocked, the door is closed, and no start-up block (`$N0`/`$N1`) can turn the
-    laser on.
+    profile's, the board is idle (not in check mode `$C`, where nothing would be marked) and unlocked, the door is
+    closed, and no start-up block (`$N0`/`$N1`) can turn the laser on.
   - Framing is light-only: `M5` and absolute `$J=` jogs (no `M3`/`M4`, no `S`). There is no low-power frame option.
     Framing and the red-dot jog (`/api/machine/pointer`) move a gantry's head, so for a GRBL device they refuse MCP
     (the `frame_start` tool and MCP client headers, 403) like homing and jogging; `frame_stop` and Stop stay open.
   - Stop always wins: the realtime feed hold `!` then soft reset `0x18`, written directly (realtime bytes bypass
     GRBL's line buffer, so they never queue behind buffered lines), noticed by a streaming run within one read
     timeout (10 ms). Pause is feed hold, resume cycle start `~`. A door (`Door` state or the `D` pin), alarm or
-    `error:N` aborts the run the same way; a reset while moving leaves alarm 3 for a person to home or unlock.
+    `error:N` aborts the run the same way; a reset while moving leaves alarm 3 for a person to home or unlock. The
+    spindle counts as off only once the board's start-up message confirms the reset: a stop byte lost on the way
+    leaves `M3`/`M4` and `S` as they were, so unarmed moves stay refused until `$G` reports `M5`.
   - Flow control: character counting; a line is written only when it fits beside the unanswered lines' bytes in
     GRBL's 127-byte receive buffer (the simulator fails any overflow).
   - The console (`POST /api/machine/console`, UI only, never MCP) is never armed, so it refuses anything that could
     fire now or later before anything is sent: `M3`/`M4` in any spelling (`M 3`, `M03`, `M+4`, `M3.0`), `S > 0`,
     unknown G/M codes (allowlists), unknown word letters, the realtime characters `?` `!` `~` and every
-    non-printable byte, `$RST=`, and start-up blocks that fail the same rule; a line that moves is sent only while the
-    board's parser state reports `M5`. Homing (`$H`), unlock (`$X`) and jogs (`$J=`) are UI only and never fire.
+    non-printable byte, `$RST=`, and start-up blocks that fail the same rule; a line that moves or dwells (`G4`: a
+    dwell in `M3` keeps the laser on) is sent only while the board's parser state reports `M5`. Homing (`$H`), unlock
+    (`$X`) and jogs (`$J=`) are UI only and never fire: homing and jogs (the API's and the console's) also need the
+    parser state at `M5` (a start-up block cleared after the reset that ran it can leave `M3 S...` active).
   - Approval, Require Framing, the checklist and the stop epoch apply unchanged; the foot switch and IO ports are
     galvo inputs and are not read for a GRBL device. MCP can request a GRBL run like a galvo run and never approve it.
 - The engine holds no link of its own and reaches the board only through `Controller` methods: a freshly opened USB

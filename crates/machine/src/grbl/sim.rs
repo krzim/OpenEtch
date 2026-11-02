@@ -179,6 +179,8 @@ struct Board {
     disconnected: bool,
     /// Lines containing this text are answered with this error code.
     reject: Option<(String, u8)>,
+    /// Feed hold and soft reset bytes are lost on the way (a flaky cable): the board never sees them.
+    lose_stop_bytes: bool,
 }
 
 fn fmt(v: f64) -> String {
@@ -216,6 +218,7 @@ impl Board {
             report: SimGrblReport::default(),
             disconnected: false,
             reject: None,
+            lose_stop_bytes: false,
         };
         b.boot(false);
         b
@@ -674,6 +677,12 @@ impl SimGrblHandle {
         lock(&self.board).reject = Some((text.to_owned(), code));
     }
 
+    /// Lose every feed hold (`!`) and soft reset (0x18) byte while `on`, as on a flaky cable: the board keeps
+    /// running its buffers, keeps its parser state and never sends a start-up message.
+    pub fn lose_stop_bytes(&self, on: bool) {
+        lock(&self.board).lose_stop_bytes = on;
+    }
+
     /// Every transfer fails from now on.
     pub fn disconnect(&self) {
         lock(&self.board).disconnected = true;
@@ -687,6 +696,9 @@ impl SerialLink for SimGrbl {
             return Err(LinkError::Disconnected);
         }
         for &byte in bytes {
+            if matches!(byte, SOFT_RESET | FEED_HOLD) && b.lose_stop_bytes {
+                continue;
+            }
             if matches!(byte, STATUS | FEED_HOLD | CYCLE_START | SOFT_RESET) || byte >= 0x80 {
                 b.realtime(byte);
             } else {

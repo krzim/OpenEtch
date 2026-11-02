@@ -12,8 +12,9 @@
 //! - **Framing is light-only**: the laser off (`M5`) and jog moves (`$J=`), never `M3`/`M4` or an `S` word. There is
 //!   no low-power frame option.
 //! - **The console** ([`GrblController::console`]) sends only lines the console policy accepts
-//!   ([`check_console_line`]: never `M3`/`M4`, never `S > 0`), and a line that moves only while the board's parser
-//!   state reports the spindle off (`M5`). Homing, jogging and unlocking never fire either.
+//!   ([`check_console_line`]: never `M3`/`M4`, never `S > 0`), and a line that moves or dwells only while the
+//!   board's parser state reports the spindle off (`M5`). Homing and jogging need the same (a jog with `M3`/`M4` and
+//!   `S > 0` still active would fire); unlocking moves nothing.
 //! - **Stop always wins** ([`GrblController::abort`]): realtime feed hold `!` then soft reset `0x18`, written at once
 //!   and never queued behind buffered lines (realtime bytes bypass GRBL's line buffer). A soft reset clears GRBL's
 //!   buffers and turns the laser off. An [`crate::AbortHandle`] request is noticed within one read timeout of a
@@ -202,6 +203,7 @@ impl<P: SerialLink> GrblController<P> {
         self.state = ControllerState::Uninitialized;
         self.inflight.clear();
         self.rx.clear();
+        self.spindle_off = false;
     }
 
     pub fn profile(&self) -> Option<&GrblProfile> {
@@ -348,6 +350,7 @@ impl<P: SerialLink> GrblController<P> {
     fn drain(&mut self, timeout: Duration) -> Result<()> {
         let start = Instant::now();
         while !self.inflight.is_empty() {
+            self.check_abort()?;
             self.read_responses(self.poll.read_timeout)?;
             if start.elapsed() >= timeout {
                 self.inflight.clear();
@@ -438,6 +441,21 @@ impl<P: SerialLink> GrblController<P> {
         Ok(())
     }
 
+    /// Before an unarmed line that moves or dwells (a jog, homing, a console move or `G4`): the board's parser state
+    /// must say the spindle is off (`M5`), read again (`$G`) when that is not known. A start-up block cleared after
+    /// the reset that ran it, or a stop whose reset was never confirmed, can leave `M3`/`M4` with `S > 0` active, and
+    /// a jog or a constant-power dwell would then fire.
+    fn require_spindle_off(&mut self) -> std::result::Result<(), GrblError> {
+        if !self.spindle_off {
+            self.read_parser_state().map_err(|e| GrblError::Settings(format!("could not read the parser state ($G): {e}")))?;
+        }
+        if self.spindle_off {
+            Ok(())
+        } else {
+            Err(GrblError::Settings("the board's spindle state is not M5 (the laser could be on); send M5 in the console first".into()))
+        }
+    }
+
     // ----- connect and status -----
 
     /// Connect-time setup: soft reset and wait for GRBL's start-up message, then read the settings (`$$`), the
@@ -513,6 +531,9 @@ impl<P: SerialLink> GrblController<P> {
             GrblState::Alarm => return Err(GrblError::Locked(self.alarm).into()),
             GrblState::Door => return Err(GrblError::DoorOpen.into()),
             _ if s.door_open() && run => return Err(GrblError::DoorOpen.into()),
+            GrblState::Check if run => {
+                return Err(GrblError::NotIdle("in check mode ($C): nothing would be marked; send $C again to leave it".into()).into());
+            }
             GrblState::Idle | GrblState::Check => {}
             GrblState::Jog if !run => {}
             other => return Err(GrblError::NotIdle(other.name().to_owned()).into()),
@@ -803,11 +824,13 @@ impl<P: SerialLink> GrblController<P> {
         let reset = self.port.write(&[SOFT_RESET]);
         self.inflight.clear();
         self.rx.clear();
+        // Unknown until the board's start-up message confirms the reset (`read_responses` sets it then): a reset byte
+        // that never arrived leaves the parser state (`M3`/`M4`, `S`) as it was.
+        self.spindle_off = false;
         let welcome = if reset.is_ok() { self.wait_welcome(self.poll.reset_timeout).map(|_| ()) } else { Ok(()) };
         self.abort.clear();
         self.control.clear_pause();
         self.control.set_paused(false);
-        self.spindle_off = true;
         self.state = if self.profile.is_some() { ControllerState::Idle } else { ControllerState::Uninitialized };
         hold.map_err(ControllerError::from).and(reset.map_err(ControllerError::from)).and(welcome)
     }
@@ -837,6 +860,7 @@ impl<P: SerialLink> GrblController<P> {
         if !self.unsafe_startup.is_empty() {
             return Err(GrblError::Settings("start-up blocks can turn the laser on; clear them first".into()).into());
         }
+        self.require_spindle_off()?;
         match self.command_ok("$H", self.poll.homing_timeout) {
             Ok(_) => {
                 self.alarm = None;
@@ -872,6 +896,7 @@ impl<P: SerialLink> GrblController<P> {
             return Err(ControllerError::Refused(format!("a jog step must be non-zero and at most the bed ({w} x {h} mm)")));
         }
         let feed = self.jog_feed(&profile, feed)?;
+        self.require_spindle_off()?;
         let (mx, my) = profile.mirror();
         let (dx, dy) = (if mx { -dx } else { dx }, if my { -dy } else { dy });
         let line = format!("$J=G91G21X{}Y{}F{}", num(dx), num(dy), num(feed));
@@ -883,6 +908,7 @@ impl<P: SerialLink> GrblController<P> {
         let profile = self.ready_to_move(false)?;
         let (mx, my) = profile.to_machine(x, y).map_err(ControllerError::Refused)?;
         let feed = self.jog_feed(&profile, feed)?;
+        self.require_spindle_off()?;
         let line = format!("$J=G90G21X{}Y{}F{}", num(mx), num(my), num(feed));
         self.command_ok(&line, self.poll.response_timeout).map(|_| ())
     }
@@ -915,11 +941,8 @@ impl<P: SerialLink> GrblController<P> {
         if moves && !self.unsafe_startup.is_empty() {
             return Err(GrblError::Console("start-up blocks can turn the laser on; clear them ($N0= / $N1=) before moving".into()).into());
         }
-        if moves && !self.spindle_off {
-            self.read_parser_state()?;
-            if !self.spindle_off {
-                return Err(GrblError::Console("the board's spindle state is not M5; send M5 first".into()).into());
-            }
+        if moves {
+            self.require_spindle_off().map_err(|e| GrblError::Console(e.to_string()))?;
         }
         let timeout = if kind == ConsoleKind::Home { self.poll.homing_timeout } else { self.poll.response_timeout };
         let reply = match self.command(&line, timeout) {

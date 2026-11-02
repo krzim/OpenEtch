@@ -26,6 +26,17 @@ pub const MAX_BYTES: usize = 50 * 1024 * 1024;
 pub const MAX_POINTS: usize = 5_000_000;
 /// Largest chord error when flattening arcs, mm.
 const ARC_TOLERANCE_MM: f64 = 0.01;
+/// Farthest coordinate (and work offset or arc centre) accepted, mm: 10 km. A file beyond it is broken or hostile
+/// (and sums of such numbers overflow to infinity or NaN, which must never reach a document).
+pub const MAX_COORD_MM: f64 = 1e7;
+
+fn sane(p: Point) -> bool {
+    p.x.is_finite() && p.y.is_finite() && p.x.abs() <= MAX_COORD_MM && p.y.abs() <= MAX_COORD_MM
+}
+
+fn out_of_range<T>(line: usize) -> Result<T> {
+    invalid(format!("line {line}: a coordinate, offset or arc centre is beyond {MAX_COORD_MM} mm (or not a number)"))
+}
 
 /// One word: a letter and its number.
 #[derive(Debug, Clone, Copy)]
@@ -177,7 +188,8 @@ pub fn parse(text: &str) -> Result<Art> {
     let mut codes_seen = 0usize;
     let mut bad_lines = 0usize;
     let mut skipped: Vec<&'static str> = Vec::new();
-    for line in text.lines() {
+    for (n, line) in text.lines().enumerate() {
+        let n = n + 1;
         let ws = match words(line) {
             Ok(ws) => ws,
             Err(_) => {
@@ -209,9 +221,9 @@ pub fn parse(text: &str) -> Result<Art> {
                         v if (v - 92.0).abs() < 1e-6 => set_offset = true,
                         v if [28.0, 30.0, 53.0].iter().any(|c| (v - c).abs() < 1e-6) => {
                             non_modal_skip = true;
-                            skipped.push("G28/G30/G53 (machine-frame moves)");
+                            note(&mut skipped, "G28/G30/G53 (machine-frame moves)");
                         }
-                        v if (54.0..=59.0).contains(&v) => skipped.push("G54-G59 (work coordinate systems)"),
+                        v if (54.0..=59.0).contains(&v) => note(&mut skipped, "G54-G59 (work coordinate systems)"),
                         _ => {}
                     }
                 }
@@ -236,8 +248,11 @@ pub fn parse(text: &str) -> Result<Art> {
         if set_offset {
             // G92: the current position is renamed to the given coordinates.
             let want = Point::new(x.map_or(pos.x - offset.x, |v| v * k), y.map_or(pos.y - offset.y, |v| v * k));
+            if !sane(want) || !sane((pos - want).to_point()) {
+                return out_of_range(n);
+            }
             offset = pos - want;
-            skipped.push("G92 (coordinate offset, applied)");
+            note(&mut skipped, "G92 (coordinate offset, applied)");
             continue;
         }
         if non_modal_skip || (x.is_none() && y.is_none() && i.is_none() && j.is_none()) {
@@ -248,6 +263,9 @@ pub fn parse(text: &str) -> Result<Art> {
         } else {
             Point::new(x.map_or(pos.x, |v| v * k + offset.x), y.map_or(pos.y, |v| v * k + offset.y))
         };
+        if !sane(target) {
+            return out_of_range(n);
+        }
         let cutting = spindle_on && s > 0.0 || !uses_spindle;
         let key = if uses_spindle { (s * 1000.0).round() as i64 } else { i64::MIN };
         match motion {
@@ -259,6 +277,7 @@ pub fn parse(text: &str) -> Result<Art> {
                     _ => Some(pos + Vec2::new(i.unwrap_or(0.0) * k, j.unwrap_or(0.0) * k)),
                 };
                 match center {
+                    Some(c) if !sane(c) => return out_of_range(n),
                     Some(c) => {
                         let mut from = pos;
                         for p in arc(pos, target, c, cw) {
@@ -267,13 +286,13 @@ pub fn parse(text: &str) -> Result<Art> {
                         }
                     }
                     None => {
-                        skipped.push("arcs whose radius cannot reach their end (drawn as lines)");
+                        note(&mut skipped, "arcs whose radius cannot reach their end (drawn as lines)");
                         cuts.line(key, pos, target)?;
                     }
                 }
             }
             Some(2 | 3) if cutting => {
-                skipped.push("arcs outside the XY plane (drawn as lines)");
+                note(&mut skipped, "arcs outside the XY plane (drawn as lines)");
                 cuts.line(key, pos, target)?;
             }
             _ => cuts.break_chain(),
@@ -299,6 +318,13 @@ pub fn parse(text: &str) -> Result<Art> {
         return invalid("the G-code program cuts nothing (no feed moves with the laser on)");
     }
     Ok(art)
+}
+
+/// Remember a warning once (a file may repeat a code on millions of lines).
+fn note(skipped: &mut Vec<&'static str>, what: &'static str) {
+    if !skipped.contains(&what) {
+        skipped.push(what);
+    }
 }
 
 fn number(v: f64) -> String {
@@ -370,6 +396,25 @@ mod tests {
         let art = parse(g).unwrap();
         assert_eq!(art.paths.iter().map(|p| p.label.as_str()).collect::<Vec<_>>(), ["S 255", "S 500"]);
         assert_eq!(bbox(&art, 1), kurbo::Rect::new(190.0, 140.0, 210.0, 170.0));
+    }
+
+    /// Numbers near f64's limit (309 digits) in inches, offsets and incremental sums overflow to infinity and NaN;
+    /// such a file is refused rather than putting non-finite points into a document.
+    #[test]
+    fn hostile_coordinates_are_refused() {
+        let big = format!("1{}", "0".repeat(307));
+        for g in [
+            format!("G20\nG0 X{big}\nG92 X-{big}\nG0 X-{big}\nM3 S10\nG1 X-{big} Y10 F100\nG21\nG1 X5 Y5\n"),
+            format!("M3 S10\nG91\nG1 X{big} F100\nG1 X{big}\nG1 X-{big}\n"),
+            "M3 S10\nG1 X20000000 Y0 F100\n".to_owned(),
+            format!("M3 S10\nG0 X0 Y0\nG2 X0 Y0 I{big} J0 F100\n"),
+        ] {
+            let e = parse(&g).unwrap_err();
+            assert!(e.to_string().contains("beyond"), "{e}");
+        }
+        // Huge repetitive files keep one warning per kind.
+        let art = parse(&"G54\nG1 X1 Y1\nG1 X0 Y0\n".repeat(10_000)).unwrap();
+        assert_eq!(art.warnings.len(), 1, "{:?}", art.warnings);
     }
 
     #[test]
