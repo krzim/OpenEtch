@@ -97,8 +97,10 @@
   height: 32px;
 }
 
-.cuts-row:hover {
-  background: var(--surface-hover);
+@media (hover: hover) {
+  .cuts-row:hover {
+    background: var(--surface-hover);
+  }
 }
 
 .cuts-row.selected {
@@ -209,8 +211,10 @@
   color: var(--accent);
 }
 
-.tog:hover:not(:disabled) {
-  border-color: var(--border);
+@media (hover: hover) {
+  .tog:hover:not(:disabled) {
+    border-color: var(--border);
+  }
 }
 
 .tog:disabled {
@@ -388,8 +392,10 @@
   flex-basis: 28px;
 }
 
-.pal-swatch:hover {
-  transform: translateY(-1px);
+@media (hover: hover) {
+  .pal-swatch:hover {
+    transform: translateY(-1px);
+  }
 }
 
 .pal-text {
@@ -570,8 +576,10 @@
   cursor: pointer;
 }
 
-.sb-btn:hover {
-  color: var(--accent);
+@media (hover: hover) {
+  .sb-btn:hover {
+    color: var(--accent);
+  }
 }
 
 @media (max-width: 760px) {
@@ -842,8 +850,10 @@ a.menu-item {
   font-size: calc(14px * var(--ui-scale, 1));
 }
 
-.hk-x:hover {
-  color: var(--danger);
+@media (hover: hover) {
+  .hk-x:hover {
+    color: var(--danger);
+  }
 }
 
 .hk-add.recording {
@@ -1076,10 +1086,12 @@ a.menu-item {
   min-height: 24px;
   cursor: pointer;
 }
-.doc-tab-close:hover,
-.doc-tab-add:hover {
-  background: var(--surface-hover);
-  color: var(--text);
+@media (hover: hover) {
+  .doc-tab-close:hover,
+  .doc-tab-add:hover {
+    background: var(--surface-hover);
+    color: var(--text);
+  }
 }
 .doc-tab-add {
   align-self: center;

@@ -1,4 +1,7 @@
-/* OpenEtch: Fusion-inspired light and dark themes; every colour is a token below. Plain CSS; touch targets are at least 40px. */
+/* OpenEtch: Fusion-inspired light and dark themes; every colour is a token below (sizes, spacing, z-index and the
+   chrome budget are in tokens.css). Plain CSS. Text and UI colours meet WCAG 2.2 AA in both themes: tokens.test.ts
+   checks the pairs. Fusion-neutral greys with one blue accent; amber means "laser armed / framing", red STOP, errors and
+   out-of-field, green ready, purple AI-origin steps. */
 
 :root {
   /* light theme tokens (default) */
@@ -12,12 +15,16 @@
   --border-soft: #dcdde0;
   --text: #24272b;
   --text-2: #5d6168;
-  --muted: #8a8e95;
-  --accent: #0696d7;
-  --accent-hover: #0582bb;
+  --muted: #656a72;
+  --accent: #0a73ad;
+  --accent-hover: #08608f;
   --accent-soft: #d7eefa;
-  --accent-fill: rgba(6, 150, 215, 0.08);
+  --accent-fill: rgba(10, 115, 173, 0.08);
+  /* Filled buttons (primary, active segments, badges): white text on it is AA. */
+  --accent-btn: #0a73ad;
+  --accent-btn-hover: #08608f;
   --on-accent: #ffffff;
+  --input-border: #8a8f98;
   --icon: #3a5e7a;
   --danger: #d32f2f;
   --danger-dark: #a61f1f;
@@ -26,23 +33,33 @@
   --warn: #e08600;
   --warn-bg: #fff7e6;
   --warn-text: #8a4f00;
-  --ok: #2e9d4a;
+  /* Text on an amber fill (warning chips). */
+  --on-warn: #3a2400;
+  /* The amber Request run / Start icon on the ribbon. */
+  --run-icon: #b35c00;
+  --ok: #23803b;
+  /* Green fills under white text (badges). */
+  --ok-fill: #23803b;
   --agent: #7b4fd6;
   --script: #5f6b7a;
   --flash-bg: #efe7ff;
-  --topbar-bg: #3c3f44;
-  --topbar-fg: #f1f1f1;
-  --topbar-border: #2b2d31;
-  --topbar-muted: #b9bcc2;
-  --topbar-hover: #4b4f55;
-  --topbar-tabs: #2f3236;
-  --topbar-tab-fg: #d6d8dc;
-  --topbar-tab-active-bg: #f5f5f6;
+  /* The top bar follows the theme (owner decision 7). */
+  --topbar-bg: #eef0f2;
+  --topbar-fg: #24272b;
+  --topbar-border: #c9cbcf;
+  --topbar-muted: #5d6168;
+  --topbar-hover: #dfe2e6;
+  --topbar-tabs: #dfe2e6;
+  --topbar-tab-fg: #3d4147;
+  --topbar-tab-active-bg: #ffffff;
   --topbar-tab-active-fg: #1e2023;
   --dot-ok: #3ccf63;
   --dot-wait: #f1b31c;
   --dot-bad: #ef5350;
   --stop-border: #ff8a80;
+  /* STOP: the same red in both themes, white text AA. */
+  --stop-bg: #c62828;
+  --stop-bg-hover: #a51f1f;
   --shadow: rgba(0, 0, 0, 0.2);
   --shadow-strong: rgba(0, 0, 0, 0.25);
   --scrim: rgba(30, 32, 36, 0.18);
@@ -52,7 +69,7 @@
   --hint-fg: #ffffff;
   --toast-bg: #2f3236;
   --toast-fg: #ffffff;
-  --drop-bg: rgba(6, 150, 215, 0.12);
+  --drop-bg: rgba(10, 115, 173, 0.12);
   --swatch-border: rgba(0, 0, 0, 0.25);
   /* canvas */
   --canvas: #dfe1e4;
@@ -76,7 +93,7 @@
   --handle-fill: #ffffff;
   --tp-jump: #9aa0a8;
   --tp-shade: #111111;
-  --crosshair: rgba(6, 150, 215, 0.55);
+  --crosshair: rgba(10, 115, 173, 0.55);
   --radius: 4px;
   color-scheme: light;
   font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
@@ -86,89 +103,10 @@
   -webkit-text-size-adjust: 100%;
 }
 
-/* Dark theme: "Match system" (no data-theme yet, or data-theme="system" never set) follows the OS; data-theme="dark"
-   forces it. Keep --field in step with FIELD_BG in workspace/theme.ts (canvas stroke contrast), and --tp-jump and
-   --tp-shade with TOOLPATH_INK there (the toolpath preview is drawn on a canvas). */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #17191c;
-    --chrome: #23262a;
-    --chrome-2: #2b2f34;
-    --panel: #1f2226;
-    --surface: #2a2e33;
-    --surface-hover: #33383e;
-    --border: #3d4248;
-    --border-soft: #31353b;
-    --text: #e4e6e9;
-    --text-2: #aab0b7;
-    --muted: #7f868e;
-    --accent: #2aa8e8;
-    --accent-hover: #55bcf0;
-    --accent-soft: #173a4e;
-    --accent-fill: rgba(42, 168, 232, 0.12);
-    --on-accent: #ffffff;
-    --icon: #93b9d8;
-    --danger: #ef5350;
-    --danger-dark: #c62828;
-    --danger-bg: #3c2023;
-    --danger-overlay: rgba(198, 40, 40, 0.92);
-    --warn: #f0a33a;
-    --warn-bg: #3a2d14;
-    --warn-text: #f3c27a;
-    --ok: #4cb86a;
-    --agent: #a688f2;
-    --script: #8f9bab;
-    --flash-bg: #3a2f5a;
-    --topbar-bg: #141518;
-    --topbar-fg: #e8e9eb;
-    --topbar-border: #0b0c0e;
-    --topbar-muted: #9ca1a8;
-    --topbar-hover: #2d3035;
-    --topbar-tabs: #0e0f11;
-    --topbar-tab-fg: #c6c9ce;
-    --topbar-tab-active-bg: #2f3338;
-    --topbar-tab-active-fg: #f3f4f5;
-    --dot-ok: #3ccf63;
-    --dot-wait: #f1b31c;
-    --dot-bad: #ef5350;
-    --stop-border: #ff8a80;
-    --shadow: rgba(0, 0, 0, 0.45);
-    --shadow-strong: rgba(0, 0, 0, 0.55);
-    --scrim: rgba(0, 0, 0, 0.4);
-    --backdrop: rgba(0, 0, 0, 0.55);
-    --overlay-bg: rgba(35, 38, 42, 0.94);
-    --hint-bg: rgba(8, 9, 11, 0.86);
-    --hint-fg: #f1f1f1;
-    --toast-bg: #3a3f46;
-    --toast-fg: #ffffff;
-    --drop-bg: rgba(42, 168, 232, 0.15);
-    --swatch-border: rgba(255, 255, 255, 0.35);
-    --canvas: #121416;
-    --field: #1d2024;
-    --field-edge: #5d646e;
-    --grid-minor: #282c32;
-    --grid-major: #3a4048;
-    --axis-x: rgba(239, 83, 80, 0.6);
-    --axis-y: rgba(76, 184, 106, 0.6);
-    --stock-fill: rgba(160, 170, 185, 0.09);
-    --stock-stroke: #8d95a2;
-    --outside: rgba(239, 83, 80, 0.7);
-    --marquee-enclose: #ef5350;
-    --marquee-enclose-fill: rgba(239, 83, 80, 0.1);
-    --marquee-cross: #4cb86a;
-    --marquee-cross-fill: rgba(76, 184, 106, 0.1);
-    --snap: #ff4fa8;
-    --snap-label: #ff8cc6;
-    --snap-halo: rgba(20, 22, 26, 0.92);
-    --constraint: #ffa940;
-    --handle-fill: #eef0f2;
-    --tp-jump: #6f7783;
-    --tp-shade: #f2f2f2;
-    --crosshair: rgba(42, 168, 232, 0.6);
-    color-scheme: dark;
-  }
-}
-
+/* Dark theme. <html data-theme> is always "light" or "dark": main.tsx resolves "Match system" before the first paint
+   and usePrefs.ts keeps it current, so this one block is the whole dark palette. Keep --field in step with FIELD_BG in
+   workspace/theme.ts (canvas stroke contrast), and --tp-jump and --tp-shade with TOOLPATH_INK there (the toolpath
+   preview is drawn on a canvas). */
 :root[data-theme="dark"] {
   --bg: #17191c;
   --chrome: #23262a;
@@ -180,12 +118,16 @@
   --border-soft: #31353b;
   --text: #e4e6e9;
   --text-2: #aab0b7;
-  --muted: #7f868e;
+  --muted: #9aa1a9;
+  /* The bright blue stays for text, outlines and focus; filled buttons use a darker blue so white text is AA. */
   --accent: #2aa8e8;
   --accent-hover: #55bcf0;
   --accent-soft: #173a4e;
   --accent-fill: rgba(42, 168, 232, 0.12);
+  --accent-btn: #1a78ab;
+  --accent-btn-hover: #1f88c2;
   --on-accent: #ffffff;
+  --input-border: #757c86;
   --icon: #93b9d8;
   --danger: #ef5350;
   --danger-dark: #c62828;
@@ -194,7 +136,10 @@
   --warn: #f0a33a;
   --warn-bg: #3a2d14;
   --warn-text: #f3c27a;
+  --on-warn: #3a2400;
+  --run-icon: #f0a33a;
   --ok: #4cb86a;
+  --ok-fill: #2e7d43;
   --agent: #a688f2;
   --script: #8f9bab;
   --flash-bg: #3a2f5a;
@@ -211,6 +156,8 @@
   --dot-wait: #f1b31c;
   --dot-bad: #ef5350;
   --stop-border: #ff8a80;
+  --stop-bg: #c62828;
+  --stop-bg-hover: #a51f1f;
   --shadow: rgba(0, 0, 0, 0.45);
   --shadow-strong: rgba(0, 0, 0, 0.55);
   --scrim: rgba(0, 0, 0, 0.4);
@@ -435,8 +382,10 @@ textarea {
   color: var(--topbar-fg);
 }
 
-.topbar .icon-btn:hover {
-  background: var(--topbar-hover);
+@media (hover: hover) {
+  .topbar .icon-btn:hover {
+    background: var(--topbar-hover);
+  }
 }
 
 .conn {
@@ -474,7 +423,7 @@ textarea {
 
 .warn-chip {
   background: var(--warn);
-  color: var(--on-accent);
+  color: var(--on-warn);
   border-radius: 3px;
   padding: 1px 6px;
   font-size: calc(11px * var(--ui-scale, 1));
@@ -501,9 +450,14 @@ textarea {
   cursor: pointer;
 }
 
-.file-btn:hover,
 .file-btn.open {
   background: var(--topbar-hover);
+}
+
+@media (hover: hover) {
+  .file-btn:hover {
+    background: var(--topbar-hover);
+  }
 }
 
 .menu {
@@ -546,10 +500,16 @@ textarea {
   cursor: pointer;
 }
 
-.menu-item:hover:not(:disabled),
 .menu-item:focus-visible {
   background: var(--accent-soft);
   outline: 0;
+}
+
+@media (hover: hover) {
+  .menu-item:hover:not(:disabled) {
+    background: var(--accent-soft);
+    outline: 0;
+  }
 }
 
 .menu-item:disabled {
@@ -614,8 +574,10 @@ textarea {
   cursor: pointer;
 }
 
-.project-row:hover:not(:disabled) {
-  background: var(--chrome-2);
+@media (hover: hover) {
+  .project-row:hover:not(:disabled) {
+    background: var(--chrome-2);
+  }
 }
 
 .project-row.current {
@@ -744,8 +706,10 @@ textarea {
   padding: 0;
 }
 
-.icon-btn:hover:not(:disabled) {
-  background: var(--chrome-2);
+@media (hover: hover) {
+  .icon-btn:hover:not(:disabled) {
+    background: var(--chrome-2);
+  }
 }
 
 .icon-btn:disabled {
@@ -780,8 +744,10 @@ textarea {
   gap: 6px;
 }
 
-.btn:hover:not(:disabled) {
-  background: var(--chrome-2);
+@media (hover: hover) {
+  .btn:hover:not(:disabled) {
+    background: var(--chrome-2);
+  }
 }
 
 .btn:disabled {
@@ -790,13 +756,15 @@ textarea {
 }
 
 .btn-primary {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--accent-btn);
+  border-color: var(--accent-btn);
   color: var(--on-accent);
 }
 
-.btn-primary:hover:not(:disabled) {
-  background: var(--accent-hover);
+@media (hover: hover) {
+  .btn-primary:hover:not(:disabled) {
+    background: var(--accent-btn-hover);
+  }
 }
 
 .btn-warn {
@@ -812,12 +780,14 @@ textarea {
   font-weight: 600;
 }
 
-.btn-danger:hover:not(:disabled) {
-  background: var(--danger-dark);
+@media (hover: hover) {
+  .btn-danger:hover:not(:disabled) {
+    background: var(--danger-dark);
+  }
 }
 
 .btn-stop {
-  background: var(--danger);
+  background: var(--stop-bg);
   border-color: var(--stop-border);
   color: var(--on-accent);
   font-weight: 700;
@@ -827,8 +797,14 @@ textarea {
   flex: none;
 }
 
-.btn-stop:hover:not(:disabled) {
-  background: var(--danger-dark);
+.btn-stop:active {
+  background: var(--stop-bg-hover);
+}
+
+@media (hover: hover) {
+  .btn-stop:hover:not(:disabled) {
+    background: var(--stop-bg-hover);
+  }
 }
 
 .btn-row {
@@ -890,9 +866,11 @@ textarea {
   color: var(--icon);
 }
 
-.tool-btn:hover:not(:disabled) {
-  background: var(--chrome-2);
-  border-color: var(--border-soft);
+@media (hover: hover) {
+  .tool-btn:hover:not(:disabled) {
+    background: var(--chrome-2);
+    border-color: var(--border-soft);
+  }
 }
 
 .tool-btn.active {
@@ -906,7 +884,7 @@ textarea {
 }
 
 .tool-run .icon {
-  color: var(--warn);
+  color: var(--run-icon);
 }
 
 /* ---- main area and panels ---------------------------------------------------------------------------------- */
@@ -1127,10 +1105,15 @@ textarea {
   transition: background 0.1s;
 }
 
-.dock-splitter:hover::after,
 .dock-splitter:focus-visible::after,
 .dock-splitter:active::after {
   background: var(--accent);
+}
+
+@media (hover: hover) {
+  .dock-splitter:hover::after {
+    background: var(--accent);
+  }
 }
 
 .dock-splitter-bottom {
@@ -1210,9 +1193,11 @@ textarea {
   box-shadow: inset 0 -2px 0 var(--accent);
 }
 
-.tree-head:hover,
-.tree-row:hover {
-  background: var(--chrome-2);
+@media (hover: hover) {
+  .tree-head:hover,
+  .tree-row:hover {
+    background: var(--chrome-2);
+  }
 }
 
 .tree-head.strong .tree-label {
@@ -1323,7 +1308,7 @@ textarea {
   min-width: 0;
   display: flex;
   align-items: center;
-  border: 1px solid var(--border);
+  border: 1px solid var(--input-border);
   border-radius: var(--radius);
   background: var(--surface);
   min-height: 34px;
@@ -1911,8 +1896,10 @@ textarea {
   cursor: pointer;
 }
 
-.tl-entry.clickable:hover {
-  border-color: var(--accent);
+@media (hover: hover) {
+  .tl-entry.clickable:hover {
+    border-color: var(--accent);
+  }
 }
 
 /* After the marker: rolled back, greyed out, not deleted (Fusion). */
@@ -2178,9 +2165,11 @@ textarea {
   padding: 0;
 }
 
-.mini-btn:hover:not(:disabled) {
-  background: var(--chrome-2);
-  border-color: var(--border-soft);
+@media (hover: hover) {
+  .mini-btn:hover:not(:disabled) {
+    background: var(--chrome-2);
+    border-color: var(--border-soft);
+  }
 }
 
 .mini-btn.active {
@@ -2303,8 +2292,10 @@ textarea {
   cursor: pointer;
 }
 
-.pass-tab:hover {
-  background: var(--chrome-2);
+@media (hover: hover) {
+  .pass-tab:hover {
+    background: var(--chrome-2);
+  }
 }
 
 .pass-tab.active {
@@ -2479,7 +2470,7 @@ kbd {
 }
 
 .badge.origin-ui {
-  background: var(--accent);
+  background: var(--accent-btn);
 }
 
 .badge.origin-agent {
@@ -2495,7 +2486,7 @@ kbd {
 }
 
 .badge.risk-query {
-  background: var(--ok);
+  background: var(--ok-fill);
 }
 
 /* ---- modal ------------------------------------------------------------------------------------------------- */
@@ -2579,7 +2570,7 @@ kbd {
 }
 
 .segmented button.active {
-  background: var(--accent);
+  background: var(--accent-btn);
   color: var(--on-accent);
 }
 
@@ -2657,8 +2648,10 @@ kbd {
   cursor: pointer;
 }
 
-.palette-item:hover {
-  background: var(--chrome-2);
+@media (hover: hover) {
+  .palette-item:hover {
+    background: var(--chrome-2);
+  }
 }
 
 .palette-item.active {
@@ -2828,8 +2821,10 @@ kbd {
   cursor: pointer;
 }
 
-.link-btn:hover {
-  color: var(--accent-hover);
+@media (hover: hover) {
+  .link-btn:hover {
+    color: var(--accent-hover);
+  }
 }
 
 .field-per-file {
@@ -3007,8 +3002,10 @@ kbd {
   cursor: pointer;
 }
 
-.dev-table tbody tr:hover {
-  background: var(--chrome-2);
+@media (hover: hover) {
+  .dev-table tbody tr:hover {
+    background: var(--chrome-2);
+  }
 }
 
 .dev-table tbody tr.selected {
@@ -3420,4 +3417,101 @@ image.pixelated {
   grid-row: auto;
   grid-column: span 2;
   width: 46px;
+}
+
+/* ---- touch, focus and density (docs/ux/ui-plan-2026-11.md 1.2, 1.5) -------------------------------------------- */
+
+/* No double-tap zoom delay; pinch zoom on the page stays possible outside the canvas (the canvas takes its own). */
+html {
+  touch-action: manipulation;
+}
+
+/* Pressed states, for touch screens that have no hover. */
+.btn:active:not(:disabled),
+.icon-btn:active:not(:disabled),
+.tool-btn:active:not(:disabled),
+.menu-item:active:not(:disabled),
+.mini-btn:active:not(:disabled),
+.file-btn:active {
+  background: var(--surface-hover);
+}
+
+.btn-primary:active:not(:disabled) {
+  background: var(--accent-btn-hover);
+}
+
+/* One focus ring for keyboard users (WCAG 2.4.7 / 2.4.11): never removed without this replacement. */
+:where(button, a, summary, select, [role="menuitem"], [role="menuitemcheckbox"], [role="treeitem"], [role="tab"], [role="separator"], [tabindex]):focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--panel),
+    0 0 0 4px var(--accent);
+}
+
+:where(input, textarea):focus-visible:not(.field-input input) {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Coarse pointers: 16 px or more in fields, so focusing one never zooms the page (iOS). */
+@media (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: max(16px, 1em);
+  }
+}
+
+:root[data-density="touch"] :is(input, select, textarea) {
+  font-size: max(16px, 1em);
+}
+
+/* Touch density: 44 px targets for the small controls (WCAG 2.5.8 asks 24 with a mouse, Apple 44 with a finger). */
+:root[data-density="touch"] .icon-btn.small,
+:root[data-density="touch"] .doc-tab-close,
+:root[data-density="touch"] .doc-tab-add {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+:root[data-density="touch"] .mini-btn {
+  width: 44px;
+  height: 44px;
+}
+
+:root[data-density="touch"] .mini-grid,
+:root[data-density="touch"] .mini-grid.eight,
+:root[data-density="touch"] .mini-grid.two {
+  grid-template-columns: repeat(4, 44px);
+}
+
+:root[data-density="touch"] .mini-select {
+  height: 44px;
+  grid-row: auto;
+}
+
+:root[data-density="touch"] .doc-tab-btn {
+  min-height: 44px;
+}
+
+:root[data-density="touch"] .dock-float-grip {
+  width: 44px;
+  height: 44px;
+}
+
+:root[data-density="touch"] .pal-swatch {
+  flex: 0 0 44px;
+  max-width: none;
+}
+
+:root[data-density="touch"] .file-btn,
+:root[data-density="touch"] .btn,
+:root[data-density="touch"] .menu-item {
+  min-height: 44px;
+}
+
+:root[data-density="touch"] .tool-rail .mini-grid,
+:root[data-density="touch"] .tool-rail .mini-grid.eight,
+:root[data-density="touch"] .tool-rail .mini-grid.two {
+  grid-template-columns: 44px;
 }

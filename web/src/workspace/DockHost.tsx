@@ -381,6 +381,16 @@ export function WindowMenu(p: { focusCanvas?: boolean; onFocusCanvas?: () => voi
   );
 }
 
+/**
+ * Esc belongs to something else first: a dialog, an open menu, or a field being edited (its Esc reverts the edit).
+ * Overlays and sheets close on Esc only when none of these is there.
+ */
+export function escapeTakenElsewhere(e: KeyboardEvent): boolean {
+  const el = e.target as HTMLElement | null;
+  const typing = !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable);
+  return typing || !!document.querySelector(".modal-backdrop, .menu");
+}
+
 // ---- side panels: splitter, rail, overlay -------------------------------------------------------------------------------
 
 /** Pixels per arrow-key press on a splitter. */
@@ -522,7 +532,7 @@ export function SidePanel(p: SidePanelProps) {
   useEffect(() => {
     if (!overlayOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape" || document.querySelector(".modal-backdrop")) return;
+      if (e.key !== "Escape" || escapeTakenElsewhere(e)) return;
       e.preventDefault();
       e.stopImmediatePropagation();
       onOverlay(false);

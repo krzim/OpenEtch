@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { LAYOUT_MODES, type LayoutMode } from "./layoutMode.ts";
 import { bottomRow, chromeBudget, chromeHeight, toastBottom, windowTitle, type ChromeBudget } from "./shell.ts";
+import { SHEET_SNAPS, SNAP_FRACTION, snapFor } from "./phone.ts";
 
 test("chromeBudget: the plan's numbers per mode", () => {
   assert.deepEqual(chromeBudget("wide"), { top: 44, tool: 64, context: 32, palette: 24, timeline: 52, status: 24, nav: 0, bottom: 76, toolRail: 0 });
@@ -90,4 +91,17 @@ test("windowTitle: document name, unsaved marker, app name", () => {
   assert.equal(windowTitle(null, false), "OpenEtch");
   assert.equal(windowTitle("", true), "• — OpenEtch");
   assert.equal(windowTitle(undefined, undefined), "OpenEtch");
+});
+
+test("bottom sheet: a drag settles on the nearest height, or closes well under the peek", () => {
+  assert.deepEqual(SHEET_SNAPS, ["peek", "half", "full"]);
+  assert.equal(snapFor(0.3), "peek");
+  assert.equal(snapFor(0.4), "peek");
+  assert.equal(snapFor(0.45), "half");
+  assert.equal(snapFor(0.6), "half");
+  assert.equal(snapFor(0.8), "full");
+  assert.equal(snapFor(1), "full");
+  assert.equal(snapFor(0.2), "peek", "a little under the peek stays open");
+  assert.equal(snapFor(0.1), null, "dragged well down: close");
+  assert.ok(SNAP_FRACTION.peek < SNAP_FRACTION.half && SNAP_FRACTION.half < SNAP_FRACTION.full);
 });

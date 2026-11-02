@@ -57,9 +57,11 @@ import { LayerSection, PropertiesPanel } from "./components/PropertiesPanel.tsx"
 import { Timeline } from "./components/Timeline.tsx";
 import { Toolbar, type ArrangeAction } from "./components/Toolbar.tsx";
 import { TopBar, type Workspace } from "./components/TopBar.tsx";
+import { Icon } from "./components/ui.tsx";
 import { Viewport, type PreviewOptions, type SnapSettings, type Tool, type ViewStyle } from "./components/Viewport.tsx";
 import { CutsLayers } from "./workspace/CutsLayers.tsx";
-import { TopActions } from "./workspace/HelpMenu.tsx";
+import { AboutDialog, HelpItems, TopActions } from "./workspace/HelpMenu.tsx";
+import { PhoneShell } from "./workspace/PhoneShell.tsx";
 import { LaserDock, machineState } from "./workspace/LaserDock.tsx";
 import { NumericBar } from "./workspace/NumericBar.tsx";
 import { PaletteBar } from "./workspace/PaletteBar.tsx";
@@ -175,6 +177,7 @@ export function App() {
   const [rightOpen, setRightOpen] = useState(true);
   const [overlay, setOverlay] = useState<SideArea | null>(null);
   const [focus, setFocus] = useState(false);
+  const [about, setAbout] = useState(false);
   const stripBusy = useContextStripBusy();
   const fileRef = useRef<HTMLInputElement>(null);
   const toastId = useRef(0);
@@ -359,7 +362,7 @@ export function App() {
 
   // LightBurn's Arrange > Distribute (H-Spaced / H-Centered / V-Spaced / V-Centered), hidden in Beginner Mode like
   // LightBurn's. The arrange handler is defined further down; the menu reaches it through a ref.
-  const { beginnerMode, hotkeys: prefHotkeys, timelinePinned } = usePrefs();
+  const { beginnerMode, hotkeys: prefHotkeys, timelinePinned, theme: themePref } = usePrefs();
   // Timeline and status bar: two rows (wide, pinned compact) or one merged row (compact, tablet).
   const row = bottomRow(layout, timelinePinned);
   useEffect(() => {
@@ -751,6 +754,8 @@ export function App() {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
       const k = e.key.toLowerCase();
+      // Ctrl/Cmd with = + - 0 never zooms the page (the canvas has its own zoom keys).
+      if (mod && !e.altKey && (k === "=" || k === "+" || k === "-" || k === "0")) e.preventDefault();
       if (mod && !e.altKey && k === "s") {
         // Never the browser's "save page"; Save prompts for a name the first time, Ctrl+Shift+S always.
         e.preventDefault();
@@ -1143,57 +1148,60 @@ export function App() {
 
   // ---- the shell's parts (placed per layout mode below) ----------------------------------------------------------
 
-  const topBar = (
-    <TopBar
-      fileMenu={
-        <FileMenu
-          file={file}
-          onImport={openImport}
-          onDevices={canDevices ? () => setDevicesOpen(true) : undefined}
-          recent={(close) => (
-            <RecentProjects
-              current={file.projectName}
-              disabled={file.busy}
-              onOpen={(name) => {
-                close();
-                file.openProject(name);
-              }}
-            />
-          )}
-          extra={(close) => (
-            <>
-              {tabs.api.supported && (
-                <button
-                  role="menuitem"
-                  className="menu-item"
-                  onClick={() => {
-                    close();
-                    tabs.api.newTab();
-                  }}
-                >
-                  <span>{t("tabs.newTab")}</span>
-                </button>
-              )}
-              <WorkspaceFileItems close={close} open={ws.open} />
-              {libsUi.fileItems(close)}
-            </>
-          )}
-          files={filesUi.menu}
-          onSaveGcode={
-            isGrblMachine(machine)
-              ? () =>
-                  void jobApi
-                    .exportGcode()
-                    .then(({ blob, filename }) => {
-                      const name = gcodeFileName(filename, file.projectName ?? file.openedName ?? doc?.name ?? null);
-                      saveBlob(blob, name);
-                      notify(t("fm.gcodeSaved", { name }));
-                    })
-                    .catch(report)
-              : undefined
-          }
+  const fileMenu = (
+    <FileMenu
+      file={file}
+      onImport={openImport}
+      onDevices={canDevices ? () => setDevicesOpen(true) : undefined}
+      recent={(close) => (
+        <RecentProjects
+          current={file.projectName}
+          disabled={file.busy}
+          onOpen={(name) => {
+            close();
+            file.openProject(name);
+          }}
         />
+      )}
+      extra={(close) => (
+        <>
+          {tabs.api.supported && (
+            <button
+              role="menuitem"
+              className="menu-item"
+              onClick={() => {
+                close();
+                tabs.api.newTab();
+              }}
+            >
+              <span>{t("tabs.newTab")}</span>
+            </button>
+          )}
+          <WorkspaceFileItems close={close} open={ws.open} />
+          {libsUi.fileItems(close)}
+        </>
+      )}
+      files={filesUi.menu}
+      onSaveGcode={
+        isGrblMachine(machine)
+          ? () =>
+              void jobApi
+                .exportGcode()
+                .then(({ blob, filename }) => {
+                  const name = gcodeFileName(filename, file.projectName ?? file.openedName ?? doc?.name ?? null);
+                  saveBlob(blob, name);
+                  notify(t("fm.gcodeSaved", { name }));
+                })
+                .catch(report)
+          : undefined
       }
+    />
+  );
+
+  const topBar = (onMenu?: () => void) => (
+    <TopBar
+      fileMenu={fileMenu}
+      onMenu={onMenu}
       extra={
         <>
           {layout === "wide" && <WindowMenu focusCanvas={focus} onFocusCanvas={toggleFocus} />}
@@ -1534,7 +1542,7 @@ export function App() {
           run={run}
         />
       )}
-      <FloatHost />
+      {layout !== "phone" && <FloatHost />}
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />}
       {dropLabel && <DropOverlay label={dropLabel} />}
       <div className="toasts">
@@ -1551,6 +1559,7 @@ export function App() {
           </button>
         ))}
       </div>
+      {about && <AboutDialog machine={machine} onClose={() => setAbout(false)} />}
       <ConnectScreen
         onConnected={() => {
           void engine.refreshDoc();
@@ -1559,6 +1568,164 @@ export function App() {
       />
     </>
   );
+
+  if (layout === "phone") {
+    const themeName = { light: t("theme.light"), dark: t("theme.dark"), system: t("theme.system") }[themePref];
+    const nextTheme = ({ light: "dark", dark: "system", system: "light" } as const)[themePref];
+    const moreRow = (label: string, action: () => void, disabled = false) => (
+      <button type="button" className="menu-item" disabled={disabled} onClick={action}>
+        <span>{label}</span>
+      </button>
+    );
+    return (
+      <PhoneShell
+        className={`ws-${workspace}`}
+        topBar={(openMenu) => topBar(openMenu)}
+        banner={<ConnectionBanner />}
+        canvas={canvasStage}
+        canvasHud={
+          <>
+            <button type="button" className="icon-btn phone-hud-btn" title={t("top.undo")} aria-label={t("top.undo")} onClick={() => void undo()}>
+              <Icon name="undo" />
+            </button>
+            <button type="button" className="icon-btn phone-hud-btn" title={t("top.redo")} aria-label={t("top.redo")} onClick={() => void redo()}>
+              <Icon name="redo" />
+            </button>
+          </>
+        }
+        toolStrip={workspace === "design" ? toolbar : null}
+        selectionSheet={
+          workspace === "design" && hasSel ? (
+            <div className="phone-selection">
+              <NumericBar doc={doc} selection={selection} run={run} report={report} />
+              <div className="phone-actions">
+                <button type="button" className="btn" disabled={!doc?.stock} onClick={() => centreOn("stock")}>
+                  {t("app.centreStock")}
+                </button>
+                <button type="button" className="btn" onClick={() => centreOn("field")}>
+                  {t("app.centreField")}
+                </button>
+                <button type="button" className="btn" onClick={() => touchAction("rotate90")}>
+                  {t("shell.rotate90")}
+                </button>
+                <button type="button" className="btn btn-danger" onClick={deleteSelection}>
+                  {t("app.delete")}
+                </button>
+              </div>
+            </div>
+          ) : null
+        }
+        layersSheet={
+          <>
+            {doc && (
+              <CutsLayers
+                doc={doc}
+                selection={selection}
+                machine={machine}
+                has={has}
+                run={run}
+                report={report}
+                notify={notify}
+                onSelectLayer={(id, all) => {
+                  if (all && doc) setSelection(selectLayerObjects(doc, id));
+                  else setSelection({ objects: [], layer: id, stock: false });
+                }}
+              />
+            )}
+            <div className="phone-palette">
+              <PaletteBar doc={doc} selected={selection.objects} run={run} report={report} notify={notify} has={has} />
+            </div>
+          </>
+        }
+        jobSheet={workspace === "laser" ? rightContent : null}
+        onTab={(tab) => {
+          const w: Workspace = tab === "job" ? "laser" : "design";
+          if (w !== workspace) switchWorkspace(w);
+        }}
+        moreItems={
+          <>
+            <details open>
+              <summary>
+                <ShellIcon name="file" />
+                {t("shell.moreFile")}
+              </summary>
+              <div className="phone-more-body">
+                {moreRow(t("fm.new"), () => file.newDocument(), file.busy)}
+                {moreRow(t("fm.open"), () => file.setModal({ kind: "open" }), file.busy)}
+                {moreRow(t("fm.save"), () => saveFile(), file.busy)}
+                {moreRow(t("fm.saveAs"), () => file.setModal({ kind: "saveAs" }), file.busy)}
+                {moreRow(t("fm.import"), openImport, file.busy)}
+                <div className="phone-filemenu">{fileMenu}</div>
+              </div>
+            </details>
+            <details>
+              <summary>
+                <ShellIcon name="layers" />
+                {t("win.browser")}
+              </summary>
+              <div className="phone-more-body">{leftContent}</div>
+            </details>
+            <details>
+              <summary>
+                <ShellIcon name="history" />
+                {t("shell.history")}
+              </summary>
+              <div className="phone-more-body">
+                <Timeline
+                  variant="list"
+                  timeline={engine.timeline}
+                  flash={engine.remoteEdit}
+                  onGoto={(marker) => void engine.historyGoto(marker).catch(report)}
+                  onDelete={(index) => void engine.historyDelete(index).catch(report)}
+                />
+              </div>
+            </details>
+            <details>
+              <summary>
+                <ShellIcon name="settings" />
+                {t("shell.moreSettings")}
+              </summary>
+              <div className="phone-more-body">
+                {moreRow(t("prefs.title"), () => ws.open("prefs"))}
+                {moreRow(t("theme.switchTitle", { theme: themeName }), () => updatePrefs({ theme: nextTheme }))}
+                {moreRow(t("shell.useAsApp"), () => openAppModeDialog())}
+                {canDevices && moreRow(t("shell.devices"), () => setDevicesOpen(true))}
+              </div>
+            </details>
+            <details>
+              <summary>
+                <Icon name="more" />
+                {t("help.menu")}
+              </summary>
+              <div className="phone-more-body">
+                <HelpItems close={() => {}} onHotkeys={() => ws.open("hotkeys")} onAbout={() => setAbout(true)} helpExtra={libsUi.helpItems} />
+              </div>
+            </details>
+            <details>
+              <summary>
+                <ShellIcon name="monitor" />
+                {t("shell.desktopFeatures")}
+              </summary>
+              <div className="phone-note hint">
+                {t("shell.desktopFeaturesHint")}
+                <ul>
+                  <li>{t("shell.dfNodes")}</li>
+                  <li>{t("shell.dfPen")}</li>
+                  <li>{t("shell.dfTrim")}</li>
+                  <li>{t("shell.dfDocking")}</li>
+                  <li>{t("shell.dfArt")}</li>
+                  <li>{t("shell.dfDevices")}</li>
+                  <li>{t("shell.dfLens")}</li>
+                  <li>{t("shell.dfConsole")}</li>
+                </ul>
+              </div>
+            </details>
+          </>
+        }
+        overlays={overlays}
+      />
+    );
+  }
 
   const sizeVars = {
     "--dock-left-size": `${dockLayout.sizes.left}px`,
@@ -1575,7 +1742,7 @@ export function App() {
 
   return (
     <div className={`app ws-${workspace}`} style={sizeVars} data-focus={focus ? "" : undefined}>
-      {topBar}
+      {topBar()}
       <ConnectionBanner />
       {tabs.bar && <div className="doc-tabs-row">{tabs.bar}</div>}
       {layout !== "tablet" && toolbar}
