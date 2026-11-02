@@ -1,5 +1,9 @@
 # Attribution
 
+OpenEtch is licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE) or the [MIT license](LICENSE-MIT),
+at your option. Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in OpenEtch,
+as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
+
 Third-party code or data that enters this repository. Rust crate dependencies are pinned by `Cargo.lock` and are not
 listed here.
 

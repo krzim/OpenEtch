@@ -3,6 +3,8 @@ name = "engine"
 description = "OpenEtch engine: HTTP/WebSocket API, MCP server, run approval."
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 

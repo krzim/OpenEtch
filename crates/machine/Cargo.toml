@@ -3,6 +3,8 @@ name = "machine"
 description = "Machine profile, Link transport trait, SimLink, UsbLink (nusb), Controller."
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 

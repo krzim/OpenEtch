@@ -3,6 +3,8 @@ name = "fileio"
 description = "File formats and image tools: SVG/DXF/PDF/AI export, PDF/AI/EPS/HPGL/Gerber/3D model import, zip, trace, rasterise"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
