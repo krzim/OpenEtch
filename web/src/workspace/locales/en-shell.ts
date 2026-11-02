@@ -4,4 +4,10 @@
 export const EN_SHELL = {
   "shell.menu": "Menu",
   "shell.more": "More",
+  "shell.contextStrip": "Selection and tool options",
+  "shell.hintSelect": "Click a shape to select it · drag to select an area (left to right encloses, right to left crosses) · right-click for more",
+  "shell.hintTool": "Esc ends the tool",
+  "shell.dismiss": "Click to dismiss",
+  "shell.timelinePin": "Pin the timeline open",
+  "shell.timelineUnpin": "Unpin the timeline (merge it with the status bar)",
 };

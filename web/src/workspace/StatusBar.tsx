@@ -56,7 +56,7 @@ export function StatusBar(p: StatusBarProps) {
       </span>
       <span className="sb-spacer" />
       {p.machineText && <span className="sb-cell sb-machine">{p.machineText}</span>}
-      <span className="sb-cell" title={t("status.snapTitle")}>
+      <span className="sb-cell sb-snap" title={t("status.snapTitle")}>
         {t("status.snap")}: {snapText || t("status.off")}
       </span>
       <button className="sb-cell sb-btn" title={t("status.zoomTitle")} onClick={() => sendViewCommand("fit")}>

@@ -78,8 +78,6 @@
   --tp-shade: #111111;
   --crosshair: rgba(6, 150, 215, 0.55);
   --radius: 4px;
-  --tap: 40px;
-  --ui-scale: 1;
   color-scheme: light;
   font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
   font-size: calc(13px * var(--ui-scale, 1));
@@ -292,12 +290,16 @@ textarea {
 /* ---- shell ------------------------------------------------------------------------------------------------- */
 
 .app {
+  height: 100vh;
   height: 100dvh;
-  display: grid;
-  /* One column that never grows past the window: a long timeline or toolbar scrolls inside its own row. */
-  grid-template-columns: minmax(0, 1fr);
-  /* top bar, document tabs (workspace/DocTabs.tsx; only with two or more), toolbar, main, timeline, status bar */
-  grid-template-rows: auto auto auto minmax(0, 1fr) auto auto;
+  /* Rows (each only when present): top bar, connection banner, document tabs (two or more), ribbon, main (the rest),
+     the timeline + status row. A column that never grows past the window: long rows scroll inside themselves. */
+  display: flex;
+  flex-direction: column;
+  /* Text selection and the iOS callout stay off the chrome; fields re-enable them (below). */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
   padding-left: var(--safe-left);
   padding-right: var(--safe-right);
   /* The last row stays above the home indicator. */
@@ -307,6 +309,15 @@ textarea {
 
 .app > * {
   min-width: 0;
+  flex: none;
+}
+
+.app input,
+.app textarea,
+.app [contenteditable="true"] {
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
 }
 
 .topbar {
@@ -525,7 +536,8 @@ textarea {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  min-height: 44px;
+  /* 32 px rows with a mouse, 44 with a finger. */
+  min-height: max(32px, var(--hit));
   padding: 0 12px;
   border: 0;
   border-radius: var(--radius);
@@ -661,8 +673,8 @@ textarea {
 .warn-panel {
   position: fixed;
   left: 12px;
-  bottom: 76px;
-  z-index: 90;
+  bottom: calc(var(--bar-bottom) + 18px);
+  z-index: var(--z-banner);
   width: min(480px, calc(100vw - 24px));
   max-height: 45vh;
   display: flex;
@@ -899,9 +911,10 @@ textarea {
 
 /* ---- main area and panels ---------------------------------------------------------------------------------- */
 
-.main {
+.app > .main {
   position: relative;
   display: flex;
+  flex: 1 1 0;
   min-height: 0;
   overflow: hidden;
 }
@@ -966,36 +979,36 @@ textarea {
   color: var(--muted);
 }
 
-/* Drawers on narrow screens. */
-.narrow .panel {
+/* Drawers on tablets and phones. */
+.drawers .panel {
   display: flex;
   position: absolute;
   top: 0;
   bottom: 0;
-  z-index: 20;
+  z-index: var(--z-drawer);
   width: min(320px, 86vw);
   box-shadow: 0 0 24px var(--shadow);
   transition: transform 0.18s ease-out;
 }
 
-.narrow .panel-left {
+.drawers .panel-left {
   left: 0;
   transform: translateX(-105%);
 }
 
-.narrow .panel-right {
+.drawers .panel-right {
   right: 0;
   transform: translateX(105%);
 }
 
-.narrow .panel.open {
+.drawers .panel.open {
   transform: none;
 }
 
 .drawer-scrim {
   position: absolute;
   inset: 0;
-  z-index: 15;
+  z-index: calc(var(--z-drawer) - 1);
   background: var(--scrim);
 }
 
@@ -1833,7 +1846,7 @@ textarea {
 .drop-overlay {
   position: fixed;
   inset: 0;
-  z-index: 400;
+  z-index: var(--z-drop);
   pointer-events: none;
   display: flex;
   align-items: center;
@@ -2441,25 +2454,34 @@ kbd {
 
 /* ---- toasts ------------------------------------------------------------------------------------------------ */
 
+/* Bottom centre, above everything under the canvas (--bar-bottom), so they never cover the canvas corners' buttons. */
 .toasts {
   position: fixed;
-  right: 12px;
-  bottom: 76px;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(var(--bar-bottom) + 18px);
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 6px;
-  z-index: 200;
-  max-width: min(420px, calc(100vw - 24px));
+  z-index: var(--z-toast);
+  width: max-content;
+  max-width: min(520px, calc(100vw - 24px));
+  pointer-events: none;
 }
 
 .toast {
+  pointer-events: auto;
   padding: 10px 14px;
+  border: 0;
   border-radius: 6px;
   background: var(--toast-bg);
   color: var(--toast-fg);
-  box-shadow: 0 4px 16px var(--shadow);
+  box-shadow: var(--shadow-toast);
   cursor: pointer;
   overflow-wrap: anywhere;
+  text-align: left;
+  font: inherit;
 }
 
 .toast-error {
@@ -2872,4 +2894,266 @@ image.pixelated {
 .beginner-badge {
   margin-left: 8px;
   white-space: nowrap;
+}
+
+/* ---- layout modes (docs/ux/ui-plan-2026-11.md 1.1; tokens.css holds the budget) ---------------------------------- */
+
+/* The context strip: one row under the ribbon with the selection's fields, a tool's option bar or the hint. */
+.context-strip {
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: var(--bar-context);
+  min-width: 0;
+  background: var(--chrome);
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+}
+
+/* The Laser workspace shows the strip only while a tool bar is in it. */
+.context-strip.idle {
+  display: none;
+}
+
+.context-strip-slot {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.context-strip-slot:empty {
+  display: none;
+}
+
+/* A tool bar moved in from over the canvas (V16) sits in the row instead of floating. */
+.context-strip-slot > * {
+  position: static;
+  inset: auto;
+  transform: none;
+  margin: 0;
+  max-width: none;
+  box-shadow: none;
+}
+
+.cs-hint {
+  padding: 0 12px;
+  color: var(--text-2);
+  font-size: calc(var(--fs-sm) * var(--ui-scale, 1));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Timeline and status bar: two rows (wide, pinned compact) or one merged row (compact 28 px, tablet 44 px). */
+.bottom-row {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.bottom-row[data-bottom="none"] {
+  display: none;
+}
+
+.bottom-row .statusbar {
+  height: var(--bar-status);
+  min-height: 0;
+}
+
+.bottom-row[data-bottom="merged"] {
+  flex-direction: row;
+  align-items: stretch;
+  height: var(--bar-timeline);
+  background: var(--chrome);
+  border-top: 1px solid var(--border);
+}
+
+.bottom-row[data-bottom="merged"] .timeline {
+  flex: 1 1 auto;
+  height: 100%;
+  border-top: 0;
+}
+
+.bottom-row[data-bottom="merged"] .timeline-label {
+  display: none;
+}
+
+.bottom-row[data-bottom="merged"] .timeline-strip {
+  padding: 2px 6px;
+}
+
+.bottom-row[data-bottom="merged"] .tl-entry {
+  height: calc(var(--bar-timeline) - 6px);
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border-bottom-width: 2px;
+}
+
+.bottom-row[data-bottom="merged"] .tl-controls .icon-btn.small {
+  min-width: min(36px, calc(var(--bar-timeline) - 4px));
+  min-height: min(36px, calc(var(--bar-timeline) - 4px));
+}
+
+.bottom-row[data-bottom="merged"] .statusbar {
+  flex: 0 1 auto;
+  height: 100%;
+  max-width: 55%;
+  border-top: 0;
+  border-left: 1px solid var(--border-soft);
+}
+
+.bottom-row[data-bottom="merged"] .sb-machine,
+.bottom-row[data-bottom="merged"] .sb-snap,
+.bottom-row[data-bottom="merged"] .sb-snap-label,
+.bottom-row[data-bottom="merged"] .sb-spacer {
+  display: none;
+}
+
+.bottom-row[data-bottom="merged"] .sb-xy {
+  min-width: 0;
+}
+
+.tl-pin {
+  flex: none;
+  align-self: center;
+  color: var(--text-2);
+}
+
+.tl-pin.active {
+  color: var(--accent);
+}
+
+.bottom-row[data-bottom="split"] .tl-pin {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+}
+
+/* Palette: 24 px, 36 px on tablets (scrolls sideways). */
+.palette-bar {
+  height: var(--bar-palette);
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+
+.palette-bar .pal-swatch {
+  height: calc(var(--bar-palette) - 6px);
+}
+
+:root[data-layout="tablet"] .palette-bar .pal-swatch {
+  flex: 0 0 32px;
+  max-width: none;
+}
+
+/* Compact ribbon: 40 px, icons only (the caption stays as the tooltip and accessible name). */
+:root[data-layout="compact"] .app > .toolbar {
+  height: var(--bar-tool);
+  padding-top: 3px;
+  padding-bottom: 3px;
+  align-items: center;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+:root[data-layout="compact"] .toolbar .tool-btn {
+  min-width: 34px;
+  min-height: 32px;
+  padding: 0 4px;
+}
+
+:root[data-layout="compact"] .toolbar .tool-btn > span,
+:root[data-layout="compact"] .toolbar .mini-label {
+  display: none;
+}
+
+:root[data-layout="compact"] .toolbar .tool-group {
+  align-items: center;
+}
+
+:root[data-layout="compact"] .toolbar .mini-grid {
+  grid-auto-flow: column;
+  grid-template-rows: 24px;
+  grid-template-columns: none;
+  grid-auto-columns: 26px;
+}
+
+:root[data-layout="compact"] .toolbar .mini-select {
+  grid-row: auto;
+  width: 62px;
+}
+
+/* Tablet: the ribbon is a vertical tool rail on the canvas's left edge. */
+.tool-rail {
+  flex: none;
+  display: flex;
+  width: var(--tool-rail-w);
+  min-height: 0;
+  background: var(--chrome);
+  border-right: 1px solid var(--border);
+}
+
+.tool-rail .toolbar {
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  padding: 4px 2px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border-bottom: 0;
+  scrollbar-width: none;
+}
+
+.tool-rail .tool-group {
+  flex-direction: column;
+  align-items: center;
+  padding: 4px 0;
+  border-right: 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.tool-rail .tool-sep {
+  width: 70%;
+  height: 1px;
+  margin: 4px auto;
+}
+
+.tool-rail .tool-spacer {
+  flex: 1 0 8px;
+}
+
+.tool-rail .tool-btn {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+}
+
+.tool-rail .tool-btn > span,
+.tool-rail .mini-label {
+  display: none;
+}
+
+.tool-rail .mini-grid,
+.tool-rail .mini-grid.eight,
+.tool-rail .mini-grid.two {
+  grid-template-columns: repeat(2, 22px);
+}
+
+.tool-rail .mini-btn {
+  width: 22px;
+}
+
+.tool-rail .mini-select {
+  grid-row: auto;
+  grid-column: span 2;
+  width: 46px;
 }
