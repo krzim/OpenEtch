@@ -3471,6 +3471,11 @@ html {
   min-height: 44px;
 }
 
+/* A short label ("Go", "1", "×") still gets a 44 px wide button. */
+:root[data-density="touch"] .btn {
+  min-width: 44px;
+}
+
 
 /* ---- crash screen (app/CrashScreen.tsx): STOP stays on screen when a render throws --------------------------- */
 

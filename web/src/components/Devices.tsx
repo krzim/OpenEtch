@@ -459,8 +459,9 @@ export function DevicesWindow(p: {
         ) : ask?.kind === "remove" ? (
           <div className="dev-confirm" role="alertdialog" aria-label={`Remove ${ask.device.display_name}`}>
             <p>
-              Remove {ask.device.display_name}? Make sure you have the right device selected. Its LightBurn settings stay
-              in LightBurn; you can import it again.
+              {t("dv.removeAsk", { name: ask.device.display_name })}{" "}
+              {/* Only an imported device can be imported again (a GRBL or Ruida added by hand said "Its LightBurn settings stay in LightBurn"). */}
+              {ask.device.source === "lightburn-prefs" ? t("dv.removeLightBurn") : ask.device.source === "lbdev" ? t("dv.removeLbdev") : t("dv.removeManual")}
             </p>
             <div className="dev-confirm-actions">
               <button className="btn" onClick={() => setAsk(null)}>

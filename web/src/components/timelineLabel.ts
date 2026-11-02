@@ -109,6 +109,9 @@ function labelFor(cmd: string, summary: string, t: T): StepLabel | null {
     case "doc.rename":
       return { text: t("tlx.renameDoc"), icon: "file" };
   }
+  // Every importer (SVG, DXF, images, and the formats merged from main: .rd, G-code, PDF...) is an Import step; the chip
+  // read "import_rd" after an .rd import.
+  if (cmd.startsWith("art.import_") || cmd.startsWith("doc.import")) return { text: t("tlx.import"), icon: "import" };
   if (cmd.startsWith("layer.")) {
     if (cmd === "layer.add" || cmd === "layer.tool" || cmd === "layer.sub_add" || cmd === "layer.sub_duplicate") return { text: t("tlx.addLayer"), icon: "layers" };
     if (cmd === "layer.delete" || cmd === "layer.sub_delete") return { text: t("tlx.deleteLayer"), icon: "layers" };

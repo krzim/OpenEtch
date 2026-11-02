@@ -59,3 +59,10 @@ test("timelineLabel: the Tools menu extras have names, not the engine's short la
   assert.equal(timelineLabel(step("path.resize_slots", "resized slots", "resize_slots"), t).text, "Resize slots");
   assert.equal(timelineLabel(step("image.trace_files", "traced 3 files", "trace_files"), t).text, "Trace");
 });
+
+test("timelineLabel: every importer is an Import step", () => {
+  // Seen in the app: an .rd import left a chip reading "import_rd".
+  for (const cmd of ["art.import_rd", "art.import_gcode", "art.import_pdf", "art.import_svg"]) {
+    assert.deepEqual(timelineLabel(step(cmd, "imported", cmd.split(".")[1]), t), { text: "Import", icon: "import" }, cmd);
+  }
+});

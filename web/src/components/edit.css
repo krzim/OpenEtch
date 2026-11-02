@@ -49,6 +49,10 @@
 .viewport .vp-top-right {
   top: 26px;
 }
+/* The off-field warning goes under those buttons (at 52 px it covered their lower third, and more with 44 px ones). */
+.viewport .vp-warn {
+  top: calc(26px + max(36px, var(--hit, 36px)) + 12px);
+}
 
 /* ---- rulers ---- */
 .et-ruler {
