@@ -1,2 +1,56 @@
-/* Touch HUD, modifier bar, selection action bar and long-press ring (owner: P3, docs/ux/ui-plan-2026-11.md 1.2).
-   Empty in Stage A. */
+/* Touch and canvas input (owner: P3, docs/ux/ui-plan-2026-11.md 1.2): the long-press ring, the snap bubble above the
+   finger, the Space+drag cursor, the touch HUD (modifier bar and selection action bar) and the touch row controls. */
+
+/* ---- canvas ------------------------------------------------------------------------------------------------------ */
+
+.viewport.space-pan .vp-main {
+  cursor: grab;
+}
+.viewport.space-pan .vp-main:active {
+  cursor: grabbing;
+}
+
+/* The long-press ring: appears after a short rest and closes over the remaining time to 500 ms. */
+.lp-ring {
+  position: absolute;
+  width: 56px;
+  height: 56px;
+  margin: -28px 0 0 -28px;
+  border-radius: 50%;
+  border: 3px solid var(--accent, #0a73ad);
+  pointer-events: none;
+  z-index: var(--z-canvas-ui, 5);
+  opacity: 0;
+  transform: scale(1.4);
+  animation: lp-ring 350ms ease-out 150ms forwards;
+}
+@keyframes lp-ring {
+  to {
+    opacity: 0.85;
+    transform: scale(0.7);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lp-ring {
+    animation: none;
+    opacity: 0.85;
+    transform: none;
+  }
+}
+
+/* Snap label and readout above the finger, where the fingertip does not hide them (T16). */
+.snap-bubble {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  padding: 4px 8px;
+  border-radius: var(--r-md, 4px);
+  background: var(--panel, #2b2f34);
+  color: var(--text, #e6e6e6);
+  border: 1px solid var(--border, #555);
+  box-shadow: var(--shadow-pop, 0 2px 8px rgba(0, 0, 0, 0.3));
+  font-size: var(--fs-sm, 12px);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: var(--z-canvas-ui, 5);
+}
