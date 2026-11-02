@@ -105,12 +105,12 @@ test("stored run options are clamped", () => {
 });
 
 test("frame request bodies leave out options that do not apply", () => {
-  assert.deepEqual(frameRequestBody(DEFAULT_FRAME_OPTIONS), { mode: "hull", continuous: true });
+  assert.deepEqual(frameRequestBody(DEFAULT_FRAME_OPTIONS), { mode: "hull", continuous: true, live: true });
   const o = { ...DEFAULT_FRAME_OPTIONS, style: "outline" as const, individually: true, outsideOnly: true, pointer: "both" as const, blanking: false, live: true, speedMmS: 1500, continuous: false };
   assert.deepEqual(frameRequestBody(o), { mode: "outline", outside_only: true, continuous: false, speed_mm_s: 1500, pointer: "both", blanking: false, live: true });
-  assert.deepEqual(frameRequestBody({ ...DEFAULT_FRAME_OPTIONS, style: "hull", individually: true, outsideOnly: true }), { mode: "hull", individually: true, continuous: true });
-  assert.deepEqual(frameRequestBody({ ...DEFAULT_FRAME_OPTIONS, selectionOnly: true, toolLayersOnly: true }, ["obj-3"]), { mode: "hull", ids: ["obj-3"], continuous: true });
-  assert.deepEqual(frameRequestBody({ ...DEFAULT_FRAME_OPTIONS, toolLayersOnly: true }), { mode: "hull", tool_layers_only: true, continuous: true });
+  assert.deepEqual(frameRequestBody({ ...DEFAULT_FRAME_OPTIONS, style: "hull", individually: true, outsideOnly: true }), { mode: "hull", individually: true, continuous: true, live: true });
+  assert.deepEqual(frameRequestBody({ ...DEFAULT_FRAME_OPTIONS, selectionOnly: true, toolLayersOnly: true }, ["obj-3"]), { mode: "hull", ids: ["obj-3"], continuous: true, live: true });
+  assert.deepEqual(frameRequestBody({ ...DEFAULT_FRAME_OPTIONS, toolLayersOnly: true }), { mode: "hull", tool_layers_only: true, continuous: true, live: true });
   assert.throws(() => frameRequestBody({ ...DEFAULT_FRAME_OPTIONS, selectionOnly: true }, []), /Select shapes/);
   assert.equal(normalizeFrameOptions({ style: "contour" }).style, "outline");
   assert.equal(normalizeFrameOptions({ style: "star", pointer: "laser" }).pointer, "red");

@@ -248,7 +248,8 @@ export const DEFAULT_FRAME_OPTIONS: FrameOptions = {
   speedMmS: null,
   pointer: "red",
   blanking: null,
-  live: false,
+  // Live by default: the frame follows every edit and nudge, for lining the design up with what is on the bed.
+  live: true,
 };
 
 const STYLES: readonly FrameStyle[] = ["bounds", "hull", "outline"];
@@ -268,7 +269,7 @@ export function normalizeFrameOptions(raw: unknown): FrameOptions {
     speedMmS: speed,
     pointer: POINTERS.includes(o.pointer as FramePointer) ? (o.pointer as FramePointer) : d.pointer,
     blanking: typeof o.blanking === "boolean" ? o.blanking : null,
-    live: o.live === true,
+    live: typeof o.live === "boolean" ? o.live : d.live,
     imageBounds: o.imageBounds === true,
   };
 }
