@@ -344,5 +344,6 @@ export function usePublished<T>(key: string): T | undefined {
       };
     },
     () => shared.get(key) as T | undefined,
+    () => shared.get(key) as T | undefined,
   );
 }

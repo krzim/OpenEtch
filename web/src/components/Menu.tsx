@@ -379,15 +379,13 @@ export function Menu(p: MenuProps) {
       if (P.current.owner?.contains(target)) return;
       closeAll(false);
     };
+    // Not on resize: phones resize the window when the address bar or the keyboard moves.
     const blur = () => closeAll(false);
-    const resize = () => closeAll(false);
     document.addEventListener("pointerdown", down, true);
     window.addEventListener("blur", blur);
-    window.addEventListener("resize", resize);
     return () => {
       document.removeEventListener("pointerdown", down, true);
       window.removeEventListener("blur", blur);
-      window.removeEventListener("resize", resize);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
