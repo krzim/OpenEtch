@@ -18,6 +18,7 @@
 pub mod construct;
 pub mod dogbone;
 pub mod extend;
+pub mod fill_region;
 pub mod fillet;
 pub mod fit;
 pub mod flatten;
