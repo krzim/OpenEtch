@@ -347,6 +347,25 @@ export function geometryCmds(g: Geometry): PathCmd[] {
   }
 }
 
+/**
+ * A string equal for equal geometry, for caches that outlive a document refetch (the UI refetches the whole document
+ * after every edit, so unchanged objects arrive as new values): the path data itself for paths and text, the size for
+ * images (never their pixels), the whole value for the parametric shapes.
+ */
+export function geometryKey(g: Geometry): string {
+  const any = g as { kind: string; path?: unknown; outline?: unknown; width_mm?: number; height_mm?: number };
+  switch (any.kind) {
+    case "path":
+      return typeof any.path === "string" ? `p${any.path}` : `P${JSON.stringify(any.path)}`;
+    case "text":
+      return typeof any.outline === "string" ? `t${any.outline}` : `T${JSON.stringify(any.outline)}`;
+    case "image":
+      return `i${any.width_mm}x${any.height_mm}`;
+    default:
+      return JSON.stringify(g);
+  }
+}
+
 /** Stock outline in the field frame. */
 export function stockCmds(s: Stock): { cmds: PathCmd[]; transform: Affine } {
   const local =

@@ -1,9 +1,9 @@
 // The Viewport's raster layers: bitmaps and the toolpath preview are drawn on <canvas> elements sized to the canvas
-// area at device-pixel resolution, under (images) and over (toolpath) the SVG outlines. A view change repaints the
+// area at device-pixel resolution, under (images) and over (toolpath) the object outlines (VectorLayer.tsx). A view change repaints the
 // visible region, once per frame, from caches that do not depend on the view: decoded ImageBitmaps per image (and per
 // dithered preview), and the toolpath's segments uploaded once to the GPU (toolpathGL.ts; without WebGL2, per-tile
-// Path2Ds on a 2D canvas). Hit-testing and selection stay in the SVG/interaction layer; these canvases never take
-// pointer events.
+// Path2Ds on a 2D canvas). Hit-testing is geometric (selection.ts) and handles live in the interaction SVG; these
+// canvases never take pointer events.
 
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Affine } from "../api/types.ts";
@@ -264,7 +264,7 @@ export function paintToolpath(ctx: CanvasRenderingContext2D, a: PaintArgs, tp: T
 
 /** Any CSS colour as 0..1 RGBA (hex directly, anything else through a 2D canvas). */
 const parsed = new Map<string, [number, number, number, number]>();
-function rgbaOf(color: string, alpha: number): [number, number, number, number] {
+export function rgbaOf(color: string, alpha: number): [number, number, number, number] {
   let c = parsed.get(color) ?? parseHexColor(color);
   if (!c) {
     const ctx = document.createElement("canvas").getContext("2d");

@@ -1539,7 +1539,8 @@ textarea {
   cursor: default;
 }
 
-/* Scene layers under the interaction SVG (Viewport.tsx): field and grid, images (canvas), outlines, toolpath (canvas). */
+/* Scene layers under the interaction SVG (Viewport.tsx), all raster: field and grid, images, outlines and fills
+   (WebGL2, VectorLayer.tsx), toolpath. Their colours come from the tokens above (vectorScene.ts TOKEN_VARS). */
 .viewport .vp-layer {
   position: absolute;
   left: 0;
@@ -1555,91 +1556,6 @@ textarea {
 .viewport.tool-ellipse svg,
 .viewport.tool-circle svg {
   cursor: crosshair;
-}
-
-.field-bg {
-  fill: var(--field);
-}
-
-.field-edge {
-  fill: none;
-  stroke: var(--field-edge);
-}
-
-.grid-minor {
-  stroke: var(--grid-minor);
-  fill: none;
-}
-
-.grid-major {
-  stroke: var(--grid-major);
-  fill: none;
-}
-
-.axis-x {
-  stroke: var(--axis-x);
-}
-
-.axis-y {
-  stroke: var(--axis-y);
-}
-
-.stock {
-  fill: var(--stock-fill);
-  stroke: var(--stock-stroke);
-}
-
-.stock.selected {
-  stroke: var(--accent);
-  fill: var(--accent-fill);
-}
-
-.objects path {
-  pointer-events: none;
-}
-
-.obj {
-  fill: none;
-}
-
-.obj-fill {
-  stroke: none;
-}
-
-.no-output .obj,
-.no-output .obj-fill {
-  opacity: 0.4;
-}
-
-/* Selected objects: LightBurn's animated dashed outline. */
-.obj-selected {
-  fill: none;
-  stroke: var(--accent);
-  animation: ants 0.8s linear infinite;
-}
-
-/* One dash period (5 + 4 screen px: the outline keeps its screen width and dashes). */
-@keyframes ants {
-  to {
-    stroke-dashoffset: -9;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .obj-selected {
-    animation: none;
-  }
-}
-
-.obj-outside {
-  fill: none;
-  stroke: var(--outside);
-}
-
-/* Images are dimmed on their canvas (Viewport.tsx paintImages). */
-.objects.dimmed .obj,
-.objects.dimmed .obj-fill {
-  opacity: 0.3;
 }
 
 .group-bounds {
