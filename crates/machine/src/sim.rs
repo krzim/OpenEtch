@@ -30,6 +30,9 @@ pub struct SimBoard {
     pub busy_polls: usize,
     /// `GetVersion` polls the board reports not READY after each list packet.
     pub not_ready_polls: usize,
+    /// When set: the not-READY polls after a packet sent while a list executes (a full buffer that frees up only as
+    /// the board marks, as with slow, dense fills); `not_ready_polls` then applies only before execution starts.
+    pub executing_not_ready_polls: Option<usize>,
     /// `GetVersion` polls the board reports AXIS (moving) after `MoveAxisTo`.
     pub axis_polls: usize,
 }
@@ -41,6 +44,7 @@ impl Default for SimBoard {
             version: [0x0001, 0x0000, 0x0000],
             busy_polls: 3,
             not_ready_polls: 1,
+            executing_not_ready_polls: None,
             axis_polls: 2,
         }
     }
@@ -236,7 +240,7 @@ impl Link for SimLink {
             return Err(e);
         }
         self.traffic.push(Traffic::Packet(packet.clone()));
-        self.not_ready_left = self.board.not_ready_polls;
+        self.not_ready_left = self.board.executing_not_ready_polls.filter(|_| self.executing).unwrap_or(self.board.not_ready_polls);
         Ok(())
     }
 }

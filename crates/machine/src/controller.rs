@@ -293,7 +293,8 @@ pub const FULL_POLLS: usize = 5;
 pub struct PollConfig {
     /// Pause between status polls.
     pub interval: Duration,
-    /// Longest wait for READY before sending a packet.
+    /// Longest wait for READY before sending a packet while the board is not executing a list (a board that is
+    /// executing frees its buffer as it marks, so that wait is not bounded).
     pub ready_timeout: Duration,
     /// Longest wait for a run to finish; `None` waits as long as the board reports BUSY.
     pub finish_timeout: Option<Duration>,
@@ -897,18 +898,23 @@ impl<L: Link> Controller<L> {
         }
     }
 
-    /// Wait for READY; returns how many polls found the board not ready.
+    /// Wait for READY; returns how many polls found the board not ready. While the board executes a list (BUSY), a
+    /// full buffer frees up as it marks, however long one packet takes (slow, dense fills), so only time spent not
+    /// ready and not executing counts toward [`PollConfig::ready_timeout`]. Abort and Stop are checked on every poll.
     fn wait_ready(&mut self) -> Result<usize> {
         let mut start = Instant::now();
         let mut refused = 0;
         loop {
             start += self.service_run()?;
             self.sample_inputs();
-            if self.poll_status()?.ready() {
+            let status = self.poll_status()?;
+            if status.ready() {
                 return Ok(refused);
             }
             refused += 1;
-            if start.elapsed() >= self.poll.ready_timeout {
+            if status.busy() {
+                start = Instant::now();
+            } else if start.elapsed() >= self.poll.ready_timeout {
                 return Err(ControllerError::NotReady(self.poll.ready_timeout));
             }
             self.pause();
@@ -1517,6 +1523,21 @@ mod tests {
         let outline: Vec<(f64, f64)> = (0..300).map(|i| (f64::from(i) * 0.1, 0.0)).collect();
         assert!(matches!(c.frame(&[outline], 1), Err(ControllerError::NotReady(_))));
         assert_eq!(c.link().singles().last(), Some(&Single::goto_xy(CENTER, CENTER, 0)));
+    }
+
+    /// A slow, dense fill: one packet takes the board longer than `ready_timeout` to mark, so its buffer stays full.
+    /// That is not a stuck board while it reports BUSY; the run waits (coin D, 2026-11-01, failed on a 5 s timeout).
+    #[test]
+    fn a_full_buffer_while_executing_never_times_out() {
+        let board = SimBoard { not_ready_polls: 0, executing_not_ready_polls: Some(50), busy_polls: 10_000, ..SimBoard::default() };
+        let mut c = controller(board);
+        c.poll.ready_timeout = Duration::ZERO;
+        c.init(&b6(), None).unwrap();
+        let sent = c.frame_styled(&[(0..2000).map(|i| (f64::from(i) * 0.01, 0.0)).collect()], 1, &FrameStyle::for_profile(&b6())).unwrap();
+        assert!(sent > 5, "packets sent after execution started: {sent}");
+        assert_eq!(c.state(), ControllerState::Framing);
+        c.stop_frame().unwrap();
+        c.run(&job(), Armed::approved_in_ui("run-1".into())).unwrap();
     }
 
     /// A link that pauses the run (through its [`RunControl`]) when packet `pause_at` is sent and resumes it after
