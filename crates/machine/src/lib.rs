@@ -35,8 +35,8 @@ mod usb;
 pub use armed::Armed;
 pub use check::{JobCheckError, check_job};
 pub use controller::{
-    AXIS_TIMEOUT, AbortHandle, BoardInfo, Controller, ControllerError, ControllerState, FrameStyle, PollConfig, RunControl,
-    RunPart, RunProgress, RunReport,
+    AXIS_TIMEOUT, AbortHandle, BoardInfo, Controller, ControllerError, ControllerState, FrameStyle, InputSamples,
+    PollConfig, RunControl, RunPart, RunProgress, RunReport,
 };
 pub use geometry::{FieldError, field_to_galvo};
 pub use init::InitSettings;

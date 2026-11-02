@@ -257,7 +257,8 @@ impl FootWatch {
 /// bounds) when it is pressed after being seen released, while the board is idle. The foot switch drives the foot
 /// switch cycle (module `cycle`: frame, then burn what was framed, then frame again) when it is seen released and then
 /// pressed for `pin::CONFIRM_READS` reads in a row; a changed foot switch port (bit or polarity) needs a fresh
-/// release. It is read every `pin::CONFIRM_POLL` while watched, else every [`IO_POLL`].
+/// release. It is read every `pin::CONFIRM_POLL` while watched, else every [`IO_POLL`]; the reads a frame took while
+/// it streamed (`machine::InputSamples`, when the controller was held too long for these) count first, in order.
 /// Reads only while the board is initialised and not running (a run claimed by an approval, including one waiting
 /// for its start input or physical confirmation, owns the input; a press then is not seen at all), and while
 /// framing only when the foot switch is watched (the cycle's second press comes while it frames); sends nothing but
@@ -279,23 +280,28 @@ pub fn spawn_io_watch(st: Arc<AppState>) -> tokio::task::JoinHandle<()> {
             if (frame_port.is_none() && foot_port.is_none()) || st.machine.is_running() || (frame_now && foot_port.is_none()) {
                 framing.reset();
                 foot.reset();
+                st.machine.clear_input_samples();
                 continue;
             }
             let read = st
                 .machine
                 .blocking(|m, ctl| {
                     // Checked again with the controller held: an approval may have claimed the machine meanwhile.
+                    // The reads a streaming frame took come first (taken with the controller held, so none is lost
+                    // or out of order), then this one.
+                    let streamed = m.take_input_samples();
                     (!m.is_running() && ctl.state() != machine::ControllerState::Uninitialized)
                         .then(|| ctl.read_port().ok())
                         .flatten()
+                        .map(|bits| (streamed, bits))
                 })
                 .await;
-            let Ok(Some(bits)) = read else {
+            let Ok(Some((streamed, bits))) = read else {
                 framing.reset();
                 foot.reset();
                 continue;
             };
-            if foot.update(bits) {
+            if streamed.into_iter().chain([bits]).any(|b| foot.update(b)) {
                 framing.reset();
                 crate::cycle::pressed(&st).await;
                 continue;

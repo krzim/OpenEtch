@@ -48,8 +48,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::sync::Arc;
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use corfile::CorTable;
@@ -335,6 +336,37 @@ impl AbortHandle {
     }
 }
 
+/// How often a streaming frame reads the input port (see [`InputSamples`]).
+const SAMPLE_EVERY: Duration = Duration::from_millis(20);
+/// Most input reads [`InputSamples`] keeps; older ones are dropped.
+const SAMPLES_KEPT: usize = 256;
+
+/// Input port reads (`ReadPort` word 1) taken while a frame streams its list. Streaming holds the controller for as
+/// long as the board takes to accept the list (about a second per call), so a foot switch read by the engine between
+/// calls alone misses most presses; these reads, oldest first, fill that gap. Taken only while framing, at most every
+/// [`SAMPLE_EVERY`], never while a run streams.
+#[derive(Debug, Clone, Default)]
+pub struct InputSamples(Arc<Mutex<VecDeque<u16>>>);
+
+impl InputSamples {
+    /// The reads since the last call, oldest first.
+    pub fn take(&self) -> Vec<u16> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner).drain(..).collect()
+    }
+
+    pub fn clear(&self) {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner).clear();
+    }
+
+    fn push(&self, bits: u16) {
+        let mut q = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        if q.len() >= SAMPLES_KEPT {
+            q.pop_front();
+        }
+        q.push_back(bits);
+    }
+}
+
 /// Drives one board through a [`Link`]. See the module docs for the safety rules.
 ///
 /// # Deviations from the reference sequences
@@ -373,6 +405,8 @@ pub struct Controller<L: Link> {
     abort: AbortHandle,
     control: RunControl,
     info: Option<BoardInfo>,
+    samples: InputSamples,
+    last_sample: Option<Instant>,
 }
 
 impl<L: Link> Controller<L> {
@@ -391,6 +425,8 @@ impl<L: Link> Controller<L> {
             abort: AbortHandle::default(),
             control: RunControl::default(),
             info: None,
+            samples: InputSamples::default(),
+            last_sample: None,
         }
     }
 
@@ -432,6 +468,11 @@ impl<L: Link> Controller<L> {
     /// A handle that pauses and resumes runs and reads their progress from another thread.
     pub fn run_control(&self) -> RunControl {
         self.control.clone()
+    }
+
+    /// A handle to the input port reads taken while frames stream ([`InputSamples`]).
+    pub fn input_samples(&self) -> InputSamples {
+        self.samples.clone()
     }
 
     /// The board's identification as read by the last successful `init` (or [`Controller::refresh_info`]).
@@ -838,6 +879,18 @@ impl<L: Link> Controller<L> {
         }
     }
 
+    /// While a frame streams: read the input port into [`InputSamples`], at most every [`SAMPLE_EVERY`]. A failed read
+    /// is skipped (the status poll that follows reports a broken link).
+    fn sample_inputs(&mut self) {
+        if self.state != ControllerState::Framing || self.last_sample.is_some_and(|t| t.elapsed() < SAMPLE_EVERY) {
+            return;
+        }
+        self.last_sample = Some(Instant::now());
+        if let Ok(reply) = self.reply(Single::read_port()) {
+            self.samples.push(reply[1]);
+        }
+    }
+
     fn pause(&self) {
         if !self.poll.interval.is_zero() {
             std::thread::sleep(self.poll.interval);
@@ -850,6 +903,7 @@ impl<L: Link> Controller<L> {
         let mut refused = 0;
         loop {
             start += self.service_run()?;
+            self.sample_inputs();
             if self.poll_status()?.ready() {
                 return Ok(refused);
             }
@@ -1127,8 +1181,23 @@ mod tests {
         let mut c = ready();
         assert_eq!(c.frame(&[vec![(0.0, 0.0), (1.0, 1.0)]], 1).unwrap(), 1);
         let singles = c.link().singles_without_polls();
-        assert_eq!(opcodes(&singles), [op::FIBER_SET_MO, op::RESET_LIST, op::EXECUTE_LIST]);
+        assert_eq!(opcodes(&singles), [op::FIBER_SET_MO, op::RESET_LIST, op::READ_PORT, op::EXECUTE_LIST], "an input sample while it streams");
         assert_eq!(singles[0], Single::fiber_set_mo(false));
+    }
+
+    #[test]
+    fn a_streaming_frame_samples_the_inputs_and_a_run_does_not() {
+        let mut c = ready();
+        let samples = c.input_samples();
+        c.link_mut().set_inputs(1 << 14);
+        c.frame(&[vec![(0.0, 0.0), (5.0, 0.0)]], 40).unwrap();
+        let read = samples.take();
+        assert!(!read.is_empty() && read.iter().all(|&b| b == 1 << 14), "{read:?}");
+        assert!(samples.take().is_empty(), "taken once");
+        c.stop_frame().unwrap();
+        std::thread::sleep(SAMPLE_EVERY);
+        c.run(&job(), Armed::approved_in_ui("run-1".into())).unwrap();
+        assert!(samples.take().is_empty(), "a run never samples");
     }
 
     #[test]

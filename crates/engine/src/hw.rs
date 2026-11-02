@@ -17,8 +17,8 @@ use std::sync::{Arc, Mutex, PoisonError, RwLock, TryLockError};
 use corfile::CorTable;
 use lmc::{LASER_ENABLE_BIT, Packet, Single};
 use machine::{
-    AbortHandle, AxisRole, BoardInfo, Controller, ControllerError, ControllerState, FiberKind, InitSettings, Link, LinkError,
-    MachineProfile, PollConfig, Reply, RunControl, RunProgress, SimLink,
+    AbortHandle, AxisRole, BoardInfo, Controller, ControllerError, ControllerState, FiberKind, InitSettings, InputSamples,
+    Link, LinkError, MachineProfile, PollConfig, Reply, RunControl, RunProgress, SimLink,
 };
 use plan::Target;
 use serde_json::{Value, json};
@@ -211,6 +211,8 @@ pub struct Machine {
     abort: AbortHandle,
     /// Pause, resume and progress of the controller's runs (usable while a run holds the controller).
     control: RunControl,
+    /// Input port reads taken while a frame streams (the foot switch watcher's reads in between).
+    samples: InputSamples,
     /// The current [`MachineConfig`]; replaced only with the controller lock held.
     config: RwLock<Arc<MachineConfig>>,
     kind: LinkKind,
@@ -253,6 +255,7 @@ impl Machine {
         Machine {
             abort: ctl.abort_handle(),
             control: ctl.run_control(),
+            samples: ctl.input_samples(),
             ctl: Arc::new(Mutex::new(ctl)),
             config: RwLock::new(Arc::new(MachineConfig { target: target_from_profile(&profile), profile, cor, generation: 0 })),
             kind,
@@ -461,6 +464,16 @@ impl Machine {
     /// the locked controller so it can never interleave with a list being streamed. Sends nothing that can emit.
     pub fn read_inputs(&self, ctl: &mut Ctl) -> Result<u16, ControllerError> {
         ctl.read_port()
+    }
+
+    /// The input port reads taken while frames streamed since the last call, oldest first
+    /// ([`machine::InputSamples`]).
+    pub(crate) fn take_input_samples(&self) -> Vec<u16> {
+        self.samples.take()
+    }
+
+    pub(crate) fn clear_input_samples(&self) {
+        self.samples.clear();
     }
 
     /// [`Machine::request_stop`] (noticed by a running job at its next packet or poll), then send the abort sequence
