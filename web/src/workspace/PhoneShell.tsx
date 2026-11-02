@@ -9,6 +9,7 @@
 // A tap on the active tab opens or closes its sheet.
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { OPEN_LASER_EVENT } from "../laser/laserContext.ts";
 import { BottomSheet } from "./BottomSheet.tsx";
 import type { SheetSnap } from "./phone.ts";
 import { ShellIcon, type ShellIconName } from "./shellIcons.tsx";
@@ -63,6 +64,15 @@ export function PhoneShell(p: PhoneShellProps) {
     setOpen(true);
     bySelection.current = false;
   };
+
+  // The Start flow asks for the Laser window (checklist, Start from Design): on the phone that is the Job sheet.
+  const showRef = useRef(show);
+  showRef.current = show;
+  useEffect(() => {
+    const open = () => showRef.current("job");
+    window.addEventListener(OPEN_LASER_EVENT, open);
+    return () => window.removeEventListener(OPEN_LASER_EVENT, open);
+  }, []);
 
   // Selecting a shape on the Canvas tab peeks the selection sheet open; clearing the selection closes it again.
   useEffect(() => {

@@ -1,11 +1,12 @@
 // The workspace layer's state for App.tsx in one hook: theme/scale/language on <html>, the key map (installed here,
 // ahead of EditTools' key listener), and the Preferences / Keyboard shortcuts dialogs.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { setActionRunner } from "../components/commands.ts";
 import { HotkeysDialog } from "./HotkeysDialog.tsx";
 import { hintFor } from "./hotkeys.ts";
 import { PreferencesDialog } from "./PreferencesDialog.tsx";
-import { useKeymap, useKeymapConfig, type KeymapConfig } from "./useKeymap.ts";
+import { runKeymapAction, useKeymap, useKeymapConfig, type KeymapConfig } from "./useKeymap.ts";
 import { useApplyWorkspace, usePrefs, useT } from "./usePrefs.ts";
 import type { T } from "./i18n.ts";
 import type { MenuItem } from "../components/Menu.tsx";
@@ -25,6 +26,13 @@ export function useWorkspaceUi(): WorkspaceUi {
   useApplyWorkspace();
   const keymap = useKeymapConfig();
   useKeymap(keymap);
+  // Menus, ribbon buttons and command search run workspace actions through the same handlers as their keys, also
+  // the actions that have no key bound (components/commands.ts). A missing handler or one that declines (false) falls
+  // back to the key press route.
+  useEffect(() => {
+    setActionRunner((id) => runKeymapAction(keymap.current, id));
+    return () => setActionRunner(null);
+  }, [keymap]);
   const [dialog, setDialog] = useState<WsDialog>(null);
   const close = () => setDialog(null);
   const dialogs =

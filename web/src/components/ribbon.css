@@ -210,10 +210,7 @@
   justify-content: center;
 }
 
-/* The canvas column starts after the rail (P1's tablet grid may take this over with a rail column). */
-:root[data-layout="tablet"] .app > .main {
-  margin-left: var(--tool-rail-w, 52px);
-}
+/* Tablet: P1's .tool-rail column holds the vertical ribbon (styles.css), so .main needs no margin for it. */
 
 .ribbon.has-creation-rail ~ .main,
 :root .app:has(.ribbon.has-creation-rail) > .main {

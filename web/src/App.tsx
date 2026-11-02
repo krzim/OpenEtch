@@ -50,7 +50,7 @@ import { useLibsUi } from "./libs/useLibsUi.tsx";
 import { useDesignUi } from "./design/useDesignUi.tsx";
 import { MachineCard, PreviewStatsCard, RunsCard } from "./components/LaserPanel.tsx";
 import { frameWithOptions } from "./components/FramingOptions.tsx";
-import { runJob, togglePause } from "./components/JobControls.tsx";
+import { togglePause } from "./components/JobControls.tsx";
 import { PreviewTimeline } from "./components/PreviewTimeline.tsx";
 import { LightBurnDevices, useLightBurn } from "./components/LightBurn.tsx";
 import { LayerSection, PropertiesPanel } from "./components/PropertiesPanel.tsx";
@@ -82,7 +82,11 @@ import { useLayoutMode } from "./workspace/layoutMode.ts";
 import { ContextStripHost, useContextStripBusy } from "./workspace/contextStrip.tsx";
 import { bottomRow, windowTitle } from "./workspace/shell.ts";
 import { ShellIcon } from "./workspace/shellIcons.tsx";
-import { ConnectScreen } from "./app/ConnectScreen.tsx";
+import { syncThemeColor } from "./app/appMode.ts";
+import { openCommandSearch } from "./components/commandBus.ts";
+import { OPEN_LASER_EVENT, useLaserBridge } from "./laser/laserContext.ts";
+import { startFromHotkey } from "./laser/startFlow.ts";
+import { pickerAccept } from "./touch/filePick.ts";
 import { ConnectionBanner } from "./laser/ConnectionBanner.tsx";
 import { EmptyCanvasCard } from "./laser/EmptyCanvasCard.tsx";
 import { TouchHud } from "./touch/TouchHud.tsx";
@@ -170,7 +174,7 @@ export function App() {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [devicesOpen, setDevicesOpen] = useState(false);
   // Layout mode (workspace/layoutMode.ts): wide, compact (MacBook), tablet, phone; the pointer and the density.
-  const { layout, pointer } = useLayoutMode();
+  const { layout } = useLayoutMode();
   // Side panels shown (the toolbar's Browser / Properties toggles, Window > Toggle side panels); pinned or rail is the
   // layout's business (dockPolicy below). `overlay`: a rail opened over the canvas. `focus`: Focus canvas.
   const [leftOpen, setLeftOpen] = useState(true);
@@ -1024,11 +1028,39 @@ export function App() {
   // there is one, else the whole job; `style` overrides the frame style.
   const frameWith = (style?: "bounds" | "outline") =>
     void machineAction(frameWithOptions(selection.objects, { selectionOnly: selection.objects.length > 0, ...(style ? { style } : {}) }), t("app.framing"));
-  // Request run (hotkey, toolbar) with the Laser window's run options: it still needs PIN approval, or without a PIN
-  // (`--approval click`) it is LightBurn's Start and burns at once (the Job Checklist is ticked in the Laser window).
-  const requestRun = () =>
-    void runJob(noPinMode(machine), selection.objects, null, null, doc?.revision ?? null).then(notify).catch(report).finally(() => void engine.refreshMachine());
+  // Request run / Start (Alt+S) goes through the one Start flow (laser/startFlow.ts): the same gates as the Start
+  // button, so with the Job Checklist on and unticked it opens the checklist instead of firing, and in Design it opens
+  // the Laser window first. A run still needs PIN approval, or without a PIN (`--approval click`) Start burns at once.
+  const requestRun = () => void startFromHotkey();
   const laserDisabled = designOnlyReason(device);
+  // "Open the Laser window" for the Start flow (checklist, Start from Design): the Laser workspace with its right side
+  // shown (pinned, or its overlay on a rail); on the phone the Job sheet (workspace/PhoneShell.tsx listens).
+  const openLaser = () => {
+    if (layout === "phone") {
+      window.dispatchEvent(new CustomEvent(OPEN_LASER_EVENT));
+      return;
+    }
+    if (workspace !== "laser") switchWorkspace("laser");
+    if (dockLayout.areaMode.right === "hidden") updateLayout((l) => setAreaMode(l, "right", null));
+    setFocus(false);
+    setRightOpen(true);
+    if (policy.right === "rail") setOverlay("right");
+  };
+  // Everything the Start buttons, the status chip, the connection banner and the empty card need from the app.
+  useLaserBridge({
+    machine,
+    link: engine.link,
+    httpError: engine.httpError,
+    designOnly: laserDisabled,
+    workspace,
+    selection: selection.objects,
+    revision: doc?.revision ?? null,
+    docEmpty: doc ? doc.objects.length === 0 : null,
+    openLaser,
+    notify,
+    report,
+    refreshMachine: () => void engine.refreshMachine(),
+  });
   // Workspace hotkeys (workspace/hotkeys.ts); App's own keys stay in the handler above.
   ws.keymap.current = {
     blocked: () => !!dialog || fileModalOpen || devicesOpen || filesUi.modalOpen || libsUi.modalOpen || designUi.modalOpen,
@@ -1096,7 +1128,8 @@ export function App() {
       "view.fullscreen": () => (!fullscreen.supported || tool === "line" || tool === "pen" ? false : fullscreen.toggle()),
       "help.useAsApp": () => openAppModeDialog(),
       // S: command search (P2 turns the Commands dialog into it); in node editing plain S makes a node smooth.
-      "app.commandSearch": () => (tool === "node" || tool === "text" ? false : setDialog("commands")),
+      // (components/CommandSearch.tsx, hosted by the toolbar; it declines while no toolbar is mounted).
+      "app.commandSearch": () => (tool === "node" || tool === "text" || !openCommandSearch() ? false : undefined),
     },
   };
 
@@ -1110,6 +1143,14 @@ export function App() {
   useEffect(() => {
     document.title = windowTitle(titleName, file.dirty);
   }, [titleName, file.dirty]);
+  // The browser's and the app window's chrome colour follows the top bar, which follows the theme (app/appMode.ts).
+  useEffect(() => {
+    syncThemeColor();
+    if (typeof MutationObserver !== "function") return;
+    const mo = new MutationObserver(() => syncThemeColor());
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => mo.disconnect();
+  }, [layout]);
 
   // The touch HUD's selection action bar (touch/TouchHud.tsx).
   const touchAction = (id: string) => {
@@ -1261,8 +1302,6 @@ export function App() {
       onTogglePreview={() => setShowPreview((v) => !v)}
       onFrame={() => void machineAction(frameWithOptions(selection.objects), t("app.framing"))}
       onFrameStop={() => void machineAction(api.frameStop(), t("app.frameStopped"))}
-      onRequestRun={requestRun}
-      startMode={noPinMode(machine)}
       designOnly={designOnlyReason(device)}
       onToggleLeft={() => toggleSide("left")}
       onToggleRight={() => toggleSide("right")}
@@ -1485,7 +1524,8 @@ export function App() {
           onTemplates={() => file.setModal({ kind: "open" })}
         />
       )}
-      {pointer === "coarse" && <TouchHud tool={tool} selectionCount={selection.objects.length} onAction={touchAction} />}
+      {/* Always mounted: it shows itself on touch, or everywhere with the selection bar set to Always. */}
+      <TouchHud tool={tool} selectionCount={selection.objects.length} onAction={touchAction} />
     </div>
   );
 
@@ -1517,7 +1557,7 @@ export function App() {
 
   const overlays = (
     <>
-      <input ref={fileRef} type="file" accept={importAccept(has("art.import_pdf") ? ENGINE_ACCEPT : null)} multiple hidden onChange={onPick} />
+      <input ref={fileRef} type="file" accept={pickerAccept(importAccept(has("art.import_pdf") ? ENGINE_ACCEPT : null))} multiple hidden onChange={onPick} />
 
       {dialog === "stock" && <StockDialog doc={doc} run={run} onClose={closeDialog} />}
       {dialog === "place" && <PlaceDialog ids={selection.objects} run={run} onClose={closeDialog} />}
@@ -1560,12 +1600,6 @@ export function App() {
         ))}
       </div>
       {about && <AboutDialog machine={machine} onClose={() => setAbout(false)} />}
-      <ConnectScreen
-        onConnected={() => {
-          void engine.refreshDoc();
-          void engine.refreshMachine();
-        }}
-      />
     </>
   );
 
@@ -1688,7 +1722,6 @@ export function App() {
               <div className="phone-more-body">
                 {moreRow(t("prefs.title"), () => ws.open("prefs"))}
                 {moreRow(t("theme.switchTitle", { theme: themeName }), () => updatePrefs({ theme: nextTheme }))}
-                {moreRow(t("shell.useAsApp"), () => openAppModeDialog())}
                 {canDevices && moreRow(t("shell.devices"), () => setDevicesOpen(true))}
               </div>
             </details>

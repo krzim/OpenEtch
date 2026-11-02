@@ -74,9 +74,6 @@ export interface ToolbarProps {
   onTogglePreview: () => void;
   onFrame: () => void;
   onFrameStop: () => void;
-  onRequestRun: () => void;
-  /** No PIN on the engine: the run button is Start and burns at once. */
-  startMode?: boolean;
   /** Why the active device can't frame or run (design-only device), or null. */
   designOnly?: string | null;
   onToggleLeft: () => void;
@@ -351,16 +348,8 @@ export function Toolbar(p: ToolbarProps) {
                   <Icon name="chevronDown" size={12} />
                 </MenuButton>
               </span>
+              {/* The one Start (laser/StartButton.tsx): Request run with a PIN, Start without; gated like the dock's. */}
               <StartButton variant="toolbar" />
-              {/* Until P5's StartButton renders, the run button stays here (remove it when StartButton lands). */}
-              <ToolButton
-                icon="run"
-                label={p.startMode ? t("laser.start") : t("tb.requestRun")}
-                onClick={p.onRequestRun}
-                disabled={!!p.designOnly}
-                title={p.designOnly ?? (p.startMode ? t("laser.startTitle") : t("tb.requestRunTitle"))}
-                cls="tool-run"
-              />
               <ToolButton icon="frameStop" label={t("tb.stopFrame")} onClick={p.onFrameStop} title={t("tb.stopFrameTitle")} />
             </RibbonGroup>
           </>

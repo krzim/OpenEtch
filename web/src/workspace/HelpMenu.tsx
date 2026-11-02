@@ -4,6 +4,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { MachineStatus } from "../api/types.ts";
+import { openAppModeDialog, useAppModeOffered } from "../app/AppModeDialog.tsx";
 import { Icon } from "../components/ui.tsx";
 import { hintFor } from "./hotkeys.ts";
 import { updatePrefs, type ThemePref } from "./prefs.ts";
@@ -63,6 +64,8 @@ export interface TopActionsProps {
 export function HelpItems(p: { close: () => void; onHotkeys: () => void; onAbout: () => void; helpExtra?: (close: () => void) => ReactNode }) {
   const t = useT();
   const prefs = usePrefs();
+  // "Use as an app" (P4): not inside an app window, where it is already one.
+  const appModeOffered = useAppModeOffered();
   const link = (href: string, label: string) => (
     <a role="menuitem" className="menu-item" href={href} target="_blank" rel="noopener noreferrer" onClick={p.close}>
       <span>{label}</span>
@@ -94,6 +97,18 @@ export function HelpItems(p: { close: () => void; onHotkeys: () => void; onAbout
           {p.helpExtra(p.close)}
           <div className="menu-sep" role="separator" />
         </>
+      )}
+      {appModeOffered && (
+        <button
+          role="menuitem"
+          className="menu-item"
+          onClick={() => {
+            p.close();
+            openAppModeDialog();
+          }}
+        >
+          <span>{t("shell.useAsApp")}…</span>
+        </button>
       )}
       <button
         role="menuitem"

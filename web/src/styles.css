@@ -3330,33 +3330,6 @@ image.pixelated {
   scrollbar-width: none;
 }
 
-:root[data-layout="compact"] .toolbar .tool-btn {
-  min-width: 34px;
-  min-height: 32px;
-  padding: 0 4px;
-}
-
-:root[data-layout="compact"] .toolbar .tool-btn > span,
-:root[data-layout="compact"] .toolbar .mini-label {
-  display: none;
-}
-
-:root[data-layout="compact"] .toolbar .tool-group {
-  align-items: center;
-}
-
-:root[data-layout="compact"] .toolbar .mini-grid {
-  grid-auto-flow: column;
-  grid-template-rows: 24px;
-  grid-template-columns: none;
-  grid-auto-columns: 26px;
-}
-
-:root[data-layout="compact"] .toolbar .mini-select {
-  grid-row: auto;
-  width: 62px;
-}
-
 /* Tablet: the ribbon is a vertical tool rail on the canvas's left edge. */
 .tool-rail {
   flex: none;
@@ -3367,60 +3340,13 @@ image.pixelated {
   border-right: 1px solid var(--border);
 }
 
-.tool-rail .toolbar {
+/* P2's vertical ribbon (components/ribbon.css) fills the rail column instead of floating over the canvas. */
+.tool-rail > .ribbon-vertical {
+  position: static;
   flex: 1;
-  flex-direction: column;
-  align-items: center;
-  padding: 4px 2px;
-  overflow-x: hidden;
-  overflow-y: auto;
-  border-bottom: 0;
-  scrollbar-width: none;
-}
-
-.tool-rail .tool-group {
-  flex-direction: column;
-  align-items: center;
-  padding: 4px 0;
+  width: auto;
+  min-height: 0;
   border-right: 0;
-  border-bottom: 1px solid var(--border-soft);
-}
-
-.tool-rail .tool-sep {
-  width: 70%;
-  height: 1px;
-  margin: 4px auto;
-}
-
-.tool-rail .tool-spacer {
-  flex: 1 0 8px;
-}
-
-.tool-rail .tool-btn {
-  min-width: 44px;
-  min-height: 44px;
-  padding: 0;
-}
-
-.tool-rail .tool-btn > span,
-.tool-rail .mini-label {
-  display: none;
-}
-
-.tool-rail .mini-grid,
-.tool-rail .mini-grid.eight,
-.tool-rail .mini-grid.two {
-  grid-template-columns: repeat(2, 22px);
-}
-
-.tool-rail .mini-btn {
-  width: 22px;
-}
-
-.tool-rail .mini-select {
-  grid-row: auto;
-  grid-column: span 2;
-  width: 46px;
 }
 
 /* ---- touch, focus and density (docs/ux/ui-plan-2026-11.md 1.2, 1.5) -------------------------------------------- */
@@ -3514,8 +3440,3 @@ html {
   min-height: 44px;
 }
 
-:root[data-density="touch"] .tool-rail .mini-grid,
-:root[data-density="touch"] .tool-rail .mini-grid.eight,
-:root[data-density="touch"] .tool-rail .mini-grid.two {
-  grid-template-columns: 44px;
-}

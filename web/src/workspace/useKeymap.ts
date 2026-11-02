@@ -42,6 +42,14 @@ export interface KeymapConfig {
   modalOpen: () => boolean;
 }
 
+/** Run workspace action `id` through the key map's handler: false when there is none, the key map is blocked (an App
+ * dialog is open) or the handler declines. */
+export function runKeymapAction(k: Pick<KeymapConfig, "handlers" | "blocked">, id: string): boolean {
+  const h = k.handlers[id];
+  if (!h || k.blocked()) return false;
+  return h("") !== false;
+}
+
 /** A ref to fill with the current `KeymapConfig` on every render (see `useKeymap`). */
 export function useKeymapConfig(): { current: KeymapConfig } {
   return useRef<KeymapConfig>({ handlers: {}, blocked: () => false, modalOpen: () => false });

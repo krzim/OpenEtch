@@ -65,6 +65,7 @@ import type { ProjectEntry } from "../api/types.ts";
 import type { Engine } from "../api/useEngine.ts";
 import { carryGuides, clearGuides, guideScope, UNSAVED_SCOPE } from "../guides.ts";
 import { ENGINE_ACCEPT } from "../files/fileFormats.ts";
+import { pickerAccept, splitPicked } from "../touch/filePick.ts";
 import { ProjectThumb } from "../files/ProjectDialogs.tsx";
 import { FolderTree, useProjectFolders } from "../files/ProjectFolders.tsx";
 import { baseNameOf, folderOf, joinProject, projectsIn } from "../files/folders.ts";
@@ -775,7 +776,7 @@ function OpenDialog({ file, onClose }: { file: FileActions; onClose: () => void 
       <input
         ref={input}
         type="file"
-        accept={`.openetch,.lbrn2,${ENGINE_ACCEPT}`}
+        accept={pickerAccept(`.openetch,.lbrn2,${ENGINE_ACCEPT}`)}
         hidden
         onChange={(e) => {
           const f = e.target.files?.[0];
@@ -1043,11 +1044,12 @@ function ImportDialog(p: { file: FileActions; initialFiles: File[]; initialMode:
       <input
         ref={input}
         type="file"
-        accept=".lbrn2"
+        accept={pickerAccept(".lbrn2")}
         multiple
         hidden
         onChange={(e) => {
-          const f = Array.from(e.target.files ?? []);
+          // iOS offers every file (no accept there, touch/filePick.ts): only the LightBurn files are kept.
+          const f = splitPicked(Array.from(e.target.files ?? []), ".lbrn2").ok;
           e.target.value = "";
           if (f.length) setPicked(f);
         }}

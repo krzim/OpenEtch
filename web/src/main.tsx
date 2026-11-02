@@ -1,4 +1,5 @@
-// Entry point. Picks up `?token=` before anything talks to the engine and sets the theme before the first paint.
+// Entry point. Picks up `?token=` before anything talks to the engine and sets the theme before the first paint. The
+// app sits behind the Connect card (app/ConnectScreen.tsx), shown instead of it while the engine refuses the token.
 
 // Design tokens first, so every other stylesheet (styles.css, the components' own) can use them.
 import "./tokens.css";
@@ -6,6 +7,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { initAuthToken } from "./api/client.ts";
 import { App } from "./App.tsx";
+import { ConnectGate } from "./app/ConnectScreen.tsx";
 import { getPrefs } from "./workspace/prefs.ts";
 import { resolveTheme } from "./workspace/theme.ts";
 import "./styles.css";
@@ -26,7 +28,9 @@ const root = document.getElementById("root");
 if (root) {
   createRoot(root).render(
     <StrictMode>
-      <App />
+      <ConnectGate>
+        <App />
+      </ConnectGate>
     </StrictMode>,
   );
 }

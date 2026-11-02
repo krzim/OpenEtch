@@ -82,6 +82,8 @@ export interface Prefs {
   timelinePinned: boolean;
   /** The floating selection action bar (Copy, Paste, Delete, ...). */
   showSelectionBar: ShowSelectionBar;
+  /** Desktop: LightBurn-style creation tools on a vertical rail at the canvas's left edge (owner decision 6: off). */
+  creationRail: boolean;
 }
 
 export const DEFAULT_NUDGE: NudgeSteps = { normal: 5, shift: 20, ctrl: 1, ctrlShift: 0.1 };
@@ -110,6 +112,7 @@ export const DEFAULT_PREFS: Prefs = {
   touchOneFinger: "select",
   timelinePinned: false,
   showSelectionBar: "auto",
+  creationRail: false,
 };
 
 export const PREFS_KEY = "openetch.prefs";
@@ -164,6 +167,7 @@ export function sanitizePrefs(raw: unknown): Prefs {
     touchOneFinger: oneOf(r.touchOneFinger, ["select", "pan"] as const, d.touchOneFinger),
     timelinePinned: bool(r.timelinePinned, d.timelinePinned),
     showSelectionBar: oneOf(r.showSelectionBar, ["auto", "always", "never"] as const, d.showSelectionBar),
+    creationRail: bool(r.creationRail, d.creationRail),
   };
 }
 
