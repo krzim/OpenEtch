@@ -1,2 +1,523 @@
 /* Start button, status chip, connection banner, empty-canvas card and step bar (owner: P5,
-   docs/ux/ui-plan-2026-11.md P5). Empty in Stage A. */
+   docs/ux/ui-plan-2026-11.md P5). Amber is reserved for "laser armed / framing", red for STOP. */
+
+:root {
+  /* Start: amber fill with white text (5.6:1 in both themes); never the dialog-blue primary. */
+  --start-bg: #a35200;
+  --start-bg-hover: #8a4500;
+  --start-fg: #ffffff;
+  --start-border: #7a3d00;
+  --chip-framing: #e08600;
+}
+
+/* ---- Start --------------------------------------------------------------------------------------------------- */
+
+.btn.btn-start {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: var(--start-bg);
+  border-color: var(--start-border);
+  color: var(--start-fg);
+  font-weight: 600;
+  white-space: nowrap;
+  min-width: 0;
+}
+.btn.btn-start:hover:not(:disabled) {
+  background: var(--start-bg-hover);
+}
+.btn.btn-start:disabled {
+  /* Disabled reads as disabled (not a faded amber), and the reason sits next to it as text. */
+  opacity: 1;
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--muted);
+}
+.btn-start-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.start-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.start-block .btn-start {
+  min-height: 40px;
+  width: 100%;
+}
+.start-reason {
+  font-size: var(--fs-sm, 12px);
+  color: var(--warn-text);
+  line-height: 1.3;
+}
+
+.start-toolbar {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.start-toolbar .btn-start {
+  min-height: 32px;
+  padding: 0 10px;
+  max-width: 260px;
+}
+.start-toolbar .start-reason {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.start-refusal {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  background: var(--danger-bg);
+  color: var(--text);
+  font-size: var(--fs-sm, 12px);
+  line-height: 1.35;
+}
+.start-refusal-text {
+  flex: 1;
+  min-width: 0;
+}
+.start-refusal-pill {
+  border: 1px solid var(--danger);
+  border-radius: 999px;
+  background: var(--danger-bg);
+  color: var(--danger-dark);
+  font-size: var(--fs-sm, 12px);
+  font-weight: 600;
+  padding: 2px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+/* The Laser dock's Start row: STOP is always the larger of the two. */
+.laser-start-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.laser-start-row .btn-stop.laser-stop {
+  flex: none;
+  margin-left: 0;
+  min-height: 48px;
+  min-width: 104px;
+  font-size: var(--fs-lg, 15px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+/* The pending runs' approval right under Request run. */
+.pending-approvals {
+  margin: 0 0 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+  background: var(--warn-bg);
+}
+.pending-approvals-h {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.pending-approvals .run-row {
+  background: var(--panel);
+}
+
+/* ---- Status chip (left of STOP in the top bar) ------------------------------------------------------------------- */
+
+.status-chip {
+  --chip-dot: var(--muted);
+  display: inline-flex;
+  align-items: stretch;
+  flex: none;
+  min-width: 0;
+  max-width: 280px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  overflow: hidden;
+}
+.status-chip.tone-ok {
+  --chip-dot: var(--ok);
+}
+.status-chip.tone-armed {
+  --chip-dot: var(--chip-framing);
+  border-color: var(--chip-framing);
+}
+.status-chip.tone-run {
+  --chip-dot: var(--danger);
+  border-color: var(--danger);
+}
+.status-chip.tone-bad {
+  --chip-dot: var(--danger);
+  border-color: var(--danger);
+  background: var(--danger-bg);
+}
+.status-chip-main,
+.status-chip-act {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--fs-sm, 12px);
+  font-weight: 600;
+  cursor: pointer;
+  min-width: 0;
+}
+.status-chip-main {
+  position: relative;
+  padding: 0 10px;
+  flex: 1 1 auto;
+}
+.status-chip-act {
+  flex: none;
+  padding: 0 10px 0 8px;
+  border-left: 1px solid var(--border);
+}
+@media (hover: hover) {
+  .status-chip-main:hover,
+  .status-chip-act:hover {
+    background: var(--surface-hover);
+  }
+}
+.status-chip-main:active,
+.status-chip-act:active {
+  background: var(--surface-hover);
+}
+.status-chip-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--chip-dot);
+}
+.status-chip-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+.status-chip-count {
+  flex: none;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: var(--chip-framing);
+  color: #1a1200;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+}
+.status-chip-bar {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 3px;
+  height: 2px;
+  background: var(--border-soft);
+  border-radius: 1px;
+  overflow: hidden;
+}
+.status-chip-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--danger);
+}
+.status-chip.pulse .status-chip-dot {
+  animation: status-chip-pulse 1.1s ease-in-out infinite;
+}
+@keyframes status-chip-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(224, 134, 0, 0.7);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(224, 134, 0, 0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .status-chip.pulse .status-chip-dot {
+    animation: none;
+  }
+}
+/* Phone: just the dot, still a 44 px target. */
+.status-chip.compact {
+  border: 0;
+  background: transparent;
+  height: auto;
+}
+.status-chip.compact .status-chip-main {
+  justify-content: center;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0;
+}
+.status-chip.compact .status-chip-dot {
+  width: 14px;
+  height: 14px;
+}
+[data-pointer="coarse"] .status-chip {
+  height: 40px;
+}
+[data-pointer="coarse"] .status-chip.compact .status-chip-main {
+  min-width: 44px;
+  min-height: 44px;
+}
+[data-layout="compact"] .status-chip-act-text,
+[data-layout="tablet"] .status-chip-act-text {
+  /* Icon only where the top bar is tight; the button keeps its aria-label. */
+  display: none;
+}
+
+/* ---- Connection banner ------------------------------------------------------------------------------------------ */
+
+.conn-banner {
+  position: relative;
+  z-index: var(--z-banner, 90);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--danger);
+  color: #ffffff;
+  font-size: var(--fs-md, 13px);
+  line-height: 1.35;
+}
+.conn-banner-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid #ffffff;
+  border-top-color: transparent;
+  animation: conn-banner-spin 0.9s linear infinite;
+}
+@keyframes conn-banner-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .conn-banner-dot {
+    animation: none;
+    border-top-color: #ffffff;
+  }
+}
+.conn-banner-text {
+  min-width: 0;
+}
+
+/* ---- Tablet: the Laser workspace's context strip (chip, Frame, Start) ------------------------------------------- */
+
+.laser-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+.laser-strip .frame-ctl {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+.laser-strip .start-toolbar .start-reason {
+  max-width: 220px;
+}
+
+/* ---- Laser dock: device select and machine card -------------------------------------------------------------- */
+
+/* The device name gets the whole row (it was clipped to "ComMarker B6 MOPA 60W (E"); Devices… wraps below it. */
+.laser-device .dev-select-bar {
+  flex: 1 1 100%;
+}
+.laser-device .dev-select select {
+  width: 100%;
+  text-overflow: ellipsis;
+}
+.laser-device .dev-bar-row > .btn {
+  margin-left: auto;
+}
+
+.machine-advanced {
+  margin-top: 6px;
+}
+.machine-advanced > summary {
+  cursor: pointer;
+  color: var(--text-2, var(--muted));
+  font-size: var(--fs-sm, 12px);
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+}
+.machine-raw {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--fs-xs, 11px);
+}
+.machine-raw dd {
+  overflow-wrap: anywhere;
+}
+
+/* ---- Empty canvas card -------------------------------------------------------------------------------------------- */
+
+.empty-card-wrap {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-canvas-ui, 5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-4, 16px);
+  pointer-events: none;
+}
+.empty-card {
+  pointer-events: auto;
+  width: min(420px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  padding: var(--sp-4, 16px);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg, 8px);
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: var(--shadow-pop, 0 4px 16px rgba(0, 0, 0, 0.18));
+}
+.empty-card-title {
+  margin: 0 0 4px;
+  font-size: var(--fs-xl, 18px);
+  font-weight: 600;
+}
+.empty-card-drop {
+  margin: 0 0 12px;
+  color: var(--text-2, var(--muted));
+}
+.empty-card-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.empty-card-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  min-height: max(36px, var(--hit, 28px));
+}
+.empty-card-actions .btn-primary {
+  grid-column: 1 / -1;
+  justify-content: center;
+}
+.empty-card-t {
+  display: inline-block;
+  width: 18px;
+  text-align: center;
+  font-weight: 700;
+  font-family: Georgia, "Times New Roman", serif;
+}
+.empty-card-laser {
+  --chip-dot: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 12px 0 0;
+  font-size: var(--fs-sm, 12px);
+  color: var(--text-2, var(--muted));
+}
+.empty-card-laser.tone-ok {
+  --chip-dot: var(--ok);
+}
+.empty-card-laser.tone-armed {
+  --chip-dot: var(--chip-framing);
+}
+.empty-card-laser.tone-run,
+.empty-card-laser.tone-bad {
+  --chip-dot: var(--danger);
+}
+[data-layout="phone"] .empty-card-actions {
+  grid-template-columns: 1fr;
+}
+
+/* ---- Beginner Mode step bar --------------------------------------------------------------------------------------- */
+
+.step-bar {
+  margin: 0 0 8px;
+}
+.step-bar-list {
+  display: flex;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.step {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  color: var(--text-2, var(--muted));
+  font-size: var(--fs-sm, 12px);
+}
+.step.done {
+  color: var(--text);
+}
+.step.current {
+  border-color: var(--start-bg);
+  background: var(--warn-bg);
+  color: var(--text);
+  font-weight: 600;
+}
+.step-n {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid currentColor;
+  font-size: 11px;
+}
+.step.current .step-n {
+  background: var(--start-bg);
+  border-color: var(--start-bg);
+  color: var(--start-fg);
+}
+.step-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.step-hint {
+  margin: 4px 0 0;
+  font-size: var(--fs-sm, 12px);
+  color: var(--text-2, var(--muted));
+}
