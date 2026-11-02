@@ -7,18 +7,26 @@
 //! ```text
 //! G90 G21          absolute millimetres
 //! M4 S0            dynamic power (M3 with constant power), laser off until an S
+//! M8 / M9          air assist on / off where a pass's setting changes (layer option `air_assist`)
 //! G0 X.. Y..       travel to each polyline (GRBL's laser mode keeps the laser off during G0)
+//! M3 S0 / M4 S0    a change of spindle mode (layer option `constant_power`), always with S0
 //! G1 X.. Y.. S.. F..   the first cut of a polyline with its power and feed, later cuts only X/Y
-//! M5 / G4 P.. / M4 a pause before or after a pass, with the laser off
-//! M5               laser off at the end
+//! M5 / G4 P.. / M4 S0  a pause before or after a pass, with the laser off
+//! M5 (M9)          laser off at the end (and air assist, when it was on)
 //! ```
+//!
+//! The GRBL layer options ([`crate::GantryPass`], from `doc::CutOptions`): `constant_power` runs a pass with `M3`
+//! even when the device's default is `M4`; `air_assist` turns air on for the passes that ask for it; `overscan_mm`
+//! moves the head that far before and past every straight scan line with `G1 ... S0` (laser off, at the cut's feed,
+//! shortened at the bed's edge); `overcut_mm` cuts a closed outline on past its start point (at most once around).
+//! S changes ride on the `G1` line they apply to, so the laser never gets a power while the head stands still.
 //!
 //! Coordinates are machine mm from the origin corner, positive into the bed: `S · field + [W/2, H/2]` with `S`
 //! negating the mirrored axes (the rule `lbrn` uses for gantry projects); feeds are mm/min (`speed_mm_s × 60`); S is
 //! `power % / 100 × $30`. Nothing is clamped: a feed above the machine's limit, a power above its limit, a point off the
 //! bed, a dot-mode pass (a galvo feature) or a multi-part job (rotary/Z) are refused. Unverified on hardware.
 
-use crate::{JobPlan, PlanError, Result, Target};
+use crate::{JobPlan, PassPlan, PlanError, Point, Result, Target};
 
 /// The machine facts a G-code job is made for (from the engine's GRBL profile).
 #[derive(Debug, Clone, PartialEq)]
@@ -74,6 +82,29 @@ impl GcodeSettings {
         }
     }
 
+    /// The overscan run-in and run-out points of the scan line `a` -> `b`: `length` mm before `a` and past `b` along
+    /// the line, each shortened so it stays on the bed (field frame).
+    fn overscan(&self, a: Point, b: Point, length: f64) -> (Point, Point) {
+        let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+        let d = (dx * dx + dy * dy).sqrt();
+        if d <= 1e-9 || !d.is_finite() {
+            return (a, b);
+        }
+        let u = [dx / d, dy / d];
+        let half = [self.work_area_mm[0] / 2.0, self.work_area_mm[1] / 2.0];
+        // How far from `p` the bed reaches in direction `v`.
+        let room = |p: Point, v: [f64; 2]| {
+            (0..2)
+                .filter(|&k| v[k].abs() > 1e-12)
+                .map(|k| (v[k].signum() * half[k] - p[k]) / v[k])
+                .fold(f64::INFINITY, f64::min)
+                .max(0.0)
+        };
+        let back = length.min(room(a, [-u[0], -u[1]]));
+        let on = length.min(room(b, u));
+        ([a[0] - back * u[0], a[1] - back * u[1]], [b[0] + on * u[0], b[1] + on * u[1]])
+    }
+
     fn to_machine(&self, p: [f64; 2]) -> Result<(f64, f64)> {
         let [w, h] = self.work_area_mm;
         if !(p[0].is_finite() && p[1].is_finite() && p[0].abs() <= w / 2.0 + 1e-9 && p[1].abs() <= h / 2.0 + 1e-9) {
@@ -100,17 +131,24 @@ pub fn gcode_lines(job: &JobPlan, s: &GcodeSettings) -> Result<Vec<String>> {
     if job.parts.len() > 1 || job.passes.iter().any(|p| p.part != 0) {
         return Err(PlanError::Gcode("the job moves an extension axis (rotary or Z), which GRBL output does not support".into()));
     }
-    let spindle = if s.dynamic_power { "M4" } else { "M3" };
-    let mut out = vec!["G90 G21".to_owned(), format!("{spindle} S0")];
-    let mut on = true;
+    let mode_of = |p: &PassPlan| if p.gantry.constant_power || !s.dynamic_power { "M3" } else { "M4" };
+    let first = job
+        .passes
+        .iter()
+        .find(|p| p.polylines.iter().any(|q| q.len() >= 2))
+        .map_or(if s.dynamic_power { "M4" } else { "M3" }, mode_of);
+    let mut out = vec!["G90 G21".to_owned(), format!("{first} S0")];
+    // The spindle mode in force (`None` after an `M5`) and whether air assist is on.
+    let mut spindle = Some(first);
+    let mut air = false;
     let mut pos: Option<(f64, f64)> = None;
     let (mut cur_s, mut cur_f): (Option<f64>, Option<f64>) = (Some(0.0), None);
     let mut marked = false;
-    let pause = |out: &mut Vec<String>, us: f64, on: &mut bool| {
+    let pause = |out: &mut Vec<String>, us: f64, spindle: &mut Option<&str>| {
         if us > 0.0 {
             out.push("M5".into());
             out.push(format!("G4 P{}", gcode_number((us / 1e6).min(60.0))));
-            *on = false;
+            *spindle = None;
         }
     };
     for pass in &job.passes {
@@ -127,7 +165,18 @@ pub fn gcode_lines(job: &JobPlan, s: &GcodeSettings) -> Result<Vec<String>> {
                 s.max_feed_mm_min
             )));
         }
-        pause(&mut out, pass.pause_before_us, &mut on);
+        let g = &pass.gantry;
+        for (name, v) in [("overscan", g.overscan_mm), ("overcut", g.overcut_mm)] {
+            if !(v.is_finite() && (0.0..=doc::MAX_GANTRY_EXTRA_MM).contains(&v)) {
+                return Err(PlanError::Gcode(format!(
+                    "layer {}: {name} {v} mm is outside 0..={} mm",
+                    pass.layer_id,
+                    doc::MAX_GANTRY_EXTRA_MM
+                )));
+            }
+        }
+        let want = mode_of(pass);
+        pause(&mut out, pass.pause_before_us, &mut spindle);
         for (i, poly) in pass.polylines.iter().enumerate() {
             if poly.len() < 2 {
                 continue;
@@ -137,22 +186,48 @@ pub fn gcode_lines(job: &JobPlan, s: &GcodeSettings) -> Result<Vec<String>> {
                 return Err(PlanError::PowerTooHigh { layer: pass.layer_id.clone(), power_pct: power, max_pct: s.max_power_pct });
             }
             let sv = (power / 100.0 * s.s_max * 1000.0).round() / 1000.0;
-            let start = s.to_machine(poly[0])?;
+            // Where the head goes with the laser off first, then each move with its S.
+            let (approach, moves) = if g.overscan_mm > 0.0 && poly.len() == 2 {
+                let (pre, post) = s.overscan(poly[0], poly[1], g.overscan_mm);
+                let mut m = Vec::with_capacity(3);
+                if !same(pre, poly[0]) {
+                    m.push((poly[0], 0.0));
+                }
+                m.push((poly[1], sv));
+                if !same(post, poly[1]) {
+                    m.push((post, 0.0));
+                }
+                (pre, m)
+            } else {
+                let mut m: Vec<(Point, f64)> = poly[1..].iter().map(|p| (*p, sv)).collect();
+                if g.overcut_mm > 0.0 {
+                    m.extend(overcut(poly, g.overcut_mm).into_iter().map(|p| (p, sv)));
+                }
+                (poly[0], m)
+            };
+            if g.air_assist != air {
+                out.push(if g.air_assist { "M8" } else { "M9" }.to_owned());
+                air = g.air_assist;
+            }
+            let start = s.to_machine(approach)?;
             if pos.is_none_or(|p| (p.0 - start.0).abs() > 1e-6 || (p.1 - start.1).abs() > 1e-6) {
                 out.push(format!("G0 X{} Y{}", gcode_number(start.0), gcode_number(start.1)));
+                pos = Some(start);
             }
-            if !on {
-                out.push(spindle.to_owned());
-                on = true;
+            if spindle != Some(want) {
+                // Always with S0: the power comes with the next cut, never while the head stands still.
+                out.push(format!("{want} S0"));
+                spindle = Some(want);
+                cur_s = Some(0.0);
             }
-            for (k, p) in poly[1..].iter().enumerate() {
-                let (x, y) = s.to_machine(*p)?;
+            for (p, sval) in moves {
+                let (x, y) = s.to_machine(p)?;
                 let mut line = format!("G1 X{} Y{}", gcode_number(x), gcode_number(y));
-                if k == 0 && cur_s != Some(sv) {
-                    line.push_str(&format!(" S{}", gcode_number(sv)));
-                    cur_s = Some(sv);
+                if cur_s != Some(sval) {
+                    line.push_str(&format!(" S{}", gcode_number(sval)));
+                    cur_s = Some(sval);
                 }
-                if k == 0 && cur_f != Some(feed) {
+                if cur_f != Some(feed) {
                     line.push_str(&format!(" F{}", gcode_number(feed)));
                     cur_f = Some(feed);
                 }
@@ -161,13 +236,44 @@ pub fn gcode_lines(job: &JobPlan, s: &GcodeSettings) -> Result<Vec<String>> {
             }
             marked = true;
         }
-        pause(&mut out, pass.pause_after_us, &mut on);
+        pause(&mut out, pass.pause_after_us, &mut spindle);
     }
     if !marked {
         return Err(PlanError::Empty);
     }
     out.push("M5".into());
+    if air {
+        out.push("M9".into());
+    }
     Ok(out)
+}
+
+fn same(a: Point, b: Point) -> bool {
+    (a[0] - b[0]).abs() <= 1e-9 && (a[1] - b[1]).abs() <= 1e-9
+}
+
+/// The first `length` mm of a closed polyline (first point = last, at least two segments) from its start, at most
+/// once around: the overcut's points after the polyline's own. Empty for an open polyline.
+fn overcut(poly: &[Point], length: f64) -> Vec<Point> {
+    let (Some(first), Some(last)) = (poly.first(), poly.last()) else { return Vec::new() };
+    if poly.len() < 3 || !same(*first, *last) {
+        return Vec::new();
+    }
+    let mut left = length;
+    let mut out = Vec::new();
+    for w in poly.windows(2) {
+        let d = ((w[1][0] - w[0][0]).powi(2) + (w[1][1] - w[0][1]).powi(2)).sqrt();
+        if d >= left {
+            if d > 0.0 {
+                let t = left / d;
+                out.push([w[0][0] + t * (w[1][0] - w[0][0]), w[0][1] + t * (w[1][1] - w[0][1])]);
+            }
+            return out;
+        }
+        left -= d;
+        out.push(w[1]);
+    }
+    out
 }
 
 /// The job as a `.gcode` file: `header` lines as `;` comments, then [`gcode_lines`], CRLF-free (`\n`).
@@ -225,6 +331,7 @@ mod tests {
             pause_before_us: 0.0,
             pause_after_us: 0.0,
             z_mm: None,
+            gantry: crate::GantryPass::default(),
         }
     }
 
@@ -262,7 +369,7 @@ mod tests {
         let job = JobPlan { passes: vec![p.clone()], ..JobPlan::default() };
         let rear_right = GcodeSettings { mirror_x: true, mirror_y: true, dynamic_power: false, ..settings() };
         let lines = gcode_lines(&job, &rear_right).unwrap();
-        assert_eq!(lines, ["G90 G21", "M3 S0", "M5", "G4 P0.5", "G0 X400 Y0", "M3", "G1 X390 Y10 S125 F600", "M5"]);
+        assert_eq!(lines, ["G90 G21", "M3 S0", "M5", "G4 P0.5", "G0 X400 Y0", "M3 S0", "G1 X390 Y10 S125 F600", "M5"]);
         let fast = JobPlan { passes: vec![pass(vec![vec![[0.0, 0.0], [1.0, 0.0]]], 10.0, 101.0)], ..JobPlan::default() };
         assert!(gcode_lines(&fast, &settings()).unwrap_err().to_string().contains("6060 mm/min"));
         let hot = JobPlan { passes: vec![pass(vec![vec![[0.0, 0.0], [1.0, 0.0]]], 60.0, 10.0)], ..JobPlan::default() };
@@ -275,6 +382,101 @@ mod tests {
         assert!(matches!(gcode_lines(&JobPlan::default(), &settings()), Err(PlanError::Empty)));
         let file = gcode_file(&job, &settings(), &["OpenEtch".into(), "two\nlines".into()]).unwrap();
         assert!(file.starts_with("; OpenEtch\n; two\n; lines\nG90 G21\n") && file.ends_with("M5\n"));
+    }
+
+    fn gantry(constant_power: bool, air_assist: bool, overscan_mm: f64, overcut_mm: f64) -> crate::GantryPass {
+        crate::GantryPass { constant_power, air_assist, overscan_mm, overcut_mm }
+    }
+
+    #[test]
+    fn constant_power_and_air_assist_per_pass() {
+        let mut a = pass(vec![vec![[0.0, 0.0], [10.0, 0.0]]], 50.0, 20.0);
+        a.gantry = gantry(true, true, 0.0, 0.0);
+        let b = pass(vec![vec![[0.0, 10.0], [10.0, 10.0]]], 50.0, 20.0);
+        let mut c = pass(vec![vec![[0.0, 20.0], [10.0, 20.0]]], 40.0, 20.0);
+        c.gantry = gantry(false, true, 0.0, 0.0);
+        let job = JobPlan { passes: vec![a, b, c], ..JobPlan::default() };
+        let lines = gcode_lines(&job, &settings()).unwrap();
+        assert_eq!(
+            lines,
+            [
+                "G90 G21",
+                "M3 S0",
+                "M8",
+                "G0 X200 Y150",
+                "G1 X210 Y150 S500 F1200",
+                "M9",
+                "G0 X200 Y160",
+                "M4 S0",
+                "G1 X210 Y160 S500",
+                "M8",
+                "G0 X200 Y170",
+                "G1 X210 Y170 S400",
+                "M5",
+                "M9"
+            ]
+        );
+        // A device that is constant power anyway never switches.
+        let m3 = gcode_lines(&job, &GcodeSettings { dynamic_power: false, ..settings() }).unwrap();
+        assert!(!m3.iter().any(|l| l.starts_with("M4")), "{m3:?}");
+        assert_eq!(m3.iter().filter(|l| l.starts_with("M3")).count(), 1, "{m3:?}");
+    }
+
+    #[test]
+    fn overscan_runs_in_and_out_with_the_laser_off() {
+        let mut p = pass(vec![vec![[-10.0, 0.0], [10.0, 0.0]], vec![[10.0, 1.0], [-10.0, 1.0]]], 50.0, 20.0);
+        p.gantry = gantry(false, false, 2.5, 0.0);
+        let job = JobPlan { passes: vec![p], ..JobPlan::default() };
+        let lines = gcode_lines(&job, &settings()).unwrap();
+        assert_eq!(
+            lines,
+            [
+                "G90 G21",
+                "M4 S0",
+                "G0 X187.5 Y150",
+                "G1 X190 Y150 F1200",
+                "G1 X210 Y150 S500",
+                "G1 X212.5 Y150 S0",
+                "G0 X212.5 Y151",
+                "G1 X210 Y151",
+                "G1 X190 Y151 S500",
+                "G1 X187.5 Y151 S0",
+                "M5"
+            ]
+        );
+        // At the bed's edge the run-in is shortened, never off the bed; a diagonal line runs in along itself.
+        let mut edge = pass(vec![vec![[-199.0, 0.0], [-190.0, 0.0]], vec![[0.0, 0.0], [3.0, 4.0]]], 50.0, 20.0);
+        edge.gantry = gantry(false, false, 5.0, 0.0);
+        let lines = gcode_lines(&JobPlan { passes: vec![edge], ..JobPlan::default() }, &settings()).unwrap();
+        assert_eq!(lines[2], "G0 X0 Y150");
+        assert!(lines.contains(&"G0 X197 Y146".to_owned()) && lines.contains(&"G1 X206 Y158 S0".to_owned()), "{lines:?}");
+        // Every S > 0 is on a G1 between the run-in and the run-out: the S0 moves frame each cut.
+        let mut img = pass(vec![vec![[0.0, 0.0], [1.0, 0.0]], vec![[1.0, 0.1], [0.0, 0.1]]], 30.0, 10.0);
+        img.powers = vec![10.0, 20.0];
+        img.gantry = gantry(true, false, 1.0, 0.0);
+        let lines = gcode_lines(&JobPlan { passes: vec![img], ..JobPlan::default() }, &settings()).unwrap();
+        for (k, l) in lines.iter().enumerate().filter(|(_, l)| l.starts_with("G1") && l.contains(" S") && !l.contains(" S0")) {
+            assert!(lines[k - 1].starts_with("G1") && lines[k + 1].ends_with(" S0"), "cut {l} without run-in and run-out: {lines:?}");
+        }
+        assert!(lines.contains(&"G1 X201 Y150 S100".to_owned()) && lines.contains(&"G1 X200 Y150.1 S200".to_owned()), "{lines:?}");
+    }
+
+    #[test]
+    fn overcut_retraces_the_start_of_closed_outlines_only() {
+        let square = vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0], [0.0, 0.0]];
+        let mut p = pass(vec![square, vec![[0.0, 20.0], [5.0, 20.0], [5.0, 25.0]]], 50.0, 20.0);
+        p.gantry = gantry(false, false, 0.0, 12.0);
+        let lines = gcode_lines(&JobPlan { passes: vec![p.clone()], ..JobPlan::default() }, &settings()).unwrap();
+        assert_eq!(
+            lines[2..9],
+            ["G0 X200 Y150", "G1 X210 Y150 S500 F1200", "G1 X210 Y160", "G1 X200 Y160", "G1 X200 Y150", "G1 X210 Y150", "G1 X210 Y152"]
+        );
+        assert_eq!(lines[9..], ["G0 X200 Y170", "G1 X205 Y170", "G1 X205 Y175", "M5"], "an open path gets no overcut");
+        p.gantry.overcut_mm = 50.0;
+        let lines = gcode_lines(&JobPlan { passes: vec![p.clone()], ..JobPlan::default() }, &settings()).unwrap();
+        assert_eq!(lines.iter().filter(|l| l.starts_with("G1")).count(), 4 + 4 + 2, "at most once around: {lines:?}");
+        p.gantry.overcut_mm = 51.0;
+        assert!(gcode_lines(&JobPlan { passes: vec![p], ..JobPlan::default() }, &settings()).is_err());
     }
 
     #[test]

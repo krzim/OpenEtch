@@ -102,6 +102,34 @@ pub struct PassPlan {
     /// Z position of this pass, mm (Z offset and step per pass), when the machine has a Z axis.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub z_mm: Option<f64>,
+    /// The pass's GRBL layer options (constant power, air assist, overscan, overcut): read only by the G-code output
+    /// (`gcode`); the LMC encoder never looks at them.
+    #[serde(default, skip_serializing_if = "GantryPass::is_default")]
+    pub gantry: GantryPass,
+}
+
+/// A pass's GRBL layer options ([`doc::CutOptions`] `constant_power`, `air_assist`, `overscan_mm`, `overcut_mm`), as
+/// the G-code output uses them. `overscan_mm` is set only for passes that hold scan lines (fill hatches, images).
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub struct GantryPass {
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub constant_power: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub air_assist: bool,
+    #[serde(default, skip_serializing_if = "is_zero_f64")]
+    pub overscan_mm: f64,
+    #[serde(default, skip_serializing_if = "is_zero_f64")]
+    pub overcut_mm: f64,
+}
+
+impl GantryPass {
+    pub fn is_default(&self) -> bool {
+        *self == GantryPass::default()
+    }
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
 }
 
 fn is_zero_usize(v: &usize) -> bool {
@@ -476,6 +504,17 @@ pub(crate) fn plan_job_within(doc: &Document, target: &Target, max_segments: usi
                 pause_before_us: cut.options.pause_before_ms * 1000.0,
                 pause_after_us: cut.options.pause_after_ms * 1000.0,
                 z_mm,
+                gantry: GantryPass {
+                    constant_power: cut.options.constant_power,
+                    air_assist: cut.options.air_assist,
+                    // Scan lines: image runs, and the hatch lines of fill modes (Offset Fill traces closed rings).
+                    overscan_mm: if !decoded.is_empty() || matches!(cut.mode, FillMode::Fill | FillMode::FillThenLine) {
+                        cut.options.overscan_mm
+                    } else {
+                        0.0
+                    },
+                    overcut_mm: cut.options.overcut_mm,
+                },
             });
         }
     }

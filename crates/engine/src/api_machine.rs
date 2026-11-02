@@ -24,7 +24,7 @@
 //! | PUT | `/api/devices/{id}/cor` | `?name=<file>.cor`, the file as the body: load a lens correction file (UI only) |
 //! | DELETE | `/api/devices/{id}/cor` | clear it (UI only) |
 //! | POST | `/api/devices/import/markcfg` | `?name=`, an EzCad `markcfg7` as the body: a new device (UI only) |
-//! | GET | `/api/machine/grbl` | a GRBL gantry's profile and board (version, last status report, alarm, laser mode, `$30`/`$31`, unsafe start-up blocks, messages); `board` null while a run or frame holds it |
+//! | GET | `/api/machine/grbl` | `?refresh=true` asks an idle board for a status report first (never waits behind a run, frame or homing). A GRBL gantry's profile and board (version, last status report, alarm, laser mode, `$30`/`$31`, unsafe start-up blocks, messages; `board` null while a run or frame holds it) and `position` (`{machine: [x, y], field: [x, y]}` mm from the last status report: machine coordinates from the origin corner and the field frame of the canvas; null when unknown) |
 //! | POST | `/api/machine/home` | GRBL homing cycle `$H` (UI only; moves, never fires) |
 //! | POST | `/api/machine/unlock` | GRBL `$X` after an alarm (UI only) |
 //! | POST | `/api/machine/jog` | `{dx, dy}` mm or `{x, y}` (field frame), `feed?` mm/min: a GRBL jog `$J=` with the laser off (UI only) |
@@ -95,9 +95,31 @@ async fn serial_ports() -> Json<Value> {
     Json(json!({ "ports": crate::hw::serial_ports(), "serial_support": cfg!(feature = "serial") }))
 }
 
-async fn grbl_status(State(st): State<Arc<AppState>>) -> Result<Json<Value>, EngineError> {
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GrblStatusQuery {
+    #[serde(default)]
+    refresh: bool,
+}
+
+async fn grbl_status(State(st): State<Arc<AppState>>, Query(q): Query<GrblStatusQuery>) -> Result<Json<Value>, EngineError> {
     let profile = st.machine.grbl_profile().ok_or_else(|| EngineError::Conflict("the active machine is not a GRBL gantry".into()))?;
-    Ok(Json(json!({ "profile": profile, "board": st.machine.grbl_snapshot(), "running": st.machine.is_running(), "framing": st.machine.is_framing() })))
+    if q.refresh && !st.machine.is_running() && !st.machine.is_framing() {
+        let m = st.machine.clone();
+        tokio::task::spawn_blocking(move || m.grbl_refresh_status()).await?;
+    }
+    let board = st.machine.grbl_snapshot();
+    let position = board.as_ref().and_then(|b| b.status.as_ref()).and_then(|s| s.mpos).map(|[x, y, _]| {
+        let (fx, fy) = profile.to_field(x, y);
+        json!({ "machine": [x, y], "field": [fx, fy] })
+    });
+    Ok(Json(json!({
+        "profile": profile,
+        "board": board,
+        "position": position,
+        "running": st.machine.is_running(),
+        "framing": st.machine.is_framing(),
+    })))
 }
 
 /// Run `f` on the GRBL driver: refused unless a GRBL gantry is active and no run or frame holds the machine (a

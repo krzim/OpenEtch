@@ -33,7 +33,7 @@ pub use geom::{FLATTEN_TOLERANCE_MM, Point};
 pub use hatch::MAX_SCANLINES;
 pub use image::{MAX_IMAGE_DOTS, MAX_PROCESSED_DOTS, MAX_SOURCE_PIXELS, ProcessedBitmap, processed_bitmap, processed_png, tone_factors};
 pub use job::{
-    JobOptions, JobPlan, MAX_LAYER_PASSES, MAX_PASSES, MAX_SEGMENTS, MotionTime, PartPlan, PassPlan, PassSettings, Stats, layer_schedule,
+    GantryPass, JobOptions, JobPlan, MAX_LAYER_PASSES, MAX_PASSES, MAX_SEGMENTS, MotionTime, PartPlan, PassPlan, PassSettings, Stats, layer_schedule,
     plan_job, plan_job_with,
 };
 pub use preview::{

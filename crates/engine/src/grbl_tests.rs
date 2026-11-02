@@ -401,3 +401,98 @@ async fn agents_cannot_frame_a_gantry() {
     let r = crate::mcp::GalvoMcp::new(st.clone()).call("machine_stop", serde_json::Map::new()).await;
     assert_ne!(serde_json::to_value(&r).unwrap()["isError"], true);
 }
+
+/// The GRBL layer options (constant power, air assist, overscan) through the whole engine: set like any layer setting
+/// (an agent may edit them: an edit fires nothing), they shape the exported G-code and the run's, and the laser and
+/// the air come on only inside the approved run; Stop or the run's end leaves both off.
+#[tokio::test]
+async fn grbl_layer_options_shape_the_gcode_and_fire_only_in_the_armed_run() {
+    let (app, st, _, _) = grbl_engine(false).await;
+    let board = sim(&st);
+    exec(&app, "shape.rect", json!({"width_mm": 20, "height_mm": 4})).await;
+    // As MCP would send it: an edit, never a burn.
+    let (s, v) = send(&app, req("POST", "/api/execute", Some(json!({"id": "layer.update", "params": {"id": "layer-1", "settings": {
+        "mode": "fill", "power_pct": 40, "speed_mm_s": 20, "hatch": {"interval_mm": 1.0, "angle_deg": 0.0},
+        "options": {"constant_power": true, "air_assist": true, "overscan_mm": 3.0}}}})))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (s, v) = send(&app, req("POST", "/api/execute", Some(json!({"id": "layer.update", "params": {"id": "layer-1", "settings": {
+        "options": {"overscan_mm": 80.0}}}})))).await;
+    assert_eq!((s, &v["ok"]), (StatusCode::OK, &json!(false)), "overscan above 50 mm is refused: {v}");
+
+    let res = app.clone().oneshot(req("GET", "/api/export/gcode", None)).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let text = String::from_utf8(res.into_body().collect().await.unwrap().to_bytes().to_vec()).unwrap();
+    assert!(text.contains("layer options: M3 constant power on some layers, air assist M8/M9, overscan"), "{text}");
+    let lines: Vec<&str> = text.lines().filter(|l| !l.starts_with(';')).collect();
+    assert_eq!(lines[..3], ["G90 G21", "M3 S0", "M8"], "{text}");
+    assert_eq!(lines[lines.len() - 2..], ["M5", "M9"], "{text}");
+    // Every scan line: a run-in at S0, the cut at S400, a run-out at S0, 3 mm each side.
+    assert!(lines.iter().any(|l| l.starts_with("G0 X187 ")), "run-in 3 mm before the hatch line at x = 190: {text}");
+    assert!(lines.iter().any(|l| l.starts_with("G1 X210 ") && l.contains("S400")), "{text}");
+    assert!(lines.iter().any(|l| l.starts_with("G1 X213 ") && l.contains("S0")), "{text}");
+    assert!(board.report().fires.is_empty() && !board.report().air_now, "the export sent nothing");
+
+    let (s, v) = send(&app, req("POST", "/api/runs", None)).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let id = v["id"].as_str().unwrap().to_owned();
+    assert!(board.report().fires.is_empty() && !board.report().air_now, "a pending run sends nothing");
+    // MCP cannot approve it.
+    let mut r = req("POST", &format!("/api/runs/{id}/approve"), Some(json!({"pin": PIN})));
+    r.headers_mut().insert("mcp-session-id", "x".parse().unwrap());
+    assert_eq!(send(&app, r).await.0, StatusCode::FORBIDDEN);
+    assert!(board.report().fires.is_empty());
+    let (s, v) = approve(&app, &id).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let run = wait_final(&st, &id).await;
+    assert_eq!(run.state, RunState::Finished, "{:?}", run.error);
+    let r = board.report();
+    assert!(r.cuts() >= 4, "{:?}", r.fires);
+    assert!(r.fires.iter().all(|f| f.kind == FireKind::Cut && f.s == 400.0 && f.air), "every cut at S400 with air: {:?}", r.fires);
+    // The overscan moves never fired: every cut lies within the rectangle (x 190..210 on the bed).
+    assert!(r.fires.iter().all(|f| f.from[0].min(f.to[0]) >= 190.0 - 1e-6 && f.from[0].max(f.to[0]) <= 210.0 + 1e-6), "{:?}", r.fires);
+    assert!(r.lines.iter().any(|l| l == "M8") && r.lines.iter().any(|l| l == "M3 S0"), "{:?}", r.lines);
+    assert!(!r.air_now && !r.lit_now, "air and laser off after the run");
+}
+
+/// The Move window's position readout: `?refresh=true` asks an idle board for a status report and the answer carries
+/// the head's position in machine and canvas (field) coordinates. A refresh never moves or fires.
+#[tokio::test]
+async fn the_move_window_reads_the_heads_position() {
+    let (app, st, _, _) = grbl_engine(false).await;
+    let board = sim(&st);
+    let (s, v) = send(&app, req("POST", "/api/machine/jog", Some(json!({"x": -150.0, "y": 100.0, "feed": 3000})))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    board.run_blocks(5);
+    let (s, g) = send(&app, req("GET", "/api/machine/grbl?refresh=true", None)).await;
+    assert_eq!(s, StatusCode::OK, "{g}");
+    assert_eq!(g["position"]["machine"], json!([50.0, 250.0]), "{g}");
+    assert_eq!(g["position"]["field"], json!([-150.0, 100.0]), "{g}");
+    assert_eq!(send(&app, req("GET", "/api/machine/grbl?nope=1", None)).await.0, StatusCode::BAD_REQUEST);
+    let r = board.report();
+    assert!(r.fires.is_empty(), "{:?}", r.fires);
+}
+
+/// Console macros are saved with the device in the engine's preferences (UI only), and a macro that could turn the
+/// laser on is refused when it is saved, before it could ever reach the console.
+#[tokio::test]
+async fn console_macros_are_saved_per_device_and_checked_like_console_lines() {
+    let (app, st, id, _) = grbl_engine(false).await;
+    let put = |v: Value| req("PUT", "/api/prefs", Some(v));
+    let (s, v) = send(&app, put(json!({"console_macros": [{"name": "Fire", "lines": ["M8", "M3 S1000"]}]}))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
+    assert!(v["error"].as_str().unwrap().contains("M3"), "{v}");
+    let mut r = put(json!({"console_macros": []}));
+    r.headers_mut().insert("mcp-session-id", "x".parse().unwrap());
+    assert_eq!(send(&app, r).await.0, StatusCode::FORBIDDEN, "agents cannot write macros");
+    let macros = json!([{"name": "Air on", "lines": ["M8"]}, {"name": "Park", "lines": ["$J=G90 G21 X0 Y0 F3000", "M9"]}]);
+    let (s, v) = send(&app, put(json!({"console_macros": macros}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (_, v) = send(&app, req("GET", "/api/prefs", None)).await;
+    assert_eq!((&v["device"], &v["device_prefs"]["console_macros"]), (&json!(id), &macros), "{v}");
+    // Running one is sending its lines through the console, one by one.
+    for line in ["$J=G90 G21 X0 Y0 F3000", "M9"] {
+        let (s, v) = send(&app, req("POST", "/api/machine/console", Some(json!({"line": line})))).await;
+        assert_eq!((s, &v["ok"]), (StatusCode::OK, &json!(true)), "{line}: {v}");
+    }
+    assert!(sim(&st).report().fires.is_empty());
+}

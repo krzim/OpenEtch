@@ -387,3 +387,19 @@ fn curve_tolerance_from_the_document_or_device_sets_how_finely_curves_are_marked
     assert!(plan_job(&d, &target()).is_ok());
     assert!(matches!(plan_job(&d, &Target { field_height_mm: Some(60.0), ..target() }), Err(PlanError::OutOfField { .. })));
 }
+
+#[test]
+fn gantry_layer_options_reach_the_passes_and_never_the_galvo_list() {
+    let o = CutOptions { constant_power: true, air_assist: true, overscan_mm: 2.0, overcut_mm: 1.5, ..CutOptions::default() };
+    let objects = || vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0))];
+    let line = plan_job(&doc_with(objects(), with_options(CutSettings::default(), o.clone())), &target()).unwrap();
+    // Overscan is for scan lines only: a line layer has none.
+    assert_eq!(line.passes[0].gantry, GantryPass { constant_power: true, air_assist: true, overscan_mm: 0.0, overcut_mm: 1.5 });
+    let filled = plan_job(&doc_with(objects(), with_options(fill(1.0), o.clone())), &target()).unwrap();
+    assert_eq!(filled.passes[0].gantry.overscan_mm, 2.0);
+    // The galvo's list is the same with or without them.
+    let plain = plan_job(&doc_with(objects(), fill(1.0)), &target()).unwrap();
+    assert_eq!(encode(&filled, &target()).unwrap(), encode(&plain, &target()).unwrap());
+    assert!(plain.passes[0].gantry.is_default());
+    assert!(serde_json::to_value(&plain.passes[0]).unwrap().get("gantry").is_none(), "left out of JSON while off");
+}

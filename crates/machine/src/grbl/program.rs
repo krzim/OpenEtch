@@ -105,10 +105,10 @@ pub const MAX_PROGRAM_LINES: usize = 4_000_000;
 /// - printable ASCII lines that fit GRBL's receive buffer with their newline, no realtime characters (`?`, `!`,
 ///   `~`), no comments, no `$` system commands;
 /// - `G0`, `G1`, `G4 P<s>` (0..=60 s), `G21` and `G90` (millimetres, absolute: required before the first motion),
-///   `M3` / `M4` / `M5`, `S` within `0..=max_power_pct` of `$30`, `F` within `0..=max_feed_mm_min` (and set before
+///   `M3` / `M4` / `M5`, air assist (coolant) `M7` / `M8` / `M9`, `S` within `0..=max_power_pct` of `$30`, `F` within `0..=max_feed_mm_min` (and set before
 ///   the first `G1`), `X` / `Y` inside the bed (machine coordinates, mm from the origin corner);
 /// - no `G4` dwell while constant power (`M3`) is on with `S > 0` (the laser would fire standing still);
-/// - the laser is off (`M5`) at the end.
+/// - the laser is off (`M5`) and air assist is off (`M9`) at the end.
 pub fn check_program(profile: &GrblProfile, program: &GcodeProgram) -> Result<(), ProgramError> {
     if program.is_empty() {
         return Err(ProgramError { line: 0, reason: "the program is empty".into() });
@@ -121,6 +121,7 @@ pub fn check_program(profile: &GrblProfile, program: &GcodeProgram) -> Result<()
     let (mut mm, mut absolute, mut feed_set) = (false, false, false);
     // 0 = M5, 3 = M3, 4 = M4.
     let (mut spindle, mut s, mut motion) = (5u8, 0.0f64, None::<u8>);
+    let mut air = false;
     for (i, line) in program.lines.iter().enumerate() {
         let n = i + 1;
         let err = |reason: String| ProgramError { line: n, reason };
@@ -144,6 +145,8 @@ pub fn check_program(profile: &GrblProfile, program: &GcodeProgram) -> Result<()
                 'M' if wd.is('M', 3.0) => spindle = 3,
                 'M' if wd.is('M', 4.0) => spindle = 4,
                 'M' if wd.is('M', 5.0) => spindle = 5,
+                'M' if wd.is('M', 7.0) || wd.is('M', 8.0) => air = true,
+                'M' if wd.is('M', 9.0) => air = false,
                 'S' => {
                     if !(0.0..=s_limit).contains(&wd.value) {
                         return Err(err(format!("S{} is above the limit S{:.3} ({} % of $30)", wd.value, profile.s_limit(), profile.max_power_pct)));
@@ -197,6 +200,9 @@ pub fn check_program(profile: &GrblProfile, program: &GcodeProgram) -> Result<()
     if spindle != 5 {
         return Err(ProgramError { line: program.len(), reason: "the program must end with the laser off (M5)".into() });
     }
+    if air {
+        return Err(ProgramError { line: program.len(), reason: "the program must end with air assist off (M9)".into() });
+    }
     Ok(())
 }
 
@@ -236,6 +242,8 @@ mod tests {
             (vec!["G90 G21", "G1 X1 Y1 F100 ?", "M5"], "character"),
             (vec!["G90 G21", "G91", "M5"], "not allowed"),
             (vec!["G90 G21", "G0 Z5", "M5"], "not allowed"),
+            (vec!["G90 G21", "M8", "M4 S0", "G1 X5 Y5 S10 F100", "M5"], "air assist off"),
+            (vec!["G90 G21", "M62 P1", "M5"], "not allowed"),
         ] {
             let e = check_program(&p, &prog(&bad)).unwrap_err();
             assert!(e.to_string().contains(why), "{bad:?}: {e}");
@@ -244,6 +252,7 @@ mod tests {
         assert!(check_program(&half, &good).is_ok());
         assert!(check_program(&half, &prog(&["G90 G21", "M4 S501", "M5"])).is_err());
         check_program(&p, &prog(&["G90 G21", "M4 S300", "G4 P0.5", "M5"])).unwrap();
+        check_program(&p, &prog(&["G90 G21", "M8", "M3 S0", "G0 X1 Y1", "G1 X2 Y1 S10 F100", "M9", "M5"])).unwrap();
         let long = format!("G1 X1 Y1 F100{}", " ".repeat(120));
         assert!(check_program(&p, &prog(&["G90 G21", &long, "M5"])).is_err());
     }

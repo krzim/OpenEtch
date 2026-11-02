@@ -409,6 +409,21 @@ fn file_response(kind: &str, stem: &str, ext: &str, mime: &str, body: Vec<u8>, w
         .into_response()
 }
 
+/// The GRBL layer options a G-code job uses, for the export header ("" when none).
+fn gantry_options_note(job: &plan::JobPlan) -> String {
+    let g = |f: fn(&plan::GantryPass) -> bool| job.passes.iter().any(|p| f(&p.gantry));
+    let notes: Vec<&str> = [
+        (g(|p| p.constant_power), "M3 constant power on some layers"),
+        (g(|p| p.air_assist), "air assist M8/M9"),
+        (g(|p| p.overscan_mm > 0.0), "overscan"),
+        (g(|p| p.overcut_mm > 0.0), "overcut"),
+    ]
+    .into_iter()
+    .filter_map(|(on, n)| on.then_some(n))
+    .collect();
+    if notes.is_empty() { String::new() } else { format!("; layer options: {}", notes.join(", ")) }
+}
+
 /// The name downloads get: the project, else the opened file, else the document.
 fn stem(st: &AppState) -> String {
     let p = st.project_status();
@@ -497,9 +512,10 @@ async fn export_gcode(State(st): State<Arc<AppState>>, q: Q) -> Result<Response,
         let header = [
             format!("OpenEtch G-code for {device} ({} x {} mm bed)", grbl.work_area_mm[0], grbl.work_area_mm[1]),
             format!(
-                "GRBL 1.1 laser mode ($32=1), S 0..{} ($30), {}",
+                "GRBL 1.1 laser mode ($32=1), S 0..{} ($30), {}{}",
                 plan::gcode_number(grbl.s_max),
-                if grbl.dynamic_power { "M4 dynamic power" } else { "M3 constant power" }
+                if grbl.dynamic_power { "M4 dynamic power" } else { "M3 constant power" },
+                gantry_options_note(&job)
             ),
             format!("{} polylines, {:.1} mm marked, about {:.0} s", job.stats.polyline_count, job.stats.mark_length_mm, job.stats.estimated_time_s),
         ];
