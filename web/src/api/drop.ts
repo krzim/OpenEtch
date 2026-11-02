@@ -28,15 +28,12 @@ export const IMAGE_TYPES: Record<string, string> = {
 
 /** Formats LightBurn imports that OpenEtch has no importer for yet. */
 const NOT_YET: Record<string, string> = {
-  gc: "G-code",
-  gcode: "G-code",
-  nc: "G-code",
   clb: tr("apidr.lightburnLibrary"),
 };
 
 /**
- * Formats only engines with `POST /api/document/import` read (PDF, AI, EPS, HPGL, Gerber, 3D models, TIFF/TGA,
- * EzCad). On such engines src/files/useFilesUi.tsx takes them before this router; older engines refuse them here.
+ * Formats only engines with `POST /api/document/import` read (PDF, AI, EPS, HPGL, G-code, Gerber, 3D models,
+ * TIFF/TGA, EzCad). On such engines src/files/useFilesUi.tsx takes them before this router; older engines refuse them here.
  */
 const ENGINE_ONLY: Record<string, string> = {
   ai: tr("apidr.adobeIllustrator"),
@@ -44,6 +41,10 @@ const ENGINE_ONLY: Record<string, string> = {
   eps: "EPS",
   plt: "HPGL",
   hpgl: "HPGL",
+  gcode: "G-code",
+  gc: "G-code",
+  nc: "G-code",
+  ngc: "G-code",
   tif: "TIFF",
   tiff: "TIFF",
   tga: "TGA",

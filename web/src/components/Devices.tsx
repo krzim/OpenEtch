@@ -20,6 +20,8 @@ import {
   deviceList,
   deviceOptionText,
   deviceSizeText,
+  GRBL_FORM_DEFAULT,
+  grblDeviceBody,
   importAddParam,
   importMessage,
   importResult,
@@ -35,6 +37,7 @@ import {
   type DeviceImportBody,
   type DeviceList,
   type DeviceSummary,
+  type GrblForm,
 } from "../api/devices.ts";
 import { diffLabel, formatDiffValue } from "../api/lightburn.ts";
 import { formatBytes } from "../api/project.ts";
@@ -194,11 +197,59 @@ export function DeviceBar(p: {
   );
 }
 
+/** The New GRBL device form (Devices window footer): connection, bed, origin, homing, $30, feed limit, M4/M3. */
+function GrblDeviceForm(p: { form: GrblForm; busy: boolean; onChange: (f: GrblForm) => void; onCancel: () => void; onAdd: () => void }) {
+  const t = useT();
+  const f = p.form;
+  const text = (key: keyof GrblForm, label: string, mode: "text" | "decimal" = "decimal") => (
+    <label className="dev-select">
+      <span className="dev-select-label">{label}</span>
+      <input inputMode={mode} value={String(f[key])} onChange={(e) => p.onChange({ ...f, [key]: e.target.value })} />
+    </label>
+  );
+  return (
+    <div className="dev-confirm" role="group" aria-label={t("dv.newGrblHint")}>
+      {text("displayName", t("dv.grblName"), "text")}
+      {text("port", t("dv.grblPort"), "text")}
+      {text("baud", t("dv.grblBaud"))}
+      {text("widthMm", t("dv.grblWidth"))}
+      {text("heightMm", t("dv.grblHeight"))}
+      <label className="dev-select">
+        <span className="dev-select-label">{t("dv.grblOrigin")}</span>
+        <select value={f.origin} onChange={(e) => p.onChange({ ...f, origin: e.target.value as GrblForm["origin"] })}>
+          {(["bottom_left", "top_left", "bottom_right", "top_right"] as const).map((o) => (
+            <option key={o} value={o}>
+              {originLabel(o)}
+            </option>
+          ))}
+        </select>
+      </label>
+      {text("sMax", t("dv.grblSMax"))}
+      {text("maxFeedMmMin", t("dv.grblMaxFeed"))}
+      <label>
+        <input type="checkbox" checked={f.homing} onChange={(e) => p.onChange({ ...f, homing: e.target.checked })} /> {t("dv.grblHoming")}
+      </label>
+      <label>
+        <input type="checkbox" checked={f.dynamicPower} onChange={(e) => p.onChange({ ...f, dynamicPower: e.target.checked })} /> {t("dv.grblDynamic")}
+      </label>
+      <div className="dev-confirm-actions">
+        <button className="btn" onClick={p.onCancel}>
+          {t("dv.cancel")}
+        </button>
+        <button className="btn btn-primary" disabled={p.busy} onClick={p.onAdd}>
+          {t("dv.add")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /** What the Devices window footer is asking: nothing, to switch, to remove, or which devices of a file to import. */
 type Ask =
   | { kind: "switch"; device: DeviceSummary }
   | { kind: "remove"; device: DeviceSummary }
-  | { kind: "import"; file: string; parsed: DeviceImportBody; choice: string };
+  | { kind: "import"; file: string; parsed: DeviceImportBody; choice: string }
+  | { kind: "grbl"; form: GrblForm };
 
 /** LightBurn's Devices window. */
 export function DevicesWindow(p: {
@@ -310,6 +361,17 @@ export function DevicesWindow(p: {
       if (r?.device?.id) setSelected(r.device.id);
     });
 
+  const addGrbl = (form: GrblForm) =>
+    task(async () => {
+      const b = grblDeviceBody(form);
+      if ("error" in b) throw new Error(b.error);
+      const r = (await jobApi.addGrblDevice(b.body)) as { device?: { id?: string; display_name?: string } };
+      p.notify(t("dv.grblAdded", { name: r?.device?.display_name ?? t("dv.aDevice") }));
+      setAsk(null);
+      await p.devices.refresh();
+      if (r?.device?.id) setSelected(r.device.id);
+    });
+
   const activateBlock = activateBlocker(device, list, p.machine);
   const removeBlock = removeBlocker(device, list);
 
@@ -373,6 +435,8 @@ export function DevicesWindow(p: {
               </button>
             </div>
           </div>
+        ) : ask?.kind === "grbl" ? (
+          <GrblDeviceForm form={ask.form} busy={busy} onChange={(form) => setAsk({ kind: "grbl", form })} onCancel={() => setAsk(null)} onAdd={() => void addGrbl(ask.form)} />
         ) : (
           <>
             <button className="btn" disabled={busy} onClick={() => void runImport(null, "all", t("dv.lightburnOnTheEngineComputer"))}>
@@ -383,6 +447,9 @@ export function DevicesWindow(p: {
             </button>
             <button className="btn" disabled={busy} title={t("dv.addADeviceFromAnEzcad")} onClick={() => markcfgInput.current?.click()}>
               {t("dv.importEzcad")}
+            </button>
+            <button className="btn" disabled={busy} title={t("dv.newGrblHint")} onClick={() => setAsk({ kind: "grbl", form: GRBL_FORM_DEFAULT })}>
+              {t("dv.newGrbl")}
             </button>
             <button className="btn" disabled={busy || !device} title={t("dv.editACopyOfTheSelected")} onClick={() => device && void duplicate(device)}>
               {t("dv.duplicate")}

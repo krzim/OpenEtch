@@ -116,6 +116,9 @@ export const jobApi = {
   corUpload: (id: string, file: Blob, name: string) =>
     call("PUT", `/api/devices/${enc(id)}/cor?name=${enc(name)}&origin=${UI_ORIGIN}`, undefined, { body: file, type: "application/octet-stream" }),
   corClear: (id: string) => call("DELETE", `/api/devices/${enc(id)}/cor?origin=${UI_ORIGIN}`),
+  /** POST /api/devices/grbl: a GRBL gantry from a profile (UI only). */
+  addGrblDevice: (body: { display_name: string; profile: Record<string, unknown> }) =>
+    call("POST", "/api/devices/grbl", { ...body, origin: UI_ORIGIN }),
   importMarkcfg: (file: Blob, name: string) =>
     call("POST", `/api/devices/import/markcfg?name=${enc(name)}&origin=${UI_ORIGIN}`, undefined, { body: file, type: "application/octet-stream" }),
 };

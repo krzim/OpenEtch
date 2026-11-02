@@ -347,3 +347,28 @@ test("import body: refuses what is not a LightBurn device file", () => {
   assert.equal(D.importAddParam(""), "all");
   assert.equal(D.importAddParam("WAZER"), "WAZER");
 });
+
+test("a GRBL device form becomes the engine's profile, typing slips caught first", () => {
+  const ok = D.grblDeviceBody({ ...D.GRBL_FORM_DEFAULT, displayName: " Diode ", port: "COM5 ", widthMm: "410", heightMm: "400.5", homing: true, dynamicPower: false });
+  assert.ok("body" in ok);
+  assert.deepEqual(ok.body, {
+    display_name: "Diode",
+    profile: {
+      port: "COM5",
+      baud: 115200,
+      work_area_mm: [410, 400.5],
+      origin: "bottom_left",
+      homing: true,
+      s_max: 1000,
+      max_feed_mm_min: 6000,
+      frame_feed_mm_min: 3000,
+      dynamic_power: false,
+    },
+  });
+  for (const bad of [{ displayName: "" }, { baud: "fast" }, { widthMm: "0" }, { heightMm: "" }, { sMax: "-1" }, { maxFeedMmMin: "x" }]) {
+    assert.ok("error" in D.grblDeviceBody({ ...D.GRBL_FORM_DEFAULT, ...bad }), JSON.stringify(bad));
+  }
+  assert.equal(D.kindLabel("grbl"), "GRBL gantry");
+  assert.equal(D.isGalvo("grbl"), false);
+  assert.equal(D.deviceSummary({ id: "g", name: "GRBL", display_name: "Diode", kind: "grbl", workspace_mm: [400, 300], origin: "bottom_left", controllable: true })?.kind, "grbl");
+});

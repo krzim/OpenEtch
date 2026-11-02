@@ -56,6 +56,8 @@ test("extensions route to the engine's import formats", () => {
   assert.equal(engineFormatOf("x.eps"), "eps");
   assert.equal(engineFormatOf("plot.plt"), "plt");
   assert.equal(engineFormatOf("plot.hpgl"), "hpgl");
+  assert.equal(engineFormatOf("cut.GCODE"), "gcode");
+  assert.equal(engineFormatOf("cut.nc"), "gcode");
   assert.equal(engineFormatOf("board-F_Cu.gtl"), "gerber");
   assert.equal(engineFormatOf("board.gbr"), "gerber");
   assert.equal(engineFormatOf("board.drl"), "drill");

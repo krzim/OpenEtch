@@ -16,8 +16,11 @@ import { ACTIVE_STATES } from "./runs.ts";
 import type { MachineStatus, Vec2 } from "./types.ts";
 import { tr } from "../workspace/tr.ts";
 
-/** What kind of controller a device is. Only `jcz_galvo` can be driven by OpenEtch today. */
-export type DeviceKind = "jcz_galvo" | "gantry" | "galvo_other" | "unknown";
+/**
+ * What kind of controller a device is. OpenEtch drives `jcz_galvo` and `grbl` (a GRBL 1.1 gantry made in OpenEtch;
+ * unverified on hardware); `gantry` is a LightBurn gantry kept design-only.
+ */
+export type DeviceKind = "jcz_galvo" | "grbl" | "gantry" | "galvo_other" | "unknown";
 
 /** Where a device came from. */
 export type DeviceSource = "builtin" | "lightburn-prefs" | "lbdev" | "manual";
@@ -94,7 +97,7 @@ function pos(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null;
 }
 
-const KINDS: readonly DeviceKind[] = ["jcz_galvo", "gantry", "galvo_other", "unknown"];
+const KINDS: readonly DeviceKind[] = ["jcz_galvo", "grbl", "gantry", "galvo_other", "unknown"];
 
 /** Whether a device kind is a galvo (square field, centre origin). */
 export function isGalvo(kind: DeviceKind | string): boolean {
@@ -397,6 +400,8 @@ export function kindLabel(kind: DeviceKind | string): string {
       return tr("apid.jczGalvoEzcad2Lmc");
     case "galvo_other":
       return "Galvo";
+    case "grbl":
+      return "GRBL gantry";
     case "gantry":
       return "Gantry";
     default:
@@ -571,4 +576,71 @@ export function deviceImportBody(text: string): DeviceImportBody {
 /** The `add` query value: every device, or one by name. */
 export function importAddParam(choice: string | null): string {
   return choice === null || choice === "" ? "all" : choice;
+}
+
+// ---- GRBL devices ---------------------------------------------------------------------------------------------------
+
+/** The New GRBL device form, as typed (numbers as text). */
+export interface GrblForm {
+  displayName: string;
+  /** COM5, /dev/ttyUSB0. */
+  port: string;
+  baud: string;
+  widthMm: string;
+  heightMm: string;
+  origin: Exclude<DeviceOrigin, "center">;
+  homing: boolean;
+  /** `$30`. */
+  sMax: string;
+  maxFeedMmMin: string;
+  /** M4 (dynamic power) rather than M3. */
+  dynamicPower: boolean;
+}
+
+export const GRBL_FORM_DEFAULT: GrblForm = {
+  displayName: "GRBL laser",
+  port: "",
+  baud: "115200",
+  widthMm: "400",
+  heightMm: "400",
+  origin: "bottom_left",
+  homing: false,
+  sMax: "1000",
+  maxFeedMmMin: "6000",
+  dynamicPower: true,
+};
+
+/**
+ * The body of POST /api/devices/grbl from the form, or the first problem as a plain sentence. The engine validates
+ * the profile again (and is the one that matters); this only catches typing slips before the request.
+ */
+export function grblDeviceBody(f: GrblForm): { body: { display_name: string; profile: Record<string, unknown> } } | { error: string } {
+  const num = (v: string) => (v.trim() === "" ? NaN : Number(v));
+  const name = f.displayName.trim();
+  if (!name) return { error: "Give the device a name." };
+  const baud = num(f.baud);
+  if (!Number.isInteger(baud) || baud < 300 || baud > 4_000_000) return { error: "The baud rate must be a whole number (GRBL 1.1 uses 115200)." };
+  const w = num(f.widthMm);
+  const h = num(f.heightMm);
+  if (!(w > 0 && h > 0 && w <= 5000 && h <= 5000)) return { error: "The work area must be positive, at most 5000 mm each way." };
+  const sMax = num(f.sMax);
+  if (!(sMax > 0 && sMax <= 100_000)) return { error: "$30 (maximum S) must be positive." };
+  const feed = num(f.maxFeedMmMin);
+  if (!(feed > 0 && feed <= 100_000)) return { error: "The maximum feed must be positive (mm/min)." };
+  return {
+    body: {
+      display_name: name,
+      profile: {
+        port: f.port.trim(),
+        baud,
+        work_area_mm: [w, h],
+        origin: f.origin,
+        homing: f.homing,
+        s_max: sMax,
+        max_feed_mm_min: feed,
+        frame_feed_mm_min: Math.min(3000, feed),
+        dynamic_power: f.dynamicPower,
+      },
+    },
+  };
 }

@@ -24,6 +24,8 @@ export type EngineFormat =
   | "ezd"
   | "hpgl"
   | "plt"
+  /** G-code toolpaths (.gcode, .nc, .gc, .ngc, .tap). */
+  | "gcode"
   | "gerber"
   | "drill"
   | "model"
@@ -44,6 +46,7 @@ const BITMAP_MIME: Record<string, string> = {
 /** Gerber layer extensions (RS-274X: KiCad, Eagle, Altium, generic) and Excellon drill files. */
 const GERBER_EXT = ["gbr", "ger", "gtl", "gbl", "gts", "gbs", "gto", "gbo", "gtp", "gbp", "gko", "gm1", "gml", "cmp", "sol", "art", "pho"];
 const DRILL_EXT = ["drl", "xln", "exc", "drd", "txt-drill"];
+const GCODE_EXT = ["gcode", "nc", "gc", "ngc", "tap"];
 const MODEL_EXT = ["stl", "obj", "off", "ply", "3mf", "amf"];
 
 /** The engine import format of a file name, or null when the engine has no importer for it (by extension). */
@@ -55,6 +58,7 @@ export function engineFormatOf(name: string): EngineFormat | null {
   if (ext === "tga") return "tga";
   if (ext === "hpgl" || ext === "hpg") return "hpgl";
   if (ext === "plt") return "plt";
+  if (GCODE_EXT.includes(ext)) return "gcode";
   if (GERBER_EXT.includes(ext)) return "gerber";
   if (DRILL_EXT.includes(ext)) return "drill";
   if (MODEL_EXT.includes(ext)) return "model";
@@ -124,6 +128,7 @@ export function formatLabel(f: EngineFormat): string {
       ezd: "EzCad",
       hpgl: "HPGL",
       plt: "HPGL",
+      gcode: "G-code",
       gerber: "Gerber",
       drill: "Excellon drill",
       model: "3D model",
@@ -134,9 +139,9 @@ export function formatLabel(f: EngineFormat): string {
 }
 
 /** Formats whose import takes `keep_position` (the others are always centred by the engine). */
-const KEEPS_POSITION: ReadonlySet<EngineFormat> = new Set(["dxf", "pdf", "ai", "eps", "ezd", "hpgl", "plt", "gerber", "drill"]);
+const KEEPS_POSITION: ReadonlySet<EngineFormat> = new Set(["dxf", "pdf", "ai", "eps", "ezd", "hpgl", "plt", "gcode", "gerber", "drill"]);
 /** Formats whose import takes `split` (one object per path in a group). */
-const SPLITS: ReadonlySet<EngineFormat> = new Set(["svg", "dxf", "pdf", "ai", "eps", "ezd", "hpgl", "plt", "gerber", "drill"]);
+const SPLITS: ReadonlySet<EngineFormat> = new Set(["svg", "dxf", "pdf", "ai", "eps", "ezd", "hpgl", "plt", "gcode", "gerber", "drill"]);
 
 export function takesKeepPosition(f: EngineFormat): boolean {
   return KEEPS_POSITION.has(f);
@@ -162,6 +167,7 @@ export const ENGINE_ACCEPT = [
   ".hpgl",
   ".hpg",
   ".plt",
+  ...GCODE_EXT.map((e) => `.${e}`),
   ...GERBER_EXT.map((e) => `.${e}`),
   ".drl",
   ".xln",
