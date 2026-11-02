@@ -238,7 +238,8 @@ export interface FrameOptions {
 }
 
 export const DEFAULT_FRAME_OPTIONS: FrameOptions = {
-  style: "bounds",
+  // Hull (a rubber band around the shapes) is the owner's preferred default: as quick as a rectangle, closer to the art.
+  style: "hull",
   individually: false,
   outsideOnly: false,
   toolLayersOnly: false,
