@@ -3361,6 +3361,9 @@ image.pixelated {
   width: auto;
   min-height: 0;
   border-right: 0;
+  /* A rail taller than the window (44 px touch targets on a 768 px iPad) scrolls by touch or wheel; .toolbar's thin
+     scrollbar would take 10 px of the rail's width and clip every button. */
+  scrollbar-width: none;
 }
 
 /* ---- touch, focus and density (docs/ux/ui-plan-2026-11.md 1.2, 1.5) -------------------------------------------- */

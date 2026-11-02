@@ -475,7 +475,9 @@ export function MenuButton(p: MenuButtonProps) {
         <Menu
           items={p.items}
           anchor={open.rect}
-          placement={p.placement}
+          // On the tablet's vertical tool rail a dropdown opens beside the rail, not down over the rail's own buttons
+          // (the Frame options menu covered Start there).
+          placement={p.placement ?? (ref.current?.closest(".ribbon-vertical") ? "right" : undefined)}
           align={p.align}
           label={p.label}
           owner={ref.current}
