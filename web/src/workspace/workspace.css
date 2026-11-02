@@ -401,21 +401,23 @@
 
 /* ---- numeric edits bar ------------------------------------------------------------------------------------------ */
 
-/* Groups wrap onto more rows instead of scrolling sideways; a narrow canvas column also gets narrower fields (the bar
-   is a size container, so this follows the canvas column, not the window). */
+/* One row that never wraps (the context strip, docs/ux/ui-plan-2026-11.md 1.1): in a narrow canvas column the fields get
+   narrower and the units go, and as a last resort the row scrolls sideways. The bar is a size container, so this
+   follows the canvas column, not the window. */
 .numeric-bar {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 4px 12px;
-  padding: 3px 8px;
+  padding: 0 8px;
   background: var(--chrome);
-  border-bottom: 1px solid var(--border);
   container: numbar / inline-size;
   min-width: 0;
-  flex: none;
-  min-height: 38px;
-  scrollbar-width: thin;
+  flex: 1 1 auto;
+  height: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
 }
 
 .numeric-bar .field {
@@ -435,8 +437,19 @@
 }
 
 .numeric-bar .field-input {
-  width: 96px;
-  min-height: 30px;
+  flex: none;
+  width: auto;
+  min-height: calc(var(--bar-context) - 6px);
+}
+
+/* Room for "-27.463" in full (V11); figures line up. */
+.numeric-bar .field-input input {
+  flex: none;
+  width: 8.5ch;
+  min-width: 7ch;
+  min-height: 0;
+  padding: 2px 6px;
+  font-variant-numeric: tabular-nums;
 }
 
 .numeric-bar .field-note {
@@ -452,21 +465,18 @@
   flex: none;
   margin-bottom: 0;
   padding: 0;
-  grid-template-columns: repeat(3, 13px);
+  grid-template-columns: repeat(3, 9px);
+  gap: 1px;
 }
 
 .numeric-bar .anchor-grid.small button {
-  width: 13px;
-  height: 13px;
+  width: 9px;
+  height: 9px;
 }
 
 .numeric-bar .anchor-grid.small .anchor-dot {
-  width: 7px;
-  height: 7px;
-}
-
-.numeric-bar .field {
-  min-height: 32px;
+  width: 5px;
+  height: 5px;
 }
 
 .numeric-bar .segmented {
@@ -481,29 +491,13 @@
   min-width: 0;
 }
 
-@container numbar (max-width: 860px) {
-  .numeric-bar .field-input {
-    width: 78px;
-  }
-
-  .num-group {
-    gap: 4px;
-  }
-}
-
-@container numbar (max-width: 560px) {
-  .numeric-bar .field-input {
-    width: 66px;
-  }
-
+@container numbar (max-width: 720px) {
   .numeric-bar .field-input .unit {
     display: none;
   }
 
-  /* The status bar's units button switches mm / in too. */
-  .numeric-sep,
-  .numeric-bar > .unit-toggle {
-    display: none;
+  .num-group {
+    gap: 4px;
   }
 }
 
@@ -512,16 +506,12 @@
   background: var(--accent-soft);
 }
 
-.numeric-sep {
-  flex: 1;
-}
-
 .unit-toggle {
   flex: none;
 }
 
 .unit-toggle button {
-  min-height: 28px;
+  min-height: 24px;
   padding: 0 8px;
 }
 

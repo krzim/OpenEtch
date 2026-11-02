@@ -13,6 +13,9 @@ export type KeyHandler = (chord: string) => boolean | void;
 
 const synthetic = new WeakSet<Event>();
 
+/** The emergency stop's action id (hotkeys.ts): handled before anything else can swallow its key. */
+export const STOP_ACTION = "laser.stop";
+
 /** While set (the hotkey editor is recording), every key press goes to it and nowhere else. */
 let capture: ((e: KeyboardEvent) => void) | null = null;
 
@@ -60,13 +63,26 @@ export function useKeymap(config: { current: KeymapConfig }): void {
         capture(e);
         return;
       }
+      const chord = chordOf(e);
+      // STOP first: never held back by an open dialog (of any kind), a focused text field or a menu
+      // (docs/ux/ui-plan-2026-11.md 1.1, V5). Its handler decides whether a shared chord (Ctrl+.) stops now.
+      if (chord) {
+        const stop = resolveKey(chord, getPrefs().hotkeys);
+        if (stop.kind === "ws" && stop.action === STOP_ACTION) {
+          const fn = live.current.handlers[STOP_ACTION];
+          if (fn && fn(chord) !== false) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            return;
+          }
+        }
+      }
       // A workspace dialog is open: keys aimed elsewhere (the canvas, the page) must not edit the document behind it.
       // Escape still reaches the dialog's close handler.
       if (live.current.modalOpen() && e.key !== "Escape" && !(e.target instanceof Element && e.target.closest(".modal"))) {
         e.stopImmediatePropagation();
         return;
       }
-      const chord = chordOf(e);
       if (!chord) return;
       // F1 works from anywhere; other keys leave text fields alone.
       if (typingIn(e.target) && chord !== "F1") return;
@@ -79,8 +95,7 @@ export function useKeymap(config: { current: KeymapConfig }): void {
       if (r.kind === "ws") {
         const { handlers: h, blocked: b } = live.current;
         const fn = h[r.action];
-        // STOP is never held back by an open dialog.
-        if (!fn || (b() && r.action !== "laser.stop")) return;
+        if (!fn || r.action === STOP_ACTION || b()) return;
         // Plain letter keys act only with the canvas (or nothing) focused, as App.tsx's canvas keys do.
         if (isBareKey(chord) && !canvasOrBody() && chord !== "F1" && chord !== "Shift+?") return;
         if (fn(chord) === false) return;

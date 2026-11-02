@@ -3,7 +3,8 @@
 // (every edit, save, preview and run then goes to it), "+" opens a new empty document or a saved project in a new
 // tab, and × closes a tab, asking first when it has unsaved changes. Shown only on engines with GET /api/documents.
 // The list follows the engine's `documents_changed` and `project_saved` events, so a switch made by an agent or another
-// browser shows here too.
+// browser shows here too. The tab row shows only with two or more documents; with one, its "+" sits in the top bar
+// beside the document name.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api/client.ts";
@@ -35,7 +36,16 @@ export interface DocTabsApi {
   supported: boolean;
 }
 
-export function useDocTabs(p: DocTabsProps): { api: DocTabsApi; bar: JSX.Element | null } {
+export interface DocTabsUi {
+  api: DocTabsApi;
+  /** The tab row; null without the engine's documents, or with one document open (the row shows only with two or
+   * more: docs/ux/ui-plan-2026-11.md 1.1). */
+  bar: JSX.Element | null;
+  /** With one document open: its "+" (new tab, open a project in a tab) for the top bar, beside the name. */
+  addButton: JSX.Element | null;
+}
+
+export function useDocTabs(p: DocTabsProps): DocTabsUi {
   const t = useT();
   const [list, setList] = useState<DocumentList | null>(null);
   const [unsupported, setUnsupported] = useState(false);
@@ -116,8 +126,20 @@ export function useDocTabs(p: DocTabsProps): { api: DocTabsApi; bar: JSX.Element
 
   const supported = !unsupported && !!list;
   const api_ = { newTab, openInTab, supported };
-  if (!supported || !list) return { api: api_, bar: null };
+  if (!supported || !list) return { api: api_, bar: null, addButton: null };
   const many = list.documents.length > 1;
+  const addMenu = adding && <AddMenu x={adding.x} y={adding.y} onNew={newTab} onOpen={openInTab} onClose={() => setAdding(null)} />;
+  if (!many && !closing) {
+    const addButton = (
+      <>
+        <button className="doc-tab-add topbar-add" title={t("tabs.add")} aria-label={t("tabs.add")} onClick={(e) => setAdding({ x: e.clientX, y: e.clientY })}>
+          <Icon name="plus" size={14} />
+        </button>
+        {addMenu}
+      </>
+    );
+    return { api: api_, bar: null, addButton };
+  }
   const bar = (
     <div className="doc-tabs" role="tablist" aria-label={t("tabs.label")}>
       {list.documents.map((d) => {
@@ -149,7 +171,7 @@ export function useDocTabs(p: DocTabsProps): { api: DocTabsApi; bar: JSX.Element
       <button className="doc-tab-add" title={t("tabs.add")} aria-label={t("tabs.add")} onClick={(e) => setAdding({ x: e.clientX, y: e.clientY })}>
         <Icon name="plus" size={14} />
       </button>
-      {adding && <AddMenu x={adding.x} y={adding.y} onNew={newTab} onOpen={openInTab} onClose={() => setAdding(null)} />}
+      {addMenu}
       {closing && (
         <WsModal
           title={t("tabs.closeTitle", { name: closing.title })}
@@ -183,7 +205,7 @@ export function useDocTabs(p: DocTabsProps): { api: DocTabsApi; bar: JSX.Element
       )}
     </div>
   );
-  return { api: api_, bar };
+  return { api: api_, bar, addButton: null };
 }
 
 /** "+": a new empty document, or a saved project opened in a new tab. */

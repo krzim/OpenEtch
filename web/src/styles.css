@@ -296,10 +296,12 @@ textarea {
   display: grid;
   /* One column that never grows past the window: a long timeline or toolbar scrolls inside its own row. */
   grid-template-columns: minmax(0, 1fr);
-  /* top bar, document tabs (workspace/DocTabs.tsx; empty without them), toolbar, main, timeline, status bar */
-  grid-template-rows: 48px auto auto minmax(0, 1fr) auto auto;
-  padding-left: env(safe-area-inset-left);
-  padding-right: env(safe-area-inset-right);
+  /* top bar, document tabs (workspace/DocTabs.tsx; only with two or more), toolbar, main, timeline, status bar */
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto auto;
+  padding-left: var(--safe-left);
+  padding-right: var(--safe-right);
+  /* The last row stays above the home indicator. */
+  padding-bottom: var(--safe-bottom);
   overflow: hidden;
 }
 
@@ -311,11 +313,33 @@ textarea {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 0 8px 0 4px;
+  height: calc(var(--bar-top) + var(--safe-top));
+  padding: var(--safe-top) 8px 0 4px;
   background: var(--topbar-bg);
   color: var(--topbar-fg);
   border-bottom: 1px solid var(--topbar-border);
   min-width: 0;
+  overflow: hidden;
+}
+
+/* File menu, brand, project name and the "+" tab button: the part that shrinks first. */
+.topbar-start {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* STOP's slot: never shrinks, never clipped, above every modal, menu and toast. No ancestor creates a stacking
+   context, so --z-stop counts against the backdrop's --z-modal. */
+.topbar-stop {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  position: relative;
+  z-index: var(--z-stop);
 }
 
 .brand {
@@ -323,6 +347,12 @@ textarea {
   align-items: center;
   gap: 8px;
   min-width: 0;
+  overflow: hidden;
+}
+
+.topbar-add {
+  flex: none;
+  color: var(--topbar-muted);
 }
 
 .brand-mark {
@@ -348,6 +378,7 @@ textarea {
 
 .workspaces {
   display: flex;
+  flex: none;
   gap: 2px;
   background: var(--topbar-tabs);
   border-radius: var(--radius);
@@ -468,16 +499,25 @@ textarea {
   position: absolute;
   top: calc(100% + 4px);
   left: 0;
-  z-index: 150;
+  z-index: var(--z-menu);
   min-width: 240px;
   display: flex;
   flex-direction: column;
+  /* Never taller than the window under the top bar: long menus (File) scroll inside (V3). */
+  max-height: calc(100vh - var(--menu-top, var(--bar-top)) - 8px);
+  max-height: calc(100dvh - var(--menu-top, var(--bar-top)) - var(--safe-top) - var(--safe-bottom) - 8px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 4px;
   background: var(--panel);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 6px;
   box-shadow: 0 8px 28px var(--shadow-strong);
+}
+
+.menu > * {
+  flex: none;
 }
 
 .menu-item {
@@ -670,13 +710,6 @@ textarea {
   }
 }
 
-/* The workspace switcher shrinks (and scrolls sideways) before STOP ever does. */
-.topbar .workspaces {
-  min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
 .topbar-actions {
   flex: none;
 }
@@ -779,6 +812,7 @@ textarea {
   letter-spacing: 0.5px;
   min-width: 96px;
   min-height: 40px;
+  flex: none;
 }
 
 .btn-stop:hover:not(:disabled) {
@@ -1628,13 +1662,12 @@ textarea {
 .timeline {
   display: flex;
   align-items: stretch;
-  /* A fixed height, so the layout does not shift when the first chip appears. */
-  height: calc(58px + env(safe-area-inset-bottom));
+  /* A fixed height, so the layout does not shift when the first chip appears (the safe area is .app's padding). */
+  height: var(--bar-timeline);
   min-width: 0;
   overflow: hidden;
   background: var(--chrome);
   border-top: 1px solid var(--border);
-  padding-bottom: env(safe-area-inset-bottom);
 }
 
 .tl-controls {
@@ -1784,9 +1817,10 @@ textarea {
 
 .ctx-menu {
   position: fixed;
-  z-index: 300;
+  z-index: var(--z-ctxmenu);
   min-width: 220px;
   max-height: calc(100vh - 8px);
+  max-height: calc(100dvh - 8px - var(--safe-bottom));
   overflow-y: auto;
 }
 
@@ -2196,7 +2230,8 @@ kbd {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 100;
+  /* Below STOP (--z-stop), which stays clickable over every dialog (V5). */
+  z-index: var(--z-modal);
   padding: 16px;
 }
 
@@ -2431,52 +2466,59 @@ kbd {
   background: var(--danger-dark);
 }
 
-/* ---- narrow layout tweaks ---------------------------------------------------------------------------------- */
+/* ---- top bar per layout ------------------------------------------------------------------------------------ */
 
-@media (max-width: 760px) {
-  .doc-name,
-  .conn-text {
-    display: none;
-  }
-  .brand-name {
-    display: none;
-  }
-  .workspaces button {
-    padding: 0 10px;
-  }
-  .btn-stop {
-    min-width: 72px;
-  }
+:root[data-layout="compact"] .topbar .btn-stop {
+  min-height: 34px;
 }
 
-/* Phones: the File button joins the top bar, so tighten it (after the 760px rules, which it overrides). */
-@media (max-width: 480px) {
-  .topbar {
-    gap: 6px;
-  }
-  .brand-mark,
-  .file-btn .icon {
-    display: none;
-  }
-  .file-btn {
-    padding: 0 8px;
-  }
-  .workspaces button {
-    padding: 0 8px;
-  }
-  .topbar-actions {
-    gap: 4px;
-  }
-  .topbar .icon-btn {
-    min-width: 34px;
-  }
-  .conn {
-    padding: 0 4px;
-  }
-  .btn-stop {
-    min-width: 64px;
-    padding: 0 10px;
-  }
+:root[data-layout="tablet"] .conn-text,
+:root[data-layout="phone"] .conn-text,
+:root[data-layout="phone"] .brand-name,
+:root[data-layout="phone"] .brand-mark {
+  display: none;
+}
+
+/* Tablet: the workspace switcher is two icon segments of 44 px. */
+:root[data-layout="tablet"] .workspaces {
+  padding: 2px;
+}
+
+:root[data-layout="tablet"] .workspaces button {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 10px;
+  justify-content: center;
+}
+
+:root[data-layout="tablet"] .ws-label {
+  display: none;
+}
+
+:root[data-layout="tablet"] .brand-name {
+  display: none;
+}
+
+/* Phone: menu, document name, status dot, STOP (64 px or more). */
+:root[data-layout="phone"] .topbar {
+  gap: 6px;
+  padding-right: 6px;
+}
+
+:root[data-layout="phone"] .doc-name {
+  max-width: none;
+  color: var(--topbar-fg);
+  font-weight: 500;
+}
+
+:root[data-layout="phone"] .btn-stop {
+  min-width: 72px;
+  min-height: 40px;
+  padding: 0 10px;
+}
+
+:root[data-layout="phone"] .conn {
+  padding: 0 2px;
 }
 
 /* ---- LightBurn field size and devices ---------------------------------------------------------------------- */
