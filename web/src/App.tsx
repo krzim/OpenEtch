@@ -45,6 +45,7 @@ import { useFilesUi } from "./files/useFilesUi.tsx";
 import { ShutdownBadge, SimPinBadge } from "./libs/JobSafety.tsx";
 import { LaserExtras } from "./libs/LaserExtras.tsx";
 import { useLibsUi } from "./libs/useLibsUi.tsx";
+import { useToolsUi } from "./tools/useToolsUi.tsx";
 import { useDesignUi } from "./design/useDesignUi.tsx";
 import { MachineCard, PreviewStatsCard, RunsCard } from "./components/LaserPanel.tsx";
 import { frameWithOptions } from "./components/FramingOptions.tsx";
@@ -281,6 +282,18 @@ export function App() {
     refreshMachine: () => void engine.refreshMachine(),
     onStartPointTool: () => setTool("select"),
   });
+  // Tabs, dogbone, Resize Slots, Multi-File Trace and the Web Tools (User Tools) menu (src/tools/).
+  const toolsUi = useToolsUi({
+    doc,
+    selection: selection.objects,
+    activeLayer,
+    design: workspace === "design",
+    run: engine.run,
+    notify,
+    report,
+    selectIds,
+    onTabTool: () => setTool("select"),
+  });
   // Shape Properties, warp / deform, tangent circle, rubber band, toolpath to path, selection queries, page positions,
   // grid array, curve tolerance, the Art Library and the clipboard (src/design/).
   const designUi = useDesignUi({
@@ -290,13 +303,14 @@ export function App() {
     activeLayer,
     workspaceMm,
     design: workspace === "design",
-    blocked: !!dialog || fileModalOpen || devicesOpen || filesUi.modalOpen || libsUi.modalOpen,
+    blocked: !!dialog || fileModalOpen || devicesOpen || filesUi.modalOpen || libsUi.modalOpen || toolsUi.modalOpen,
     has,
     run: engine.run,
     notify,
     report,
     cursor,
     refreshDoc: () => void engine.refreshDoc(),
+    extraTools: toolsUi.toolsItems,
   });
   // The key handler reads the design layer through a ref (a new object each render would re-install it every time).
   const designRef = useRef(designUi);
@@ -1170,6 +1184,7 @@ export function App() {
             {edit.toolbar}
             {designUi.toolbar}
             {libsUi.toolbar}
+            {toolsUi.toolbar}
           </>
         }
       />
@@ -1232,7 +1247,7 @@ export function App() {
             notify={notify}
             report={report}
             canvasTool={withPositionLaser(
-              withLayerFlash(designUi.wrap(libsUi.wrap(text.wrap(edit.canvas))), doc, flash),
+              withLayerFlash(designUi.wrap(toolsUi.wrap(libsUi.wrap(text.wrap(edit.canvas)))), doc, flash),
               positioning,
               (pt) =>
                 void machineAction(jobApi.pointer(roundMm(pt[0]), roundMm(pt[1])), t("poslaser.done", { x: roundMm(pt[0]), y: roundMm(pt[1]) })),
@@ -1409,6 +1424,7 @@ export function App() {
       {edit.dialogs}
       {filesUi.dialogs}
       {libsUi.dialogs}
+      {toolsUi.dialogs}
       {designUi.dialogs}
       {text.dialogs}
       {ws.dialogs}

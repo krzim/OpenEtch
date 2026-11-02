@@ -8,6 +8,7 @@ import { EN_JOB } from "./en-job.ts";
 import { EN_LIBS } from "./en-libs.ts";
 import { EN_REST } from "./en-rest.ts";
 import { EN_TEXT } from "./en-text.ts";
+import { EN_TOOLS } from "./en-tools.ts";
 import { EN_UI } from "./en-ui.ts";
 import { EN_WS } from "./en-ws.ts";
 
@@ -20,6 +21,8 @@ export const EN = {
   ...EN_FILES,
   // A GRBL gantry's Move and Console windows, Save G-code and the GRBL layer options.
   ...EN_GANTRY,
+  // Tabs, dogbones, Resize Slots, Multi-File Trace and the User Tools menu (src/tools/).
+  ...EN_TOOLS,
   // The design-engine UI: Shape Properties, Edit / Tools menus, Art Library, Move / Grid array dialogs (src/design/).
   ...EN_DESIGN,
   // Material library, defaults, test generators, approval gates, laser tools, camera, Help additions (src/libs/).

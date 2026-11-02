@@ -1,0 +1,90 @@
+/* The Tools menu extras (src/tools/): hand-placed tab marks (LightBurn's red dots), Multi-File Trace and Manage User
+   Tools windows. */
+
+.tools-tab-marks circle {
+  fill: var(--danger);
+  fill-opacity: 0.85;
+  stroke: var(--bg, #fff);
+}
+.tools-tab-marks circle.sel {
+  stroke: var(--accent);
+}
+.tools-tab-marks circle.hot {
+  fill-opacity: 1;
+  stroke: var(--accent);
+}
+
+.tools-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px 20px;
+}
+
+.tools-set {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px 10px;
+  margin: 0 0 8px;
+  min-width: 0;
+}
+.tools-set legend {
+  padding: 0 4px;
+  font-weight: 600;
+}
+
+.tools-radio {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+}
+
+.tools-pick {
+  display: inline-flex;
+  align-items: center;
+  margin: 6px 0;
+  cursor: pointer;
+}
+
+.tools-list {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+  max-height: 40vh;
+  overflow: auto;
+}
+.tools-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.tools-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.tools-what {
+  grid-column: 1;
+  color: var(--muted, inherit);
+  font-size: 0.9em;
+  overflow-wrap: anywhere;
+}
+.tools-actions {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.tools-steps {
+  flex-direction: column;
+  align-items: stretch;
+}
+.tools-steps textarea {
+  width: 100%;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12px;
+  box-sizing: border-box;
+}

@@ -58,7 +58,11 @@ test("cut options resolve with the engine's defaults", () => {
   const s = resolveOptions(settings({ options: { output: false, pause_after_ms: 20, wobble: { step_mm: 0.2, size_mm: 0.5 }, tabs: { size_mm: 1, count: 3 }, fill_grouping: "by_group" } }));
   assert.equal(s.output, false);
   assert.deepEqual(s.wobble, { step_mm: 0.2, size_mm: 0.5 });
-  assert.deepEqual(s.tabs, { count: 3, spacing_mm: 0, size_mm: 1 });
+  assert.deepEqual(s.tabs, { enabled: true, generation: "auto", count: 3, spacing_mm: 0, max_tabs: 0, size_mm: 1, skip_inner: false, cut_power_pct: 0 });
+  // The switch, the generation and the LightBurn extras read back as saved.
+  const m = resolveOptions(settings({ options: { tabs: { enabled: false, generation: "manual", size_mm: 0.8, skip_inner: true, cut_power_pct: 20, max_tabs: 3 } } }));
+  assert.deepEqual(m.tabs, { enabled: false, generation: "manual", count: 0, spacing_mm: 0, max_tabs: 3, size_mm: 0.8, skip_inner: true, cut_power_pct: 20 });
+  assert.equal(activeOptionCount(m), 1, "switched-off tabs do not count (fill grouping does)");
   assert.equal(activeOptionCount(s), 5);
   // The GRBL layer options: read like the others, counted only for a gantry (a galvo never uses them).
   const g = resolveOptions(settings({ options: { constant_power: true, air_assist: true, overscan_mm: 2.5, overcut_mm: 1 } }));
