@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 
 use crate::hw::Machine;
-use crate::pin::{self, ApprovalConfig, PinStore};
+use crate::pin::{self, ApprovalConfig, ApprovalMode, PinStore};
 use crate::runs::{Run, RunState};
 use crate::security::SecurityConfig;
 use crate::{AppState, api};
@@ -57,12 +57,22 @@ async fn wait_final(st: &AppState, id: &str) -> Run {
 /// An engine on the simulators with a GRBL device (400 x 300 bed, front-left origin) made and activated through the
 /// API; returns the app, the state, the GRBL device id and the built-in galvo's id.
 async fn grbl_engine(homing: bool) -> (Router, Arc<AppState>, String, String) {
+    grbl_engine_in(homing, ApprovalMode::Pin).await
+}
+
+/// [`grbl_engine`] in the approval mode `mode` (`click`: no PIN file, Start in the app in a browser).
+async fn grbl_engine_in(homing: bool, mode: ApprovalMode) -> (Router, Arc<AppState>, String, String) {
     let machine = Arc::new(Machine::simulated(MachineProfile::generic_lmc_fiber(), None, PollConfig::immediate()));
     machine.connect().await.unwrap();
     let dir = pin::temp_dir("grbl-engine");
-    pin::set_pin(&dir, PIN).unwrap();
+    if mode == ApprovalMode::Pin {
+        pin::set_pin(&dir, PIN).unwrap();
+    }
     let approval = ApprovalConfig { pin: PinStore::new(&dir), confirm: None };
     let st = AppState::new(Session::new(doc::Document::default()), machine, SecurityConfig::default(), approval, crate::tests::test_projects());
+    if mode != ApprovalMode::Pin {
+        st.set_approval_mode(mode).expect("set once");
+    }
     let app = api::router(st.clone(), None);
     let galvo = st.active_device().id;
     let profile = json!({"port": "COM9", "work_area_mm": [400.0, 300.0], "origin": "bottom_left", "homing": homing, "max_feed_mm_min": 6000.0});
@@ -268,6 +278,39 @@ async fn input_port_features_are_galvo_only_and_survive_a_driver_switch() {
     assert!(!samples.is_empty() && samples.iter().all(|&(_, b)| b == 1 << 14), "{samples:?}");
     st.machine.request_stop();
     assert!(!st.machine.has_input_samples(), "a stop discards them");
+}
+
+/// One-click Start (main's `--approval click`) on a GRBL gantry: the same gates as on the galvo. MCP clients and
+/// requests that do not come from the app in a browser are refused, an open safety door refuses it with nothing sent,
+/// and a browser Start runs the G-code. The foot switch cycle stays off (no input port).
+#[tokio::test]
+async fn one_click_start_on_a_gantry_keeps_the_gates() {
+    let (app, st, _, _) = grbl_engine_in(false, ApprovalMode::Click).await;
+    assert!(crate::approve::foot_switch_port(&st).is_none());
+    let board = sim(&st);
+    exec(&app, "shape.rect", json!({"width_mm": 40, "height_mm": 20})).await;
+    exec(&app, "layer.update", json!({"id": "layer-1", "settings": {"power_pct": 30, "speed_mm_s": 25}})).await;
+    let start = || crate::approve::tests::browser(req("POST", "/api/job/start", None));
+    let mut r = start();
+    r.headers_mut().insert("mcp-session-id", "x".parse().unwrap());
+    assert_eq!(send(&app, r).await.0, StatusCode::FORBIDDEN, "MCP never starts a run");
+    let (s, v) = send(&app, req("POST", "/api/job/start", None)).await;
+    assert_eq!((s, &v["code"]), (StatusCode::FORBIDDEN, &json!("browser_required")), "{v}");
+    board.set_door(true);
+    let (s, v) = send(&app, start()).await;
+    assert_eq!(s, StatusCode::CONFLICT, "an open door refuses Start: {v}");
+    assert!(v["error"].as_str().unwrap_or_default().contains("door"), "{v}");
+    board.set_door(false);
+    assert!(board.report().fires.is_empty());
+    assert!(st.runs().views(st.revision()).iter().all(|r| r.state.is_final()), "nothing is left waiting");
+
+    let (s, v) = send(&app, start()).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let id = v["run"]["id"].as_str().unwrap().to_owned();
+    assert_eq!(v["run"]["driver"], "grbl", "{v}");
+    let run = wait_final(&st, &id).await;
+    assert_eq!(run.state, RunState::Finished, "{:?}", run.error);
+    assert_eq!(board.report().cuts(), 4, "{:?}", board.report().fires);
 }
 
 #[tokio::test]
