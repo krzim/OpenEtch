@@ -194,6 +194,8 @@ pub fn gcode_lines(job: &JobPlan, s: &GcodeSettings) -> Result<Vec<String>> {
                 return Err(PlanError::PowerTooHigh { layer: pass.layer_id.clone(), power_pct: power, max_pct: s.max_power_pct });
             }
             let sv = (power / 100.0 * s.s_max * 1000.0).round() / 1000.0;
+            // Leads and path pauses belong to vector paths, never to an image's scan runs.
+            let vector = i >= g.image_runs;
             // Where the head goes with the laser off first, then each move with its S.
             let (approach, moves) = if g.overscan_mm > 0.0 && poly.len() == 2 {
                 // A scan line split into pieces of different power (a ramp, or image runs side by side) is overscanned
@@ -218,7 +220,7 @@ pub fn gcode_lines(job: &JobPlan, s: &GcodeSettings) -> Result<Vec<String>> {
                 let outside = outward(poly, hole.get(i).copied().unwrap_or(false));
                 let mut approach = poly[0];
                 let mut m: Vec<(Point, f64)> = Vec::with_capacity(path.len() + 16);
-                if let Some(lead) = g.lead_in
+                if let Some(lead) = g.lead_in.filter(|_| vector)
                     && let Some(t) = direction(path[0], &path[1..])
                 {
                     let pts = lead_in(path[0], t, outside(t), &lead);
@@ -226,7 +228,7 @@ pub fn gcode_lines(job: &JobPlan, s: &GcodeSettings) -> Result<Vec<String>> {
                     m.extend(pts[1..].iter().map(|p| (*p, sv)));
                 }
                 m.extend(path[1..].iter().map(|p| (*p, sv)));
-                if let Some(lead) = g.lead_out
+                if let Some(lead) = g.lead_out.filter(|_| vector)
                     && let Some(&end) = path.last()
                     && let Some(t) = direction(end, path[..path.len() - 1].iter().rev()).map(|t| [-t[0], -t[1]])
                 {
@@ -249,7 +251,7 @@ pub fn gcode_lines(job: &JobPlan, s: &GcodeSettings) -> Result<Vec<String>> {
                 air = Some(g.air_assist);
             }
             // Start Pause Time: a dwell with the laser off, once the head stands at the path.
-            pause(&mut out, g.start_pause_us, &mut spindle);
+            pause(&mut out, if vector { g.start_pause_us } else { 0.0 }, &mut spindle);
             if spindle != Some(want) {
                 // Always with S0: the power comes with the next cut, never while the head stands still.
                 out.push(format!("{want} S0"));
@@ -270,7 +272,7 @@ pub fn gcode_lines(job: &JobPlan, s: &GcodeSettings) -> Result<Vec<String>> {
                 out.push(line);
                 pos = Some((x, y));
             }
-            pause(&mut out, g.end_pause_us, &mut spindle);
+            pause(&mut out, if vector { g.end_pause_us } else { 0.0 }, &mut spindle);
             marked = true;
         }
         pause(&mut out, pass.pause_after_us, &mut spindle);

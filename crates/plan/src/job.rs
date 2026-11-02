@@ -132,6 +132,10 @@ pub struct GantryPass {
     pub start_pause_us: f64,
     #[serde(default, skip_serializing_if = "is_zero_f64")]
     pub end_pause_us: f64,
+    /// The pass's first `image_runs` polylines are image scan runs (an image on a Line-mode layer): leads and path
+    /// pauses are for the vector paths after them, never for raster runs. Set only when a lead or pause is.
+    #[serde(default, skip_serializing_if = "is_zero_usize")]
+    pub image_runs: usize,
 }
 
 impl GantryPass {
@@ -490,6 +494,7 @@ pub(crate) fn plan_job_within(doc: &Document, target: &Target, max_segments: usi
                     start = run.to;
                 }
             }
+            let image_runs = polylines.len();
             let budget = (max_segments - segments - polylines.len(), max_segments);
             let (vectors, scales, end) = pass_polylines(&layer.id, cut, angle, &buckets, start, budget, &ctx)?;
             powers.extend(scales.iter().map(|k| settings.power_pct * k));
@@ -505,6 +510,17 @@ pub(crate) fn plan_job_within(doc: &Document, target: &Target, max_segments: usi
                 return Err(PlanError::TooManySegments { max: max_segments });
             }
             pos = end;
+            let o = &cut.options;
+            let path_extras = cut.mode == FillMode::Line
+                && (o.lead_in.is_some() || o.lead_out.is_some() || o.start_pause_ms > 0.0 || o.end_pause_ms > 0.0);
+            if target.gantry && path_extras && (o.tabs.is_some() || o.perforation.is_some()) {
+                // Tabs and perforation cut a path into pieces; a lead (and a dwell) at every piece would cut across
+                // the bridges and the skips.
+                return Err(PlanError::Target(format!(
+                    "layer {}: lead-in, lead-out and start/end pauses cannot be combined with tabs or perforation",
+                    layer.id
+                )));
+            }
             plan.passes.push(PassPlan {
                 layer_id: layer.id.clone(),
                 sub_layer,
@@ -532,6 +548,7 @@ pub(crate) fn plan_job_within(doc: &Document, target: &Target, max_segments: usi
                     lead_out: if cut.mode == FillMode::Line { cut.options.lead_out } else { None },
                     start_pause_us: if cut.mode == FillMode::Line { cut.options.start_pause_ms * 1000.0 } else { 0.0 },
                     end_pause_us: if cut.mode == FillMode::Line { cut.options.end_pause_ms * 1000.0 } else { 0.0 },
+                    image_runs: if path_extras { image_runs } else { 0 },
                 },
             });
         }

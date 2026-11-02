@@ -450,3 +450,47 @@ fn leads_and_path_pauses_reach_line_passes_only() {
     let bad = CutOptions { lead_out: Some(doc::Lead { length_mm: 0.0, ..lead }), ..CutOptions::default() };
     assert!(plan_job(&doc_with(objects(), with_options(CutSettings::default(), bad)), &target()).is_err());
 }
+
+#[test]
+fn grbl_leads_and_path_pauses_refuse_tabs_and_perforation() {
+    // Tabs and perforation cut each path into pieces: a lead at every piece would cut across the bridges and skips.
+    let gantry = Target { gantry: true, ..target() };
+    let lead = Some(doc::Lead { style: doc::LeadStyle::Line, length_mm: 2.0, angle_deg: 90.0 });
+    let objects = || vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0))];
+    let tabs = Some(Tabs { count: 4, spacing_mm: 0.0, size_mm: 1.0 });
+    let perf = Some(doc::Perforation { cut_mm: 1.0, skip_mm: 1.0 });
+    for o in [
+        CutOptions { lead_in: lead, tabs: tabs.clone(), ..CutOptions::default() },
+        CutOptions { lead_out: lead, perforation: perf.clone(), ..CutOptions::default() },
+        CutOptions { start_pause_ms: 5.0, tabs: tabs.clone(), ..CutOptions::default() },
+    ] {
+        let d = doc_with(objects(), with_options(CutSettings::default(), o));
+        assert!(matches!(plan_job(&d, &gantry), Err(PlanError::Target(m)) if m.contains("tabs or perforation")));
+        // A galvo ignores the GRBL-only settings.
+        plan_job(&d, &target()).unwrap();
+    }
+    plan_job(&doc_with(objects(), with_options(CutSettings::default(), CutOptions { tabs, ..CutOptions::default() })), &gantry).unwrap();
+}
+
+#[test]
+fn start_here_part_way_along_a_path_drops_that_paths_grbl_leads() {
+    // Resuming in the middle of a closed outline: the rest of it is an open path, and a lead measured from there
+    // would land on the wrong side (into the part). It is cut on its own without leads; later paths keep theirs.
+    let gantry = Target { gantry: true, ..target() };
+    let lead = Some(doc::Lead { style: doc::LeadStyle::Line, length_mm: 2.0, angle_deg: 90.0 });
+    let o = CutOptions { lead_in: lead, lead_out: lead, ..CutOptions::default() };
+    let d = doc_with(vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0)), rect("obj-2", 10.0, 10.0, (30.0, 0.0))], with_options(CutSettings::default(), o));
+    let plan = plan_job(&d, &gantry).unwrap();
+    let mid = start_at(&plan, 3, &gantry).unwrap();
+    assert_eq!(mid.passes.len(), 2, "{:?}", mid.passes);
+    assert_eq!((mid.passes[0].gantry.lead_in, mid.passes[0].gantry.lead_out), (None, None));
+    assert_eq!(mid.passes[0].polylines.len(), 1);
+    assert_eq!((mid.passes[1].gantry.lead_in, mid.passes[1].polylines.len()), (lead, 1));
+    assert!((mid.stats.mark_length_mm - 60.0).abs() < 1e-9, "{}", mid.stats.mark_length_mm);
+    // From a path's start (a jump), nothing is split.
+    let from_second = start_at(&plan, 5, &gantry).unwrap();
+    assert_eq!((from_second.passes.len(), from_second.passes[0].gantry.lead_in), (1, lead));
+    // The last path resumed part-way: its pass is replaced, keeping the pass's pause after.
+    let last = start_at(&plan, 8, &gantry).unwrap();
+    assert_eq!((last.passes.len(), last.passes[0].gantry.lead_in), (1, None));
+}

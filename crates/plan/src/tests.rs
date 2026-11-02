@@ -544,3 +544,38 @@ fn masked_images_engrave_only_inside_the_mask() {
     let xs: Vec<[f64; 2]> = plan.passes[0].polylines.iter().map(|l| [l[0][0], l[1][0]]).collect();
     assert_eq!(xs, [[-5.0, 5.0]]);
 }
+
+#[test]
+fn grbl_leads_and_path_pauses_skip_an_images_scan_runs() {
+    // An image on a Line-mode layer is rastered in the same pass as the layer's outlines: a lead-in or a start pause
+    // is for the outlines only, never one per scan run (a lead would mark beside every run of the picture).
+    let s = GcodeSettings {
+        work_area_mm: [400.0, 300.0],
+        mirror_x: false,
+        mirror_y: false,
+        s_max: 1000.0,
+        max_power_pct: 100.0,
+        max_feed_mm_min: 6000.0,
+        dynamic_power: true,
+    };
+    let img = image_object("obj-7", 4.0, 2.0, png(4, 2, |x, _| if x < 2 { 0 } else { 255 }), Affine::IDENTITY);
+    let mut cut = coarse(doc::DitherMode::Threshold);
+    cut.speed_mm_s = 20.0;
+    cut.options.lead_in = Some(doc::Lead { style: doc::LeadStyle::Line, length_mm: 2.0, angle_deg: 90.0 });
+    cut.options.lead_out = Some(doc::Lead { style: doc::LeadStyle::Line, length_mm: 2.0, angle_deg: 90.0 });
+    cut.options.start_pause_ms = 10.0;
+    let plan = plan_job(&doc_with(vec![img.clone(), rect("obj-1", 10.0, 10.0, (20.0, 0.0))], cut.clone()), &s.target()).unwrap();
+    assert_eq!(plan.passes[0].gantry.image_runs, 2);
+    let lines = gcode_lines(&plan, &s).unwrap();
+    // Each run is travelled to at its own start and ends at its own end.
+    for run in [["G0 X198 Y149.5", "G1 X200 Y149.5"], ["G0 X198 Y150.5", "G1 X200 Y150.5"]] {
+        let at = lines.iter().position(|l| l == run[0]).unwrap_or_else(|| panic!("{run:?} in {lines:?}"));
+        assert!(lines[at + 1].starts_with(run[1]), "{lines:?}");
+        assert!(lines[at + 2].starts_with("G0"), "no lead-out after a run: {lines:?}");
+    }
+    assert_eq!(lines.iter().filter(|l| l.starts_with("G4")).count(), 1, "one start pause, the rectangle's: {lines:?}");
+    // Without leads or pauses nothing is recorded (the plan's JSON stays as it was).
+    cut.options = doc::CutOptions::default();
+    let plain = plan_job(&doc_with(vec![img, rect("obj-1", 10.0, 10.0, (20.0, 0.0))], cut), &s.target()).unwrap();
+    assert!(plain.passes[0].gantry.is_default());
+}

@@ -1230,7 +1230,11 @@ Origin), the public WAZER `.lbdev`, xTool/Creality `.lbdev` posts and the owner'
   `lead_out` (Line passes) add a straight or arc cut at the pass's power before each path's start and after its end
   (after the overcut), a positive angle on the waste side (outside a closed outline by its winding, inside a hole: an
   outline nested in an odd number of the pass's others; above an open path); `start_pause_ms` / `end_pause_ms` (Line
-  passes) dwell at each path with `M5` + `G4`, the spindle mode coming back as `M3 S0` / `M4 S0`. The web UI offers the
+  passes) dwell at each path with `M5` + `G4`, the spindle mode coming back as `M3 S0` / `M4 S0`. Leads and path
+  pauses are for vector paths only (an image's scan runs on the same Line layer get none, `GantryPass.image_runs`);
+  combined with tabs or perforation they are refused (a lead at every piece would cut across the bridges); Start Here
+  part-way along a path cuts the rest of that path without its leads (from the resume point a lead would land on the
+  wrong side). The web UI offers the
   Move window (with saved positions and Show Last Position) and the Console window and File > Save G-code only while
   a GRBL gantry is active. Not yet for GRBL: the ramp on Threshold images, Cut Through pauses (laser on), leads and
   overcut in the preview, Repeat Marking tables, queues, the
