@@ -18,7 +18,7 @@ import type { Workspace } from "../components/TopBar.tsx";
 import { getRunOptions } from "../components/jobStore.ts";
 import { getPrefs } from "../workspace/prefs.ts";
 import { tr } from "../workspace/tr.ts";
-import { getLaserFlow, setLaserFlow } from "./laserContext.ts";
+import { getLaserFacts, getLaserFlow, onlineOf, setLaserFlow, type LaserFacts } from "./laserContext.ts";
 import { runJob } from "./runJob.ts";
 
 /** Where Start was pressed. */
@@ -182,6 +182,33 @@ function ticksForStart(ctx: StartCtx): boolean[] | null {
   const { gates, ticks } = getLaserFlow();
   if (!gates || !gates.checklistOn) return null;
   return Array.from({ length: gates.items }, (_, i) => ticks[i] === true);
+}
+
+/** The Start context from the shared laser facts (laser/laserContext.ts). */
+export function startCtxOf(f: LaserFacts, source: StartSource, extra: Partial<StartCtx> = {}): StartCtx {
+  return {
+    source,
+    machine: f.machine,
+    online: onlineOf(f),
+    designOnly: f.designOnly,
+    workspace: f.workspace,
+    selection: f.selection,
+    revision: f.revision,
+    estimateS: f.estimateS,
+    openLaser: f.openLaser,
+    notify: (m) => f.notify(m),
+    report: f.report,
+    refreshMachine: f.refreshMachine,
+    ...extra,
+  };
+}
+
+/**
+ * The `laser.requestRun` hotkey (App.tsx's `requestRun` body, P1): the one Start flow from the shared laser facts. It
+ * opens the checklist instead of firing when the checklist is on and unticked, and the Laser panel when pressed in Design.
+ */
+export function startFromHotkey(extra: Partial<StartCtx> = {}): Promise<void> {
+  return startFlow(startCtxOf(getLaserFacts(), "hotkey", extra));
 }
 
 /** Press Start: request the run (or open the checklist / Laser panel first). */

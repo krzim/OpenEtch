@@ -6,6 +6,7 @@ import { useCallback } from "react";
 import { jobApi } from "../api/jobApi.ts";
 import { useJobStatus } from "../components/JobControls.tsx";
 import { Icon } from "../components/ui.tsx";
+import { useSharedApprovalGates } from "../libs/JobSafety.tsx";
 import { useT } from "../workspace/usePrefs.ts";
 import { useEscStopsFraming } from "./escFraming.ts";
 import { chipState } from "./statusChip.ts";
@@ -21,6 +22,8 @@ export function StatusChip({ compact = false }: StatusChipProps) {
   const t = useT();
   const { facts } = useLaserLive();
   const job = useJobStatus(facts.link);
+  // Keeps the Job Checklist gates known to the Start flow (the hotkey decides from them) wherever the chip is mounted.
+  useSharedApprovalGates();
   const st = chipState(facts.machine, facts.link, job.unsupported ? null : job.job, facts.httpError);
   const refresh = useCallback(() => {
     facts.refreshMachine();

@@ -5,13 +5,15 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { MachineStatus } from "../api/types.ts";
 import { setRunOptions } from "../components/jobStore.ts";
-import { getLaserFlow, resetLaserStore, setLaserFlow } from "./laserContext.ts";
+import { getLaserFacts, getLaserFlow, resetLaserStore, setLaserFlow, setLaserSource } from "./laserContext.ts";
 import {
   runUnderWay,
   sharedChecklistIncomplete,
   shortClock,
   startBlock,
+  startCtxOf,
   startDecision,
+  startFromHotkey,
   startFlow,
   startLabel,
   startScope,
@@ -171,4 +173,22 @@ test("startFlow: a blocked press only tells why; the checklist press opens the L
   assert.equal(opened, 1);
   assert.match(said[1] ?? "", /checklist/i);
   assert.equal(getLaserFlow().starting, false, "nothing was requested");
+});
+
+test("startFromHotkey reads the shared facts: offline only tells why, the checklist opens the Laser panel", async () => {
+  resetLaserStore();
+  const said: string[] = [];
+  let opened = 0;
+  setLaserSource("app", { link: "closed", machine: null, notify: (m) => said.push(m), openLaser: () => opened++ });
+  await startFromHotkey();
+  assert.match(said[0] ?? "", /offline/i);
+  setLaserSource("app", { link: "open", machine: machine(), workspace: "design", notify: (m) => said.push(m), openLaser: () => opened++ });
+  setLaserFlow({ gates: { checklistOn: true, items: 1, requireFraming: false }, ticks: [] });
+  await startFromHotkey();
+  assert.equal(opened, 1);
+  assert.match(said[1] ?? "", /checklist/i);
+  const c = startCtxOf(getLaserFacts(), "toolbar");
+  assert.equal(c.online, true);
+  assert.equal(c.workspace, "design");
+  resetLaserStore();
 });

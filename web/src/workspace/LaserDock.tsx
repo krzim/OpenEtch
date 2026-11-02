@@ -184,7 +184,7 @@ export function LaserDock(p: LaserDockProps) {
           onChanged={p.onChanged}
         />
       </div>
-      {noPin && <ApprovalChecks state={gates} disabled={false} showDoor={false} />}
+      {noPin && <ApprovalChecks state={gates} disabled={flow.starting} showDoor={false} />}
       <div className="laser-start-row">
         <StartButton variant="dock" />
         <button className="btn btn-stop laser-stop" onClick={p.onStop} title={t("lz.stopTitle")}>

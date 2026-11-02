@@ -7,8 +7,8 @@ import { noPinMode } from "../api/runs.ts";
 import { Icon } from "../components/ui.tsx";
 import { ApprovalChecks, useSharedApprovalGates } from "../libs/JobSafety.tsx";
 import { useT } from "../workspace/usePrefs.ts";
-import { onlineOf, setLaserFlow, type LaserFacts } from "./laserContext.ts";
-import { startFlow, startState, type StartCtx, type StartSource } from "./startFlow.ts";
+import { setLaserFlow } from "./laserContext.ts";
+import { startCtxOf, startFlow, startState } from "./startFlow.ts";
 import { useLaserLive } from "./useLaserLive.ts";
 import "./laser.css";
 
@@ -16,25 +16,6 @@ export type StartButtonVariant = "toolbar" | "dock" | "sheet";
 
 export interface StartButtonProps {
   variant: StartButtonVariant;
-}
-
-/** The Start context from the shared laser facts (also what the shell can pass to `startFlow` for the hotkey). */
-export function startCtxOf(f: LaserFacts, source: StartSource, extra: Partial<StartCtx> = {}): StartCtx {
-  return {
-    source,
-    machine: f.machine,
-    online: onlineOf(f),
-    designOnly: f.designOnly,
-    workspace: f.workspace,
-    selection: f.selection,
-    revision: f.revision,
-    estimateS: f.estimateS,
-    openLaser: f.openLaser,
-    notify: (m) => f.notify(m),
-    report: f.report,
-    refreshMachine: f.refreshMachine,
-    ...extra,
-  };
 }
 
 /** The refusal of the last Start, until dismissed or the next Start. */
