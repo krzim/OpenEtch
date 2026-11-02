@@ -45,7 +45,8 @@ COMMANDS:
                         connection and size) is updated. Restart the engine to see them.
 
 OPTIONS:
-  --listen <addr>       Address to serve on (default 127.0.0.1:7878). Off loopback a token is required.
+  --listen <addr>       Address to serve on (default 127.0.0.1:7878). Off loopback a token is required unless
+                        --no-token.
   --profile <path>      Machine profile TOML (default fixtures/b6-mopa-60w.toml, found from the current dir up).
   --web-dir <path>      Built web UI to serve (default web/dist, found from the current dir up).
   --usb                 Drive the real laser over USB (needs a build with --features usb). Default: simulator.
@@ -53,6 +54,9 @@ OPTIONS:
                         first use, when listening off loopback or with --require-token).
   --require-token       Require the access token on loopback too: for an HTTPS proxy on the same computer (tailscale
                         serve, Caddy), which reaches the engine over 127.0.0.1 on behalf of other devices.
+  --no-token            Require no access token, even off loopback: for a trusted home network. Anyone who can reach
+                        the port can then use the app and its MCP endpoint (edit, frame, request runs); burns still
+                        start only with Start in the app or the foot switch. Not with --token or --require-token.
   --allow-host <name>   Extra host name accepted in Host/Origin headers (repeatable), e.g. galvo.local.
   --config-dir <path>   Engine config directory (operator PIN). Default: the OS config dir + openetch, e.g.
                         %APPDATA%\\openetch or ~/.config/openetch.
@@ -106,6 +110,8 @@ pub struct Config {
     pub token: Option<String>,
     /// `--require-token`: require the access token even on a loopback address (a proxy in front).
     pub require_token: bool,
+    /// `--no-token`: require no access token, even off loopback (a trusted network).
+    pub no_token: bool,
     pub allow_hosts: Vec<String>,
     /// Where the operator PIN lives.
     pub config_dir: PathBuf,
@@ -213,6 +219,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Parsed, String> 
     let mut usb = false;
     let mut token = None;
     let mut require_token = false;
+    let mut no_token = false;
     let mut allow_hosts = Vec::new();
     let mut lightburn_prefs = None;
     let mut lightburn_device = None;
@@ -242,6 +249,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Parsed, String> 
                 token = Some(t);
             }
             "--require-token" => require_token = true,
+            "--no-token" => no_token = true,
             "--allow-host" => allow_hosts.push(value("--allow-host")?),
             "--config-dir" => config = Some(PathBuf::from(value("--config-dir")?)),
             "--projects-dir" => projects_dir = Some(PathBuf::from(value("--projects-dir")?)),
@@ -300,6 +308,9 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Parsed, String> 
             other => return Err(format!("unknown option '{other}' (see --help)")),
         }
     }
+    if no_token && (token.is_some() || require_token) {
+        return Err("--no-token cannot be combined with --token or --require-token".into());
+    }
     if usb && sim_pin.is_some() {
         return Err("--sim-pin is only accepted with the simulator; it cannot be combined with --usb".into());
     }
@@ -317,6 +328,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Parsed, String> 
         usb,
         token,
         require_token,
+        no_token,
         allow_hosts,
         config_dir: config_dir(config)?,
         confirm_input,
@@ -509,6 +521,11 @@ mod tests {
         assert!(p(&["--usb", "token"]).unwrap_err().contains("command of its own"));
         assert!(!run(&[]).require_token);
         assert!(run(&["--require-token"]).require_token);
+        assert!(!run(&[]).no_token);
+        assert!(run(&["--listen", "0.0.0.0:7878", "--no-token"]).no_token);
+        assert!(p(&["--no-token", "--require-token"]).unwrap_err().contains("--no-token"));
+        assert!(p(&["--token", "abcdefghijklmnop", "--no-token"]).unwrap_err().contains("--no-token"));
+        assert!(USAGE.contains("--no-token"));
         assert!(USAGE.contains("openetch token [--rotate]") && USAGE.contains("--require-token"));
     }
 

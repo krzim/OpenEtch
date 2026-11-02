@@ -255,7 +255,15 @@ async fn run(config: Config) -> Result<(), String> {
 
     // Off loopback (or behind a proxy, --require-token) every client needs the access token. It is kept in the config
     // directory, so a restart or an update does not log out the paired browsers, app windows and MCP clients.
-    let need_token = !config.listen.ip().is_loopback() || config.require_token;
+    let need_token = (!config.listen.ip().is_loopback() || config.require_token) && !config.no_token;
+    if config.no_token && !config.listen.ip().is_loopback() {
+        tracing::warn!(listen = %config.listen, "--no-token: no access token is required off loopback");
+        println!(
+            "openetch: --no-token: anyone who can reach {} can use the app and its MCP endpoint without a token \
+             (burns still need Start in the app or the foot switch)",
+            config.listen
+        );
+    }
     let token = match (&config.token, need_token) {
         (Some(t), _) => Some(t.clone()),
         (None, false) => None,
