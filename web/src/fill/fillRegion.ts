@@ -147,6 +147,38 @@ export class FaceCache {
   }
 }
 
+/**
+ * Hover previews one at a time. The engine runs commands in turn, so on a heavy document a slow answer must not leave
+ * a question queued behind it for every pause of the mouse: while one is out, only the latest point waits.
+ */
+export class HoverGate {
+  private out = false;
+  private waiting: Vec2 | null = null;
+
+  /** Whether to ask about `at` now; false when an answer is still out (then `at` waits, replacing an older point). */
+  request(at: Vec2): boolean {
+    if (this.out) {
+      this.waiting = at;
+      return false;
+    }
+    this.out = true;
+    return true;
+  }
+
+  /** The answer came back: the gate is free, and the point that waited meanwhile (if any) is returned. */
+  done(): Vec2 | null {
+    const next = this.waiting;
+    this.out = false;
+    this.waiting = null;
+    return next;
+  }
+
+  /** Forget the waiting point (the tool was left); an answer still out frees the gate when it comes. */
+  clear(): void {
+    this.waiting = null;
+  }
+}
+
 // ---- the tool's state machine ----------------------------------------------------------------------------------------
 
 /** One area the tool shows: where it was picked and its face (null while the preview is on its way). */

@@ -6,6 +6,7 @@ import { ALIASES, searchCommands, type Command } from "../components/commandSear
 import { CANVAS_TOOLS } from "../canvasTool.ts";
 import {
   FaceCache,
+  HoverGate,
   IDLE,
   areaText,
   faceContains,
@@ -80,6 +81,21 @@ test("the face cache holds faces for one revision and one set of options", () =>
   assert.equal(c.sync(4, { gapMm: 0.5, holes: true }), true, "other options drop it");
   for (let i = 0; i < 250; i++) c.add({ contours: [sq(i, 0, i + 1, 1)], areaMm2: 1 });
   assert.ok(c.size <= 200, "bounded");
+});
+
+test("hover questions go one at a time; only the latest point waits", () => {
+  const g = new HoverGate();
+  assert.equal(g.request([1, 1]), true);
+  assert.equal(g.request([2, 2]), false, "one is out");
+  assert.equal(g.request([3, 3]), false);
+  assert.deepEqual(g.done(), [3, 3], "the latest point waited, the older one was dropped");
+  assert.equal(g.request([3, 3]), true, "the gate is free again");
+  assert.equal(g.done(), null);
+  assert.equal(g.request([4, 4]), true);
+  g.request([5, 5]);
+  g.clear();
+  assert.equal(g.done(), null, "leaving the tool forgets the waiting point");
+  assert.equal(g.request([6, 6]), true);
 });
 
 test("mouse: hover asks once per area, a click fills", () => {

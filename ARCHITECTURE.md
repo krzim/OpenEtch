@@ -756,7 +756,11 @@ geometry in place drops its `extras` (kept LightBurn shape data no longer descri
   point, changing nothing. At most 256 points. Curves are flattened at 0.01 mm. How it scales: `i_overlay` slices a
   square window around each point by only the lines that reach into it (chunks of 32 segments in a uniform grid); the
   piece holding the point is the area when it stays clear of the window's border (lines outside the window cannot cut
-  it), else the window grows x4 until it holds every line, and a piece that still reaches the border is open.
+  it), else the window grows x4 until it holds every line, and a piece that still reaches the border is open. A piece
+  that reaches the border is first checked against a coarse map of the free space joined to the outside (grid cells
+  no line comes near; conservative), so a point in open space fails after one small window instead of slicing the
+  whole drawing; with a gap, only the lines within half the gap of the exact area are thickened. Gaps below 0.001 mm
+  count as 0.
   `path.fill_region_preview {points, ...the same options}` (query) returns the outlines without creating anything:
   `faces [{contours, area_mm2, bounds}]`, `points [{point, face} | {point, face: null, error, code: not_enclosed |
   on_line}]`. The web tool (ribbon MODIFY > Fill Region, also the tablet rail, the phone strip and command search,

@@ -26,6 +26,7 @@ import {
   areaText,
   FILL_CMD,
   FaceCache,
+  HoverGate,
   IDLE,
   MAX_GAP_MM,
   facePathData,
@@ -86,6 +87,7 @@ export function useFillRegionTool(p: FillToolProps) {
   const [layerPick, setLayerPick] = useState<string | null>(null);
   const cache = useRef(new FaceCache());
   const hoverTimer = useRef(0);
+  const gate = useRef(new HoverGate());
   const seq = useRef(0);
   const touchUi = useRef(false);
   const press = useRef<{ at: Vec2; screen: Vec2; moved: boolean } | null>(null);
@@ -110,7 +112,7 @@ export function useFillRegionTool(p: FillToolProps) {
     const stale = (k: { at: Vec2; face: Face | null } | null) => (k ? { at: k.at, face: null } : null);
     const next: FillState = { ...s, hover: stale(s.hover), armed: stale(s.armed), pending: s.pending.map((k) => ({ at: k.at, face: null })) };
     set(next);
-    for (const k of [next.hover, next.armed, ...next.pending]) if (k) ask(k.at);
+    for (const k of [next.hover, next.armed, ...next.pending]) if (k) void ask(k.at);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [revision, opts]);
 
@@ -121,6 +123,7 @@ export function useFillRegionTool(p: FillToolProps) {
       return;
     }
     window.clearTimeout(hoverTimer.current);
+    gate.current.clear();
     seq.current++;
     press.current = null;
     if (S.current !== IDLE) set(IDLE);
@@ -136,11 +139,11 @@ export function useFillRegionTool(p: FillToolProps) {
   };
 
   /** Ask the engine for the face at `at` and fold the answer in. */
-  const ask = (at: Vec2) => {
+  const ask = (at: Vec2): Promise<unknown> => {
     // Answers for points no longer shown are ignored by onPreview; answers that arrive after the tool was left (the
     // epoch moved on) are dropped here.
     const epoch = seq.current;
-    void execute(fillPreview([at], O.current))
+    return execute(fillPreview([at], O.current))
       .then((r) => {
         if (epoch !== seq.current) return;
         const [a] = parsePreview(r.result, 1);
@@ -149,6 +152,22 @@ export function useFillRegionTool(p: FillToolProps) {
         set(onPreview(S.current, at, shown));
       })
       .catch((e: unknown) => epoch === seq.current && set(onPreview(S.current, at, { error: errText(e), code: "error" })));
+  };
+
+  /** A hover question, through the gate: one out at a time, and a point that waited is asked only if the pointer is
+   * still there and the answers since have not covered it. */
+  const askHover = (at: Vec2) => {
+    if (S.current.hover?.at !== at) return;
+    const known = cache.current.find(at);
+    if (known) {
+      set(onPreview(S.current, at, { face: known }));
+      return;
+    }
+    if (!gate.current.request(at)) return;
+    void ask(at).finally(() => {
+      const next = gate.current.done();
+      if (next) askHover(next);
+    });
   };
 
   const commit = (points: Vec2[]) => {
@@ -171,8 +190,8 @@ export function useFillRegionTool(p: FillToolProps) {
         window.clearTimeout(hoverTimer.current);
         if (fx.why === "hover") {
           const at = fx.at;
-          hoverTimer.current = window.setTimeout(() => S.current.hover?.at === at && ask(at), HOVER_MS);
-        } else ask(fx.at);
+          hoverTimer.current = window.setTimeout(() => askHover(at), HOVER_MS);
+        } else void ask(fx.at);
         return;
       case "commit":
         window.clearTimeout(hoverTimer.current);
