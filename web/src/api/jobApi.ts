@@ -77,6 +77,31 @@ export function saveBlob(blob: Blob, filename: string): void {
 
 const enc = encodeURIComponent;
 
+/**
+ * POST /api/machine/console: the board's answer `{line, lines, ok, error}` also when the board refused the line
+ * (`ok: false`, HTTP 200); an engine refusal (a line that could fire: 422, MCP headers: 403, busy: 409) throws.
+ */
+async function consoleLine(line: string): Promise<unknown> {
+  let res: Response;
+  try {
+    res = await fetch("/api/machine/console", {
+      method: "POST",
+      headers: headers("application/json", "application/json"),
+      body: JSON.stringify({ line, origin: UI_ORIGIN }),
+    });
+  } catch (e) {
+    throw new ApiError(`engine unreachable: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  const text = await res.text();
+  const data = parse(text);
+  if (!res.ok) {
+    const obj = data && typeof data === "object" ? (data as { error?: unknown; code?: unknown }) : null;
+    const msg = obj && "error" in obj ? String(obj.error) : text || res.statusText;
+    throw new ApiError(`POST /api/machine/console: ${res.status} ${msg}`, res.status, { detail: msg, code: typeof obj?.code === "string" ? obj.code : undefined });
+  }
+  return data;
+}
+
 export const jobApi = {
   // ---- job control ----
   job: () => call("GET", "/api/job"),
@@ -101,6 +126,20 @@ export const jobApi = {
   /** Move the extension axis (Z lift or rotary); UI only. */
   axis: (p: { z_mm: number } | { steps: number }) => call("POST", "/api/machine/axis", { ...p, origin: UI_ORIGIN }),
   machineInfo: () => call("GET", "/api/machine/info"),
+
+  // ---- a GRBL gantry: Move and Console windows, Save G-code (none of these can fire the laser) ----
+  /** GET /api/machine/grbl; `refresh` asks an idle board for a status report first (its position). */
+  grblStatus: (refresh: boolean) => call("GET", `/api/machine/grbl${refresh ? "?refresh=true" : ""}`),
+  /** A jog by `{dx, dy}` (canvas directions) or to `{x, y}` (canvas frame), mm, at `feed` mm/min, laser off. UI only. */
+  jog: (body: { dx: number; dy: number } | { x: number; y: number }, feed?: number) =>
+    call("POST", "/api/machine/jog", { ...body, ...(feed ? { feed } : {}), origin: UI_ORIGIN }),
+  /** 0x85: stops a jog; never gated. */
+  jogCancel: () => call("POST", "/api/machine/jog/cancel", {}),
+  home: () => call("POST", "/api/machine/home", { origin: UI_ORIGIN }),
+  unlock: () => call("POST", "/api/machine/unlock", { origin: UI_ORIGIN }),
+  console: consoleLine,
+  /** GET /api/export/gcode: the job as G-code for the active GRBL gantry (sends nothing to the machine). */
+  exportGcode: () => download("/api/export/gcode"),
 
   // ---- preview ----
   previewPng: (width: number, jumps: boolean) => download(`/api/preview.png?width=${Math.round(width)}&jumps=${jumps}`),

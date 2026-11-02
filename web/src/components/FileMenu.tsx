@@ -512,10 +512,13 @@ export function FileMenu({
   recent,
   extra,
   files,
+  onSaveGcode,
 }: {
   file: FileActions;
   onImport: () => void;
   onDevices?: () => void;
+  /** Save G-code (LightBurn's Save GCode): given only while the active device is a GRBL gantry. */
+  onSaveGcode?: () => void;
   /** Recent projects (workspace/RecentProjects.tsx), given a function that closes the menu. */
   recent?: (close: () => void) => ReactNode;
   /** More entries at the end (Preferences, Edit hotkeys), given a function that closes the menu. */
@@ -577,6 +580,7 @@ export function FileMenu({
           {item(t("fm.importLb"), file.openLbrn2Dialog, ".lbrn2")}
           {item(t("fm.exportLb"), () => file.setModal({ kind: "export" }), ".lbrn2")}
           {files?.(() => setOpen(false))}
+          {onSaveGcode && item(t("fm.saveGcode"), onSaveGcode, ".gcode")}
           {onDevices && (
             <>
               <div className="menu-sep" role="separator" />

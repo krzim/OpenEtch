@@ -1,8 +1,8 @@
 //! Engine preferences kept in `<config-dir>/preferences.json`: per device, LightBurn's layer defaults (Make Default /
 //! Reset to Default / Make Default for All, per colour; "Load default layer settings on New"), the optimization
 //! defaults (Set as Defaults), Galvo Basic Settings' Other Options (Require Framing Before Start, Play Sound on Job
-//! Finished, the Job Checklist) and the device's material library; globally the debug log and the opt-in update
-//! check. Written through a temporary file; a missing or unreadable file means the defaults (reported once).
+//! Finished, the Job Checklist), the device's material library and a GRBL gantry's console macros; globally the
+//! debug log and the opt-in update check. Written through a temporary file; a missing or unreadable file means the defaults (reported once).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -18,6 +18,10 @@ pub const ALL_COLORS: &str = "*";
 /// Most checklist items and the longest item.
 pub const MAX_CHECKLIST_ITEMS: usize = 30;
 pub const MAX_CHECKLIST_ITEM_CHARS: usize = 300;
+/// Most console macros per device, the longest name and the most lines of one macro.
+pub const MAX_MACROS: usize = 32;
+pub const MAX_MACRO_NAME_CHARS: usize = 40;
+pub const MAX_MACRO_LINES: usize = 50;
 
 /// A saved layer default: main settings and sub-layers.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -52,6 +56,38 @@ impl Checklist {
     }
 }
 
+/// A console macro of a GRBL gantry (LightBurn's Console macros): a named list of console lines, sent one after
+/// another through `POST /api/machine/console` (so through the same console policy: nothing that can turn the laser
+/// on). Saving checks every line against that policy too, so a macro that could never run is refused when saved.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConsoleMacro {
+    pub name: String,
+    pub lines: Vec<String>,
+}
+
+/// Why `macros` cannot be saved, if they cannot.
+pub fn macros_problem(macros: &[ConsoleMacro]) -> Option<String> {
+    if macros.len() > MAX_MACROS {
+        return Some(format!("at most {MAX_MACROS} macros"));
+    }
+    for m in macros {
+        let n = m.name.trim().chars().count();
+        if n == 0 || n > MAX_MACRO_NAME_CHARS || m.name.chars().any(char::is_control) {
+            return Some(format!("macro name \"{}\" must be 1..={MAX_MACRO_NAME_CHARS} printable characters", m.name));
+        }
+        if m.lines.is_empty() || m.lines.len() > MAX_MACRO_LINES {
+            return Some(format!("macro \"{}\" must have 1..={MAX_MACRO_LINES} lines", m.name));
+        }
+        for l in &m.lines {
+            if let Err(e) = machine::grbl::check_console_line(l) {
+                return Some(format!("macro \"{}\", line \"{l}\": {e}", m.name));
+            }
+        }
+    }
+    None
+}
+
 /// Per-device preferences.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -70,6 +106,9 @@ pub struct DevicePrefs {
     /// The material library loaded and selected when this device is active (LightBurn links a saved library to the
     /// active device).
     pub library: Option<String>,
+    /// A GRBL gantry's console macros ([`ConsoleMacro`]), in button order.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub console_macros: Vec<ConsoleMacro>,
 }
 
 impl DevicePrefs {
@@ -182,6 +221,27 @@ mod tests {
         let (broken, note) = PrefStore::open(&dir);
         assert!(note.is_some() && broken.prefs == Preferences::default());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn macros_must_pass_the_console_policy() {
+        let m = |name: &str, lines: &[&str]| ConsoleMacro { name: name.into(), lines: lines.iter().map(|l| (*l).to_owned()).collect() };
+        assert!(macros_problem(&[m("Air on", &["M8"]), m("Park", &["$J=G90 G21 X0 Y0 F3000", "M9"])]).is_none());
+        for bad in [
+            vec![m("Fire", &["M3 S1000"])],
+            vec![m("Sneaky", &["G1 X10 F100 S5"])],
+            vec![m("Startup", &["$N0=M4"])],
+            vec![m("", &["M8"])],
+            vec![m("Empty", &[])],
+            vec![m("Status", &["?"])],
+        ] {
+            assert!(macros_problem(&bad).is_some(), "{bad:?}");
+        }
+        assert!(macros_problem(&vec![m("x", &["M8"]); MAX_MACROS + 1]).is_some());
+        // Older preference files without macros load as none, and none are written.
+        let d: DevicePrefs = serde_json::from_str("{}").unwrap();
+        assert!(d.console_macros.is_empty());
+        assert!(serde_json::to_value(&d).unwrap().get("console_macros").is_none());
     }
 
     #[test]

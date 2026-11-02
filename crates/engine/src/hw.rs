@@ -478,6 +478,21 @@ impl Machine {
         }
     }
 
+    /// Ask an idle, initialised GRBL board for a status report (`?`, a realtime query that never moves or fires), so
+    /// [`Machine::grbl_snapshot`] shows the head's position (the Move window). Does nothing while anything else holds
+    /// the driver (a run, a frame, homing, a console line), while the board is not initialised, or for a galvo.
+    pub fn grbl_refresh_status(&self) {
+        let Ok(mut ctl) = self.ctl.try_lock() else { return };
+        if ctl.state() != ControllerState::Idle {
+            return;
+        }
+        if let Some(g) = ctl.grbl_mut()
+            && let Err(e) = g.status()
+        {
+            tracing::debug!(error = %e, "GRBL status refresh failed");
+        }
+    }
+
     pub fn kind(&self) -> LinkKind {
         self.kind
     }

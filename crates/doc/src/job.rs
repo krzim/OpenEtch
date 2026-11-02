@@ -136,6 +136,26 @@ pub struct CutOptions {
     /// Kerf Offset, to make up for the beam width when cutting parts). Open paths are not offset.
     #[serde(skip_serializing_if = "is_zero")]
     pub kerf_offset_mm: f64,
+    /// GRBL gantries only (LightBurn's GRBL "Constant Power Mode"): these passes use constant power, `M3`, even when
+    /// the device's default is dynamic power `M4` (power then does not follow speed, so it suits fills at an even
+    /// speed). Ignored by galvo jobs.
+    #[serde(skip_serializing_if = "is_false")]
+    pub constant_power: bool,
+    /// GRBL gantries only (LightBurn's per-layer Air Assist): air assist (`M8`, coolant flood) is on while these
+    /// passes mark and off (`M9`) for passes without it and at the end of the job. Ignored by galvo jobs.
+    #[serde(skip_serializing_if = "is_false")]
+    pub air_assist: bool,
+    /// GRBL gantries only (LightBurn's Overscanning for fills and images): every straight scan line (hatch line or
+    /// image run) is approached from this far before its start and left this far past its end with the laser off
+    /// (`S0`), so the head is at speed while it marks. Shortened at the bed's edge. 0..=50 mm; 0 is off. Ignored by
+    /// galvo jobs (a galvo uses its delays instead).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub overscan_mm: f64,
+    /// GRBL gantries only (LightBurn's Overcut for line cuts): a closed outline is cut on past its start point by this
+    /// much (at most once around), so the start and end of the cut overlap. 0..=50 mm; 0 is off. Ignored by galvo
+    /// jobs.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub overcut_mm: f64,
 }
 
 impl Default for CutOptions {
@@ -155,12 +175,18 @@ impl Default for CutOptions {
             z_offset_mm: 0.0,
             z_step_mm: 0.0,
             kerf_offset_mm: 0.0,
+            constant_power: false,
+            air_assist: false,
+            overscan_mm: 0.0,
+            overcut_mm: 0.0,
         }
     }
 }
 
 /// Longest pause before or after a pass, ms.
 pub const MAX_PAUSE_MS: f64 = 600_000.0;
+/// Longest overscan and overcut, mm ([`CutOptions::overscan_mm`], [`CutOptions::overcut_mm`]).
+pub const MAX_GANTRY_EXTRA_MM: f64 = 50.0;
 
 impl CutOptions {
     pub fn is_default(&self) -> bool {
@@ -185,6 +211,8 @@ impl CutOptions {
             .or_else(|| range("z_offset_mm", self.z_offset_mm, -1000.0, 1000.0))
             .or_else(|| range("z_step_mm", self.z_step_mm, -100.0, 100.0))
             .or_else(|| range("kerf_offset_mm", self.kerf_offset_mm, -50.0, 50.0))
+            .or_else(|| range("overscan_mm", self.overscan_mm, 0.0, MAX_GANTRY_EXTRA_MM))
+            .or_else(|| range("overcut_mm", self.overcut_mm, 0.0, MAX_GANTRY_EXTRA_MM))
             .or_else(|| {
                 self.dot_mode.as_ref().and_then(|d| {
                     range("dot_mode.dot_time_ms", d.dot_time_ms, 0.01, 1000.0)
@@ -477,6 +505,18 @@ mod tests {
         assert!(bad.problem().unwrap().contains("tabs"));
         let bad = CutOptions { wobble: Some(Wobble { step_mm: 0.0, size_mm: 1.0 }), ..CutOptions::default() };
         assert!(bad.problem().unwrap().contains("wobble.step_mm"));
+        let bad = CutOptions { overscan_mm: 51.0, ..CutOptions::default() };
+        assert!(bad.problem().unwrap().contains("overscan_mm"));
+        let bad = CutOptions { overcut_mm: -1.0, ..CutOptions::default() };
+        assert!(bad.problem().unwrap().contains("overcut_mm"));
+        let gantry = CutOptions { constant_power: true, air_assist: true, overscan_mm: 2.5, overcut_mm: 1.0, ..CutOptions::default() };
+        assert!(gantry.problem().is_none());
+        let v = serde_json::to_value(&gantry).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({"fill_grouping": "all_at_once", "constant_power": true, "air_assist": true, "overscan_mm": 2.5, "overcut_mm": 1.0})
+        );
+        assert_eq!(serde_json::from_value::<CutOptions>(v).unwrap(), gantry);
         let o = Optimization { order_by: vec![OrderBy::Group, OrderBy::Group], ..Optimization::default() };
         assert!(o.problem().is_some());
         assert!(Rotary::default().problem().is_none());

@@ -1,7 +1,8 @@
 // The rest of LightBurn's galvo cut settings for one pass (main settings or a sub-layer), under the laser parameters
 // in the Properties panel: global passes (layer), the pass's own output toggle, fill options (lines per inch, fill
 // grouping, flood fill, auto-rotate, dot width adjust), line options (dot mode, wobble, perforation, tabs), pause
-// before / after, Z offset / Z step, and "Override timings" prefilled from the device. Each field sends one
+// before / after, Z offset / Z step, the GRBL layer options (constant power, air assist, overscan, overcut; shown only
+// while a GRBL gantry is active), and "Override timings" prefilled from the device. Each field sends one
 // `layer.update` / `layer.sub_update` with a partial `settings.options` (a merge patch), `settings.timing`,
 // `settings.hatch.lines_per_inch` or `global_passes`.
 //
@@ -12,6 +13,7 @@
 import { useEffect, useState } from "react";
 import { api, type Invocation } from "../api/client.ts";
 import {
+  MAX_GANTRY_EXTRA_MM,
   OPTION_DEFAULTS,
   TIMING_KEYS,
   activeOptionCount,
@@ -82,7 +84,16 @@ const TIMING_LABEL: Record<keyof GalvoTiming, [string, string]> = {
 
 // ---- per-pass options -----------------------------------------------------------------------------------------------
 
-export function CutOptionsSection(p: { layer: Layer; sub: number | null; settings: CutSettings; run: Run; report: (e: unknown) => void; has?: (cmd: string) => boolean }) {
+export function CutOptionsSection(p: {
+  layer: Layer;
+  sub: number | null;
+  settings: CutSettings;
+  run: Run;
+  report: (e: unknown) => void;
+  has?: (cmd: string) => boolean;
+  /** The active device is a GRBL gantry: show its layer options; `dynamic` is its default power mode (M4). */
+  gantry?: { dynamic: boolean } | null;
+}) {
   const t = useT();
   const ref: PassRef = { layer: p.layer.id, sub: p.sub };
   const r = resolveOptions(p.settings);
@@ -92,7 +103,7 @@ export function CutOptionsSection(p: { layer: Layer; sub: number | null; setting
   const lines = p.settings.mode !== "fill";
   const timing = layerTiming(p.settings);
   const devTiming = useDeviceTiming();
-  const count = activeOptionCount(r) + (timing ? 1 : 0) + (p.sub === null && globalPasses(p.layer) > 1 ? 1 : 0);
+  const count = activeOptionCount(r, !!p.gantry) + (timing ? 1 : 0) + (p.sub === null && globalPasses(p.layer) > 1 ? 1 : 0);
   const num = (f: (v: number) => void) => (v: number | null) => v !== null && f(v);
   return (
     <details className="cut-opts" open={count > 0 || undefined}>
@@ -186,6 +197,27 @@ export function CutOptionsSection(p: { layer: Layer; sub: number | null; setting
           {(r.dot_mode || r.wobble || r.perforation || r.tabs) && <p className="hint">{t("cut.lineOrder")}</p>}
           <NumberField label={t("cut.kerf")} unit="mm" value={r.kerf_offset_mm} min={-50} max={50} digits={3} onCommit={num((kerf_offset_mm) => opt({ kerf_offset_mm }))} />
           {r.kerf_offset_mm !== 0 && <p className="hint">{t("cut.kerfHint")}</p>}
+        </fieldset>
+      )}
+
+      {p.gantry && (
+        <fieldset className="job-fieldset">
+          <legend>{t("cut.grbl")}</legend>
+          <CheckField label={t("cut.constantPower")} checked={r.constant_power} onChange={(constant_power) => opt({ constant_power })} />
+          <p className="hint">{t("cut.constantPowerHint", { mode: p.gantry.dynamic ? "M4" : "M3" })}</p>
+          <CheckField label={t("cut.airAssist")} checked={r.air_assist} onChange={(air_assist) => opt({ air_assist })} />
+          {hatching && (
+            <>
+              <NumberField label={t("cut.overscan")} unit="mm" value={r.overscan_mm} min={0} max={MAX_GANTRY_EXTRA_MM} digits={2} onCommit={num((overscan_mm) => opt({ overscan_mm }))} />
+              {r.overscan_mm > 0 && <p className="hint">{t("cut.overscanHint")}</p>}
+            </>
+          )}
+          {lines && (
+            <>
+              <NumberField label={t("cut.overcut")} unit="mm" value={r.overcut_mm} min={0} max={MAX_GANTRY_EXTRA_MM} digits={2} onCommit={num((overcut_mm) => opt({ overcut_mm }))} />
+              {r.overcut_mm > 0 && <p className="hint">{t("cut.overcutHint")}</p>}
+            </>
+          )}
         </fieldset>
       )}
 

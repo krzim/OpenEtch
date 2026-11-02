@@ -60,6 +60,16 @@ test("cut options resolve with the engine's defaults", () => {
   assert.deepEqual(s.wobble, { step_mm: 0.2, size_mm: 0.5 });
   assert.deepEqual(s.tabs, { count: 3, spacing_mm: 0, size_mm: 1 });
   assert.equal(activeOptionCount(s), 5);
+  // The GRBL layer options: read like the others, counted only for a gantry (a galvo never uses them).
+  const g = resolveOptions(settings({ options: { constant_power: true, air_assist: true, overscan_mm: 2.5, overcut_mm: 1 } }));
+  assert.deepEqual([g.constant_power, g.air_assist, g.overscan_mm, g.overcut_mm], [true, true, 2.5, 1]);
+  assert.equal(activeOptionCount(g), 1, "only the missing fill grouping, on a galvo");
+  assert.equal(activeOptionCount(g, true), 5);
+  assert.deepEqual([r.constant_power, r.air_assist, r.overscan_mm, r.overcut_mm], [false, false, 0, 0]);
+  assert.deepEqual(optionsPatch({ layer: "layer-1", sub: 0 }, { air_assist: true }), {
+    id: "layer.sub_update",
+    params: { layer: "layer-1", index: 0, settings: { options: { air_assist: true } } },
+  });
   // Settings from an engine without options.
   assert.equal(resolveOptions(settings()).output, true);
 });

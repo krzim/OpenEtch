@@ -76,7 +76,10 @@ import { useFlash, withLayerFlash } from "./workspace/flash.tsx";
 import { togglePositionLaser, usePositionLaser, withPositionLaser } from "./workspace/positionLaser.tsx";
 import { requestRotarySetup } from "./workspace/LaserDock.tsx";
 import { MoveTogetherDialog } from "./design/DesignDialogs.tsx";
-import { jobApi } from "./api/jobApi.ts";
+import { jobApi, saveBlob } from "./api/jobApi.ts";
+import { gcodeFileName, isGrblMachine } from "./api/grbl.ts";
+import { GrblConsole } from "./components/GrblConsole.tsx";
+import { GrblMove } from "./components/GrblMove.tsx";
 import { usePrefs, useT } from "./workspace/usePrefs.ts";
 import { alignMoves, distributeMoves, nudgeDelta, nudgeKeyId, queueNudge, rotateKeyDeg, roundMm, type AlignX, type AlignY } from "./editing.ts";
 import { boxCenter, objectBounds, unionBoxes, type Box } from "./geometry.ts";
@@ -1092,6 +1095,19 @@ export function App() {
               </>
             )}
             files={filesUi.menu}
+            onSaveGcode={
+              isGrblMachine(machine)
+                ? () =>
+                    void jobApi
+                      .exportGcode()
+                      .then(({ blob, filename }) => {
+                        const name = gcodeFileName(filename, file.projectName ?? file.openedName ?? doc?.name ?? null);
+                        saveBlob(blob, name);
+                        notify(t("fm.gcodeSaved", { name }));
+                      })
+                      .catch(report)
+                : undefined
+            }
           />
         }
         extra={
@@ -1331,6 +1347,17 @@ export function App() {
                   }}
                 />
                 {libsUi.dock}
+                {/* A GRBL gantry's Move and Console windows (LightBurn's); galvos have neither. */}
+                {isGrblMachine(machine) && (
+                  <>
+                    <Dock id="move" title={t("win.move")}>
+                      <GrblMove notify={notify} report={report} />
+                    </Dock>
+                    <Dock id="console" title={t("win.console")}>
+                      <GrblConsole notify={notify} report={report} />
+                    </Dock>
+                  </>
+                )}
                 <Dock id="machine" title={t("win.machine")}>
                 <MachineCard machine={machine} httpError={engine.httpError}>
                   {/* Engines without the device registry: LightBurn's devices and the profile diffs. */}

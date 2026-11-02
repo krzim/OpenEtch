@@ -114,12 +114,15 @@ fn stop_wins_with_a_full_buffer() {
         (r, c)
     });
     let start = Instant::now();
+    let mut stalled = false;
     loop {
-        if sim.report().blocks_executed >= 12 {
+        if !stalled && sim.report().blocks_executed >= 12 {
             sim.stall(true);
+            stalled = true;
         }
         let rep = sim.report();
-        if rep.blocks_executed >= 12 && rep.planner_blocks == machine::grbl::PLANNER_BLOCKS && rep.rx_bytes > 100 {
+        // Only once the stall is on: a block counted between the check above and this report must not slip past it.
+        if stalled && rep.planner_blocks == machine::grbl::PLANNER_BLOCKS && rep.rx_bytes > 100 {
             break;
         }
         assert!(start.elapsed() < Duration::from_secs(5), "the run never filled the buffers: {rep:?}");
@@ -479,4 +482,36 @@ fn runs_are_refused_in_check_mode() {
     assert!(c.console("$C").unwrap().ok);
     c.run_program(&square(1), armed()).unwrap();
     assert_eq!(h.report().cuts(), 4);
+}
+
+#[test]
+fn air_assist_rides_along_with_an_armed_run_and_stop_turns_it_off() {
+    let (mut c, h) = connected(&SimGrblConfig::default(), &profile());
+    // Per-layer options as `plan::gcode_lines` writes them: constant power and air for the first cut, dynamic power
+    // without air for the second, overscan moves at S0 around the second.
+    let prog = GcodeProgram::new(
+        [
+            "G90 G21", "M3 S0", "M8", "G0 X10 Y10", "G1 X60 Y10 S400 F3000", "M9", "G0 X8 Y20", "M4 S0", "G1 X10 Y20", "G1 X60 Y20 S300",
+            "G1 X62 Y20 S0", "M5",
+        ]
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect(),
+    );
+    c.run_program(&prog, armed()).unwrap();
+    let r = h.report();
+    assert_eq!(r.fires.len(), 2, "only the two cuts fired: {:?}", r.fires);
+    assert!(r.fires[0].air && r.fires[0].s == 400.0 && !r.fires[1].air && r.fires[1].s == 300.0, "{:?}", r.fires);
+    assert!(r.fires.iter().all(|f| f.kind == FireKind::Cut && f.from[1] == f.to[1] && f.from[0] >= 10.0 && f.to[0] <= 60.0));
+    assert!(!r.air_now);
+    // A program that leaves the air on is refused before anything is sent.
+    let before = h.report().lines_received;
+    let left_on = GcodeProgram::new(["G90 G21", "M8", "M4 S0", "G1 X20 Y20 S100 F600", "M5"].iter().map(|s| (*s).to_owned()).collect());
+    assert!(c.run_program(&left_on, armed()).unwrap_err().to_string().contains("M9"));
+    assert_eq!(h.report().lines_received, before);
+    // The console may switch the air (it cannot fire); Stop's soft reset turns it off again.
+    assert!(c.console("M8").unwrap().ok);
+    assert!(h.report().air_now);
+    c.abort().unwrap();
+    assert!(!h.report().air_now && h.report().fires.len() == 2);
 }

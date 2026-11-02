@@ -6,6 +6,7 @@
 import { useState } from "react";
 import type { Invocation } from "../api/client.ts";
 import * as C from "../api/commands.ts";
+import { gantryOf } from "../api/grbl.ts";
 import { boxOutside, frequencyRange, nearestPulseWidth, pulseWidths } from "../api/laser.ts";
 import { useCircleLock } from "../circleLock.ts";
 import { MAX_SUB_LAYERS, clampPass, cleanupPass, passAfterDelete, passAfterMove, passColor, passEntries, passFromResult, settingsSummary } from "../api/passes.ts";
@@ -505,7 +506,7 @@ function PassEditor({
         <>
           <CutSettingsForm key={`${layer.id}#${pass}`} settings={entry.settings} machine={machine} onPatch={patch} />
           {/* Beginner Mode hides the advanced cut settings (tabs included), as LightBurn's Cut Settings Editor does. */}
-          {!beginnerMode && <CutOptionsSection key={`opts-${layer.id}#${pass}`} layer={layer} sub={sub} settings={entry.settings} run={run} report={report} has={has} />}
+          {!beginnerMode && <CutOptionsSection key={`opts-${layer.id}#${pass}`} layer={layer} sub={sub} settings={entry.settings} run={run} report={report} has={has} gantry={gantryOf(machine)} />}
         </>
       ) : (
         <dl className="kv">

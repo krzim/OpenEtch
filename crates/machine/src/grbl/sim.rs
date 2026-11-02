@@ -79,6 +79,8 @@ pub struct Fire {
     pub from: [f64; 2],
     pub to: [f64; 2],
     pub s: f64,
+    /// Air assist (coolant `M7`/`M8`) was on.
+    pub air: bool,
 }
 
 /// A realtime byte as it arrived, with the buffers' fill at that moment.
@@ -114,6 +116,8 @@ pub struct SimGrblReport {
     pub state: String,
     /// The laser is lit right now (spindle on with `S > 0` and laser mode off).
     pub lit_now: bool,
+    /// Air assist (coolant `M7`/`M8`) is on in the parser state right now.
+    pub air_now: bool,
 }
 
 impl SimGrblReport {
@@ -139,6 +143,7 @@ struct Block {
     /// 0 off, 3, 4.
     spindle: u8,
     s: f64,
+    air: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -149,11 +154,13 @@ struct Modal {
     spindle: u8,
     s: f64,
     f: f64,
+    /// Coolant (air assist): `M7`/`M8` on, `M9` off; a reset turns it off.
+    air: bool,
 }
 
 impl Default for Modal {
     fn default() -> Self {
-        Modal { motion: 0, absolute: true, mm: true, spindle: 0, s: 0.0, f: 0.0 }
+        Modal { motion: 0, absolute: true, mm: true, spindle: 0, s: 0.0, f: 0.0, air: false }
     }
 }
 
@@ -373,11 +380,12 @@ impl Board {
     fn gc_state(&self) -> String {
         let m = &self.modal;
         format!(
-            "[GC:G{} G54 G17 {} {} G94 M{} M9 T0 F{} S{}]",
+            "[GC:G{} G54 G17 {} {} G94 M{} M{} T0 F{} S{}]",
             m.motion,
             if m.mm { "G21" } else { "G20" },
             if m.absolute { "G90" } else { "G91" },
             if m.spindle == 0 { 5 } else { m.spindle },
+            if m.air { 8 } else { 9 },
             m.f,
             m.s
         )
@@ -486,7 +494,7 @@ impl Board {
             return Err(16);
         }
         let to = target(self.planned, absolute, x, y);
-        self.push(Block { kind: Kind::Jog, from: self.planned, to, spindle: self.modal.spindle, s: self.modal.s });
+        self.push(Block { kind: Kind::Jog, from: self.planned, to, spindle: self.modal.spindle, s: self.modal.s, air: self.modal.air });
         Ok(())
     }
 
@@ -515,7 +523,9 @@ impl Board {
                 ('M', 30) => m.spindle = 3,
                 ('M', 40) => m.spindle = 4,
                 ('M', 50 | 20 | 300) => m.spindle = 0,
-                ('M', 0 | 10 | 70 | 80 | 90) => {}
+                ('M', 70 | 80) => m.air = true,
+                ('M', 90) => m.air = false,
+                ('M', 0 | 10) => {}
                 ('G' | 'M', _) => return Err(20),
                 ('S', _) => m.s = w.value,
                 ('F', _) => m.f = w.value,
@@ -535,16 +545,23 @@ impl Board {
         }
         let lit = self.modal.spindle != 0 && self.modal.s > 0.0;
         if lit && !self.laser_mode() && !self.report.lit_now {
-            self.report.fires.push(Fire { kind: FireKind::Static, from: self.planned, to: self.planned, s: self.modal.s });
+            self.report.fires.push(Fire { kind: FireKind::Static, from: self.planned, to: self.planned, s: self.modal.s, air: self.modal.air });
         }
         self.report.lit_now = lit && !self.laser_mode();
         if dwell {
             let _secs = p.ok_or(28)?;
-            self.push(Block { kind: Kind::Dwell, from: self.planned, to: self.planned, spindle: self.modal.spindle, s: self.modal.s });
+            self.push(Block {
+                kind: Kind::Dwell,
+                from: self.planned,
+                to: self.planned,
+                spindle: self.modal.spindle,
+                s: self.modal.s,
+                air: self.modal.air,
+            });
         } else if x.is_some() || y.is_some() {
             let to = target(self.planned, self.modal.absolute, x, y);
             let kind = if self.modal.motion == 0 { Kind::Rapid } else { Kind::Linear };
-            self.push(Block { kind, from: self.planned, to, spindle: self.modal.spindle, s: self.modal.s });
+            self.push(Block { kind, from: self.planned, to, spindle: self.modal.spindle, s: self.modal.s, air: self.modal.air });
         }
         Ok(())
     }
@@ -566,7 +583,7 @@ impl Board {
             _ => None,
         };
         if let Some(kind) = kind {
-            self.report.fires.push(Fire { kind, from: b.from, to: b.to, s: b.s });
+            self.report.fires.push(Fire { kind, from: b.from, to: b.to, s: b.s, air: b.air });
         }
         self.position = b.to;
         self.parse();
@@ -578,6 +595,7 @@ impl Board {
         r.rx_bytes = self.rx.len();
         r.planner_blocks = self.planner.len();
         r.state = self.state_name().to_owned();
+        r.air_now = self.modal.air;
         r
     }
 }

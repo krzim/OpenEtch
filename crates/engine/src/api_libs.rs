@@ -20,7 +20,7 @@
 //! | POST | `/api/library/{name}/entries/{id}/duplicate` | Duplicate → `{id}` |
 //! | DELETE | `/api/library/{name}/entries/{id}` | Delete (layers linked to it are unlinked) |
 //! | POST | `/api/library/{name}/entries/{id}/apply` | `{layer, link?: bool}`: Assign (default) or Link |
-//! | GET / PUT | `/api/prefs` | the active device's preferences and the global ones; PUT `{require_framing?, play_sound?, checklist?, load_defaults_on_new?, debug_log?, check_for_updates?}` (UI only) |
+//! | GET / PUT | `/api/prefs` | the active device's preferences and the global ones; PUT `{require_framing?, play_sound?, checklist?, load_defaults_on_new?, console_macros?, debug_log?, check_for_updates?}` (UI only; `console_macros` `[{name, lines}]` replaces the device's macros, every line checked against the GRBL console policy) |
 //! | POST | `/api/layers/{id}/default` | `{all?}`: Make Default (for the layer's colour) / Make Default for All |
 //! | POST | `/api/layers/{id}/reset` | `{builtin?}`: Reset to Default (`builtin`: OpenEtch's defaults, LightBurn's Shift+Reset) |
 //! | POST / DELETE | `/api/optimization/default` | Set as Defaults / forget them |
@@ -497,6 +497,8 @@ struct PrefsBody {
     #[serde(default)]
     load_defaults_on_new: Option<bool>,
     #[serde(default)]
+    console_macros: Option<Vec<crate::prefs::ConsoleMacro>>,
+    #[serde(default)]
     debug_log: Option<bool>,
     #[serde(default)]
     check_for_updates: Option<bool>,
@@ -509,6 +511,11 @@ async fn prefs_edit(State(st): State<Arc<AppState>>, headers: HeaderMap, b: Byte
     ui_only(&headers, b.origin.as_ref(), "preferences can be changed")?;
     if let Some(c) = &b.checklist
         && let Some(p) = c.problem()
+    {
+        return Err(EngineError::BadRequest(p));
+    }
+    if let Some(m) = &b.console_macros
+        && let Some(p) = crate::prefs::macros_problem(m)
     {
         return Err(EngineError::BadRequest(p));
     }
@@ -527,6 +534,9 @@ async fn prefs_edit(State(st): State<Arc<AppState>>, headers: HeaderMap, b: Byte
         }
         if let Some(v) = b.load_defaults_on_new {
             d.load_defaults_on_new = v;
+        }
+        if let Some(m) = b.console_macros {
+            d.console_macros = m;
         }
         if let Some(v) = b.debug_log {
             p.prefs.debug_log = v;
