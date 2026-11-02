@@ -35,13 +35,16 @@ would cut the burn short after all, so the unit needs `TimeoutStopSec` at least 
 
 ```ini
 [Service]
-ExecStart=/home/pi/openetch/openetch --usb --listen 0.0.0.0:7878 --shutdown-grace-secs 3600
+ExecStart=/home/pi/openetch/openetch --usb --listen 0.0.0.0:7878 --config-dir /home/pi/.config/openetch --shutdown-grace-secs 3600
 TimeoutStopSec=3660
 KillMode=mixed
 ```
 
 (`KillMode=mixed` sends SIGTERM to the engine only; `systemctl restart` then returns once the job has finished and the
-engine has exited.) `tools/pi/safe-restart.sh [--force] [--url URL] [--service NAME]` (POSIX sh; curl and jq or
+engine has exited.) Off loopback the engine needs its access token, which it keeps in `<config-dir>/access-token`
+(mode 0600), so restarts and updates do not log anyone out. Run `openetch token --config-dir /home/pi/.config/openetch`
+(the service's `--config-dir`, as a user who can read it) to print it with a pairing link; `--rotate` makes a new one (restart
+the engine, then pair every device again). See "Access". `tools/pi/safe-restart.sh [--force] [--url URL] [--service NAME]` (POSIX sh; curl and jq or
 python3) restarts the service only while `GET /api/machine` shows no run (`running`, `job.active`); with a token
 listening off loopback it takes `OPENETCH_TOKEN` from the environment and hands it to curl on stdin, never on a
 command line and never printed. It refuses (exit 3) while a burn runs, or when it cannot read the state, unless
@@ -870,13 +873,46 @@ order: its `field_mm` parameter, `extras["lbrn2._field_mm"]`, `document.field_mm
 
 **Access.** Every request's `Host` must be a loopback name, an IP literal or an `--allow-host` name, and an `Origin`
 header, when present, must be loopback, allowed or same-host (DNS-rebinding and cross-site protection). On loopback
-no token is needed. Off loopback (`--listen 0.0.0.0:7878` on the Pi) a bearer token is generated (or given with
-`--token`) and printed in the startup URL: `/api/*` and `/mcp` need `Authorization: Bearer <token>`; only
-`GET /api/events` (the WebSocket, where browsers cannot set headers) also accepts `?token=`. Static files and
-`POST /api/machine/stop` need no token.
+no token is needed. Off loopback (`--listen 0.0.0.0:7878` on the Pi), or with `--require-token` (an HTTPS proxy on the
+same computer reaches the engine over 127.0.0.1 on behalf of other devices), every client needs the access token:
+`--token`, else the persistent one in `<config-dir>/access-token` (made on first use, mode 0600, reused across
+restarts; a damaged file is reported and the engine runs with a one-off token rather than silently replacing it).
+`openetch token [--rotate] [--config-dir P] [--listen ADDR]` prints it and a pairing URL `http://<lan-ip>:7878/?token=…`.
+`/api/*` and `/mcp` need `Authorization: Bearer <token>`; only `GET /api/events` (the WebSocket, where browsers cannot
+set headers) also accepts `?token=`. Static files and `POST /api/machine/stop` need no token.
+
+**App windows and the token cookie.** The web app keeps the token in localStorage (`?token=` in the page URL is stored
+and removed from the address bar). Safari's Add to Dock apps get a copy of Safari's cookies but not its localStorage,
+and iOS Home Screen apps have storage of their own, so the engine also sets `openetch_token` (HttpOnly,
+SameSite=Strict, Path=/, 400 days, `Secure` behind `X-Forwarded-Proto: https`) when a page is opened with the right
+`?token=` or an `/api/*` request presents the right bearer token, and accepts that cookie for `/api/*` (never for
+`/mcp`: agents stay bearer-only). Because a cookie is sent by the browser on its own, it counts only when the request
+has no `Origin` or one with the request's own host **and port** (or an `--allow-host` name); another web service on
+the same machine is same-site to the browser and must not ride on it. When the engine answers 401 the app shows a
+"Connect to OpenEtch" card (paste the token or the pairing link; Remember on this device) instead of a broken UI, with
+its own STOP. A Home Screen app asks for the token once.
+
+**Web UI delivery.** `--web-dir` (default `web/dist`) is served with: `index.html` only for page navigations (GET or
+HEAD, no file extension in the last path segment, outside `/assets/`), so a missing `/assets/x.js`, `favicon.ico` or
+`manifest.webmanifest` is a 404 instead of a page; `Cache-Control: public, max-age=31536000, immutable` on the hashed
+`/assets/*` (not their source maps) and `no-cache` (revalidate) on everything else, so an app window, which has no
+reload button, never runs a stale page against a newer engine; and the `.br`/`.gz` copies `npm run build` writes next to
+each text file, chosen by `Accept-Encoding` (`Vary: Accept-Encoding`), so the Pi spends no CPU compressing (the JS
+bundle is about 290 kB br instead of 1.15 MB). The manifest (`application/manifest+json`), icons and the iOS meta tags
+make Safari Add to Dock, Add to Home Screen and Chrome/Edge "Open as window" work over plain http; a Chrome/Edge
+install, the title-bar layout (window-controls-overlay), the browser camera, Wake Lock and Keyboard Lock need HTTPS.
+
+**HTTPS.** The engine has no TLS of its own; put an HTTPS proxy in front (`docs/https-on-the-pi.md`). Recommended:
+`tailscale serve --bg --https=443 http://127.0.0.1:7878` on the Pi (a publicly trusted certificate for
+`<pi>.<tailnet>.ts.net`, nothing to install in trust stores, every device runs the Tailscale app), with the engine on
+`--listen 127.0.0.1:7878 --require-token --allow-host <pi>.<tailnet>.ts.net`. Alternative: Caddy with `tls internal`
+(its root CA installed once per device). Engine-native `--tls-cert/--tls-key` is planned, not built. A plain
+self-signed certificate that users click through is not an option (no install, no service worker, no iOS Home Screen
+app). Stopgap for the owner's own PC or Mac in Chrome/Edge: `chrome://flags` > "Insecure origins treated as secure" >
+`http://192.168.1.20:7878`.
 
 Default listen address `127.0.0.1:7878`. Other options: `--profile`, `--web-dir`, `--usb`, `--token`,
-`--allow-host`, `--config-dir`, `--approval pin|click` (see "Safety model"), `--confirm-input`, `--projects-dir`, `--lightburn-prefs <path>` (default the OS
+`--require-token`, `--allow-host`, `--config-dir`, `--approval pin|click` (see "Safety model"), `--confirm-input`, `--projects-dir`, `--lightburn-prefs <path>` (default the OS
 location, a missing file is fine), `--lightburn-device <name>` (the LightBurn device `GET /api/lightburn` and the
 machine status compare with), `--device <id or name>` (the OpenEtch device for this run, overriding the stored active
 one without changing it), `--sim-pin <digits>` (simulator only: a test operator PIN held in memory, see "Safety
