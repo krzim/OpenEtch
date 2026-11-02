@@ -297,7 +297,10 @@ export function Viewport(props: ViewportProps) {
   const clsRef = useRef<PointerClass>("mouse");
   const layout = useLayoutMode();
   /** The pointer class the handles are drawn for: the last one used on the canvas (a coarse screen starts with touch). */
-  const [handleCls, setHandleCls] = useState<PointerClass>(() => (layout.pointer === "coarse" ? "touch" : "mouse"));
+  const [lastCls, setLastCls] = useState<PointerClass>(() => (layout.pointer === "coarse" ? "touch" : "mouse"));
+  // Preferences > Density = Touch asks for touch-sized handles (and tap-again rotate) whatever the pointer.
+  const touchDensity = layout.density === "touch";
+  const handleCls: PointerClass = lastCls === "mouse" && touchDensity ? "touch" : lastCls;
   /** Touch handles show the rotate handles instead of the scale handles (a tap on the selection toggles). */
   const [rotMode, setRotMode] = useState(false);
   /** The long-press ring under a resting finger, screen px. */
@@ -674,7 +677,7 @@ export function Viewport(props: ViewportProps) {
     pointers.current.set(e.pointerId, s);
     capturePointer(svgRef.current, e.pointerId);
     if (cls === "touch") lastTouchT.current = performance.now();
-    if (cls !== handleCls) setHandleCls(cls);
+    if (cls !== lastCls) setLastCls(cls);
     lastKeys.current = keysOf(e);
     downInfo.current.set(e.pointerId, { target: e.target as Element, button: e.button, time: e.timeStamp, cls });
     // The arbiter decides when the press starts: at once for a mouse or pen, past the slop or on lift for a finger.
@@ -754,7 +757,7 @@ export function Viewport(props: ViewportProps) {
         index: snapIndexFor(new Set(ids), true),
         tapSelect: op === "replace" && isSel && selection.objects.length > 1 ? hit : null,
         slop: tl.slop,
-        rotToggle: cls !== "mouse" && op === "replace" && isSel,
+        rotToggle: (cls !== "mouse" || touchDensity) && op === "replace" && isSel,
       };
       return;
     }
@@ -1386,7 +1389,7 @@ export function Viewport(props: ViewportProps) {
   const showRot = !touchHandles || rotMode;
   const scaleHandles = smallSel ? HANDLES.filter((h) => h.length === 2) : HANDLES;
   /** Touch: the snap label and readout go in a bubble above the finger instead of under it (T16). */
-  const fingerAt = handleCls === "touch" && pointers.current.size > 0 ? (lastMove.current?.s ?? null) : null;
+  const fingerAt = lastCls === "touch" && pointers.current.size > 0 ? (lastMove.current?.s ?? null) : null;
   const liveM = liveObjects ? `matrix(${liveObjects.join(",")})` : undefined;
   const outsideCount = outside.size;
 
