@@ -7,8 +7,8 @@
 //! ```text
 //! G90 G21          absolute millimetres
 //! M4 S0            dynamic power (M3 with constant power), laser off until an S
-//! M8 / M9          air assist on / off where a pass's setting changes (layer option `air_assist`)
 //! G0 X.. Y..       travel to each polyline (GRBL's laser mode keeps the laser off during G0)
+//! M8 / M9          air assist on / off where a pass's setting changes (layer option `air_assist`), after the travel
 //! M3 S0 / M4 S0    a change of spindle mode (layer option `constant_power`), always with S0
 //! G1 X.. Y.. S.. F..   the first cut of a polyline with its power and feed, later cuts only X/Y
 //! M5 / G4 P.. / M4 S0  a pause before or after a pass, with the laser off
@@ -138,9 +138,11 @@ pub fn gcode_lines(job: &JobPlan, s: &GcodeSettings) -> Result<Vec<String>> {
         .find(|p| p.polylines.iter().any(|q| q.len() >= 2))
         .map_or(if s.dynamic_power { "M4" } else { "M3" }, mode_of);
     let mut out = vec!["G90 G21".to_owned(), format!("{first} S0")];
-    // The spindle mode in force (`None` after an `M5`) and whether air assist is on.
+    // The spindle mode in force (`None` after an `M5`) and whether air assist is on (`None`: not known yet). A job that
+    // uses air assist does not assume it starts off: the console may have left it on (`M8`), so its first pass sets
+    // it either way and the end turns it off. A job without air assist never touches it.
     let mut spindle = Some(first);
-    let mut air = false;
+    let mut air = if job.passes.iter().any(|p| p.gantry.air_assist) { None } else { Some(false) };
     let mut pos: Option<(f64, f64)> = None;
     let (mut cur_s, mut cur_f): (Option<f64>, Option<f64>) = (Some(0.0), None);
     let mut marked = false;
@@ -205,14 +207,16 @@ pub fn gcode_lines(job: &JobPlan, s: &GcodeSettings) -> Result<Vec<String>> {
                 }
                 (poly[0], m)
             };
-            if g.air_assist != air {
-                out.push(if g.air_assist { "M8" } else { "M9" }.to_owned());
-                air = g.air_assist;
-            }
             let start = s.to_machine(approach)?;
             if pos.is_none_or(|p| (p.0 - start.0).abs() > 1e-6 || (p.1 - start.1).abs() > 1e-6) {
                 out.push(format!("G0 X{} Y{}", gcode_number(start.0), gcode_number(start.1)));
                 pos = Some(start);
+            }
+            // After the travel: `M8`/`M9` make GRBL wait until the head stands still, and in constant power (`M3`) the
+            // laser keeps its last S while it stands; after a `G0` that S is off, after a cut it would burn a dot.
+            if air != Some(g.air_assist) {
+                out.push(if g.air_assist { "M8" } else { "M9" }.to_owned());
+                air = Some(g.air_assist);
             }
             if spindle != Some(want) {
                 // Always with S0: the power comes with the next cut, never while the head stands still.
@@ -242,7 +246,7 @@ pub fn gcode_lines(job: &JobPlan, s: &GcodeSettings) -> Result<Vec<String>> {
         return Err(PlanError::Empty);
     }
     out.push("M5".into());
-    if air {
+    if air != Some(false) {
         out.push("M9".into());
     }
     Ok(out)
@@ -402,24 +406,43 @@ mod tests {
             [
                 "G90 G21",
                 "M3 S0",
-                "M8",
                 "G0 X200 Y150",
+                "M8",
                 "G1 X210 Y150 S500 F1200",
-                "M9",
                 "G0 X200 Y160",
+                "M9",
                 "M4 S0",
                 "G1 X210 Y160 S500",
-                "M8",
                 "G0 X200 Y170",
+                "M8",
                 "G1 X210 Y170 S400",
                 "M5",
                 "M9"
             ]
         );
+        // M8/M9 wait for the head to stand still, and in M3 the laser keeps its S while it stands: they never come
+        // straight after a cut.
+        for w in lines.windows(2) {
+            assert!(!(w[0].starts_with("G1") && !w[0].ends_with(" S0") && (w[1] == "M8" || w[1] == "M9")), "{lines:?}");
+        }
         // A device that is constant power anyway never switches.
         let m3 = gcode_lines(&job, &GcodeSettings { dynamic_power: false, ..settings() }).unwrap();
         assert!(!m3.iter().any(|l| l.starts_with("M4")), "{m3:?}");
         assert_eq!(m3.iter().filter(|l| l.starts_with("M3")).count(), 1, "{m3:?}");
+    }
+
+    #[test]
+    fn air_assist_does_not_assume_it_starts_off() {
+        // The console may have left air on (M8): a job with an air layer sets it for its first pass either way and
+        // turns it off at the end; a job without air assist never touches it.
+        let a = pass(vec![vec![[0.0, 0.0], [10.0, 0.0]]], 50.0, 20.0);
+        let mut b = pass(vec![vec![[0.0, 10.0], [10.0, 10.0]]], 50.0, 20.0);
+        b.gantry = gantry(false, true, 0.0, 0.0);
+        let lines = gcode_lines(&JobPlan { passes: vec![a.clone(), b], ..JobPlan::default() }, &settings()).unwrap();
+        assert_eq!(lines[..4], ["G90 G21", "M4 S0", "G0 X200 Y150", "M9"], "{lines:?}");
+        assert!(lines.contains(&"M8".to_owned()) && lines.last().unwrap() == "M9", "{lines:?}");
+        let plain = gcode_lines(&JobPlan { passes: vec![a], ..JobPlan::default() }, &settings()).unwrap();
+        assert!(!plain.iter().any(|l| l.starts_with("M7") || l.starts_with("M8") || l.starts_with("M9")), "{plain:?}");
     }
 
     #[test]

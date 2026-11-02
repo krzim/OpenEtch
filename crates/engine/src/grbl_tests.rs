@@ -424,7 +424,8 @@ async fn grbl_layer_options_shape_the_gcode_and_fire_only_in_the_armed_run() {
     let text = String::from_utf8(res.into_body().collect().await.unwrap().to_bytes().to_vec()).unwrap();
     assert!(text.contains("layer options: M3 constant power on some layers, air assist M8/M9, overscan"), "{text}");
     let lines: Vec<&str> = text.lines().filter(|l| !l.starts_with(';')).collect();
-    assert_eq!(lines[..3], ["G90 G21", "M3 S0", "M8"], "{text}");
+    assert_eq!(lines[..2], ["G90 G21", "M3 S0"], "{text}");
+    assert!(lines[2].starts_with("G0 ") && lines[3] == "M8", "air on after the first travel, before the first cut: {text}");
     assert_eq!(lines[lines.len() - 2..], ["M5", "M9"], "{text}");
     // Every scan line: a run-in at S0, the cut at S400, a run-out at S0, 3 mm each side.
     assert!(lines.iter().any(|l| l.starts_with("G0 X187 ")), "run-in 3 mm before the hatch line at x = 190: {text}");
@@ -495,4 +496,36 @@ async fn console_macros_are_saved_per_device_and_checked_like_console_lines() {
         assert_eq!((s, &v["ok"]), (StatusCode::OK, &json!(true)), "{line}: {v}");
     }
     assert!(sim(&st).report().fires.is_empty());
+}
+
+/// Air assist left on from the console (`M8` is a console line) does not leak into a job's passes without air assist:
+/// a job that uses air sets it for its first pass either way, and the run ends with the air off. The laser fires only
+/// inside the approved run throughout.
+#[tokio::test]
+async fn console_air_does_not_leak_into_passes_without_air_assist() {
+    let (app, st, _, _) = grbl_engine(false).await;
+    let board = sim(&st);
+    exec(&app, "shape.rect", json!({"width_mm": 20, "height_mm": 4})).await;
+    exec(&app, "layer.update", json!({"id": "layer-1", "settings": {"power_pct": 30, "speed_mm_s": 20, "options": {"air_assist": false}}})).await;
+    // A second pass (sub-layer) of the same layer with air assist.
+    exec(&app, "layer.sub_add", json!({"layer": "layer-1", "settings": {"power_pct": 20, "options": {"air_assist": true}}})).await;
+    let (s, v) = send(&app, req("POST", "/api/machine/console", Some(json!({"line": "M8"})))).await;
+    assert_eq!((s, &v["ok"]), (StatusCode::OK, &json!(true)), "{v}");
+    assert!(board.report().air_now && board.report().fires.is_empty(), "the console switched the air, nothing fired");
+
+    let (s, v) = send(&app, req("POST", "/api/runs", None)).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let id = v["id"].as_str().unwrap().to_owned();
+    let (s, v) = approve(&app, &id).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let run = wait_final(&st, &id).await;
+    assert_eq!(run.state, RunState::Finished, "{:?}", run.error);
+    let r = board.report();
+    assert!(r.fires.iter().all(|f| f.kind == FireKind::Cut), "{:?}", r.fires);
+    let main: Vec<_> = r.fires.iter().filter(|f| f.s == 300.0).collect();
+    let sub: Vec<_> = r.fires.iter().filter(|f| f.s == 200.0).collect();
+    assert!(!main.is_empty() && !sub.is_empty() && main.len() + sub.len() == r.fires.len(), "{:?}", r.fires);
+    assert!(main.iter().all(|f| !f.air), "the pass without air assist ran without air: {:?}", r.fires);
+    assert!(sub.iter().all(|f| f.air), "the pass with air assist ran with air: {:?}", r.fires);
+    assert!(!r.air_now && !r.lit_now, "air and laser off after the run");
 }
