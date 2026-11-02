@@ -27,6 +27,7 @@ import { FocusTestDialog, IntervalTestDialog, MaterialTestDialog } from "./TestG
 import { errText, type DropItem } from "./ui.tsx";
 import { Dropdown } from "../components/EditMenus.tsx";
 import { RibbonSlot, usePublish } from "../components/Ribbon.tsx";
+import { FileMenuPart } from "../components/FileMenuPart.tsx";
 import { openEngineConsole } from "../components/commandBus.ts";
 import "./libs.css";
 
@@ -255,29 +256,19 @@ export function useLibsUi(p: LibsUiProps) {
     },
   ];
 
-  const fileItems = (close: () => void) => {
-    const item = (label: string, k: LibsWindow, hint?: string) => (
-      <button
-        role="menuitem"
-        className="menu-item"
-        onClick={() => {
-          close();
-          openLibsWindow(k);
-        }}
-      >
-        <span>{label}</span>
-        {hint && <span className="menu-hint">{hint}</span>}
-      </button>
-    );
-    return (
-      <>
-        {item(t("lib.title"), "library", hk("window.library"))}
-        {item(t("fml.title"), "findLaser")}
-        {item(`${t("batch.title")}…`, "batch")}
-        {item(`${t("jlog.title")}…`, "jobLog", hk("laser.jobLog"))}
-      </>
-    );
-  };
+  // File > Laser ▸ entries as data (components/FileMenuPart.tsx).
+  const fileItems = (close: () => void) => (
+    <FileMenuPart
+      section="laser"
+      close={close}
+      items={[
+        { label: t("lib.title"), actionId: "window.library", action: () => openLibsWindow("library") },
+        { label: t("fml.title"), action: () => openLibsWindow("findLaser") },
+        { label: `${t("batch.title")}…`, action: () => openLibsWindow("batch") },
+        { label: `${t("jlog.title")}…`, actionId: "laser.jobLog", action: () => openLibsWindow("jobLog") },
+      ]}
+    />
+  );
 
   const helpItems = (close: () => void) => (
     <>

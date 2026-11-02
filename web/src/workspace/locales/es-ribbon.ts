@@ -65,4 +65,11 @@ export const ES_RIBBON: Messages = {
   "rb.selectBy": "Seleccionar",
   "rb.sysClip": "Usar el portapapeles del sistema",
   "rb.engineCommandsHelp": "Desarrollador: comandos del motor (JSON)…",
+  "rb.autosave": "Autoguardado",
+  "rb.openRecent": "Abrir reciente",
+  "rb.export": "Exportar",
+  "rb.project": "Proyecto",
+  "rb.lightburn": "LightBurn",
+  "rb.laserMenu": "Láser",
+  "rb.settings": "Configuración",
 };

@@ -65,4 +65,11 @@ export const EN_RIBBON = {
   "rb.selectBy": "Select",
   "rb.sysClip": "Use the system clipboard",
   "rb.engineCommandsHelp": "Developer: engine commands (JSON)…",
+  "rb.autosave": "Autosave",
+  "rb.openRecent": "Open Recent",
+  "rb.export": "Export",
+  "rb.project": "Project",
+  "rb.lightburn": "LightBurn",
+  "rb.laserMenu": "Laser",
+  "rb.settings": "Settings",
 };

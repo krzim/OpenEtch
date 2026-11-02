@@ -14,7 +14,7 @@
 // The dialog preselects Open (replace) when the design has no objects, Import (merge) otherwise (`defaultImportMode`).
 // The top bar and download names use the opened file's name, which the engine keeps as `display_name` across reloads.
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, isValidElement, useCallback, useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { api, execute } from "../api/client.ts";
 import { createdIds } from "../api/drop.ts";
@@ -69,6 +69,12 @@ import { ProjectThumb } from "../files/ProjectDialogs.tsx";
 import { FolderTree, useProjectFolders } from "../files/ProjectFolders.tsx";
 import { baseNameOf, folderOf, joinProject, projectsIn } from "../files/folders.ts";
 import { Icon, Modal, fmt } from "./ui.tsx";
+import { MenuButton, type MenuItem } from "./Menu.tsx";
+import { FileMenuPart } from "./FileMenuPart.tsx";
+import { buildFileMenu, type FileSection } from "./fileMenuModel.ts";
+import { formatChord } from "./formatChord.ts";
+import { usePublish } from "./Ribbon.tsx";
+import { WorkspaceFileItems, workspaceFileMenuItems, type WsDialog } from "../workspace/useWorkspace.tsx";
 import { useT } from "../workspace/usePrefs.ts";
 import type { T } from "../workspace/i18n.ts";
 
@@ -491,19 +497,61 @@ export function useFileActions(p: {
 
 /** "Ctrl+S", or "⌘S" on Apple devices. */
 export function saveShortcut(): string {
-  const plat = typeof navigator === "undefined" ? "" : navigator.platform || navigator.userAgent;
-  return /Mac|iPhone|iPad|iPod/.test(plat) ? "⌘S" : "Ctrl+S";
+  return formatChord("Ctrl+S");
 }
 
-/** "Ctrl+X" or "⌘X" for a menu hint. */
-function shortcut(key: string, shift = false): string {
-  const mac = saveShortcut().startsWith("⌘");
-  return mac ? `${shift ? "⇧" : ""}⌘${key}` : `Ctrl+${shift ? "Shift+" : ""}${key}`;
+const noop = () => {};
+
+/** The text of a menu row element (its first <span>, else all its text). */
+function textOf(node: ReactNode): string {
+  if (node === null || node === undefined || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) {
+    const first = node.find((n) => isValidElement(n) && (n as ReactElement).type === "span");
+    return first ? textOf(first) : node.map(textOf).join("");
+  }
+  if (isValidElement(node)) return textOf((node.props as { children?: ReactNode }).children);
+  return "";
 }
 
 /**
- * The File button and its tap-to-open dropdown. `onImport` opens the Import picker (also Ctrl+I or a drop); `onDevices`
- * opens the Devices window (absent on engines without the device registry).
+ * The File menu entries the other layers contribute (App passes them as render functions): FileMenuPart data, the
+ * workspace layer's Preferences / Edit hotkeys, and plain menu rows (New tab), filed by section.
+ */
+export function collectFileParts(node: ReactNode, t: T, out: Partial<Record<FileSection, MenuItem[]>> = {}): Partial<Record<FileSection, MenuItem[]>> {
+  const add = (s: FileSection, items: MenuItem[]) => {
+    out[s] = [...(out[s] ?? []), ...items];
+  };
+  const walk = (n: ReactNode) => {
+    if (Array.isArray(n)) return n.forEach(walk);
+    if (!isValidElement(n)) return;
+    const el = n as ReactElement<Record<string, unknown>>;
+    if (el.type === Fragment) return walk(el.props.children as ReactNode);
+    if (el.type === FileMenuPart) {
+      const pp = el.props as unknown as { section: FileSection; items: MenuItem[] };
+      return add(pp.section, pp.items);
+    }
+    if (el.type === WorkspaceFileItems) {
+      const pp = el.props as unknown as { open: (d: WsDialog) => void };
+      return add("settings", workspaceFileMenuItems(pp.open, t));
+    }
+    if (el.props.role === "menuitem") {
+      const onClick = el.props.onClick as ((e: unknown) => void) | undefined;
+      const label = textOf(el.props.children as ReactNode);
+      return add("top", [{ label, disabled: !!el.props.disabled, action: onClick ? () => onClick({}) : undefined }]);
+    }
+    // Anything else is shown as it is.
+    add("top", [{ label: "", content: () => el }]);
+  };
+  walk(node);
+  return out;
+}
+
+/**
+ * The File button and its menu (Menu primitive; structure in fileMenuModel.ts): New, Open, Open Recent ▸, Save, Save
+ * As, Import, Export ▸, Project ▸, LightBurn ▸, Laser ▸ (Devices, Material Library, Find My Laser, Batch run, Job
+ * log), New tab, Settings. `onImport` opens the Import picker (also Ctrl+I or a drop); `onDevices` opens the Devices
+ * window (absent on engines without the device registry).
  */
 export function FileMenu({
   file,
@@ -521,82 +569,53 @@ export function FileMenu({
   onSaveGcode?: () => void;
   /** Recent projects (workspace/RecentProjects.tsx), given a function that closes the menu. */
   recent?: (close: () => void) => ReactNode;
-  /** More entries at the end (Preferences, Edit hotkeys), given a function that closes the menu. */
+  /** More entries (Preferences, Edit hotkeys, New tab, the Laser entries), given a function that closes the menu. */
   extra?: (close: () => void) => ReactNode;
-  /** Export, Print, templates, notes, backups... (src/files/useFilesUi.tsx), after Export to LightBurn. */
+  /** Export, Print, templates, notes, backups... (src/files/useFilesUi.tsx). */
   files?: (close: () => void) => ReactNode;
 }) {
   const t = useT();
-  const [open, setOpen] = useState(false);
-  const root = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: PointerEvent) => {
-      if (root.current && !root.current.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
-    document.addEventListener("pointerdown", onDown);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("pointerdown", onDown);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-  const item = (label: string, action: () => void, hint?: string) => (
-    <button
-      role="menuitem"
-      className="menu-item"
-      disabled={file.busy}
-      onClick={() => {
-        setOpen(false);
-        action();
-      }}
-    >
-      <span>{label}</span>
-      {hint && <span className="menu-hint">{hint}</span>}
-    </button>
-  );
+  const parts = collectFileParts(files?.(noop), t, collectFileParts(extra?.(noop), t));
+  const items = buildFileMenu({
+    busy: file.busy,
+    newDocument: file.newDocument,
+    open: () => file.setModal({ kind: "open" }),
+    recent: recent ? { label: t("rb.openRecent"), content: (close) => recent(close) } : undefined,
+    save: file.save,
+    saveAs: () => file.setModal({ kind: "saveAs" }),
+    importFiles: onImport,
+    importLightBurn: file.openLbrn2Dialog,
+    exportLightBurn: () => file.setModal({ kind: "export" }),
+    downloadOpenetch: file.downloadOpenetch,
+    saveGcode: onSaveGcode,
+    devices: onDevices,
+    parts,
+    labels: {
+      new: t("fm.new"),
+      open: t("fm.open"),
+      openRecent: t("rb.openRecent"),
+      save: t("fm.save"),
+      saveAs: t("fm.saveAs"),
+      import: t("fm.import"),
+      export: t("rb.export"),
+      exportLightBurn: t("fm.exportLb"),
+      saveGcode: t("fm.saveGcode"),
+      downloadOpenetch: t("fm.downloadOpenetch"),
+      project: t("rb.project"),
+      lightburn: t("rb.lightburn"),
+      importLightBurn: t("fm.importLb"),
+      laser: t("rb.laserMenu"),
+      devices: t("fm.devices"),
+      settings: t("rb.settings"),
+    },
+  });
+  usePublish("menu.file", { label: t("fm.file"), items });
   return (
-    <div className="file-menu" ref={root}>
-      <button className={`file-btn${open ? " open" : ""}`} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+    <div className="file-menu">
+      <MenuButton className="file-btn" label={t("fm.file")} items={items}>
         {t("fm.file")}
         <Icon name="chevronDown" size={16} />
-      </button>
-      {open && (
-        <div className="menu" role="menu" aria-label={t("fm.file")}>
-          {item(t("fm.new"), file.newDocument)}
-          {item(t("fm.open"), () => file.setModal({ kind: "open" }), shortcut("O"))}
-          {recent && (
-            <>
-              <div className="menu-sep" role="separator" />
-              {recent(() => setOpen(false))}
-              <div className="menu-sep" role="separator" />
-            </>
-          )}
-          {item(t("fm.save"), file.save, saveShortcut())}
-          {item(t("fm.saveAs"), () => file.setModal({ kind: "saveAs" }), shortcut("S", true))}
-          <div className="menu-sep" role="separator" />
-          {item(t("fm.import"), onImport, shortcut("I"))}
-          {item(t("fm.importLb"), file.openLbrn2Dialog, ".lbrn2")}
-          {item(t("fm.exportLb"), () => file.setModal({ kind: "export" }), ".lbrn2")}
-          {files?.(() => setOpen(false))}
-          {onSaveGcode && item(t("fm.saveGcode"), onSaveGcode, ".gcode")}
-          {onDevices && (
-            <>
-              <div className="menu-sep" role="separator" />
-              {item(t("fm.devices"), onDevices)}
-            </>
-          )}
-          <div className="menu-sep" role="separator" />
-          {item(t("fm.downloadOpenetch"), file.downloadOpenetch)}
-          {extra && (
-            <>
-              <div className="menu-sep" role="separator" />
-              {extra(() => setOpen(false))}
-            </>
-          )}
-        </div>
-      )}
+      </MenuButton>
     </div>
   );
 }

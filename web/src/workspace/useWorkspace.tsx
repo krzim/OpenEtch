@@ -7,6 +7,8 @@ import { hintFor } from "./hotkeys.ts";
 import { PreferencesDialog } from "./PreferencesDialog.tsx";
 import { useKeymap, useKeymapConfig, type KeymapConfig } from "./useKeymap.ts";
 import { useApplyWorkspace, usePrefs, useT } from "./usePrefs.ts";
+import type { T } from "./i18n.ts";
+import type { MenuItem } from "../components/Menu.tsx";
 
 export type WsDialog = "prefs" | "hotkeys" | "hotkeysEdit" | null;
 
@@ -34,7 +36,15 @@ export function useWorkspaceUi(): WorkspaceUi {
   return { keymap, dialog, open: setDialog, dialogs };
 }
 
-/** File menu entries of the workspace layer: Preferences and Edit hotkeys. */
+/** File > Settings entries of the workspace layer as menu data (components/FileMenu.tsx reads them). */
+export function workspaceFileMenuItems(open: (d: WsDialog) => void, t: T): MenuItem[] {
+  return [
+    { label: t("file.preferences"), actionId: "app.preferences", action: () => open("prefs") },
+    { label: t("file.editHotkeys"), action: () => open("hotkeysEdit") },
+  ];
+}
+
+/** File menu entries of the workspace layer: Preferences and Edit hotkeys (plain rows when rendered on their own). */
 export function WorkspaceFileItems(p: { close: () => void; open: (d: WsDialog) => void }) {
   const t = useT();
   const hotkeys = usePrefs().hotkeys;
