@@ -894,7 +894,7 @@ fn light_packets(profile: &MachineProfile, outline: &[Vec<(f64, f64)>], loops: u
         polys.push(
             poly.iter()
                 .map(|&(x, y)| {
-                    let (dx, dy) = profile.red_dot.apply(x, y);
+                    let (dx, dy) = profile.red_dot.apply(x, y, profile.field_mm);
                     field_to_galvo(profile, dx, dy)
                 })
                 .collect::<Result<_, _>>()?,

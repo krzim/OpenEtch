@@ -64,6 +64,14 @@ Bitmap shapes (no Polygon), every Enhance value in them is 0, and no .lbart, .lb
   add-in (`tools/fusion360-addin`) and the Inkscape extension (`tools/inkscape-extension`) stay as extras; they are
   tested against a stub engine only and need one run inside each program before anyone relies on them.
 
+## Logged for later (owner, 2026-11-01)
+
+- **Red-light frame slightly trapezoidal on the B6.** With the field trammed (0.6°) and the red pointer scaled
+  (X 1.005, Y 1.02), the framed jig rectangle's left side matched but the right side did not; the burn itself is
+  square (a 100 mm test square measured 100 x 100). `machine::RedDot::correction` (frame-only angle, skew,
+  trapezoid, bulge) exists for this but is neutral and untuned. The owner treats it as a non-issue for now: the
+  coin circles frame close enough. Next: tune `red_dot.correction.trapezoid_*` by eye against the jig outline.
+
 ## The rest: gantry and controller-specific items
 
 These are `na` today because OpenEtch only drives JCZ/BJJCZ galvos. They become reachable in this order:

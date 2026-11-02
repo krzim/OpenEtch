@@ -116,8 +116,11 @@ pub enum FiberKind {
 }
 
 /// Red-dot alignment, framing only (LightBurn Device Settings > Red Dot): the pointer diode sits off the beam axis,
-/// so a framed point `p` is sent to `(p.x * scale_x + offset_x_mm, p.y * scale_y + offset_y_mm)` before the lens
-/// correction; the burn never uses these. The rest position is where the dot is parked when framing stops.
+/// so a framed point `p` is sent to `(p.x * scale_x + offset_x_mm, p.y * scale_y + offset_y_mm)`, then through
+/// `correction` (the same model as the field calibration, `lmc::Calibration`: angle, skew, trapezoid, bulge), before
+/// the lens correction; the burn never uses these. `correction` exists because the red light (about 650 nm) goes
+/// through an f-theta lens corrected for the burn's 1064 nm, so the frame can come out slightly trapezoidal or
+/// skewed while the burn is square. The rest position is where the dot is parked when framing stops.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct RedDot {
@@ -127,11 +130,22 @@ pub struct RedDot {
     pub scale_y: f64,
     pub rest_x_mm: f64,
     pub rest_y_mm: f64,
+    /// Frame-only distortion correction, neutral by default.
+    #[serde(skip_serializing_if = "lmc::Calibration::is_neutral")]
+    pub correction: lmc::Calibration,
 }
 
 impl Default for RedDot {
     fn default() -> Self {
-        RedDot { offset_x_mm: 0.0, offset_y_mm: 0.0, scale_x: 1.0, scale_y: 1.0, rest_x_mm: 0.0, rest_y_mm: 0.0 }
+        RedDot {
+            offset_x_mm: 0.0,
+            offset_y_mm: 0.0,
+            scale_x: 1.0,
+            scale_y: 1.0,
+            rest_x_mm: 0.0,
+            rest_y_mm: 0.0,
+            correction: lmc::Calibration::default(),
+        }
     }
 }
 
@@ -140,9 +154,9 @@ impl RedDot {
         *self == RedDot::default()
     }
 
-    /// Where a framed field point is sent.
-    pub fn apply(&self, x: f64, y: f64) -> (f64, f64) {
-        (x * self.scale_x + self.offset_x_mm, y * self.scale_y + self.offset_y_mm)
+    /// Where a framed field point is sent (`field_mm` scales the `correction`, as for the field calibration).
+    pub fn apply(&self, x: f64, y: f64, field_mm: f64) -> (f64, f64) {
+        self.correction.apply(x * self.scale_x + self.offset_x_mm, y * self.scale_y + self.offset_y_mm, field_mm)
     }
 }
 
@@ -643,6 +657,9 @@ impl MachineProfile {
         if let Some(p) = self.calibration.problem(self.field_mm) {
             return invalid("calibration", p);
         }
+        if let Some(p) = self.red_dot.correction.problem(self.field_mm) {
+            return invalid("red_dot.correction", p);
+        }
         let d = &self.red_dot;
         let eighth = self.field_mm / 8.0;
         if [d.offset_x_mm, d.offset_y_mm, d.scale_x, d.scale_y, d.rest_x_mm, d.rest_y_mm].iter().any(|v| !v.is_finite())
@@ -868,6 +885,24 @@ mod tests {
         let axis = p.axis.as_ref().unwrap();
         assert_eq!(axis.z_steps(2.5), Ok(1000));
         assert!(axis.z_steps(120.0).is_err() && axis.z_steps(-1.0).is_err());
-        assert_eq!(p.red_dot.apply(10.0, 10.0), (10.4, 10.0));
+        assert_eq!(p.red_dot.apply(10.0, 10.0, p.field_mm), (10.4, 10.0));
+    }
+
+    #[test]
+    fn red_dot_correction_bends_the_frame_only() {
+        let mut p = MachineProfile::from_toml(B6).unwrap();
+        // A trapezoid on the red light only: wider towards +Y, the burn's calibration untouched.
+        p.red_dot.correction.trapezoid_x = 1.02;
+        p.validate().unwrap();
+        let (back, _) = p.red_dot.apply(50.0, 60.0, p.field_mm);
+        let (front, _) = p.red_dot.apply(50.0, -60.0, p.field_mm);
+        assert!(back > 50.0 && front < 50.0, "{back} {front}");
+        assert!(p.calibration.is_neutral() || p.calibration == MachineProfile::from_toml(B6).unwrap().calibration);
+        let again = MachineProfile::from_toml(&p.to_toml().unwrap()).unwrap();
+        assert_eq!(again.red_dot, p.red_dot);
+        p.red_dot.correction.trapezoid_x = 1.5;
+        assert!(p.validate().is_err(), "a red-dot correction out of range is refused like the field calibration");
+        // Neutral by default: an existing profile's frame is unchanged.
+        assert_eq!(RedDot::default().apply(12.5, -3.0, 153.75), (12.5, -3.0));
     }
 }
