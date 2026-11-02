@@ -1,0 +1,1211 @@
+[
+ {
+  "key": "visual",
+  "summary": "Visual audit of OpenEtch at http://127.0.0.1:7979, run in tab \"seed\" at 1920x1080, 1440x900, 1280x800, 1280x720, 1024x768, 820x1180 and the mobile preset (375x812; the preset is not 390x844). I checked dark and light themes, then reset the tab to the desktop preset and left it open.\n\nWhat already works:\n- Pointer-event editing: draw, select, move and resize are all fine, and the left-to-right marquee encloses.\n- Undo appears in the Fusion-style timeline as a ghosted chip.\n- Edits sync live between two tabs.\n- Below 1024 px the side panels become drawers with a scrim.\n- The Preferences dialog has Text size, Icon size and Handle size sliders.\n- Menu items are 44 px tall. The Rectangle tool's hint says \"tap for 20 mm\".\n- The Laser workspace is lean, and Start/Stop sit near the top of its panel.\n- Light and dark themes both render cleanly.\n\nThe biggest problems:\n1. **Too little canvas on a MacBook.** Fixed bars take about 331 px of height, and the side panels are fixed at 272 + 320 px with no resizer or collapse rail. The canvas is 688x423 at 1280x800, 688x343 at 1280x720 (a real Safari window), and 432x381 on iPad landscape.\n2. **Toolbar hidden off the right edge.** The ribbon needs 2094 px at every width. Even at 1920, Commands and the Properties panel toggle are off screen. At 1280 everything after Tools is hidden behind a thin scrollbar.\n3. **File menu cut off.** It is 1337 px tall, cannot scroll and has no max-height. On any screen under about 1340 px tall, Devices, Preferences, Material Library, Find My Laser, Batch run and Job log cannot be reached.\n4. **Top bar breaks on iPad portrait and phone.** At 820 px the Window button covers the Laser workspace tab. On the phone the workspace switcher shrinks to 6 px and STOP is pushed off screen (21 of 82 px visible).\n5. **STOP blocked by dialogs.** Every modal backdrop covers the STOP button; a hit-test at STOP's centre returns `.modal-backdrop`.\n6. **Touch gaps.** One finger on empty canvas pans, so touch has no marquee selection. There are no on-screen Shift/Ctrl/Alt toggles. Right-click menus have no long-press alternative, which matters most on iPad Safari. Resize handles are 8 px to see and 16 px to hit, and many controls are under 44 px.\n7. **No full-screen or app-window mode.** There is no full-screen toggle, no web manifest, no icon and no apple-touch-icon.\n\nSmaller issues:\n- Escape leaves a toolbar dropdown open but clears the selection.\n- The frame-options popover runs 157 px below the window and covers Start.\n- The numeric bar wraps and cuts off its values.\n- The properties panel is 3089 px tall and repeats controls.\n- Some labels show developer wording.\n\nInterference during the audit: another agent opened a second tab (tab-1) in the browser pane. It also brought that tab to the front, switched it to the Laser workspace and resized it to 1280x720 and then 1180x820. So I ran everything else with tabId \"seed\". The second tab shares the same engine document, which now holds 3 objects (two rectangles and the text \"Hello\").",
+  "findings": [
+   {
+    "id": "V1",
+    "severity": "blocker",
+    "area": "Layout / MacBook canvas space",
+    "problem": "Fixed bars take about 331 px of height and the side panels about 592 px of width, which leaves a small canvas on a MacBook. There is no compact mode, no panel resizer and no collapse-to-icon-rail.",
+    "evidence": "Measured heights: topbar 48, doc tabs 31, toolbar 91 (72 px buttons plus a scrollbar), numeric bar 50 (96 when it wraps below about 850 px of centre width), palette 29, timeline 58, status bar 24. Canvas (.center-stage) size: 688x423 at 1280x800 (28% of the screen); 688x343 at 1280x720, the real Safari viewport of a 1280x800 MacBook; 848x569 at 1440x900. The left Browser panel is a fixed 272 px and mostly empty with a small tree; the right panel is a fixed 320 px. CSS has no max-height media queries and nothing that resizes the panels.",
+    "recommendation": "Add a compact density for heights under about 900 px: a 40-48 px icon toolbar with labels as tooltips, the numeric bar merged into the toolbar or the top of the properties panel, and the doc tabs merged into the topbar. Let the palette and timeline collapse to thin strips (Fusion keeps its timeline at about 32 px). Make the side panels resizable, collapsible to an icon rail, and auto-collapsed when the canvas would drop below about 700 px. Add a 'focus canvas' toggle (Tab or F11 style) that hides every panel.",
+    "files": [
+     "web/src/styles.css (.app grid, .toolbar, .tool-btn, .panel, .panel-right)",
+     "web/src/workspace/workspace.css (.numeric-bar, .palette-bar)",
+     "web/src/App.tsx",
+     "web/src/components/Toolbar.tsx"
+    ],
+    "viewport": "1280x800, 1280x720, 1440x900"
+   },
+   {
+    "id": "V2",
+    "severity": "blocker",
+    "area": "Toolbar overflow",
+    "problem": "The ribbon is 2094 px wide at every viewport, so many tools sit off screen behind a thin horizontal scrollbar that gives no hint anything is there. That includes the only toolbar toggle for the Properties panel.",
+    "evidence": "Toolbar scrollWidth is 2094 px against clientWidth 1280, 1440 and even 1920. At 1920: Commands at x=1941 and the Properties toggle at x=2024 are off screen. At 1440: Place, Array, Delete, the whole align/distribute/group/flip cluster, the snap toggles, Filled view, Commands and Properties are hidden. At 1280 everything after 'Tools' is hidden. At 1024 everything after 'Measure' is hidden. 'Laser Tools' wraps to two lines in a 47 px button.",
+    "recommendation": "Use a Fusion-style tabbed or grouped ribbon (Create / Modify / Arrange / Laser), with each group collapsing to a dropdown when space runs out (a priority-plus overflow '»' menu). Move the panel toggles (Browser, Properties) to fixed positions at the edges of the topbar, or to an always-visible rail, not the scrolling ribbon. Shrink buttons to icon-only with tooltips in compact mode.",
+    "files": [
+     "web/src/components/Toolbar.tsx",
+     "web/src/styles.css (.toolbar, .tool-group, .tool-btn)"
+    ],
+    "viewport": "all (1920 included)"
+   },
+   {
+    "id": "V3",
+    "severity": "blocker",
+    "area": "File menu",
+    "problem": "The File menu cannot scroll and has no max-height, so its lower items are off screen and unreachable on a laptop, iPad or phone.",
+    "evidence": "The File .menu is 1337 px tall from top 47; scrollHeight equals clientHeight, and wheel scrolling over it does nothing. At 1280x800 the last visible item is 'Notes…'. 'Restore from autosave', 'Import options', 'Preferences and bundles', 'Devices…', 'Download .openetch', 'New tab', 'Preferences…', 'Edit hotkeys', 'Material Library', 'Find My Laser / Add galvo…', 'Batch run…' and 'Job log…' are below the bottom edge. It is the same on the 375x812 phone. The .menu rule (styles.css:467) has no max-height or overflow, while ctx-menu (styles.css:1789) does have max-height: calc(100vh - 8px).",
+    "recommendation": "Give .menu max-height: calc(100dvh - top - 8px) and overflow-y: auto. Also shorten the menu: it has 26 items with duplicates ('Preferences and bundles…' and 'Preferences…'; Material Library and Devices also live elsewhere). Split it into File / Machine / Settings, or use submenus. Use about 32 px rows with a pointer:fine query and keep 44 px for coarse pointers.",
+    "files": [
+     "web/src/styles.css:467 (.menu)",
+     "web/src/workspace/workspace.css:662 (.menu.menu-right)",
+     "web/src/App.tsx (File menu items)"
+    ],
+    "viewport": "1280x800, 1440x900, 1024x768, phone"
+   },
+   {
+    "id": "V4",
+    "severity": "blocker",
+    "area": "Topbar on narrow screens (STOP / workspace switch)",
+    "problem": "Below about 900 px wide the topbar actions (flex: none, 566 px) overrun the workspace switcher. On iPad portrait the Laser tab is covered and cannot be tapped. On the phone the switcher collapses to 6 px and the STOP button is pushed mostly off screen.",
+    "evidence": "At 820x1180, elementFromPoint at the centre of the Laser workspace button returns the 'Window' button, because topbar-actions starts at x=246 and Laser spans x=239-301. At 375x812: .workspaces is 6 px wide; .btn-stop sits at left 354 with width 82 in a 375 px viewport (21 px visible); topbar scrollWidth is 436. The screenshot shows only a red sliver at the right edge. The CSS comment at styles.css:673 says the switcher shrinks 'before STOP ever does', but .topbar-actions is flex: none, so STOP overflows instead.",
+    "recommendation": "Make STOP a fixed-size item that is never clipped (outside the flex overflow, or position: sticky right). On narrow widths, fold Window, Help, theme, preferences, undo and redo into one '⋯' menu and show the connection status as just the dot. Keep Design/Laser as a two-icon segmented control. On phones, consider a bottom tab bar (Design / Laser / Layers / Properties) with a permanent STOP.",
+    "files": [
+     "web/src/styles.css:310-400, 673-682 (.topbar, .workspaces, .topbar-actions, .btn-stop) and the max-width 480/760 rules",
+     "web/src/App.tsx (topbar markup)"
+    ],
+    "viewport": "820x1180 (iPad portrait), 375x812 (phone)"
+   },
+   {
+    "id": "V5",
+    "severity": "major",
+    "area": "Safety / STOP reachability",
+    "problem": "Every modal backdrop sits on top of the topbar Emergency STOP, so STOP cannot be clicked while any dialog is open (Devices, Preferences, Cut settings and so on).",
+    "evidence": "With the Devices dialog open at 1280x800, elementFromPoint at the centre of .btn-stop returns 'modal-backdrop', and the STOP button is visibly dimmed under the overlay. The cut-settings and Preferences dialogs also cover it (modal top 16 px, backdrop covers the whole viewport).",
+    "recommendation": "Exclude the topbar STOP from the backdrop: give the topbar or .btn-stop a z-index above .modal-backdrop, or start the backdrop below the topbar. Also make Esc and Space with a modal open never swallow a global stop hotkey, if one exists.",
+    "files": [
+     "web/src/styles.css:2192 (.modal-backdrop)",
+     "web/src/styles.css (.btn-stop / .topbar z-index)"
+    ],
+    "viewport": "all"
+   },
+   {
+    "id": "V6",
+    "severity": "major",
+    "area": "Touch: selection, modifiers, context menus",
+    "problem": "On touch, one finger on empty canvas always pans, so there is no marquee selection. There are no on-screen modifier toggles, so Shift-add, Ctrl-toggle, constrain and snap-off are impossible. Every right-click-only menu has no long-press alternative.",
+    "evidence": "Viewport.tsx:604-607: 'if (e.pointerType === \"touch\") { // One finger on empty space pans'. A grep finds no long-press handling and no sticky modifier UI in web/src. There are 14 onContextMenu handlers (canvas Viewport.tsx:1077, Timeline.tsx:180, BrowserPanel, CutsLayers, MaterialLibrary, ArtLibrary, PagesDock, Dock/DockHost). Timeline chip tooltips say 'Right-click for more' and layer rows say 'right-click for more'. iPad Safari does not fire contextmenu on long-press.",
+    "recommendation": "Add a small floating touch toolbar on coarse pointers with sticky Shift / Ctrl / Alt toggles and a Select/Pan mode switch (or two-finger pan with one-finger marquee, as in Procreate/Shapr3D). Add a long-press (about 500 ms, within the tap slop) that opens the same context menu everywhere onContextMenu is used. Also show a '⋯' button on timeline chips and on tree and layer rows.",
+    "files": [
+     "web/src/components/Viewport.tsx (pointer down/update, ~L490-610, L1077)",
+     "web/src/components/Timeline.tsx",
+     "web/src/components/BrowserPanel.tsx",
+     "web/src/workspace/CutsLayers.tsx",
+     "web/src/components/ContextMenu.tsx"
+    ],
+    "viewport": "iPad (1024x768, 820x1180), phone"
+   },
+   {
+    "id": "V7",
+    "severity": "major",
+    "area": "Touch target sizes",
+    "problem": "Many controls are far below 44 px on touch, and the on-canvas transform handles do not grow for coarse pointers.",
+    "evidence": "At 375x812 with a coarse pointer: scale handles are 8 px to see and 16x16 to hit, rotate handles 18x18 (Viewport.tsx:1169/1179 hpx(8)/hpx(9); HANDLE_PX = 8 in useDesignUi.tsx:117). Reference-point anchor grid buttons are 13x13. Palette swatches are 18x22. Doc tab '+' is 26x24 and the doc tab is 26 px tall. Status bar buttons (zoom %, units) are 20 px tall. Timeline transport is 36x36. Arrange/align mini buttons are 26x24. Ruler unit button is 20x20. The --tap variable is 40px (styles.css:81). On a selected 10.8x3.6 mm text, the handles completely cover the text even at desktop size.",
+    "recommendation": "Under (pointer: coarse), set --tap to 44px, scale the handle hit areas to at least 32-44 px (a default handle scale of about 2 on coarse pointers), enlarge swatches to 32 px with a scrolling palette, and use 44 px rows in the status bar and timeline. When a selection is small on screen, place the handles outside the bounds (min box size) so the object stays visible.",
+    "files": [
+     "web/src/styles.css (:root --tap, .swatch, .mini-grid, .anchor-grid button)",
+     "web/src/workspace/workspace.css (.sb-btn, .doc-tab-add, .numeric-bar .anchor-grid.small)",
+     "web/src/components/Viewport.tsx (hpx handle sizes)",
+     "web/src/design/useDesignUi.tsx:117"
+    ],
+    "viewport": "iPad, phone"
+   },
+   {
+    "id": "V8",
+    "severity": "major",
+    "area": "Full screen / app-like window",
+    "problem": "There is no full-screen mode and no installable app shell, so the app cannot run as a title-bar-only window. The owner listed this as a goal.",
+    "evidence": "No button, menu item or title matches 'full screen' (searched the DOM and requestFullscreen in source). The Window menu lists only panels and 'Reset to default layout'. index.html has only charset, viewport and apple-mobile-web-app-capable: no <link rel=manifest>, no icon or favicon, no apple-touch-icon, no theme-color, and web/public does not exist.",
+    "recommendation": "Add 'Full screen' (F11 / Ctrl+Cmd+F) to the Window menu and as a topbar icon, using element.requestFullscreen() with the webkit prefix for iPad. Add manifest.webmanifest (display: standalone or window-controls-overlay, name, icons, theme_color) plus apple-touch-icon and apple-mobile-web-app-status-bar-style. Chrome/Edge 'Install' or 'Open as window' and Safari 'Add to Dock' / 'Add to Home Screen' then give a chrome-less window. Note that full PWA install in Chrome needs a secure context, so on plain-http LAN document 'Create shortcut → Open as window' or serve a self-signed https option.",
+    "files": [
+     "web/index.html",
+     "web/public/ (new: manifest, icons)",
+     "web/src/App.tsx (Window menu)"
+    ],
+    "viewport": "all"
+   },
+   {
+    "id": "V9",
+    "severity": "major",
+    "area": "iPad landscape layout",
+    "problem": "At 1024 px the panels stay docked (the drawer breakpoint is max-width: 1023px), which leaves a 432 px wide canvas. Hiding the Browser panel does not re-fit the view, so the top of the field is clipped.",
+    "evidence": "At 1024x768: canvas 432x381, numeric bar wraps to two rows (96 px), palette scrolls horizontally (670/432). After toggling the Browser panel off, the canvas is wider but the field's top edge sits above the visible area and the fit buttons overlap the field. NARROW_QUERY = \"(max-width: 1023px)\" in App.tsx:106.",
+    "recommendation": "Choose drawers from the space the canvas would get rather than viewport width alone (for example, docked panels only when the canvas would be at least about 700 px wide). Or switch at 1279 px and use overlay drawers or an icon rail on iPad landscape. Re-fit the view, or keep its centre, when panel visibility changes.",
+    "files": [
+     "web/src/App.tsx:106, 169-223",
+     "web/src/styles.css (.narrow .panel)"
+    ],
+    "viewport": "1024x768"
+   },
+   {
+    "id": "V10",
+    "severity": "major",
+    "area": "Phone: properties drawer auto-opens over the canvas",
+    "problem": "On narrow layouts, selecting or drawing a shape slides in the 320 px Properties drawer with a scrim, covering about 85% of the phone screen and the object being edited. The next canvas tap only closes the drawer.",
+    "evidence": "At 375x812, after drawing a rectangle the right panel (.panel-right.open, left 55, width 320) and .drawer-scrim cover the canvas, and the drawn shape is hidden. App.tsx:221: 'if (narrow && workspace === \"design\" && (s.objects.length > 0 || s.stock)) setRightOpen(true)'.",
+    "recommendation": "On phones use a bottom sheet with peek / half / full states that shows the key numeric fields (X/Y/W/H, layer) at peek height, and do not auto-expand it. Keep the selection visible: pan or zoom the canvas into the remaining space.",
+    "files": [
+     "web/src/App.tsx:210-223",
+     "web/src/styles.css (.narrow .panel, .drawer-scrim)"
+    ],
+    "viewport": "375x812, 820x1180"
+   },
+   {
+    "id": "V11",
+    "severity": "minor",
+    "area": "Numeric bar",
+    "problem": "The X/Y/W/H inputs are too narrow and clip their values. The bar wraps onto a second or third row, which wastes vertical space. The inputs have no accessible labels.",
+    "evidence": "At 1280x800 the inputs are 45 px wide: X shows '-27.4' for -27.463, W shows '54.92' for 54.925, and '122.5' for 122.572. The bar is 96 px tall with 'mm | in' alone on row 2 (multi-select puts 'Rot by' on row 2). On the phone the bar is 135 px (three rows). read_page names the textboxes by their values (e.g. textbox \"43.767\"), not 'X'/'Y'.",
+    "recommendation": "Use min-width: 7ch inputs (or 8ch with the sign) and drop the inline 'mm' suffix inside the field, since the unit toggle already shows it. Put mm/in in the status bar only, which already has it. Add aria-labels. In compact mode merge the bar into the toolbar row.",
+    "files": [
+     "web/src/workspace/workspace.css:406-520 (.numeric-bar)",
+     "web/src/workspace/NumericBar.tsx (or equivalent)"
+    ],
+    "viewport": "1280x800, 1024x768, phone"
+   },
+   {
+    "id": "V12",
+    "severity": "minor",
+    "area": "Right panel organisation",
+    "problem": "With a shape selected, the right panel is a single 3089 px column (5.6 screens at 1280x800). Shape Properties sits below Pages, Cuts/Layers, the inline layer quick settings, Material Library, Art Library and Docking. The same layer and transform controls appear two or three times.",
+    "evidence": "At 1280x800: panel-body scrollHeight 3089 against clientHeight 548. The text shows Speed/Power/Passes/Frequency/Q-Pulse inline under Cuts/Layers, then again in the 'CUT SETTINGS' and 'Layer' blocks inside Shape Properties. X/Y/W/H/Rotation appear in both the numeric bar and Shape Properties. Selecting a shape does not scroll to its properties. The Q-Pulse placeholder is clipped ('source c').",
+    "recommendation": "Use Fusion-style tabs or an accordion where only one library is open at a time. Pin Shape Properties to the top, or auto-scroll to it, when something is selected. Drop the duplicated cut-settings block (keep the inline quick row plus 'All settings…'). Let the user dock libraries into the left panel.",
+    "files": [
+     "web/src/App.tsx (right panel composition)",
+     "web/src/workspace/CutsLayers.tsx",
+     "web/src/components/PropertiesPanel.tsx (or equivalent)"
+    ],
+    "viewport": "1280x800, 1440x900"
+   },
+   {
+    "id": "V13",
+    "severity": "minor",
+    "area": "Frame options popover",
+    "problem": "The frame-style popover is absolutely positioned inside the Laser panel. It covers the Start and in-panel STOP buttons and runs 157 px below the viewport.",
+    "evidence": "At 1280x800, .frame-pop spans top 406 to bottom 957 with viewport height 800. The Pointer, Blanking and Live framing options are off screen until the panel is scrolled, and the popover sits over Start/STOP.",
+    "recommendation": "Open it as a flip-aware floating popover (above when there is no room below) with max-height and internal scroll, or as a collapsible section in the panel. Never cover STOP.",
+    "files": [
+     "web/src/components/job.css:150 (.frame-pop)",
+     "web/src/components/JobPanel.tsx (or Laser panel)"
+    ],
+    "viewport": "1280x800"
+   },
+   {
+    "id": "V14",
+    "severity": "minor",
+    "area": "Keyboard: Escape with dropdown open",
+    "problem": "Pressing Escape while a toolbar dropdown (Edit) is open leaves the dropdown open and clears the canvas selection instead.",
+    "evidence": "With 1 object selected I opened Edit ▾ and pressed Escape. The status bar changed to 'Nothing selected' and the .menu element was still present; the screenshot shows the Edit dropdown still open.",
+    "recommendation": "Toolbar dropdowns (et-dropdown / lx-drop) should catch Escape, close themselves and stop propagation before the canvas Escape handler runs.",
+    "files": [
+     "web/src/components/Toolbar.tsx (et-dropdown)",
+     "web/src/components/Viewport.tsx or App.tsx (global Esc handler)"
+    ],
+    "viewport": "1280x800"
+   },
+   {
+    "id": "V15",
+    "severity": "minor",
+    "area": "Phone status bar and timeline",
+    "problem": "On the phone every status bar cell is truncated to the point of being useless. The timeline spends 176 px on its vertical label and transport, which leaves a 199 px strip. The status bar sits under the home-indicator safe area.",
+    "evidence": "At 375x812 the status bar reads 'X — Y...', 'Nothing selec...', 'Snap: obje...', '5...', 'mm · m...'. The timeline strip is 199 px wide starting at x=176. Safe-area bottom padding is applied to .timeline (styles.css:1632-1637), but the status bar comes after it in the grid.",
+    "recommendation": "On phones, hide the status bar or reduce it to the selection size, and move the safe-area padding to the last row. Collapse the timeline to a single scrubber row with transport in an overflow.",
+    "files": [
+     "web/src/workspace/workspace.css (.statusbar, .sb-cell)",
+     "web/src/styles.css:1628-1670 (.timeline)"
+    ],
+    "viewport": "375x812"
+   },
+   {
+    "id": "V16",
+    "severity": "minor",
+    "area": "Text tool options overlay",
+    "problem": "The Text tool's floating options bar (about 600x95 CSS px) and the tool hint banners sit over the top of the canvas, hiding part of the field on small screens. The red 'outside the galvo field' toast covers the zoom-fit buttons.",
+    "evidence": "At 1280x800 the 'New text' panel covers the top 20% of the 423 px canvas. The rectangle-tool hint ('Drag to draw a rectangle…') runs up to the fit buttons. The red warning toast at top right sits on top of the Fit field / Zoom to selection buttons.",
+    "recommendation": "Put tool options in a context strip that replaces the numeric bar while a tool is active, as Fusion does, instead of overlaying the canvas. Anchor toasts away from the canvas controls (bottom-centre above the palette).",
+    "files": [
+     "web/src/text/ (text tool bar)",
+     "web/src/workspace/workspace.css (.et-bar, .et-hint)",
+     "web/src/styles.css (.toasts)"
+    ],
+    "viewport": "1280x800"
+   },
+   {
+    "id": "V17",
+    "severity": "polish",
+    "area": "Wording / developer jargon",
+    "problem": "Several labels show internal names instead of user-facing wording.",
+    "evidence": "Timeline chips are labelled 'rect', 'transform', 'text', with tooltips like 'object.transform move [55.782, -45.323] on obj-2'. The Machine and runs panel dumps raw keys: 'Field Height Mm 153.75', 'Focus Light false', 'Shutting Down false', 'Driver lmc'. The device select is clipped to 'ComMarker B6 MOPA 60W (E'. The Text object shows a path icon in the Browser tree. The Edit dropdown has no Select all / Delete / Duplicate / Undo.",
+    "recommendation": "Give each timeline chip an icon plus a friendly verb ('Rectangle', 'Move', 'Text \"Hello\"'), as in Fusion's feature icons. Show machine state as formatted rows (Focus light: Off) and hide debug fields behind an 'Advanced' toggle. Use a T icon for text. Fill out the Edit menu.",
+    "files": [
+     "web/src/components/Timeline.tsx",
+     "web/src/components/MachinePanel.tsx (Machine and runs)",
+     "web/src/components/BrowserPanel.tsx"
+    ],
+    "viewport": "all"
+   },
+   {
+    "id": "V18",
+    "severity": "polish",
+    "area": "Load state / light theme",
+    "problem": "On reload the drawing tools (Text, Barcode, Line, Pen, Polygon, Edit nodes, Trim) briefly show disabled with no loading cue. In the light theme the grid is very faint, and the topbar stays dark while the rest of the UI is light.",
+    "evidence": "In the first light-theme screenshot after reload these tools were greyed out; a second later only Place, Array and Delete were disabled. The light-theme grid lines are barely visible against white.",
+    "recommendation": "Show a subtle loading spinner or skeleton, or keep the tools enabled and queue the action. Raise the light-theme grid contrast slightly. Decide on purpose whether the topbar follows the theme.",
+    "files": [
+     "web/src/components/Toolbar.tsx",
+     "web/src/styles.css (light theme tokens)"
+    ],
+    "viewport": "1440x900 light"
+   }
+  ],
+  "architecture_notes": "Layout lives in the CSS grid on .app (styles.css:294-304: rows 48px / doc tabs / toolbar / main / timeline / status). The panels are fixed widths (.panel 272px, .panel-right 320px), and they switch to drawers through a JS media query, NARROW_QUERY \"(max-width: 1023px)\" in App.tsx:106, which adds the .narrow class. App.tsx:221 auto-opens the right drawer on selection.\n\nResponsive CSS is minimal. It is all max-width rules on small pieces (topbar shrink at 760 and 480, dialogs). There are no max-height queries, nothing for pointer: coarse (only a single pointer: fine rule), and no responsive rules for .toolbar, .main or the panels.\n\nTouch handling:\n- --tap is 40px (styles.css:81).\n- Canvas handles come from hpx() in Viewport.tsx (8 px visible, 16 px hit) and scale only with the Preferences 'Handle and node size' slider.\n- The touch branch in Viewport.tsx (~L604) maps one-finger drags on empty canvas to pan.\n- There is no long-press handling; 14 onContextMenu handlers exist.\n\nMenus:\n- .menu (styles.css:467) has no max-height; .ctx-menu (styles.css:1789) does.\n- Modal backdrop: styles.css:2192.\n- Frame popover: components/job.css:150.\n- Toolbar: components/Toolbar.tsx, a single horizontally scrolling flex row (scrollWidth 2094).\n- index.html has no manifest or icons, and there is no web/public folder.\n\nConcurrency note for the orchestrator: a second tab (tab-1) was opened in the shared browser pane by another actor during this audit. It switched to the Laser workspace and was resized, and it shares the engine document, which now holds two rectangles and a text \"Hello\". I used tabId \"seed\" explicitly from then on, and reset seed to preset desktop (dark colour scheme) at the end."
+ },
+ {
+  "key": "layout",
+  "summary": "The shell is a single CSS grid on `.app` (styles.css:294). Its rows are: top bar 48px, document tabs, toolbar, main, timeline, status bar. `main` is a flex row: left panel at a fixed 272px, the canvas column, and the right panel at a fixed 320px. The app has one JS breakpoint (`NARROW_QUERY` \"(max-width: 1023px)\", App.tsx:26). Below 1024px it adds `.narrow`, which turns both panels into overlay drawers 86vw wide. The rest is a few CSS-only `max-width` tweaks at 900/760/640/600/560/480px. The numeric bar is the only part using a container query.\n\nColours are cleanly tokenised and dark mode works. Size, spacing, z-index and density are not tokenised. `--tap` is a fixed 40px for mouse and touch alike.\n\nI measured against the running simulator (127.0.0.1:7979) at four sizes:\n- **1280x720 (MacBook-class browser area):** the canvas gets 688x343px, about 26% of the window. Vertical chrome is 377px: topbar 48, a 31px doc-tab row with only one tab open, toolbar 91, numeric bar 96 (a wrap bug makes it three rows), palette 29, timeline 58, status 24. The toolbar content is 2094px wide in 1280px, so Arrange, Snap/View, Commands and the Properties panel toggle are off-screen. There is no visible scroll hint on macOS.\n- **1024x700 (iPad landscape with Safari chrome):** both fixed panels stay docked, which leaves the canvas at 432x313. One pixel narrower, the whole layout flips to drawers.\n- **375x812 (phone):** the STOP button is cut off the right edge: 61 of its 82px are past the viewport and clipped by `overflow: hidden` on `.app`. The Design/Laser switcher shrinks to 6px wide, so the Laser workspace can't really be reached. In the Laser workspace, the Machine drawer toggle sits at x=466–530, off-screen in the scrolling toolbar.\n\nNothing implements full screen or an app window: there is no Fullscreen API call, no web manifest, no theme-color and no icons.\n\nProposed architecture:\n1. **Layout modes.** A `useLayoutMode()` hook sets `data-layout` = wide / compact / tablet / phone and `data-pointer` = fine / coarse on `<html>`. Preferences gets an override (Auto / Comfortable / Compact / Touch). Tokens and CSS key off these attributes instead of the single `.narrow` class.\n2. **Density tokens.** Control height, gaps, bar heights and dock widths come from tokens per mode.\n3. **Ribbon overflow.** A ResizeObserver collapses low-priority toolbar groups into Fusion-style group dropdowns (\"CREATE ▾\", \"MODIFY ▾\", \"ARRANGE ▾\"). The panel toggles move out of the scrolling area.\n4. **Docks.** Resizable side docks with persisted widths. Each dock area gets pinned / auto-hide-rail / hidden states, stored in the existing layout.ts store. The compact default layout uses tab groups instead of six stacked docks.\n5. **Timeline.** It can collapse, and it merges with the status bar in compact mode.\n6. **Full screen.** A Full screen toggle plus a focus-mode hotkey, and a manifest with standalone display for an app-like window.\n7. **Phone shell.** A separate shell that reuses the existing components: top bar with STOP always visible, full-bleed canvas, bottom tab bar (Canvas / Layers / Job / More) and bottom sheets. Its scope is monitoring, framing, Start (still gated by the app's approval / foot switch), layer power and speed, simple move and align, import and run history.\n\nAll of this fits the current plain-CSS and React codebase in five small phases (see architecture_notes). No UI library is needed.",
+  "findings": [
+   {
+    "id": "L1",
+    "severity": "blocker",
+    "area": "Top bar / safety",
+    "problem": "On phone widths the top bar overflows and the always-visible STOP button is cut off past the right edge of the screen.",
+    "evidence": "At 375x812 `.btn-stop` spans x=354–436, so 61 of its 82px are off-screen, and `.app { overflow: hidden }` (styles.css:294-304) hides the rest. The top bar's scrollWidth is 436 vs 375. `.topbar-actions { flex: none }` (styles.css:680) holds Window, theme, prefs, Help, undo, redo, the connection status and STOP, about 372px, so it can't shrink. The 480px media block (styles.css:2453) only trims padding.",
+    "recommendation": "Make STOP an un-shrinkable last item outside the overflowing group: `.topbar-actions { flex: 0 1 auto; min-width: 0 }` with a `.topbar-stop { flex: none }` wrapper. Below about 900px, fold Window, Help, theme and Preferences into one overflow menu, and below about 600px fold undo and redo into it too. Add a dev-only check in the layout hook that warns in the console when the STOP button's bounding rect leaves the viewport on resize. That makes this kind of regression visible.",
+    "files": [
+     "web/src/components/TopBar.tsx",
+     "web/src/styles.css",
+     "web/src/App.tsx"
+    ],
+    "viewport": "phone (<=480px); partially 481–760px"
+   },
+   {
+    "id": "L2",
+    "severity": "blocker",
+    "area": "Top bar / workspace switcher",
+    "problem": "On a phone the Design/Laser workspace switcher shrinks to 6px wide, so you can't really switch to the Laser workspace, which is the one you need for monitoring and starting jobs.",
+    "evidence": "At 375px, `.topbar .workspaces` measures 6px wide with scrollWidth 111 (styles.css:674: `min-width: 0; overflow-x: auto; scrollbar-width: none`). Its siblings are flex:none, so it absorbs all the shrinking.",
+    "recommendation": "Give the switcher a floor (`flex: none`, about 2x44px), using icon-only segments on phones, and let the brand/project name be the part that shrinks. In the phone layout, move workspace switching into the bottom tab bar (see the phone shell in the architecture notes).",
+    "files": [
+     "web/src/styles.css",
+     "web/src/components/TopBar.tsx"
+    ],
+    "viewport": "phone"
+   },
+   {
+    "id": "L3",
+    "severity": "major",
+    "area": "Toolbar overflow",
+    "problem": "The design toolbar is about 2094px wide and scrolls sideways with no affordance. At MacBook widths the Arrange grid, Snap/View, Commands and the Properties panel toggle are off-screen. On a phone in the Laser workspace, the Machine drawer toggle is off-screen too.",
+    "evidence": "`.toolbar { overflow-x: auto }` (styles.css:797). At 1280x720: scrollWidth 2094 vs clientWidth 1280, and the horizontal scrollbar adds 11px of height (91 vs 80). The right panel toggle is the last child after `.tool-spacer` (Toolbar.tsx:213), so it is the first thing pushed off-screen. Group widths: 64, 77, 275, 143, 209, 212, 146, 143, 60, 209, 228 (Arrange), 129 (Snap/View), 85 (Commands), 64. In the Laser workspace at 375px the Machine toggle sits at x=466–530.",
+    "recommendation": "(a) Take both panel toggles out of the scrolling strip into fixed end caps (`.toolbar-start`, `.toolbar-end`, flex:none). (b) Add a `useRibbonOverflow()` ResizeObserver hook. Each `.tool-group` gets a priority and a group label, and when space runs out the lowest-priority groups collapse into one Fusion-style dropdown button ('CREATE ▾', 'MODIFY ▾', 'ARRANGE ▾'). EditMenus.tsx already has the dropdown pattern to reuse. (c) In compact mode with a fine pointer, show icons only with labels in tooltips (`.tool-btn span {display:none}`): buttons go from 64x52 to about 36x36 and the toolbar from 80px to about 44px tall.",
+    "files": [
+     "web/src/components/Toolbar.tsx",
+     "web/src/components/EditMenus.tsx",
+     "web/src/styles.css"
+    ],
+    "viewport": "1280–1470 (MacBook), iPad, phone"
+   },
+   {
+    "id": "L4",
+    "severity": "major",
+    "area": "Vertical space budget (MacBook)",
+    "problem": "On a 1280x720 browser area, chrome takes 377px of height, leaving the canvas 343px. That is 48% of the height and about 26% of the window area.",
+    "evidence": "Measured rows: topbar 48, doc-tabs row 31 (one tab open), toolbar 91, numeric bar 96, palette 29, timeline 58, status 24. Canvas stage: 688x343.",
+    "recommendation": "Compact-mode target is about 176px of chrome:\n- topbar 40, with doc tabs merged into it and the separate row (`.doc-tabs-row`) rendered only when two or more tabs are open\n- toolbar 44 (icon-only)\n- numeric bar 32 on a single row (see L5), or inline on the toolbar's right on wide screens\n- palette 24\n- timeline and status merged into one 32px row that expands to the full 58px strip on hover, tap or pin\nThat raises the canvas height from 343 to about 544px (+59%). Gate it on `data-layout=compact` and on `@media (max-height: 860px)`, so short MacBook windows get it even when they are wide.",
+    "files": [
+     "web/src/styles.css",
+     "web/src/workspace/workspace.css",
+     "web/src/App.tsx",
+     "web/src/workspace/DocTabs.tsx",
+     "web/src/components/Timeline.tsx",
+     "web/src/workspace/StatusBar.tsx"
+    ],
+    "viewport": "1280x720 to 1470x860"
+   },
+   {
+    "id": "L5",
+    "severity": "major",
+    "area": "Numeric edits bar",
+    "problem": "A spacer element plus flex-wrap makes the numeric bar wrap onto an extra row, so it is 96px tall where 38px would do. On a phone it is 135px.",
+    "evidence": "workspace.css:515 `.numeric-sep { flex: 1 }` inside `.numeric-bar { flex-wrap: wrap }`. At 688px the three groups (231+302+102px plus gaps) nearly fill row 1. The 1px spacer wraps to row 2 and grows to the full width, which pushes the unit toggle (68px) to row 3 (measured tops 173, 195, 220).",
+    "recommendation": "Delete the spacer element and use `margin-left: auto` on `.unit-toggle`. Use the existing container query to drop the unit toggle and shrink the fields before anything wraps. Also consider hiding the bar, or showing it as a 28px collapsed strip, when nothing is selected (`.numeric-bar.empty`). On phones, move X/Y/W/H into the selection bottom sheet.",
+    "files": [
+     "web/src/workspace/workspace.css",
+     "web/src/workspace/NumericBar.tsx"
+    ],
+    "viewport": "all; worst on MacBook and phone"
+   },
+   {
+    "id": "L6",
+    "severity": "major",
+    "area": "Side docks",
+    "problem": "Side panels have fixed widths (272/320px), can't be resized or auto-hidden, and both dock at any width of 1024px or more. iPad landscape and small laptop windows end up with a tiny canvas, and the switch to full-width drawers at 1023px is abrupt.",
+    "evidence": "styles.css:890 `.panel { width: 272px }`, :907 `.panel-right { width: 320px }`, App.tsx:26 `NARROW_QUERY = (max-width: 1023px)`. At 1024x700 the canvas is 432x313. layout.ts has areas, order, tab groups and float rectangles, but no sizes and no pinned/auto-hide state.",
+    "recommendation": "Add `sizes: { left, right, bottom }` and `mode: { left|right: 'pinned' | 'rail' | 'hidden' }` to layout.ts's Layout. They are sanitised and persisted like the rest, so `npm test` covers them. Drive widths through CSS variables (`--dock-left-w`, `--dock-right-w`) with a pointer-events splitter (about 60 lines, reusing pointer.ts capturePointer).\n- **Rail mode:** the area collapses to a 32px vertical strip of window titles. Tapping or hovering opens it as an overlay (Fusion's browser behaves the same way), and a pin button docks it again.\n- **Auto rule:** when the canvas column would fall below about 640px, put the left area in rail mode first, then the right. That replaces the single 1023px switch to drawers.",
+    "files": [
+     "web/src/workspace/layout.ts",
+     "web/src/workspace/DockHost.tsx",
+     "web/src/App.tsx",
+     "web/src/styles.css"
+    ],
+    "viewport": "1024–1470, iPad landscape"
+   },
+   {
+    "id": "L7",
+    "severity": "major",
+    "area": "Full screen / app window",
+    "problem": "No full-screen toggle and no installable or app-window metadata exist. These are among the owner's stated goals.",
+    "evidence": "There is no requestFullscreen or display-mode anywhere in web/src. index.html has only `apple-mobile-web-app-capable`. There is no manifest, no theme-color, no apple-touch-icon and no `public/` folder.",
+    "recommendation": "(1) Add `web/public/manifest.webmanifest` with name, short_name, `display: \"standalone\"`, `display_override: [\"standalone\"]`, start_url \"/\", theme_color/background_color and 192/512 icons. In index.html add the manifest link, light and dark `theme-color` metas, `apple-touch-icon`, `apple-mobile-web-app-status-bar-style` and `mobile-web-app-capable`. The site is plain http on the LAN, so Chrome won't offer a proper 'Install' (that needs a secure context). These routes still give a window with only a title bar; check each on the devices:\n- Chrome/Edge: 'Create shortcut… > Open as window'\n- Safari on macOS: 'Add to Dock'\n- iPadOS/iOS: 'Add to Home Screen'\n(2) Add a View > Full screen toggle using `document.documentElement.requestFullscreen()`. The Fullscreen API works over http. Hide the toggle when `document.fullscreenEnabled` is false (iPhone Safari), and listen to `fullscreenchange`. Escape always exits browser full screen first, and Keyboard Lock needs https, so tell the user that Esc leaves full screen.\n(3) Add a 'Focus canvas' hotkey and menu item that hides docks, timeline and status. Extend the existing `window.sidePanels` command (App.tsx:1046).",
+    "files": [
+     "web/index.html",
+     "web/public/manifest.webmanifest (new)",
+     "web/src/workspace/DockHost.tsx (WindowMenu)",
+     "web/src/App.tsx",
+     "web/src/workspace/hotkeys.ts"
+    ],
+    "viewport": "MacBook, iPad"
+   },
+   {
+    "id": "L8",
+    "severity": "major",
+    "area": "Density and touch tokens",
+    "problem": "There is one fixed density. `--tap: 40px` applies to mouse users too, which wastes space on a MacBook, while some controls are well under any touch minimum on iPad.",
+    "evidence": "styles.css:81 `--tap: 40px` is the same for every pointer type. `.tool-btn` has min-height calc(32px + 20px) = 52px (styles.css:825). `.mini-btn` is 26x24px (styles.css:1856) and holds the whole Arrange grid and the snap toggles. Doc-tab close is 24px (workspace.css). Only the input font size switches on `(pointer: fine)` (styles.css:1135).",
+    "recommendation": "Tokens per density: `--ctl-h` (fine 28, compact 32, touch 44), `--tap` (fine 28–32, touch 44), `--gap-1..4`, `--bar-top`, `--bar-tool`, `--bar-status`, `--dock-w-*`. Set them from `[data-pointer=coarse]` / `[data-density=compact|comfortable|touch]` on `<html>`, chosen automatically from `(pointer: coarse)` with an override in Preferences. Use `@media (any-pointer: coarse)` as well for touch laptops. For touch, the mini Arrange grid should become a dropdown of 44px items rather than 44px cells, which would make the toolbar huge.",
+    "files": [
+     "web/src/styles.css",
+     "web/src/workspace/usePrefs.ts",
+     "web/src/workspace/PreferencesDialog.tsx"
+    ],
+    "viewport": "MacBook (too loose), iPad (too small)"
+   },
+   {
+    "id": "L9",
+    "severity": "major",
+    "area": "Drawers on tablet and phone",
+    "problem": "In narrow mode, selecting anything automatically opens the right drawer, which covers 86vw of the canvas. Tap-to-select followed by drag, or a second tap, lands on the drawer.",
+    "evidence": "App.tsx:221 `if (narrow && workspace === \"design\" && (s.objects.length > 0 || s.stock)) setRightOpen(true);` and styles.css:936 `.narrow .panel { width: min(320px, 86vw) }`.",
+    "recommendation": "Don't open a drawer as a side effect of selecting. On tablet, show a small floating 'Properties' pill or a selection bar at the bottom of the canvas that opens the panel on request. On phone, use a peek-height bottom sheet (about 30% of the height) with X/Y/W/H and align-to-stock; swiping up gives full properties. Also make closed drawers `inert`, since they are only translated off-screen today and stay focusable.",
+    "files": [
+     "web/src/App.tsx",
+     "web/src/styles.css"
+    ],
+    "viewport": "iPad portrait, phone"
+   },
+   {
+    "id": "L10",
+    "severity": "major",
+    "area": "Right panel content",
+    "problem": "Every right-side window stacks in one scrolling 320px column, so the content runs to thousands of pixels and the controls you need are far below the fold.",
+    "evidence": "Design at 1280x720: the right panel has six docks and Properties alone is 1853px tall. Laser: 2853px of content in a 498px panel. 'Machine and runs' is 1638px and sits below Laser (830) and Cuts (328). layout.ts already supports tab groups (`group`, `activeTab`), but the default layout puts every window in its own frame.",
+    "recommendation": "Ship layout presets: Wide (current), Compact and Touch. Compact puts the right area into tab groups: {Cuts/Layers, Properties} and {Library, Art library, Variable text, Docking}, with Laser/Machine tabbed in the Laser workspace. Alternatively add an 'accordion: one open at a time' option per area. Add the presets to the Window menu next to 'Reset to Default Layout'.",
+    "files": [
+     "web/src/workspace/layout.ts",
+     "web/src/workspace/DockHost.tsx",
+     "web/src/App.tsx"
+    ],
+    "viewport": "MacBook, iPad"
+   },
+   {
+    "id": "L11",
+    "severity": "minor",
+    "area": "Safe areas and fixed overlays",
+    "problem": "The bottom safe-area inset is applied to the timeline, which is the second-to-last row. The status bar, which is the last row, sits under the iOS home indicator. Toasts and the warnings panel are positioned with a hard-coded `bottom: 76px` that assumes the current timeline and status bar heights.",
+    "evidence": "styles.css:1628 `.timeline { height: calc(58px + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom) }`, while App.tsx renders StatusBar after Timeline. `.toasts` (styles.css:2409) and `.warn-panel` (styles.css:621) use `bottom: 76px`. There is no `safe-area-inset-top` handling for standalone mode with a translucent status bar.",
+    "recommendation": "Put the bottom inset on the last grid row via `.app { padding-bottom: env(safe-area-inset-bottom) }` and add a top inset for standalone. Replace the 76px with `calc(var(--bar-timeline) + var(--bar-status) + 18px)`, set from the layout mode. Once the timeline collapses (L4), the 76px value will be wrong.",
+    "files": [
+     "web/src/styles.css"
+    ],
+    "viewport": "iPhone, iPad standalone"
+   },
+   {
+    "id": "L12",
+    "severity": "minor",
+    "area": "Dialogs",
+    "problem": "Modals are centred cards in two fixed widths (420/860), with no full-screen sheet on phones. Each open Modal adds its own window keydown listener for Escape, so Escape closes every stacked dialog at once. A pointer-down on the backdrop dismisses the dialog, so a touch scroll that starts at the edge can throw away edits.",
+    "evidence": "components/ui.tsx:12-60 (window-level Escape listener, `onPointerDown` on the backdrop). styles.css:2193-2216 (`.modal` min(420px), `.modal-wide` min(860px)). 28 call sites use `wide`.",
+    "recommendation": "Add `@media (max-width: 600px) { .modal { width: 100%; height: 100%; border-radius: 0 } }` so dialogs are full-screen sheets with the footer kept at the bottom, and size wide dialogs with `max-height: min(100%, 90dvh)`. Keep a modal stack so Escape closes only the top dialog, and dismiss on backdrop `click` with the same target at pointerdown and pointerup, not on pointerdown.",
+    "files": [
+     "web/src/components/ui.tsx",
+     "web/src/styles.css"
+    ],
+    "viewport": "phone, iPad"
+   },
+   {
+    "id": "L13",
+    "severity": "minor",
+    "area": "Design tokens and stacking",
+    "problem": "Colours are fully tokenised, but there is no spacing, typography, size or z-index scale. Z-index values are ad hoc and spread across seven files. The dark palette is written out three times in styles.css and three more times in edit.css.",
+    "evidence": "z-index values: 1 (rulers), 5–6 (preview player, text editor), 15 (scrim), 20 (drawer), 40 (frame pop), 60 (float layer, lx-drop-menu, tx-font-pop), 90 (warn panel), 100 (modal), 150 (menu), 200 (toasts), 300 (context menu), 400 (drop overlay). Dark tokens are repeated under `@media (prefers-color-scheme: dark) :root:not([data-theme=light])` and `:root[data-theme=dark]` (styles.css:94 and about 170; edit.css:13 and 22). Hundreds of literal px values: 270 width or min-width rules, all different.",
+    "recommendation": "Add `web/src/tokens.css`, imported first, with these scales:\n- `--z-canvas-ui:5 --z-drawer:20 --z-popover-in-panel:40 --z-float:60 --z-banner:90 --z-modal:100 --z-menu:150 --z-toast:200 --z-ctxmenu:300 --z-drop:400`\n- `--space-1..6` (2/4/6/8/12/16)\n- `--fs-xs/sm/md/lg`\n- `--radius-sm/md/lg`\n- bar heights and dock widths\nMigrate one file at a time. Optionally collapse each dark/light token pair into a single `light-dark()` declaration with `color-scheme` controlled by data-theme (Safari 17.5+, Chrome 123+). Otherwise generate the duplicate block with a tiny build step rather than maintaining it by hand.",
+    "files": [
+     "web/src/styles.css",
+     "web/src/components/edit.css",
+     "web/src/workspace/workspace.css",
+     "web/src/libs/libs.css",
+     "web/src/text/text.css",
+     "web/src/components/job.css"
+    ],
+    "viewport": "all"
+   },
+   {
+    "id": "L14",
+    "severity": "polish",
+    "area": "Doc tabs row",
+    "problem": "A 31px document-tab row is shown even when only one document is open.",
+    "evidence": "Measured `.doc-tabs-row` at 31px with a single 'Untitled' tab at 1280x720. App.tsx renders `<div className=\"doc-tabs-row\">{tabs.bar}</div>` unconditionally.",
+    "recommendation": "Render the row only when two or more tabs are open, or in Wide mode. In Compact and phone modes, show the document name and the '+' in the top bar's project indicator instead, which already shows the name and dirty dot.",
+    "files": [
+     "web/src/App.tsx",
+     "web/src/workspace/DocTabs.tsx"
+    ],
+    "viewport": "MacBook"
+   },
+   {
+    "id": "L15",
+    "severity": "polish",
+    "area": "Floating windows on small screens",
+    "problem": "Floating dock windows default to 320x360 at (120,120) and are only clamped when they render. On a phone a floating window covers most of the canvas, and on iPad rotation they are not re-clamped until the next render.",
+    "evidence": "DockHost.tsx:89-97 (default rect) and clampFloat (DockHost.tsx:100); `view` is read from window.innerWidth only at render time.",
+    "recommendation": "In phone layout mode, show floating windows as bottom sheets, or dock them on the right. Re-clamp all float rects on a `resize` / `orientationchange` listener in FloatHost.",
+    "files": [
+     "web/src/workspace/DockHost.tsx"
+    ],
+    "viewport": "phone, iPad rotation"
+   }
+  ],
+  "architecture_notes": "CURRENT SHELL MAP (code)\n- `.app` grid (styles.css:294): rows `48px | auto (doc tabs) | auto (toolbar) | minmax(0,1fr) (main) | auto (timeline, fixed 58px) | auto (status 24px)`. It uses `height: 100dvh`, left/right safe-area padding and `overflow: hidden`.\n- **Main row:** `.main` is a flex row: `aside.panel-left` (272px) | `section.center` (flex column: NumericBar in Design → `.center-stage` with Viewport and PreviewTimeline → DockAreaHost bottom (max 38vh) → PaletteBar) | `aside.panel-right` (320px).\n- **Panels:** each panel body hosts `DockAreaHost` plus `Dock` windows that portal into slots (Dock.tsx, DockHost.tsx, layout.ts with areas left/right/bottom/float, tab groups, float rects, visibility; persisted in localStorage). Collapsing a dock is a pref.\n- **Floating windows:** FloatHost uses a fixed layer at z60.\n- **Breakpoints:** JS `NARROW_QUERY (max-width:1023px)` adds `.narrow`, which turns panels into translateX drawers with a scrim (z20/15) and starts them closed. CSS breakpoints at 900/760/640/600/560/480 only hide text or turn grids into one column. The numeric bar uses `@container numbar`.\n- **Tokens:** a complete colour token set, with dark mode via `prefers-color-scheme` plus `[data-theme]`; usePrefs sets `--ui-scale`, `--icon-scale` and `--handle-scale` inline. No space, size or z scales.\n- **Dependencies:** react and react-dom only.\n\nTARGET ARCHITECTURE\n1. **Layout mode hook** (`workspace/layoutMode.ts`). One external store, like prefs.ts, built from matchMedia:\n   - phone: `(max-width: 599px)`, or `(max-width: 899px) and (pointer: coarse) and (orientation: portrait)`\n   - tablet: `(max-width: 1179px)`, or `(pointer: coarse)` without a fine `any-pointer`\n   - compact: `(max-width: 1599px)` or `(max-height: 860px)`\n   - wide: everything else\n   It writes `data-layout`, `data-pointer` and `data-density` on `<html>`. Preferences can override it (Auto / Comfortable / Compact / Touch). App replaces `narrow` with `mode !== 'wide' && mode !== 'compact'` for drawer behaviour. Pure functions mean `npm test` can cover the mode resolution.\n2. **Tokens** (`tokens.css`): size, space, z-index and bar-height scales, re-declared under `[data-density=compact]` and `[data-pointer=coarse]`. Every component CSS file moves to them over time, without a rewrite. Colour tokens stay as they are.\n3. **Ribbon overflow** (`useRibbonOverflow`): each Toolbar group declares `{id, label, priority}`. A ResizeObserver measures and collapses groups from the lowest priority into Fusion-style 'GROUP ▾' dropdowns built from the EditMenus menu component. The panel toggles and the Laser group's Frame / Start / Stop frame are pinned and never collapse. Compact plus a fine pointer means icon-only buttons.\n4. **Docks:**\n   - Layout gets `sizes` and `areaMode` (pinned / rail / hidden), sanitised like the rest.\n   - Splitters use pointer events with `touch-action: none`, plus double-click to reset.\n   - Rail mode is a 32px strip of vertical titles; a tap or hover opens the area as an overlay at z20.\n   - Auto policy: keep the canvas at least 640px wide, collapsing left first, then right.\n   - Presets Wide / Compact / Touch go in the Window menu.\n5. **Bottom chrome:** in compact mode, Timeline and StatusBar share one 32px row: timeline chips scroll, status cells sit on the right. A pin or chevron expands it to the full 58px Fusion strip. Doc tabs show only when two or more are open. The palette is 24px.\n6. **Full screen:** the manifest and metas, a Full screen toggle (Fullscreen API, hidden when unsupported), and a Focus-canvas hotkey. Note the http limits: no install prompt or Window Controls Overlay without HTTPS. 'Open as window' / 'Add to Dock' / 'Add to Home Screen' still give an app-like window. If a true install matters, the Pi engine could later serve HTTPS with a locally trusted cert, which is a separate decision.\n7. **Tablet layout** (iPad):\n   - 44px tap targets.\n   - The toolbar becomes a vertical tool rail on the canvas's left edge (select, rect, ellipse, text, pen, import, plus an Arrange popover). This frees the horizontal toolbar row, which keeps only the group dropdowns, Frame and Start.\n   - The right area docks in landscape and becomes a drawer in portrait. The left Browser is always a rail or overlay.\n   - Selection never auto-opens a drawer; a floating Properties pill does that on request.\n   - Long-press opens the context menu (already pointer-based).\n   - Keep LightBurn modifiers through an on-canvas modifier chip (Shift / Ctrl latch), because iPad has no keyboard by default.\n8. **Phone layout:** a separate `PhoneShell` chosen in App when the mode is phone. It reuses Viewport, LaserDock, CutsLayers, PropertiesPanel, RunsCard and PreviewStatsCard.\n   - **Top bar:** File/menu, project name, connection dot, STOP (always visible, fixed width).\n   - **Body:** full-bleed canvas with fit/zoom overlay.\n   - **Bottom tab bar** (safe-area aware): Canvas / Layers / Job / More. Each tab opens a bottom sheet (peek or full).\n   - **On a phone:** job monitoring (progress, time, pause/resume, run history), framing and stop frame, Start or Request run (still gated by the app's approval / foot switch), layer power/speed/passes, select and move with X/Y/W/H, centre on stock or field, rotate 90, delete, import a file, simple text.\n   - **Not on a phone:** node editing, pen and polygon, trim/weld, the docking tool, the art library editor, device editing, the lens wizard, G-code console. Leave them reachable via More → 'Desktop features' with a hint.\n   - The timeline becomes a sheet listing steps; undo/redo sit in the sheet header.\n9. **Dialogs:** full-screen sheets at 600px and below, a modal stack so Escape closes only the top one, and backdrop dismissal by click rather than pointerdown.\n\nINCREMENTAL PLAN (each step is a small PR, no UI library)\n- **Phase 0 (CSS fixes, about a day):** L1 STOP never clipped, L2 switcher floor, L3a panel toggles out of the scroller, L5 numeric-bar spacer, L11 safe-area row, L14 doc-tabs row only with two or more tabs.\n- **Phase 1:** layoutMode hook plus tokens.css (z, space, size, density). Replace `.narrow` and `--tap` with the new tokens, and add the density preference.\n- **Phase 2:** ribbon overflow and icon-only compact toolbar, merged timeline and status row, dock splitters with persisted sizes, rail mode, layout presets (L3, L4, L6, L10).\n- **Phase 3:** manifest, metas and icons, Full screen toggle, Focus mode (L7).\n- **Phase 4:** tablet. Coarse density, tool rail, selection pill instead of auto-opening drawers, inert drawers, float re-clamp (L8, L9, L15).\n- **Phase 5:** PhoneShell with bottom tabs and sheets, and full-screen dialogs (L12).\n- **Later:** migrate the remaining CSS to tokens and dedupe the dark palette (L13).\n\nDEPENDENCY VERDICT: none needed. Splitters, ResizeObserver overflow, bottom sheets and rails are each 50–150 lines with the existing pointer utilities (pointer.ts, capturePointer). The only one worth considering later is `@floating-ui/dom` (MIT, about 10KB), if popovers and menus keep clipping at screen edges. Today ContextMenu clamps by hand and `.menu` is absolutely positioned with no flip. Avoid Radix, MUI and similar: too big, and they would fight the hand-built token theme.\n\nEVIDENCE NOTE: all measurements were taken by viewport emulation in the built-in browser against the simulator at http://127.0.0.1:7979, at 1280x720, 1180x820, 1024x700 and 375x812. That covers Design and Laser in each, except Laser at 1180x820 and 1024x700, which I didn't measure. I only switched workspaces and read layout metrics; nothing was edited, burned or stopped. The viewport emulation was reset to desktop afterwards.\n\nPaths:\n- <repo>\\web\\src\\App.tsx\n- <repo>\\web\\src\\styles.css\n- <repo>\\web\\src\\workspace\\workspace.css\n- <repo>\\web\\src\\workspace\\layout.ts\n- <repo>\\web\\src\\workspace\\DockHost.tsx\n- <repo>\\web\\src\\workspace\\Dock.tsx\n- <repo>\\web\\src\\components\\TopBar.tsx\n- <repo>\\web\\src\\components\\Toolbar.tsx\n- <repo>\\web\\src\\components\\ui.tsx\n- <repo>\\web\\index.html"
+ },
+ {
+  "key": "input",
+  "summary": "Input/touch audit (code only, read-only). The basics are in good shape. The canvas uses Pointer Events throughout, with touch-action:none and user-select:none on the viewport SVGs. A non-passive wheel listener is in place, two-finger pan/pinch is coalesced to animation frames, and capturePointer() exists. Menu items are 44px, .field-input inputs go to 16px on coarse pointers (no iOS focus zoom), and the node and line tools expose their key actions as buttons in the options bar.\n\nThe editing model is still mouse-and-keyboard only, though, and in some cases that is a real break on iPad, iPhone and MacBook:\n\n1. **Touch has no LightBurn selection model.** One finger on empty space always pans, so there is no marquee and no crossing selection. Touch events carry no modifiers, so selection is always \"replace\". Select All, Invert, Copy, Cut, Paste and Paste in place can only be reached by keyboard or right-click. iOS never fires contextmenu, so the canvas, Browser, Layers and Timeline context menus cannot be opened at all.\n2. **Shift/Ctrl/Alt drag behaviours have no touch path.** This covers constrain, snap off, guides only, draw from centre, rotate steps and node Shift-select.\n3. **Some canvas tools act on pointerdown.** On touch, a finger that starts a pinch adds a stray line vertex, sets a measure point, completes a point pick, or runs Trim on the shape under it (with no hover preview first).\n4. **Hit targets and slop are mouse-sized on every pointer.** Click tolerance is 5px, tap slop 4px, node tolerance 7px, scale-handle hit 16px and guide hit 9px. Nothing uses @media (pointer: coarse), so a finger tap on a selected object can become a tiny move.\n5. **MacBook problems.**\n   - A purely vertical two-finger scroll zooms, while any sideways component pans, so the mode flips mid-swipe.\n   - There is no Space+drag pan and no middle button on a trackpad.\n   - Safari's trackpad pinch (GestureEvents) is not handled. I believe this means Safari zooms the whole page; this needs checking on the machine.\n   - Ctrl+click on a Mac fires contextmenu, which undoes a Ctrl-toggle selection.\n6. **Timeline right-click menu is not kept on screen.** It is not clamped to the window and opens off-screen at the bottom bar, so Delete step is unreachable. The history marker is an 8px-wide drag target.\n7. **Phone typing problems.**\n   - Signed number fields use inputMode=decimal, so the iPhone keypad has no minus sign or maths operators. Negative X/Y positions are common because the field is centred on the origin.\n   - Several inputs outside .field-input, and the on-canvas text editor, are under 16px, so iOS zooms the page when they get focus.\n8. **Smaller items.**\n   - No touch-action:manipulation or -webkit-touch-callout on the app chrome.\n   - :hover styles stay highlighted after a tap on touch screens.\n   - Some actions are double-click-only, and reordering uses HTML5 drag-and-drop, which is unreliable on touch.\n   - Many controls are 18–28px.\n   - There is no palm rejection when using an Apple Pencil.\n   - Ruler guide drags depend on pointer capture having succeeded.\n\nThe architecture notes below propose a touch model that maps one finger to the left mouse button and two fingers to view navigation. It adds long-press for context menus, a latching modifier bar, a floating selection action bar, touch-sized tolerances chosen per event, commit-on-lift for canvas tools, and palm rejection. This keeps the LightBurn mouse behaviour exactly as it is.",
+  "findings": [
+   {
+    "id": "T1",
+    "severity": "blocker",
+    "area": "Canvas selection on touch",
+    "problem": "Touch has no marquee, no crossing (right-to-left) marquee, and no add, toggle or remove selection. One finger on empty space always pans. Touch PointerEvents carry no modifier keys, so selectOpFor() always returns 'replace'. Selecting several objects on an iPad or phone is impossible except one at a time through the Browser tree, and Shift-click there does not work on touch either.",
+    "evidence": "Viewport.tsx:604-608 `if (e.pointerType === \"touch\") { gesture.current = { kind: \"pan\", ... clearOnTap } ; return; }` happens before the marquee branch at 609. modsOf (484-488) reads only e.shiftKey, ctrlKey, metaKey and altKey, and selection.ts:47 selectOpFor maps those to the op. BrowserPanel.tsx:233 and CutsLayers.tsx:289 rely on e.shiftKey and e.ctrlKey for multi-select.",
+    "recommendation": "Make one finger behave like the left mouse button and two fingers handle view navigation. One-finger drag on empty space draws the same marquee as the mouse (left to right encloses, right to left crosses, same solid and dashed styles). Pan and pinch stay on two fingers, which already works through the pinch branch (504-509, 721-731). Feed a virtual-modifier store (the modifier bar in T3) into modsOf() so Add, Toggle and Remove work for taps and marquees. Offer the old 'one finger pans' behaviour as a preference for phone users if wanted.",
+    "files": [
+     "web/src/components/Viewport.tsx",
+     "web/src/selection.ts",
+     "web/src/components/BrowserPanel.tsx",
+     "web/src/workspace/CutsLayers.tsx"
+    ],
+    "viewport": "iPad, iPhone (touch)"
+   },
+   {
+    "id": "T2",
+    "severity": "blocker",
+    "area": "Context menus and right-click-only actions",
+    "problem": "iOS Safari does not fire contextmenu on long-press, and the app has no long-press of its own, so every right-click menu is unreachable on iPad and iPhone. On the canvas that leaves Cut, Copy, Paste, Paste in place, Select All, Invert Selection, docking and the text, file and design context items with no touch path. Copy and Paste exist only as keyboard shortcuts and in this menu. The same applies to the Browser layer and object menus, the CutsLayers layer menu (including Flash layer), Timeline step menu, PagesDock, ArtLibrary, MaterialLibrary and DockHost tab menus.",
+    "evidence": "Viewport.tsx:1077-1084 opens the menu only from onContextMenu. App.tsx:950-982 builds menuItems (Cut, Copy, Paste, Select All, Invert) used only by that menu. The only other Select All path is the Ctrl+A key at App.tsx:763. Grep finds no long-press or timer-based press anywhere in web/src.",
+    "recommendation": "Add a shared long-press helper (pointer.ts, pure and testable): 500 ms with less than 8 px of movement and no second pointer. It cancels the pending gesture and calls the same onContextMenu(x, y), selecting the object under the finger first as right-click does. Use it on the canvas, tree and table rows, timeline chips, art and library items. Also add a floating selection action bar on touch (see architecture notes) with Copy, Paste, Duplicate, Delete, Group and a ⋯ button that opens the full context menu, so the menu is discoverable without knowing about long-press.",
+    "files": [
+     "web/src/components/Viewport.tsx",
+     "web/src/App.tsx",
+     "web/src/components/ContextMenu.tsx",
+     "web/src/pointer.ts",
+     "web/src/components/BrowserPanel.tsx",
+     "web/src/workspace/CutsLayers.tsx",
+     "web/src/components/Timeline.tsx"
+    ],
+    "viewport": "iPad, iPhone"
+   },
+   {
+    "id": "T3",
+    "severity": "major",
+    "area": "Modifier-key behaviours",
+    "problem": "Every LightBurn modifier behaviour needs a physical key. Shift constrains moves, nodes and line angles and squares rect/ellipse. Ctrl turns snapping off, draws from the centre, scales about the centre and gives 5° rotation steps. Alt snaps to guides only. Shift frees the aspect ratio when scaling and gives 15° rotation steps, and Shift-click selects nodes. Touch, Apple Pencil and an iPad without a keyboard have none of these.",
+    "evidence": "Viewport.tsx:636-645 (move: m.shift → constrainDelta), 386-405 (snapOpts reads m.ctrl and m.alt), 418-424 (drawEnd: Ctrl draws from centre, Shift squares), 671 scaleFromHandle(..., m), 682 rotateFromHandle(..., m); EditTools.tsx:579 clickNode(..., m.shift). pointer.ts modifierReplay re-evaluates a drag when a key changes, so the plumbing for live toggles already exists.",
+    "recommendation": "Add a modifier bar on coarse pointers, a floating pill at the canvas's bottom-left. Its toggles change with the tool. Select: Add, Toggle, Constrain, No snap. Rect/Ellipse/Circle: Square, From centre, No snap. Rotating: Fine steps. Node: Add to node selection. A tap latches the toggle for the next gesture and a double-tap locks it, with a clear lit state. Merge it in modsOf() as physical OR virtual, and when a toggle changes mid-drag call update(lastMove.s, mods), the same path modifierReplay uses. Show the active toggles in the bottom-left readout.",
+    "files": [
+     "web/src/components/Viewport.tsx",
+     "web/src/pointer.ts",
+     "web/src/editing.ts",
+     "web/src/components/EditTools.tsx"
+    ],
+    "viewport": "iPad, iPhone, Pencil"
+   },
+   {
+    "id": "T4",
+    "severity": "major",
+    "area": "Canvas tools commit on pointerdown",
+    "problem": "The line, measure, pick and trim tools act on the first pointerdown. On touch, a pinch always starts with one finger, so the first finger's down has already happened when the second arrives. The Viewport then calls ext.cancel(), but cancel() only pops the point for the Pen tool. A Line vertex, a measure start point or a completed pick stays. Trim runs immediately on the down with no preview, because the trim-hover highlight needs hover. Starting a pinch over a shape in Trim mode cuts it.",
+    "evidence": "EditTools.tsx:588-609 (line/pen: `store.set({ pen: [...pts, { p: q }] })` on down; line leaves gest 'none'), 852-861 cancel() pops only `if (g.kind === \"pen\")`, 610-626 measure sets meas on down, 640-662 trim executes G.trim on down, 663-677 pick finishes the pick on down. Viewport.tsx:504-509 cancels on the second finger.",
+    "recommendation": "For touch (and optionally pen), defer the commit to lift. down() records a pending press. If a second pointer arrives, or the press moves past the drag slop into a drag, the pending press is dropped. A clean lift commits. For Trim on touch, show et-trim-hover while the finger is down and remove the piece on lift. Lifting with the finger moved away, or a second finger, cancels. At minimum make cancel() roll back whatever this gesture added: the line point, the measure start and the pick point.",
+    "files": [
+     "web/src/components/EditTools.tsx",
+     "web/src/components/Viewport.tsx",
+     "web/src/canvasTool.ts"
+    ],
+    "viewport": "iPad, iPhone"
+   },
+   {
+    "id": "T5",
+    "severity": "major",
+    "area": "Hit targets, tolerances and slop",
+    "problem": "All canvas tolerances are mouse-sized and the same for every pointer type, and nothing in CSS or JS uses (pointer: coarse). The handle size preference defaults to 1×. A finger (about 7-10 mm) cannot reliably hit a 1.3px outline with a 5px tolerance, a 16px handle or a 9px guide. The 4px tap slop means normal finger jitter on a selected object becomes a move: a tap commits a tiny object.transform and an undo step.",
+    "evidence": "Viewport.tsx:172 TAP_SLOP = 4, 174 CLICK_TOL_PX = 5, 1169 rotate hit r=hpx(9), 1179 scale hit 16×16 hpx; EditTools.tsx:198 SLOP = 4, 200 NODE_TOL_PX = 7, 202 DBL_MS, 598 double-tap distance < 6 px, 204 CLOSE_PX = 8, 1462 guide hit strokeWidth px(9); snapping.ts:34 SNAP_TOL_PX = 8; prefs.ts:76 handleScale: 1. Grep: no 'coarse' or 'pointerType'-based sizing anywhere.",
+    "recommendation": "Add a per-event tolerance table in pointer.ts keyed by e.pointerType. Suggested touch values: click 14px, slop 10px, node 18px, snap 14px, handle hit 44px, double-tap distance 24px and 400 ms. Pen sits between touch and mouse. Pass it through CanvasCtx and PointerInfo. Render handles at about 2× when the last pointer was touch, and hide the rotate handles until a second tap on the selection, which is LightBurn's click-again rotate mode and avoids overlapping hit areas on small objects. In hitTest() pick the nearest outline within tolerance, not the first in z-order, once tolerances are larger.",
+    "files": [
+     "web/src/components/Viewport.tsx",
+     "web/src/components/EditTools.tsx",
+     "web/src/snapping.ts",
+     "web/src/selection.ts",
+     "web/src/nodes.ts",
+     "web/src/pointer.ts",
+     "web/src/workspace/prefs.ts"
+    ],
+    "viewport": "iPad, iPhone"
+   },
+   {
+    "id": "T6",
+    "severity": "major",
+    "area": "MacBook trackpad and mouse navigation",
+    "problem": "(a) The wheel handler pans only when deltaX ≠ 0. A purely vertical two-finger trackpad swipe therefore zooms, while a slightly diagonal one pans, and the mode flips mid-gesture. (b) There is no Space+drag or Shift+wheel pan, and a MacBook trackpad has no middle button, so vertical panning is effectively missing. (c) Safari on macOS sends trackpad pinch as GestureEvents (gesturestart/gesturechange), not Ctrl+wheel. There is no handler, so Safari will zoom the whole page instead of the canvas (needs checking on the machine).",
+    "evidence": "Viewport.tsx:318-338 (`if (!e.ctrlKey && pixel && e.deltaX !== 0) { pan; return }`, else zoom), 514-517 middle-button pan only; grep: no 'Space' pan handling or gesturestart listener in web/src.",
+    "recommendation": "Add a 'Trackpad: two-finger scroll pans, pinch zooms' preference, on by default on Mac and when a stream of pixel-mode wheel events with fractional or mixed deltas is detected. Latch the pan or zoom decision per wheel stream (about 150 ms idle) so it never flips mid-swipe. Add Space+drag pan (cursor: grab) and Shift+wheel horizontal pan. Add non-passive gesturestart, gesturechange and gestureend listeners on the canvas that preventDefault and zoom by e.scale about the pointer.",
+    "files": [
+     "web/src/components/Viewport.tsx",
+     "web/src/workspace/prefs.ts"
+    ],
+    "viewport": "MacBook (Safari/Chrome)"
+   },
+   {
+    "id": "T7",
+    "severity": "major",
+    "area": "Mac modifier mapping",
+    "problem": "modsOf treats ctrlKey OR metaKey as Ctrl. On macOS, Ctrl+click also fires contextmenu. A Ctrl+click toggle-deselect therefore opens the context menu, and that handler then replaces the selection with the hit object because it is no longer selected, undoing the toggle. Ctrl+drag (snap off) opens the menu at the start of the drag. Menu hints say 'Ctrl+X' and similar on Mac, although a ⌘ helper already exists.",
+    "evidence": "Viewport.tsx:484-488 modsOf; 1077-1084 onContextMenu: `if (hit && !selectedSet.has(hit)) props.onSelection(applySelect(..., [hit], \"replace\"))`; App.tsx:951-981 hard-coded 'Ctrl+…' hints; FileMenu.tsx:492-501 has saveShortcut()/the ⌘ hint helper used only there.",
+    "recommendation": "On Apple platforms, map the Ctrl semantics to metaKey only and leave Ctrl+click as the macOS right-click. Also ignore a contextmenu that arrives while a canvas gesture is active. Route every hint (ContextMenu items, tooltips, hotkey cheat sheet) through one platform-aware formatter (⌘, ⌥, ⇧).",
+    "files": [
+     "web/src/components/Viewport.tsx",
+     "web/src/App.tsx",
+     "web/src/components/FileMenu.tsx",
+     "web/src/workspace/hotkeys.ts"
+    ],
+    "viewport": "MacBook"
+   },
+   {
+    "id": "T8",
+    "severity": "major",
+    "area": "Timeline (Fusion-style history)",
+    "problem": "Delete step and 'Roll marker before this step' are right-click-only. That menu is positioned at the raw clientY with no clamping, and the Timeline is the bottom bar, so the menu opens mostly below the window on every device, including the MacBook. The draggable marker is 8px wide, too small to grab with a finger. Step details (who made it, why it failed on replay) exist only in title tooltips, which need hover.",
+    "evidence": "Timeline.tsx:180-184 onContextMenu → setMenu({x: e.clientX, y: e.clientY}); 215-216 `<div className=\"menu ctx-menu\" style={{ left: menu.x, top: menu.y }}>` (does not use ContextMenu's clamping); styles.css:1772-1776 .tl-marker.draggable width 8px; Timeline.tsx:162-171 details only in title.",
+    "recommendation": "Reuse ContextMenu, which portals and clamps to the window, and open it on long-press as well. Better, a tap on a chip selects it and shows a small popover above the bar. The popover holds the step's full details (origin badge, summary, failure reason) and buttons for Roll here, Roll before and Delete step. Keep click = roll for mouse users if wanted. Give the marker a 32-44px-wide invisible hit area with a visible grip.",
+    "files": [
+     "web/src/components/Timeline.tsx",
+     "web/src/styles.css"
+    ],
+    "viewport": "all (clipping), touch (right-click and marker)"
+   },
+   {
+    "id": "T9",
+    "severity": "major",
+    "area": "Keyboard-only features",
+    "problem": "Several everyday edits exist only as keys:\n- arrow nudge (and its Shift/Ctrl step sizes)\n- rotate 90° with . and ,\n- Tab to cycle the selection\n- Backspace to remove the last line or pen point (no button)\n- node I/M/T (insert at pointer, insert at middle, trim; the node bar lacks them)\n- Alt+V paste in place, Ctrl+A select all, Ctrl+C/X/V copy, cut and paste\n- Esc to cancel a drag\nThe Properties panel only prints the nudge hint.",
+    "evidence": "App.tsx:824-838 nudgeDelta/rotateKeyDeg handlers, 845-849 Tab cycle, 763 Ctrl+A; PropertiesPanel.tsx:209 pp.nudgeHint text only; EditTools.tsx:1217-1219 Enter/Esc/Backspace for line and pen (the bar at 1634-1642 has Finish and Close only); 1626-1632 node bar has Delete, Break, Join, Smooth, Corner, Line and Curve but no Insert.",
+    "recommendation": "On coarse pointers, add a nudge pad (4 arrows plus a step picker) to the Properties panel's position section. Add a floating selection action bar with Copy, Paste, Paste in place, Duplicate, Delete, Rotate 90, Flip and ⋯. Add an 'Undo point' button to the line and pen bar, and 'Insert node' (at the midpoint of the selected segment) to the node bar. Document that a second finger cancels an in-progress drag, the touch equivalent of Esc, since the pinch branch already does this.",
+    "files": [
+     "web/src/App.tsx",
+     "web/src/components/PropertiesPanel.tsx",
+     "web/src/components/EditTools.tsx"
+    ],
+    "viewport": "iPad, iPhone"
+   },
+   {
+    "id": "T10",
+    "severity": "major",
+    "area": "Number entry on phone",
+    "problem": "Every numeric field uses inputMode=\"decimal\". On iPhone that shows a keypad with digits and '.' only, with no '-' and no operators. Negative positions are common because the galvo field is centred on the origin, and the fields' maths entry ('20/3') cannot be typed. There are no steppers either, so changing power, speed or passes always needs the keyboard.",
+    "evidence": "ui.tsx:96 (UnitTextField), 174 (NumberField), 246 (PairField) inputMode=\"decimal\"; Viewport.tsx:286 field box is centred on 0,0; NumericBar X/Y use NumberField.",
+    "recommendation": "Use inputMode=\"text\" with enterKeyHint=\"done\" (or a ± key in the field) for signed or expression fields such as X/Y, rotation and offsets. Keep decimal for fields that cannot be negative. On coarse pointers, add −/+ steppers with press-and-hold repeat to the high-traffic fields: power, speed, passes, frequency and size.",
+    "files": [
+     "web/src/components/ui.tsx",
+     "web/src/workspace/NumericBar.tsx",
+     "web/src/components/PropertiesPanel.tsx"
+    ],
+    "viewport": "iPhone (iPad partly)"
+   },
+   {
+    "id": "T11",
+    "severity": "major",
+    "area": "iOS zoom when an input gets focus",
+    "problem": "Only `.field-input input/select` are raised to 16px on coarse pointers. Every other input inherits 13px, and some are 11px. iPhone Safari zooms the page when these get focus and does not zoom back, which breaks the app layout. The on-canvas text editor's font size follows the zoom with a 12px minimum, so editing small text zooms the page as well.",
+    "evidence": "styles.css:275-278 `input, select, textarea { font: inherit }` with root 13px; 1123-1140 the 16px rule only for .field-input. Affected: .tree-rename (BrowserPanel.tsx:107), .lx-search, .hk-search, .dz-art-search, .files-notes (11px, files.css:94), .pv-name (11px, styles.css:1968), polygon bar .et-opt number inputs (edit.css:270), Devices and Dialogs inputs; useTextTools.tsx:563-583 textarea fontSize = clamp(12..300).",
+    "recommendation": "Add `@media (pointer: coarse) { input, select, textarea { font-size: max(16px, 1em); } }`. For the text editor, render the textarea at no less than 16px and scale it down visually with a CSS transform, or apply a 16px minimum on touch.",
+    "files": [
+     "web/src/styles.css",
+     "web/src/text/useTextTools.tsx",
+     "web/src/components/edit.css",
+     "web/src/files/files.css"
+    ],
+    "viewport": "iPhone"
+   },
+   {
+    "id": "T12",
+    "severity": "minor",
+    "area": "Browser touch defaults on the app chrome",
+    "problem": "No `touch-action: manipulation`, so quick repeated taps on buttons can trigger iPad Safari's double-tap zoom. Examples are Timeline next and prev, zoom, the arrange minis and nudge buttons. user-select:none applies only to the tree and the canvas, so a long-press on toolbar or panel labels selects text and shows the iOS callout or loupe. There is no -webkit-touch-callout:none, so art and library thumbnails (img) show the Save Image callout. 33 :hover rules are not gated by @media (hover: hover), so tapped buttons stay highlighted.",
+    "evidence": "Grep: no 'manipulation' or 'touch-callout' in web/src; styles.css:971-972 and 1319-1320 are the only user-select:none in the main sheet; e.g. styles.css:497 .menu-item:hover, 1701 .tl-entry.clickable:hover, 1870 .mini-btn:hover.",
+    "recommendation": "`html { touch-action: manipulation; }`. `.app { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }`, re-enabled for input, textarea, [contenteditable] and read-only text the user may copy (console output, notes). Wrap hover visuals in `@media (hover: hover)` and add :active states for touch feedback.",
+    "files": [
+     "web/src/styles.css",
+     "web/src/workspace/workspace.css",
+     "web/src/components/edit.css",
+     "web/src/files/files.css"
+    ],
+    "viewport": "iPad, iPhone"
+   },
+   {
+    "id": "T13",
+    "severity": "minor",
+    "area": "Double-click-only actions and HTML5 drag-and-drop",
+    "problem": "Some actions can only be reached by double-click, or by double-click plus right-click. dblclick is unreliable on iOS Safari. Affected: renaming the document (Browser header), PagesDock rename, ProjectFolders expand, Devices row action, ArtLibrary insert and MaterialLibrary assign. Reordering layers in the Browser and Cuts/Layers, and dragging art onto the canvas, use HTML5 draggable/dragstart. That does not work on many touch browsers, and on iPad it starts a system drag on long-press that would conflict with a long-press menu. The Cuts/Layers fallback up/down buttons are 20×14px.",
+    "evidence": "BrowserPanel.tsx:124 onDoubleClick rename (only path), 163-181 draggable rows; files/PagesDock.tsx:106; files/ProjectFolders.tsx:121; components/Devices.tsx:513; design/ArtLibrary.tsx:368-378 draggable plus dblclick insert; libs/MaterialLibrary.tsx:258; workspace.css:165-175 .c-order .tog 20×14.",
+    "recommendation": "Give every double-click action a visible control: a rename pencil or 'tap the selected row again to rename', an Insert button on the selected art item, and an Assign button in the library. Replace HTML5 DnD reordering with a pointer-event reorder driven by a 44px drag grip, which works the same for mouse and touch. On coarse pointers make the up/down buttons at least 40px.",
+    "files": [
+     "web/src/components/BrowserPanel.tsx",
+     "web/src/workspace/CutsLayers.tsx",
+     "web/src/files/PagesDock.tsx",
+     "web/src/design/ArtLibrary.tsx",
+     "web/src/libs/MaterialLibrary.tsx",
+     "web/src/files/ProjectFolders.tsx"
+    ],
+    "viewport": "iPad, iPhone"
+   },
+   {
+    "id": "T14",
+    "severity": "minor",
+    "area": "Small hit targets in the chrome",
+    "problem": "--tap: 40px is defined and used for primary buttons, but several dense controls stay far below it with no coarse-pointer override: the arrange and snap mini-grid buttons (26×24), the grid-step select (24px), document tabs (26px) with 24px close and add buttons, the floating-window resize grip (18px), tool option bar buttons (28px) and number inputs (26px), the Cuts order toggles (20×14) and icon-btn.small (36px).",
+    "evidence": "styles.css:1856-1858 .mini-btn 26×24, 1885-1887 .mini-select 24px, 711-713 .icon-btn.small 36px; workspace.css:1044-1084 doc tabs, 1001-1006 .dock-float-grip 18px; edit.css:256-273 .et-bar .btn 28px, .et-opt input 26px.",
+    "recommendation": "Add one `@media (pointer: coarse)` block that raises these to 40-44px. The mini-grid can become a 2-row strip or a popover on touch. Give the float grip a 32px invisible hit area. Keep the compact sizes for (pointer: fine), which suits the MacBook.",
+    "files": [
+     "web/src/styles.css",
+     "web/src/workspace/workspace.css",
+     "web/src/components/edit.css"
+    ],
+    "viewport": "iPad, iPhone"
+   },
+   {
+    "id": "T15",
+    "severity": "minor",
+    "area": "Apple Pencil and palm rejection",
+    "problem": "Pen and touch pointers go into the same pointers map. A palm or finger resting on the screen while the Pencil draws or drags makes the pointer count 2, which cancels the stroke and starts a pinch.",
+    "evidence": "Viewport.tsx:498-510: any second pointer → cancelGesture() + pinch, regardless of pointerType.",
+    "recommendation": "While a pen pointer is down, or for about 1 s after the last pen event, ignore touch pointers for editing; at most they navigate. Keep the Pencil as the left mouse button, with hover where the Pencil supports it (already handled for non-touch). Fingers keep doing pan and pinch.",
+    "files": [
+     "web/src/components/Viewport.tsx"
+    ],
+    "viewport": "iPad with Pencil"
+   },
+   {
+    "id": "T16",
+    "severity": "minor",
+    "area": "Feedback under the finger",
+    "problem": "Touch has no hover, so the first point of a line, rect or polygon is placed without seeing where it will snap. The snap glyph and label are drawn at the point and at (+11, −9) px, under the fingertip. Node and handle drags hide the very thing being moved.",
+    "evidence": "Viewport.tsx:700-705 hover snap only for non-touch (713-716); 1309-1331 SnapOverlay label at x+11, y−9; EditTools.tsx:877-887 rubber band only via hover.",
+    "recommendation": "On touch, place on lift: pressing shows the snap glyph and readout, dragging adjusts, and lifting commits. Pair this with T4. Show the snap label and readout in a small bubble about 60px above the touch point, or as a magnifier loupe for node work. Optionally offer an offset 'precision cursor' for node dragging.",
+    "files": [
+     "web/src/components/Viewport.tsx",
+     "web/src/components/EditTools.tsx"
+    ],
+    "viewport": "iPad, iPhone"
+   },
+   {
+    "id": "T17",
+    "severity": "minor",
+    "area": "Ruler guide drag robustness",
+    "problem": "Ruler drags only move or finish while hasPointerCapture() is true. If setPointerCapture throws (the Timeline comment notes this happens on touch), the guide never follows and never ends. The guides' 9px hit band in Select mode also captures one-finger touches meant for the canvas.",
+    "evidence": "Rulers.tsx:38-52 raw setPointerCapture in try/catch, then `if (!e.currentTarget.hasPointerCapture?.(e.pointerId)) return;` in move and up; Timeline.tsx:105 documents the touch capture failure; EditTools.tsx:539, 1462.",
+    "recommendation": "Use capturePointer() and a local 'dragging' ref instead of hasPointerCapture. With touch tolerances, give guides a larger hit area only on long-press, or only when the guide is already selected, so panning over guides stays reliable.",
+    "files": [
+     "web/src/components/Rulers.tsx",
+     "web/src/components/EditTools.tsx"
+    ],
+    "viewport": "touch"
+   },
+   {
+    "id": "T18",
+    "severity": "minor",
+    "area": "iOS file pickers",
+    "problem": "The import and open inputs list custom extensions (.lbrn2, .openetch, .clb, .lbart, .oeart, .lbt, .cor and others). iOS maps accept values to file types (UTIs), and files whose extension it does not know are often greyed out in the Files picker, so they cannot be opened on iPad or iPhone (needs checking on a device). Drag-and-drop from Files on iPad goes through the window listeners and should work.",
+    "evidence": "App.tsx:1403 accept=importAccept(...); FileMenu.tsx:759 accept=\".openetch,.lbrn2,...\"; libs/MaterialLibrary.tsx:190 .clb; design/ArtLibrary.tsx:254 .oeart,.lbart; files/ProjectDialogs.tsx:175 .lbt.",
+    "recommendation": "On iOS/iPadOS, omit accept or use */* and check the extension after the pick, with a clear toast for the wrong type.",
+    "files": [
+     "web/src/App.tsx",
+     "web/src/components/FileMenu.tsx",
+     "web/src/api/drop.ts"
+    ],
+    "viewport": "iPad, iPhone"
+   },
+   {
+    "id": "T19",
+    "severity": "polish",
+    "area": "Menus",
+    "problem": "The Dropdown's 250 ms reopen guard means a slow tap (over 250 ms) on an open Modify or Arrange button closes the menu and immediately reopens it. ContextMenu has role=menu but no arrow-key or Home/End navigation and no focus on open. Its max-height uses 100vh, which on iOS includes the hidden browser toolbar.",
+    "evidence": "EditMenus.tsx:52-56 justClosed < 250; ContextMenu.tsx:24-37 handles Escape only; styles.css:1789 max-height: calc(100vh - 8px).",
+    "recommendation": "Track an 'opened-by-this-press' flag on pointerdown instead of a time window. Add roving focus with the arrow keys. Use 100dvh.",
+    "files": [
+     "web/src/components/EditMenus.tsx",
+     "web/src/components/ContextMenu.tsx",
+     "web/src/styles.css"
+    ],
+    "viewport": "all"
+   },
+   {
+    "id": "T20",
+    "severity": "polish",
+    "area": "Pointer-move rendering cost",
+    "problem": "Every pointermove, from both fingers during a pinch and during pans, calls setCursor and onCursor. Each call re-renders the whole Viewport and publishes the view status, alongside the frame-coalesced view update. On an iPad this costs smoothness during navigation.",
+    "evidence": "Viewport.tsx:707-711 setCursor(f); props.onCursor?.(f) run before the pinch branch at 721.",
+    "recommendation": "Skip cursor updates for touch pointers during pan or pinch, or coalesce them into the same requestAnimationFrame as the view, and hide the X/Y readout while navigating.",
+    "files": [
+     "web/src/components/Viewport.tsx"
+    ],
+    "viewport": "iPad"
+   }
+  ],
+  "architecture_notes": "Proposed touch interaction model. It keeps the LightBurn mouse behaviour exactly as it is today and makes touch a faithful translation of it. \"One finger is the left mouse button, two fingers are the view.\"\n\n1) Input classification (pointer.ts, pure, unit-tested like pointer.test.ts)\n- `pointerClass(e)` returns mouse, pen or touch, and `TOL[class]` gives the tolerances:\n\n  | Pointer | Click | Slop | Node | Snap | Handle hit | Double-tap | Long-press |\n  |---|---|---|---|---|---|---|---|\n  | Mouse | 5 | 4 | 7 | 8 | 16 | 6px / 350ms | – |\n  | Pen | 8 | 6 | 10 | 10 | 24 | – | – |\n  | Touch | 14 | 10 | 18 | 14 | 44 | 24px / 400ms | 500ms |\n\n- Pass the class in PointerInfo and CanvasCtx (`ctx.tol`) so EditTools, Viewport and snapping all use one source. Decide per event, not per device: an iPad with a trackpad gets mouse tolerances.\n- A `virtualMods` external store (useSyncExternalStore) holds the modifier-bar state. `modsOf(e)` becomes physical OR virtual (Mac: metaKey stands for Ctrl, see T7). A toggle change during a drag reuses the existing modifierReplay → `update(lastMove.s, m)` path.\n\n2) Gesture arbiter (Viewport onPointerDown, onPointerMove, endPointer)\n- **First touch:** start a *pending* gesture. Select/move, marquee, draw, handle and canvas-tool behave exactly as for the mouse, but nothing is committed or added on down. Canvas tools get `down` only once the press is known to be a tap (lift within slop) or a drag (past slop).\n- **Second touch:** if it arrives before slop or within about 150 ms, the pending gesture is dropped without side effects and becomes pan + pinch, using the existing pinch code. If it arrives mid-drag, it cancels the drag (the touch \"Esc\").\n- **Long-press:** 500 ms within slop and no second finger opens the context menu at the finger, using the same handler as right-click and selecting the hit first if it is not selected. Show a short ring animation so the user sees it coming.\n- **Pen palm rejection:** while a pen is active, touches only navigate.\n- **Optional, Procreate-style:** two-finger tap = undo, three-finger tap = redo. These are cheap and natural for Fusion and LightBurn users on an iPad.\n\n3) Select-tool semantics on touch (mirroring LightBurn)\n- **Tap an object:** select it (replace). With Add latched, add it; with Toggle latched, toggle it.\n- **Tap an already-selected object again:** toggle between scale handles and rotate handles. This is LightBurn's click-again rotate mode, and it avoids overlapping 44px hit areas on small parts.\n- **Drag an object:** select and move it. Constrain latched = Shift (H/V/45°); No-snap latched = Ctrl.\n- **One-finger drag on empty space:** marquee. Left to right encloses (solid); right to left crosses (dashed green, same styles as now). The Add/Toggle latches apply.\n- **Tap empty space:** clear the selection (as now).\n- **Two fingers:** always pan and pinch. A double-tap with two fingers fits the field.\n- **Handles:** about 2× visual size and 44px hit areas when the last pointer was touch, with the selection box padding scaled so handles do not cover the part.\n\n4) Modifier bar (coarse pointers only, bottom-left over the canvas, one-hand reachable on a phone)\n- Context-sensitive toggles:\n  - Select: Add (⇧), Toggle (⌘/Ctrl), Constrain, No snap.\n  - Rect/Ellipse: Square, From centre, No snap.\n  - Circle: No snap.\n  - Line/Pen: 15° steps.\n  - While rotating: Fine steps (5°).\n  - Node: Add-to-node-selection.\n- A tap latches the toggle for the next gesture (auto-clears); a double-tap locks it until tapped again. The lit state also appears in the bottom-left readout.\n- It is the same Mods object the keyboard produces, so EditTools and editing.ts need no new logic.\n\n5) Selection action bar (touch; also useful on a MacBook)\n- A floating pill above the selection bounds, or docked above the timeline on a phone, with Copy, Paste, Duplicate, Delete, Group/Ungroup, Rotate 90, Flip and ⋯ (opens the existing App menuItems ContextMenu).\n- This makes Select All, Invert, Paste in place and Docking reachable without long-press discovery.\n- Add a nudge pad to the Properties panel's position section on coarse pointers.\n\n6) Canvas tools on touch\n- Place on lift. Pressing shows the snap glyph and readout in a bubble about 60px above the finger, dragging adjusts, and lifting commits.\n- The line and pen bar gains \"Undo point\". The existing Finish and Close buttons stay.\n- Trim highlights the piece while the finger is down and removes it on lift.\n- The node bar gains \"Insert node\". Node marquee is a one-finger drag on empty space (already the case).\n\n7) Desktop and trackpad\n- Space+drag pan and Shift+wheel horizontal pan.\n- Wheel streams are latched to pan or zoom per gesture.\n- A \"Trackpad: scroll pans, pinch zooms\" preference (on by default on Mac).\n- Safari gesturestart/gesturechange handled with preventDefault.\n- Cmd mapping on Mac, and Ctrl+click left as the Mac right-click.\n\n8) Global CSS for touch\n- `html{touch-action:manipulation}`.\n- `.app{user-select:none;-webkit-touch-callout:none}`, re-enabled for input, textarea and contenteditable.\n- `@media (hover:hover)` around hover visuals, plus :active feedback.\n- `@media (pointer:coarse)`: inputs ≥16px, dense controls ≥40-44px (mini-grid, doc tabs, et-bar, c-order, float grip), and the timeline marker hit area ≥32px.\n\nImplementation order (each step independently testable)\n1. Tolerance table and per-event classes. This removes accidental micro-moves.\n2. Deferred commit and long-press in the arbiter. This fixes the stray points and Trim-on-pinch, and gives context menus on iOS.\n3. Touch marquee and the modifier bar.\n4. Selection action bar and nudge pad.\n5. Trackpad, Space pan and Safari gestures.\n6. CSS coarse and hover pass.\n7. Timeline popover and marker hit area.\n\nKeep the arbiter as a pure state machine in pointer.ts (inputs: down, move and up events with class, time and position; outputs: tap, drag, pinch, long-press, cancel) so `npm test` covers it without a DOM.\n\nFiles reviewed: web/src/components/{Viewport,SceneCanvas,EditTools,EditMenus,ContextMenu,FileDrop,Timeline,BrowserPanel,Toolbar,TopBar,Rulers,ui}.tsx, web/src/{pointer,canvasTool,selection,editing,snapping,nodes}.ts, web/src/workspace/{CutsLayers,DockHost,DocTabs,NumericBar,hotkeys}.ts(x), web/src/text/useTextTools.tsx, web/src/App.tsx, web/index.html, and the CSS (styles.css, edit.css, workspace.css, files.css). Nothing was edited, and nothing was run against the engine, port 7878 or the Pi."
+ },
+ {
+  "key": "chrome",
+  "summary": "Full screen / app-window audit of OpenEtch (code read-only, plus platform research). Today the app has none of the pieces it needs to run as an app window. There is no in-app full screen toggle and no shortcut for it (F11 is listed as reserved for the browser in hotkeys.ts). There is no web app manifest, no icons or favicon, no theme-color and no service worker. index.html has only a viewport tag with viewport-fit=cover and the old apple-mobile-web-app-capable tag.\n\nPlain http from the Pi's LAN IP still allows a lot. The Fullscreen API does not need a secure context. It works over http in Chrome, Edge and Firefox (Windows and macOS), in Safari on macOS 16.4+ and in Safari on iPad (with caveats). Safari 17+ on macOS Sonoma can \"Add to Dock\" any site, and iOS/iPadOS can open any site added to the Home Screen as a standalone web app (the default for every site since iOS 26), both over http.\n\nPlain http blocks other things: installing the app in Chrome/Edge/Android (manifest-based), window-controls-overlay, service workers, Screen Wake Lock, Keyboard Lock and the browser camera (getUserMedia). The app's Camera panel already says so. On http the browser also sends no Sec-Fetch-Site header for click approval. iPhone Safari still has no element fullscreen, so on the phone the Home Screen web app is the only \"full screen\" route.\n\nTwo problems in the engine and app would break installed app windows even with HTTPS:\n- The bearer token is kept in localStorage. Safari's Dock apps get only a copy of the cookies, and iOS Home Screen apps have their own storage, so neither sees the token.\n- The token is generated again on every engine restart unless --token is passed, and the UI has no screen for entering a token after a 401.\n\nThe static file server also needs work: there are no Cache-Control headers and no compression (the main JS bundle is 1.15 MB uncompressed). A missing /assets/* file, favicon.ico or manifest is answered with index.html and a 200 status, so a stale cached index.html after an update can leave a blank page.\n\nOn the layout side:\n- The bottom safe-area inset is applied to the timeline, but the status bar is the last row, so on iPad and iPhone it sits under the home indicator.\n- There is no handling of the top inset.\n- Ctrl+wheel or a trackpad pinch over the side panels zooms the whole page. On iPad, pinch and double-tap over the panels do the same.\n\nRecommended order:\n1. A full screen toggle: a button in the top bar, a View/command palette entry, and a rebindable Alt+Enter shortcut. Use the Fullscreen API on documentElement, sync state from fullscreenchange, and take keyboard lock for Esc in Chromium where available.\n2. A manifest with display_override window-controls-overlay then standalone, plus icons, an apple-touch-icon, theme-color and the iOS meta tags.\n3. A persistent token in the config dir and a \"Connect to engine\" screen.\n4. Safe-area and zoom fixes.\n5. Engine static serving: Cache-Control, precompressed gzip/br files, and a 404 for missing assets.\n6. An HTTPS path. Short term with no code: `tailscale serve` (a publicly trusted *.ts.net certificate, but every device needs the Tailscale app) or Caddy with `tls internal` (needs its root CA installed on each device). Long term: an engine `--tls-cert/--tls-key` option, optionally with a built-in local CA and a one-tap profile download.\n\nFor the owner's own Windows PC and MacBook in Chrome/Edge, a zero-infrastructure stopgap is the flag \"Insecure origins treated as secure\" (chrome://flags or edge://flags) set to http://192.168.1.20:7878. This makes manifest install and window-controls-overlay work over http.",
+  "findings": [
+   {
+    "id": "FS-01",
+    "severity": "major",
+    "area": "Full screen toggle",
+    "problem": "There is no in-app full screen control or shortcut. On a 1280x800-1470x956 MacBook, browser chrome (tabs, address bar, macOS menu bar) takes 120-180 px of height away from the canvas. The owner has no app-like way to reclaim it, and F11 is a browser-only mode the app cannot see or exit.",
+    "evidence": "A grep of web/src for requestFullscreen, fullscreenElement or fullscreenchange finds nothing. web/src/workspace/hotkeys.ts:183 lists F11 in RESERVED ('Chords a browser keeps for itself'). TopBar.tsx has no such button. index.html has only viewport and apple-mobile-web-app-capable meta tags.",
+    "recommendation": "Add a 'Full screen' action (an id like view.fullscreen) in three places: an icon button in the top bar's .topbar-actions, a View/command palette entry, and a rebindable default shortcut of Alt+Enter (Option+Return on Mac). Alt+Enter is unbound and not taken by any browser. Do not use F11: browsers keep it for their own full screen, and the page cannot intercept it reliably. Do not use Cmd+Shift+F either, which Chrome on Mac uses for 'always show toolbar in full screen'.\n\nImplementation:\n- Call `document.documentElement.requestFullscreen({navigationUI:'hide'})`, falling back to webkitRequestFullscreen for older Safari. Exit with document.exitFullscreen or webkitExitFullscreen.\n- Call it directly in the click or keydown handler, because it needs transient user activation. The keymap's capture listener counts as activation, since keydown is an activation event.\n- Show the button only when `document.fullscreenEnabled || document.webkitFullscreenEnabled`. That is false on iPhone Safari and in iOS Home Screen apps; in that case show 'Install as app' (see FS-09) instead.\n- Track state from the fullscreenchange/webkitfullscreenchange events plus `matchMedia('(display-mode: fullscreen)')`. Chromium also matches that query in its own F11 mode, so the icon can show 'Exit full screen' and tell the user to press F11 when the browser, not the page, owns full screen.\n- The Fullscreen API needs no secure context, so this works today over http://192.168.1.20:7878 in Chrome, Edge and Firefox on Windows and macOS, and in Safari on macOS (unprefixed since 16.4).\n- iPadOS Safari supports it with caveats: an X overlay, a swipe-down exit, and focusing a text field or showing the on-screen keyboard has been reported to drop out of full screen. On iPad, prefer the Home Screen web app and treat the toggle as a bonus.\n- Remember the user's choice only as a hint ('re-enter full screen?' toast after a reload). Browsers do not allow entering full screen on load.",
+    "files": [
+     "web/src/components/TopBar.tsx",
+     "web/src/workspace/hotkeys.ts",
+     "web/src/workspace/useKeymap.ts",
+     "web/src/App.tsx",
+     "web/index.html"
+    ],
+    "viewport": "MacBook 1280x800-1470x956, Windows PC, iPad"
+   },
+   {
+    "id": "FS-02",
+    "severity": "major",
+    "area": "Installable app window (manifest, icons, meta)",
+    "problem": "There is no web app manifest, no icons (not even a favicon), no theme-color and no Apple touch icon. In Chrome or Edge the app cannot become an installed window with its own Dock or taskbar icon and only a title bar, and window-controls-overlay (a Fusion-like look with the top bar in the title bar) is impossible. Safari 'Add to Dock' and iOS/iPadOS 'Add to Home Screen' produce a generic or screenshot icon titled from the page.",
+    "evidence": "web/index.html contains only charset, viewport (width=device-width, initial-scale=1, viewport-fit=cover), apple-mobile-web-app-capable=yes and the title. web/public does not exist. web/dist holds only index.html, assets/ and parity. curl -I http://127.0.0.1:7979/manifest.webmanifest and /favicon.ico both return 200 text/html (the index.html fallback). The only brand mark is a CSS gradient square (styles.css:328-334).",
+    "recommendation": "Add web/public/manifest.webmanifest (Vite copies public/ to dist):\n- name 'OpenEtch', short_name 'OpenEtch', id '/', start_url '/', scope '/'\n- display 'standalone' and display_override ['window-controls-overlay','standalone','minimal-ui']\n- background_color and theme_color set to the dark chrome colour (#23262a), orientation 'any'\n- icons: 192 and 512 PNG, a 512 maskable PNG and an SVG; optional shortcuts such as 'New document'\n\nAdd to web/index.html:\n- `<link rel=manifest href=/manifest.webmanifest>` and `<link rel=icon href=/icon.svg type=image/svg+xml>`, plus a favicon.ico or 32px PNG\n- `<link rel=apple-touch-icon href=/apple-touch-icon.png>` (180x180, opaque)\n- `<meta name=theme-color>` twice, with media='(prefers-color-scheme: light)' and '(prefers-color-scheme: dark)'\n- `<meta name=color-scheme content='light dark'>`\n- `<meta name=mobile-web-app-capable content=yes>`; keep the apple- one, since Chrome now warns that it alone is deprecated\n- `<meta name=apple-mobile-web-app-title content=OpenEtch>`\n- `<meta name=apple-mobile-web-app-status-bar-style content=black-translucent>`, only together with the top safe-area padding in FS-05\n\nDesign a real icon from the orange/blue brand mark.\n\nFor window-controls-overlay, give .topbar these CSS rules when `(display-mode: window-controls-overlay)` matches: padding-left env(titlebar-area-x, 0), width/height from env(titlebar-area-width/height), app-region: drag (and -webkit-app-region) on the empty top bar background, and app-region: no-drag on every button, menu and input. The macOS traffic lights and the Windows min/max/close buttons then share the 48 px top bar, as in Fusion 360.\n\nOn plain http, Chrome and Edge ignore the manifest for installation, so this pays off fully only with FS-04. Safari's Dock apps and iOS Home Screen apps use the icons, name and status bar meta tags over http too.",
+    "files": [
+     "web/index.html",
+     "web/public/manifest.webmanifest (new)",
+     "web/public/icon-*.png (new)",
+     "web/src/styles.css"
+    ],
+    "viewport": "all"
+   },
+   {
+    "id": "FS-03",
+    "severity": "major",
+    "area": "Auth token vs installed app windows",
+    "problem": "Installed app windows on Apple platforms will open logged out, and the app has no way to recover:\n- The bearer token lives only in localStorage ('openetch.token') and is removed from the URL on first load.\n- Safari 'Add to Dock' apps get a copy of Safari's cookies, not its localStorage.\n- iOS/iPadOS Home Screen web apps have storage separate from Safari.\n- The saved start URL no longer contains ?token=.\n- The engine generates a new random token on every start when it listens off loopback without --token. That is the systemd example in ARCHITECTURE.md (`--listen 0.0.0.0:7878`), so every Pi restart or update also silently invalidates the token on every browser, Dock app and Home Screen app.\n- The UI has no 401 handling and no screen for entering a token.",
+    "evidence": "web/src/api/client.ts:16-44: initAuthToken reads ?token=, stores it in localStorage, then history.replaceState removes it. crates/engine/src/main.rs:208-213: `(None, false) => Some(generate_token()?)`. ARCHITECTURE.md:38: ExecStart has no --token. A grep for 401 or Unauthorized in web/src outside tests finds nothing. security.rs:189 answers 401 with 'open the URL the engine printed at startup', which is printed to the Pi's journal, which the owner cannot see from an iPad.",
+    "recommendation": "Engine side: generate the token once and keep it in <config-dir>/access-token (mode 0600), reusing it across restarts. Add a command like `openetch token [--rotate]` (similar to set-pin) that prints it and a pairing URL. Optionally render that URL as a QR code in the terminal.\n\nWeb side: when /api/* answers 401, or no token is stored, show a full-page 'Connect to OpenEtch' card. It should have a token field (paste), 'Remember on this device', a short explanation of where to find the token (ssh to the Pi, then `openetch token`), and later a 'Scan QR' option (camera needs HTTPS). Store the token in localStorage as now.\n\nOptional: at the moment the engine accepts ?token=, also set an HttpOnly, SameSite=Strict, Secure-when-https cookie, and accept it in the guard as an alternative to the bearer header. Safari's 'Add to Dock' copies cookies into the new app, so it would arrive already logged in. The existing Origin check still guards against CSRF.\n\nDo not put the token in the manifest's start_url.",
+    "files": [
+     "web/src/api/client.ts",
+     "web/src/main.tsx",
+     "web/src/App.tsx",
+     "crates/engine/src/main.rs",
+     "crates/engine/src/security.rs",
+     "crates/engine/src/cli.rs",
+     "ARCHITECTURE.md"
+    ],
+    "viewport": "Safari Dock app (macOS), iPad/iPhone Home Screen app"
+   },
+   {
+    "id": "FS-04",
+    "severity": "major",
+    "area": "Secure context / HTTPS on the Pi",
+    "problem": "The production URL http://192.168.1.20:7878 is not a secure context. In Chromium, Firefox and Safari that blocks:\n- Chrome/Edge/Android Chrome manifest install, and with it window-controls-overlay and the standalone app window\n- service workers\n- Screen Wake Lock (keeping the iPad or phone screen on while watching a burn)\n- Keyboard Lock (Esc in full screen, FS-07)\n- getUserMedia, so the app's own 'browser camera' button is disabled\n- Sec-Fetch-Site on the click-approval request, which the engine docs already note leaves only the Origin check\n- in Chromium, also the async Clipboard API and Web Share\n\nThe engine has no TLS of its own (updates.rs says it carries no TLS stack).",
+    "evidence": "web/src/libs/Camera.tsx:452 `can = !!navigator.mediaDevices?.getUserMedia`. The locale string cam.noBrowserCam reads 'needs https or localhost'. security.rs:61-64 documents that there is no Sec-Fetch-Site on plain http. tower-http features are only fs and cors (Cargo.toml:51). The client is already HTTPS-ready: api/client.ts:272 picks wss: when the page is https.",
+    "recommendation": "Offer HTTPS as an option and keep http working. The realistic options for a Pi on a home LAN:\n\n(a) Tailscale. `tailscale serve --bg --https=443 http://127.0.0.1:7878` gives a publicly trusted Let's Encrypt certificate for pi.<tailnet>.ts.net, renewed automatically, with nothing to install in any trust store. Every device needs the Tailscale app running: macOS, Windows, iPadOS, iOS and Android all have one, and it uses the VPN slot on iOS. LAN traffic still goes direct over WireGuard. It also gives remote access, which is acceptable because burns only start from Start or the foot switch. Zero engine code. This is the best short-term option.\n\n(b) Caddy on the Pi with `tls internal`, giving a hostname such as openetch.local (avahi) and/or the IP. Caddy runs a local CA and renews certificates itself, and it proxies WebSocket, does HTTP/2, and compresses with gzip/zstd. The root CA must be installed once per device:\n- macOS: Keychain, set to Always Trust\n- Windows: Trusted Root store\n- iOS/iPadOS: install the profile, then turn it on under Settings > General > About > Certificate Trust Settings\n- Android: a user CA works in Chrome\n- Firefox: uses OS roots by default on Windows and Mac\n\n(c) mkcert. The same trust setup as (b), but certificates are issued by hand and expire after about 2 years. The certificate files would feed (b) or (e).\n\n(d) A domain the owner owns plus a Let's Encrypt DNS-01 certificate (Caddy DNS plugin or certbot), with an A record pointing at 192.168.1.20. Publicly trusted, with no setup on devices. It costs a domain and a DNS API token, and some routers' DNS-rebind protection must allow the private answer.\n\n(e) The engine serving TLS itself: `--tls-cert/--tls-key` (rustls through axum-server or tokio-rustls, with ring for easy aarch64 builds), plus an optional http listener that redirects to https. Optionally a built-in local CA (rcgen) that serves its root certificate and an iOS .mobileconfig at http://<pi>:7878/ca for one-tap install. This is the most integrated option and the most code.\n\nTwo caveats for any proxy setup:\n- The engine currently decides whether a token is needed from its listen address. Behind a proxy it would listen on 127.0.0.1 and turn the token off while LAN clients reach it through Caddy or Tailscale. Require --token, or the persisted token from FS-03, whenever a proxy fronts the engine, and document it.\n- Add the HTTPS hostname with --allow-host. The Origin same-host check already ignores scheme and port.\n\nDo not use a plain self-signed certificate that users click through: Chromium then refuses service workers and installation, and iOS Home Screen apps will not load it.\n\nStopgap for the owner's own PC and Mac in Chrome/Edge with no infrastructure: set chrome://flags (or edge://flags) 'Insecure origins treated as secure' to http://192.168.1.20:7878. Manifest install, window-controls-overlay, wake lock and the camera then work over http in that browser profile.",
+    "files": [
+     "crates/engine/src/main.rs",
+     "crates/engine/src/cli.rs",
+     "crates/engine/Cargo.toml",
+     "ARCHITECTURE.md",
+     "web/src/libs/Camera.tsx"
+    ],
+    "viewport": "all remote devices (MacBook, PC, iPad, phone)"
+   },
+   {
+    "id": "FS-05",
+    "severity": "major",
+    "area": "Safe areas (home indicator, notch, standalone status bar)",
+    "problem": "The bottom safe-area inset is padded onto the timeline, but the status bar is the grid row below it. On an iPad with Face ID or an iPhone, the status bar (cursor XY and snap readout) therefore sits under the home indicator and the inset gap appears between the timeline and the status bar. There is no top inset handling. That is fine for a Safari tab or the default standalone status bar, but it breaks the moment black-translucent is used, and it ignores titlebar-area for window-controls-overlay.",
+    "evidence": "styles.css:1632-1637: `.timeline { height: calc(58px + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom) }`. App.tsx:1395 renders <Timeline> and App.tsx:1401 renders <StatusBar> after it. styles.css:295-302: `.app` has 100dvh, a grid-template-rows first row of a fixed 48px, and left/right safe-area padding only. workspace/workspace.css:530 .statusbar has no inset.",
+    "recommendation": "Move the bottom inset to the last row: give `.statusbar` padding-bottom env(safe-area-inset-bottom) and min-height calc(24px + env(safe-area-inset-bottom)), and remove it from `.timeline`. If the status bar is hidden on phones, apply the inset to whichever row is last. Simpler still: put `padding-bottom: env(safe-area-inset-bottom)` on `.app` and paint it with the status bar colour.\n\nFor the top, use `grid-template-rows: calc(48px + env(safe-area-inset-top)) ...` with `.topbar { padding-top: env(safe-area-inset-top) }`. Together with apple-mobile-web-app-status-bar-style=black-translucent and theme-color, the iOS/iPadOS Home Screen app then draws its own top bar under the status bar, which looks more app-like.\n\nFixed and floating layers also need insets: toasts, drawers (.drawer-scrim), the context menu, the floating NumericBar and the bottom sheets on phones. Test the iPad in Slide Over and Stage Manager windows too.",
+    "files": [
+     "web/src/styles.css",
+     "web/src/workspace/workspace.css",
+     "web/src/App.tsx"
+    ],
+    "viewport": "iPad (Face ID models), iPhone, Home Screen web app"
+   },
+   {
+    "id": "FS-06",
+    "severity": "minor",
+    "area": "Accidental page zoom / bounce on touch and trackpad",
+    "problem": "Only the canvas SVG intercepts wheel input and has touch-action:none. Over the side panels, timeline or top bar:\n- a trackpad pinch or Ctrl+wheel in Chrome, Edge or Firefox zooms the whole UI (it stays zoomed for that origin)\n- in Safari on macOS a pinch fires gesture events and zooms the page\n- on iPad a two-finger pinch or a double-tap on a panel zooms the page, because iOS ignores user-scalable=no\n- Ctrl+=, Ctrl+- and Ctrl+0 while a text field has focus fall through to browser zoom, because the keymap returns early when typing\n\nThe html/body/#root overscroll-behavior:none (styles.css:262) already prevents scroll bounce and pull-to-refresh.",
+    "evidence": "Viewport.tsx:323-336: a wheel listener with passive:false on svgRef only. styles.css:1318: `.viewport svg { touch-action: none }`. No global touch-action, and no gesturestart handler anywhere. useKeymap.ts:73: `if (typingIn(e.target) && chord !== 'F1') return;`",
+    "recommendation": "- Add a window-level `wheel` listener ({passive:false}) that calls preventDefault when e.ctrlKey and the target is outside the canvas. Optionally route it to the canvas zoom.\n- For Safari, add `gesturestart`, `gesturechange` and `gestureend` listeners on document that call preventDefault.\n- Set `html { touch-action: manipulation }` and `touch-action: pan-x pan-y` on scrollable panels and lists. This kills double-tap zoom and pinch zoom on iPad while keeping panel scrolling. Keep touch-action:none on the canvas and on drag handles.\n- In the keymap, always call preventDefault on Ctrl/Cmd plus =, - and 0, even while typing, so the UI never browser-zooms. The app's own --ui-scale preference is the supported way to scale the UI.\n- Add `-webkit-touch-callout: none` to the canvas and toolbars, so a long press on iPad does not open the image or link callout.",
+    "files": [
+     "web/src/components/Viewport.tsx",
+     "web/src/styles.css",
+     "web/src/workspace/useKeymap.ts",
+     "web/src/App.tsx"
+    ],
+    "viewport": "MacBook trackpad, iPad"
+   },
+   {
+    "id": "FS-07",
+    "severity": "minor",
+    "area": "Esc inside element full screen",
+    "problem": "The app uses Esc heavily (cancel the tool or the drawing, deselect, close dialogs; useKeymap lets Esc through to dialogs). In element full screen every browser takes Esc to exit full screen, so cancelling a pen path or a marquee also kicks the user out of full screen.",
+    "evidence": "useKeymap.ts:61 ('Escape still reaches the dialog's close handler'). No navigator.keyboard usage anywhere in web/src.",
+    "recommendation": "In Chromium (Chrome/Edge), after requestFullscreen succeeds, call `navigator.keyboard?.lock(['Escape'])`, or pass the new `keyboardLock` option of requestFullscreen where supported. Esc then reaches the app, and the user holds Esc to leave full screen (Chrome shows that hint). This needs a secure context (FS-04), and Safari and Firefox do not support it. Where it is unavailable, show a one-time tip on entering full screen ('Esc leaves full screen; use Alt+Enter to toggle') and offer the toolbar button to re-enter. An installed standalone app window avoids the conflict entirely, so promote it as the preferred 'title bar only' mode.",
+    "files": [
+     "web/src/App.tsx",
+     "web/src/workspace/useKeymap.ts"
+    ],
+    "viewport": "MacBook, Windows PC"
+   },
+   {
+    "id": "FS-08",
+    "severity": "minor",
+    "area": "Engine static file serving (MIME, caching, compression, fallback)",
+    "problem": "ServeDir has an SPA fallback to index.html for every unknown path, including /assets/*.js, /favicon.ico and a future /manifest.webmanifest or /sw.js, and answers them with 200 text/html. There is no Cache-Control on index.html or on the hashed assets, so browsers cache them heuristically from Last-Modified (Safari is aggressive). After an engine or web update, a cached index.html can request old hashed bundles. Those come back as HTML with a JS MIME expectation, and the page is blank until a hard reload. Installed app windows and iOS Home Screen apps have no reload button. There is also no compression: the 1,146,534-byte JS bundle and the 85 KB CSS go uncompressed over the Pi's Wi-Fi to phones and iPads.",
+    "evidence": "crates/engine/src/api.rs:86-88: `ServeDir::new(dir).fallback(ServeFile::new(dir.join(\"index.html\")))`. curl -I on 127.0.0.1:7979: index.html is 'content-type: text/html', last-modified, no cache-control. assets/index-BOkRz1yM.js is 'text/javascript', content-length 1146534, no cache-control, no content-encoding even with Accept-Encoding: gzip, br. /favicon.ico and /manifest.webmanifest return 200 text/html. Cargo.toml:51: tower-http features [fs, cors]. MIME types are fine: mime_guess maps webmanifest to application/manifest+json.",
+    "recommendation": "- Fall back to index.html only for navigations: GET requests whose path has no file extension and that do not start with /assets/, or with Accept: text/html. Answer 404 everywhere else.\n- Add `Cache-Control: no-cache` on index.html, manifest.webmanifest and sw.js, and `public, max-age=31536000, immutable` on /assets/* (the files are content-hashed).\n- Precompress at build time (a vite compression plugin, or a small script writing .br and .gz next to each asset) and serve with `ServeDir::precompressed_br().precompressed_gzip()`, which costs no CPU on the Pi. Alternatively enable the tower-http `compression-br` and `compression-gzip` features with a CompressionLayer limited to static files.\n- Consider not shipping sourcemaps to the Pi (vite.config.ts `sourcemap: true`), or exclude .map files from compression and caching.\n- If HTTPS arrives, a small service worker can come later: network-first for index.html, cache-first for /assets/*, never /api or /mcp. It speeds up reopening the app and gives an 'engine unreachable' shell. With the caching headers above it is optional, and it must never serve a stale UI against a newer engine.",
+    "files": [
+     "crates/engine/src/api.rs",
+     "Cargo.toml",
+     "web/vite.config.ts"
+    ],
+    "viewport": "all; worst on phone/iPad over Wi-Fi and in installed app windows"
+   },
+   {
+    "id": "FS-09",
+    "severity": "minor",
+    "area": "Install / app-mode guidance",
+    "problem": "The way to get an app-like window differs on every device the owner uses, and nothing in the app explains it or detects the current mode. iPhone has no Fullscreen API at all, so the phone's only route to a full-screen app is Add to Home Screen.",
+    "evidence": "There is no display-mode detection (matchMedia('(display-mode: standalone)') or navigator.standalone) anywhere in web/src, and no 'install' or 'beforeinstallprompt' handling.",
+    "recommendation": "Add a 'Use as an app' item, for example in the Help menu and on first visit on touch devices, that detects the platform and display mode and shows the right steps:\n- Chrome/Edge, once HTTPS or the flag is in place: an Install button driven by beforeinstallprompt, or the browser's Install app menu item\n- Safari 17+ on macOS: File > Add to Dock (works over http)\n- iPad and iPhone: Share > Add to Home Screen, with Open as Web App on (iOS/iPadOS 26 turns this on for every site; also works over http)\n- Firefox on Windows: Taskbar Tabs (experimental, Firefox 143+)\n- Android Chrome: Install app (needs HTTPS)\n\nHide the item when already standalone. In standalone mode, also hide the full screen button where document.fullscreenEnabled is false.",
+    "files": [
+     "web/src/workspace/HelpMenu.tsx",
+     "web/src/App.tsx"
+    ],
+    "viewport": "all"
+   },
+   {
+    "id": "FS-10",
+    "severity": "polish",
+    "area": "Window title in app windows",
+    "problem": "An installed app window or Dock app shows only document.title in its title bar, and that is always the static 'OpenEtch'. Fusion and LightBurn show the open document and an unsaved-changes marker.",
+    "evidence": "A grep for document.title in web/src finds nothing. index.html:7 has <title>OpenEtch</title>.",
+    "recommendation": "Keep document.title in sync as '<project or doc name>' + ' •' when dirty + ' — OpenEtch', using the projectName, docName and dirty values TopBar already receives. With window-controls-overlay this text is hidden, so the top bar's own ProjectIndicator carries it.",
+    "files": [
+     "web/src/App.tsx",
+     "web/src/components/TopBar.tsx"
+    ],
+    "viewport": "installed app windows, browser tabs"
+   },
+   {
+    "id": "FS-11",
+    "severity": "polish",
+    "area": "vh units on touch browsers",
+    "problem": "Context menus and some popovers cap their height with 100vh. In iPad and iPhone Safari tabs, 100vh is the large viewport (the toolbar collapsed), so menus near the bottom can extend under the Safari toolbar or the keyboard. The shell already uses 100dvh correctly.",
+    "evidence": "styles.css:1789 `.ctx-menu { max-height: calc(100vh - 8px) }`. components/edit.css:320 has the same rule.",
+    "recommendation": "Use `calc(100dvh - 8px - env(safe-area-inset-bottom))`, with a 100vh fallback declared first. For menus opened while the on-screen keyboard is up, consider sizing from visualViewport.",
+    "files": [
+     "web/src/styles.css",
+     "web/src/components/edit.css"
+    ],
+    "viewport": "iPad/iPhone Safari tab"
+   }
+  ],
+  "architecture_notes": "What each browser allows for OpenEtch served at http://192.168.1.20:7878. Researched in November 2026; behaviour on real iPad and iPhone hardware is not verified.\n\nElement full screen (Fullscreen API on document.documentElement). Needs a user gesture. Does not need HTTPS.\n- Chrome/Edge (Windows, macOS): yes. Esc exits; with HTTPS, Keyboard Lock can keep Esc for the app.\n- Firefox: yes.\n- Safari on macOS 16.4+: yes, unprefixed.\n- iPadOS Safari: supported. Caveats: an X overlay, swipe down exits, and focusing an input or opening the keyboard has been reported to exit full screen.\n- iPhone Safari: no, still video-only as of iOS 26. The WebKit bug and forum threads show no element full screen in iOS 26 or the Safari 27 betas.\n- Android Chrome: yes.\n\nApp window with only a title bar:\n- Chrome/Edge: manifest install with display standalone, or window-controls-overlay to merge the top bar into the title bar. Needs a secure context: HTTPS, localhost, or the 'Insecure origins treated as secure' flag for that exact origin. Chrome's 'Install page as app' / Create shortcut 'Open as window' may work on http without a manifest; not verified.\n- Safari 17+ (macOS Sonoma or later): File > Add to Dock works for any site, http included. It copies cookies but not localStorage, which is why FS-03 matters, and it uses the manifest or apple- meta tags when present.\n- iOS/iPadOS: Add to Home Screen. Since iOS/iPadOS 26 every site opens as a web app by default; works over http. Its storage is isolated from Safari. Without black-translucent it shows the status bar only.\n- Firefox on Windows: Taskbar Tabs (experimental, Labs, 143+). Firefox on macOS: none.\n- Android: real install needs HTTPS.\n\nAPIs that need HTTPS and matter for this app: service worker, beforeinstallprompt/installability (Chromium), Screen Wake Lock (keep the iPad awake while monitoring a burn), Keyboard Lock (Esc in full screen), getUserMedia (Camera.tsx browser camera), Sec-Fetch-* headers (strengthen click approval), async Clipboard (copy/paste currently uses copy/paste events, which work on http).\n\nEngine changes to support all of this:\n- Optional TLS: --tls-cert/--tls-key with rustls, or document Caddy / tailscale serve in front.\n- A persistent access token, and a 'require token even on loopback' mode for proxy setups.\n- --allow-host for the HTTPS name.\n- Static serving: a real 404 for missing assets, Cache-Control (index no-cache, assets immutable), and precompressed br/gzip.\n- MIME types are already correct via mime_guess (webmanifest is application/manifest+json, js is text/javascript). The web client already switches to wss: on https (api/client.ts:272).\n\nRecommended HTTPS path: tailscale serve now (no code, a trusted certificate, all four device types have clients), or Caddy with tls internal if the owner does not want Tailscale. Later, engine-native TLS with a built-in local CA and a one-tap profile download for iPad/iPhone. For immediate use on the owner's own PC and MacBook in Chrome/Edge, the insecure-origin flag unlocks install and window-controls-overlay with no infrastructure.\n\nSources consulted: caniuse requestFullscreen; Apple Developer Forums thread 133248 (iOS element full screen); WebKit bugs 205917, 206854 and 212934; Apple support 104996 (Safari web apps on Mac); WWDC23 session 10120; heise and iDownloadBlog on iOS 26 Home Screen web apps; Mozilla support 'web-apps-firefox-windows'; MDN Keyboard.lock (secure context only) and Element.requestFullscreen."
+ },
+ {
+  "key": "ux",
+  "summary": "I audited the UX and information architecture of OpenEtch's web UI. I read the code in web/src (App.tsx, the top bar, toolbar, menus, Modal, Laser dock, job controls, Viewport touch handling, Timeline, and all the CSS). I also checked the simulator's state over HTTP at 127.0.0.1:7979 (/api/machine, /api/documents, /api/prefs, the asset files and their headers). I did not use the browser pane, so pixel widths and heights are estimates from the CSS and should be checked at 375, 768, 1280x720 and 1470x870.\n\nThe base is strong:\n- Fusion-style collapsible docks with a Window menu.\n- A LightBurn-faithful editing model that uses pointer events.\n- A Fusion-style timeline that shows who made each change (you, AI or script).\n- Theme tokens in light and dark, reduced-motion support, and translated text.\n- STOP lives in the top bar.\n\nThe main problems are layout density (built for 1920px+ screens), a missing app shell for full screen and installing as an app, safety status that is only visible inside the Laser panel, and touch support that maps the mouse model one-to-one.\n\nTop UX improvements, in priority order:\n1. **Keep STOP and the Design/Laser switch on screen at every width.** By the CSS sums, at 375–834px the right-hand group of the top bar overflows. STOP is clipped and the Design/Laser tabs shrink to almost nothing.\n2. **Show machine state everywhere.** Add a top-bar status chip (Idle / Framing / Running 42% / Paused / Offline) with Pause and Stop frame, a banner when the connection drops, and refusal reasons shown inline in the Laser panel.\n3. **Make Start a single flow.** Today the toolbar Start, the Alt+S hotkey and \"Start here\" skip the checklist UI and work from the Design workspace. The Start tooltip says Esc stops a burn, but it does not. There is no stop hotkey usable on a Mac or iPad keyboard.\n4. **Rebuild the Design toolbar.** It is about 2,000px wide and scrolls sideways at every laptop width. Use Fusion-style groups (CREATE / MODIFY / ARRANGE / INSERT / INSPECT) plus a vertical LightBurn-style drawing-tool rail on the left.\n5. **Cut the stacked bars from about 290px to about 170px on a MacBook.** Hide document tabs when only one document is open, use a compact toolbar, a collapsible 28px timeline, and one bottom bar that combines status, snapping, zoom and the palette. Make the side panels resizable and close the left one by default below 1440px.\n6. **Add full screen and app-window support.** Add a web manifest (manifest.webmanifest and favicon.ico currently return the HTML page), app icons and theme-color, and a View > Full screen toggle (Fullscreen API, which works on plain http). Add Help text for Chrome/Edge \"open as window\", Safari \"Add to Dock\" and iPad \"Add to Home Screen\". Optional HTTPS on the Pi would enable install, Wake Lock and the browser camera.\n7. **Make touch work properly.**\n   - Selection modes on the canvas (Add/Toggle chips, and a marquee tool for touch).\n   - Long-press opens the context menu.\n   - Larger targets when the pointer is coarse, and compact rows on desktop.\n   - On phones, use a bottom sheet instead of an 86%-wide drawer that opens on every tap.\n8. **Restructure the menus.**\n   - One menubar with submenus and arrow-key navigation, and a max-height on the File menu (about 30 items, so the bottom ones can't be reached on a MacBook).\n   - Remove the duplicate entries (two Preferences items, Arrange as both a dropdown and a button grid).\n   - Replace the toolbar's raw JSON Commands button with a Fusion-style \"S\" command search.\n   - Turn the roughly 40-item context menu into short menus with submenus.\n9. **Fix WCAG AA contrast.**\n   - Muted text: 3.0–3.3:1 in light mode.\n   - White text on blue buttons: 3.31 (light) and 2.67 (dark).\n   - White text on the amber chip: 2.77 and 2.10.\n   - STOP in dark mode: 3.49.\n   - Input borders: 1.6:1.\n10. **Build one dialog component.** It needs a focus trap, a dialog stack so Escape closes only the top dialog, no closing a form by tapping the backdrop, size variants, and full-screen sheets on phones.\n11. **Onboarding.** Show a card on the empty canvas, and turn Beginner Mode into a curated toolbar plus a guided Preview → Frame → Start bar.\n12. **Polish.** One icon set (Lucide, ISC licence, with Tabler, MIT, for CAD-specific icons), token scales for type, spacing and corner radius, compressed and cached assets, and lazy-loaded dialogs.",
+  "findings": [
+   {
+    "id": "UX-01",
+    "severity": "blocker",
+    "area": "Responsive layout / safety-critical UI",
+    "problem": "On phones and iPad portrait the top bar's right-hand group (.topbar-actions, flex:none) is wider than the window. STOP is the right-most item, so it is clipped. The Design/Laser switcher (.workspaces, min-width:0, overflow-x:auto) is the only item allowed to shrink, so it shrinks to almost nothing.",
+    "evidence": "styles.css: .topbar-actions {flex:none}; .topbar .workspaces {min-width:0; overflow-x:auto}; .app {overflow:hidden}. The right-hand group is Window menu (~74px), theme (34), gear (34), Help (~62), undo (34), redo (34), connection dot (~17), STOP (~86 incl. icon) and 7 gaps: about 407px at the <=480px rules, plus the File button (~50). That is about 475px against 375–430px phones. At 768px the actions are ~612px (the connection text 'Live · Laser connected' is still shown), leaving about 48px for brand + Design/Laser. Estimated from the CSS, not measured in a browser.",
+    "recommendation": "Give the top bar priority slots. STOP and the machine status chip are pinned on the right and never shrink. The workspace switch never drops below its content width (use a compact 'D | L' or icon segmented control on phones). Move theme, Preferences, Help, Window, undo and redo into a single overflow menu below about 900px; on touch, undo/redo can move to the canvas HUD. Add a regression check at 360, 375, 768 and 834px that STOP's bounding box is inside the viewport.",
+    "files": [
+     "web/src/components/TopBar.tsx",
+     "web/src/styles.css",
+     "web/src/workspace/HelpMenu.tsx",
+     "web/src/workspace/DockHost.tsx"
+    ],
+    "viewport": "phone 360–430px; iPad portrait 768–834px"
+   },
+   {
+    "id": "UX-02",
+    "severity": "major",
+    "area": "Toolbar IA / small screens",
+    "problem": "The Design toolbar is about 2,000px wide and only scrolls sideways, so at 1280–1470px (MacBook) and even 1920px a large part is off-screen, including the Properties panel toggle at the far end. Its grouping mixes concerns:\n- Import sits among the drawing tools, and drawing tools are split across three groups.\n- 'Arrange' appears both as a dropdown and as a 16-button grid.\n- 'Edit' is both a group name and a dropdown.\n- 'Laser Tools' appears in the Design workspace.\n- A developer 'Commands' (raw JSON) button is in both workspaces.",
+    "evidence": "Toolbar.tsx, EditMenus.tsx, useDesignUi.tsx toolbar, useTextTools.tsx toolbar and useLibsUi.tsx toolbar give about 24 .tool-btn (min-width calc(44px+20px*icon-scale) = 64px, labels at 11.5px) plus the 8x2 arrange grid (8x26px) and the snap grid. styles.css .toolbar {overflow-x:auto} with no wrap; tool-btn min-height 52px gives a toolbar row about 61px tall.",
+    "recommendation": "Use Fusion's panel pattern: icon row plus a caption dropdown (CREATE ▾, MODIFY ▾, ARRANGE ▾, INSERT ▾, INSPECT ▾), icon-only at <1440px with the caption as the label. Move the drawing tools (Select, Rect, Ellipse, Polygon, Line, Pen, Text, Barcode, Nodes, Trim, Measure) to a 40px vertical rail on the left like LightBurn's Creation toolbar, because width is cheaper than height on a 16:10 laptop. Fold the arrange grid into the ARRANGE dropdown (keep a small optional 'Align' strip when 2+ objects are selected). Move Snap/Grid/Filled view to the bottom bar like Fusion's navigation bar. Remove Commands from the toolbar (see UX-08). Keep the Laser workspace toolbar as Preview | Frame ▾ | Start.",
+    "files": [
+     "web/src/components/Toolbar.tsx",
+     "web/src/components/EditMenus.tsx",
+     "web/src/design/useDesignUi.tsx",
+     "web/src/text/useTextTools.tsx",
+     "web/src/libs/useLibsUi.tsx",
+     "web/src/styles.css"
+    ],
+    "viewport": "MacBook 1280x800 – 1470x956; also 1920"
+   },
+   {
+    "id": "UX-03",
+    "severity": "major",
+    "area": "Small-screen layout (vertical budget)",
+    "problem": "About 290px of stacked bars before the canvas: top bar 48, document tabs ~30 (shown even with one document), toolbar ~61, numeric bar 38+, palette ~30, timeline 58, status bar ~24. In Safari on a 13\" MacBook (~1280x720 usable) the canvas gets about 430px. The side panels are fixed at 272 + 320 = 592px (46% of 1280) and cannot be resized. Breakpoints are scattered (480/560/600/640/760/900 in CSS, 1023 in JS) and none is height-based.",
+    "evidence": "styles.css .app grid rows '48px auto auto minmax(0,1fr) auto auto'; .timeline height calc(58px + safe-area); workspace.css .numeric-bar min-height 38px and .doc-tabs min-height 30px. GET /api/documents on the simulator returns one document, and DocTabs.tsx shows the bar whenever the route exists. .panel width 272px and .panel-right 320px have no resize handle. NARROW_QUERY '(max-width: 1023px)' in App.tsx.",
+    "recommendation": "Target about 170px of bars at 1280x720:\n- 40px top bar (with doc tabs merged in only when >1 doc).\n- 40–44px compact toolbar.\n- Numeric fields in the toolbar's right side, or shown only with a selection.\n- Timeline collapsible to a 28px strip (Fusion's is about 30px) with the latest step and marker.\n- One 30px bottom bar combining status, snap/grid/view toggles, zoom and the colour palette.\nAdd panel splitters (remember the widths). Below 1440px, close the Browser by default or float it over the canvas like Fusion's Browser. Replace the ad-hoc breakpoints with 3–4 layout modes computed from width, height and pointer type (e.g. phone <700, tablet 700–1099 or coarse pointer, laptop 1100–1439 or height <860, desktop ≥1440).",
+    "files": [
+     "web/src/App.tsx",
+     "web/src/styles.css",
+     "web/src/workspace/workspace.css",
+     "web/src/workspace/DocTabs.tsx",
+     "web/src/components/Timeline.tsx",
+     "web/src/workspace/StatusBar.tsx",
+     "web/src/workspace/PaletteBar.tsx",
+     "web/src/workspace/NumericBar.tsx"
+    ],
+    "viewport": "1280x720 (Safari usable), 1470x870"
+   },
+   {
+    "id": "UX-04",
+    "severity": "major",
+    "area": "Full screen / app window",
+    "problem": "There is no full-screen mode and no way to run the app as an app window. There is no web manifest, favicon or app icons, and no theme-color. The only hint is the deprecated apple-mobile-web-app-capable meta tag. No code calls the Fullscreen API. On iPhone/iPad the safe-area bottom inset is applied to the timeline, not to the status bar (the last row), so the status bar sits under the home indicator. There is no top inset for standalone mode.",
+    "evidence": "GET /manifest.webmanifest and /favicon.ico on :7979 return 200 text/html (the SPA fallback, 474 bytes). web/index.html has only viewport-fit=cover and apple-mobile-web-app-capable. grep for requestFullscreen/fullscreen/display-mode in web/src finds nothing. styles.css .timeline padding-bottom env(safe-area-inset-bottom) while StatusBar renders after Timeline in App.tsx.",
+    "recommendation": "1) Add manifest.webmanifest with name/short_name, display 'standalone', theme_color/background_color matching --topbar-bg, and 192/512 plus maskable icons. Add <link rel=manifest>, apple-touch-icon, <meta name=theme-color> for light and dark, and mobile-web-app-capable. Make the engine serve them with the right content types instead of the SPA fallback.\n2) Add View > Full screen (F11 on Windows, Ctrl+Cmd+F on Mac, plus a top-bar button): document.documentElement.requestFullscreen, with the webkit prefix for iPadOS. Hide it on iPhone, where only standalone mode works.\n3) Add a Help > 'Use as an app' page: Chrome/Edge 'Create shortcut > Open as window' (works on plain http), Safari 'Add to Dock', iPad 'Add to Home Screen'.\n4) Move the bottom safe-area padding to the last row and add env(safe-area-inset-top) to the top bar.\n5) Optionally serve HTTPS on the Pi with a local CA. That enables real PWA install, Window Controls Overlay (a true title-bar-only window), Screen Wake Lock (keep the iPad on during a job), the browser camera and the async clipboard.",
+    "files": [
+     "web/index.html",
+     "web/vite.config.ts",
+     "web/src/styles.css",
+     "web/src/App.tsx"
+    ],
+    "viewport": "all; especially iPad and MacBook"
+   },
+   {
+    "id": "UX-05",
+    "severity": "major",
+    "area": "Safety-critical UI: Start",
+    "problem": "Three Start entry points behave differently:\n- The Laser dock's Start shows the Job Checklist and is disabled until every item is ticked.\n- The toolbar Start and the Alt+S hotkey call runJob with checklist=null, show no checklist, and work from the Design workspace, where no job status is visible. The engine refuses only if a gate is on; the checklist is off by default per /api/prefs.\n- PreviewTimeline 'Start here' is a third path.\nStart's tooltip promises 'STOP or Esc ends it', but Esc only clears the tool or selection. The Stop hotkey is Ctrl+Pause / Ctrl+Cancel, keys a MacBook or iPad keyboard does not have. Start uses the generic blue btn-primary, the same style as every dialog OK. Neither Start is disabled while offline or while a job is running, and neither says what will burn (whole job vs Cut Selected Graphics, estimated time).",
+    "evidence": "App.tsx requestRun: runJob(noPinMode(machine), selection.objects, null, null, …) and handler 'laser.requestRun' (no workspace check); Toolbar.tsx tool-run disabled only by designOnly; LaserDock.tsx Start disabled={designOnly || requesting || (noPin && !gates.complete)}; PreviewTimeline.tsx runJob(!!p.noPin, [], startAt, null, …). en.ts 'laser.startTitle': 'Plan and burn the job now (no PIN on this engine). STOP or Esc ends it.' hotkeys.ts laser.stop ['Ctrl+Pause','Ctrl+Cancel']; App.tsx Escape only clears tool or selection. /api/prefs device_prefs.checklist.enabled=false.",
+    "recommendation": "Make one StartButton/startFlow used by the toolbar, the hotkey, the dock and 'Start here':\n- Starting from the Design workspace switches to Laser (or opens the job bar) and shows the checklist inline. If the checklist is on and unticked, the hotkey opens it instead of firing.\n- The label carries the scope: 'Start · selection (3) · ~2:14'.\n- Disabled with a visible reason when offline, already running, framing or design-only.\n- Distinct style: an amber 'fire' button with a laser glyph, never the dialog-blue primary, and STOP always larger than Start.\n- Fix the copy, or bind Esc to stop while a job or frame is active (as the copy promises). Add a Mac-friendly stop key (e.g. Esc while running, or Ctrl/Cmd+.).\n- Show the stop hotkey on the STOP tooltip.",
+    "files": [
+     "web/src/App.tsx",
+     "web/src/components/Toolbar.tsx",
+     "web/src/workspace/LaserDock.tsx",
+     "web/src/components/PreviewTimeline.tsx",
+     "web/src/components/JobControls.tsx",
+     "web/src/workspace/hotkeys.ts",
+     "web/src/workspace/locales/en.ts"
+    ],
+    "viewport": "all"
+   },
+   {
+    "id": "UX-06",
+    "severity": "major",
+    "area": "Feedback: job, laser and connection status",
+    "problem": "Machine state appears in four places, none of them prominent outside the Laser panel:\n- The top-bar connection text shows only the link ('Live · Simulator'), not framing or running.\n- Status-bar text.\n- The Laser dock.\n- A pending-runs pill.\nThe framing hotkeys (Ctrl+Shift+A, Alt+R) and Alt+S work in the Design workspace with only a toast as feedback. On narrow screens the Laser panel is a drawer that starts closed. When the engine link drops there is no banner (on phones only a coloured dot, since .conn-text is hidden ≤760px), and STOP then fails with a generic error toast. Start refusals (door open, Require Framing, checklist) appear only as 7-second toasts at the bottom right, over the panel. With a PIN, 'Request run' is in the Laser dock but PIN approval is in the Runs card of a separate Machine dock.",
+    "evidence": "TopBar.tsx machineText uses connected/sim only; App.tsx statusMachineText goes to the status bar; LaserDock.tsx .laser-status role=status; App.tsx toasts kind error with 7000ms timeout, aria-live polite; no use of link==='closed' for a banner; styles.css @media (max-width:760px) .conn-text {display:none}; RunsCard is rendered in the 'machine' Dock in App.tsx.",
+    "recommendation": "Add a status chip to the top bar, next to STOP, in both workspaces and on phones: Idle (grey), Framing (amber, pulsing, with an inline 'Stop frame'), Running 42% · 3:12 left (red/amber, with Pause), Paused, Offline (red). Tapping it opens the Laser panel or sheet. When the link closes, show a full-width banner: 'Lost connection to the laser engine – reconnecting… STOP may not reach the laser; use the hardware E-stop.' Show Start refusals as persistent messages above the Start button until resolved. Put PIN approval right below Request run. Make error toasts role=alert and keep them until dismissed when they concern the machine.",
+    "files": [
+     "web/src/components/TopBar.tsx",
+     "web/src/App.tsx",
+     "web/src/workspace/LaserDock.tsx",
+     "web/src/components/LaserPanel.tsx",
+     "web/src/api/useEngine.ts"
+    ],
+    "viewport": "all; worst on iPad portrait and phone"
+   },
+   {
+    "id": "UX-07",
+    "severity": "major",
+    "area": "Touch (iPad) and phone interaction",
+    "problem": "Touch copies the mouse model without filling the gaps:\n- One finger on empty space pans and a tap clears the selection, so there is no marquee and no way to add to or toggle the selection.\n- The context menu depends on the 'contextmenu' event, which iOS Safari does not fire on long-press.\n- Arrange buttons are 26x24px and palette swatches 22px tall, against the stated 40px touch-target rule.\n- There is no pointer:coarse density switch: desktop menus use 44px rows (a ~40-item context menu is about 1,760px tall) while touch-only targets stay tiny.\n- On narrow screens, selecting any object auto-opens the 86vw Properties drawer over the canvas, so you cannot drag what you just tapped.\n- No touch-action: manipulation on buttons and no touch-callout suppression on chrome.",
+    "evidence": "Viewport.tsx: `if (e.pointerType === \"touch\") { gesture = pan … clearOnTap }` before the marquee branch; onContextMenu only; styles.css .mini-btn 26x24, workspace.css .pal-swatch height 22px, .menu-item min-height 44px for all pointers, only one @media (pointer: fine) for font size; App.tsx setSelection: `if (narrow && workspace === 'design' && …) setRightOpen(true)`; no grep hits for touch-action: manipulation.",
+    "recommendation": "Add a canvas HUD for touch with sticky selection modes: Select, +Add, ±Toggle, Box (marquee left-to-right encloses / right-to-left crosses, kept from LightBurn). Long-press (500ms, little movement) opens the context menu. Two-finger tap = undo, three-finger = redo (Procreate/Shapr3D convention). Density tokens: --row-h 28px and --hit 28px for fine pointers, 40–44px for any-pointer: coarse, applied to menus, mini buttons, swatches and tree rows. Do not auto-open the drawer: on phones use a bottom sheet with a peek state (position/size/layer) that can be dragged up. Add `button{touch-action:manipulation}` and `.topbar,.toolbar,.statusbar{-webkit-user-select:none;-webkit-touch-callout:none}`. Let an Apple Pencil (pointerType pen) keep mouse behaviour.",
+    "files": [
+     "web/src/components/Viewport.tsx",
+     "web/src/App.tsx",
+     "web/src/styles.css",
+     "web/src/workspace/workspace.css",
+     "web/src/components/ContextMenu.tsx"
+    ],
+    "viewport": "iPad (portrait/landscape), phone"
+   },
+   {
+    "id": "UX-08",
+    "severity": "major",
+    "area": "Menus and information architecture",
+    "problem": "Menu problems:\n- The File menu has about 30 entries (New, Open, Recent, Save, Save As, Import, two LightBurn entries, G-code, Devices, Download, Export, Print, two image exports, three template entries, Notes, Backups, Autosave status, Import options, 'Preferences and bundles…', New tab, 'Preferences…', Edit hotkeys, Material Library, Find My Laser, Batch, Job log) at 44px each and has no max-height. On an 800px-high screen the bottom items cannot be reached because html/body are overflow:hidden.\n- Menus are split three ways: File at top left, Window and Help at top right, and Edit/Tools/Modify/Arrange/Laser Tools as toolbar dropdowns.\n- Preferences is reachable three ways with two different meanings.\n- The canvas context menu is a flat list of about 40 items.\n- No menu supports arrow keys, focus on open or submenus.\n- The 'Commands' toolbar button opens a raw command list with JSON parameters, a developer and MCP tool presented as a main feature.",
+    "evidence": "styles.css .menu has no max-height (only .ctx-menu caps it); FileMenu.tsx items plus useFilesUi.tsx menu, useLibsUi.tsx fileItems and useWorkspace.tsx WorkspaceFileItems; en-files 'files.menuPrefs' 'Preferences and bundles…' and en.ts 'file.preferences'; App.tsx menuItems; ContextMenu.tsx renders buttons with no key handling; Dialogs.tsx CommandPalette parses JSON.parse(params).",
+    "recommendation": "One LightBurn-style menubar on desktop (File, Edit, View, Arrange, Tools, Laser, Window, Help), collapsing into a single ≡ menu on tablets and phones. Build one Menu primitive with submenus, roving focus, arrow/Home/End/type-ahead, focus-first-item on open, and max-height with scrolling, then use it for the menubar, the toolbar dropdowns and the context menu. Move Material Library, Find laser, Batch and Job log to Laser or Window; group Templates, Backups and Notes under File > Project ▸. Merge the two Preferences into one dialog with sections. Limit the context menu to about 12 entries (Cut/Copy/Paste/Duplicate/Delete, Group/Ungroup, Arrange ▸, Modify ▸, Laser ▸ Frame selection / Start point, Select ▸). Replace 'Commands' with a Fusion 'S' search box over UI actions and hotkeys, with recents. Move the JSON console to Help > Developer > Engine commands.",
+    "files": [
+     "web/src/components/FileMenu.tsx",
+     "web/src/files/useFilesUi.tsx",
+     "web/src/libs/useLibsUi.tsx",
+     "web/src/workspace/useWorkspace.tsx",
+     "web/src/workspace/HelpMenu.tsx",
+     "web/src/workspace/DockHost.tsx",
+     "web/src/components/ContextMenu.tsx",
+     "web/src/components/Dialogs.tsx",
+     "web/src/App.tsx"
+    ],
+    "viewport": "MacBook height (≤800px) and all"
+   },
+   {
+    "id": "UX-09",
+    "severity": "major",
+    "area": "Colour and contrast (WCAG AA)",
+    "problem": "Several theme token pairs fail WCAG AA: muted secondary text (hints, units, menu shortcut hints, tree meta), white text on the accent (every primary button), white text on warn chips, the dark-theme STOP, the amber Request run/Start icon, and input borders (WCAG 1.4.11 asks 3:1 for UI components).",
+    "evidence": "Computed from styles.css tokens:\n- Light: --muted #8a8e95 on panel 3.18, on chrome 3.02, on surface 3.29; white on --accent #0696d7 3.31; accent text on panel 3.20; white on --warn #e08600 2.77; .tool-run icon #e08600 on chrome 2.54; --ok text 3.36; --border #c9cbcf on surface 1.62.\n- Dark: white on #2aa8e8 2.67; white on --danger #ef5350 (btn-stop, pill) 3.49; white on warn 2.10; --muted on surface 3.71; --border 1.58.\n- 10px timeline label in --muted.",
+    "recommendation": "Light theme:\n- --accent #0a73ad (white 5.16, as text 4.99), hover #08608f.\n- --muted #6b7078 (4.57 on chrome).\n- Input border #8a8f98 (3.14).\n- Warn chip text #3a2400 on amber (5.29), run icon #b35c00 (4.33, large icon).\n- --ok text #23803b.\nDark theme:\n- Keep the bright accent for text and focus, but use #0b6fa6 or #1b7fb5 as the button fill (or dark text on #2aa8e8).\n- STOP fill #c62828 (5.62) in both themes.\n- --muted #9aa1a9.\n- Input border about #757c86.\nAdd a contrast unit test over the token pairs (the token table already exists) so regressions fail CI.",
+    "files": [
+     "web/src/styles.css",
+     "web/src/components/edit.css",
+     "web/src/workspace/theme.ts"
+    ],
+    "viewport": "all"
+   },
+   {
+    "id": "UX-10",
+    "severity": "major",
+    "area": "Dialogs: consistency and keyboard",
+    "problem": "There are about 44 dialog call sites on one Modal, which has these problems:\n- No initial focus (only a few dialogs autoFocus), no focus trap, no focus restore.\n- Every open Modal adds its own window keydown listener for Escape, so with two dialogs mounted one Escape closes both.\n- A pointer-down on the backdrop closes any dialog, including forms such as the Device editor, Save As and Grid array, which loses input after an accidental tap on iPad.\n- Only two widths (420 and 860px); on phones dialogs are centred cards, not full-screen sheets, so footers can sit under the on-screen keyboard.\n- The close button's aria-label is hard-coded 'Close' (not translated).\n- Cancel is labelled with two different keys (dlg.cancel / common.cancel).",
+    "evidence": "components/ui.tsx Modal: useEffect window keydown Escape → onClose; onPointerDown on backdrop → onClose; aria-label='Close'; styles.css .modal width min(420px,100%), .modal-wide min(860px,100%). WsModal only stops propagation of other keys.",
+    "recommendation": "Write a Dialog primitive with:\n- A module-level dialog stack, so only the top dialog handles Escape and Enter.\n- A focus trap with focus restore, and first-field or primary-button initial focus.\n- A `dismissable` flag (backdrop closes only non-form dialogs; forms ask 'Discard changes?' when dirty).\n- Sizes sm 360 / md 480 / lg 720 / xl 960 / full.\n- Below 700px a bottom sheet or full-screen page with a sticky footer and visualViewport-aware padding.\n- aria-labelledby on the title, and translated labels.\nKeep Cancel on the left and the primary action on the right (already consistent). Use one non-modal 'tool window' variant for Devices, Material Library and Image settings so the canvas stays usable.",
+    "files": [
+     "web/src/components/ui.tsx",
+     "web/src/workspace/WsModal.tsx",
+     "web/src/libs/ui.tsx",
+     "web/src/styles.css"
+    ],
+    "viewport": "all; phone/iPad most"
+   },
+   {
+    "id": "UX-11",
+    "severity": "major",
+    "area": "Onboarding, empty states and Beginner Mode",
+    "problem": "A new or empty document shows a blank field with no guidance: no hint to drop a file here, draw a shape, open a project or check the device. The Properties panel only says 'nothing selected'. Beginner Mode only hides about 8 advanced options (Distribute, Mirror across line, Optimization, Rotary, Cut Selected, advanced cut settings, Start point). It leaves Commands, Pen, Trim, Edit nodes, Modify, Tools and Laser Tools in the toolbar and gives no guided Laser workflow. Nothing checks the first-run setup (device, field size, lens, test grid).",
+    "evidence": "No grep hits for welcome/onboarding/empty-canvas in web/src; en.ts 'prefs.beginnerModeHint' lists the hidden items; Toolbar.tsx and EditMenus.tsx render regardless of beginnerMode except the Distribute buttons.",
+    "recommendation": "Show a centred empty-state card on the canvas: 'Drop SVG, DXF, image or .lbrn2 here' with Import, Open project, Draw (Rect/Text) and Templates buttons, and a small 'Laser: ComMarker B6 MOPA · Ready (simulator)' line. Make Beginner Mode a curated profile: a reduced toolbar (Select, Rect, Ellipse, Text, Import, Arrange basics), the Job Checklist on by default, Require Framing on, and a Laser step bar 1 Preview → 2 Frame → 3 Start that highlights the next step. Add a first-run wizard: pick a device (Find My Laser), confirm field and lens, run a material test (the test generators already exist).",
+    "files": [
+     "web/src/components/Viewport.tsx",
+     "web/src/components/PropertiesPanel.tsx",
+     "web/src/components/Toolbar.tsx",
+     "web/src/workspace/LaserDock.tsx",
+     "web/src/workspace/PreferencesDialog.tsx"
+    ],
+    "viewport": "all"
+   },
+   {
+    "id": "UX-12",
+    "severity": "minor",
+    "area": "Redundancy",
+    "problem": "The same information appears in several places and competes for small-screen space:\n- Cursor X/Y in the canvas bottom-left overlay and in the status bar.\n- Machine state in the top bar, status bar and Laser dock (but the useful framing/running state in none of the global spots).\n- Position and size in the Numeric bar and the Properties Object section.\n- Arrange as a dropdown, a mini grid and the context menu.",
+    "evidence": "Viewport.tsx .vp-bottom-left readout; StatusBar.tsx sb-xy; TopBar.tsx conn; App.tsx statusMachineText; NumericBar.tsx and PropertiesPanel.tsx ObjectSection.",
+    "recommendation": "Keep the cursor/size readout in the status bar only (the canvas overlay only while drawing, near the pointer, like Fusion's dimension tooltips). Keep machine state in the top-bar chip (UX-06) and the Laser panel. On laptops show the position/size fields either in the Numeric bar or in Properties (setting), not both.",
+    "files": [
+     "web/src/components/Viewport.tsx",
+     "web/src/workspace/StatusBar.tsx",
+     "web/src/components/TopBar.tsx",
+     "web/src/components/PropertiesPanel.tsx"
+    ],
+    "viewport": "MacBook and smaller"
+   },
+   {
+    "id": "UX-13",
+    "severity": "minor",
+    "area": "Iconography",
+    "problem": "At least five separate hand-drawn icon sources with different stroke weights and metaphors: the ui.tsx ICONS registry, EditMenus EIcon (stroke 1.7), inline SVGs in useTextTools.tsx, HelpMenu.tsx (Theme/Gear), NumericBar.tsx (Lock) and MaterialLibrary.tsx (Link). Some metaphors are weak, e.g. 'Arrange' as two squares and 'Edit' as a clipboard.",
+    "evidence": "grep viewBox=\"0 0 24 24\" in components/ui.tsx, components/EditMenus.tsx, text/useTextTools.tsx, workspace/HelpMenu.tsx, workspace/NumericBar.tsx, libs/MaterialLibrary.tsx, libs/useLibsUi.tsx.",
+    "recommendation": "Use one Icon registry built from Lucide (ISC licence; consistent 24px grid and 2px stroke, drawn at 1.5 for a CAD look), with Tabler Icons (MIT) filling CAD-specific gaps (vector-bezier, align-box-*, layout-distribute-*, ruler-measure, focus-centered, laser/flame). Copy the path data into the registry (no runtime dependency, which keeps the 'no UI library' rule) with a NOTICE file. Sizes: 20px toolbar, 16px menus and inspector, 24px touch HUD; colour via currentColor and the --icon token.",
+    "files": [
+     "web/src/components/ui.tsx",
+     "web/src/components/EditMenus.tsx",
+     "web/src/text/useTextTools.tsx",
+     "web/src/workspace/HelpMenu.tsx",
+     "web/src/workspace/NumericBar.tsx"
+    ],
+    "viewport": "all"
+   },
+   {
+    "id": "UX-14",
+    "severity": "minor",
+    "area": "Typography, spacing and token hygiene",
+    "problem": "There are 13 different font sizes (10, 10.5, 11, 11.5, 12, 12.5, 13, 13.5, 14, 15, 16, 18, 22px), 8 different corner radii (2, 3, 4, 6, 8, 9, 10, 18px) and spacing values from 1 to 24px including 3/5/7. The full dark palette is written out twice in styles.css (the media query and [data-theme=dark]), with more theme blocks in edit.css. uiScale scales fonts only, not padding or row heights. Numeric fields mostly lack tabular figures (8 font-variant-numeric rules).",
+    "evidence": "grep font-size/border-radius/padding across *.css; styles.css lines ~94–232.",
+    "recommendation": "Adopt the token scales described in architecture_notes (type, spacing, radius, elevation, density). Generate the dark block once (a shared custom-property set, or a tiny build step / CSS light-dark()). Make --ui-scale drive spacing and row height too. Use font-variant-numeric: tabular-nums on all numeric inputs and readouts.",
+    "files": [
+     "web/src/styles.css",
+     "web/src/components/edit.css",
+     "web/src/workspace/workspace.css"
+    ],
+    "viewport": "all"
+   },
+   {
+    "id": "UX-15",
+    "severity": "minor",
+    "area": "Performance of heavy views and delivery",
+    "problem": "The app ships as one 1.15MB JS chunk (plus 85KB CSS) with no compression and no Cache-Control from the engine, which is slow over the Pi's Wi-Fi to a phone. Rarely used dialogs (Camera, test generators, 3D slice, Barcode, image adjust, Devices editor) are not split out. The timeline renders every step chip and, while dragging, measures all chips with getBoundingClientRect, which will degrade with long AI-driven sessions.",
+    "evidence": "curl :7979/assets/index-BOkRz1yM.js = 1,146,534 bytes with and without Accept-Encoding: gzip; headers have no cache-control or content-encoding. Timeline.tsx chips.map(c => c.getBoundingClientRect()) on all chips.",
+    "recommendation": "Have the engine serve precompressed .br/.gz (vite-plugin-compression or build-time gzip) with `Cache-Control: public, max-age=31536000, immutable` for /assets/* and no-cache for index.html. React.lazy the heavy dialogs and libs windows. Virtualize the timeline (render the visible window plus 20 either side; group old steps into a 'history before' chip), and compute marker slots from known chip widths instead of measuring the DOM.",
+    "files": [
+     "web/vite.config.ts",
+     "web/src/App.tsx",
+     "web/src/components/Timeline.tsx"
+    ],
+    "viewport": "phone and iPad over Wi-Fi"
+   },
+   {
+    "id": "UX-16",
+    "severity": "minor",
+    "area": "Feedback, screen reader and copy",
+    "problem": "Toasts:\n- Errors are aria-live 'polite' (not role=alert) and auto-dismiss after 7s.\n- A toast is a click-to-dismiss div that cannot be focused and has no action button.\n- Toasts sit at the bottom right (bottom:76px), over the Properties/Laser panel.\nSome copy is not translated:\n- The viewport warning '{n} objects outside the galvo field (red). The laser cannot reach them.'\n- The 'Field …' and 'Workspace …' readouts.\n- togglePause toasts ('Job resumed.', 'Pausing the job.', 'No job is running.').\n- Modal 'Close'.\nThe disabled browser-camera button explains 'needs https' only in a tooltip, which touch users never see and many browsers don't show on disabled buttons.",
+    "evidence": "App.tsx toasts markup and timeouts; Viewport.tsx vp-warn literal text; JobControls.tsx togglePause literals; Camera.tsx title on a disabled button.",
+    "recommendation": "Toasts: role=status for info, role=alert for errors; errors stay until dismissed when they concern the machine; real <button> close with an optional action ('Show', 'Undo'); place toasts at the bottom centre above the bottom bar on narrow screens and away from the inspector on desktop. Move the literals into locales. Show 'Camera needs HTTPS – see Help' as inline text next to the disabled button.",
+    "files": [
+     "web/src/App.tsx",
+     "web/src/components/Viewport.tsx",
+     "web/src/components/JobControls.tsx",
+     "web/src/libs/Camera.tsx",
+     "web/src/components/ui.tsx"
+    ],
+    "viewport": "all"
+   },
+   {
+    "id": "UX-17",
+    "severity": "polish",
+    "area": "Focus visibility",
+    "problem": "There are only 4 :focus-visible rules. Menu items replace the outline with --accent-soft, a very faint fill (about 1.2:1 against the panel). Several inputs set outline:0 and rely on a 2px accent-soft ring. The canvas sets outline:none. Keyboard users struggle to see focus in menus and the inspector.",
+    "evidence": "grep focus-visible across *.css = 4; styles.css .menu-item:focus-visible {background: var(--accent-soft); outline:0}; files.css, text.css outline none.",
+    "recommendation": "Add a global token --focus-ring: 0 0 0 2px var(--panel), 0 0 0 4px var(--accent), applied to :focus-visible on button, [role=menuitem], [role=treeitem], input and select. For the canvas, show a subtle inset ring only when focused by keyboard.",
+    "files": [
+     "web/src/styles.css",
+     "web/src/files/files.css",
+     "web/src/text/text.css"
+    ],
+    "viewport": "desktop keyboard users"
+   }
+  ],
+  "architecture_notes": "Proposed app shell (Fusion feel with LightBurn editing). This is a refactor of App.tsx's grid, not of the engine.\n\n1. LayoutMode hook\n   - Replace the single NARROW_QUERY with one hook that returns 'desktop' (≥1440), 'laptop' (1100–1439 or height <860), 'tablet' (700–1099, or a coarse pointer at any width) or 'phone' (<700), plus a `coarse` flag from (any-pointer: coarse).\n   - Set data-layout and data-density attributes on <html> and drive all CSS from them. This removes the scattered 480/560/600/640/760/900 breakpoints.\n\n2. Shell slots\n   - AppBar (40px): ≡ menu or menubar, project name and dirty dot, doc tabs only when >1 document, the Design | Laser segmented control, the machine status chip, undo/redo, STOP (pinned, never inside an overflow menu).\n   - CommandBar (40–44px): Fusion panels with caption dropdowns. Icon-only below 1440px, icon and label above.\n   - ToolRail (40px, left, vertical): Select, the drawing tools, Text, Nodes, Trim, Measure. On phones it becomes a horizontal bottom tool strip.\n   - Canvas with HUD: tool options bar (et-bar already exists), touch selection-mode chips, fit/zoom buttons, empty-state card.\n   - Inspector (right; resizable 260–420px): Cuts/Layers and Properties as collapsible docks. On phones it becomes a bottom sheet with peek, half and full heights.\n   - BottomBar (28–30px): coordinates, selection size, snap/grid/filled toggles and grid step (moved from the toolbar), zoom %, units, colour palette.\n   - Timeline: collapsible strip (28px collapsed, 52px expanded).\n   - The Laser workspace swaps the CommandBar for Preview | Frame ▾ | Start, and the Inspector shows the Laser dock first.\n\n3. Shared stores and primitives\n   - A machine/job status store (useJobStatus and machineState already exist; lift them to App) used by the AppBar chip, Laser dock, status bar and touch HUD.\n   - One StartButton with startFlow(gates, scope) used by the toolbar, the hotkey, the dock and 'Start here'.\n   - One Menu primitive: submenus, roving focus, type-ahead, max-height with scroll, long-press trigger. Used by the menubar, toolbar dropdowns, the Dock window menu and the context menu; replaces ContextMenu, DropMenu, useMenu (HelpMenu) and the WindowMenu ad-hoc menus.\n   - One Dialog primitive: a stack manager for Escape/Enter, focus trap and restore, dismissable/dirty guard, sizes sm/md/lg/xl/full, and a sheet on phones. WsModal's stopPropagation becomes part of it.\n   - A command registry: the hotkeys.ts ids plus labels and handlers (already partly there in ws.keymap.handlers). It feeds the menubar, the 'S' command search and the hotkey editor from one source, and is the natural surface for MCP parity.\n\n4. Visual polish direction for a CAD tool\n   - Font: system-ui stack ('Segoe UI Variable', 'Segoe UI', -apple-system, 'SF Pro Text', Inter, sans-serif), with tabular-nums for all numbers.\n   - Type scale (px): 11 caption/hints, 12 labels/menus/inspector, 13 body/default, 15 section and dialog titles, 18 big stats (job progress). Weights 400/500/600 only. Uppercase only for 11px dock captions (letter-spacing .04em).\n   - Spacing scale (4px base): 2, 4, 8, 12, 16, 24, 32 as --sp-0…--sp-6. Inspector rows use 8px vertical / 12px horizontal padding; groups are separated by 16px.\n   - Density tokens:\n     - fine pointer: --row-h 28px, --ctl-h 28px, --hit 28px, toolbar icon 20px.\n     - coarse pointer: --row-h 40px, --ctl-h 40px, --hit 44px, icon 24px.\n   - Corner radius: 2px (inputs inside groups, chips), 4px (buttons, fields), 8px (popovers, dialogs, sheets). Drop 3/6/9/10/18.\n   - Elevation: 3 levels (popover, dialog, toast) as shadow tokens.\n   - Z-index scale: base, dock-float, menu, dialog, toast, critical-banner.\n   - Colour:\n     - Neutral greys (Fusion), one blue accent for selection and focus.\n     - Amber is reserved for 'laser armed/framing', red for STOP, errors and out-of-field, green for ready/OK, purple for AI-origin steps (already used).\n     - Apply the AA token fixes from UX-09 and add a contrast unit test over the token table.\n   - Icons: Lucide (ISC) with Tabler (MIT) for CAD-specific glyphs, inlined into one registry; 1.5 stroke at 20px.\n   - Component patterns:\n     - Fusion panel group (icon row plus caption ▾).\n     - Split button (Frame ▾ with Box/Outline/Selection only).\n     - Segmented control (workspace, units).\n     - Inspector row (label 84px | field | unit), collapsible dock section with header actions.\n     - Canvas HUD bar.\n     - Status chip with state colour and progress.\n     - Persistent inline alert (safety refusals), toast with action, empty-state card, bottom sheet, command search (S), radial or long-press menu on touch.\n\n5. Delivery and platform\n   - Serve the manifest, icons and theme-color; precompressed and immutably cached assets.\n   - Fullscreen toggle; correct safe-area handling.\n   - Optional HTTPS on the Pi (local CA) to unlock PWA install, Window Controls Overlay (a real title-bar-only window), Wake Lock during jobs, the browser camera and the async clipboard.\n\nVerification note: findings UX-01, UX-02 and UX-03 are computed from the CSS, not measured. Check them in the browser pane at 360x740, 768x1024, 1280x720 and 1470x870, and confirm STOP's bounding box and the toolbar's scrollWidth versus clientWidth."
+ }
+]
