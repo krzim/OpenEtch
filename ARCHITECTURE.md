@@ -326,7 +326,15 @@ computer while nobody watches it; the foot switch is the approval path that need
   - Send (`POST /api/machine/files/send`, UI only) stores a program that starts with its file name (`E7 01`), which
     makes a controller store it rather than run it (MeerK40t's emulator; unverified on hardware). It needs no
     approval because it does not fire; as a guard against a controller that ran it instead, the status register is
-    read after every datagram and the upload is stopped (`D8 01`) the moment it shows a running job.
+    read after every datagram while the controller answers, and the upload is stopped (`D8 01`) the moment it shows a
+    running job. A controller that takes the stream into a file (the simulator's model) keeps that read instead of
+    answering it, so the reads stop there and the status is read again after the end of file. An upload that fails or
+    is stopped part way is ended (`D8 01`, `D7`, `D8 01`) and its half file deleted, so no partial job is left to be
+    started and the controller is not left taking later commands (a Stop, the next run) into the file; when that
+    cannot be done the error says a partial file may remain, and the next connect, run, frame, Send or Start that
+    finds the controller still storing (its status read unanswered) ends that file (`D7`, `D8 01`) and refuses once,
+    naming the partial file to delete. A Send or Delete cancels pending stored-file runs (the list's numbering
+    changed).
   - Framing is light-only: rapid moves `D9 10` with the option byte `02` ("nothing": no cut, not the red-light options,
     whose meaning is unverified), at the controller's own travel speed, refused off the bed. Framing and the pointer
     move the head, so they refuse MCP as for GRBL.

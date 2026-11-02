@@ -12,8 +12,11 @@
 //!   it was stored.
 //! - **Send stores, never runs** ([`RuidaController::upload_file`]): the program starts with its file name (`E7 01`),
 //!   which makes a controller store it (MeerK40t's emulator; unverified on hardware). Because a controller that ran the
-//!   upload instead would fire without an approval, the status register is read after every datagram and the
-//!   upload is stopped (`D8 01`) the moment it shows a running job.
+//!   upload instead would fire without an approval, the status register is read after every datagram while the
+//!   controller answers, and the upload is stopped (`D8 01`) the moment it shows a running job; a controller that
+//!   takes the stream into a file keeps the read instead of answering it, so the reads end there and the status is
+//!   read again after the end of file. An upload that fails or is stopped part way is closed (`D7`) and its half file
+//!   deleted, so no partial job is left to start and the controller is not left taking later commands into it.
 //! - **Framing is light-only**: rapid moves (`D9 10`) with the option byte that asks for nothing (`02`), never a cut
 //!   and never the red-light options (their meaning is unverified).
 //! - **Stop always wins** ([`RuidaController::abort`]): stop process (`D8 01`), sent at once; an [`AbortHandle`]
@@ -202,12 +205,28 @@ impl<L: RuidaLink> RuidaController<L> {
         if self.abort.is_requested() { Err(ControllerError::Aborted) } else { Ok(()) }
     }
 
-    /// Refuse while the controller runs a job of its own (started from its panel or by another program).
+    /// Refuse while the controller runs a job of its own (started from its panel or by another program), or while it
+    /// still takes an earlier upload into a file (see [`RuidaController::close_dangling_file`]).
     fn require_no_job(&mut self) -> Result<()> {
-        if self.read_status()? & mem::STATUS_JOB_RUNNING != 0 {
-            return Err(RuidaDriverError::JobRunning.into());
+        match self.probe_status()? {
+            None => Err(self.close_dangling_file()),
+            Some(s) if s & mem::STATUS_JOB_RUNNING != 0 => Err(RuidaDriverError::JobRunning.into()),
+            Some(_) => Ok(()),
         }
-        Ok(())
+    }
+
+    /// A read acknowledged but not answered: the controller still takes an upload that never ended (the link failed
+    /// part way, or OpenEtch stopped) into a file, and would keep every later command, a run included, in it. End the
+    /// file (`D7`, then `D8 01`) and refuse: its half file is now on the controller's list.
+    fn close_dangling_file(&mut self) -> ControllerError {
+        tracing::warn!("Ruida: the controller was still storing an unfinished upload; ending it (D7)");
+        let _ = self.command(&Command::EndOfFile);
+        let _ = self.command(&Command::StopProcess);
+        RuidaDriverError::PartialFile(
+            "the controller was still storing an earlier upload that never finished (it did not answer a status read);              that upload was ended now, so a partial file may be on the controller's list: delete it in the File List,              never start it"
+                .into(),
+        )
+        .into()
     }
 
     // ----- connect and status -----
@@ -219,7 +238,11 @@ impl<L: RuidaLink> RuidaController<L> {
         self.state = ControllerState::Uninitialized;
         self.abort.clear();
         self.link.send_payload(&[0xCE])?;
-        let card = self.read_memory(mem::CARD_ID)?;
+        let card = match self.command(&Command::GetMemory(mem::CARD_ID))? {
+            Some(Reply::Memory { addr, value, .. }) if addr == mem::CARD_ID => value,
+            None => return Err(self.close_dangling_file()),
+            other => return Err(reply_error("reading the card ID", other)),
+        };
         self.card_id = Some(card);
         let status = self.read_status()?;
         self.profile = Some(profile.clone());
@@ -359,7 +382,7 @@ impl<L: RuidaLink> RuidaController<L> {
         self.state = ControllerState::Running;
         self.control.start_count(payloads.len());
         let mut guard = RunGuard { ctl: self, done: false };
-        let result = guard.ctl.send_payloads(&payloads, false).and_then(|()| guard.ctl.wait_finished());
+        let result = guard.ctl.send_payloads(&payloads).and_then(|()| guard.ctl.wait_finished());
         guard.ctl.finish(&result);
         guard.done = true;
         result.map(|()| RunReport { run_id: armed.run_id().to_owned(), packets: payloads.len(), mark_time: None })
@@ -377,6 +400,11 @@ impl<L: RuidaLink> RuidaController<L> {
         }
         self.ready_for_job()?;
         self.expect_name(index, name)?;
+        // A stop that came in while the name was read: nothing is started.
+        if self.abort.is_requested() {
+            self.abort_after(&ControllerError::Aborted);
+            return Err(ControllerError::Aborted);
+        }
         tracing::info!(run_id = armed.run_id(), index, name, "starting armed Ruida stored file");
         self.state = ControllerState::Running;
         self.control.start_count(1);
@@ -422,16 +450,13 @@ impl<L: RuidaLink> RuidaController<L> {
         std::thread::sleep(self.poll.status_interval.max(Duration::from_millis(5)));
     }
 
-    /// Send `payloads` in order. `storing`: read the status register after each and stop the moment it shows a job
-    /// running (a controller that runs an upload instead of storing it).
-    fn send_payloads(&mut self, payloads: &[Vec<u8>], storing: bool) -> Result<()> {
+    /// Send a run's `payloads` in order, the stop request checked and pause/resume sent between them.
+    fn send_payloads(&mut self, payloads: &[Vec<u8>]) -> Result<()> {
         let mut paused = false;
         for (i, p) in payloads.iter().enumerate() {
             loop {
                 self.check_abort()?;
-                if !storing {
-                    self.pause_step(&mut paused)?;
-                }
+                self.pause_step(&mut paused)?;
                 if !paused {
                     break;
                 }
@@ -439,11 +464,80 @@ impl<L: RuidaLink> RuidaController<L> {
             }
             self.link.send_payload(p)?;
             self.control.set_sent(i + 1);
-            if storing && self.read_status()? & mem::STATUS_JOB_RUNNING != 0 {
-                return Err(RuidaDriverError::RanWhileStoring.into());
-            }
         }
         Ok(())
+    }
+
+    /// A status read that may go unanswered: `None` when the controller acknowledged it but sent no data (a
+    /// controller taking the stream into a file keeps every command, reads too, until the end of file).
+    fn probe_status(&mut self) -> Result<Option<u64>> {
+        match self.command(&Command::GetMemory(mem::MACHINE_STATUS))? {
+            Some(Reply::Memory { addr, value, .. }) if addr == mem::MACHINE_STATUS => {
+                self.status = Some(value);
+                Ok(Some(value))
+            }
+            None => Ok(None),
+            other => Err(reply_error("reading the status register", other)),
+        }
+    }
+
+    /// Send a stored file's `payloads` (Send). The status register is read after each datagram for as long as the
+    /// controller answers, and the upload stops the moment it shows a running job (a controller that runs the upload
+    /// instead of storing it). A controller that takes the stream into a file (`ruida::sim`, after MeerK40t's
+    /// emulator) keeps the read instead of answering it: the reads end there (each would be stored in the file),
+    /// and the status is read again once the end of file has closed it.
+    fn send_file_payloads(&mut self, payloads: &[Vec<u8>]) -> Result<()> {
+        let mut probing = true;
+        for (i, p) in payloads.iter().enumerate() {
+            self.check_abort()?;
+            self.link.send_payload(p)?;
+            if probing && i + 1 < payloads.len() {
+                match self.probe_status()? {
+                    Some(s) if s & mem::STATUS_JOB_RUNNING != 0 => return Err(RuidaDriverError::RanWhileStoring.into()),
+                    Some(_) => {}
+                    None => probing = false,
+                }
+            }
+        }
+        match self.probe_status()? {
+            Some(s) if s & mem::STATUS_JOB_RUNNING != 0 => Err(RuidaDriverError::RanWhileStoring.into()),
+            Some(_) => Ok(()),
+            None => Err(RuidaDriverError::Reply("the controller did not answer a status read after the end of file".into()).into()),
+        }
+    }
+
+    /// After a Send that failed or was stopped part way: stop (`D8 01`, in case the controller runs it), end the file
+    /// (`D7`: a controller still taking the stream into a file closes it, instead of keeping every later command,
+    /// a Stop or the next run included, in it), stop again, then delete the half file if the list gained one named
+    /// `name`, so no partial job is left on the controller to be started. Returns the error to report: `cause`, or
+    /// [`RuidaDriverError::PartialFile`] when a half file may remain.
+    fn abandon_upload(&mut self, cause: ControllerError, name: &str, before: u64) -> ControllerError {
+        tracing::warn!(%cause, name, "Ruida: the upload did not finish; closing and removing the partial file");
+        let _ = self.command(&Command::StopProcess);
+        let _ = self.command(&Command::EndOfFile);
+        let _ = self.command(&Command::StopProcess);
+        let removed = (|| -> Result<bool> {
+            let n = self.read_memory(mem::TOTAL_DOC_NUMBER)?;
+            if n <= before {
+                return Ok(false);
+            }
+            let index = u16::try_from(n).map_err(|_| RuidaDriverError::Reply(format!("the controller reports {n} files")))?;
+            self.expect_name(index, name)?;
+            self.command(&Command::DeleteDocument { index, other: 0 })?;
+            Ok(true)
+        })();
+        match removed {
+            Ok(true) => {
+                tracing::warn!(name, "Ruida: the partial file was deleted from the controller");
+                cause
+            }
+            Ok(false) => cause,
+            Err(e) => RuidaDriverError::PartialFile(format!(
+                "{cause}; a partial file {name:?} may be left on the controller and could not be removed ({e}): delete it \
+                 in the File List or on the controller's panel, never start it"
+            ))
+            .into(),
+        }
     }
 
     /// Read the status register until the job has finished.
@@ -528,8 +622,9 @@ impl<L: RuidaLink> RuidaController<L> {
     }
 
     /// Send: store `program` on the controller under its name (no [`Armed`] token: storing does not fire). The program
-    /// is checked like a run's ([`check_program`], `Purpose::Store`); the controller must show no running job before
-    /// and after every datagram (see the module docs). Returns the stored file as the list then shows it.
+    /// is checked like a run's ([`check_program`], `Purpose::Store`); the controller must show no running job before,
+    /// during (while it answers) and after the upload, and a failed upload leaves no half file (see the module docs).
+    /// Returns the stored file as the list then shows it.
     pub fn upload_file(&mut self, program: &RuidaProgram) -> Result<StoredFile> {
         let profile = self.profile.clone().ok_or(ControllerError::NotInitialized)?;
         if self.state == ControllerState::Running {
@@ -544,7 +639,7 @@ impl<L: RuidaLink> RuidaController<L> {
         tracing::info!(name = %name, bytes = program.len(), datagrams = payloads.len(), "sending a file to the Ruida controller");
         self.state = ControllerState::Running;
         let mut guard = RunGuard { ctl: self, done: false };
-        let result = guard.ctl.send_payloads(&payloads, true);
+        let result = guard.ctl.send_file_payloads(&payloads).map_err(|e| guard.ctl.abandon_upload(e, &name, before));
         guard.ctl.finish(&result);
         guard.done = true;
         drop(guard);
@@ -752,6 +847,235 @@ mod tests {
         assert_eq!(c.state(), ControllerState::Idle);
     }
 
+    /// A job that takes several datagrams.
+    fn big(power: f64) -> RdJob {
+        let mut j = square(power);
+        for i in 0..400 {
+            let o = f64::from(i % 50);
+            j.layers[0].polylines.push(vec![[10.0 + o, 10.0], [30.0 + o, 10.0], [30.0 + o, 30.0 + o]]);
+        }
+        j
+    }
+
+    #[test]
+    fn a_file_of_several_datagrams_is_stored_whole() {
+        // The simulator takes everything after `E7 01` into the file until the end of file, reads too: a status read
+        // between datagrams goes unanswered (and the next run must still work).
+        let (mut c, h) = ctl();
+        let p = RuidaProgram::from_job(&big(25.0), Some("BIG")).unwrap();
+        assert!(p.datagram_count() > 3);
+        let f = c.upload_file(&p).unwrap();
+        assert_eq!(f, StoredFile { index: 1, name: "BIG".into() });
+        assert_eq!(h.report().burns, 0, "stored, nothing fired");
+        c.start_file(1, "BIG", armed()).unwrap();
+        let burns = h.report().burns;
+        assert_eq!(burns, 4 + 400 * 2, "the whole file ran");
+        c.run_program(&RuidaProgram::from_job(&square(30.0), None).unwrap(), armed()).unwrap();
+        assert_eq!(h.report().burns, burns + 4);
+    }
+
+    /// A link that requests a stop, or fails, after `after` payloads of a stored file.
+    struct Cut {
+        sim: SimRuida,
+        abort: Option<AbortHandle>,
+        after: usize,
+        seen: usize,
+        storing: bool,
+    }
+
+    impl RuidaLink for Cut {
+        fn send_payload(&mut self, plain: &[u8]) -> Result<Option<Reply>, crate::LinkError> {
+            if plain.starts_with(&[0xE7, 0x01]) {
+                self.storing = true;
+            }
+            if self.storing && plain.first() != Some(&0xDA) {
+                self.seen += 1;
+                if self.seen == self.after {
+                    match &self.abort {
+                        Some(a) => a.request(),
+                        None => {
+                            self.storing = false;
+                            return Err(crate::LinkError::Io("cable pulled".into()));
+                        }
+                    }
+                    self.storing = false;
+                }
+            }
+            self.sim.send_payload(plain)
+        }
+    }
+
+    #[test]
+    fn a_stopped_or_failed_upload_leaves_no_half_file() {
+        for stop in [true, false] {
+            let sim = SimRuida::new(0x88);
+            let h = sim.handle();
+            let abort = AbortHandle::default();
+            let link = Cut { sim, abort: stop.then(|| abort.clone()), after: 3, seen: 0, storing: false };
+            let mut c = RuidaController::with_handles(link, RuidaPoll::immediate(), abort.clone(), RunControl::default());
+            c.init(&RuidaProfile::default()).unwrap();
+            let p = RuidaProgram::from_job(&big(25.0), Some("HALF")).unwrap();
+            let e = c.upload_file(&p).unwrap_err();
+            if stop {
+                assert!(matches!(e, ControllerError::Aborted), "{e}");
+            } else {
+                assert!(matches!(e, ControllerError::Link(_)), "{e}");
+            }
+            // The half file was closed and deleted; the controller answers again and is not taking commands into it.
+            assert_eq!(h.report().files, Vec::<String>::new(), "stop {stop}");
+            assert_eq!(c.state(), ControllerState::Idle);
+            assert!(c.list_files().unwrap().is_empty());
+            assert_eq!(h.report().burns, 0);
+            c.run_program(&RuidaProgram::from_job(&square(30.0), None).unwrap(), armed()).unwrap();
+            assert_eq!((h.report().burns, h.report().files.len()), (4, 0), "the next run ran and stored nothing");
+        }
+    }
+
+    #[test]
+    fn a_controller_that_runs_a_long_upload_is_stopped_after_its_first_datagram() {
+        // A controller that ignores `E7 01` and runs the stream as it arrives (modelled by dropping the name): it
+        // answers the status read after the first datagram with a running job.
+        struct Live(SimRuida);
+        impl RuidaLink for Live {
+            fn send_payload(&mut self, plain: &[u8]) -> Result<Option<Reply>, crate::LinkError> {
+                let kept: Vec<u8> =
+                    ruida::command::split(plain).filter(|(_, c)| !c.starts_with(&[0xE7, 0x01])).flat_map(|(_, c)| c.to_vec()).collect();
+                if kept.is_empty() {
+                    return Ok(None);
+                }
+                self.0.send_payload(&kept)
+            }
+        }
+        let sim = SimRuida::new(0x88);
+        let h = sim.handle();
+        let mut c = RuidaController::with_handles(Live(sim), RuidaPoll::immediate(), AbortHandle::default(), RunControl::default());
+        c.init(&RuidaProfile::default()).unwrap();
+        let p = RuidaProgram::from_job(&big(25.0), Some("LIVE")).unwrap();
+        let e = c.upload_file(&p).unwrap_err();
+        assert!(matches!(e, ControllerError::Ruida(RuidaDriverError::RanWhileStoring)), "{e}");
+        // One datagram of the file, then the stops and the end of file of the cleanup.
+        let r = h.report();
+        assert!(!r.running && r.files.is_empty());
+        assert!(p.datagram_count() > 3);
+        let first = ruida::parse_lenient(&p.payloads().unwrap()[0]).iter().filter(|c| c.is_cut()).count();
+        assert!(first < 4 + 400 * 2);
+        assert_eq!(h.with(|s| s.log.iter().filter(|c| c.is_cut()).count()), first, "nothing after the first datagram ran");
+    }
+
+    #[test]
+    fn stop_wins_during_a_stored_file_run() {
+        // A controller that keeps running the started file (until stopped).
+        struct Busy(SimRuida, bool);
+        impl RuidaLink for Busy {
+            fn send_payload(&mut self, plain: &[u8]) -> Result<Option<Reply>, crate::LinkError> {
+                if plain.starts_with(&[0xE8, 0x03]) {
+                    self.1 = true;
+                }
+                if plain == [0xD8, 0x01] {
+                    self.1 = false;
+                }
+                match self.0.send_payload(plain)? {
+                    Some(Reply::Memory { addr, value, second }) if self.1 && addr == mem::MACHINE_STATUS => {
+                        Ok(Some(Reply::Memory { addr, value: value | mem::STATUS_JOB_RUNNING, second }))
+                    }
+                    r => Ok(r),
+                }
+            }
+        }
+        let sim = SimRuida::new(0x88);
+        let h = sim.handle();
+        let abort = AbortHandle::default();
+        let mut c = RuidaController::with_handles(Busy(sim, false), RuidaPoll::immediate(), abort.clone(), RunControl::default());
+        c.init(&RuidaProfile::default()).unwrap();
+        c.upload_file(&RuidaProgram::from_job(&square(25.0), Some("LONG")).unwrap()).unwrap();
+        let stopper = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(30));
+            abort.request();
+        });
+        assert!(matches!(c.start_file(1, "LONG", armed()), Err(ControllerError::Aborted)));
+        stopper.join().unwrap();
+        assert_eq!(h.with(|s| s.log.last().cloned()), Some(Command::StopProcess));
+        assert_eq!(c.state(), ControllerState::Idle);
+    }
+
+    #[test]
+    fn a_stop_while_the_name_is_read_starts_nothing() {
+        struct StopOnName(SimRuida, AbortHandle, bool);
+        impl RuidaLink for StopOnName {
+            fn send_payload(&mut self, plain: &[u8]) -> Result<Option<Reply>, crate::LinkError> {
+                if self.2 && plain.starts_with(&[0xE8, 0x01]) {
+                    self.1.request();
+                }
+                self.0.send_payload(plain)
+            }
+        }
+        let sim = SimRuida::new(0x88);
+        let h = sim.handle();
+        let abort = AbortHandle::default();
+        let mut c =
+            RuidaController::with_handles(StopOnName(sim, abort.clone(), false), RuidaPoll::immediate(), abort, RunControl::default());
+        c.init(&RuidaProfile::default()).unwrap();
+        c.upload_file(&RuidaProgram::from_job(&square(25.0), Some("A")).unwrap()).unwrap();
+        c.link.2 = true;
+        assert!(matches!(c.start_file(1, "A", armed()), Err(ControllerError::Aborted)));
+        let started = h.with(|s| s.log.iter().any(|c| matches!(c, Command::Document { kind: DocKind::Start, .. })));
+        assert!(!started, "E8 03 was never sent");
+        assert_eq!(h.report().burns, 0);
+    }
+
+    #[test]
+    fn a_controller_left_storing_an_unfinished_upload_is_closed_before_anything_else() {
+        let (mut c, h) = ctl();
+        // An upload cut off part way (the engine stopped, the cable was pulled): the simulator keeps taking commands.
+        let p = RuidaProgram::from_job(&big(25.0), Some("CUT")).unwrap();
+        let payloads = p.payloads().unwrap();
+        h.with(|s| {
+            for d in &payloads[..2] {
+                let packet = ruida::frame::frame_udp(s.swizzle(), d).unwrap();
+                s.handle_udp(&packet);
+            }
+        });
+        let run = RuidaProgram::from_job(&square(30.0), None).unwrap();
+        let e = c.run_program(&run, armed()).unwrap_err();
+        assert!(matches!(e, ControllerError::Ruida(RuidaDriverError::PartialFile(_))), "{e}");
+        // The half file was ended (it is on the list, to be deleted), nothing ran, and the controller answers again.
+        assert_eq!((h.report().files, h.report().burns), (vec!["CUT".to_owned()], 0));
+        c.delete_file(1, "CUT").unwrap();
+        c.run_program(&run, armed()).unwrap();
+        assert_eq!(h.report().burns, 4);
+        // The same at connect time: init ends it, refuses once, then connects.
+        h.with(|s| {
+            let packet = ruida::frame::frame_udp(s.swizzle(), &payloads[0]).unwrap();
+            s.handle_udp(&packet);
+        });
+        assert!(matches!(c.init(&RuidaProfile::default()), Err(ControllerError::Ruida(RuidaDriverError::PartialFile(_)))));
+        c.init(&RuidaProfile::default()).unwrap();
+        assert_eq!(h.report().files, vec!["CUT".to_owned()]);
+    }
+
+    #[test]
+    fn a_half_file_that_cannot_be_removed_is_reported() {
+        // The link fails for good part way: nothing can close or delete the half file.
+        struct Dies(SimRuida, usize);
+        impl RuidaLink for Dies {
+            fn send_payload(&mut self, plain: &[u8]) -> Result<Option<Reply>, crate::LinkError> {
+                if plain.starts_with(&[0xE7, 0x01]) || self.1 > 0 {
+                    self.1 += 1;
+                }
+                if self.1 > 3 {
+                    return Err(crate::LinkError::Io("gone".into()));
+                }
+                self.0.send_payload(plain)
+            }
+        }
+        let sim = SimRuida::new(0x88);
+        let mut c = RuidaController::with_handles(Dies(sim, 0), RuidaPoll::immediate(), AbortHandle::default(), RunControl::default());
+        c.init(&RuidaProfile::default()).unwrap();
+        let e = c.upload_file(&RuidaProgram::from_job(&big(25.0), Some("HALF")).unwrap()).unwrap_err();
+        assert!(matches!(e, ControllerError::Ruida(RuidaDriverError::PartialFile(_))), "{e}");
+        assert!(e.to_string().contains("never start it"), "{e}");
+    }
+
     #[test]
     fn pause_and_resume_reach_the_controller() {
         let (mut c, h) = ctl();
@@ -798,8 +1122,12 @@ mod tests {
         c.init(&RuidaProfile::default()).unwrap();
         c.upload_file(&RuidaProgram::from_job(&square(10.0), Some("NET")).unwrap()).unwrap();
         c.start_file(1, "NET", armed()).unwrap();
+        // A file of several datagrams: the status read the controller keeps in the file goes unanswered (UDP waits
+        // for it, then goes on).
+        c.upload_file(&RuidaProgram::from_job(&big(10.0), Some("NET2")).unwrap()).unwrap();
+        assert_eq!(c.list_files().unwrap().len(), 2);
         stop.store(true, Ordering::Relaxed);
         let sim = t.join().unwrap();
-        assert_eq!((sim.burns().count(), sim.jobs_finished, sim.documents.len()), (4, 1, 1));
+        assert_eq!((sim.burns().count(), sim.jobs_finished, sim.documents.len()), (4, 1, 2));
     }
 }

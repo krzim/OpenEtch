@@ -205,6 +205,36 @@ async fn send_list_start_through_approval_and_delete_files() {
 }
 
 #[tokio::test]
+async fn a_long_job_is_sent_whole_and_a_send_cancels_pending_stored_runs() {
+    let (app, st, _) = ruida_engine(ApprovalMode::Pin).await;
+    let ctl = sim(&st);
+    for i in 0..100 {
+        let (x, y) = (f64::from(i % 10) * 25.0 - 120.0, f64::from(i / 10) * 25.0 - 120.0);
+        exec(&app, "shape.rect", json!({"width_mm": 10, "height_mm": 10, "center": [x, y]})).await;
+    }
+    exec(&app, "layer.update", json!({"id": "layer-1", "settings": {"power_pct": 30, "speed_mm_s": 50}})).await;
+    let datagrams = ctl.report().datagrams;
+    let (s, v) = send(&app, req("POST", "/api/machine/files/send", Some(json!({"name": "GRID"})))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert!(ctl.report().datagrams - datagrams > 4, "the job took several datagrams");
+    assert_eq!(ctl.report().burns, 0);
+    // A pending start of file 1, then another Send: the list changed, so the pending run is cancelled.
+    let (_, v) = send(&app, req("POST", "/api/machine/files/1/run", Some(json!({"name": "GRID"})))).await;
+    let stale = v["run"]["id"].as_str().unwrap().to_owned();
+    let (s, v) = send(&app, req("POST", "/api/machine/files/send", Some(json!({"name": "GRID"})))).await;
+    assert_eq!((s, &v["file"]["index"]), (StatusCode::OK, &json!(2)), "{v}");
+    assert_eq!(st.runs().get(&stale).unwrap().state, RunState::Cancelled);
+    assert_eq!(approve(&app, &stale).await.0, StatusCode::CONFLICT);
+    assert_eq!(ctl.report().burns, 0);
+    // Starting the second copy burns all 100 squares.
+    let (_, v) = send(&app, req("POST", "/api/machine/files/2/run", Some(json!({"name": "GRID"})))).await;
+    let id = v["run"]["id"].as_str().unwrap().to_owned();
+    assert_eq!(approve(&app, &id).await.0, StatusCode::OK);
+    assert_eq!(wait_final(&st, &id).await.state, RunState::Finished);
+    assert_eq!((ctl.report().burns, ctl.report().jobs_finished), (400, 1));
+}
+
+#[tokio::test]
 async fn stored_files_obey_require_framing_the_checklist_and_stop() {
     let (app, st, _) = ruida_engine(ApprovalMode::Pin).await;
     let ctl = sim(&st);

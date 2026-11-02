@@ -7,8 +7,8 @@
 //! | POST | `/api/devices/ruida` | `{display_name, profile}`: a new Ruida device from a `machine::ruida::RuidaProfile` (UI only) |
 //! | GET | `/api/machine/ruida` | `?refresh=true` reads the status register and head position of an idle controller first. `{profile, controller, position}` (`controller` null while a run or frame holds it) |
 //! | GET | `/api/machine/files` | `{files: [{index, name}]}`: the files stored on the controller (reads only; 409 while a run or frame holds it) |
-//! | POST | `/api/machine/files/send` | `{name, ids?}`: Send. The document (or the objects `ids`) planned like a run and stored on the controller as `name` (1-32 printable ASCII); never started. UI only |
-//! | POST | `/api/machine/files/{index}/delete` | `{name}`: delete file `index` if it is still named `name`. UI only |
+//! | POST | `/api/machine/files/send` | `{name, ids?}`: Send. The document (or the objects `ids`) planned like a run and stored on the controller as `name` (1-32 printable ASCII); never started. Cancels pending stored-file runs. UI only |
+//! | POST | `/api/machine/files/{index}/delete` | `{name}`: delete file `index` if it is still named `name`. Cancels pending stored-file runs. UI only |
 //! | POST | `/api/machine/files/{index}/run` | `{name}` → `{ok, run}`: a pending run that starts file `index` (if still named `name`); approve it like any run (`POST /api/runs/{id}/approve`: the operator PIN, or Start in the app). UI only, never MCP |
 //! | GET | `/api/export/rd` | `?ids=a,b`: Save RD file. The document planned for the active Ruida gantry as an `.rd` file (the bytes a run would send, checked like a run). 409 unless a Ruida gantry is active. Sends nothing to a machine |
 //!
@@ -211,6 +211,26 @@ pub(crate) fn check_stored_run(st: &AppState) -> Result<(), EngineError> {
     Ok(())
 }
 
+/// A Send or a Delete changed the controller's file list (and its numbering): pending stored-file runs are cancelled,
+/// so an approval never starts a file other than the one the list showed when it was asked for (a name can be on
+/// the list twice). Returns how many.
+fn cancel_stored_runs(st: &AppState) -> usize {
+    let mut store = st.runs();
+    let ids: Vec<String> = store
+        .pending(0)
+        .into_iter()
+        .filter(|v| matches!(store.get(&v.id).and_then(|r| r.ruida.as_ref()), Some(DriverJob::RuidaFile { .. })))
+        .map(|v| v.id)
+        .collect();
+    for id in &ids {
+        if let Some(r) = store.get_mut(id) {
+            r.state = crate::runs::RunState::Cancelled;
+            r.error = Some("the controller's file list changed (Send or Delete); start the file again from the File List".into());
+        }
+    }
+    ids.len()
+}
+
 /// Refuse requests that look like an MCP client or name a non-UI origin.
 fn ui_only(headers: &HeaderMap, origin: Option<&Value>, what: &str) -> Result<(), EngineError> {
     if has_mcp_marker(headers) {
@@ -331,7 +351,10 @@ async fn files_send(State(st): State<Arc<AppState>>, headers: HeaderMap, b: Byte
         plan_program(&doc, &config.target, &profile, b.ids.filter(|v| !v.is_empty()), None, run_index, Some(&name))
     })
     .await??;
-    let file: StoredFile = with_ruida(&st, move |r| r.upload_file(&program)).await?;
+    let result = with_ruida(&st, move |r| r.upload_file(&program)).await;
+    // Even a failed Send may have changed the list (a half file stored, then removed).
+    cancel_stored_runs(&st);
+    let file: StoredFile = result?;
     tracing::info!(index = file.index, name = %file.name, "job sent to the Ruida controller");
     st.emit(Event::machine("controller_files_changed", None));
     Ok(Json(json!({ "ok": true, "file": file })))
@@ -355,6 +378,7 @@ async fn files_delete(
     ui_only(&headers, b.origin.as_ref(), "files on the controller can be deleted")?;
     let name = b.name.clone();
     with_ruida(&st, move |r| r.delete_file(index, &name)).await?;
+    cancel_stored_runs(&st);
     tracing::info!(index, name = %b.name, "file deleted on the Ruida controller");
     st.emit(Event::machine("controller_files_changed", None));
     Ok(Json(json!({ "ok": true })))

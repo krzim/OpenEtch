@@ -37,6 +37,9 @@ pub enum RuidaDriverError {
     /// The file list changed since it was read.
     #[error("{0}")]
     FileChanged(String),
+    /// A Send failed part way and its half file could not be removed from the controller.
+    #[error("{0}")]
+    PartialFile(String),
     /// The upload ended but the file list does not show the file.
     #[error("{0}")]
     NotStored(String),

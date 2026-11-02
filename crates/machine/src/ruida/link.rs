@@ -18,8 +18,9 @@ use crate::link::LinkError;
 /// One payload to a Ruida controller and its answer.
 pub trait RuidaLink: Send {
     /// Send one payload (unscrambled whole commands, at most 1470 bytes, at most one that asks for data) and wait for
-    /// its acknowledgement; returns the data reply when the payload asks for one. A payload that was not
-    /// acknowledged is never sent again unless it only reads (the controller may have run it).
+    /// its acknowledgement; returns the data reply when the payload asks for one (`None` when the controller
+    /// acknowledged it but sent no data: a read it kept in a file being stored, a file it does not have). A payload
+    /// that was not acknowledged is never sent again unless it only reads (the controller may have run it).
     fn send_payload(&mut self, plain: &[u8]) -> Result<Option<Reply>, LinkError>;
 }
 
@@ -54,7 +55,6 @@ impl std::fmt::Debug for UdpRuidaLink {
 fn udp_error(e: UdpError) -> LinkError {
     match e {
         UdpError::NoAck(n) => LinkError::Io(format!("the Ruida controller did not acknowledge after {n} tries (UDP)")),
-        UdpError::NoReply => LinkError::Io("the Ruida controller sent no data reply (UDP)".into()),
         other => LinkError::Io(format!("Ruida UDP: {other}")),
     }
 }
@@ -76,7 +76,12 @@ impl UdpRuidaLink {
 
 impl RuidaLink for UdpRuidaLink {
     fn send_payload(&mut self, plain: &[u8]) -> Result<Option<Reply>, LinkError> {
-        self.channel.send_payload(plain).map_err(udp_error)
+        match self.channel.send_payload(plain) {
+            // Acknowledged without data (as the simulator answers): a read the controller kept instead of answering
+            // (it takes an upload into a file), or a file name it does not have.
+            Err(UdpError::NoReply) => Ok(None),
+            r => r.map_err(udp_error),
+        }
     }
 }
 
