@@ -128,7 +128,7 @@ import { Icon } from "./ui.tsx";
 import { TOOLPATH_INK, canvasColor, type Theme } from "../workspace/theme.ts";
 import { usePrefs, useResolvedTheme } from "../workspace/usePrefs.ts";
 import { fixedLength, fixedNumber, formatLength, lengthDigits, lengthToDisplay, trimNumber } from "../workspace/units.ts";
-import { onViewCommand, publishViewStatus } from "../workspace/viewStatus.ts";
+import { onRevealSelection, onViewCommand, publishViewStatus, revealShift } from "../workspace/viewStatus.ts";
 import { useT } from "../workspace/usePrefs.ts";
 
 export type Tool = "select" | "rect" | "ellipse" | "circle" | CanvasToolId;
@@ -1215,6 +1215,22 @@ export function Viewport(props: ViewportProps) {
         } else queueView((v) => zoomAtPure(v, size, [size[0] / 2, size[1] / 2], cmd === "zoomIn" ? 1.25 : 0.8));
       }),
     [fitField, fitBox, selBounds, stockBox, size, queueView],
+  );
+  // The phone's peek sheet opened for a selection: pan just enough that the selection shows above it.
+  useEffect(
+    () =>
+      onRevealSelection((fraction) => {
+        const b = selBounds;
+        if (!b) return;
+        const v = viewRef.current;
+        const top = -(b.y1 - v.cy) * v.scale + size[1] / 2;
+        const bottom = -(b.y0 - v.cy) * v.scale + size[1] / 2;
+        const shift = revealShift(top, bottom, size[1] * fraction);
+        if (shift <= 0) return;
+        autoFit.current = false;
+        setView({ ...v, cy: v.cy - shift / v.scale });
+      }),
+    [selBounds, size, setView],
   );
   useEffect(() => {
     publishViewStatus({ cursor, snap: snapShown ? { p: snapShown.p, label: snapShown.label, kind: snapShown.kind } : null, scale: view.scale });

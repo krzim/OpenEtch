@@ -53,3 +53,25 @@ export function onViewCommand(fn: (cmd: ViewCommand) => void): () => void {
   target.addEventListener("view", h);
   return () => target.removeEventListener("view", h);
 }
+
+/**
+ * How far (screen px, up) to move the view so a selection spanning `top`..`bottom` (canvas px) ends above `limit`, at
+ * least `margin` clear of it, without pushing its top above `margin`. 0 when it already shows. Pure (tests).
+ */
+export function revealShift(top: number, bottom: number, limit: number, margin = 12): number {
+  const over = bottom - (limit - margin);
+  if (over <= 0) return 0;
+  return Math.max(0, Math.min(over, top - margin));
+}
+
+/** Ask the canvas to keep the selection above `fraction` of its height (the phone's peek sheet covers the rest). */
+export function sendRevealSelection(fraction: number): void {
+  target?.dispatchEvent(new CustomEvent<number>("reveal", { detail: fraction }));
+}
+
+export function onRevealSelection(fn: (fraction: number) => void): () => void {
+  if (!target) return () => {};
+  const h = (e: Event) => fn((e as CustomEvent<number>).detail);
+  target.addEventListener("reveal", h);
+  return () => target.removeEventListener("reveal", h);
+}

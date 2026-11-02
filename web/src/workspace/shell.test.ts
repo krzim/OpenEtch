@@ -112,3 +112,11 @@ test("phone: the canvas column outweighs styles.css's `.app > * { flex: none }`,
   assert.match(rule, /flex:\s*1 1 0/);
   assert.doesNotMatch(phone, /(^|\})\s*\.phone-main\s*\{/);
 });
+
+test("revealShift: pan a selection clear of the peek sheet, never past the top", async () => {
+  const { revealShift } = await import("./viewStatus.ts");
+  assert.equal(revealShift(100, 200, 500), 0, "already above the sheet");
+  assert.equal(revealShift(600, 670, 520), 162, "the bottom moves 12 px above the sheet's top");
+  assert.equal(revealShift(40, 700, 520), 28, "a tall selection: its top stops 12 px under the canvas top");
+  assert.equal(revealShift(5, 700, 520), 0, "already at the top: no move");
+});

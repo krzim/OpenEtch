@@ -12,7 +12,8 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { commandHostReady, openCommandSearch } from "../components/commandBus.ts";
 import { OPEN_LASER_EVENT } from "../laser/laserContext.ts";
 import { BottomSheet } from "./BottomSheet.tsx";
-import type { SheetSnap } from "./phone.ts";
+import { SNAP_FRACTION, type SheetSnap } from "./phone.ts";
+import { sendRevealSelection } from "./viewStatus.ts";
 import { ShellIcon, type ShellIconName } from "./shellIcons.tsx";
 import { useT } from "./usePrefs.ts";
 import "./phone.css";
@@ -97,13 +98,28 @@ export function PhoneShell(p: PhoneShellProps) {
     };
   }, []);
 
+  // A shape in the bottom 30 % of the canvas would sit under the peek sheet it opens: the canvas pans it clear.
+  const revealAbovePeek = () => window.setTimeout(() => sendRevealSelection(1 - SNAP_FRACTION.peek), 0);
+
   // Selecting a shape on the Canvas tab peeks the selection sheet open; clearing the selection closes it again.
   useEffect(() => {
+    // With the Layers or More sheet closed the canvas is what is on screen, but the tab stayed: a tap on a shape then
+    // selected it with no selection sheet at all. Selecting from there goes back to the Canvas tab.
+    if (hasSelection && !open && (tab === "layers" || tab === "more")) {
+      onTab?.("canvas");
+      setTab("canvas");
+      setSnap("peek");
+      setOpen(true);
+      bySelection.current = true;
+      revealAbovePeek();
+      return;
+    }
     if (tab !== "canvas") return;
     if (hasSelection && !open) {
       setSnap("peek");
       setOpen(true);
       bySelection.current = true;
+      revealAbovePeek();
     } else if (!hasSelection && open && bySelection.current) {
       setOpen(false);
       bySelection.current = false;
