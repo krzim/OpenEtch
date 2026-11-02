@@ -1,4 +1,5 @@
-// Small shared UI pieces: modal dialog, commit-on-blur fields, and the toolbar icon set. Plain CSS, no libraries.
+// Small shared UI pieces: the modal dialog (an alias of Dialog.tsx), commit-on-blur fields, and the icon set. Plain
+// CSS, no libraries.
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { evalNumber } from "../editing.ts";
@@ -6,59 +7,11 @@ import { useUnitConversion } from "../workspace/usePrefs.ts";
 import { trimNumber } from "../workspace/units.ts";
 
 /**
- * Centered modal with a title, body and footer. Escape or a backdrop tap cancels; with `onSubmit`, Enter in a text
- * field submits.
+ * Centred modal with a title, body and footer: an alias of the Dialog primitive (Dialog.tsx), which adds the dialog
+ * stack, the focus trap, sizes, the phone sheet and "Discard changes?". Escape cancels; with `onSubmit`, Enter in a
+ * text field submits.
  */
-export function Modal(props: { title: string; onClose: () => void; children: ReactNode; footer?: ReactNode; wide?: boolean; onSubmit?: () => void }) {
-  const { onClose } = props;
-  // Enter first blurs the field so a commit-on-blur field (NumberField, TextField) sets its value, then submits on the
-  // next tick with the re-rendered dialog's `onSubmit`, which sees that value (calling the old one sent stale state).
-  const submitRef = useRef(props.onSubmit);
-  submitRef.current = props.onSubmit;
-  const alive = useRef(true);
-  useEffect(() => {
-    alive.current = true;
-    return () => {
-      alive.current = false;
-    };
-  }, []);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-  return (
-    <div className="modal-backdrop" onPointerDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div
-        className={`modal${props.wide ? " modal-wide" : ""}`}
-        role="dialog"
-        aria-modal="true"
-        aria-label={props.title}
-        onKeyDown={(e) => {
-          const t = e.target as HTMLElement;
-          if (e.key === "Enter" && props.onSubmit && t.tagName === "INPUT" && (t as HTMLInputElement).type !== "checkbox") {
-            e.preventDefault();
-            t.blur();
-            window.setTimeout(() => {
-              if (alive.current) submitRef.current?.();
-            }, 0);
-          }
-        }}
-      >
-        <div className="modal-head">
-          <span>{props.title}</span>
-          <button className="icon-btn" onClick={onClose} aria-label="Close">
-            <Icon name="close" />
-          </button>
-        </div>
-        <div className="modal-body">{props.children}</div>
-        {props.footer && <div className="modal-foot">{props.footer}</div>}
-      </div>
-    </div>
-  );
-}
+export { Dialog as Modal } from "./Dialog.tsx";
 
 /** Format a number for a field: up to `digits` decimals, no trailing zeros. */
 export function fmt(v: number | null | undefined, digits = 3): string {

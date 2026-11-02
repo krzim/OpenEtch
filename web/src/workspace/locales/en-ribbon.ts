@@ -9,4 +9,8 @@ export const EN_RIBBON = {
   "menu.section.select": "Select",
   "menu.section.laser": "Laser",
   "menu.section.more": "More",
+  // Dialog primitive (components/Dialog.tsx).
+  "dlg.discardQ": "Discard your changes?",
+  "dlg.keepEditing": "Keep editing",
+  "dlg.discard": "Discard",
 };

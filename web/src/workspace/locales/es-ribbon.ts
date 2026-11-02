@@ -10,4 +10,7 @@ export const ES_RIBBON: Messages = {
   "menu.section.select": "Seleccionar",
   "menu.section.laser": "Láser",
   "menu.section.more": "Más",
+  "dlg.discardQ": "¿Descartar los cambios?",
+  "dlg.keepEditing": "Seguir editando",
+  "dlg.discard": "Descartar",
 };
