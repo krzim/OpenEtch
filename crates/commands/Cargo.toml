@@ -31,3 +31,5 @@ text = { workspace = true, features = ["system"] }
 
 [dev-dependencies]
 image = { workspace = true }
+# .rd files for the art.import_rd tests.
+ruida = { workspace = true }
