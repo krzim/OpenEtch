@@ -1,5 +1,6 @@
 // Top bar extras: the Help menu (keyboard shortcuts, documentation links, About with versions and the MCP address),
-// the Preferences button and a quick theme switch (Light / Dark / Match system).
+// the Preferences button and a quick theme switch (Light / Dark / Match system). In the compact layouts and below they
+// fold, with the Window menu, into one ⋯ overflow menu (docs/ux/ui-plan-2026-11.md 1.1).
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { MachineStatus } from "../api/types.ts";
@@ -7,6 +8,7 @@ import { Icon } from "../components/ui.tsx";
 import { hintFor } from "./hotkeys.ts";
 import { updatePrefs, type ThemePref } from "./prefs.ts";
 import { usePrefs, useT } from "./usePrefs.ts";
+import { ShellIcon } from "./shellIcons.tsx";
 import { WsModal } from "./WsModal.tsx";
 import "./workspace.css";
 
@@ -51,17 +53,18 @@ export interface TopActionsProps {
   onPreferences: () => void;
   /** More Help entries (src/libs: debug log, Report a Bug, Check for Updates), above About. */
   helpExtra?: (close: () => void) => ReactNode;
+  /** Compact layouts and below: Window, Help, theme and Preferences fold into one ⋯ menu. */
+  overflow?: boolean;
+  /** The Window menu's entries (DockHost.tsx `WindowMenuEntries`), shown in the ⋯ menu. */
+  windowItems?: (close: () => void) => ReactNode;
 }
 
-export function TopActions(p: TopActionsProps) {
+/** The Help menu's entries (also listed in the ⋯ overflow menu and the phone's More sheet). */
+export function HelpItems(p: { close: () => void; onHotkeys: () => void; onAbout: () => void; helpExtra?: (close: () => void) => ReactNode }) {
   const t = useT();
   const prefs = usePrefs();
-  const help = useMenu();
-  const [about, setAbout] = useState(false);
-  const next: Record<ThemePref, ThemePref> = { light: "dark", dark: "system", system: "light" };
-  const themeName = { light: t("theme.light"), dark: t("theme.dark"), system: t("theme.system") }[prefs.theme];
   const link = (href: string, label: string) => (
-    <a role="menuitem" className="menu-item" href={href} target="_blank" rel="noopener noreferrer" onClick={() => help.setOpen(false)}>
+    <a role="menuitem" className="menu-item" href={href} target="_blank" rel="noopener noreferrer" onClick={p.close}>
       <span>{label}</span>
       <span className="menu-hint">↗</span>
     </a>
@@ -69,11 +72,104 @@ export function TopActions(p: TopActionsProps) {
   return (
     <>
       <button
-        className="icon-btn theme-btn"
-        title={t("theme.switchTitle", { theme: themeName })}
-        aria-label={t("theme.switchTitle", { theme: themeName })}
-        onClick={() => updatePrefs({ theme: next[prefs.theme] })}
+        role="menuitem"
+        className="menu-item"
+        onClick={() => {
+          p.close();
+          p.onHotkeys();
+        }}
       >
+        <span>{t("help.hotkeys")}</span>
+        <span className="menu-hint">{hintFor("help.hotkeys", prefs.hotkeys)}</span>
+      </button>
+      <div className="menu-sep" role="separator" />
+      {link(DOC_LINKS.readme, t("help.readme"))}
+      {link(DOC_LINKS.architecture, t("help.architecture"))}
+      {link(DOC_LINKS.webReadme, t("help.webReadme"))}
+      {link(DOC_LINKS.lightburn, t("help.lightburn"))}
+      {link(DOC_LINKS.issues, t("help.issues"))}
+      <div className="menu-sep" role="separator" />
+      {p.helpExtra && (
+        <>
+          {p.helpExtra(p.close)}
+          <div className="menu-sep" role="separator" />
+        </>
+      )}
+      <button
+        role="menuitem"
+        className="menu-item"
+        onClick={() => {
+          p.close();
+          p.onAbout();
+        }}
+      >
+        <span>{t("help.about")}</span>
+      </button>
+    </>
+  );
+}
+
+const NEXT_THEME: Record<ThemePref, ThemePref> = { light: "dark", dark: "system", system: "light" };
+
+export function TopActions(p: TopActionsProps) {
+  const t = useT();
+  const prefs = usePrefs();
+  const help = useMenu();
+  const [about, setAbout] = useState(false);
+  const themeName = { light: t("theme.light"), dark: t("theme.dark"), system: t("theme.system") }[prefs.theme];
+  const cycleTheme = () => updatePrefs({ theme: NEXT_THEME[prefs.theme] });
+  const close = () => help.setOpen(false);
+  if (p.overflow) {
+    return (
+      <>
+        <div className="help-menu file-menu top-overflow" ref={help.root}>
+          <button
+            className={`icon-btn${help.open ? " open" : ""}`}
+            title={t("shell.more")}
+            aria-label={t("shell.more")}
+            aria-haspopup="menu"
+            aria-expanded={help.open}
+            onClick={() => help.setOpen((v) => !v)}
+          >
+            <ShellIcon name="ellipsis" />
+          </button>
+          {help.open && (
+            <div className="menu menu-right" role="menu" aria-label={t("shell.more")}>
+              {p.windowItems && (
+                <>
+                  <div className="menu-label">{t("win.menu")}</div>
+                  {p.windowItems(close)}
+                  <div className="menu-sep" role="separator" />
+                </>
+              )}
+              <button role="menuitem" className="menu-item" onClick={cycleTheme}>
+                <span>{t("theme.switchTitle", { theme: themeName })}</span>
+                <ThemeIcon pref={prefs.theme} />
+              </button>
+              <button
+                role="menuitem"
+                className="menu-item"
+                onClick={() => {
+                  close();
+                  p.onPreferences();
+                }}
+              >
+                <span>{t("prefs.title")}</span>
+                <span className="menu-hint">{hintFor("app.preferences", prefs.hotkeys)}</span>
+              </button>
+              <div className="menu-sep" role="separator" />
+              <div className="menu-label">{t("help.menu")}</div>
+              <HelpItems close={close} onHotkeys={p.onHotkeys} onAbout={() => setAbout(true)} helpExtra={p.helpExtra} />
+            </div>
+          )}
+        </div>
+        {about && <AboutDialog machine={p.machine} onClose={() => setAbout(false)} />}
+      </>
+    );
+  }
+  return (
+    <>
+      <button className="icon-btn theme-btn" title={t("theme.switchTitle", { theme: themeName })} aria-label={t("theme.switchTitle", { theme: themeName })} onClick={cycleTheme}>
         <ThemeIcon pref={prefs.theme} />
       </button>
       <button className="icon-btn" title={t("prefs.title")} aria-label={t("prefs.title")} onClick={p.onPreferences}>
@@ -86,40 +182,7 @@ export function TopActions(p: TopActionsProps) {
         </button>
         {help.open && (
           <div className="menu menu-right" role="menu" aria-label={t("help.menu")}>
-            <button
-              role="menuitem"
-              className="menu-item"
-              onClick={() => {
-                help.setOpen(false);
-                p.onHotkeys();
-              }}
-            >
-              <span>{t("help.hotkeys")}</span>
-              <span className="menu-hint">{hintFor("help.hotkeys", prefs.hotkeys)}</span>
-            </button>
-            <div className="menu-sep" role="separator" />
-            {link(DOC_LINKS.readme, t("help.readme"))}
-            {link(DOC_LINKS.architecture, t("help.architecture"))}
-            {link(DOC_LINKS.webReadme, t("help.webReadme"))}
-            {link(DOC_LINKS.lightburn, t("help.lightburn"))}
-            {link(DOC_LINKS.issues, t("help.issues"))}
-            <div className="menu-sep" role="separator" />
-            {p.helpExtra && (
-              <>
-                {p.helpExtra(() => help.setOpen(false))}
-                <div className="menu-sep" role="separator" />
-              </>
-            )}
-            <button
-              role="menuitem"
-              className="menu-item"
-              onClick={() => {
-                help.setOpen(false);
-                setAbout(true);
-              }}
-            >
-              <span>{t("help.about")}</span>
-            </button>
+            <HelpItems close={close} onHotkeys={p.onHotkeys} onAbout={() => setAbout(true)} helpExtra={p.helpExtra} />
           </div>
         )}
       </div>
@@ -128,7 +191,12 @@ export function TopActions(p: TopActionsProps) {
   );
 }
 
-function AboutDialog(p: { machine: MachineStatus | null; onClose: () => void }) {
+/** The About dialog, for callers outside the Help menu (the phone's More sheet). */
+export function AboutDialog(p: { machine: MachineStatus | null; onClose: () => void }) {
+  return <AboutDialogBody {...p} />;
+}
+
+function AboutDialogBody(p: { machine: MachineStatus | null; onClose: () => void }) {
   const t = useT();
   const ev = engineVersion(p.machine);
   const origin = typeof location === "undefined" ? "" : location.origin;
@@ -170,7 +238,7 @@ function AboutDialog(p: { machine: MachineStatus | null; onClose: () => void }) 
   );
 }
 
-function ThemeIcon({ pref }: { pref: ThemePref }) {
+export function ThemeIcon({ pref }: { pref: ThemePref }) {
   const d =
     pref === "light"
       ? "M12 8a4 4 0 100 8 4 4 0 000-8z M12 2v2 M12 20v2 M4.9 4.9l1.4 1.4 M17.7 17.7l1.4 1.4 M2 12h2 M20 12h2 M4.9 19.1l1.4-1.4 M17.7 6.3l1.4-1.4"

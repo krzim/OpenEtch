@@ -1,8 +1,9 @@
 // Numeric edits toolbar (LightBurn's Numeric Edits, above the canvas): X, Y, W, H and rotation of the selection's
 // bounding box at the chosen 9-point anchor (shared with the Properties panel), lock aspect, and mm or % sizing. Each field commits one
 // `object.transform` on Enter or blur. Values show in the display unit (Preferences); fields accept maths ("20/3").
-// The fields come in groups (anchor + X/Y, size, rotation, units) that wrap onto a second row and get narrower in a
-// narrow canvas column, so nothing is clipped or needs sideways scrolling.
+// It is the selection state of the context strip (docs/ux/ui-plan-2026-11.md 1.1): one row that never wraps; the fields
+// get narrower in a narrow canvas column and the row scrolls sideways as a last resort. The mm / in switch lives in the
+// status bar only.
 
 import { useState } from "react";
 import type { Invocation } from "../api/client.ts";
@@ -12,7 +13,6 @@ import { objectBounds, transformParts, unionBoxes } from "../geometry.ts";
 import { NumberField } from "../components/ui.tsx";
 import type { Selection } from "../selection.ts";
 import { ANCHORS, anchorPoint, moveTo, resizeTo, rotationDelta, scalePercent, useAnchor } from "./numeric.ts";
-import { updatePrefs } from "./prefs.ts";
 import { usePrefs, useT } from "./usePrefs.ts";
 import "./workspace.css";
 
@@ -94,14 +94,6 @@ export function NumericBar(p: NumericBarProps) {
       </div>
       <div className="num-group">
         <NumberField label={single || none ? t("numeric.rotate") : t("numeric.rotateBy")} unit="°" value={box ? (single ? rot : 0) : null} digits={2} disabled={none} onCommit={setRot} />
-      </div>
-      <span className="numeric-sep" />
-      <div className="segmented unit-toggle" role="radiogroup" aria-label={t("prefs.units")} title={t("numeric.unitsTitle")}>
-        {(["mm", "in"] as const).map((u) => (
-          <button key={u} role="radio" aria-checked={prefs.units === u} className={prefs.units === u ? "active" : ""} onClick={() => updatePrefs({ units: u })}>
-            {u}
-          </button>
-        ))}
       </div>
     </div>
   );

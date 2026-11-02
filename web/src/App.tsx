@@ -69,7 +69,8 @@ import { StatusBar } from "./workspace/StatusBar.tsx";
 import { sendViewCommand } from "./workspace/viewStatus.ts";
 import { WorkspaceFileItems, useWorkspaceUi } from "./workspace/useWorkspace.tsx";
 import { Dock } from "./workspace/Dock.tsx";
-import { DockAreaHost, FloatHost, WindowMenu, useAreaHasWindows } from "./workspace/DockHost.tsx";
+import { DockAreaHost, FloatHost, WindowMenu, WindowMenuEntries, useAreaHasWindows } from "./workspace/DockHost.tsx";
+import { useLayoutMode } from "./workspace/layoutMode.ts";
 import { useDocTabs } from "./workspace/DocTabs.tsx";
 import { useDocking } from "./workspace/DockingTool.tsx";
 import { useFlash, withLayerFlash } from "./workspace/flash.tsx";
@@ -143,6 +144,13 @@ function loadPrefs(): ViewPrefs {
   }
 }
 
+/** A callback ref that makes a closed drawer or overlay `inert` (no focus, no clicks, hidden from assistive tech). */
+function inertRef(inert: boolean): (el: HTMLElement | null) => void {
+  return (el) => {
+    if (el) el.inert = inert;
+  };
+}
+
 /** Typing in a field (or a dialog button) keeps its keys. */
 function typingIn(t: EventTarget | null): boolean {
   const el = t as HTMLElement | null;
@@ -167,6 +175,7 @@ export function App() {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [devicesOpen, setDevicesOpen] = useState(false);
   const narrow = useMediaQuery(NARROW_QUERY);
+  const { layout } = useLayoutMode();
   const [leftOpen, setLeftOpen] = useState(!narrow);
   const [rightOpen, setRightOpen] = useState(!narrow);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -215,13 +224,9 @@ export function App() {
 
   useEffect(() => setSelectionRaw((s) => pruneSelection(s, doc)), [doc]);
 
-  const setSelection = useCallback(
-    (s: Selection) => {
-      setSelectionRaw(s);
-      if (narrow && workspace === "design" && (s.objects.length > 0 || s.stock)) setRightOpen(true);
-    },
-    [narrow, workspace],
-  );
+  // Selecting never opens a drawer (it covered the canvas on tablets): the Properties pill or the phone's peek sheet
+  // shows the selection's settings on request.
+  const setSelection = useCallback((s: Selection) => setSelectionRaw(s), []);
   const selectIds = useCallback((ids: string[]) => {
     const d = docRef.current;
     const layer = d?.objects.find((o) => o.id === ids[ids.length - 1])?.layer ?? null;
@@ -1113,10 +1118,17 @@ export function App() {
         }
         extra={
           <>
-            <WindowMenu />
+            {layout === "wide" && <WindowMenu />}
             <SimPinBadge machine={machine} />
             <ShutdownBadge machine={machine} />
-            <TopActions machine={machine} onHotkeys={() => ws.open("hotkeys")} onPreferences={() => ws.open("prefs")} helpExtra={libsUi.helpItems} />
+            <TopActions
+              machine={machine}
+              onHotkeys={() => ws.open("hotkeys")}
+              onPreferences={() => ws.open("prefs")}
+              helpExtra={libsUi.helpItems}
+              overflow={layout !== "wide"}
+              windowItems={(close) => <WindowMenuEntries close={close} />}
+            />
           </>
         }
         workspace={workspace}
@@ -1132,8 +1144,9 @@ export function App() {
         projectName={file.projectName}
         dirty={file.dirty}
         pendingRuns={runs.length}
+        docExtra={tabs.addButton}
       />
-      <div className="doc-tabs-row">{tabs.bar}</div>
+      {tabs.bar && <div className="doc-tabs-row">{tabs.bar}</div>}
       <Toolbar
         workspace={workspace}
         tool={tool}
@@ -1184,7 +1197,11 @@ export function App() {
             }}
           />
         )}
-        <aside className={`panel panel-left${leftOpen && leftHasWindows ? " open" : ""}`} aria-label={t("win.browser")}>
+        <aside
+          ref={inertRef(narrow && !(leftOpen && leftHasWindows))}
+          className={`panel panel-left${leftOpen && leftHasWindows ? " open" : ""}`}
+          aria-label={t("win.browser")}
+        >
           <div className="panel-body">
             <DockAreaHost area="left" />
             <Dock id="browser" title={t("win.browser")}>
@@ -1266,7 +1283,11 @@ export function App() {
           {workspace === "design" && <PaletteBar doc={doc} selected={selection.objects} run={run} report={report} notify={notify} has={has} />}
         </section>
 
-        <aside className={`panel panel-right${rightOpen && rightHasWindows ? " open" : ""}`} aria-label={workspace === "laser" ? t("win.machine") : t("win.properties")}>
+        <aside
+          ref={inertRef(narrow && !(rightOpen && rightHasWindows))}
+          className={`panel panel-right${rightOpen && rightHasWindows ? " open" : ""}`}
+          aria-label={workspace === "laser" ? t("win.machine") : t("win.properties")}
+        >
           <div className="panel-body">
             <DockAreaHost area="right" />
             {workspace === "design" ? (

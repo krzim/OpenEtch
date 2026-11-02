@@ -175,11 +175,69 @@ function FloatFrame(p: { unit: AreaUnit; rect: FloatRect }) {
   );
 }
 
-/** The Window menu: every tool window with a check mark (click shows or hides it), and Reset to Default Layout. */
-export function WindowMenu() {
+/** The Window menu's entries: every tool window with a check mark (click shows or hides it), and Reset to Default
+ * Layout. Shared by the Window dropdown (wide layout) and the top bar's ⋯ overflow menu. */
+export function WindowMenuEntries(p: { close: () => void }) {
   const t = useT();
   const layout = useLayout();
   const mounted = useMountedWindows();
+  const known = WINDOWS.map((w) => w.id);
+  const extra = [...mounted.keys()].filter((id) => !known.includes(id));
+  const entries = [
+    ...WINDOWS.map((w) => ({ id: w.id, title: mounted.get(w.id) ?? t(w.titleKey as MsgKey) })),
+    ...extra.map((id) => ({ id, title: mounted.get(id) ?? id })),
+  ];
+  return (
+    <>
+      {entries.map((e) => {
+        const shown = placeOf(layout, e.id).visible;
+        const here = mounted.has(e.id);
+        return (
+          <button
+            key={e.id}
+            role="menuitemcheckbox"
+            aria-checked={shown}
+            className="menu-item"
+            title={here ? undefined : t("win.notHereTitle")}
+            onClick={() => updateLayout((l) => setVisible(l, e.id, !shown))}
+          >
+            <span>
+              <span className="menu-check" aria-hidden="true">
+                {shown ? "✓" : ""}
+              </span>
+              {e.title}
+            </span>
+            {!here && <span className="menu-hint">{t("win.notHere")}</span>}
+          </button>
+        );
+      })}
+      <div className="menu-sep" role="separator" />
+      <button
+        role="menuitem"
+        className="menu-item"
+        onClick={() => {
+          p.close();
+          resetLayout();
+        }}
+      >
+        <span>{t("win.reset")}</span>
+      </button>
+    </>
+  );
+}
+
+/** Another tab changed the stored layout: adopt it (mounted once, in App). */
+export function useLayoutSync(): void {
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => e.key === LAYOUT_KEY && reloadLayout();
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+}
+
+/** The Window menu in the top bar (wide layout). */
+export function WindowMenu() {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -193,18 +251,6 @@ export function WindowMenu() {
       window.removeEventListener("keydown", key);
     };
   }, [open]);
-  // Another tab changed the layout: adopt it.
-  useEffect(() => {
-    const onStorage = (e: StorageEvent) => e.key === LAYOUT_KEY && reloadLayout();
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, []);
-  const known = WINDOWS.map((w) => w.id);
-  const extra = [...mounted.keys()].filter((id) => !known.includes(id));
-  const entries = [
-    ...WINDOWS.map((w) => ({ id: w.id, title: mounted.get(w.id) ?? t(w.titleKey as MsgKey) })),
-    ...extra.map((id) => ({ id, title: mounted.get(id) ?? id })),
-  ];
   return (
     <div className="file-menu window-menu" ref={root}>
       <button className={`file-btn${open ? " open" : ""}`} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
@@ -213,39 +259,7 @@ export function WindowMenu() {
       </button>
       {open && (
         <div className="menu menu-right" role="menu" aria-label={t("win.menu")}>
-          {entries.map((e) => {
-            const shown = placeOf(layout, e.id).visible;
-            const here = mounted.has(e.id);
-            return (
-              <button
-                key={e.id}
-                role="menuitemcheckbox"
-                aria-checked={shown}
-                className="menu-item"
-                title={here ? undefined : t("win.notHereTitle")}
-                onClick={() => updateLayout((l) => setVisible(l, e.id, !shown))}
-              >
-                <span>
-                  <span className="menu-check" aria-hidden="true">
-                    {shown ? "✓" : ""}
-                  </span>
-                  {e.title}
-                </span>
-                {!here && <span className="menu-hint">{t("win.notHere")}</span>}
-              </button>
-            );
-          })}
-          <div className="menu-sep" role="separator" />
-          <button
-            role="menuitem"
-            className="menu-item"
-            onClick={() => {
-              setOpen(false);
-              resetLayout();
-            }}
-          >
-            <span>{t("win.reset")}</span>
-          </button>
+          <WindowMenuEntries close={() => setOpen(false)} />
         </div>
       )}
     </div>
