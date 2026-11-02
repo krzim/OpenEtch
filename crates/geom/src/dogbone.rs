@@ -11,7 +11,9 @@
 //! and outside the holes (odd depth), as the shape is filled. A corner qualifies when both lines meeting there are
 //! straight and the material's angle there is more than 180° (a reflex corner of a part, any corner of a hole).
 //! Open subpaths and corners touching a curve are left alone. A relief must fit on both lines (what is left of a line
-//! between two reliefs cannot be negative); corners where it does not are skipped with the reason.
+//! between two reliefs cannot be negative) and may cut into no other line or curve of the shape (a nearby hole, the
+//! far wall of a thin part) nor into another relief; corners where it does not are skipped with the reason. An
+//! outline that crosses itself has no known inside and is left alone.
 
 use kurbo::{Arc, BezPath, Line, ParamCurve, PathSeg, Point, Vec2};
 
@@ -68,6 +70,67 @@ fn unit(v: Vec2) -> Vec2 {
     if l > 0.0 { v / l } else { v }
 }
 
+/// A flattened piece of the shape (`seg`: its subpath and segment) or a relief already planned (`None`).
+struct Obstacle {
+    seg: Option<(usize, usize)>,
+    points: Vec<Point>,
+    bbox: kurbo::Rect,
+}
+
+impl Obstacle {
+    fn new(seg: Option<(usize, usize)>, points: Vec<Point>) -> Obstacle {
+        let bbox = bounds(&points);
+        Obstacle { seg, points, bbox }
+    }
+
+    /// Whether the polyline `other` crosses this one.
+    fn crosses(&self, other: &[Point]) -> bool {
+        let b = bounds(other);
+        if b.x0 > self.bbox.x1 || b.x1 < self.bbox.x0 || b.y0 > self.bbox.y1 || b.y1 < self.bbox.y0 {
+            return false;
+        }
+        self.points.windows(2).any(|s| other.windows(2).any(|t| segments_cross(s[0], s[1], t[0], t[1])))
+    }
+}
+
+fn bounds(points: &[Point]) -> kurbo::Rect {
+    points.iter().fold(kurbo::Rect::new(f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY), |r, p| {
+        kurbo::Rect::new(r.x0.min(p.x), r.y0.min(p.y), r.x1.max(p.x), r.y1.max(p.y))
+    })
+}
+
+/// Whether segments `ab` and `cd` cross (properly, not merely touching at an end).
+fn segments_cross(a: Point, b: Point, c: Point, d: Point) -> bool {
+    let o = |p: Point, q: Point, r: Point| (q - p).cross(r - p);
+    let (d1, d2, d3, d4) = (o(c, d, a), o(c, d, b), o(a, b, c), o(a, b, d));
+    let tol = 1e-12;
+    ((d1 > tol && d2 < -tol) || (d1 < -tol && d2 > tol)) && ((d3 > tol && d4 < -tol) || (d3 < -tol && d4 > tol))
+}
+
+/// Whether a closed ring crosses itself (rings of more than a few thousand points are not checked).
+fn self_crossing(ring: &[Point]) -> bool {
+    let n = ring.len();
+    if n > 4000 {
+        return false;
+    }
+    (0..n).any(|j| (j + 2..n).any(|k| !(j == 0 && k == n - 1) && segments_cross(ring[j], ring[(j + 1) % n], ring[k], ring[(k + 1) % n])))
+}
+
+/// Points along a relief's arc of radius `r` about `centre`, from `from` to `to` through `probe` (as the rebuilt
+/// outline draws it).
+fn relief_points(centre: Point, r: f64, from: Point, to: Point, probe: Point) -> Vec<Point> {
+    let tau = std::f64::consts::TAU;
+    let a0 = (from - centre).atan2();
+    let ccw = ((to - centre).atan2() - a0).rem_euclid(tau);
+    let off = ((probe - centre).atan2() - a0).rem_euclid(tau);
+    let sweep = if off < ccw { ccw } else { ccw - tau };
+    let n = ((sweep.abs() / 0.05).ceil() as usize).max(8);
+    let mut pts: Vec<Point> = (0..=n).map(|s| centre + Vec2::from_angle(a0 + sweep * s as f64 / n as f64) * r).collect();
+    pts[0] = from;
+    pts[n] = to;
+    pts
+}
+
 /// Add reliefs of `diameter_mm` to every inside corner of `path` (see the module docs).
 pub fn dogbone(path: &BezPath, diameter_mm: f64, relief: Relief) -> Result<Dogboned> {
     if !(diameter_mm.is_finite() && diameter_mm > 0.0 && diameter_mm <= MAX_DIAMETER_MM) {
@@ -88,10 +151,33 @@ pub fn dogbone(path: &BezPath, diameter_mm: f64, relief: Relief) -> Result<Dogbo
             Ok(flatten(&join(std::slice::from_ref(s)), TOLERANCE)?.into_iter().next().filter(|l| l.closed && l.points.len() > 2).map(|l| l.points))
         })
         .collect::<Result<_>>()?;
+    // Every piece of every closed outline, flattened, to check that a relief cuts into nothing else.
+    let mut obstacles: Vec<Obstacle> = Vec::new();
+    for (i, sub) in subs.iter().enumerate() {
+        if rings[i].is_none() {
+            continue;
+        }
+        for (k, seg) in sub.segs.iter().enumerate() {
+            let points = match seg {
+                PathSeg::Line(l) => vec![l.p0, l.p1],
+                other => {
+                    let mut p = BezPath::new();
+                    p.move_to(other.start());
+                    p.push(other.as_path_el());
+                    flatten(&p, TOLERANCE / 10.0)?.into_iter().flat_map(|l| l.points).collect()
+                }
+            };
+            obstacles.push(Obstacle::new(Some((i, k)), points));
+        }
+    }
     let mut corners = Vec::new();
     let mut skipped = Vec::new();
     for (i, sub) in subs.iter_mut().enumerate() {
         let Some(ring) = &rings[i] else { continue };
+        if self_crossing(ring) {
+            skipped.push(SkippedCorner { at: ring[0], reason: "the outline crosses itself, so which side is material is not known".into() });
+            continue;
+        }
         let probe = ring[0];
         let depth = rings.iter().enumerate().filter(|(j, o)| *j != i && o.as_ref().is_some_and(|o| point_in_ring(probe, o))).count();
         let material_left = (polygon_area(ring) > 0.0) == (depth % 2 == 0);
@@ -133,10 +219,21 @@ pub fn dogbone(path: &BezPath, diameter_mm: f64, relief: Relief) -> Result<Dogbo
                     if prev_is_b { (c, probe, tb, 0.0) } else { (c, probe, 0.0, tb) }
                 }
             };
-            if trims[k].1 + t_in > lens[k] - EPS || trims[next].0 + t_out > lens[next] - EPS && t_out > 0.0 {
+            // What is left of each line between this relief and the one at its other end must stay positive.
+            let left_prev = lens[k] - trims[k].0 - trims[k].1 - t_in;
+            let left_next = lens[next] - trims[next].0 - trims[next].1 - t_out;
+            if (t_in > 0.0 && left_prev < EPS) || (t_out > 0.0 && left_next < EPS) {
                 skipped.push(SkippedCorner { at: v, reason: "the relief does not fit on the lines at this corner".into() });
                 continue;
             }
+            // The relief's arc may cut into no other line or curve of the shape, nor into another relief.
+            let arc = relief_points(centre, r, v + e_in * t_in, v + e_out * t_out, probe);
+            let hits = obstacles.iter().any(|o| o.seg != Some((i, k)) && o.seg != Some((i, next)) && o.crosses(&arc));
+            if hits {
+                skipped.push(SkippedCorner { at: v, reason: "the relief would cut into another edge of the shape".into() });
+                continue;
+            }
+            obstacles.push(Obstacle::new(None, arc));
             trims[k].1 += t_in;
             trims[next].0 += t_out;
             planned[k] = Some(Planned { centre, probe, trim_prev: t_in, trim_next: t_out });
@@ -267,6 +364,62 @@ mod tests {
         let flat = flatten(&d.path, 1e-4).unwrap();
         let min_y = flat[0].points.iter().filter(|p| p.x > 7.0 && p.x < 13.0).map(|p| p.y).fold(f64::INFINITY, f64::min);
         assert!((min_y - 4.5).abs() < 1e-3, "into the bottom: {min_y}");
+    }
+
+    /// Whether any closed outline of `p` crosses itself or another one.
+    fn crossing(p: &BezPath) -> bool {
+        let rings: Vec<Vec<Point>> = flatten(p, 1e-4).unwrap().into_iter().map(|l| l.points).collect();
+        rings.iter().any(|r| self_crossing(r))
+            || rings.iter().enumerate().any(|(i, a)| {
+                rings[i + 1..].iter().any(|b| {
+                    let close = |r: &Vec<Point>| r.iter().copied().chain(std::iter::once(r[0])).collect::<Vec<_>>();
+                    Obstacle::new(None, close(a)).crosses(&close(b))
+                })
+            })
+    }
+
+    #[test]
+    fn reliefs_never_overlap_or_cut_into_other_edges() {
+        // A 1 mm wide slot and a 1 mm tool: one relief takes 0.71 mm of the 1 mm bottom, so only one fits.
+        let narrow = poly(&[&[(0.0, 0.0), (20.0, 0.0), (20.0, 10.0), (10.5, 10.0), (10.5, 5.0), (9.5, 5.0), (9.5, 10.0), (0.0, 10.0)]]);
+        let d = dogbone(&narrow, 1.0, Relief::Dogbone).unwrap();
+        assert_eq!((d.corners.len(), d.skipped.len()), (1, 1), "{d:?}");
+        assert!(!crossing(&d.path));
+        // An L with 1 mm arms and a 7 mm tool: the relief fits on its lines but would break through the outer walls.
+        let thin = poly(&[&[(0.0, 0.0), (10.0, 0.0), (10.0, 1.0), (1.0, 1.0), (1.0, 10.0), (0.0, 10.0)]]);
+        for relief in [Relief::Dogbone, Relief::TboneLonger, Relief::TboneShorter] {
+            let d = dogbone(&thin, 7.0, relief).unwrap();
+            assert!(d.corners.is_empty(), "{relief:?}: {d:?}");
+            assert!(d.skipped[0].reason.contains("another edge"), "{relief:?}: {:?}", d.skipped);
+            // A small tool still fits.
+            let d = dogbone(&thin, 1.0, relief).unwrap();
+            assert_eq!(d.corners.len(), 1);
+            assert!(!crossing(&d.path));
+        }
+        // A relief may not reach into a hole next to the corner, nor into a curve.
+        // (A 2 mm relief at (12, 5) dips to y = 4.71 at x = 11.29; the hole's top is at y = 4.9 under it.)
+        let mut near_hole = poly(&[&[(11.0, 4.5), (11.6, 4.5), (11.6, 4.9), (11.0, 4.9)]]);
+        near_hole.extend(slotted());
+        let d = dogbone(&near_hole, 2.0, Relief::Dogbone).unwrap();
+        assert_eq!(d.corners, vec![Point::new(8.0, 5.0)], "{d:?}");
+        assert!(!crossing(&d.path));
+        // A self-crossing outline (a bow tie) has no known inside: left alone.
+        let bowtie = poly(&[&[(0.0, 0.0), (10.0, 10.0), (10.0, 0.0), (0.0, 10.0)]]);
+        let d = dogbone(&bowtie, 1.0, Relief::Dogbone).unwrap();
+        assert!(d.corners.is_empty() && d.skipped[0].reason.contains("crosses itself"), "{d:?}");
+        // Many slots in a comb, tiny and large tools: never a crossing outline.
+        let mut comb = vec![(0.0, 0.0), (200.0, 0.0), (200.0, 10.0)];
+        for s in (0..50).rev() {
+            let x = 4.0 * s as f64;
+            comb.extend([(x + 3.0, 10.0), (x + 3.0, 4.0), (x + 1.0, 4.0), (x + 1.0, 10.0)]);
+        }
+        comb.push((0.0, 10.0));
+        let comb = poly(&[&comb]);
+        for dia in [1e-6, 0.5, 1.0, 1.5, 3.0, 50.0] {
+            let d = dogbone(&comb, dia, Relief::Dogbone).unwrap();
+            assert_eq!(d.corners.len() + d.skipped.len(), 100, "{dia}");
+            assert!(!crossing(&d.path), "{dia}");
+        }
     }
 
     #[test]
