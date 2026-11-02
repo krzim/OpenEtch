@@ -2,8 +2,14 @@
 // sub-layers). Every field commits one command (`object.transform`, `object.set_layer`, `stock.move`, `layer.update`,
 // `layer.sub_update`) on Enter or when focus leaves it; X and Y commit together as one step. Numbers accept simple
 // maths (`20/3`).
+// With objects selected the layer shows as one row ("All settings…" opens its full settings here); the Cuts / Layers
+// quick row edits speed and power, so the cut settings are no longer repeated below the shape (V12). On a coarse
+// pointer the position section has a nudge pad (touch/NudgePad.tsx), and the signed fields (X, Y, rotation) bring up
+// the full keyboard, so "-12.5" and "20/3" can be typed on a phone.
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { NudgePad } from "../touch/NudgePad.tsx";
+import { useLayoutMode } from "../workspace/layoutMode.ts";
 import type { Invocation } from "../api/client.ts";
 import * as C from "../api/commands.ts";
 import { gantryOf } from "../api/grbl.ts";
@@ -51,7 +57,8 @@ export function PropertiesPanel(props: PropertiesPanelProps) {
       {selection.objects.length > 0 && <ObjectSection {...props} doc={doc} />}
       {selection.objects.length > 0 && <ShapeCutProperties doc={doc} ids={selection.objects} run={props.run} report={props.report} has={props.has} />}
       {selection.stock && doc.stock && <StockSection {...props} doc={doc} />}
-      {layer && <LayerSection layer={layer} machine={props.machine} run={props.run} report={props.report} doc={doc} has={props.has} />}
+      {layer && selection.objects.length > 0 && <LayerRow key={layer.id} layer={layer} machine={props.machine} run={props.run} report={props.report} doc={doc} has={props.has} />}
+      {layer && selection.objects.length === 0 && <LayerSection layer={layer} machine={props.machine} run={props.run} report={props.report} doc={doc} has={props.has} />}
       {nothing && (
         <div className="panel-empty">
           {t("pp.nothing")}
@@ -61,9 +68,51 @@ export function PropertiesPanel(props: PropertiesPanelProps) {
   );
 }
 
+/**
+ * The selected objects' layer as one row: its colour, name and main speed / power, with "All settings…" to open the
+ * full layer section in place (the Cuts / Layers quick row covers the everyday fields).
+ */
+function LayerRow(p: { layer: Layer; machine: MachineStatus | null; run: Run; report: (e: unknown) => void; doc: GDocument; has: (cmd: string) => boolean }) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const s = p.layer.settings;
+  return (
+    <>
+      <section className="prop-section prop-layer-row">
+        <div className="prop-layer-line">
+          <span className="swatch" style={{ background: p.layer.color }} />
+          <span className="prop-layer-name">{p.layer.name}</span>
+          <span className="muted">{p.layer.tool ? p.layer.tool : `${trimNumber(s.speed_mm_s, 1)} mm/s · ${trimNumber(s.power_pct, 1)}%`}</span>
+          <button className="btn small" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+            {t("layers.more")}
+          </button>
+        </div>
+      </section>
+      {open && <LayerSection layer={p.layer} machine={p.machine} run={p.run} report={p.report} doc={p.doc} has={p.has} />}
+    </>
+  );
+}
+
+/**
+ * Signed fields (X, Y, rotation) need "-" and maths on a phone keypad: their inputs get `inputmode="text"` and
+ * `enterkeyhint="done"`. A bridge until the shared fields take P2's `signed` prop (components/ui.tsx is P2's).
+ */
+function useSignedInputs(ref: { current: HTMLElement | null }) {
+  useEffect(() => {
+    for (const i of ref.current?.querySelectorAll<HTMLInputElement>("input[data-signed], [data-signed] input") ?? []) {
+      if (i.inputMode !== "text") i.inputMode = "text";
+      if (i.enterKeyHint !== "done") i.enterKeyHint = "done";
+    }
+  });
+}
+
 function ObjectSection({ doc, selection, run, report, onArrange, workspaceMm }: PropertiesPanelProps & { doc: GDocument }) {
   const t = useT();
   const td = useTD();
+  const lm = useLayoutMode();
+  const coarse = lm.pointer === "coarse" || lm.density === "touch";
+  const sectionRef = useRef<HTMLElement>(null);
+  useSignedInputs(sectionRef);
   const [lockAspect, setLockAspect] = useState(true);
   // LightBurn's 9-point anchor, the same one the numeric toolbar uses.
   const [anchor, setAnchor] = useAnchor();
@@ -113,7 +162,7 @@ function ObjectSection({ doc, selection, run, report, onArrange, workspaceMm }: 
   };
 
   return (
-    <section className="prop-section">
+    <section className="prop-section" ref={sectionRef}>
       <h3>
         {single
           ? shapeKindText(td, shapeKindName(single))
@@ -149,7 +198,10 @@ function ObjectSection({ doc, selection, run, report, onArrange, workspaceMm }: 
           ))}
         </div>
       </div>
-      <PairField labels={["X", "Y"]} unit="mm" value={[ax, ay]} onCommit={(v) => setPos(v[0], v[1])} />
+      <div data-signed="">
+        <PairField labels={["X", "Y"]} unit="mm" value={[ax, ay]} onCommit={(v) => setPos(v[0], v[1])} />
+      </div>
+      {coarse && <NudgePad steps={nudge} unit={lu} />}
       <div className="field-grid">
         <NumberField label="W" unit="mm" value={w} min={0.01} onCommit={(v) => setSize(v, null)} />
         <NumberField label="H" unit="mm" value={h} min={0.01} onCommit={(v) => setSize(null, v)} />
@@ -161,17 +213,19 @@ function ObjectSection({ doc, selection, run, report, onArrange, workspaceMm }: 
           <CheckField label={t("pp.keepRound")} checked={keepRound} onChange={setKeepRound} />
         </>
       )}
-      <NumberField
-        label={single ? t("pp.rotation") : t("pp.rotateBy")}
-        unit="°"
-        value={rot}
-        digits={2}
-        onCommit={(v) => {
-          if (v === null) return;
-          const delta = single ? normDeg(v - rot) : v;
-          if (Math.abs(delta) > 1e-9) exec(C.transform(ids, { rotate_deg: round6(delta), about: [roundMm(ax), roundMm(ay)] }));
-        }}
-      />
+      <div data-signed="">
+        <NumberField
+          label={single ? t("pp.rotation") : t("pp.rotateBy")}
+          unit="°"
+          value={rot}
+          digits={2}
+          onCommit={(v) => {
+            if (v === null) return;
+            const delta = single ? normDeg(v - rot) : v;
+            if (Math.abs(delta) > 1e-9) exec(C.transform(ids, { rotate_deg: round6(delta), about: [roundMm(ax), roundMm(ay)] }));
+          }}
+        />
+      </div>
       {parts && (
         <dl className="kv">
           <dt>{t("pp.flip")}</dt>
@@ -205,7 +259,7 @@ function ObjectSection({ doc, selection, run, report, onArrange, workspaceMm }: 
           </>
         )}
       </div>
-      <p className="hint">
+      <p className="hint" hidden={coarse}>
         {t("pp.nudgeHint", {
           normal: formatLength(nudge.normal, lu, 3),
           ctrl: formatLength(nudge.ctrl, lu, 3),
@@ -245,7 +299,9 @@ function StockSection({ doc, has, run, report, onEditStock }: PropertiesPanelPro
         <dt>{t("pp.material")}</dt>
         <dd>{s.material ?? "—"}</dd>
       </dl>
-      <PairField labels={[t("pp.centreX"), t("pp.centreY")]} unit="mm" value={s.center} onCommit={(c) => move({ center: [roundMm(c[0]), roundMm(c[1])] })} />
+      <div data-signed="">
+        <PairField labels={[t("pp.centreX"), t("pp.centreY")]} unit="mm" value={s.center} onCommit={(c) => move({ center: [roundMm(c[0]), roundMm(c[1])] })} />
+      </div>
       <NumberField label={t("pp.rotation")} unit="°" value={s.rotation_deg} digits={2} onCommit={(v) => v !== null && move({ rotation_deg: round6(normDeg(v)) })} />
       <p className="hint">{t("pp.stockHint")}</p>
       <div className="btn-row">

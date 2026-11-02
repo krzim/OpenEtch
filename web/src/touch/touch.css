@@ -284,3 +284,66 @@
     font-size: max(16px, 1em);
   }
 }
+
+/* ---- the nudge pad (NudgePad.tsx, Properties on coarse pointers) ------------------------------------------------ */
+.nudge-pad {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 6px 0;
+}
+.nudge-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 44px);
+  grid-template-rows: repeat(3, 44px);
+  gap: 2px;
+}
+.nudge-btn {
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border, #c9cbcf);
+  border-radius: var(--r-md, 4px);
+  background: var(--surface, transparent);
+  color: var(--text, inherit);
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.nudge-btn:active {
+  background: var(--surface-hover, rgba(127, 127, 127, 0.2));
+}
+.nudge-step {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--fs-sm, 12px);
+}
+.nudge-step select {
+  min-height: 44px;
+  font-size: max(16px, 1em);
+}
+
+/* The selected objects' layer as one row in Properties (V12). */
+.prop-layer-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.prop-layer-name {
+  font-weight: var(--fw-semibold, 600);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.prop-layer-line .muted {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
