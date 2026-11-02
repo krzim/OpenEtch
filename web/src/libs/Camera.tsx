@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Invocation } from "../api/client.ts";
 import type { GDocument, MachineStatus } from "../api/types.ts";
 import { CheckField, NumberField } from "../components/ui.tsx";
+import { openAppModeDialog } from "../app/AppModeDialog.tsx";
 import { useT } from "../workspace/usePrefs.ts";
 import { WsModal } from "../workspace/WsModal.tsx";
 import { libsApi } from "./api.ts";
@@ -453,9 +454,20 @@ function BrowserCamera(p: { disabled: boolean; onFrame: (png: Blob) => void }) {
   return (
     <div className="lx-browser-cam">
       {!stream ? (
-        <button className="btn" disabled={!can || p.disabled} onClick={() => void start()} title={can ? undefined : t("cam.noBrowserCam")}>
-          {t("cam.browserCam")}
-        </button>
+        <>
+          <button className="btn" disabled={!can || p.disabled} onClick={() => void start()} title={can ? undefined : t("cam.noBrowserCam")}>
+            {t("cam.browserCam")}
+          </button>
+          {!can && (
+            // Said inline, not only in the tooltip (touch has no hover): the camera needs a secure origin.
+            <p className="app-cam-note">
+              {t("app.cam.needsHttps")}{" "}
+              <button type="button" className="app-link" onClick={openAppModeDialog}>
+                {t("app.cam.howTo")}
+              </button>
+            </p>
+          )}
+        </>
       ) : (
         <div className="lx-row">
           <button className="btn btn-primary" disabled={p.disabled} onClick={snap}>
