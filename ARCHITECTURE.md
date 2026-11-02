@@ -1362,7 +1362,8 @@ Origin), the public WAZER `.lbdev`, xTool/Creality `.lbdev` posts and the owner'
   profile. Activation swaps the driver (`hw::Machine::swap_ruida`: a fresh `SimRuida` on the simulator; on real
   hardware UDP to the address, no build feature needed) and back. A run is planned on the bed's target like GRBL's,
   then each pass becomes `.rd` layers in machine mm (`ruida_dsp::rd_job_from_plan`: a new layer whenever the pass or
-  the power changes, at most 128; min and max power both the layer's power) and a `RuidaProgram`. Refused for Ruida
+  the power changes, at most 128, so every tab marked at a Tab Cut Power is a layer of its own; min and max power
+  both the layer's power) and a `RuidaProgram`. Refused for Ruida
   (not built): rotary/Z jobs, dot mode, pauses before/after a pass, the GRBL layer options (constant power, air
   assist, overscan, overcut, leads and path pauses from `PassPlan.gantry`; the fill ramp, which a gantry target plans
   into the pass's powers, from the pass's own settings), the start input, Repeat Marking tables and queues. The web UI offers the File List window (stored files: Refresh, Start…, Delete; Send the

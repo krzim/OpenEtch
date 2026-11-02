@@ -65,7 +65,8 @@ fn color_of(doc: &Document, layer_id: &str) -> [u8; 3] {
 }
 
 /// The planner's passes as `.rd` layers in machine mm (`profile.to_machine`), in order: a new layer whenever the pass
-/// or the power changes (a shape with a power scale or a grayscale image makes one layer per power level, at most
+/// or the power changes (a shape with a power scale or a grayscale image makes one layer per power level, every tab
+/// marked at a Tab Cut Power one of its own, at most
 /// 128 in all). Refused: rotary and Z jobs, dot mode, layer pauses and the GRBL layer options (constant power, air
 /// assist, overscan, overcut, the fill ramp, leads and path pauses; not built for Ruida),
 /// points off the bed.
@@ -93,7 +94,8 @@ pub fn rd_job_from_plan(doc: &Document, job: &JobPlan, profile: &RuidaProfile) -
         let ramp = cut.is_some_and(|c| c.options.ramp_length_mm > 0.0 && matches!(c.mode, doc::FillMode::Fill | doc::FillMode::FillThenLine));
         if !pass.gantry.is_default() || ramp {
             return refuse(format!(
-                "layer {name}: constant power, air assist, overscan, overcut, the fill ramp, lead-ins, lead-outs and                  start/end pauses are GRBL layer options, not available on a Ruida machine yet"
+                "layer {name}: constant power, air assist, overscan, overcut, the fill ramp, lead-ins, lead-outs and \
+                 start/end pauses are GRBL layer options, not available on a Ruida machine yet"
             ));
         }
         let color = color_of(doc, name);
@@ -113,8 +115,9 @@ pub fn rd_job_from_plan(doc: &Document, job: &JobPlan, profile: &RuidaProfile) -
                 _ => {
                     if layers.len() >= MAX_RD_LAYERS {
                         return refuse(format!(
-                            "the job needs more than {MAX_RD_LAYERS} Ruida layers (pass {n}: every pass and every power level of \
-                             a power-scaled shape or grayscale image is one); use fewer power levels"
+                            "the job needs more than {MAX_RD_LAYERS} Ruida layers (pass {n}: every pass and every change of power \
+                             starts one: a power-scaled shape, a grayscale image, a tab marked at a Tab Cut Power); use fewer \
+                             power levels or tabs"
                         ));
                     }
                     layers.push(RdLayer {

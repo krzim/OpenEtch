@@ -162,9 +162,41 @@ async fn limits_and_galvo_only_options_are_refused_when_requested() {
         for r in [req("POST", "/api/runs", None), req("GET", "/api/export/rd", None)] {
             let (s, v) = send(&app, r).await;
             assert_eq!(s, StatusCode::BAD_REQUEST, "{settings}: {v}");
-            assert!(v["error"].as_str().unwrap_or_default().contains("GRBL layer options"), "{settings}: {v}");
+            let e = v["error"].as_str().unwrap_or_default();
+            assert!(e.contains("GRBL layer options") && !e.contains("  "), "{settings}: {v}");
         }
     }
+    assert_eq!(sim(&st).report().burns, 0);
+}
+
+#[tokio::test]
+async fn tabs_marked_at_a_tab_cut_power_become_ruida_layers_of_their_own() {
+    // Tabs / Bridges (DES-024) with a Tab Cut Power mark each tab at a lower power: on a Ruida machine every change of
+    // power starts an `.rd` layer, so a rectangle with 4 tabs alternates between the two powers.
+    let (app, st, _) = ruida_engine(ApprovalMode::Pin).await;
+    exec(&app, "shape.rect", json!({"width_mm": 40, "height_mm": 20})).await;
+    let tabs = |cut_power_pct: f64| {
+        json!({"power_pct": 40, "speed_mm_s": 50, "options": {"tabs": {"count": 4, "size_mm": 1.0, "cut_power_pct": cut_power_pct}}})
+    };
+    let layers_of = |bytes: &[u8]| ruida::read_rd(bytes, None).unwrap().job.layers;
+    exec(&app, "layer.update", json!({"id": "layer-1", "settings": tabs(0.0)})).await;
+    let res = app.clone().oneshot(req("GET", "/api/export/rd", None)).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(layers_of(&res.into_body().collect().await.unwrap().to_bytes()).len(), 1, "gaps only: one layer");
+    exec(&app, "layer.update", json!({"id": "layer-1", "settings": tabs(25.0)})).await;
+    let res = app.clone().oneshot(req("GET", "/api/export/rd", None)).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let layers = layers_of(&res.into_body().collect().await.unwrap().to_bytes());
+    assert!(layers.len() >= 8, "{} layers", layers.len());
+    let powers: Vec<f64> = layers.iter().map(|l| l.max_power[0]).collect();
+    assert!(powers.iter().any(|p| (p - 40.0).abs() < 0.01) && powers.iter().any(|p| (p - 10.0).abs() < 0.01), "{powers:?}");
+    // Enough tabbed shapes to pass 128 layers are refused, and the refusal names the tabs.
+    for i in 0..20 {
+        exec(&app, "shape.rect", json!({"width_mm": 5, "height_mm": 5, "center": [i as f64 * 6.0 - 60.0, -40.0]})).await;
+    }
+    let (s, v) = send(&app, req("GET", "/api/export/rd", None)).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
+    assert!(v["error"].as_str().unwrap_or_default().contains("Tab Cut Power"), "{v}");
     assert_eq!(sim(&st).report().burns, 0);
 }
 
