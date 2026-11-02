@@ -20,7 +20,7 @@
 //! | POST | `/api/library/{name}/entries/{id}/duplicate` | Duplicate → `{id}` |
 //! | DELETE | `/api/library/{name}/entries/{id}` | Delete (layers linked to it are unlinked) |
 //! | POST | `/api/library/{name}/entries/{id}/apply` | `{layer, link?: bool}`: Assign (default) or Link |
-//! | GET / PUT | `/api/prefs` | the active device's preferences and the global ones; PUT `{require_framing?, play_sound?, checklist?, load_defaults_on_new?, console_macros?, debug_log?, check_for_updates?}` (UI only; `console_macros` `[{name, lines}]` replaces the device's macros, every line checked against the GRBL console policy) |
+//! | GET / PUT | `/api/prefs` | the active device's preferences and the global ones; PUT `{require_framing?, play_sound?, checklist?, load_defaults_on_new?, console_macros?, move_positions?, debug_log?, check_for_updates?}` (UI only; `console_macros` `[{name, lines}]` replaces the device's macros, every line checked against the GRBL console policy; `move_positions` `[{name, x_mm, y_mm}]` replaces a GRBL device's saved Move positions, machine mm on its bed) |
 //! | POST | `/api/layers/{id}/default` | `{all?}`: Make Default (for the layer's colour) / Make Default for All |
 //! | POST | `/api/layers/{id}/reset` | `{builtin?}`: Reset to Default (`builtin`: OpenEtch's defaults, LightBurn's Shift+Reset) |
 //! | POST / DELETE | `/api/optimization/default` | Set as Defaults / forget them |
@@ -499,6 +499,8 @@ struct PrefsBody {
     #[serde(default)]
     console_macros: Option<Vec<crate::prefs::ConsoleMacro>>,
     #[serde(default)]
+    move_positions: Option<Vec<crate::prefs::MovePosition>>,
+    #[serde(default)]
     debug_log: Option<bool>,
     #[serde(default)]
     check_for_updates: Option<bool>,
@@ -519,6 +521,15 @@ async fn prefs_edit(State(st): State<Arc<AppState>>, headers: HeaderMap, b: Byte
     {
         return Err(EngineError::BadRequest(p));
     }
+    if let Some(m) = &b.move_positions {
+        // Saved positions are a gantry's: on the active GRBL device's bed.
+        let Some(bed) = st.machine.config().grbl.as_ref().map(|g| g.work_area_mm) else {
+            return Err(EngineError::Conflict("saved Move positions need a GRBL gantry as the active device".into()));
+        };
+        if let Some(p) = crate::prefs::move_positions_problem(m, bed) {
+            return Err(EngineError::BadRequest(p));
+        }
+    }
     let device = st.active_device().id;
     {
         let mut p = lock(&st.libs.prefs);
@@ -537,6 +548,9 @@ async fn prefs_edit(State(st): State<Arc<AppState>>, headers: HeaderMap, b: Byte
         }
         if let Some(m) = b.console_macros {
             d.console_macros = m;
+        }
+        if let Some(m) = b.move_positions {
+            d.move_positions = m;
         }
         if let Some(v) = b.debug_log {
             p.prefs.debug_log = v;

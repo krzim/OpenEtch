@@ -586,3 +586,37 @@ async fn ramps_leads_and_path_pauses_fire_only_as_cuts_in_the_armed_run() {
     assert!(fires.iter().all(|f| !outside(f.from) && !outside(f.to)), "{fires:?}");
     assert!(!r.lit_now);
 }
+
+/// Saved Move positions are stored with the device in the engine's preferences (UI only: an agent cannot save them),
+/// must lie on the bed, need a GRBL device, and going to one is an ordinary laser-off jog.
+#[tokio::test]
+async fn saved_move_positions_are_ui_only_and_on_the_bed() {
+    let (app, st, id, galvo) = grbl_engine(false).await;
+    let board = sim(&st);
+    let put = |v: Value| req("PUT", "/api/prefs", Some(v));
+    let spots = json!([{"name": "Jig corner", "x_mm": 12.5, "y_mm": 30.0}, {"name": "Park", "x_mm": 400.0, "y_mm": 300.0}]);
+    let mut r = put(json!({"move_positions": spots}));
+    r.headers_mut().insert("mcp-session-id", "x".parse().unwrap());
+    assert_eq!(send(&app, r).await.0, StatusCode::FORBIDDEN, "agents cannot save positions");
+    let (s, v) = send(&app, put(json!({"move_positions": [{"name": "Off", "x_mm": 401.0, "y_mm": 0.0}]}))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
+    assert!(v["error"].as_str().unwrap().contains("off the 400 x 300 mm bed"), "{v}");
+    let (s, v) = send(&app, put(json!({"move_positions": [{"name": " ", "x_mm": 1.0, "y_mm": 1.0}]}))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
+    let (s, v) = send(&app, put(json!({"move_positions": spots}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (_, v) = send(&app, req("GET", "/api/prefs", None)).await;
+    assert_eq!((&v["device"], &v["device_prefs"]["move_positions"]), (&json!(id), &spots), "{v}");
+    // Going to one: the Move window jogs to its field position (machine 12.5, 30 on a front-left origin).
+    let (s, v) = send(&app, req("POST", "/api/machine/jog", Some(json!({"x": -187.5, "y": -120.0, "feed": 3000})))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    board.run_blocks(5);
+    let (_, g) = send(&app, req("GET", "/api/machine/grbl?refresh=true", None)).await;
+    assert_eq!(g["position"]["machine"], json!([12.5, 30.0]), "{g}");
+    assert!(board.report().fires.is_empty());
+    // A galvo has no Move positions.
+    let (s, _) = send(&app, req("POST", &format!("/api/devices/{galvo}/activate"), None)).await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, v) = send(&app, put(json!({"move_positions": []}))).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+}

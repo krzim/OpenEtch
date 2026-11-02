@@ -105,8 +105,10 @@ These are `na` today because OpenEtch only drives JCZ/BJJCZ galvos. They become 
    keys, Home, Unlock, Go to origin, Move to position, position readout), the Console window with history and macros
    saved per device (checked against the console policy when saved and when sent), File > Save G-code, and the GRBL
    layer options constant power (M3), air assist (M8/M9), overscan and overcut, all shown only for GRBL devices.
-   Still open: ramps, lead-in/out, saved Move positions, the last-position crosshair, backlash, scanning offsets and
-   framing with the laser on.
+   *Also on branch `grbl-extras` (unverified on hardware, no gantry):* the fill ramp (`LAY-053`), lead-in/out and
+   start/end pauses (`LAY-054`), saved Move positions (`UX-075`) and Show Last Position (`JOB-064`).
+   Still open: the ramp on Threshold images, Cut Through pauses, a user origin, backlash, scanning offsets and framing
+   with the laser on.
 3. **Ruida (UDP and USB).** The most common DSP controller. The protocol is publicly documented by community
    projects (MIT/BSD ones only). Unlocks controller file lists (`OTH-017`), Send / machine files (`JOB-065`),
    RDWorks `.rd` import (`UX-037`), rotary mode on gantries (`OTH-014`), auto-focus (`JOB-073`) and feeders
