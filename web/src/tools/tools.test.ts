@@ -23,6 +23,7 @@ import {
   traceManyInvocation,
   userToolInvocations,
   userToolProblem,
+  userToolUrl,
   userToolsBody,
   type UserTool,
 } from "./toolsApi.ts";
@@ -120,4 +121,16 @@ test("user tools: parsing, checks, the menu and what they run", () => {
   assert.deepEqual(parseSteps('[{"id": "shape.rect", "params": {"width_mm": 5}}]'), { steps: [{ id: "shape.rect", params: { width_mm: 5 } }] });
   for (const bad of ["", "{}", "[]", '[{"params": {}}]', '[{"id": "x", "params": [1]}]']) assert.ok("error" in parseSteps(bad), bad);
   assert.equal(parseUserTools(null).length, 0);
+});
+
+test("the menu opens only http(s) pages, whatever preferences.json holds", () => {
+  const tools = parseUserTools({
+    user_tools: [
+      { name: "Ok", kind: "url", url: " https://example.com/box " },
+      { name: "Script", kind: "url", url: "javascript:alert(1)" },
+      { name: "Data", kind: "url", url: "data:text/html,hi" },
+      { name: "Seq", kind: "commands", steps: [{ id: "shape.rect" }] },
+    ],
+  });
+  assert.deepEqual(tools.map(userToolUrl), ["https://example.com/box", null, null, null]);
 });

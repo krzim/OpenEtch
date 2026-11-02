@@ -27,6 +27,7 @@ import {
   removeTabs,
   tabMarks,
   userToolInvocations,
+  userToolUrl,
   userToolsBody,
   type TabMark,
   type UserTool,
@@ -238,11 +239,16 @@ export function useToolsUi(p: ToolsUiProps) {
 
   const runUserTool = (tool: UserTool) => {
     if (tool.kind === "url") {
+      const url = userToolUrl(tool);
+      if (!url) {
+        p.notify(t("ut.badUrl"), "error");
+        return;
+      }
       if (!noticeAccepted()) {
         if (!window.confirm(t("ut.firstUse"))) return;
         acceptNotice();
       }
-      window.open(tool.url, "_blank", "noopener,noreferrer");
+      window.open(url, "_blank", "noopener,noreferrer");
       return;
     }
     exec(userToolInvocations(tool), t("ut.ran", { name: tool.name }));

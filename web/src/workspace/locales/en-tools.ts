@@ -107,5 +107,6 @@ export const EN_TOOLS = {
   "ut.saved": "User tools saved.",
   "ut.ran": "Ran \"{name}\".",
   "ut.unsupported": "This engine does not keep user tools.",
+  "ut.badUrl": "This tool's address is not an http:// or https:// page, so it is not opened. Fix it in Manage User Tools.",
   "ut.firstUse": "Web tools open third-party sites in a new tab. Accounts or memberships there are separate from OpenEtch. Continue?",
 } as const;

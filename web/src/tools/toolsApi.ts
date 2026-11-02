@@ -279,6 +279,12 @@ export function groupUserTools(tools: readonly UserTool[]): { category: string; 
   return out.sort((a, b) => (a.category === "" ? -1 : b.category === "" ? 1 : 0));
 }
 
+/** The address a web-page tool opens, or null when it is not an http(s) address (a preferences.json edited by hand
+ * is not checked by the engine, so the menu checks again before opening anything). */
+export function userToolUrl(t: UserTool): string | null {
+  return t.kind === "url" && isWebUrl(t.url) ? t.url.trim() : null;
+}
+
 /** The invocations a command-sequence tool runs (one batch). */
 export function userToolInvocations(t: UserTool): Invocation[] {
   return t.kind === "commands" ? t.steps.map((s) => ({ id: s.id, params: s.params })) : [];
