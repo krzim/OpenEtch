@@ -2,6 +2,7 @@
 
 use std::future::IntoFuture;
 use std::io::IsTerminal;
+use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -12,7 +13,7 @@ use engine::devices::{self, DeviceRegistry};
 use engine::hw::Machine;
 use engine::pin::{self, ApprovalConfig, ApprovalMode, PhysicalConfirm, PinStore};
 use engine::projects::ProjectDir;
-use engine::security::{SecurityConfig, generate_token};
+use engine::security::{SecurityConfig, generate_token, load_or_create_token, rotate_token, token_path};
 use engine::{AppState, api};
 use machine::PollConfig;
 
@@ -24,6 +25,7 @@ fn main() -> ExitCode {
             return ExitCode::SUCCESS;
         }
         Ok(Parsed::SetPin { config_dir, reset }) => return set_pin(&config_dir, reset),
+        Ok(Parsed::Token { config_dir, rotate, listen }) => return token_command(&config_dir, rotate, listen),
         Ok(Parsed::Devices(cmd)) => {
             return match engine::devices::devices_command(&cmd) {
                 Ok(report) => {
@@ -122,6 +124,44 @@ fn set_pin(dir: &Path, reset: bool) -> ExitCode {
     }
 }
 
+/// This computer's address on the LAN, for a pairing URL: the source address the OS would use to reach a public
+/// address (a UDP `connect` sends nothing).
+fn lan_ip() -> Option<IpAddr> {
+    let s = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    s.connect("192.0.2.1:9").ok()?;
+    let ip = s.local_addr().ok()?.ip();
+    (!ip.is_unspecified() && !ip.is_loopback()).then_some(ip)
+}
+
+/// `openetch token [--rotate]`: print the persistent access token (made on first use) and a pairing URL.
+fn token_command(dir: &Path, rotate: bool, listen: Option<SocketAddr>) -> ExitCode {
+    let got = if rotate { rotate_token(dir).map(|t| (t, true)) } else { load_or_create_token(dir) };
+    let (token, fresh) = match got {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("openetch token: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let ip = listen.map(|a| a.ip()).filter(|ip| !ip.is_unspecified()).or_else(lan_ip);
+    let host = match ip {
+        Some(IpAddr::V6(v6)) => format!("[{v6}]"),
+        Some(ip) => ip.to_string(),
+        None => "<this-machine>".to_owned(),
+    };
+    let port = listen.map_or(7878, |a| a.port());
+    println!("openetch: access token ({}):", token_path(dir).display());
+    println!("{token}");
+    println!("openetch: pair a device by opening http://{host}:{port}/?token={token}");
+    println!("openetch: or paste the token into the app's \"Connect to OpenEtch\" card");
+    if rotate {
+        println!("openetch: new token saved; restart the engine to use it, then pair every device again");
+    } else if fresh {
+        println!("openetch: new token saved; an engine that is already running off loopback uses it after a restart");
+    }
+    ExitCode::SUCCESS
+}
+
 /// `--sim-pin` is refused unless the engine drives the simulator (and, in a release build, unless
 /// `OPENETCH_ALLOW_SIM_PIN=1`).
 fn check_sim_pin(config: &Config, simulated: bool) -> Result<(), String> {
@@ -205,11 +245,28 @@ async fn run(config: Config) -> Result<(), String> {
         Err(e) => tracing::warn!(error = %e, "board not ready; framing and runs will retry the connection"),
     }
 
-    let loopback = config.listen.ip().is_loopback();
-    let token = match (&config.token, loopback) {
+    // Off loopback (or behind a proxy, --require-token) every client needs the access token. It is kept in the config
+    // directory, so a restart or an update does not log out the paired browsers, app windows and MCP clients.
+    let need_token = !config.listen.ip().is_loopback() || config.require_token;
+    let token = match (&config.token, need_token) {
         (Some(t), _) => Some(t.clone()),
-        (None, true) => None,
-        (None, false) => Some(generate_token()?),
+        (None, false) => None,
+        (None, true) => match load_or_create_token(&config.config_dir) {
+            Ok((t, created)) => {
+                let path = token_path(&config.config_dir);
+                if created {
+                    println!("openetch: new access token saved to {} (`openetch token` prints it)", path.display());
+                } else {
+                    println!("openetch: access token from {} (`openetch token --rotate` replaces it)", path.display());
+                }
+                Some(t)
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "cannot keep the access token; using a new one for this run only");
+                println!("openetch: {e}; using a new access token for this run only (devices must pair again)");
+                Some(generate_token()?)
+            }
+        },
     };
     let security = SecurityConfig::new(token.clone(), config.allow_hosts.clone());
     if let Err(e) = pin::create_config_dir(&config.config_dir) {

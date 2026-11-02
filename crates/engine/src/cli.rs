@@ -15,6 +15,7 @@ pub const USAGE: &str = "openetch: laser design and control engine
 
 USAGE: openetch [OPTIONS]
        openetch set-pin [--reset] [--config-dir <path>]
+       openetch token [--rotate] [--config-dir <path>] [--listen <addr>]
        openetch profile from-lightburn [--prefs <path>] [--device <name>] [--base <profile>] --out <file> [--force]
        openetch devices list [--config-dir <path>] [--profile <path>]
        openetch devices import <file> [--add all|<name>] [--config-dir <path>] [--profile <path>]
@@ -26,6 +27,11 @@ COMMANDS:
                         approvals once the file changes: restart it to use the new PIN.
   set-pin --reset       Delete the operator PIN (forgotten PIN) after typing a confirmation phrase. Approvals stay
                         disabled until a new PIN is set and the engine is restarted.
+  token                 Print the access token that browsers, app windows and MCP clients need when the engine listens
+                        off loopback (or with --require-token), and a pairing URL that logs a device in. The token is
+                        kept in <config-dir>/access-token (mode 0600) and survives restarts; it is made on first use.
+                        --listen gives the address the URL uses (default: this computer's LAN address, port 7878).
+  token --rotate        Make a new access token (every device has to be paired again). Restart the engine to use it.
   profile from-lightburn
                         Write a machine profile TOML (--out) for a LightBurn device: LightBurn's device settings
                         (field, timing, speeds, frequency range, ...) applied onto --base (default the B6 profile),
@@ -43,7 +49,10 @@ OPTIONS:
   --profile <path>      Machine profile TOML (default fixtures/b6-mopa-60w.toml, found from the current dir up).
   --web-dir <path>      Built web UI to serve (default web/dist, found from the current dir up).
   --usb                 Drive the real laser over USB (needs a build with --features usb). Default: simulator.
-  --token <token>       Bearer token to require (default: generated when listening off loopback).
+  --token <token>       Bearer token to require (default: the persistent token in <config-dir>/access-token, made on
+                        first use, when listening off loopback or with --require-token).
+  --require-token       Require the access token on loopback too: for an HTTPS proxy on the same computer (tailscale
+                        serve, Caddy), which reaches the engine over 127.0.0.1 on behalf of other devices.
   --allow-host <name>   Extra host name accepted in Host/Origin headers (repeatable), e.g. galvo.local.
   --config-dir <path>   Engine config directory (operator PIN). Default: the OS config dir + openetch, e.g.
                         %APPDATA%\\openetch or ~/.config/openetch.
@@ -95,6 +104,8 @@ pub struct Config {
     pub web_dir: PathBuf,
     pub usb: bool,
     pub token: Option<String>,
+    /// `--require-token`: require the access token even on a loopback address (a proxy in front).
+    pub require_token: bool,
     pub allow_hosts: Vec<String>,
     /// Where the operator PIN lives.
     pub config_dir: PathBuf,
@@ -127,6 +138,14 @@ pub enum Parsed {
         config_dir: PathBuf,
         /// `--reset`: delete the PIN instead of setting one.
         reset: bool,
+    },
+    /// `openetch token [--rotate]`: print (or replace) the persistent access token.
+    Token {
+        config_dir: PathBuf,
+        /// `--rotate`: make a new token first.
+        rotate: bool,
+        /// `--listen`: the address the pairing URL names (`None`: this computer's LAN address, port 7878).
+        listen: Option<SocketAddr>,
     },
     /// `openetch profile from-lightburn ...`.
     ProfileFromLightBurn(crate::lightburn::ProfileFromLightBurn),
@@ -171,6 +190,10 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Parsed, String> 
         args.next();
         return parse_set_pin(args);
     }
+    if args.peek().is_some_and(|a| a == "token") {
+        args.next();
+        return parse_token(args);
+    }
     if args.peek().is_some_and(|a| a == "profile") {
         args.next();
         return parse_profile(args);
@@ -189,6 +212,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Parsed, String> 
     let mut web_dir: Option<PathBuf> = None;
     let mut usb = false;
     let mut token = None;
+    let mut require_token = false;
     let mut allow_hosts = Vec::new();
     let mut lightburn_prefs = None;
     let mut lightburn_device = None;
@@ -212,11 +236,12 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Parsed, String> 
             "--usb" => usb = true,
             "--token" => {
                 let t = value("--token")?;
-                if t.len() < 16 || !t.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+                if !crate::security::valid_token(&t) {
                     return Err("--token must be at least 16 characters of [A-Za-z0-9_-]".into());
                 }
                 token = Some(t);
             }
+            "--require-token" => require_token = true,
             "--allow-host" => allow_hosts.push(value("--allow-host")?),
             "--config-dir" => config = Some(PathBuf::from(value("--config-dir")?)),
             "--projects-dir" => projects_dir = Some(PathBuf::from(value("--projects-dir")?)),
@@ -269,7 +294,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Parsed, String> 
                     }
                 }
             }
-            "set-pin" | "profile" | "devices" => {
+            "set-pin" | "token" | "profile" | "devices" => {
                 return Err(format!("{flag} is a command of its own and comes first (see --help)"));
             }
             other => return Err(format!("unknown option '{other}' (see --help)")),
@@ -291,6 +316,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Parsed, String> 
         web_dir: web_dir.unwrap_or_else(|| resolve_default(DEFAULT_WEB_DIR)),
         usb,
         token,
+        require_token,
         allow_hosts,
         config_dir: config_dir(config)?,
         confirm_input,
@@ -383,6 +409,31 @@ fn parse_profile(mut it: impl Iterator<Item = String>) -> Result<Parsed, String>
     Ok(Parsed::ProfileFromLightBurn(crate::lightburn::ProfileFromLightBurn { prefs, device, base, out, force }))
 }
 
+/// `openetch token [--rotate] [--config-dir P] [--listen ADDR]`.
+fn parse_token(mut it: impl Iterator<Item = String>) -> Result<Parsed, String> {
+    let (mut dir, mut rotate, mut listen) = (None, false, None);
+    while let Some(arg) = it.next() {
+        let (flag, inline) = match arg.split_once('=') {
+            Some((f, v)) if f.starts_with("--") => (f.to_owned(), Some(v.to_owned())),
+            _ => (arg.clone(), None),
+        };
+        let mut value = |name: &str| -> Result<String, String> {
+            inline.clone().or_else(|| it.next()).ok_or_else(|| format!("{name} needs a value"))
+        };
+        match flag.as_str() {
+            "--rotate" => rotate = true,
+            "--config-dir" => dir = Some(PathBuf::from(value("--config-dir")?)),
+            "--listen" => {
+                let v = value("--listen")?;
+                listen = Some(v.parse::<SocketAddr>().map_err(|e| format!("--listen {v}: {e}"))?);
+            }
+            "-h" | "--help" => return Ok(Parsed::Help),
+            other => return Err(format!("token: unknown option '{other}' (only --rotate, --config-dir and --listen)")),
+        }
+    }
+    Ok(Parsed::Token { config_dir: config_dir(dir)?, rotate, listen })
+}
+
 fn parse_set_pin(mut it: impl Iterator<Item = String>) -> Result<Parsed, String> {
     let mut dir = None;
     let mut reset = false;
@@ -440,6 +491,25 @@ mod tests {
             assert!(parse(["--projects-mount", bad].iter().map(|s| s.to_string())).is_err(), "{bad}");
         }
         assert!(run(&[]).projects_dir.ends_with(Path::new("openetch").join("projects")));
+    }
+
+    #[test]
+    fn token_command_and_require_token() {
+        let p = |a: &[&str]| parse(a.iter().map(|s| s.to_string()));
+        assert_eq!(
+            p(&["token", "--config-dir", "x"]).unwrap(),
+            Parsed::Token { config_dir: PathBuf::from("x"), rotate: false, listen: None }
+        );
+        assert_eq!(
+            p(&["token", "--rotate", "--config-dir=y", "--listen", "0.0.0.0:9000"]).unwrap(),
+            Parsed::Token { config_dir: PathBuf::from("y"), rotate: true, listen: Some("0.0.0.0:9000".parse().unwrap()) }
+        );
+        assert!(p(&["token", "--listen", "nope"]).is_err());
+        assert!(p(&["token", "--usb"]).is_err());
+        assert!(p(&["--usb", "token"]).unwrap_err().contains("command of its own"));
+        assert!(!run(&[]).require_token);
+        assert!(run(&["--require-token"]).require_token);
+        assert!(USAGE.contains("openetch token [--rotate]") && USAGE.contains("--require-token"));
     }
 
     #[test]

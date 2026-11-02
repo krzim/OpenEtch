@@ -1,13 +1,13 @@
 //! The HTTP API (ARCHITECTURE.md "Engine API") plus `/mcp` and the static web UI, as one axum [`Router`].
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use axum::body::Bytes;
+use axum::body::{Body, Bytes};
 use axum::extract::rejection::{BytesRejection, QueryRejection};
 use axum::extract::{DefaultBodyLimit, Path as UrlPath, Query, State};
-use axum::http::{HeaderMap, HeaderName, StatusCode, header};
+use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router, middleware};
@@ -29,8 +29,7 @@ pub const MAX_BODY_BYTES: usize = 32 * 1024 * 1024;
 /// Largest file `POST /api/document/upload` accepts.
 pub const MAX_UPLOAD_BYTES: usize = crate::projects::MAX_FILE_BYTES;
 
-/// The whole app: `/api/*`, `/mcp`, and `web_dir` (with SPA fallback to `index.html`) when given, all behind
-/// [`security::guard`].
+/// The whole app: `/api/*`, `/mcp`, and `web_dir` (see [`serve_web`]) when given, all behind [`security::guard`].
 pub fn router(state: Arc<AppState>, web_dir: Option<&Path>) -> Router {
     let api = Router::new()
         .route("/commands", get(commands))
@@ -84,10 +83,66 @@ pub fn router(state: Arc<AppState>, web_dir: Option<&Path>) -> Router {
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES));
     let mut app = Router::new().nest("/api", api).nest_service("/mcp", mcp::service(state.clone()));
     if let Some(dir) = web_dir {
-        let spa = ServeDir::new(dir).fallback(ServeFile::new(dir.join("index.html")));
-        app = app.fallback_service(spa);
+        let dir: Arc<PathBuf> = Arc::new(dir.to_path_buf());
+        app = app.fallback(move |req: Request<Body>| {
+            let dir = dir.clone();
+            async move { serve_web(&dir, req).await }
+        });
     }
     app.with_state(state.clone()).layer(middleware::from_fn_with_state(state, security::guard))
+}
+
+/// `Cache-Control` for the hashed bundles under `/assets/` (their names change with their content).
+pub const CACHE_IMMUTABLE: &str = "public, max-age=31536000, immutable";
+/// `Cache-Control` for everything else the UI is made of (`index.html`, the manifest, icons, source maps): always
+/// revalidated (`Last-Modified`), so an app window, which has no reload button, never keeps a stale page.
+pub const CACHE_REVALIDATE: &str = "no-cache";
+
+/// A request for a page of the single-page app (`/`, `/editor/x`): a GET or HEAD whose last path segment has no
+/// file extension, outside `/assets/`. Only these fall back to `index.html`; a missing `/assets/x.js`, `favicon.ico`
+/// or `manifest.webmanifest` is a 404, never a page that a script tag or the browser would take for the file.
+pub fn is_navigation(method: &Method, path: &str) -> bool {
+    (method == Method::GET || method == Method::HEAD)
+        && !path.starts_with("/assets/")
+        && !path.rsplit('/').next().unwrap_or_default().contains('.')
+}
+
+/// The `Cache-Control` for a static answer (`served` is the path of the file actually sent), or `None` for failures,
+/// which are never cached.
+pub fn static_cache_control(served: &str, status: StatusCode) -> Option<&'static str> {
+    if !(status.is_success() || status == StatusCode::NOT_MODIFIED) {
+        return None;
+    }
+    Some(if served.starts_with("/assets/") && !served.ends_with(".map") { CACHE_IMMUTABLE } else { CACHE_REVALIDATE })
+}
+
+/// Serve the built web UI from `dir`: files as they are, with the `.br`/`.gz` copies written at build time (web/
+/// vite.config.ts) when the browser accepts them (`Content-Encoding`, `Vary: Accept-Encoding`); `index.html` for
+/// page navigations only ([`is_navigation`]); `Cache-Control` from [`static_cache_control`].
+pub async fn serve_web(dir: &Path, req: Request<Body>) -> Response {
+    let path = req.uri().path().to_owned();
+    let navigation = is_navigation(req.method(), &path);
+    let (method, headers) = (req.method().clone(), req.headers().clone());
+    let served = ServeDir::new(dir).precompressed_br().precompressed_gzip().try_call(req).await;
+    let (mut res, mut file) = match served {
+        Ok(r) => (r.map(Body::new), path.clone()),
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("cannot read the web UI: {e}")).into_response(),
+    };
+    if res.status() == StatusCode::NOT_FOUND && navigation {
+        let mut index = Request::new(Body::empty());
+        *index.method_mut() = method;
+        *index.headers_mut() = headers;
+        res = match ServeFile::new(dir.join("index.html")).precompressed_br().precompressed_gzip().try_call(index).await {
+            Ok(r) => r.map(Body::new),
+            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("cannot read the web UI: {e}")).into_response(),
+        };
+        file = "/index.html".to_owned();
+    }
+    if let Some(cc) = static_cache_control(&file, res.status()) {
+        res.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static(cc));
+        res.headers_mut().append(header::VARY, HeaderValue::from_static("accept-encoding"));
+    }
+    res
 }
 
 async fn api_not_found() -> EngineError {
@@ -659,4 +714,238 @@ async fn start_job(State(st): State<Arc<AppState>>, headers: HeaderMap, body: By
     let options: crate::runs::RunOptions =
         serde_json::from_value(Value::Object(b)).map_err(|e| EngineError::BadRequest(format!("bad run options: {e}")))?;
     Ok(Json(approve::start_now(&st, options, checklist.as_deref(), revision).await?))
+}
+
+#[cfg(test)]
+mod web_tests {
+    //! The static web UI: navigation-only fallback, cache headers, precompressed files, and the access token kept
+    //! across restarts (with its cookie for app windows).
+
+    use super::*;
+    use crate::hw::Machine;
+    use crate::pin::{self, ApprovalConfig, PinStore};
+    use crate::security::{self, SecurityConfig};
+    use commands::Session;
+    use http_body_util::BodyExt;
+    use machine::{MachineProfile, PollConfig};
+    use tower::ServiceExt;
+
+    /// A web/dist look-alike: index.html (+ .br/.gz), a hashed bundle (+ .br/.gz), its source map and the manifest.
+    fn web_dir() -> PathBuf {
+        let dir = pin::temp_dir("webdist");
+        std::fs::create_dir_all(dir.join("assets")).unwrap();
+        let files: [(&str, &[u8]); 8] = [
+            ("index.html", b"<!doctype html><title>OpenEtch</title>"),
+            ("index.html.br", b"BR-INDEX"),
+            ("index.html.gz", b"GZ-INDEX"),
+            ("assets/index-abc123.js", b"console.log('plain')"),
+            ("assets/index-abc123.js.br", b"BR-JS"),
+            ("assets/index-abc123.js.gz", b"GZ-JS"),
+            ("assets/index-abc123.js.map", b"{}"),
+            ("manifest.webmanifest", b"{\"name\":\"OpenEtch\"}"),
+        ];
+        for (name, body) in files {
+            std::fs::write(dir.join(name), body).unwrap();
+        }
+        dir
+    }
+
+    async fn state(security: SecurityConfig) -> Arc<AppState> {
+        let machine = Arc::new(Machine::simulated(MachineProfile::generic_lmc_fiber(), None, PollConfig::immediate()));
+        machine.connect().await.expect("sim connects");
+        let approval = ApprovalConfig { pin: PinStore::new(&pin::temp_dir("webtests")), confirm: None };
+        AppState::new(Session::new(doc::Document::default()), machine, security, approval, crate::tests::test_projects())
+    }
+
+    fn get(uri: &str, extra: &[(&str, &str)]) -> Request<Body> {
+        let mut b = Request::builder().method("GET").uri(uri).header("host", "192.168.1.20:7878");
+        for (k, v) in extra {
+            b = b.header(*k, *v);
+        }
+        b.body(Body::empty()).unwrap()
+    }
+
+    async fn fetch(app: &Router, r: Request<Body>) -> (StatusCode, HeaderMap, Vec<u8>) {
+        let res = app.clone().oneshot(r).await.unwrap();
+        let (status, headers) = (res.status(), res.headers().clone());
+        (status, headers, res.into_body().collect().await.unwrap().to_bytes().to_vec())
+    }
+
+    fn header(h: &HeaderMap, name: header::HeaderName) -> &str {
+        h.get(name).and_then(|v| v.to_str().ok()).unwrap_or_default()
+    }
+
+    #[test]
+    fn navigations_and_cache_policy() {
+        for nav in ["/", "/editor/x", "/laser", "/a.b/c"] {
+            assert!(is_navigation(&Method::GET, nav), "{nav}");
+        }
+        assert!(is_navigation(&Method::HEAD, "/editor"));
+        for not in ["/assets/nope.js", "/assets/x", "/favicon.ico", "/manifest.webmanifest", "/sw.js"] {
+            assert!(!is_navigation(&Method::GET, not), "{not}");
+        }
+        assert!(!is_navigation(&Method::POST, "/editor"));
+        assert_eq!(static_cache_control("/assets/index-abc.js", StatusCode::OK), Some(CACHE_IMMUTABLE));
+        assert_eq!(static_cache_control("/assets/index-abc.js", StatusCode::NOT_MODIFIED), Some(CACHE_IMMUTABLE));
+        assert_eq!(static_cache_control("/assets/index-abc.js.map", StatusCode::OK), Some(CACHE_REVALIDATE));
+        for page in ["/index.html", "/manifest.webmanifest", "/sw.js", "/icon.svg"] {
+            assert_eq!(static_cache_control(page, StatusCode::OK), Some(CACHE_REVALIDATE), "{page}");
+        }
+        assert_eq!(static_cache_control("/assets/nope.js", StatusCode::NOT_FOUND), None);
+    }
+
+    #[tokio::test]
+    async fn static_routing_cache_headers_and_precompressed_files() {
+        let dir = web_dir();
+        let app = router(state(SecurityConfig::default()).await, Some(&dir));
+
+        // A page of the app: index.html, revalidated.
+        let (s, h, body) = fetch(&app, get("/editor/x", &[])).await;
+        assert_eq!(s, StatusCode::OK);
+        assert_eq!(body, b"<!doctype html><title>OpenEtch</title>");
+        assert_eq!(header(&h, header::CACHE_CONTROL), "no-cache");
+        assert!(header(&h, header::CONTENT_TYPE).starts_with("text/html"));
+        let (s, h, _) = fetch(&app, get("/", &[])).await;
+        assert_eq!((s, header(&h, header::CACHE_CONTROL)), (StatusCode::OK, "no-cache"));
+
+        // Missing files are 404s, not the page.
+        for missing in ["/assets/nope.js", "/favicon-missing.ico", "/sw.js"] {
+            let (s, h, _) = fetch(&app, get(missing, &[])).await;
+            assert_eq!(s, StatusCode::NOT_FOUND, "{missing}");
+            assert!(h.get(header::CACHE_CONTROL).is_none(), "{missing}: a 404 is never cached");
+        }
+
+        // The manifest has its own type and is revalidated.
+        let (s, h, _) = fetch(&app, get("/manifest.webmanifest", &[])).await;
+        assert_eq!(s, StatusCode::OK);
+        assert_eq!(header(&h, header::CONTENT_TYPE), "application/manifest+json");
+        assert_eq!(header(&h, header::CACHE_CONTROL), "no-cache");
+
+        // Hashed bundles: immutable, and the precompressed copy the browser accepts.
+        let (s, h, body) = fetch(&app, get("/assets/index-abc123.js", &[])).await;
+        assert_eq!((s, body.as_slice()), (StatusCode::OK, &b"console.log('plain')"[..]));
+        assert_eq!(header(&h, header::CACHE_CONTROL), CACHE_IMMUTABLE);
+        assert!(h.get(header::CONTENT_ENCODING).is_none());
+        let (s, h, body) = fetch(&app, get("/assets/index-abc123.js", &[("accept-encoding", "gzip, deflate, br")])).await;
+        assert_eq!((s, body.as_slice()), (StatusCode::OK, &b"BR-JS"[..]));
+        assert_eq!(header(&h, header::CONTENT_ENCODING), "br");
+        assert!(header(&h, header::CONTENT_TYPE).contains("javascript"), "{h:?}");
+        assert!(header(&h, header::VARY).contains("accept-encoding"));
+        assert_eq!(header(&h, header::CACHE_CONTROL), CACHE_IMMUTABLE);
+        let (_, h, body) = fetch(&app, get("/assets/index-abc123.js", &[("accept-encoding", "gzip")])).await;
+        assert_eq!((header(&h, header::CONTENT_ENCODING), body.as_slice()), ("gzip", &b"GZ-JS"[..]));
+        // The fallback page is precompressed too.
+        let (_, h, body) = fetch(&app, get("/editor", &[("accept-encoding", "br")])).await;
+        assert_eq!((header(&h, header::CONTENT_ENCODING), body.as_slice()), ("br", &b"BR-INDEX"[..]));
+
+        // Source maps are neither precompressed nor cached for ever.
+        let (s, h, _) = fetch(&app, get("/assets/index-abc123.js.map", &[("accept-encoding", "br")])).await;
+        assert_eq!(s, StatusCode::OK);
+        assert!(h.get(header::CONTENT_ENCODING).is_none());
+        assert_eq!(header(&h, header::CACHE_CONTROL), "no-cache");
+
+        // The API is not the web UI: an unknown route stays the API's JSON 404.
+        let (s, h, _) = fetch(&app, get("/api/nope", &[])).await;
+        assert_eq!(s, StatusCode::NOT_FOUND);
+        assert!(h.get(header::CACHE_CONTROL).is_none());
+    }
+
+    #[tokio::test]
+    async fn the_access_token_survives_a_restart_and_logs_app_windows_in() {
+        let config = pin::temp_dir("tokencfg");
+        let (token, created) = security::load_or_create_token(&config).unwrap();
+        assert!(created && security::valid_token(&token));
+        let web = web_dir();
+        let first = router(state(SecurityConfig::new(Some(token.clone()), Vec::new())).await, Some(&web));
+        let bearer = format!("Bearer {token}");
+        assert_eq!(fetch(&first, get("/api/machine", &[])).await.0, StatusCode::UNAUTHORIZED);
+        let (s, h, _) = fetch(&first, get("/api/machine", &[("authorization", &bearer)])).await;
+        assert_eq!(s, StatusCode::OK);
+        let cookie = header(&h, header::SET_COOKIE).to_owned();
+        assert!(cookie.starts_with(&format!("{}={token};", security::TOKEN_COOKIE)), "{cookie}");
+        assert!(cookie.contains("HttpOnly") && cookie.contains("SameSite=Strict") && !cookie.contains("Secure"));
+
+        // "Restart": a new AppState from the same config directory keeps the token, so paired devices stay in.
+        let (again, created) = security::load_or_create_token(&config).unwrap();
+        assert_eq!((again.as_str(), created), (token.as_str(), false));
+        let second = router(state(SecurityConfig::new(Some(again), Vec::new())).await, Some(&web));
+        assert_eq!(fetch(&second, get("/api/machine", &[("authorization", &bearer)])).await.0, StatusCode::OK);
+
+        // The cookie alone (an app window without the page's localStorage) is accepted for /api, not for /mcp.
+        let jar = format!("theme=dark; {}={token}", security::TOKEN_COOKIE);
+        let (s, h, _) = fetch(&second, get("/api/machine", &[("cookie", &jar)])).await;
+        assert_eq!(s, StatusCode::OK);
+        assert!(h.get(header::SET_COOKIE).is_none(), "a good cookie is not set again");
+        let same_origin = [("cookie", jar.as_str()), ("origin", "http://192.168.1.20:7878")];
+        assert_eq!(fetch(&second, get("/api/machine", &same_origin)).await.0, StatusCode::OK);
+        // Another service on the same machine (another port) is same-site for the browser: its requests do not count.
+        let other_port = [("cookie", jar.as_str()), ("origin", "http://192.168.1.20:8080")];
+        assert_eq!(fetch(&second, get("/api/machine", &other_port)).await.0, StatusCode::UNAUTHORIZED);
+        let mcp = Request::builder()
+            .method("POST")
+            .uri("/mcp")
+            .header("host", "192.168.1.20:7878")
+            .header("cookie", &jar)
+            .header("content-type", "application/json")
+            .body(Body::from("{}"))
+            .unwrap();
+        assert_eq!(fetch(&second, mcp).await.0, StatusCode::UNAUTHORIZED, "MCP stays bearer-only");
+        let wrong = format!("{}=not-the-token-0123456789", security::TOKEN_COOKIE);
+        assert_eq!(fetch(&second, get("/api/machine", &[("cookie", &wrong)])).await.0, StatusCode::UNAUTHORIZED);
+
+        // Opening the pairing URL (?token=) sets the cookie on the page itself; a wrong token sets nothing.
+        let (s, h, _) = fetch(&second, get(&format!("/?token={token}"), &[("x-forwarded-proto", "https")])).await;
+        assert_eq!(s, StatusCode::OK);
+        let cookie = header(&h, header::SET_COOKIE);
+        assert!(cookie.contains(&token) && cookie.ends_with("; Secure"), "{cookie}");
+        let (s, h, _) = fetch(&second, get("/?token=wrong-token-0123456789", &[])).await;
+        assert_eq!(s, StatusCode::OK);
+        assert!(h.get(header::SET_COOKIE).is_none());
+
+        // Rotating replaces it: the old one is refused by the next engine.
+        let rotated = security::rotate_token(&config).unwrap();
+        assert_ne!(rotated, token);
+        let third = router(state(SecurityConfig::new(security::read_token(&config).unwrap(), Vec::new())).await, None);
+        assert_eq!(fetch(&third, get("/api/machine", &[("authorization", &bearer)])).await.0, StatusCode::UNAUTHORIZED);
+        let fresh = format!("Bearer {rotated}");
+        assert_eq!(fetch(&third, get("/api/machine", &[("authorization", &fresh)])).await.0, StatusCode::OK);
+        // STOP never needs it.
+        let stop = Request::builder()
+            .method("POST")
+            .uri("/api/machine/stop")
+            .header("host", "192.168.1.20:7878")
+            .header("content-type", "application/json")
+            .body(Body::from("{}"))
+            .unwrap();
+        assert_eq!(fetch(&third, stop).await.0, StatusCode::OK);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_token_file_is_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = pin::temp_dir("tokenmode");
+        let (_, _) = security::load_or_create_token(&dir).unwrap();
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&security::token_path(&dir)), 0o600);
+        assert_eq!(mode(&dir), 0o700);
+        security::rotate_token(&dir).unwrap();
+        assert_eq!(mode(&security::token_path(&dir)), 0o600);
+        // A hand-made file with loose permissions is tightened when it is read.
+        std::fs::set_permissions(security::token_path(&dir), std::fs::Permissions::from_mode(0o644)).unwrap();
+        security::read_token(&dir).unwrap();
+        assert_eq!(mode(&security::token_path(&dir)), 0o600);
+    }
+
+    #[test]
+    fn a_damaged_token_file_is_an_error_not_a_silent_new_token() {
+        let dir = pin::temp_dir("tokenbad");
+        assert_eq!(security::read_token(&dir).unwrap(), None);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(security::token_path(&dir), "short\n").unwrap();
+        assert!(security::read_token(&dir).unwrap_err().contains("--rotate"));
+        assert!(security::load_or_create_token(&dir).is_err());
+        let t = security::rotate_token(&dir).unwrap();
+        assert_eq!(security::read_token(&dir).unwrap().as_deref(), Some(t.as_str()));
+    }
 }
