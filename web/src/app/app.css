@@ -1,2 +1,255 @@
-/* "Use as an app" dialog, Connect card and app-window chrome (owner: P4, docs/ux/ui-plan-2026-11.md 1.3). Empty in
-   Stage A. */
+/* "Use as an app" dialog, Connect card and app-window chrome (owner: P4, docs/ux/ui-plan-2026-11.md 1.3). Colours
+   come from styles.css's theme tokens, sizes from tokens.css. */
+
+/* ---- Connect card (ConnectScreen.tsx): the whole window, above nothing but its own STOP ---------------------------- */
+
+.connect-screen {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+  overflow: auto;
+  padding: 0 var(--safe-right) var(--safe-bottom) var(--safe-left);
+}
+
+.connect-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex: none;
+  min-height: calc(var(--bar-top) + var(--safe-top));
+  padding: var(--safe-top) var(--sp-2) 0 var(--sp-3);
+  background: var(--topbar-bg);
+  color: var(--topbar-fg);
+  border-bottom: 1px solid var(--topbar-border);
+}
+
+.connect-brand {
+  font-weight: var(--fw-semibold);
+}
+
+.connect-bar-gap {
+  flex: 1;
+}
+
+/* STOP stays on top of everything, exactly as in the app's top bar. */
+.connect-stop {
+  position: relative;
+  z-index: var(--z-stop);
+  flex: none;
+  min-width: 64px;
+}
+
+.connect-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-3);
+  padding: var(--sp-5) var(--sp-4);
+}
+
+.connect-card {
+  width: min(100%, 480px);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-5);
+  background: var(--panel);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-dialog);
+}
+
+.connect-card h1 {
+  margin: 0;
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-semibold);
+}
+
+.connect-card h2 {
+  margin: 0 0 var(--sp-1);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+}
+
+.connect-card p {
+  margin: 0;
+}
+
+.connect-lead,
+.connect-muted {
+  color: var(--text-2);
+}
+
+.connect-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  font-weight: var(--fw-medium);
+}
+
+.connect-field input {
+  min-height: max(var(--tap, 40px), 40px);
+  padding: 0 var(--sp-2);
+  font: inherit;
+  /* 16 px: iOS does not zoom the page into the field. */
+  font-size: max(16px, 1em);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+
+.connect-check {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 32px;
+}
+
+.connect-error {
+  color: var(--danger);
+}
+
+.connect-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+.connect-where {
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border-soft);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  font-size: var(--fs-md);
+}
+
+.connect-where code,
+.app-mode code {
+  padding: 1px var(--sp-1);
+  border-radius: var(--r-sm);
+  background: var(--chrome-2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.connect-stop-hint {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  text-align: center;
+}
+
+/* ---- Full-screen toggle and its tip (FullscreenButton.tsx) ---------------------------------------------------------- */
+
+.fs-toggle {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+
+.fs-tip {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: var(--z-toast);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: max-content;
+  max-width: min(360px, calc(100vw - 16px));
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-md);
+  background: var(--toast-bg);
+  color: var(--toast-fg);
+  box-shadow: var(--shadow-toast);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+  white-space: normal;
+}
+
+.fs-tip-ok {
+  flex: none;
+}
+
+/* ---- Use as an app (AppModeDialog.tsx) ------------------------------------------------------------------------------ */
+
+.app-mode {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  max-width: 560px;
+}
+
+.app-mode p {
+  margin: 0;
+}
+
+.app-mode-steps {
+  margin: 0;
+  padding-left: 1.4em;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.app-mode-note {
+  color: var(--text-2);
+  font-size: var(--fs-md);
+}
+
+.app-mode-http {
+  padding: var(--sp-2);
+  border-radius: var(--r-md);
+  background: var(--warn-bg);
+  color: var(--warn-text);
+}
+
+/* ---- The Camera's HTTPS note (libs/Camera.tsx) ---------------------------------------------------------------------- */
+
+.app-cam-note {
+  margin: var(--sp-1) 0 0;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+}
+
+.app-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* ---- Installed window with the title-bar overlay (manifest display_override): the top bar is the title bar ---------- */
+
+@media (display-mode: window-controls-overlay) {
+  .topbar {
+    /* Keep clear of the window controls (macOS traffic lights on the left, Windows buttons on the right). */
+    padding-left: max(4px, env(titlebar-area-x, 0px));
+    padding-right: max(8px, calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw)));
+    app-region: drag;
+    -webkit-app-region: drag;
+  }
+  .topbar button,
+  .topbar a,
+  .topbar input,
+  .topbar select,
+  .topbar [role="tab"],
+  .topbar [role="tablist"],
+  .topbar [role="menu"],
+  .topbar [role="menubar"],
+  .topbar .menu,
+  .topbar .doc-name {
+    app-region: no-drag;
+    -webkit-app-region: no-drag;
+  }
+}
