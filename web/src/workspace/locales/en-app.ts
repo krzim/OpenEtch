@@ -1,4 +1,73 @@
 // English strings of the app window: full screen, Use as an app and the Connect card (owner: P4, docs/ux/ui-
-// plan-2026-11.md). Spread into EN (en.ts). `{name}` marks a placeholder. Empty in Stage A.
+// plan-2026-11.md). Spread into EN (en.ts). `{name}` marks a placeholder.
 
-export const EN_APP = {};
+export const EN_APP = {
+  // The Connect card (app/ConnectScreen.tsx): shown instead of the app when the engine refuses the access token.
+  "app.connect.title": "Connect to OpenEtch",
+  "app.connect.lead": "This OpenEtch engine needs its access token before this device can use it.",
+  "app.connect.tokenLabel": "Access token",
+  "app.connect.tokenPlaceholder": "Paste the token or the pairing link",
+  "app.connect.remember": "Remember on this device",
+  "app.connect.connect": "Connect",
+  "app.connect.checking": "Connecting…",
+  "app.connect.retry": "Try again",
+  "app.connect.whereTitle": "Where is the token?",
+  "app.connect.where1": "On the engine's computer (on the Raspberry Pi: ssh in first), run",
+  "app.connect.where2": "It prints the token and a pairing link. Open the link on this device, or paste either one here.",
+  "app.connect.where3": "The token stays the same when the engine restarts. `openetch token --rotate` makes a new one.",
+  "app.connect.badInput": "That does not look like an access token (16 or more letters, digits, - or _).",
+  "app.connect.refused": "The engine refused that token. Check that it is the current one (`openetch token`).",
+  "app.connect.unreachable": "Cannot reach the engine: {detail}",
+  "app.connect.stopHint": "STOP always works, even without the token.",
+  "app.connect.stopSent": "Stop sent.",
+  "app.connect.stopFailed": "Stop could not reach the engine: {detail}. Use the hardware E-stop.",
+
+  // Full screen (workspace/fullscreen.ts, app/FullscreenButton.tsx).
+  "app.fs.enter": "Full screen",
+  "app.fs.exit": "Leave full screen",
+  "app.fs.exitF11": "Full screen (the browser's): press F11 to leave",
+  "app.fs.tipEscape": "Esc left full screen. {key} or the full-screen button brings it back; an app window avoids this (Help > Use as an app).",
+  "app.fs.tipBrowser": "The browser is full screen (F11). Press F11 to leave it.",
+  "app.fs.tipOk": "OK",
+
+  // Use as an app (app/AppModeDialog.tsx, app/appMode.ts).
+  "app.mode.title": "Use OpenEtch as an app",
+  "app.mode.lead": "Run OpenEtch in its own window without the browser's tabs and address bar.",
+  "app.mode.current": "Now: {mode}.",
+  "app.mode.mode.browser": "a browser tab",
+  "app.mode.mode.app": "an app window",
+  "app.mode.mode.fullscreen": "full screen",
+  "app.mode.platform.mac-safari": "Safari on a Mac",
+  "app.mode.platform.chromium": "Chrome or Edge",
+  "app.mode.platform.firefox": "Firefox",
+  "app.mode.platform.ipad": "iPad",
+  "app.mode.platform.iphone": "iPhone",
+  "app.mode.platform.android": "Android",
+  "app.mode.platform.other": "This browser",
+  "app.mode.install": "Install OpenEtch",
+  "app.mode.close": "Close",
+  "app.mode.alreadyApp": "OpenEtch already runs as an app here.",
+  "app.mode.step.macSafari1": "In Safari's menu bar choose File > Add to Dock… (macOS Sonoma or later).",
+  "app.mode.step.macSafari2": "Click Add. OpenEtch gets its own Dock icon and a window with only a title bar.",
+  "app.mode.step.macSafari3": "It opens already connected: the engine's login cookie is copied with it.",
+  "app.mode.step.chromiumSecure1": "Click the install icon at the right end of the address bar, or use the button below.",
+  "app.mode.step.chromiumSecure2": "Chrome: ⋮ > Cast, save and share > Install page as app. Edge: … > Apps > Install this site as an app.",
+  "app.mode.step.chromiumHttp1": "Chrome: ⋮ > Cast, save and share > Create shortcut…, tick Open as window, then Create.",
+  "app.mode.step.chromiumHttp2": "Edge: … > Apps > Install this site as an app.",
+  "app.mode.step.firefox1": "Firefox has no app windows on macOS; on Windows, Firefox 143 or later can pin a site with Taskbar Tabs (Firefox Labs).",
+  "app.mode.step.firefox2": "Or use Safari, Chrome or Edge for an app window.",
+  "app.mode.step.ios1": "Tap Share (the square with the arrow) in Safari.",
+  "app.mode.step.ios2": "Choose Add to Home Screen, keep Open as Web App on, and tap Add.",
+  "app.mode.step.ios3": "Start OpenEtch from the Home Screen: it fills the screen without Safari's bars.",
+  "app.mode.step.ios4": "The Home Screen app keeps its own storage: if it asks, paste the access token once.",
+  "app.mode.step.androidSecure1": "Chrome: ⋮ > Install app (or Add to Home screen > Install).",
+  "app.mode.step.androidHttp1": "Chrome: ⋮ > Add to Home screen. Over plain http this is a shortcut that opens a browser tab.",
+  "app.mode.step.other1": "Look in the browser's menu for Install, Add to Dock or Add to Home Screen.",
+  "app.mode.orFullscreen": "Or press {key} for full screen in this tab.",
+  "app.mode.httpNote": "This page is plain http ({origin}): Chrome, Edge and Android install a real app window (and the title-bar layout) only over HTTPS. See docs/https-on-the-pi.md, or for your own computer set chrome://flags > Insecure origins treated as secure to {origin}.",
+  "app.mode.httpsNote": "HTTPS also turns on the browser camera, keeping the screen awake and Esc in full screen.",
+
+  // Camera (libs/Camera.tsx).
+  "app.cam.needsHttps": "The browser camera needs HTTPS (or this computer's own localhost).",
+  "app.cam.howTo": "How: Help > Use as an app",
+} as const;
