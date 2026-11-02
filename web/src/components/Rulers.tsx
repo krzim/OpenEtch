@@ -2,7 +2,9 @@
 // ruler counts up), with the guides marked on them. Dragging out of a ruler makes a guide (top ruler: horizontal, left
 // ruler: vertical, as in LightBurn); dropping it back on a ruler throws it away. The corner square clears all guides.
 
+import { useRef } from "react";
 import type { RenderCtx } from "../canvasTool.ts";
+import { capturePointer } from "../pointer.ts";
 import type { Vec2 } from "../api/types.ts";
 import { rulerTicks } from "../drawTools.ts";
 import { usePrefs } from "../workspace/usePrefs.ts";
@@ -24,6 +26,9 @@ export function Rulers(props: {
   const [w, h] = r.size;
   const xs = rulerTicks(r.toField([RULER_PX, 0])[0], r.toField([w, 0])[0], r.scale, 60, unit);
   const ys = rulerTicks(r.toField([0, h])[1], r.toField([0, RULER_PX])[1], r.scale, 60, unit);
+  /** The pointer dragging a guide out of a ruler. Tracked here rather than with hasPointerCapture: on touch the capture
+   * can fail, and the guide must still follow and end (audit T17). */
+  const dragging = useRef<number | null>(null);
 
   /** Pointer handlers for one ruler: the guide follows the pointer until release. */
   const dragHandlers = (axis: "x" | "y") => {
@@ -34,23 +39,48 @@ export function Rulers(props: {
     return {
       onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => {
         if (e.pointerType === "mouse" && e.button !== 0) return;
+        if (dragging.current !== null) return; // a second finger
         e.preventDefault();
-        try {
-          e.currentTarget.setPointerCapture(e.pointerId);
-        } catch {
-          // Synthetic events cannot capture; the drag still works while the pointer stays over the ruler.
-        }
+        dragging.current = e.pointerId;
         props.onDrag(axis, local(e), "move");
+        if (capturePointer(e.currentTarget, e.pointerId)) return;
+        // No capture (a touch that the browser would not capture): follow the pointer on the window instead.
+        const id = e.pointerId;
+        const vp = e.currentTarget.closest(".viewport");
+        const at = (ev: PointerEvent): Vec2 => {
+          const b = vp?.getBoundingClientRect();
+          return b ? [ev.clientX - b.left, ev.clientY - b.top] : [ev.clientX, ev.clientY];
+        };
+        const onMove = (ev: PointerEvent) => {
+          if (ev.pointerId === id && dragging.current === id) props.onDrag(axis, at(ev), "move");
+        };
+        const onEnd = (ev: PointerEvent) => {
+          if (ev.pointerId !== id) return;
+          window.removeEventListener("pointermove", onMove);
+          window.removeEventListener("pointerup", onEnd);
+          window.removeEventListener("pointercancel", onEnd);
+          if (dragging.current !== id) return;
+          dragging.current = null;
+          props.onDrag(axis, at(ev), ev.type === "pointercancel" ? "cancel" : "end");
+        };
+        window.addEventListener("pointermove", onMove);
+        window.addEventListener("pointerup", onEnd);
+        window.addEventListener("pointercancel", onEnd);
       },
       onPointerMove: (e: React.PointerEvent<HTMLDivElement>) => {
-        if (!e.currentTarget.hasPointerCapture?.(e.pointerId)) return;
+        if (dragging.current !== e.pointerId) return;
         props.onDrag(axis, local(e), "move");
       },
       onPointerUp: (e: React.PointerEvent<HTMLDivElement>) => {
-        if (!e.currentTarget.hasPointerCapture?.(e.pointerId)) return;
+        if (dragging.current !== e.pointerId) return;
+        dragging.current = null;
         props.onDrag(axis, local(e), "end");
       },
-      onPointerCancel: (e: React.PointerEvent<HTMLDivElement>) => props.onDrag(axis, local(e), "cancel"),
+      onPointerCancel: (e: React.PointerEvent<HTMLDivElement>) => {
+        if (dragging.current !== e.pointerId) return;
+        dragging.current = null;
+        props.onDrag(axis, local(e), "cancel");
+      },
     };
   };
 

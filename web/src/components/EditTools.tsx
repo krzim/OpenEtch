@@ -4,10 +4,16 @@
 //   select nodes. Keys act on the node or segment under the pointer, else on the selected nodes, as LightBurn's do:
 //   Delete/D delete, B break, J join two end nodes, S smooth (a line: make it a curve), C corner, L line, K curve,
 //   I insert at the pointer, M insert at the middle, T trim. Rectangles and ellipses offer "Convert to path" first.
+//   The bar's Insert node adds a node in the middle of the selected segment (no pointer to point with on touch).
 // - Line (Ctrl+L): click points, double-click or Enter finishes, C (or a click on the first point) closes, Backspace
 //   removes the last point, Shift keeps 15° steps. Pen: the same, dragging a point makes it a smooth curve node.
 // - Polygon / star: drag from the centre to a corner (Shift: 15° steps); sides, star and corner radius in the bar.
 // - Measure: click two points or drag (snapped): distance, ΔX, ΔY, angle. Trim: click the piece to remove.
+// - Touch (docs/ux/ui-plan-2026-11.md 1.2): Line, Measure, picks and Trim act when the finger lifts, not when it lands
+//   (pressing shows the snap, dragging adjusts, lifting commits; Trim lights the piece and cuts it on lift), and a
+//   cancelled press (a second finger) rolls back what it added (touch/toolPress.ts). Tolerances follow the pointer
+//   (pointer.ts TOL). Guides move on touch only after a long-press, so one finger over a guide still selects or pans.
+//   The line bar has Undo point (Backspace). The option bars go to the context strip (workspace/contextStrip.tsx).
 // - Point picks for the dialogs (circular array centre, mirror line, two-point rotate/scale; Ctrl+2).
 // - Rulers along the top and left (mm), and guides dragged out of them (saved in the document with guide.add / move /
 //   delete; double-click one, or Arrange > Add guide, to type its position; drag a guide back onto a ruler to remove
@@ -40,6 +46,10 @@ import {
 import { constrainDelta, constraintLine, roundMm, type Mods } from "../editing.ts";
 import { boxFromPoints, geometryCmds, toPathData } from "../geometry.ts";
 import { getPrefs, handleScale } from "../workspace/prefs.ts";
+import { TOL, type PointerClass } from "../pointer.ts";
+import { beginPress, cancelPress, commitOn, endPress, movePress, type PointPress } from "../touch/toolPress.ts";
+import { ContextStripPortal } from "../workspace/contextStrip.tsx";
+import { useLayoutMode } from "../workspace/layoutMode.ts";
 import { usePrefs, useT, useTD } from "../workspace/usePrefs.ts";
 import { fixedLength, fixedNumber, formatLength, lengthDigits, lengthFromDisplay, lengthToDisplay, trimNumber } from "../workspace/units.ts";
 import { guideLabel, guideSnapPart, loadGuidesFor, newGuideId, onGuidesChanged, saveGuidesFor, type Guide } from "../guides.ts";
@@ -191,17 +201,27 @@ type Gesture =
   | { kind: "segment"; seg: number; t: number; start: Vec2; startScreen: Vec2; moved: boolean; d: Vec2 }
   | { kind: "nbox"; a: Vec2; startScreen: Vec2; moved: boolean; shift: boolean }
   | { kind: "pen"; p: Vec2; startScreen: Vec2; moved: boolean }
+  /** A Line point: added on the press (mouse, pen) or held until the lift (touch). `last`: the point before it. */
+  | { kind: "line"; press: PointPress<PenNode[], Vec2>; time: number; screen: Vec2; last: Vec2 | null }
   | { kind: "poly"; c: Vec2 }
-  | { kind: "measure"; startScreen: Vec2; moved: boolean };
+  /** `second`: this press places the second point; `press` holds the point (touch) and what to roll back to. */
+  | { kind: "measure"; startScreen: Vec2; moved: boolean; second: boolean; press: PointPress<Live["meas"], Vec2> }
+  | { kind: "pick"; press: PointPress<Vec2[], Vec2> }
+  /** Touch Trim: the piece under the finger when it landed. */
+  | { kind: "trim"; id: string | null };
 
+// Screen px and ms: the mouse values; touch and pen use the pointer's row of pointer.ts TOL (via CanvasCtx.tol).
 /** Screen px a press may wander before it becomes a drag. */
-const SLOP = 4;
-/** Node and handle pick radius, screen px. */
-const NODE_TOL_PX = 7;
-/** Two presses this close in time (ms) and space (px) are a double-click. */
-const DBL_MS = 350;
+const SLOP = TOL.mouse.slop;
 /** A click this close (px) to the first point closes the line. */
 const CLOSE_PX = 8;
+
+const addPoint = (pts: PenNode[], q: Vec2): PenNode[] => [...pts, { p: q }];
+const addPt = (pts: Vec2[], q: Vec2): Vec2[] => [...pts, q];
+/** A Measure click: the first point, or the second one that completes the measurement. */
+const measureAt = (s: Live["meas"], q: Vec2): Live["meas"] => (s && !s.done ? { a: s.a, b: q, done: true } : { a: q, b: q, done: false });
+const clsOf = (ctx: CanvasCtx): PointerClass => ctx.pointerClass ?? "mouse";
+const tolOfCtx = (ctx: CanvasCtx) => ctx.tol ?? TOL.mouse;
 
 export interface PolyOpts {
   sides: number;
@@ -476,8 +496,32 @@ export function useEditTools(p: EditToolsProps): EditTools {
     void execSelect(G.pathShape(penPathData(rounded, closed), layer, "Path"));
   };
 
+  /** A Line or Pen click (or touch lift) at `q` that finishes the shape: a double-click, or a click on the first point.
+   * Returns false when it is an ordinary new point. */
+  const lineFinish = (q: Vec2, time: number, screen: Vec2, ctx: CanvasCtx): boolean => {
+    const pts = store.get().pen;
+    const tl = tolOfCtx(ctx);
+    const lt = lastTap.current;
+    lastTap.current = { t: time, s: screen };
+    if (lt && time - lt.t < tl.dblMs && dist(lt.s, screen) < tl.dblDist && pts.length >= 2) {
+      finishPen(false);
+      return true;
+    }
+    if (pts.length >= (P.current.tool === "line" ? 3 : 2) && dist(ctx.toScreen(pts[0].p), ctx.toScreen(q)) <= Math.max(CLOSE_PX, tl.node)) {
+      finishPen(true);
+      return true;
+    }
+    return false;
+  };
+
+  /** Undo the last Line / Pen point (Backspace, or the bar's Undo point). */
+  const undoPoint = () => {
+    const pts = store.get().pen;
+    if (pts.length) store.set({ pen: pts.slice(0, -1), rubber: pts.length > 1 ? store.get().rubber : null });
+  };
+
   // ---- polygon ----
-  const finishPolygon = (scale: number) => {
+  const finishPolygon = (scale: number, slop = SLOP) => {
     const st = store.get().poly;
     store.set({ poly: null });
     clearSnap();
@@ -488,7 +532,7 @@ export function useEditTools(p: EditToolsProps): EditTools {
       return;
     }
     let { radius, rotationDeg } = polygonFromDrag(st.c, st.p, st.shift);
-    if (radius * scale < SLOP) {
+    if (radius * scale < slop) {
       radius = 10;
       rotationDeg = 0;
     }
@@ -514,6 +558,30 @@ export function useEditTools(p: EditToolsProps): EditTools {
     store.set({ pick: { ...pk, pts: [] }, pickHover: null });
     P.current.setTool("pick");
   };
+  /** Add a picked point; the last one finishes the pick. Returns whether it finished. */
+  const pickAt = (q: Vec2): boolean => {
+    const pk = store.get().pick;
+    if (!pk) return true;
+    const pts = [...pk.pts, q];
+    if (pts.length >= pk.labels.length) {
+      store.set({ pick: null, pickHover: null });
+      clearSnap();
+      P.current.setTool("select");
+      pk.done(pts);
+      return true;
+    }
+    store.set({ pick: { ...pk, pts } });
+    return false;
+  };
+
+  // ---- trim ----
+  const trimAt = (id: string, f: Vec2, ctx: CanvasCtx) => {
+    if (!P.current.has(G.GEO.trim)) {
+      notify(t("et.thisEngineCannotTrimYet"), "error");
+      return;
+    }
+    void exec(G.trim(id, rp(f), r6(Math.max(0.05, 10 / ctx.scale))));
+  };
 
   /** A snapped point for drawing, constrained to 15° steps from `from` while Shift is held (with its guide line). */
   const drawPoint = (f: Vec2, m: Mods, ctx: CanvasCtx, from: Vec2 | null): Vec2 => {
@@ -530,20 +598,23 @@ export function useEditTools(p: EditToolsProps): EditTools {
 
   // ---- canvas tool -----------------------------------------------------------------------------------------------
 
-  const down = (f: Vec2, m: Mods, info: { target: Element | null; screen: Vec2; time: number }, ctx: CanvasCtx): boolean => {
+  const down = (f: Vec2, m: Mods, info: { target: Element | null; screen: Vec2; time: number; longPress?: boolean }, ctx: CanvasCtx): boolean => {
     lastCtx.current = ctx;
     cursor.current = f;
     const pp = P.current;
     if (!pp.design) return false;
-    // Guides move with the Select tool only; in the drawing tools they are snap targets to click on.
-    const gEl = pp.tool === "select" ? info.target?.closest?.("[data-guide]") : null;
+    const cls = clsOf(ctx);
+    const tl = tolOfCtx(ctx);
+    // Guides move with the Select tool only; in the drawing tools they are snap targets to click on. On touch a guide
+    // moves only after a long-press, so a finger over a guide still draws a marquee or selects.
+    const gEl = pp.tool === "select" && (cls !== "touch" || info.longPress) ? info.target?.closest?.("[data-guide]") : null;
     if (gEl) {
       const id = gEl.getAttribute("data-guide");
       const gd = guidesRef.current.find((x) => x.id === id);
       if (gd) {
         const lt = lastGuideTap.current;
         lastGuideTap.current = { id: gd.id, t: info.time };
-        if (lt && lt.id === gd.id && info.time - lt.t < DBL_MS) {
+        if (lt && lt.id === gd.id && info.time - lt.t < tl.dblMs) {
           // Double-click: type the guide's position.
           lastGuideTap.current = null;
           gest.current = { kind: "none" };
@@ -563,7 +634,7 @@ export function useEditTools(p: EditToolsProps): EditTools {
           selectOnly(ctx.hitObject(f));
           return true;
         }
-        const tol = (NODE_TOL_PX * handleScale()) / ctx.scale;
+        const tol = (tl.node * handleScale()) / ctx.scale;
         const h = hitNodes(nl, f, tol, handlesShown(nl, st.nodeSel));
         if (h?.kind === "node") {
           const sel = clickNode(st.nodeSel, h.index, m.shift);
@@ -593,20 +664,20 @@ export function useEditTools(p: EditToolsProps): EditTools {
         const pts = st.pen;
         const last = pts[pts.length - 1]?.p ?? null;
         const q = drawPoint(f, m, ctx, last);
-        const lt = lastTap.current;
-        lastTap.current = { t: info.time, s: info.screen };
-        if (lt && info.time - lt.t < DBL_MS && dist(lt.s, info.screen) < 6 && pts.length >= 2) {
-          finishPen(false);
+        if (pp.tool === "line" && commitOn("line", cls) === "up") {
+          // Touch: the point lands where the finger lifts; meanwhile the rubber band shows it.
+          store.set({ rubber: last ? q : null });
+          gest.current = { kind: "line", press: beginPress(pts, q, "up", addPoint).press, time: info.time, screen: info.screen, last };
+          return true;
+        }
+        if (lineFinish(q, info.time, info.screen, ctx)) {
           gest.current = { kind: "none" };
           return true;
         }
-        if (pts.length >= (pp.tool === "line" ? 3 : 2) && dist(ctx.toScreen(pts[0].p), ctx.toScreen(q)) <= CLOSE_PX) {
-          finishPen(true);
-          gest.current = { kind: "none" };
-          return true;
-        }
-        store.set({ pen: [...pts, { p: q }], rubber: q });
-        gest.current = pp.tool === "pen" ? { kind: "pen", p: q, startScreen: info.screen, moved: false } : { kind: "none" };
+        const b = beginPress(pts, q, "down", addPoint);
+        store.set({ pen: b.state, rubber: q });
+        gest.current =
+          pp.tool === "pen" ? { kind: "pen", p: q, startScreen: info.screen, moved: false } : { kind: "line", press: b.press, time: info.time, screen: info.screen, last };
         return true;
       }
       case "polygon": {
@@ -617,27 +688,29 @@ export function useEditTools(p: EditToolsProps): EditTools {
       }
       case "measure": {
         const prev = st.meas;
-        if (prev && !prev.done) {
-          const b = drawPoint(f, m, ctx, prev.a);
-          store.set({ meas: { a: prev.a, b, done: true } });
-          ctx.readout(measureText(measure(prev.a, b), lu()));
-          gest.current = { kind: "none" };
-          return true;
+        const second = !!prev && !prev.done;
+        const q = drawPoint(f, m, ctx, second && prev ? prev.a : null);
+        const mode = commitOn("measure", cls);
+        const b = beginPress(prev, q, mode, measureAt);
+        if (mode === "down") {
+          store.set({ meas: b.state });
+          if (second && prev) ctx.readout(measureText(measure(prev.a, q), lu()));
         }
-        const a = drawPoint(f, m, ctx, null);
-        store.set({ meas: { a, b: a, done: false } });
-        gest.current = { kind: "measure", startScreen: info.screen, moved: false };
+        gest.current = { kind: "measure", startScreen: info.screen, moved: false, second, press: b.press };
         return true;
       }
       case "trim": {
         const id = ctx.hitObject(f);
         gest.current = { kind: "none" };
-        if (!id) return true;
-        if (!pp.has(G.GEO.trim)) {
-          notify(t("et.thisEngineCannotTrimYet"), "error");
+        if (commitOn("trim", cls) === "up") {
+          // Touch: the piece under the finger lights up and is cut on lift (moving off it, or a pinch, cuts nothing).
+          ctx.showSnap(null);
+          store.set({ trimHover: id });
+          gest.current = { kind: "trim", id };
           return true;
         }
-        void exec(G.trim(id, rp(f), r6(Math.max(0.05, 10 / ctx.scale))));
+        if (!id) return true;
+        trimAt(id, f, ctx);
         return true;
       }
       case "pick": {
@@ -645,13 +718,13 @@ export function useEditTools(p: EditToolsProps): EditTools {
         gest.current = { kind: "none" };
         if (!pk) return true;
         const q = drawPoint(f, m, ctx, pk.pts[pk.pts.length - 1] ?? null);
-        const pts = [...pk.pts, q];
-        if (pts.length >= pk.labels.length) {
-          store.set({ pick: null, pickHover: null });
-          clearSnap();
-          pp.setTool("select");
-          pk.done(pts);
-        } else store.set({ pick: { ...pk, pts } });
+        if (commitOn("pick", cls) === "up") {
+          store.set({ pickHover: q });
+          gest.current = { kind: "pick", press: beginPress(pk.pts, q, "up", addPt).press };
+          return true;
+        }
+        const before = pk.pts;
+        if (!pickAt(q)) gest.current = { kind: "pick", press: { mode: "down", value: q, before } };
         return true;
       }
       default:
@@ -665,7 +738,33 @@ export function useEditTools(p: EditToolsProps): EditTools {
     const g = gest.current;
     const s = ctx.toScreen(f);
     const st = store.get();
+    const slop = tolOfCtx(ctx).slop;
     switch (g.kind) {
+      case "line": {
+        // Touch: the held point follows the finger (a mouse point was placed on the press).
+        if (g.press.mode !== "up") return;
+        const q = drawPoint(f, m, ctx, g.last);
+        g.press = movePress(g.press, q);
+        store.set({ rubber: g.last ? q : null });
+        if (g.last) {
+          const ms = measure(g.last, q);
+          ctx.readout(`${fixedLength(ms.dist, lu())} · ${ms.angleDeg.toFixed(1)}°`);
+        }
+        break;
+      }
+      case "pick": {
+        if (g.press.mode !== "up") return;
+        const pk = st.pick;
+        const q = drawPoint(f, m, ctx, pk?.pts[pk.pts.length - 1] ?? null);
+        g.press = movePress(g.press, q);
+        store.set({ pickHover: q });
+        break;
+      }
+      case "trim": {
+        const id = ctx.hitObject(f);
+        if (id !== st.trimHover) store.set({ trimHover: id });
+        break;
+      }
       case "guide": {
         const remove = (g.axis === "x" ? s[0] : s[1]) < RULER_PX;
         const sp = ctx.snap(f, m);
@@ -677,7 +776,7 @@ export function useEditTools(p: EditToolsProps): EditTools {
       }
       case "nodes": {
         if (!st.nl) return;
-        if (!g.moved && dist(s, g.startScreen) < SLOP) return;
+        if (!g.moved && dist(s, g.startScreen) < slop) return;
         g.moved = true;
         const raw: Vec2 = [f[0] - g.start[0], f[1] - g.start[1]];
         let d = raw;
@@ -698,7 +797,7 @@ export function useEditTools(p: EditToolsProps): EditTools {
       case "handle": {
         const nl = st.nl;
         if (!nl) return;
-        if (!g.moved && dist(s, g.startScreen) < SLOP) return;
+        if (!g.moved && dist(s, g.startScreen) < slop) return;
         g.moved = true;
         const node = nl.nodes[g.index];
         const to = drawPoint(f, m, ctx, node?.point ?? null);
@@ -711,7 +810,7 @@ export function useEditTools(p: EditToolsProps): EditTools {
         const nl = st.nl;
         const seg = nl?.segments[g.seg];
         if (!nl || !seg) return;
-        if (!g.moved && dist(s, g.startScreen) < SLOP) return;
+        if (!g.moved && dist(s, g.startScreen) < slop) return;
         g.moved = true;
         let d: Vec2 = [f[0] - g.start[0], f[1] - g.start[1]];
         if (m.shift) d = constrainDelta(d);
@@ -722,13 +821,13 @@ export function useEditTools(p: EditToolsProps): EditTools {
         break;
       }
       case "nbox": {
-        if (!g.moved && dist(s, g.startScreen) < SLOP) return;
+        if (!g.moved && dist(s, g.startScreen) < slop) return;
         g.moved = true;
         store.set({ nodeBox: { a: g.a, b: f } });
         break;
       }
       case "pen": {
-        if (!g.moved && dist(s, g.startScreen) < SLOP) return;
+        if (!g.moved && dist(s, g.startScreen) < slop) return;
         g.moved = true;
         const handle = m.shift ? constrainAngle(g.p, f) : f;
         ctx.showConstraint(m.shift ? constraintLine(g.p, [handle[0] - g.p[0], handle[1] - g.p[1]]) : null);
@@ -751,9 +850,22 @@ export function useEditTools(p: EditToolsProps): EditTools {
         break;
       }
       case "measure": {
+        if (g.press.mode === "up") {
+          // Touch: a drag from the first point measures as with the mouse; the second point follows the finger.
+          const a = g.second ? (g.press.before?.a ?? g.press.value) : g.press.value;
+          if (!g.moved && dist(s, g.startScreen) < slop) return;
+          g.moved = true;
+          const b = drawPoint(f, m, ctx, a);
+          g.press = movePress(g.press, b);
+          store.set({ meas: { a, b, done: false } });
+          ctx.readout(measureText(measure(a, b), lu()));
+          break;
+        }
+        // Mouse: the second click completed the measurement on the press.
+        if (g.second) return;
         const prev = st.meas;
         if (!prev) return;
-        if (!g.moved && dist(s, g.startScreen) < SLOP) return;
+        if (!g.moved && dist(s, g.startScreen) < slop) return;
         g.moved = true;
         const b = drawPoint(f, m, ctx, prev.a);
         store.set({ meas: { a: prev.a, b, done: false } });
@@ -769,6 +881,27 @@ export function useEditTools(p: EditToolsProps): EditTools {
     gest.current = { kind: "none" };
     const st = store.get();
     switch (g.kind) {
+      case "line": {
+        if (g.press.mode !== "up") return;
+        // Touch: commit the held point now (or finish the line on a double-tap or the first point).
+        clearSnap();
+        if (lineFinish(g.press.value, g.time, g.screen, ctx)) return;
+        store.set({ pen: endPress(store.get().pen, g.press, addPoint), rubber: null });
+        return;
+      }
+      case "pick": {
+        if (g.press.mode !== "up") return;
+        store.set({ pickHover: null });
+        clearSnap();
+        pickAt(g.press.value);
+        return;
+      }
+      case "trim": {
+        const id = ctx.hitObject(f);
+        store.set({ trimHover: null });
+        if (id && id === g.id) trimAt(id, f, ctx);
+        return;
+      }
       case "guide": {
         const gd = st.guideDrag;
         store.set({ guideDrag: null });
@@ -840,22 +973,36 @@ export function useEditTools(p: EditToolsProps): EditTools {
         if (g.moved) store.set({ rubber: null });
         return;
       case "poly":
-        finishPolygon(ctx.scale);
+        finishPolygon(ctx.scale, tolOfCtx(ctx).slop);
         return;
       case "measure": {
-        if (g.moved && st.meas) store.set({ meas: { ...st.meas, done: true } });
+        if (g.press.mode === "up") {
+          // Touch: a drag measured from its start; a tap places the next point.
+          const next = g.moved && !g.second ? (st.meas ? { ...st.meas, done: true } : null) : endPress(g.press.before, g.press, measureAt);
+          store.set({ meas: next });
+          if (next?.done) ctx.readout(measureText(measure(next.a, next.b), lu()));
+          else clearSnap();
+          return;
+        }
+        if (!g.second && g.moved && st.meas) store.set({ meas: { ...st.meas, done: true } });
         return;
       }
     }
   };
 
+  /** The press was cancelled (a second finger, pointercancel): undo what it added (audit T4). */
   const cancel = () => {
     const g = gest.current;
     gest.current = { kind: "none" };
-    if (g.kind === "pen") {
-      const pts = store.get().pen;
-      store.set({ pen: pts.slice(0, -1) });
+    const st = store.get();
+    if (g.kind === "pen") store.set({ pen: st.pen.slice(0, -1) });
+    if (g.kind === "line") store.set({ pen: cancelPress(st.pen, g.press), rubber: null });
+    if (g.kind === "measure") store.set({ meas: cancelPress(st.meas, g.press) });
+    if (g.kind === "pick") {
+      if (g.press.mode === "down" && st.pick) store.set({ pick: { ...st.pick, pts: cancelPress(st.pick.pts, g.press) } });
+      store.set({ pickHover: null });
     }
+    if (g.kind === "trim") store.set({ trimHover: null });
     store.set({ preview: null, nodeBox: null, guideDrag: null, poly: null });
     clearSnap();
   };
@@ -870,7 +1017,7 @@ export function useEditTools(p: EditToolsProps): EditTools {
       case "node": {
         ctx.showSnap(null);
         const nl = st.nl;
-        const h = nl ? hitNodes(nl, f, (NODE_TOL_PX * handleScale()) / ctx.scale, handlesShown(nl, st.nodeSel)) : null;
+        const h = nl ? hitNodes(nl, f, (tolOfCtx(ctx).node * handleScale()) / ctx.scale, handlesShown(nl, st.nodeSel)) : null;
         if (!sameHit(h, st.hover)) store.set({ hover: h });
         return true;
       }
@@ -1188,6 +1335,32 @@ export function useEditTools(p: EditToolsProps): EditTools {
     return false;
   };
 
+  /** The node bar's Insert node: a node in the middle of the selected segment (between two selected nodes, or after
+   * the one selected node). Keys I and M insert at the pointer instead. */
+  const insertMidNode = () => {
+    const st = store.get();
+    const nl = st.nl;
+    if (!nl) return;
+    let seg = segmentsBetween(nl, st.nodeSel)[0];
+    if (seg === undefined && st.nodeSel.size === 1) {
+      const i = [...st.nodeSel][0];
+      const k = nl.segments.findIndex((s) => s.from === i);
+      if (k >= 0) seg = k;
+    }
+    if (seg === undefined) {
+      notify(t("touch.selectSegmentToInsert"), "error");
+      return;
+    }
+    const at = seg;
+    nodeEdit(
+      (id) => G.nodeInsert(id, at, 0.5),
+      (r) => {
+        const i = (r as { index?: unknown } | null)?.index;
+        if (typeof i === "number") store.set({ nodeSel: new Set([i]) });
+      },
+    );
+  };
+
   // ---- hotkeys (capture phase, ahead of the app's own) ----
   const keyRef = useRef<(e: KeyboardEvent) => void>(() => {});
   keyRef.current = (e: KeyboardEvent) => {
@@ -1216,7 +1389,7 @@ export function useEditTools(p: EditToolsProps): EditTools {
       const pts = st.pen;
       if (e.key === "Enter" && pts.length) return stop(), finishPen(false);
       if (e.key === "Escape" && pts.length) return stop(), store.set({ pen: [], rubber: null }), clearSnap();
-      if (e.key === "Backspace" && pts.length) return stop(), store.set({ pen: pts.slice(0, -1) });
+      if (e.key === "Backspace" && pts.length) return stop(), undoPoint();
       if (k === "c" && pts.length) return stop(), finishPen(true);
     }
     if (pp.tool === "measure" && e.key === "Escape" && st.meas) return stop(), store.set({ meas: null }), clearSnap();
@@ -1422,7 +1595,9 @@ export function useEditTools(p: EditToolsProps): EditTools {
         onNodeKey={(key) => {
           nodeKey(new KeyboardEvent("keydown", { key }), false);
         }}
+        onInsertNode={insertMidNode}
         onFinishLine={(closed) => finishPen(closed)}
+        onUndoPoint={undoPoint}
         onCancelPick={() => p.setTool("select")}
       />
     ),
@@ -1448,6 +1623,9 @@ function EditLayer(props: { store: Store<Live>; r: RenderCtx; tool: Tool; guides
   const st = useLive(props.store);
   const { r, tool } = props;
   const px = r.px;
+  // On a coarse pointer the guide band is wider: a touch on it moves the guide only after a long-press, so the band
+  // never takes a marquee or a selection away from the canvas.
+  const guideHitPx = useLayoutMode().pointer === "coarse" ? 24 : 9;
   const [x0, y1] = r.toField([0, 0]);
   const [x1, y0] = r.toField(r.size);
   const out: ReactNode[] = [];
@@ -1459,7 +1637,7 @@ function EditLayer(props: { store: Store<Live>; r: RenderCtx; tool: Tool; guides
     out.push(
       <g key={`guide-${g.id}`} className={`et-guide-g et-guide-${g.axis}`}>
         <path className="et-guide" d={d} strokeWidth={px(1)} />
-        {props.design && tool === "select" && <path className="et-guide-hit" data-guide={g.id} d={d} strokeWidth={px(9)} />}
+        {props.design && tool === "select" && <path className="et-guide-hit" data-guide={g.id} d={d} strokeWidth={px(guideHitPx)} />}
       </g>,
     );
   }
@@ -1590,7 +1768,9 @@ function EditOverlay(props: {
   onClearGuides: () => void;
   onConvert: (id: string) => void;
   onNodeKey: (key: string) => void;
+  onInsertNode: () => void;
   onFinishLine: (closed: boolean) => void;
+  onUndoPoint: () => void;
   onCancelPick: () => void;
 }) {
   const t = useT();
@@ -1630,6 +1810,7 @@ function EditOverlay(props: {
             {btn(t("et.corner"), () => props.onNodeKey("c"), t("et.tipCorner"), !st.nodeSel.size)}
             {btn(t("et.line"), () => props.onNodeKey("l"), t("et.tipLine"), st.nodeSel.size < 2)}
             {btn(t("et.curve"), () => props.onNodeKey("k"), t("et.tipCurve"), st.nodeSel.size < 2)}
+            {btn(t("touch.insertNode"), props.onInsertNode, t("touch.tipInsertNode"), !st.nodeSel.size)}
             <span className="et-hint">{t("et.nodeHint")}</span>
           </>
         );
@@ -1642,6 +1823,7 @@ function EditOverlay(props: {
           <span>
             <b>{tool === "line" ? t("et.lineTool") : t("et.penTool")}</b>: {tool === "line" ? t("et.lineHow") : t("et.penHow")} · {t("et.lineKeys")}
           </span>
+          {btn(t("touch.undoPoint"), props.onUndoPoint, "Backspace", !st.pen.length)}
           {btn(t("et.finish"), () => props.onFinishLine(false), "Enter", st.pen.length < 2)}
           {btn(t("et.close"), () => props.onFinishLine(true), "C", st.pen.length < (tool === "line" ? 3 : 2))}
         </>
@@ -1751,9 +1933,11 @@ function EditOverlay(props: {
     <>
       <Rulers r={r} guideDrag={st.guideDrag} onDrag={props.onRulerDrag} guides={props.guides} onClearGuides={props.onClearGuides} />
       {bar && (
-        <div className="vp-overlay et-bar" role="toolbar" aria-label={t("et.toolOptions")}>
-          {bar}
-        </div>
+        <ContextStripPortal>
+          <div className="vp-overlay et-bar" role="toolbar" aria-label={t("et.toolOptions")}>
+            {bar}
+          </div>
+        </ContextStripPortal>
       )}
       {label}
     </>
