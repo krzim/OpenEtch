@@ -19,6 +19,8 @@
 # Needs curl, and jq or python3 to read the JSON. POSIX sh. Licence: MIT (part of OpenEtch).
 
 set -u
+# Never trace: `sh -x safe-restart.sh` would print the printf line below with the token expanded.
+set +x
 
 url="${OPENETCH_URL:-http://127.0.0.1:7878}"
 service="openetch"
