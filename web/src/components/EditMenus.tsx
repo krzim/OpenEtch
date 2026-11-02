@@ -1,86 +1,50 @@
-// Design toolbar groups for the editing tools, Fusion-style (icon over label): Line, Pen and Polygon; Edit nodes, Trim
-// and Measure; and the Modify and Arrange dropdowns, which open a menu under the button with LightBurn's hotkeys.
+// The editing tools' ribbon entries (Toolbar.tsx groups, Fusion-style): Line, Pen and Polygon; Edit nodes, Trim and
+// the Modify dropdown; Measure; and the Arrange items for the toolbar's Arrange dropdown, with LightBurn's hotkeys.
 
-import { useRef, useState } from "react";
 import type { CanvasToolId } from "../canvasTool.ts";
-import { ContextMenu, type MenuItem } from "./ContextMenu.tsx";
+import { MenuButton, type MenuItem } from "./Menu.tsx";
+import { Icon } from "./ui.tsx";
+import { RibbonSlot, usePublish } from "./Ribbon.tsx";
 import type { Tool } from "./Viewport.tsx";
 import { useT } from "../workspace/usePrefs.ts";
 
-const ICONS: Record<string, string> = {
-  line: "M4 18L10 8l5 7 5-10 M4 18h.01 M10 8h.01 M15 15h.01 M20 5h.01",
-  pen: "M12 19l7-7 2 2-7 7z M18 13l-1.5-7.5L3 2l3.5 13.5L14 17z M3 2l7.6 7.6 M11 11a1 1 0 100 .01",
-  polygon: "M12 3l8 5.5-3 9.5H7L4 8.5z",
-  node: "M5 19C5 10 12 5 19 5 M3 17h4v4H3z M17 3h4v4h-4z M5 19l6-11 M11 6h2v2h-2z",
-  trim: "M6 4a2 2 0 100 4 2 2 0 000-4z M6 16a2 2 0 100 4 2 2 0 000-4z M7.6 7.2L20 18 M7.6 16.8L20 6",
-  measure: "M3 17L17 3l4 4L7 21z M7 13l2 2 M10 10l2 2 M13 7l2 2",
-  modify: "M4 12h6 M14 12h6 M12 4v6 M12 14v6 M7 7h10v10H7z",
-  arrange: "M4 4h10v10H4z M10 10h10v10H10z",
-  edit: "M8 4h8v3H8z M6 6H4v14h16V6h-2 M8 12h8 M8 16h5",
-  tools: "M14.7 6.3a4 4 0 00-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 005.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z",
-  chevronDown: "M8 10l4 4 4-4",
-};
-
-function EIcon({ name, size = 22 }: { name: string; size?: number }) {
-  return (
-    <svg className="icon" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d={ICONS[name] ?? ""} />
-    </svg>
-  );
-}
-
 function ToolBtn(props: { icon: string; label: string; active?: boolean; disabled?: boolean; title: string; onClick: () => void }) {
   return (
-    <button className={`tool-btn${props.active ? " active" : ""}`} onClick={props.onClick} disabled={props.disabled} title={props.title} aria-pressed={props.active}>
-      <EIcon name={props.icon} />
-      <span>{props.label}</span>
+    <button
+      type="button"
+      className={`tool-btn${props.active ? " active" : ""}`}
+      onClick={props.onClick}
+      disabled={props.disabled}
+      title={props.title}
+      aria-label={props.label}
+      aria-pressed={props.active}
+    >
+      <Icon name={props.icon} size={20} />
+      <span className="tool-caption">{props.label}</span>
     </button>
   );
 }
 
-/** A toolbar button that opens a menu under itself (Fusion's dropdown panels). Also used by src/design/. */
-export function Dropdown(props: { icon: string; label: string; title: string; items: MenuItem[] }) {
-  const ref = useRef<HTMLButtonElement>(null);
-  const [at, setAt] = useState<{ x: number; y: number } | null>(null);
-  const justClosed = useRef(0);
+/** A toolbar button that opens a menu under itself (Fusion's dropdown panels). Also used by src/design/ and libs/. */
+export function Dropdown(props: { icon: string; label: string; title: string; items: MenuItem[]; badge?: boolean }) {
   return (
-    <>
-      <button
-        ref={ref}
-        className={`tool-btn et-dropdown${at ? " active" : ""}`}
-        title={props.title}
-        aria-haspopup="menu"
-        aria-expanded={!!at}
-        onClick={() => {
-          // A press on the button while open closes the menu (outside press) and must not reopen it.
-          if (Date.now() - justClosed.current < 250) return;
-          const r = ref.current?.getBoundingClientRect();
-          if (r) setAt({ x: r.left, y: r.bottom + 2 });
-        }}
-      >
-        <EIcon name={props.icon} />
-        <span>
-          {props.label}
-          <svg className="et-caret" width={10} height={10} viewBox="0 0 24 24" aria-hidden="true">
-            <path d={ICONS.chevronDown} fill="none" stroke="currentColor" strokeWidth="2.5" />
-          </svg>
+    <MenuButton className="tool-btn et-dropdown" label={props.label} title={props.title} items={props.items} ariaLabel={props.label}>
+      <Icon name={props.icon} size={20} />
+      <span className="tool-caption">
+        {props.label}
+        <span className="et-caret" aria-hidden="true">
+          <Icon name="chevronDown" size={10} />
         </span>
-      </button>
-      {at && (
-        <ContextMenu
-          x={at.x}
-          y={at.y}
-          items={props.items}
-          onClose={() => {
-            justClosed.current = Date.now();
-            setAt(null);
-          }}
-        />
-      )}
-    </>
+      </span>
+      {props.badge && <span className="lx-dot" aria-hidden="true" />}
+    </MenuButton>
   );
 }
 
+/**
+ * The edit tools' ribbon entries, placed into the toolbar's groups: Line / Pen / Polygon under CREATE, Edit nodes,
+ * Trim and Modify ▾ under MODIFY, Measure under INSPECT; the Arrange items join the toolbar's Arrange ▾ menu.
+ */
 export function EditToolbar(props: {
   tool: Tool;
   onTool: (t: CanvasToolId) => void;
@@ -91,22 +55,23 @@ export function EditToolbar(props: {
   const tr = useT();
   const t = props.tool;
   const missing = ` ${tr("em.missing")}`;
+  usePublish("ribbon.arrange", props.arrange);
+  usePublish("menu.modify", { label: tr("em.modify"), items: props.modify });
   return (
     <>
-      <div className="tool-group" role="group" aria-label={tr("em.draw")}>
+      <RibbonSlot group="create" order={10}>
         <ToolBtn icon="line" label={tr("em.line")} active={t === "line"} disabled={!props.can.line} onClick={() => props.onTool("line")} title={`${tr("em.lineTitle")}${props.can.line ? "" : missing}`} />
         <ToolBtn icon="pen" label={tr("em.pen")} active={t === "pen"} disabled={!props.can.pen} onClick={() => props.onTool("pen")} title={`${tr("em.penTitle")}${props.can.pen ? "" : missing}`} />
         <ToolBtn icon="polygon" label={tr("em.polygon")} active={t === "polygon"} disabled={!props.can.polygon} onClick={() => props.onTool("polygon")} title={`${tr("em.polygonTitle")}${props.can.polygon ? "" : missing}`} />
-      </div>
-      <div className="tool-group" role="group" aria-label={tr("em.edit")}>
+      </RibbonSlot>
+      <RibbonSlot group="modify" order={10}>
         <ToolBtn icon="node" label={tr("em.editNodes")} active={t === "node"} disabled={!props.can.node} onClick={() => props.onTool("node")} title={`${tr("em.nodesTitle")}${props.can.node ? "" : missing}`} />
         <ToolBtn icon="trim" label={tr("em.trim")} active={t === "trim"} disabled={!props.can.trim} onClick={() => props.onTool("trim")} title={`${tr("em.trimTitle")}${props.can.trim ? "" : missing}`} />
-        <ToolBtn icon="measure" label={tr("em.measure")} active={t === "measure"} onClick={() => props.onTool("measure")} title={tr("em.measureTitle")} />
-      </div>
-      <div className="tool-group" role="group" aria-label={tr("em.modifyArrange")}>
         <Dropdown icon="modify" label={tr("em.modify")} title={tr("em.modifyTitle")} items={props.modify} />
-        <Dropdown icon="arrange" label={tr("em.arrange")} title={tr("em.arrangeTitle")} items={props.arrange} />
-      </div>
+      </RibbonSlot>
+      <RibbonSlot group="inspect" order={0}>
+        <ToolBtn icon="measure" label={tr("em.measure")} active={t === "measure"} onClick={() => props.onTool("measure")} title={tr("em.measureTitle")} />
+      </RibbonSlot>
     </>
   );
 }

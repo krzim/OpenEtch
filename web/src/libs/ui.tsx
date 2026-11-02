@@ -1,59 +1,33 @@
 // Small pieces the libs windows share: a dropdown menu button, a name prompt, a confirm dialog, a preview frame
 // and the download helper.
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { saveBlob } from "../api/jobApi.ts";
 import { Icon } from "../components/ui.tsx";
+import { MenuButton } from "../components/Menu.tsx";
 import { WsModal } from "../workspace/WsModal.tsx";
 import { useT } from "../workspace/usePrefs.ts";
 import "./libs.css";
 
 export type DropItem = { sep: true } | { label: string; hint?: string; disabled?: boolean; danger?: boolean; action: () => void; sep?: false };
 
-/** A button that opens a menu of actions (LightBurn's "Manage Library" button). */
+/** A button that opens a menu of actions (LightBurn's "Manage Library" button), on the Menu primitive. */
 export function DropMenu(p: { label: ReactNode; title?: string; items: DropItem[]; className?: string; align?: "left" | "right"; up?: boolean; disabled?: boolean }) {
-  const [open, setOpen] = useState(false);
-  const root = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const down = (e: PointerEvent) => root.current && !root.current.contains(e.target as Node) && setOpen(false);
-    const key = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
-    document.addEventListener("pointerdown", down, true);
-    window.addEventListener("keydown", key);
-    return () => {
-      document.removeEventListener("pointerdown", down, true);
-      window.removeEventListener("keydown", key);
-    };
-  }, [open]);
+  const name = typeof p.label === "string" ? p.label : (p.title ?? "");
   return (
-    <div className={`lx-drop${p.className ? ` ${p.className}` : ""}`} ref={root}>
-      <button className={`btn small${open ? " active" : ""}`} aria-haspopup="menu" aria-expanded={open} title={p.title} disabled={p.disabled} onClick={() => setOpen((v) => !v)}>
+    <div className={`lx-drop${p.className ? ` ${p.className}` : ""}`}>
+      <MenuButton
+        className="btn small"
+        label={name}
+        title={p.title}
+        items={p.items}
+        disabled={p.disabled}
+        placement={p.up ? "above" : "below"}
+        align={p.align === "right" ? "end" : "start"}
+      >
         {p.label}
         <Icon name="chevronDown" size={14} />
-      </button>
-      {open && (
-        <div className={`menu lx-drop-menu${p.align === "right" ? " menu-right" : ""}${p.up ? " up" : ""}`} role="menu">
-          {p.items.map((it, i) =>
-            it.sep ? (
-              <div key={i} className="menu-sep" role="separator" />
-            ) : (
-              <button
-                key={i}
-                role="menuitem"
-                className={`menu-item${it.danger ? " danger" : ""}`}
-                disabled={it.disabled}
-                onClick={() => {
-                  setOpen(false);
-                  it.action();
-                }}
-              >
-                <span>{it.label}</span>
-                {it.hint && <span className="menu-hint">{it.hint}</span>}
-              </button>
-            ),
-          )}
-        </div>
-      )}
+      </MenuButton>
     </div>
   );
 }

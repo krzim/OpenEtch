@@ -21,6 +21,7 @@ import { IMAGE_ADJUST_CMD, imageAdjust, imageUpdate } from "../api/image.ts";
 import { commandResult, formatBytes, needsConfirm, warningList } from "../api/project.ts";
 import type { Engine } from "../api/useEngine.ts";
 import type { MenuItem } from "../components/ContextMenu.tsx";
+import { FileMenuPart } from "../components/FileMenuPart.tsx";
 import type { FileActions } from "../components/FileMenu.tsx";
 import { AdjustImageDialog } from "../components/ImageSettings.tsx";
 import { Modal } from "../components/ui.tsx";
@@ -389,8 +390,10 @@ export function useFilesUi(p: {
     }
     if (can.toBitmap && vectors.length) items.push({ label: t("files.toBitmap"), action: toBitmap });
     const send = sendToPageItems(doc, p.selection, has, run, report, (name) => t("files.sendToPage", { name }));
-    if (items.length) contextItems.push({ sep: true }, ...items);
-    if (send.length) contextItems.push({ sep: true }, ...send);
+    // A long canvas menu files these under Modify ▸ (components/contextMenu.ts).
+    const tag = (xs: MenuItem[]): MenuItem[] => xs.map((it) => (it.sep ? it : { ...it, section: "modify" }));
+    if (items.length) contextItems.push({ sep: true }, ...tag(items));
+    if (send.length) contextItems.push({ sep: true }, ...tag(send));
   }
 
   // ---- hotkeys ---------------------------------------------------------------------------------------------------
@@ -408,45 +411,46 @@ export function useFilesUi(p: {
   // ---- menu ------------------------------------------------------------------------------------------------------
 
   const baseName = p.file.projectName ?? p.file.openedName ?? doc?.name ?? "Untitled";
-  const menu = (closeMenu: () => void) => {
-    const item = (label: string, action: () => void, opts: { hint?: string; disabled?: boolean; title?: string } = {}) => (
-      <button
-        role="menuitem"
-        className="menu-item"
-        disabled={opts.disabled || p.file.busy || busy}
-        title={opts.title}
-        onClick={() => {
-          closeMenu();
-          action();
-        }}
-      >
-        <span>{label}</span>
-        {opts.hint && <span className="menu-hint">{opts.hint}</span>}
-      </button>
-    );
-    return (
-      <>
-        {can.exports && item(t("files.menuExport"), () => setModal({ kind: "export" }), { hint: hintFor("file.export", hotkeys) || "Alt+X" })}
-        {can.print && item(t("files.menuPrint"), () => setModal({ kind: "print" }), { hint: hintFor("file.print", hotkeys) })}
-        {can.imageExport && item(t("files.exportImage"), () => downloadImage(false), { disabled: !image, title: image ? undefined : t("files.selectImage") })}
-        {can.imageExport && item(t("files.saveProcessed"), () => downloadImage(true), { disabled: !image, title: image ? undefined : t("files.selectImage") })}
-        {can.imports && (
-          <>
-            <div className="menu-sep" role="separator" />
-            {item(t("files.menuOpenTemplate"), () => setModal({ kind: "templates" }))}
-            <RecentTemplates disabled={p.file.busy || busy} onOpen={(n) => (closeMenu(), openTemplate(n))} />
-            {item(t("files.menuSaveTemplate"), () => setModal({ kind: "saveTemplate" }))}
-            <div className="menu-sep" role="separator" />
-            {can.notes && item(t("files.menuNotes"), () => setModal({ kind: "notes" }), { hint: hintFor("window.notes", hotkeys) })}
-            {item(t("files.menuBackups"), () => setModal({ kind: "backups" }))}
-            <AutosaveStatus project={p.file.projectName} />
-            {item(t("files.menuImportOptions"), () => setModal({ kind: "importOptions" }))}
-            {item(t("files.menuPrefs"), () => setModal({ kind: "prefs" }))}
-          </>
-        )}
-      </>
-    );
-  };
+  // File menu entries as data (components/FileMenuPart.tsx): Export ▸, Project ▸, LightBurn ▸ and Settings.
+  const off = p.file.busy || busy;
+  const noImage = image ? undefined : t("files.selectImage");
+  const menu = (closeMenu: () => void) => (
+    <>
+      <FileMenuPart
+        section="export"
+        close={closeMenu}
+        items={[
+          ...(can.exports ? [{ label: t("files.menuExport"), actionId: "file.export", hint: hintFor("file.export", hotkeys) || "Alt+X", disabled: off, action: () => setModal({ kind: "export" }) }] : []),
+          ...(can.print ? [{ label: t("files.menuPrint"), actionId: "file.print", disabled: off, action: () => setModal({ kind: "print" }) }] : []),
+          ...(can.imageExport
+            ? [
+                { label: t("files.exportImage"), disabled: off || !image, title: noImage, action: () => downloadImage(false) },
+                { label: t("files.saveProcessed"), disabled: off || !image, title: noImage, action: () => downloadImage(true) },
+              ]
+            : []),
+        ]}
+      />
+      {can.imports && (
+        <>
+          <FileMenuPart
+            section="project"
+            close={closeMenu}
+            items={[
+              { label: t("files.menuOpenTemplate"), disabled: off, action: () => setModal({ kind: "templates" }) },
+              { label: t("files.recentTemplates"), content: (close) => <RecentTemplates disabled={off} onOpen={(n) => (close(), openTemplate(n))} /> },
+              { label: t("files.menuSaveTemplate"), disabled: off, action: () => setModal({ kind: "saveTemplate" }) },
+              { sep: true },
+              ...(can.notes ? [{ label: t("files.menuNotes"), actionId: "window.notes", disabled: off, action: () => setModal({ kind: "notes" }) }] : []),
+              { label: t("files.menuBackups"), disabled: off, action: () => setModal({ kind: "backups" }) },
+              { label: t("rb.autosave"), content: () => <AutosaveStatus project={p.file.projectName} /> },
+            ]}
+          />
+          <FileMenuPart section="lightburn" close={closeMenu} items={[{ label: t("files.menuPrefs"), disabled: off, action: () => setModal({ kind: "prefs" }) }]} />
+          <FileMenuPart section="settings" close={closeMenu} items={[{ label: t("files.menuImportOptions"), disabled: off, action: () => setModal({ kind: "importOptions" }) }]} />
+        </>
+      )}
+    </>
+  );
 
   // ---- dialogs ---------------------------------------------------------------------------------------------------
 

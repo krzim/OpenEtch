@@ -24,7 +24,11 @@ import { LibraryDock } from "./MaterialLibrary.tsx";
 import { clearStartPoint, nearestStartNode, setStartPoint, startMarks } from "./model.ts";
 import { setLibsToast, cameraOverlay, closeLibsWindow, openLibsWindow, startPointTool, useDevicePrefs, useLibsWindow, editPrefs, type LibsWindow } from "./store.ts";
 import { FocusTestDialog, IntervalTestDialog, MaterialTestDialog } from "./TestGenerators.tsx";
-import { DropMenu, errText, type DropItem } from "./ui.tsx";
+import { errText, type DropItem } from "./ui.tsx";
+import { Dropdown } from "../components/EditMenus.tsx";
+import { RibbonSlot, usePublish } from "../components/Ribbon.tsx";
+import { FileMenuPart } from "../components/FileMenuPart.tsx";
+import { openEngineConsole } from "../components/commandBus.ts";
 import "./libs.css";
 
 type Run = (inv: Invocation | Invocation[]) => Promise<unknown>;
@@ -234,48 +238,50 @@ export function useLibsUi(p: LibsUiProps) {
     { sep: true },
     { label: t("lib.title"), hint: hk("window.library"), action: open("library") },
   ];
+  usePublish("menu.laserTools", { label: t("lx.laserTools"), items: laserTools });
   const toolbar: ReactNode = (
-    <div className="tool-group">
-      <DropMenu className="lx-tool-menu" label={<LaserToolsLabel label={t("lx.laserTools")} active={sp} />} title={t("lx.laserToolsTitle")} items={laserTools} />
-    </div>
+    <RibbonSlot group="laserTools" order={0}>
+      <Dropdown icon="laserTools" label={t("lx.laserTools")} title={t("lx.laserToolsTitle")} items={laserTools} badge={sp} />
+    </RibbonSlot>
   );
 
   const menuItems: MenuItem[] = [
     // Hidden in Beginner Mode like the Laser Tools entry (a running tool can still be stopped).
-    ...(beginnerMode && !sp ? [] : [{ label: sp ? t("sp.stop") : t("sp.tool"), action: toggleStartPoint } as MenuItem]),
+    ...(beginnerMode && !sp ? [] : [{ label: sp ? t("sp.stop") : t("sp.tool"), section: "laser", action: toggleStartPoint } as MenuItem]),
     {
+      section: "laser",
       label: t("sp.clear"),
       disabled: !p.selection.some((id) => marks.some((m) => m.id === id)),
       action: () => void p.run(clearStartPoint(p.selection)).catch(p.report),
     },
   ];
 
-  const fileItems = (close: () => void) => {
-    const item = (label: string, k: LibsWindow, hint?: string) => (
+  // File > Laser ▸ entries as data (components/FileMenuPart.tsx).
+  const fileItems = (close: () => void) => (
+    <FileMenuPart
+      section="laser"
+      close={close}
+      items={[
+        { label: t("lib.title"), actionId: "window.library", action: () => openLibsWindow("library") },
+        { label: t("fml.title"), action: () => openLibsWindow("findLaser") },
+        { label: `${t("batch.title")}…`, action: () => openLibsWindow("batch") },
+        { label: `${t("jlog.title")}…`, actionId: "laser.jobLog", action: () => openLibsWindow("jobLog") },
+      ]}
+    />
+  );
+
+  const helpItems = (close: () => void) => (
+    <>
       <button
         role="menuitem"
         className="menu-item"
         onClick={() => {
           close();
-          openLibsWindow(k);
+          openEngineConsole();
         }}
       >
-        <span>{label}</span>
-        {hint && <span className="menu-hint">{hint}</span>}
+        <span>{t("rb.engineCommandsHelp")}</span>
       </button>
-    );
-    return (
-      <>
-        {item(t("lib.title"), "library", hk("window.library"))}
-        {item(t("fml.title"), "findLaser")}
-        {item(`${t("batch.title")}…`, "batch")}
-        {item(`${t("jlog.title")}…`, "jobLog", hk("laser.jobLog"))}
-      </>
-    );
-  };
-
-  const helpItems = (close: () => void) => (
-    <>
       <button
         role="menuitem"
         className="menu-item"
@@ -379,14 +385,3 @@ export function useLibsUi(p: LibsUiProps) {
   return { dock, dialogs, toolbar, laserTools, wrap, menuItems, fileItems, helpItems, handlers, startPointActive: sp, modalOpen: !!win && win.kind !== "library" };
 }
 
-function LaserToolsLabel({ label, active }: { label: string; active: boolean }) {
-  return (
-    <>
-      <svg className="icon" width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <path d="M4 4h6v6H4z M14 4h6v6h-6z M4 14h6v6H4z M17 14v6 M14 17h6" />
-      </svg>
-      <span>{label}</span>
-      {active && <span className="lx-dot" aria-hidden="true" />}
-    </>
-  );
-}

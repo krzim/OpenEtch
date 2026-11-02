@@ -20,6 +20,9 @@ import type { GDocument, Vec2 } from "../api/types.ts";
 import type { CanvasCtx, CanvasTool, PointerInfo, RenderCtx } from "../canvasTool.ts";
 import type { MenuItem } from "../components/ContextMenu.tsx";
 import type { Tool } from "../components/Viewport.tsx";
+import { Icon } from "../components/ui.tsx";
+import { RibbonSlot } from "../components/Ribbon.tsx";
+import { openCommandSearch } from "../components/commandBus.ts";
 import type { Mods } from "../editing.ts";
 import { objectBounds } from "../geometry.ts";
 import { unitsOf, type Selection } from "../selection.ts";
@@ -404,32 +407,32 @@ export function useTextTools(p: TextToolsProps): TextTools {
   // ---- toolbar ----
   const toggleTool = (x: Tool) => p.setTool(tool === x ? "select" : x);
   const toolbar = design ? (
-    <div className="tool-group">
+    <RibbonSlot group="create" order={20}>
       <button
+        type="button"
+        aria-label={t("text.tool")}
         className={`tool-btn${tool === "text" ? " active" : ""}`}
         onClick={() => toggleTool("text")}
         disabled={!canText}
         aria-pressed={tool === "text"}
         title={canText ? t("text.toolTitle") : t("text.unsupported")}
       >
-        <svg className="icon" width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M5 6V4h14v2 M12 4v16 M9 20h6" />
-        </svg>
-        <span>{t("text.tool")}</span>
+        <Icon name="text" size={20} />
+        <span className="tool-caption">{t("text.tool")}</span>
       </button>
       <button
+        type="button"
+        aria-label={t("barcode.tool")}
         className={`tool-btn${tool === "barcode" ? " active" : ""}`}
         onClick={() => toggleTool("barcode")}
         disabled={!canBarcode}
         aria-pressed={tool === "barcode"}
         title={canBarcode ? t("barcode.toolTitle") : t("barcode.unsupported")}
       >
-        <svg className="icon" width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M4 4h6v6H4z M14 4h6v6h-6z M4 14h6v6H4z M14 14h2v2h-2z M18 18h2v2h-2z M14 18h2 M18 14h2" />
-        </svg>
-        <span>{t("barcode.tool")}</span>
+        <Icon name="barcode" size={20} />
+        <span className="tool-caption">{t("barcode.tool")}</span>
       </button>
-    </div>
+    </RibbonSlot>
   ) : null;
 
   // ---- properties ----
@@ -512,6 +515,9 @@ export function useTextTools(p: TextToolsProps): TextTools {
       if (!design || !canBarcode) return false;
       p.setTool("barcode");
     },
+    // Command search (S, Fusion's key; components/CommandSearch.tsx). Hosted here because this hook's handlers reach
+    // the key map; in Edit Nodes plain S makes a node smooth, so it declines there.
+    "app.commandSearch": () => (tool === "node" || !openCommandSearch() ? false : undefined),
     "window.variableText": () => {
       if (!design) return false;
       setVarOpen((v) => !v);
@@ -564,6 +570,11 @@ function TextOverlay(p: {
     const px = Math.min(300, Math.max(12, look.height_mm * editor.scale * r.scale));
     const lines = editor.value.split("\n");
     const cols = Math.max(4, ...lines.map((l) => l.length + 2));
+    // Touch (T11): iOS zooms the page into a field under 16 px. The field keeps a 16 px font and is scaled down to the
+    // canvas size instead (scale before translate, so the alignment offset is in the visible size).
+    const coarse = typeof document !== "undefined" && document.documentElement.dataset.pointer === "coarse";
+    const fontPx = coarse ? Math.max(16, px) : px;
+    const k = px / fontPx;
     edit = (
       <textarea
         ref={p.areaRef}
@@ -579,13 +590,13 @@ function TextOverlay(p: {
           left: s[0],
           top: s[1],
           fontFamily: look.font ? cssFontFamily(look.font) : "sans-serif",
-          fontSize: px,
+          fontSize: fontPx,
           fontWeight: look.bold ? 700 : 400,
           fontStyle: look.italic ? "italic" : "normal",
           textTransform: look.upper ? "uppercase" : "none",
           textAlign: cssTextAlign(alignH),
           width: `${cols}ch`,
-          transform: `rotate(${-editor.rot}deg) translate(${tx}%, ${ty}%)`,
+          transform: `rotate(${-editor.rot}deg)${k !== 1 ? ` scale(${k})` : ""} translate(${tx}%, ${ty}%)`,
         }}
         onChange={(e) => p.onChange(e.target.value)}
         onBlur={(e) => {

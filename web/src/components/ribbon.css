@@ -1,1 +1,353 @@
-/* Ribbon, tool rail, tool strip, menus and dialogs (owner: P2, docs/ux/ui-plan-2026-11.md P2). Empty in Stage A. */
+/* The ribbon (components/Ribbon.tsx, Toolbar.tsx) and command search (CommandSearch.tsx). Owner: P2.
+   styles.css's .toolbar / .tool-btn / .mini-btn stay the base; this file sizes them per layout mode
+   (data-layout on <html>, workspace/layoutMode.ts) and adds the groups, flyouts, rails and the strip. */
+
+/* ---- horizontal ribbon ------------------------------------------------------------------------------------- */
+
+.ribbon {
+  position: relative;
+  flex: none;
+}
+
+.ribbon-horizontal {
+  overflow-x: auto;
+  overflow-y: hidden;
+  min-height: var(--bar-tool, 64px);
+}
+
+.ribbon .toolbar-start,
+.ribbon .toolbar-end,
+.ribbon .ribbon-group {
+  flex: none;
+}
+
+.ribbon-group-body {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.ribbon-slot {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.ribbon .tool-btn .icon {
+  width: var(--icon-size, 20px);
+  height: var(--icon-size, 20px);
+}
+
+.ribbon-group-btn-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.rb-split {
+  display: flex;
+  align-items: stretch;
+}
+
+.rb-split .tool-btn:first-child {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.tool-btn.rb-split-caret {
+  min-width: 18px;
+  padding: 0 2px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.rb-align-strip,
+.rb-toggles {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 0 2px;
+}
+
+.rb-toggles .mini-select {
+  grid-row: auto;
+  height: 24px;
+}
+
+/* Wide: icon and caption (64 px row). */
+:root[data-layout="wide"] .ribbon-horizontal .tool-btn {
+  min-height: 52px;
+}
+
+/* Compact (MacBook): icon only, 40 px row; the caption stays the tooltip and accessible name. */
+:root[data-layout="compact"] .ribbon-horizontal {
+  min-height: var(--bar-tool, 40px);
+  max-height: var(--bar-tool, 40px);
+  padding-top: 2px;
+  padding-bottom: 2px;
+  align-items: center;
+}
+
+:root[data-layout="compact"] .ribbon-horizontal .tool-btn {
+  min-width: 34px;
+  min-height: 34px;
+  height: 34px;
+  padding: 0 5px;
+}
+
+:root[data-layout="compact"] .ribbon-horizontal .tool-btn .tool-caption {
+  display: none;
+}
+
+:root[data-layout="compact"] .ribbon-horizontal .ribbon-group-btn {
+  flex-direction: row;
+  gap: 4px;
+  font-size: var(--fs-xs, 11px);
+  text-transform: uppercase;
+  letter-spacing: var(--caption-ls, 0.04em);
+}
+
+:root[data-layout="compact"] .ribbon-horizontal .et-dropdown .tool-caption {
+  display: none;
+}
+
+/* ---- collapsed group flyout -------------------------------------------------------------------------------- */
+
+.ribbon-flyout {
+  position: fixed;
+  z-index: var(--z-menu, 150);
+  padding: 6px;
+  max-width: min(520px, calc(100vw - 8px));
+  overflow: auto;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: var(--shadow-pop, 0 8px 28px rgba(0, 0, 0, 0.25));
+}
+
+.ribbon-flyout-body {
+  flex-wrap: wrap;
+}
+
+.ribbon-flyout-body .ribbon-slot {
+  flex-wrap: wrap;
+}
+
+/* In a flyout the captions always show, whatever the layout. */
+.ribbon-flyout .tool-btn .tool-caption {
+  display: inline;
+}
+
+.ribbon-flyout .tool-btn {
+  min-height: 52px;
+  height: auto;
+}
+
+/* ---- vertical rails (tablet tool rail; the desktop creation rail) ----------------------------------------- */
+
+.ribbon-anchor {
+  height: 0;
+  flex: none;
+}
+
+.ribbon-vertical,
+.ribbon-rail-host {
+  position: fixed;
+  left: var(--safe-left, 0px);
+  top: var(--ribbon-rail-top, calc(var(--bar-top) + var(--bar-context)));
+  bottom: var(--bar-bottom, 0px);
+  z-index: var(--z-canvas-ui, 5);
+  width: var(--tool-rail-w, 52px);
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  padding: 4px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background: var(--chrome);
+  border-right: 1px solid var(--border);
+  border-bottom: 0;
+}
+
+.ribbon-rail-host {
+  display: flex;
+  width: 52px;
+}
+
+.ribbon-vertical .ribbon-group,
+.ribbon-rail-host .ribbon-group,
+.ribbon-vertical .ribbon-group-body,
+.ribbon-rail-host .ribbon-group-body,
+.ribbon-vertical .ribbon-group-body > .ribbon-slot,
+.ribbon-rail-host .ribbon-group-body > .ribbon-slot {
+  flex-direction: column;
+  padding: 0;
+  border: 0;
+}
+
+.ribbon-vertical .tool-btn,
+.ribbon-rail-host .tool-btn {
+  min-width: 0;
+  width: 100%;
+  min-height: var(--hit, 40px);
+  padding: 4px 0;
+}
+
+.ribbon-vertical .tool-btn .tool-caption,
+.ribbon-rail-host .tool-btn .tool-caption,
+.ribbon-vertical .ribbon-group-btn-label {
+  display: none;
+}
+
+.ribbon-vertical .tool-spacer {
+  flex: 1;
+}
+
+.ribbon-vertical .rb-align-strip,
+.ribbon-vertical .rb-toggles {
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+/* The canvas column starts after the rail (P1's tablet grid may take this over with a rail column). */
+:root[data-layout="tablet"] .app > .main {
+  margin-left: var(--tool-rail-w, 52px);
+}
+
+.ribbon.has-creation-rail ~ .main,
+:root .app:has(.ribbon.has-creation-rail) > .main {
+  margin-left: 52px;
+}
+
+/* ---- phone strip ------------------------------------------------------------------------------------------- */
+
+.ribbon-strip {
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex-wrap: nowrap;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.ribbon-strip .tool-btn {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 6px;
+}
+
+.ribbon-strip .tool-btn .tool-caption,
+.ribbon-strip .toolbar-start,
+.ribbon-strip .toolbar-end.panel-toggle {
+  display: none;
+}
+
+/* Coarse pointers: 44 px targets in every orientation. */
+:root[data-density="touch"] .ribbon .tool-btn,
+:root[data-density="touch"] .ribbon-flyout .tool-btn {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+:root[data-density="touch"] .ribbon .mini-btn,
+:root[data-density="touch"] .ribbon-flyout .mini-btn {
+  width: 44px;
+  height: 44px;
+}
+
+/* ---- command search ---------------------------------------------------------------------------------------- */
+
+.cs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+}
+
+.cs-input {
+  width: 100%;
+  min-height: 36px;
+  font-size: max(16px, 1em);
+}
+
+.cs-section {
+  font-size: var(--fs-xs, 11px);
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: var(--caption-ls, 0.04em);
+}
+
+.cs-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: min(420px, 55vh);
+  overflow-y: auto;
+}
+
+.cs-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 2px 8px;
+  border-radius: var(--r-md, 4px);
+  cursor: pointer;
+}
+
+:root[data-density="touch"] .cs-item {
+  min-height: 44px;
+}
+
+.cs-item.active {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.cs-item.disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.cs-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cs-path,
+.cs-id {
+  flex: none;
+  color: var(--muted);
+  font-size: var(--fs-xs, 11px);
+}
+
+.cs-id {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+}
+
+.cs-hint {
+  flex: none;
+  font: inherit;
+  font-size: var(--fs-sm, 12px);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.cs-empty,
+.cs-foot {
+  color: var(--muted);
+  font-size: var(--fs-sm, 12px);
+  padding: 6px 8px;
+}
+
+@media (max-width: 600px) {
+  .cs-id {
+    display: none;
+  }
+  .cs-list {
+    max-height: none;
+  }
+}

@@ -1,0 +1,98 @@
+/* The Menu primitive (components/Menu.tsx), on top of styles.css's .menu / .menu-item / .ctx-menu. Owner: P2.
+   32 px rows on a fine pointer, 44 px on a coarse one; the panel scrolls inside the window (Menu.tsx sets max-height). */
+
+.oe-menu {
+  position: fixed;
+  z-index: var(--z-ctxmenu, 300);
+  min-width: 220px;
+  max-width: min(420px, calc(100vw - 8px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  outline: none;
+  box-shadow: var(--shadow-pop, 0 8px 28px rgba(0, 0, 0, 0.25));
+}
+
+.oe-menu .menu-item {
+  min-height: 32px;
+  gap: 8px;
+  padding: 0 10px 0 4px;
+  justify-content: flex-start;
+  color: var(--text);
+  font: inherit;
+  width: 100%;
+}
+
+:root[data-pointer="coarse"] .oe-menu .menu-item,
+:root[data-density="touch"] .oe-menu .menu-item {
+  min-height: 44px;
+}
+
+.oe-menu .menu-item:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+/* The keyboard-focused row (focus moves with the pointer too, so plain :focus is the highlight). */
+.oe-menu .menu-item:focus:not(:disabled),
+.oe-menu .menu-item.sub-open {
+  background: var(--accent-soft);
+  outline: 0;
+}
+
+.oe-menu-check {
+  flex: none;
+  width: 16px;
+  text-align: center;
+  color: var(--accent);
+}
+
+.oe-menu-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.oe-menu .menu-hint {
+  flex: none;
+  margin-left: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.oe-menu-chevron {
+  flex: none;
+  display: flex;
+  color: var(--muted);
+  margin-left: 4px;
+}
+
+.oe-menu .menu-item.danger .oe-menu-label {
+  color: var(--danger);
+}
+
+.oe-menu .menu-item .icon {
+  flex: none;
+  color: var(--icon);
+}
+
+.oe-menu-content {
+  display: flex;
+  flex-direction: column;
+}
+
+.oe-menu-content .menu-item {
+  padding-left: 24px;
+}
+
+.oe-menu-empty {
+  cursor: default;
+  color: var(--muted);
+  padding-left: 24px;
+}
+
+/* A MenuButton's label with its caret. */
+.oe-mb-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
