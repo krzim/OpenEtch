@@ -26,6 +26,7 @@ import { bytesToBase64 } from "../api/drop.ts";
 import * as G from "../api/geomCommands.ts";
 import type { GDocument, Vec2, VirtualArray } from "../api/types.ts";
 import type { CanvasCtx, CanvasTool, RenderCtx } from "../canvasTool.ts";
+import { handleHitPx, pointerClass, type PointerClass } from "../pointer.ts";
 import type { MenuItem } from "../components/ContextMenu.tsx";
 import { Dropdown } from "../components/EditMenus.tsx";
 import { RibbonSlot, usePublish } from "../components/Ribbon.tsx";
@@ -117,7 +118,6 @@ interface Clip {
 }
 
 const SYS_KEY = "openetch.systemClipboard";
-const HANDLE_PX = 8;
 const DBL_MS = 350;
 
 function loadSysClip(): boolean {
@@ -583,8 +583,9 @@ export function useDesignUi(p: DesignUiProps): DesignUi {
 
   // ---- canvas -----------------------------------------------------------------------------------------------------
 
-  const handleAt = (s: WarpSession, f: Vec2, scale: number): number | null => {
-    const tol = HANDLE_PX / Math.max(scale, 1e-6);
+  // The warp handles are hit within half the pointer's handle size (pointer.ts: 8 px for a mouse, 22 for a finger).
+  const handleAt = (s: WarpSession, f: Vec2, scale: number, cls: PointerClass = "mouse"): number | null => {
+    const tol = handleHitPx(cls) / 2 / Math.max(scale, 1e-6);
     let best: { i: number; d: number } | null = null;
     s.handles.forEach((h, i) => {
       const d = Math.hypot(h[0] - f[0], h[1] - f[1]);
@@ -611,7 +612,7 @@ export function useDesignUi(p: DesignUiProps): DesignUi {
         else notify(tr("dz.clickCircle"), "error");
         return true;
       }
-      const i = handleAt(s, f, ctx.scale);
+      const i = handleAt(s, f, ctx.scale, pointerClass(info));
       if (i === null) return true;
       const lt = lastTap.current;
       lastTap.current = { t: info.time, index: i };

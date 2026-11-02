@@ -68,8 +68,8 @@ export function NumericBar(p: NumericBarProps) {
             </button>
           ))}
         </div>
-        <NumberField label="X" unit="mm" value={box ? ax : null} disabled={none} onCommit={(v) => setXY(v, null)} />
-        <NumberField label="Y" unit="mm" value={box ? ay : null} disabled={none} onCommit={(v) => setXY(null, v)} />
+        <NumberField label="X" unit="mm" signed value={box ? ax : null} disabled={none} onCommit={(v) => setXY(v, null)} />
+        <NumberField label="Y" unit="mm" signed value={box ? ay : null} disabled={none} onCommit={(v) => setXY(null, v)} />
       </div>
       <div className="num-group">
         <NumberField key={percent ? `w%${p.doc?.revision}` : "w"} label="W" unit={sizeUnit} value={box ? (percent ? 100 : w) : null} min={percent ? 0.1 : 0.001} disabled={none} onCommit={(v) => setSize(v, null)} />
@@ -93,7 +93,7 @@ export function NumericBar(p: NumericBarProps) {
         </div>
       </div>
       <div className="num-group">
-        <NumberField label={single || none ? t("numeric.rotate") : t("numeric.rotateBy")} unit="°" value={box ? (single ? rot : 0) : null} digits={2} disabled={none} onCommit={setRot} />
+        <NumberField label={single || none ? t("numeric.rotate") : t("numeric.rotateBy")} unit="°" signed value={box ? (single ? rot : 0) : null} digits={2} disabled={none} onCommit={setRot} />
       </div>
     </div>
   );

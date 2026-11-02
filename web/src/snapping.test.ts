@@ -220,6 +220,7 @@ test("circles: round only with equal radii and no stretch; names and diameter", 
 test("Browser icons: paths (lines, polygons, converted shapes) get the path icon, never Import", () => {
   assert.equal(objectIconName(path("p", "M0,0 L10,0")), "path");
   assert.equal(objectIconName(circle("c", 5)), "circle");
+  assert.equal(objectIconName({ geometry: { kind: "text" } as never, transform: [1, 0, 0, 1, 0, 0] as never }), "text");
   assert.equal(objectIconName(obj("e", { kind: "ellipse", rx_mm: 5, ry_mm: 4 })), "ellipse");
   assert.equal(objectIconName(obj("r", { kind: "rect", width_mm: 5, height_mm: 4, corner_radius_mm: 0 })), "rect");
   assert.equal(objectIconName(obj("i", { kind: "image", width_mm: 5, height_mm: 4, mime: "image/png", data_base64: "" })), "image");

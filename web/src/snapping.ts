@@ -102,8 +102,10 @@ export function shapeKindName(o: Pick<DocObject, "geometry" | "transform"> & { e
 }
 
 /** Browser-tree icon of an object: its shape kind (any path, drawn or converted, is "path"; never the Import icon). */
-export function objectIconName(o: Pick<DocObject, "geometry" | "transform">): "circle" | "ellipse" | "rect" | "image" | "path" {
+export function objectIconName(o: Pick<DocObject, "geometry" | "transform">): "circle" | "ellipse" | "rect" | "image" | "text" | "path" {
   switch (o.geometry.kind) {
+    case "text":
+      return "text";
     case "ellipse":
       return isRound(o) ? "circle" : "ellipse";
     case "rect":

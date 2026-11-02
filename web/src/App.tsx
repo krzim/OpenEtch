@@ -991,14 +991,14 @@ export function App() {
   const grouped = doc ? anyGrouped(doc, selection.objects) : false;
 
   const menuItems: MenuItem[] = [
-    { label: t("app.cut"), hint: "Ctrl+X", disabled: !hasSel, action: () => copy(true) },
-    { label: t("app.copy"), hint: "Ctrl+C", disabled: !hasSel, action: () => copy(false) },
-    { label: t("app.paste"), hint: "Ctrl+V", disabled: !designUi.canPaste, action: () => paste(false) },
-    { label: t("app.duplicate"), hint: "Ctrl+D", disabled: !hasSel || !has(C.OPT.duplicate), action: duplicate },
-    { label: t("app.delete"), hint: "Del", disabled: !hasSel, action: deleteSelection },
+    { label: t("app.cut"), actionId: "edit.cut", hint: "Ctrl+X", disabled: !hasSel, action: () => copy(true) },
+    { label: t("app.copy"), actionId: "edit.copy", hint: "Ctrl+C", disabled: !hasSel, action: () => copy(false) },
+    { label: t("app.paste"), actionId: "edit.paste", hint: "Ctrl+V", disabled: !designUi.canPaste, action: () => paste(false) },
+    { label: t("app.duplicate"), actionId: "edit.duplicate", hint: "Ctrl+D", disabled: !hasSel || !has(C.OPT.duplicate), action: duplicate },
+    { label: t("app.delete"), actionId: "edit.delete", hint: "Del", disabled: !hasSel, action: deleteSelection },
     { sep: true },
-    { label: t("app.group"), hint: "Ctrl+G", disabled: units < 2 || !has(C.OPT.groupCreate), action: group },
-    { label: t("app.ungroup"), hint: "Ctrl+U", disabled: !grouped || !has(C.OPT.groupUngroup), action: ungroup },
+    { label: t("app.group"), actionId: "arrange.group", hint: "Ctrl+G", disabled: units < 2 || !has(C.OPT.groupCreate), action: group },
+    { label: t("app.ungroup"), actionId: "arrange.ungroup", hint: "Ctrl+U", disabled: !grouped || !has(C.OPT.groupUngroup), action: ungroup },
     { sep: true },
     ...edit.menuItems,
     ...filesUi.contextItems,
@@ -1021,7 +1021,7 @@ export function App() {
     { label: t("app.flipV"), hint: "Ctrl+Shift+V", disabled: !hasSel, action: () => flip("y") },
     { sep: true },
     { label: t("app.selectAll"), hint: "Ctrl+A", disabled: !doc, action: () => doc && setSelection(selectAll(doc)) },
-    { label: t("app.invertSelection"), hint: "Ctrl+Shift+I", disabled: !doc, action: () => doc && setSelection(invertSelection(selection, doc)) },
+    { label: t("app.invertSelection"), actionId: "edit.invert", hint: "Ctrl+Shift+I", disabled: !doc, action: () => doc && setSelection(invertSelection(selection, doc)) },
   ];
 
   // The framing hotkeys: the Laser window's framing options (components/FramingOptions.tsx), on the selection when
@@ -1521,7 +1521,7 @@ export function App() {
           onImport={openImport}
           onOpen={() => file.setModal({ kind: "open" })}
           onDraw={(d) => setTool(d === "rect" ? "rect" : "text")}
-          onTemplates={() => file.setModal({ kind: "open" })}
+          onTemplates={filesUi.openTemplates}
         />
       )}
       {/* Always mounted: it shows itself on touch, or everywhere with the selection bar set to Always. */}

@@ -7,7 +7,7 @@
 // pointer the position section has a nudge pad (touch/NudgePad.tsx), and the signed fields (X, Y, rotation) bring up
 // the full keyboard, so "-12.5" and "20/3" can be typed on a phone.
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { NudgePad } from "../touch/NudgePad.tsx";
 import { useLayoutMode } from "../workspace/layoutMode.ts";
 import type { Invocation } from "../api/client.ts";
@@ -93,26 +93,11 @@ function LayerRow(p: { layer: Layer; machine: MachineStatus | null; run: Run; re
   );
 }
 
-/**
- * Signed fields (X, Y, rotation) need "-" and maths on a phone keypad: their inputs get `inputmode="text"` and
- * `enterkeyhint="done"`. A bridge until the shared fields take P2's `signed` prop (components/ui.tsx is P2's).
- */
-function useSignedInputs(ref: { current: HTMLElement | null }) {
-  useEffect(() => {
-    for (const i of ref.current?.querySelectorAll<HTMLInputElement>("input[data-signed], [data-signed] input") ?? []) {
-      if (i.inputMode !== "text") i.inputMode = "text";
-      if (i.enterKeyHint !== "done") i.enterKeyHint = "done";
-    }
-  });
-}
-
 function ObjectSection({ doc, selection, run, report, onArrange, workspaceMm }: PropertiesPanelProps & { doc: GDocument }) {
   const t = useT();
   const td = useTD();
   const lm = useLayoutMode();
   const coarse = lm.pointer === "coarse" || lm.density === "touch";
-  const sectionRef = useRef<HTMLElement>(null);
-  useSignedInputs(sectionRef);
   const [lockAspect, setLockAspect] = useState(true);
   // LightBurn's 9-point anchor, the same one the numeric toolbar uses.
   const [anchor, setAnchor] = useAnchor();
@@ -162,7 +147,7 @@ function ObjectSection({ doc, selection, run, report, onArrange, workspaceMm }: 
   };
 
   return (
-    <section className="prop-section" ref={sectionRef}>
+    <section className="prop-section">
       <h3>
         {single
           ? shapeKindText(td, shapeKindName(single))
@@ -198,13 +183,11 @@ function ObjectSection({ doc, selection, run, report, onArrange, workspaceMm }: 
           ))}
         </div>
       </div>
-      <div data-signed="">
-        <PairField labels={["X", "Y"]} unit="mm" value={[ax, ay]} onCommit={(v) => setPos(v[0], v[1])} />
-      </div>
+      <PairField labels={["X", "Y"]} unit="mm" signed value={[ax, ay]} onCommit={(v) => setPos(v[0], v[1])} />
       {coarse && <NudgePad steps={nudge} unit={lu} />}
       <div className="field-grid">
-        <NumberField label="W" unit="mm" value={w} min={0.01} onCommit={(v) => setSize(v, null)} />
-        <NumberField label="H" unit="mm" value={h} min={0.01} onCommit={(v) => setSize(null, v)} />
+        <NumberField label="W" unit="mm" value={w} min={0.01} stepper onCommit={(v) => setSize(v, null)} />
+        <NumberField label="H" unit="mm" value={h} min={0.01} stepper onCommit={(v) => setSize(null, v)} />
       </div>
       <CheckField label={t("pp.lockAspect")} checked={lockAspect} onChange={setLockAspect} />
       {circle && (
@@ -213,9 +196,10 @@ function ObjectSection({ doc, selection, run, report, onArrange, workspaceMm }: 
           <CheckField label={t("pp.keepRound")} checked={keepRound} onChange={setKeepRound} />
         </>
       )}
-      <div data-signed="">
+      <div>
         <NumberField
           label={single ? t("pp.rotation") : t("pp.rotateBy")}
+          signed
           unit="°"
           value={rot}
           digits={2}
@@ -299,10 +283,8 @@ function StockSection({ doc, has, run, report, onEditStock }: PropertiesPanelPro
         <dt>{t("pp.material")}</dt>
         <dd>{s.material ?? "—"}</dd>
       </dl>
-      <div data-signed="">
-        <PairField labels={[t("pp.centreX"), t("pp.centreY")]} unit="mm" value={s.center} onCommit={(c) => move({ center: [roundMm(c[0]), roundMm(c[1])] })} />
-      </div>
-      <NumberField label={t("pp.rotation")} unit="°" value={s.rotation_deg} digits={2} onCommit={(v) => v !== null && move({ rotation_deg: round6(normDeg(v)) })} />
+      <PairField labels={[t("pp.centreX"), t("pp.centreY")]} unit="mm" signed value={s.center} onCommit={(c) => move({ center: [roundMm(c[0]), roundMm(c[1])] })} />
+      <NumberField label={t("pp.rotation")} signed unit="°" value={s.rotation_deg} digits={2} onCommit={(v) => v !== null && move({ rotation_deg: round6(normDeg(v)) })} />
       <p className="hint">{t("pp.stockHint")}</p>
       <div className="btn-row">
         <button className="btn" onClick={onEditStock}>
@@ -598,8 +580,8 @@ function CutSettingsForm({ settings: s, machine, onPatch }: { settings: CutSetti
           </select>
         </span>
       </label>
-      <NumberField label={t("pp.power")} unit="%" value={s.power_pct} min={0} max={100} digits={1} onCommit={num((power_pct) => ({ power_pct }))} />
-      <NumberField label={t("pp.speed")} unit="mm/s" value={s.speed_mm_s} min={0.1} digits={1} onCommit={num((speed_mm_s) => ({ speed_mm_s }))} />
+      <NumberField label={t("pp.power")} unit="%" value={s.power_pct} min={0} max={100} digits={1} stepper onCommit={num((power_pct) => ({ power_pct }))} />
+      <NumberField label={t("pp.speed")} unit="mm/s" value={s.speed_mm_s} min={0.1} digits={1} stepper onCommit={num((speed_mm_s) => ({ speed_mm_s }))} />
       <NumberField
         label={t("pp.frequency")}
         unit="kHz"
@@ -607,6 +589,7 @@ function CutSettingsForm({ settings: s, machine, onPatch }: { settings: CutSetti
         min={freq.min}
         max={freq.max}
         digits={1}
+        stepper
         onCommit={num((frequency_khz) => ({ frequency_khz }))}
       />
       <label className="field">
@@ -628,7 +611,7 @@ function CutSettingsForm({ settings: s, machine, onPatch }: { settings: CutSetti
         </span>
       </label>
       {!pwKnown && pw !== null && <p className="warn-text">{t("pp.pwPick", { pw })}</p>}
-      <NumberField label={t("pp.passes")} value={s.passes} min={1} max={1000} digits={0} onCommit={num((v) => ({ passes: Math.round(v) }))} />
+      <NumberField label={t("pp.passes")} value={s.passes} min={1} max={1000} digits={0} stepper onCommit={num((v) => ({ passes: Math.round(v) }))} />
 
       <h4 className={hatching ? "" : "muted"}>{hatching ? t("pp.hatch") : t("pp.hatchFillOnly")}</h4>
       <NumberField label={t("pp.interval")} unit="mm" value={s.hatch.interval_mm} min={0.001} digits={4} onCommit={num((interval_mm) => ({ hatch: { interval_mm } }))} />

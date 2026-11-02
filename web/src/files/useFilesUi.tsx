@@ -104,6 +104,8 @@ export interface FilesUi {
   openOther: (file: File) => void;
   /** One of its dialogs is open (keys and drops wait). */
   modalOpen: boolean;
+  /** Open the Templates dialog (File > Project > Templates; the empty-canvas card's Templates button). */
+  openTemplates: () => void;
 }
 
 export function useFilesUi(p: {
@@ -572,7 +574,8 @@ export function useFilesUi(p: {
 
   const pagesDock = useMemo(() => (p.design ? <PagesDock doc={doc} has={has} run={run} report={report} /> : null), [p.design, doc, has, run, report]);
 
-  return { menu, contextItems, handlers, dialogs, pagesDock, intercept, openOther, modalOpen: modal !== null };
+  const openTemplates = () => setModal({ kind: "templates" });
+  return { menu, contextItems, handlers, dialogs, pagesDock, intercept, openOther, modalOpen: modal !== null, openTemplates };
 }
 
 /** File > Recent templates (this browser's list, kept to the templates that still exist). */
