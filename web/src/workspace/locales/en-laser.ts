@@ -72,6 +72,7 @@ export const EN_LASER = {
   "lz.mField": "Field",
   "lz.mPowerLimit": "Power limit",
   "lz.mFocusLight": "Focus light",
+  "lz.mFrequency": "Frequency",
   "lz.mApproval": "Approval",
   "lz.mApprovalPin": "Operator PIN",
   "lz.mApprovalClick": "Start in the app",

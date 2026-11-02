@@ -349,3 +349,36 @@
 .laser-strip .start-toolbar .start-reason {
   max-width: 220px;
 }
+
+/* ---- Laser dock: device select and machine card -------------------------------------------------------------- */
+
+/* The device name gets the whole row (it was clipped to "ComMarker B6 MOPA 60W (E"); Devices… wraps below it. */
+.laser-device .dev-select-bar {
+  flex: 1 1 100%;
+}
+.laser-device .dev-select select {
+  width: 100%;
+  text-overflow: ellipsis;
+}
+.laser-device .dev-bar-row > .btn {
+  margin-left: auto;
+}
+
+.machine-advanced {
+  margin-top: 6px;
+}
+.machine-advanced > summary {
+  cursor: pointer;
+  color: var(--text-2, var(--muted));
+  font-size: var(--fs-sm, 12px);
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+}
+.machine-raw {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--fs-xs, 11px);
+}
+.machine-raw dd {
+  overflow-wrap: anywhere;
+}

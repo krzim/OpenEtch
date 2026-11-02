@@ -7,9 +7,9 @@
 // request comes from this page in a browser), with the Job Checklist and Require Framing inline when they are on. The
 // foot switch never approves pending runs: it frames and burns the current document (the Laser window shows it).
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, ApiError } from "../api/client.ts";
-import { MACHINE_SHOWN_KEYS, formatDuration, previewLayers, segLen, statRows } from "../api/laser.ts";
+import { formatDuration, previewLayers, segLen, statRows } from "../api/laser.ts";
 import { modeLabel, passResolver, previewPasses, settingsSummary, soloPass, togglePass, type PassPreview } from "../api/passes.ts";
 import {
   activeRuns,
@@ -40,60 +40,44 @@ import { approvalRefusalText, checklistTicks } from "../libs/model.ts";
 import { formatSpeed, lengthText } from "../workspace/units.ts";
 import { useT } from "../workspace/usePrefs.ts";
 import { useLaserFacts } from "../laser/laserContext.ts";
+import { machineRows } from "../laser/machineRows.ts";
 import "../laser/laser.css";
 
-/** Machine status; `children` (the LightBurn devices section) render at the bottom of the card. */
+/**
+ * Machine status as friendly rows (laser/machineRows.ts: "Focus light: Off"), with every raw key behind Advanced;
+ * `children` (the LightBurn devices section) render at the bottom of the card.
+ */
 export function MachineCard({ machine, httpError, children }: { machine: MachineStatus | null; httpError: string | null; children?: ReactNode }) {
   const t = useT();
-  const extra = machine
-    ? Object.entries(machine).filter(([k, v]) => !MACHINE_SHOWN_KEYS.has(k) && v !== null && v !== undefined && typeof v !== "object")
-    : [];
-  const sim = !!(machine?.simulated ?? machine?.sim);
-  const state = typeof machine?.state === "string" ? machine.state : machine?.busy ? "busy" : "idle";
-  const stateText = machine?.framing ? t("lp.framingRedPointer") : machine?.running ? t("rest.running") : state.charAt(0).toUpperCase() + state.slice(1);
-  const lastError = typeof machine?.last_error === "string" && machine.last_error ? machine.last_error : null;
+  const view = machine ? machineRows(machine) : null;
   return (
     <section className="card">
       <h3>{t("lp.machine")}</h3>
-      {!machine ? (
-        <p className="muted">{httpError ? t("lp.engineUnreachable") : "Loading…"}</p>
+      {!view ? (
+        <p className="muted">{httpError ? t("lz.mUnreachable") : t("lz.mLoading")}</p>
       ) : (
-        <dl className="kv">
-          <dt>{t("lp.link")}</dt>
-          <dd>
-            <span className={`dot ${machine.connected ? "ok" : "bad"}`} /> {machine.connected ? "Connected" : t("lp.notConnected")}
-            {sim ? " (simulator)" : machine.link === "usb" ? " (USB)" : ""}
-          </dd>
-          <dt>{t("lp.state")}</dt>
-          <dd>{stateText}</dd>
-          {typeof machine.profile === "string" && (
-            <>
-              <dt>{t("lp.profile")}</dt>
-              <dd>{machine.profile}</dd>
-            </>
+        <>
+          <dl className="kv">
+            {view.rows.map((r, i) => (
+              <Fragment key={`${r.label}-${i}`}>
+                <dt>{r.label}</dt>
+                <dd className={r.error ? "run-error" : undefined}>
+                  {r.label === t("lz.mLink") && <span className={`dot ${machine?.connected ? "ok" : "bad"}`} />} {r.value}
+                </dd>
+              </Fragment>
+            ))}
+          </dl>
+          {view.advanced.length > 0 && (
+            <details className="machine-advanced">
+              <summary>{t("lz.mAdvanced")}</summary>
+              <dl className="kv machine-raw">
+                {view.advanced.map(([k, v]) => (
+                  <FragmentKV key={k} k={k} v={v} raw />
+                ))}
+              </dl>
+            </details>
           )}
-          {machine.field_mm !== undefined && (
-            <>
-              <dt>{t("lp.field")}</dt>
-              <dd>{machine.field_mm} mm</dd>
-            </>
-          )}
-          {typeof machine.max_power_pct === "number" && (
-            <>
-              <dt>{t("lp.powerLimit")}</dt>
-              <dd>{machine.max_power_pct}%</dd>
-            </>
-          )}
-          {lastError && (
-            <>
-              <dt>{t("lp.lastError")}</dt>
-              <dd className="run-error">{lastError}</dd>
-            </>
-          )}
-          {extra.map(([k, v]) => (
-            <FragmentKV key={k} k={k} v={v} />
-          ))}
-        </dl>
+        </>
       )}
       {machine && children}
     </section>
