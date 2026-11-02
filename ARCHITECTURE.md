@@ -197,6 +197,37 @@ computer while nobody watches it; the foot switch is the approval path that need
 - `machine::check_job` checks the encoded packets right before they are sent: power, frequency, pulse width, mark
   and jump speed, delays, no in-list `FiberOpenMO` (the MO is opened only by the run prelude), every `WritePort`
   either 0 or exactly the profile's laser-enable mask, and no raw opcodes.
+- **Machine drivers** (`machine::driver`). Every driver implements `MachineDriver` (state, light-only
+  `frame_styled` and `stop_frame`, `run_job(job, Armed)`, the never-gated `abort`, and the `AbortHandle` /
+  `RunControl` a stop or pause button uses from another thread); the engine holds the `machine::Driver` enum
+  (`Lmc(Controller)` | `Grbl(GrblController)`) rather than a boxed trait object because the drivers' jobs differ
+  (LMC list parts, G-code lines) and so do their extra abilities (input port and extension axis; homing, jogging and
+  the console): a mismatched job is refused in one place and a new driver does not compile until every safety path
+  handles it. `Driver::Lmc` calls straight through to the unchanged `Controller`, and the engine's wire test pins
+  the B6 galvo's bytes (`engine::wire_tests`). Every rule in this section holds for every driver.
+- **GRBL gantries** (`machine::grbl`, a device of kind `grbl`; unverified on hardware, tested on `SimGrbl`):
+  - Only an armed run fires: `GrblController::run_program` needs the `Armed` token and first checks the program
+    (`check_program`: only `G0`/`G1`/`G4`/`G21`/`G90`/`M3`/`M4`/`M5`, `S` within `max_power_pct` of `$30`, feeds within
+    `max_feed_mm_min`, every point on the bed, no dwell with `M3` and `S > 0`, the laser off at the end); it then
+    re-reads the board and refuses unless laser mode is on (`$32=1`, so `G0` never burns), `$30`/`$31` equal the
+    profile's, the board is idle and unlocked, the door is closed, and no start-up block (`$N0`/`$N1`) can turn the
+    laser on.
+  - Framing is light-only: `M5` and absolute `$J=` jogs (no `M3`/`M4`, no `S`). There is no low-power frame option.
+    Framing and the red-dot jog (`/api/machine/pointer`) move a gantry's head, so for a GRBL device they refuse MCP
+    (the `frame_start` tool and MCP client headers, 403) like homing and jogging; `frame_stop` and Stop stay open.
+  - Stop always wins: the realtime feed hold `!` then soft reset `0x18`, written directly (realtime bytes bypass
+    GRBL's line buffer, so they never queue behind buffered lines), noticed by a streaming run within one read
+    timeout (10 ms). Pause is feed hold, resume cycle start `~`. A door (`Door` state or the `D` pin), alarm or
+    `error:N` aborts the run the same way; a reset while moving leaves alarm 3 for a person to home or unlock.
+  - Flow control: character counting; a line is written only when it fits beside the unanswered lines' bytes in
+    GRBL's 127-byte receive buffer (the simulator fails any overflow).
+  - The console (`POST /api/machine/console`, UI only, never MCP) is never armed, so it refuses anything that could
+    fire now or later before anything is sent: `M3`/`M4` in any spelling (`M 3`, `M03`, `M+4`, `M3.0`), `S > 0`,
+    unknown G/M codes (allowlists), unknown word letters, the realtime characters `?` `!` `~` and every
+    non-printable byte, `$RST=`, and start-up blocks that fail the same rule; a line that moves is sent only while the
+    board's parser state reports `M5`. Homing (`$H`), unlock (`$X`) and jogs (`$J=`) are UI only and never fire.
+  - Approval, Require Framing, the checklist and the stop epoch apply unchanged; the foot switch and IO ports are
+    galvo inputs and are not read for a GRBL device. MCP can request a GRBL run like a galvo run and never approve it.
 - The engine holds no link of its own and reaches the board only through `Controller` methods: a freshly opened USB
   link is swapped in with `Controller::replace_link` (which forgets the init), and the physical confirmation reads
   inputs with `Controller::read_port`.
@@ -254,6 +285,13 @@ says otherwise. `origin` is `"ui"` (default), `"script"` or `"agent:<name>"`.
 | POST | `/api/machine/pause` | → `{ ok, running }`; not gated |
 | POST | `/api/machine/resume` | optional `{ origin }` → `{ ok }`; UI only (403 otherwise); no job 409 |
 | POST | `/api/machine/pointer` | `{ x, y, pointer?, max_seconds? }`: the red dot held at a field point (red-dot jog; light only) |
+| GET | `/api/machine/grbl` | a GRBL gantry's profile and board (version, last status, alarm, laser mode, `$30`/`$31`, unsafe start-up blocks, messages); 409 for a galvo |
+| POST | `/api/machine/home`, `/api/machine/unlock` | GRBL `$H` / `$X` (UI only; motion, never emission) |
+| POST | `/api/machine/jog` | `{dx, dy}` or `{x, y}` mm (field frame), `feed?` mm/min: a GRBL `$J=` jog with the laser off (UI only); `/api/machine/jog/cancel` (0x85) is not gated |
+| POST | `/api/machine/console` | `{line}` → `{line, lines, ok, error}`: one console line to a GRBL board (UI only); lines that could fire are refused (422) before anything is sent (Safety model) |
+| GET | `/api/machine/ports` | the engine computer's serial ports (`serial` build feature) |
+| POST | `/api/devices/grbl` | `{display_name, profile}`: a new GRBL device (UI only) |
+| GET | `/api/export/gcode` | `?ids=`: the document as a `.gcode` file for the active GRBL gantry (the lines a run would stream, checked like a run, after a `;` header); sends nothing |
 | POST | `/api/machine/axis` | `{ "z_mm" }` or `{ "steps" }` (+ `origin`): move the extension axis; UI only; no axis 400; a Z lift's `steps` must stay within its travel (400); claims the machine while it moves (a run in progress 409) |
 | GET | `/api/machine/info` | `{ connected, profile, laser_source, laser_kind, fiber_kind, axis, serial_words?, version_words?, serial_hex? }` (GetSerialNo / GetVersion, read again when idle; words not decoded) |
 | GET | `/api/preview.png` | `?width=64..=8192` (default 1600), `?jumps=false`: the preview as a PNG download (Save Preview Image) |
@@ -897,6 +935,11 @@ Pages, Show Notes, Managing Preferences, User Bundles, Import 3D Model, 3D Slice
   the file is Illustrator's, with its procsets skipped; DOS EPS preview headers); fonts, text, images and `loop` are
   not run (warning). LightBurn's current import list no longer has EPS. `art.import_hpgl {content, units_per_mm = 40}`:
   `IN DF SP PU PD PA PR CI AA AR EA ER RA RR` (one path set per pen); `LB`, `SC`, `IP`, `PE` skipped with a warning.
+  `art.import_gcode {content}` (`.gcode`, `.nc`, `.gc`, `.ngc`, `.tap`; LightBurn's G-code import): `G1` lines and
+  `G2`/`G3` arcs (I/J or R, XY plane, flattened within 0.01 mm) while the laser is on (`M3`/`M4` with `S > 0`; every
+  feed move when the program never uses `M3`/`M4`), one path set per `S` value; `G20`/`G21`, `G90`/`G91` and `G92`
+  honoured, `G28`/`G30`/`G53`, work coordinate systems and other planes reported in a warning; travel, Z and feeds are
+  not imported. The export side is `GET /api/export/gcode` (a GRBL device only: the G-code depends on the machine).
   `art.import_gerber {content, kind: auto|gerber|excellon, invert?}` (LightBurn 2.2): RS-274X copper as closed
   outlines (`FS`, `MO`, apertures C/R/O/P with holes, `LP` clear polarity cut out, G01/G02/G03 in G74/G75, D01/D02/D03,
   regions G36/G37; draws stroked with round ends through `geom` offsets, everything unioned), `invert` gives the board
@@ -1062,11 +1105,22 @@ laser profile from LightBurn. Spec and evidence: LightBurn's docs (Devices windo
 Origin), the public WAZER `.lbdev`, xTool/Creality `.lbdev` posts and the owner's `prefs.ini` files.
 
 - **Device** = `{id (slug of the display name), name (LightBurn Name: the controller), display_name, source:
-  builtin | lightburn-prefs | lbdev | manual, kind: jcz_galvo | gantry | galvo_other | unknown, lightburn_type
+  builtin | lightburn-prefs | lbdev | manual, kind: jcz_galvo | grbl | gantry | galvo_other | unknown, lightburn_type
   (LightBurn Type: the connection, e.g. LibUSB), workspace_mm [w, h], origin, controllable, profile (JCZ galvos),
   lightburn (the typed LightBurn settings it was made from)}`. Only a JCZ (BJJCZ LMC, EzCad2-family, LightBurn's
   "JCZFiber") galvo is **controllable**; every other device is **design-only**: its workspace drives the canvas, new
   documents and LightBurn import/export, and previews, runs and framing are refused (422, with the reason).
+- **GRBL gantries** (kind `grbl`, made in OpenEtch with `POST /api/devices/grbl` or the Devices window's New GRBL;
+  unverified on hardware): controllable through the GRBL driver (Safety model, "GRBL gantries"). The device holds a
+  `machine::grbl::GrblProfile` `{port, baud (115200), s_max ($30, 1000), s_min ($31), max_power_pct, max_feed_mm_min,
+  frame_feed_mm_min, work_area_mm, homing ($22), origin (a corner), dynamic_power (M4, else M3)}`, edited with a JSON
+  merge patch like a galvo profile (validated; its workspace and origin follow). Activation swaps the driver
+  (`hw::Machine::swap_grbl`: a fresh `SimGrbl` on the simulator, the profile's serial port with the `serial` build
+  feature on real hardware) and back (`swap_config`); the planning target is the bed (`plan::GcodeSettings::target`,
+  field-frame mm centred on the bed, `Target.gantry`), and a run is planned to G-code (`plan::gcode_lines`: `G90 G21`,
+  `M4 S0`, `G0` travel, `G1` cuts with `S = power % x $30` and `F` = mm/s x 60, pauses as `M5` + `G4`, `M5` at the end;
+  feeds, powers and points off the bed refused, never clamped). Not yet for GRBL: Repeat Marking tables, queues, the
+  start input, dot mode, rotary/Z jobs. LightBurn GRBL devices stay design-only gantries.
 - **Family** (LightBurn's `Name` is an open set, never matched against a closed list): a galvo when `Type` is
   `LibUSB`, `Name` contains Fiber or EZCad, or any `Galvo_*` setting exists; JCZ when such a `Name` contains JCZ
   (BSLFiber and EZCad3 are `galvo_other`); `unknown` for "No Machine"; everything else is a gantry (GCode/DSP).

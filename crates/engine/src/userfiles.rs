@@ -6,10 +6,11 @@
 //! | Method | Path | Body / result |
 //! |---|---|---|
 //! | GET | `/api/export` | `?format=svg\|dxf\|ai\|pdf&ids=a,b&colors=layers\|black&area=bounds\|workspace&stroke_mm=&tolerance_mm=&keep_circles=&images=` → the file (`doc.export`), named after the project |
+//! | GET | `/api/export/gcode` | `?ids=a,b`: the document planned for the active GRBL gantry as a `.gcode` file (`;` comment header, then exactly the lines a run would stream; checked against the profile like a run). 409 unless the active device is a GRBL gantry. Sends nothing to a machine |
 //! | GET | `/api/print` | `?format=pdf\|svg&colors=black\|layers&line_width_mm=&paper=w,h&margin_mm=&area=&ids=` → the print-ready file, inline (`doc.print`) |
 //! | GET | `/api/images/{id}/file` | the image object's file (`image.export`) |
 //! | GET | `/api/images/{id}/processed.png` | `?sub_layer=n`: Save Processed Bitmap (`image.processed`) |
-//! | POST | `/api/document/import` | `?format=svg\|dxf\|image\|tiff\|tga\|pdf\|ai\|eps\|ezd\|hpgl\|plt\|gerber\|drill\|model\|lbrn&mode=merge\|replace&name=` + the command's options as query parameters, the raw file as the body (≤ 100 MB) → like `/api/execute`; `mode=replace` opens the file as a new, unsaved project (`doc.new` then the import, one undo step; downloads are named after `name`). `tool_layers=true` (LightBurn's "Allow Importing to Tool Layers", default off) allows `layer=T1`/`T2` (added in the same step when missing); off, those names are refused and an import without `layer` skips a tool layer listed first; a `layer` id is used as given |
+//! | POST | `/api/document/import` | `?format=svg\|dxf\|image\|tiff\|tga\|pdf\|ai\|eps\|ezd\|hpgl\|plt\|gcode\|nc\|gerber\|drill\|model\|lbrn&mode=merge\|replace&name=` + the command's options as query parameters, the raw file as the body (≤ 100 MB) → like `/api/execute`; `mode=replace` opens the file as a new, unsaved project (`doc.new` then the import, one undo step; downloads are named after `name`). `tool_layers=true` (LightBurn's "Allow Importing to Tool Layers", default off) allows `layer=T1`/`T2` (added in the same step when missing); off, those names are refused and an import without `layer` skips a tool layer listed first; a `layer` id is used as given |
 //! | GET | `/api/projects/{name}/thumbnail.png` | `?width=32..=1024` (default 256): the saved project rendered |
 //! | GET | `/api/backups` | `?project=`: `{autosaves: [{file, project, saved_unix_s, size}], backups: [...]}` newest first |
 //! | POST | `/api/backups/restore` | `{kind: "autosave"\|"backup", file, origin?}`: opens it as an unsaved document → like `/api/projects/open` |
@@ -336,6 +337,7 @@ pub fn spawn_autosave(st: Arc<AppState>) -> tokio::task::JoinHandle<()> {
 pub(crate) fn routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/export", get(export))
+        .route("/export/gcode", get(export_gcode))
         .route("/print", get(print))
         .route("/images/{id}/file", get(image_file))
         .route("/images/{id}/processed.png", get(image_processed))
@@ -474,6 +476,39 @@ async fn export(State(st): State<Arc<AppState>>, q: Q) -> Result<Response, Engin
     .await
 }
 
+/// `GET /api/export/gcode`: the document as G-code for the active GRBL gantry (Save G-code, LightBurn UX-007). The
+/// same planning and checks as a run (`runs::prepare_gcode_job`'s), written to a file instead of a serial port.
+async fn export_gcode(State(st): State<Arc<AppState>>, q: Q) -> Result<Response, EngineError> {
+    let q = query(q, &["ids"])?;
+    let selection = q.get("ids").map(|v| v.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned).collect::<Vec<_>>());
+    let config = st.machine.config();
+    let Some(grbl) = config.grbl.clone() else {
+        return Err(EngineError::Conflict("G-code export needs a GRBL gantry as the active device".into()));
+    };
+    let device = st.active_device().display_name;
+    st.blocking(move |st| {
+        let doc = commands::prepare_output(&st.document()).map_err(|e| EngineError::BadRequest(format!("text: {e}")))?;
+        let options = plan::JobOptions { selection, run_index: 0, preview: false };
+        let job = plan::plan_job_with(&doc, &config.target, &options)?;
+        let settings = crate::hw::gcode_settings(&grbl);
+        let lines = plan::gcode_lines(&job, &settings)?;
+        machine::grbl::check_program(&grbl, &machine::grbl::GcodeProgram::new(lines))
+            .map_err(|e| EngineError::BadRequest(e.to_string()))?;
+        let header = [
+            format!("OpenEtch G-code for {device} ({} x {} mm bed)", grbl.work_area_mm[0], grbl.work_area_mm[1]),
+            format!(
+                "GRBL 1.1 laser mode ($32=1), S 0..{} ($30), {}",
+                plan::gcode_number(grbl.s_max),
+                if grbl.dynamic_power { "M4 dynamic power" } else { "M3 constant power" }
+            ),
+            format!("{} polylines, {:.1} mm marked, about {:.0} s", job.stats.polyline_count, job.stats.mark_length_mm, job.stats.estimated_time_s),
+        ];
+        let text = plan::gcode_file(&job, &settings, &header)?;
+        Ok(file_response("attachment", &stem(st), "gcode", "text/x-gcode", text.into_bytes(), 0))
+    })
+    .await
+}
+
 async fn print(State(st): State<Arc<AppState>>, q: Q) -> Result<Response, EngineError> {
     let q = query(q, &["format", "colors", "line_width_mm", "paper", "margin_mm", "area", "ids"])?;
     let mut params = serde_json::Map::new();
@@ -535,6 +570,10 @@ pub(crate) fn import_invocation(format: &str, bytes: Vec<u8>, q: &HashMap<String
             params.insert("content".into(), json!(text(bytes)?));
             "art.import_hpgl"
         }
+        "gcode" | "nc" | "gc" | "ngc" | "tap" => {
+            params.insert("content".into(), json!(text(bytes)?));
+            "art.import_gcode"
+        }
         "gerber" | "drill" => {
             params.insert("content".into(), json!(text(bytes)?));
             if format == "drill" {
@@ -570,7 +609,7 @@ pub(crate) fn import_invocation(format: &str, bytes: Vec<u8>, q: &HashMap<String
         }
         other => {
             return Err(EngineError::BadRequest(format!(
-                "unknown format '{other}' (svg, dxf, image, tiff, tga, pdf, ai, eps, ezd, hpgl, plt, gerber, drill, model, lbrn)"
+                "unknown format '{other}' (svg, dxf, image, tiff, tga, pdf, ai, eps, ezd, hpgl, plt, gcode, nc, gerber, drill, model, lbrn)"
             )));
         }
     };

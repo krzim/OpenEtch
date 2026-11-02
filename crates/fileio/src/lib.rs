@@ -4,8 +4,8 @@
 //! - Exports of a [`doc::Document`] (or a selection of it): [`svg_out`] (SVG, also print-ready), [`dxf_out`] (DXF
 //!   R12), [`pdf_out`] (PDF, also print-ready and the PDF-compatible Adobe Illustrator `.ai`).
 //! - Imports into [`Art`] (paths in mm, +Y up): [`pdf_in`] (PDF and PDF-based `.ai`), [`postscript`] (EPS and
-//!   PostScript-based `.ai`), [`hpgl`] (HPGL/PLT), [`gerber`] (Gerber RS-274X and Excellon drill), [`mesh`] (3D models
-//!   to a depth map image), [`bitmap`] (TIFF/TGA to PNG).
+//!   PostScript-based `.ai`), [`hpgl`] (HPGL/PLT), [`gcode_in`] (G-code toolpaths), [`gerber`] (Gerber RS-274X and
+//!   Excellon drill), [`mesh`] (3D models to a depth map image), [`bitmap`] (TIFF/TGA to PNG).
 //! - Image tools: [`trace`] (Trace Image, outline and centre line), [`raster`] (Convert to Bitmap), [`bitmap`] (masks).
 //! - [`zip`]: a small zip reader and writer (3MF, user bundles, LightBurn `.lbzip` bundles).
 //! - [`lbart`]: LightBurn Art Library files (`.lbart`), the binary container around `<LightBurnShapes>` XML.
@@ -21,6 +21,7 @@ pub mod bitmap;
 pub use image;
 pub mod dxf_out;
 pub mod ezd;
+pub mod gcode_in;
 pub mod gerber;
 pub mod hpgl;
 pub mod lbart;

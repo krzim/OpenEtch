@@ -291,8 +291,11 @@ async fn machine_status(State(st): State<Arc<AppState>>) -> Json<Value> {
     Json(st.machine_status())
 }
 
-async fn frame_start(State(st): State<Arc<AppState>>, body: Bytes) -> Result<Json<Value>, EngineError> {
+async fn frame_start(State(st): State<Arc<AppState>>, headers: HeaderMap, body: Bytes) -> Result<Json<Value>, EngineError> {
     let req: FrameRequest = body_or_default(&body)?;
+    if st.machine.is_grbl() && has_mcp_marker(&headers) {
+        return Err(EngineError::Forbidden(crate::mcp::GANTRY_FRAME.into()));
+    }
     Ok(Json(st.frame_start(req).await?))
 }
 

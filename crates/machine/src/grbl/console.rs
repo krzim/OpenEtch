@@ -138,6 +138,9 @@ mod tests {
             "M3 S1000", "M4 S1", "M3", "M4 S0", "m3s500", "S100", "G1 X10 F100 S5", "M3 (comment) S0", "G1 X1 ?", "!", "~",
             "\u{18}", "\u{85}", "$N0=M3 S1000", "$N1=S10", "$RST=*", "$RST=$", "$J=G91 X10 F100 S100", "$J=X1 F100 M3", "$Q",
             "$100=abc", "M62 P1", "G4 P1 M3", "Q5", "G1 X1 F100 (unclosed", "",
+            // GRBL ignores spaces and reads leading zeros, signs and decimals: these are M3/M4 and S > 0 too.
+            "M 3 S 1000", "m 4", "M03 S1", "M+4", "M3.0 S0", "M4.000000001", "s 0.001", "G1X1F100S1E3", "$N0=M 4",
+            "$J=G91X1F100 M 3", "M5\tM3",
         ] {
             assert!(check_console_line(bad).is_err(), "{bad:?} should be refused");
         }

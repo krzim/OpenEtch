@@ -71,11 +71,21 @@ These are `na` today because OpenEtch only drives JCZ/BJJCZ galvos. They become 
 1. **A machine-driver trait for gantries.** Split `machine::Controller` into a driver interface with the current LMC
    driver as one implementation. Planning already produces polylines; gantries need motion planning in mm/min and
    a job-origin model (`JOB-063`, `JOB-062`).
+   *Status (branch `gantry-grbl`):* done. `machine::MachineDriver` + the `machine::Driver` enum (LMC | GRBL); the
+   engine drives the enum, the LMC `Controller` is unchanged and its wire bytes are pinned by a test. Feeds are
+   mm/min in G-code; the job origin is the bed centre for now (absolute coordinates; `JOB-062`/`JOB-063` still open).
 2. **GRBL over serial (USB).** The simplest open protocol: G-code streaming with character-counting flow control.
    Unlocks homing and jogging (`JOB-064`, `UX-075`), console and macros (`JOB-074`), constant-power and other GRBL
    layer options (`LAY-060`), air assist (`LAY-059`), overscanning (`LAY-012`), ramp, lead-in/out and overcut
    (`LAY-053`, `LAY-054`), hide backlash (`JOB-019`), scanning offset table (`OTH-013`), framing with the laser on
    (`JOB-035`), and G-code import/export (`UX-036`, `UX-007`). Test on GRBL's simulator before hardware.
+   *Status (branch `gantry-grbl`, all unverified on hardware, no gantry):* the GRBL 1.1 driver over serial
+   (`serial2`, feature `serial`) with character counting, status polling, feed hold / resume / soft reset, alarms,
+   door, homing `$H`, unlock `$X`, jogs `$J=` and a console that refuses anything that could fire; G-code from the
+   planner (M4 by default, M3 option, S scaled to `$30`); `.gcode` export (`GET /api/export/gcode`) and import
+   (`art.import_gcode`); OpenEtch's own GRBL simulator (`machine::grbl::SimGrbl`) in place of GRBL's (GPL). Still
+   open: macros, the GRBL layer options (constant power per layer, air assist, overscan, ramps, lead-in/out),
+   backlash, scanning offsets, framing with the laser on, and a Move panel in the web UI.
 3. **Ruida (UDP and USB).** The most common DSP controller. The protocol is publicly documented by community
    projects (MIT/BSD ones only). Unlocks controller file lists (`OTH-017`), Send / machine files (`JOB-065`),
    RDWorks `.rd` import (`UX-037`), rotary mode on gantries (`OTH-014`), auto-focus (`JOB-073`) and feeders

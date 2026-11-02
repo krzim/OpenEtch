@@ -131,6 +131,7 @@ fn register_files(r: &mut Registry) {
     r.register::<files::ImportEps>();
     r.register::<files::ImportEzd>();
     r.register::<files::ImportHpgl>();
+    r.register::<files::ImportGcode>();
     r.register::<files::ImportGerber>();
     r.register::<files::ImportModel>();
     r.register::<files::EditModel>();

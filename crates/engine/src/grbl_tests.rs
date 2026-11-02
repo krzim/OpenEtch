@@ -271,3 +271,66 @@ async fn grbl_profiles_are_edited_and_checked() {
     assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
     assert!(v["error"].as_str().unwrap().contains("mm/min"), "{v}");
 }
+
+/// Save G-code: the document as a `.gcode` file for the active GRBL gantry, exactly the lines a run would stream,
+/// sending nothing; a galvo refuses it. The file reads back through the G-code import (`format=gcode`).
+#[tokio::test]
+async fn gcode_exports_without_sending_and_imports_back() {
+    let (app, st, _, galvo) = grbl_engine(false).await;
+    let board = sim(&st);
+    exec(&app, "shape.rect", json!({"width_mm": 40, "height_mm": 20})).await;
+    exec(&app, "layer.update", json!({"id": "layer-1", "settings": {"power_pct": 30, "speed_mm_s": 25}})).await;
+    let before = board.report().lines_received;
+    let res = app.clone().oneshot(req("GET", "/api/export/gcode", None)).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let disposition = res.headers()["content-disposition"].to_str().unwrap().to_owned();
+    assert!(disposition.contains(".gcode"), "{disposition}");
+    let text = String::from_utf8(res.into_body().collect().await.unwrap().to_bytes().to_vec()).unwrap();
+    assert!(text.starts_with("; OpenEtch G-code for Diode (400 x 300 mm bed)\n"), "{text}");
+    assert!(text.contains("\nG90 G21\nM4 S0\nG0 X180 Y140\n"), "{text}");
+    assert!(text.contains(" S300 F1500\n") && text.ends_with("M5\n"), "{text}");
+    assert_eq!(board.report().lines_received, before, "export sends nothing to the machine");
+    assert!(board.report().fires.is_empty());
+    // Unknown query parameters and unknown ids are refused.
+    assert_eq!(send(&app, req("GET", "/api/export/gcode?pin=1", None)).await.0, StatusCode::BAD_REQUEST);
+    assert!(!send(&app, req("GET", "/api/export/gcode?ids=nope", None)).await.0.is_success());
+
+    // Import it back as a new project: one path set at S300, the rectangle's size.
+    let r = Request::builder()
+        .method("POST")
+        .uri("/api/document/import?format=gcode&mode=replace&name=rect.gcode&keep_position=true")
+        .header("host", "localhost:7878")
+        .body(Body::from(text))
+        .unwrap();
+    let (s, v) = send(&app, r).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["result"]["size_mm"], json!([40.0, 20.0]), "{v}");
+
+    // A galvo has no G-code.
+    let (s, _) = send(&app, req("POST", &format!("/api/devices/{galvo}/activate"), None)).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(send(&app, req("GET", "/api/export/gcode", None)).await.0, StatusCode::CONFLICT);
+}
+
+/// Framing a gantry moves its head, so agents cannot start it (MCP tool or MCP headers); stopping still works.
+#[tokio::test]
+async fn agents_cannot_frame_a_gantry() {
+    let (app, st, _, _) = grbl_engine(false).await;
+    exec(&app, "shape.rect", json!({"width_mm": 40, "height_mm": 20})).await;
+    let before = sim(&st).report().lines_received;
+    let r = crate::mcp::GalvoMcp::new(st.clone()).call("frame_start", serde_json::Map::new()).await;
+    let v = serde_json::to_value(&r).unwrap();
+    assert_eq!(v["isError"], true, "{v}");
+    assert!(v.to_string().contains("only a person"), "{v}");
+    let mut r = req("POST", "/api/machine/frame", Some(json!({"continuous": false})));
+    r.headers_mut().insert("mcp-session-id", "x".parse().unwrap());
+    assert_eq!(send(&app, r).await.0, StatusCode::FORBIDDEN);
+    // The red-dot jog is a one-point frame: on a gantry it moves the head, so the same rule.
+    let mut r = req("POST", "/api/machine/pointer", Some(json!({"x": 10, "y": 10})));
+    r.headers_mut().insert("mcp-session-id", "x".parse().unwrap());
+    assert_eq!(send(&app, r).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(sim(&st).report().lines_received, before, "nothing was sent");
+    assert!(!st.machine.is_framing());
+    let r = crate::mcp::GalvoMcp::new(st.clone()).call("machine_stop", serde_json::Map::new()).await;
+    assert_ne!(serde_json::to_value(&r).unwrap()["isError"], true);
+}

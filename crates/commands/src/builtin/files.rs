@@ -775,6 +775,48 @@ impl Command for ImportHpgl {
     }
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ImportGcodeInput {
+    /// The G-code program text (.gcode, .nc, .gc, .ngc).
+    pub content: String,
+    /// Layer id (default the first layer).
+    pub layer: Option<String>,
+    /// Name of the group (or the object).
+    pub name: Option<String>,
+    /// Scale uniformly to this width in mm.
+    pub width_mm: Option<f64>,
+    /// Keep the program's own coordinates instead of centring on the field origin.
+    #[serde(default)]
+    pub keep_position: bool,
+    /// One object per power (S value) in a group (default true); false makes one object.
+    pub split: Option<bool>,
+}
+
+/// `art.import_gcode`.
+pub struct ImportGcode;
+
+impl Command for ImportGcode {
+    type Input = ImportGcodeInput;
+    const ID: &'static str = "art.import_gcode";
+    const TITLE: &'static str = "Import G-code";
+    const DESCRIPTION: &'static str = concat!(
+        "Import the cutting moves of a G-code program (a laser's, plotter's or router's) as paths: G1 lines and G2/G3 \
+         arcs while the laser is on (M3/M4 with S > 0; every feed move when the program never switches a laser), one \
+         path set per power (S value); travel (G0), Z and feeds are not imported. G20/G21 and G90/G91 are honoured; \
+         work offsets and machine-frame moves are approximated with a warning. Nothing is sent to a machine. ",
+        placement_doc!()
+    );
+    const RISK: Risk = Risk::Edit;
+
+    fn apply(doc: &mut Document, i: ImportGcodeInput) -> Result<(Value, String)> {
+        let id = Self::ID;
+        let art = fileio::gcode_in::parse(&i.content).map_err(file_err(id))?;
+        let p = Placement { layer: i.layer.as_deref(), name: i.name.as_deref(), width_mm: i.width_mm, keep_position: i.keep_position, split: i.split.unwrap_or(true), file_layers: false };
+        place_art(id, doc, art, &p, "Imported G-code")
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum GerberKind {
@@ -1272,6 +1314,19 @@ mod tests {
         let ai = run(&mut s, "art.import_ai", json!({"data_base64": pdf["content_base64"]}));
         assert_eq!(ai["created"].as_array().unwrap().len(), 1);
         assert!(s.execute(Invocation { id: "art.import_hpgl".into(), params: json!({"content": "nothing"}) }, Origin::Ui).is_err());
+    }
+
+    #[test]
+    fn imports_gcode_cuts_by_power() {
+        let mut s = session();
+        let g = "G90 G21\nM4 S0\nG0 X10 Y10\nG1 X20 Y10 S500 F1200\nG1 Y20\nG0 X50 Y50\nG1 X60 S250\nM5\n";
+        let r = run(&mut s, "art.import_gcode", json!({"content": g, "keep_position": true}));
+        assert_eq!(r["created"].as_array().unwrap().len(), 2);
+        assert_eq!(r["size_mm"], json!([50.0, 40.0]));
+        let one = run(&mut s, "art.import_gcode", json!({"content": g, "split": false, "width_mm": 10}));
+        assert_eq!(one["size_mm"], json!([10.0, 8.0]));
+        let e = s.execute(Invocation { id: "art.import_gcode".into(), params: json!({"content": "M3 S0\nG1 X5 F100\n"}) }, Origin::Ui).unwrap_err();
+        assert!(e.to_string().contains("cuts nothing"), "{e}");
     }
 
     /// Art kilometres wide (or far out with keep_position) is refused unless scaled down with width_mm.
