@@ -15,6 +15,7 @@ import type { Selection } from "../selection.ts";
 import { ANCHORS, anchorPoint, moveTo, resizeTo, rotationDelta, scalePercent, useAnchor } from "./numeric.ts";
 import { usePrefs, useT } from "./usePrefs.ts";
 import "./workspace.css";
+import { Icon } from "../components/ui.tsx";
 
 export interface NumericBarProps {
   doc: GDocument | null;
@@ -80,7 +81,7 @@ export function NumericBar(p: NumericBarProps) {
           aria-label={t("numeric.lock")}
           onClick={() => setLock((v) => !v)}
         >
-          <LockIcon locked={lock} />
+          <Icon name={lock ? "lock" : "unlock"} size={18} />
         </button>
         <NumberField key={percent ? `h%${p.doc?.revision}` : "h"} label="H" unit={sizeUnit} value={box ? (percent ? 100 : h) : null} min={percent ? 0.1 : 0.001} disabled={none} onCommit={(v) => setSize(null, v)} />
         <div className="segmented unit-toggle" role="radiogroup" aria-label={t("numeric.sizeMode")}>
@@ -99,10 +100,3 @@ export function NumericBar(p: NumericBarProps) {
   );
 }
 
-function LockIcon({ locked }: { locked: boolean }) {
-  return (
-    <svg className="icon" width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d={locked ? "M6 11h12v9H6z M8.5 11V8a3.5 3.5 0 017 0v3" : "M6 11h12v9H6z M8.5 11V8a3.5 3.5 0 016.8-1.2"} />
-    </svg>
-  );
-}

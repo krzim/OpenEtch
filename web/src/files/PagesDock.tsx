@@ -8,7 +8,6 @@
 import { useRef, useState } from "react";
 import { useLongPress } from "../touch/useLongPress.ts";
 import { useReorder } from "../touch/reorder.ts";
-import { TouchIcon } from "../touch/icons.tsx";
 import type { Invocation } from "../api/client.ts";
 import type { GDocument } from "../api/types.ts";
 import { ContextMenu, type MenuItem } from "../components/ContextMenu.tsx";
@@ -107,7 +106,7 @@ export function PagesDock(p: { doc: GDocument | null; has: (id: string) => boole
           >
             {rows.length > 1 && (
               <button type="button" className="row-grip" title={t("touch.reorder")} aria-label={t("touch.reorder")} onClick={(e) => e.stopPropagation()} {...reorder.grip(i)}>
-                <TouchIcon name="grip" size={14} />
+                <Icon name="grip" size={14} />
               </button>
             )}
             <span className="pages-thumb" aria-hidden="true">
@@ -125,7 +124,7 @@ export function PagesDock(p: { doc: GDocument | null; has: (id: string) => boole
                 setRename({ row: r, text: r.name });
               }}
             >
-              <TouchIcon name="pencil" size={16} />
+              <Icon name="pencil" size={16} />
             </button>
             <button
               type="button"
@@ -138,7 +137,7 @@ export function PagesDock(p: { doc: GDocument | null; has: (id: string) => boole
                 setMenu({ x: b.left, y: b.bottom, row: i });
               }}
             >
-              <TouchIcon name="more" size={16} />
+              <Icon name="more" size={16} />
             </button>
           </li>
         ))}

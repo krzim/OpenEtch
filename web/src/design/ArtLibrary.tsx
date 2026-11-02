@@ -13,7 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { onEngineEvent } from "../api/events.ts";
 import type { Vec2 } from "../api/types.ts";
 import { ContextMenu, type MenuItem } from "../components/ContextMenu.tsx";
-import { Modal } from "../components/ui.tsx";
+import { Icon, Modal } from "../components/ui.tsx";
 import { useT } from "../workspace/usePrefs.ts";
 import { setVisible, updateLayout } from "../workspace/layout.ts";
 import { updatePrefs } from "../workspace/prefs.ts";
@@ -22,7 +22,6 @@ import { artApi, type ArtItem, type ArtLibraryRow } from "./designApi.ts";
 import { artImportFormat, libraryNameProblem } from "./model.ts";
 import { useLongPress } from "../touch/useLongPress.ts";
 import { acceptLabel, acceptsFile, pickerAccept } from "../touch/filePick.ts";
-import { TouchIcon } from "../touch/icons.tsx";
 import { useLayoutMode } from "../workspace/layoutMode.ts";
 
 const LOAD_ACCEPT = ".oeart,.lbart";
@@ -271,7 +270,7 @@ export function ArtLibraryDock(p: {
                 if (it) setMenu({ x: b.left, y: b.bottom, item: it });
               }}
             >
-              <TouchIcon name="more" size={16} />
+              <Icon name="more" size={16} />
             </button>
           </div>
         )}

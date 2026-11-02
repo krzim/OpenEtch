@@ -4,10 +4,8 @@ The icon path data in web/src/components/ui.tsx (ICONS) is copied from the proje
 its source set (L = Lucide, T = Tabler) and the source icon. Some icons are used as they are, and some are rotated
 (the ellipse is Tabler's "oval" turned on its side). No icon package is a runtime dependency.
 
-Lucide path data is also copied, unchanged, into a few local icon sets that predate the registry and are not yet
-merged into it: web/src/workspace/shellIcons.tsx (ShellIcon: shell, docks, phone tabs, timeline chips),
-web/src/touch/icons.tsx (TouchIcon: the touch HUD and row controls) and web/src/app/FullscreenButton.tsx (maximize,
-minimize). The Lucide notice below covers them too.
+Every icon of the app is in that one registry: the shell, the phone tabs, the touch HUD, the row controls, the
+timeline chips and the theme, lock and link marks included.
 
 ------------------------------------------------------------------------------------------------------------------------
 Lucide (lucide-static 0.460.0), https://lucide.dev, ISC License

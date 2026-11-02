@@ -14,9 +14,9 @@ import { OPEN_LASER_EVENT } from "../laser/laserContext.ts";
 import { BottomSheet } from "./BottomSheet.tsx";
 import { SNAP_FRACTION, type SheetSnap } from "./phone.ts";
 import { sendRevealSelection } from "./viewStatus.ts";
-import { ShellIcon, type ShellIconName } from "./shellIcons.tsx";
 import { useT } from "./usePrefs.ts";
 import "./phone.css";
+import { Icon } from "../components/ui.tsx";
 
 export type PhoneTab = "canvas" | "layers" | "job" | "more";
 export const PHONE_TABS: readonly PhoneTab[] = ["canvas", "layers", "job", "more"];
@@ -27,7 +27,7 @@ export const PHONE_SEARCH_EVENT = "openetch:phone-search";
 
 /** Each tab's sheet height when it opens. */
 const OPEN_AT: Record<PhoneTab, SheetSnap> = { canvas: "peek", layers: "half", job: "half", more: "full" };
-const ICON: Record<PhoneTab, ShellIconName> = { canvas: "pointer", layers: "layers", job: "zap", more: "ellipsis" };
+const ICON: Record<PhoneTab, string> = { canvas: "pointer", layers: "layers", job: "zap", more: "ellipsis" };
 
 export interface PhoneShellProps {
   /** The top bar; `openMenu` opens the More sheet (the bar's menu button). */
@@ -153,7 +153,7 @@ export function PhoneShell(p: PhoneShellProps) {
         <div className="phone-hud">
           {p.canvasHud}
           <button type="button" className="icon-btn phone-hud-btn" title={t("shell.phoneTools")} aria-label={t("shell.phoneTools")} onClick={() => show("canvas")}>
-            <ShellIcon name="pencil" />
+            <Icon name="pencil" />
           </button>
         </div>
         <BottomSheet
@@ -184,7 +184,7 @@ export function PhoneShell(p: PhoneShellProps) {
               } else show(x);
             }}
           >
-            <ShellIcon name={ICON[x]} size={22} />
+            <Icon name={ICON[x]} size={22} />
             <span>{x === "canvas" ? t("shell.phoneCanvas") : x === "more" ? t("shell.more") : titles[x]}</span>
           </button>
         ))}

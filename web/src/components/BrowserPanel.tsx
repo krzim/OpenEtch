@@ -11,7 +11,6 @@ import { useRef, useState } from "react";
 import { getVirtualMods } from "../touch/virtualMods.ts";
 import { useLongPress } from "../touch/useLongPress.ts";
 import { useReorder } from "../touch/reorder.ts";
-import { TouchIcon } from "../touch/icons.tsx";
 import type { Invocation } from "../api/client.ts";
 import * as C from "../api/commands.ts";
 import type { GDocument } from "../api/types.ts";
@@ -143,7 +142,7 @@ export function BrowserPanel(props: BrowserPanelProps) {
           action={
             canRename ? (
               <button className="icon-btn small row-rename" title={t("touch.rename")} aria-label={t("touch.rename")} onClick={() => setRenaming(doc.name)}>
-                <TouchIcon name="pencil" size={16} />
+                <Icon name="pencil" size={16} />
               </button>
             ) : undefined
           }
@@ -192,7 +191,7 @@ export function BrowserPanel(props: BrowserPanelProps) {
                 >
                   {canMove && (
                     <button type="button" className="row-grip" title={t("touch.reorder")} aria-label={t("touch.reorder")} onClick={(e) => e.stopPropagation()} {...reorder.grip(index)}>
-                      <TouchIcon name="grip" size={16} />
+                      <Icon name="grip" size={16} />
                     </button>
                   )}
                   <span className="swatch" style={{ background: l.color }} />
@@ -227,7 +226,7 @@ export function BrowserPanel(props: BrowserPanelProps) {
                     aria-label={t("touch.rowMenu")}
                     onClick={(e) => setMenu({ ...moreAt(e), layer: l.id })}
                   >
-                    <TouchIcon name="more" size={18} />
+                    <Icon name="more" size={18} />
                   </button>
                 </div>
               ))}
@@ -280,7 +279,7 @@ export function BrowserPanel(props: BrowserPanelProps) {
                                     props.onObjectMenu?.(at.x, at.y, o.id);
                                   }}
                                 >
-                                  <TouchIcon name="more" size={18} />
+                                  <Icon name="more" size={18} />
                                 </button>
                               )}
                             </div>

@@ -15,7 +15,6 @@ import { FullscreenButton } from "../app/FullscreenButton.tsx";
 import { ProjectIndicator } from "./FileMenu.tsx";
 import { Icon } from "./ui.tsx";
 import { useLayoutMode } from "../workspace/layoutMode.ts";
-import { ShellIcon } from "../workspace/shellIcons.tsx";
 import { usePrefs, useT } from "../workspace/usePrefs.ts";
 
 export type Workspace = "design" | "laser";
@@ -79,7 +78,7 @@ export function TopBar(p: TopBarProps) {
         {phone ? (
           p.onMenu && (
             <button className="icon-btn topbar-menu" title={t("shell.menu")} aria-label={t("shell.menu")} onClick={p.onMenu}>
-              <ShellIcon name="menu" />
+              <Icon name="menu" />
             </button>
           )
         ) : (
@@ -111,7 +110,7 @@ export function TopBar(p: TopBarProps) {
                 className={p.workspace === w ? "active" : ""}
                 onClick={() => p.onWorkspace(w)}
               >
-                {iconTabs && <ShellIcon name={w === "design" ? "pencil" : "zap"} />}
+                {iconTabs && <Icon name={w === "design" ? "pencil" : "zap"} />}
                 <span className="ws-label">{label}</span>
                 {w === "laser" && p.pendingRuns > 0 && <span className="pill">{p.pendingRuns}</span>}
               </button>

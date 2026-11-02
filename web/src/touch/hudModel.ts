@@ -70,7 +70,7 @@ export function barActions(selectionCount: number, grouped: boolean): HudAction[
     { id: "copy", label: "touch.copy", icon: "copy" },
     { id: "paste", label: "touch.paste", icon: "paste" },
     { id: "duplicate", label: "touch.duplicate", icon: "duplicate" },
-    { id: "delete", label: "touch.delete", icon: "trash" },
+    { id: "delete", label: "touch.delete", icon: "delete" },
   ];
   if (grouped) out.push({ id: "ungroup", label: "touch.ungroup", icon: "ungroup" });
   else if (selectionCount > 1) out.push({ id: "group", label: "touch.group", icon: "group" });

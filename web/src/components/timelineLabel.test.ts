@@ -9,14 +9,14 @@ const t = (key: MsgKey, vars?: Vars) => translate("en", key, vars);
 const step = (commands: string, summary = "", label = "") => ({ commands, summary, label });
 
 test("timelineLabel: shapes", () => {
-  assert.deepEqual(timelineLabel(step("shape.rect", "added rectangle o1 20x10 mm", "rect"), t), { text: "Rectangle", icon: { set: "ui", name: "rect" } });
+  assert.deepEqual(timelineLabel(step("shape.rect", "added rectangle o1 20x10 mm", "rect"), t), { text: "Rectangle", icon: "rect" });
   assert.equal(timelineLabel(step("shape.ellipse", "added ellipse o2 rx 5 ry 5 mm"), t).text, "Circle");
   assert.equal(timelineLabel(step("shape.ellipse", "added ellipse o2 rx 5 ry 3 mm"), t).text, "Ellipse");
   assert.equal(timelineLabel(step("shape.path", "added path o3"), t).text, "Path");
 });
 
 test("timelineLabel: transforms are named by their first part", () => {
-  assert.deepEqual(timelineLabel(step("object.transform", "move [1, 2] on o1", "transform"), t), { text: "Move", icon: { set: "shell", name: "move" } });
+  assert.deepEqual(timelineLabel(step("object.transform", "move [1, 2] on o1", "transform"), t), { text: "Move", icon: "move" });
   assert.equal(timelineLabel(step("object.transform", "rotate 15° on o1"), t).text, "Rotate");
   assert.equal(timelineLabel(step("object.transform", "scale 2x2 on o1, o2"), t).text, "Scale");
   assert.equal(timelineLabel(step("object.transform", "mirror x on o1"), t).text, "Flip");
@@ -39,7 +39,7 @@ test("timelineLabel: several commands count the rest; unknown commands keep thei
   assert.equal(timelineLabel(step("group.create", "grouped o1, o2"), t).text, "Group");
   const unknown = timelineLabel(step("warp.mesh", "warped o1", "mesh"), t);
   assert.equal(unknown.text, "mesh", "an unknown command keeps the engine's short label");
-  assert.deepEqual(unknown.icon, { set: "shell", name: "pencil" });
+  assert.deepEqual(unknown.icon, "pencil");
   assert.equal(timelineLabel(step("", "", ""), t).text, "?");
 });
 

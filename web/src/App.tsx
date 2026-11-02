@@ -82,7 +82,6 @@ import { appModeDialogOpen, openAppModeDialog } from "./app/AppModeDialog.tsx";
 import { useLayoutMode } from "./workspace/layoutMode.ts";
 import { ContextStripHost, useContextStripBusy } from "./workspace/contextStrip.tsx";
 import { bottomRow, windowTitle } from "./workspace/shell.ts";
-import { ShellIcon } from "./workspace/shellIcons.tsx";
 import { syncThemeColor } from "./app/appMode.ts";
 import { openCommandSearch } from "./components/commandBus.ts";
 import { OPEN_LASER_EVENT, useLaserBridge } from "./laser/laserContext.ts";
@@ -1722,7 +1721,7 @@ export function App() {
             </div>
             <details open>
               <summary>
-                <ShellIcon name="file" />
+                <Icon name="file" />
                 {t("shell.moreFile")}
               </summary>
               <div className="phone-more-body">
@@ -1736,14 +1735,14 @@ export function App() {
             </details>
             <details>
               <summary>
-                <ShellIcon name="layers" />
+                <Icon name="layers" />
                 {t("win.browser")}
               </summary>
               <div className="phone-more-body">{leftContent}</div>
             </details>
             <details>
               <summary>
-                <ShellIcon name="history" />
+                <Icon name="history" />
                 {t("shell.history")}
               </summary>
               <div className="phone-more-body">
@@ -1758,7 +1757,7 @@ export function App() {
             </details>
             <details>
               <summary>
-                <ShellIcon name="settings" />
+                <Icon name="settings" />
                 {t("shell.moreSettings")}
               </summary>
               <div className="phone-more-body">
@@ -1778,7 +1777,7 @@ export function App() {
             </details>
             <details>
               <summary>
-                <ShellIcon name="monitor" />
+                <Icon name="monitor" />
                 {t("shell.desktopFeatures")}
               </summary>
               <div className="phone-note hint">
@@ -1810,7 +1809,7 @@ export function App() {
   // Tablet: a selection's settings open on request, from a pill over the canvas (selecting never opens a drawer).
   const propertiesPill = layout === "tablet" && workspace === "design" && rightMode === "rail" && overlay !== "right" && (selection.objects.length > 0 || selection.stock) && (
     <button className="btn properties-pill" title={t("shell.propertiesPillTitle")} onClick={() => setOverlay("right")}>
-      <ShellIcon name="sliders" size={16} />
+      <Icon name="sliders" size={16} />
       {t("shell.propertiesPill")}
     </button>
   );
@@ -1867,7 +1866,7 @@ export function App() {
             aria-label={t("shell.timelinePin")}
             onClick={() => updatePrefs({ timelinePinned: !timelinePinned })}
           >
-            <ShellIcon name="pin" size={16} />
+            <Icon name="pin" size={16} />
           </button>
         )}
         {statusBar}

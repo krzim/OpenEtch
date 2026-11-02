@@ -37,7 +37,6 @@ import {
 import { reloadLayout, LAYOUT_KEY } from "./layout.ts";
 import { useFullscreen } from "./fullscreen.ts";
 import { hintFor } from "./hotkeys.ts";
-import { ShellIcon } from "./shellIcons.tsx";
 import { usePrefs, useT } from "./usePrefs.ts";
 import { hostMounted, slotRef, useLayout, useMountedWindows } from "./windows.ts";
 import { windowMenuItems } from "./windowMenu.ts";
@@ -586,7 +585,7 @@ export function SidePanel(p: SidePanelProps) {
                   onOverlay(false);
                 }}
               >
-                <ShellIcon name="pin" size={16} />
+                <Icon name="pin" size={16} />
               </button>
               <button className="icon-btn small" title={t("common.close")} aria-label={t("common.close")} onClick={() => onOverlay(false)}>
                 <Icon name="close" size={16} />

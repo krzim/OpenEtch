@@ -46,7 +46,6 @@ import { usePrefs, useT } from "./usePrefs.ts";
 import { getVirtualMods } from "../touch/virtualMods.ts";
 import { useLongPress } from "../touch/useLongPress.ts";
 import { useReorder } from "../touch/reorder.ts";
-import { TouchIcon } from "../touch/icons.tsx";
 
 type Run = (inv: Invocation | Invocation[]) => Promise<unknown>;
 
@@ -289,7 +288,7 @@ export function CutsLayers(p: CutsLayersProps) {
                   <td className="c-num">
                     {canMove && (
                       <button type="button" className="row-grip" title={t("touch.reorder")} aria-label={t("touch.reorder")} onClick={(e) => e.stopPropagation()} {...reorder.grip(index)}>
-                        <TouchIcon name="grip" size={14} />
+                        <Icon name="grip" size={14} />
                       </button>
                     )}
                     {r.number}
@@ -343,7 +342,7 @@ export function CutsLayers(p: CutsLayersProps) {
                         setMenu({ x: b.left, y: b.bottom, items: layerMenu(l, index) });
                       }}
                     >
-                      <TouchIcon name="more" size={16} />
+                      <Icon name="more" size={16} />
                     </button>
                   </td>
                   <td>{l.tool ? t("layers.modeTool") : r.multi ? t("layers.multi") : modeText(main.mode)}</td>

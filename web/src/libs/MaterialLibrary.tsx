@@ -468,11 +468,12 @@ export function LibraryDock(p: { doc: GDocument | null; activeLayer: string | nu
   );
 }
 
+/** The "linked to a library entry" mark (the registry's link icon, small). */
 export function LinkIcon() {
   return (
-    <svg className="icon lx-link-icon" width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1 M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1" />
-    </svg>
+    <span className="lx-link-icon">
+      <Icon name="link" size={13} />
+    </span>
   );
 }
 

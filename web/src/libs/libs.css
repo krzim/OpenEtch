@@ -150,6 +150,7 @@
   white-space: nowrap;
 }
 .lx-link-icon {
+  display: inline-flex;
   vertical-align: -2px;
 }
 .lx-lib-layer {

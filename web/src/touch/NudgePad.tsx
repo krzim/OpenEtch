@@ -9,8 +9,8 @@ import { formatLength } from "../workspace/units.ts";
 import type { NudgeSteps } from "../editing.ts";
 import type { LengthUnit } from "../workspace/prefs.ts";
 import { runTouchAction } from "./actions.ts";
-import { TouchIcon } from "./icons.tsx";
 import "./touch.css";
+import { Icon } from "../components/ui.tsx";
 
 type Step = "normal" | "shift" | "ctrl" | "ctrlShift";
 const STEP_MODS: Record<Step, { shift?: boolean; ctrl?: boolean }> = {
@@ -60,22 +60,22 @@ export function NudgePad({ steps, unit }: { steps: NudgeSteps; unit: LengthUnit 
   const size: Record<Step, number> = { normal: steps.normal, shift: steps.shift, ctrl: steps.ctrl, ctrlShift: steps.ctrlShift };
   const btn = (id: string, icon: string, label: string) => (
     <button type="button" className="nudge-btn" title={label} aria-label={label} {...hold(run(id))}>
-      <TouchIcon name={icon} size={22} />
+      <Icon name={icon} size={22} />
     </button>
   );
   return (
     <div className="nudge-pad" role="group" aria-label={t("touch.nudge")}>
       <div className="nudge-grid">
         <span />
-        {btn("nudgeUp", "up", t("touch.nudgeUp"))}
+        {btn("nudgeUp", "arrowUp", t("touch.nudgeUp"))}
         <span />
-        {btn("nudgeLeft", "left", t("touch.nudgeLeft"))}
+        {btn("nudgeLeft", "arrowLeft", t("touch.nudgeLeft"))}
         <button type="button" className="nudge-btn" title={t("touch.rotate90")} aria-label={t("touch.rotate90")} onClick={() => void runTouchAction("rotate90")}>
-          <TouchIcon name="rotate" size={22} />
+          <Icon name="rotate" size={22} />
         </button>
-        {btn("nudgeRight", "right", t("touch.nudgeRight"))}
+        {btn("nudgeRight", "arrowRight", t("touch.nudgeRight"))}
         <span />
-        {btn("nudgeDown", "down", t("touch.nudgeDown"))}
+        {btn("nudgeDown", "arrowDown", t("touch.nudgeDown"))}
         <span />
       </div>
       <label className="nudge-step">

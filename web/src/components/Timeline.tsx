@@ -31,7 +31,6 @@ import { useLongPress } from "../touch/useLongPress.ts";
 import { Menu, type MenuAnchor, type MenuItem } from "./Menu.tsx";
 import { timelineLabel, type StepIcon } from "./timelineLabel.ts";
 import { Icon } from "./ui.tsx";
-import { ShellIcon, type ShellIconName } from "../workspace/shellIcons.tsx";
 import { useT } from "../workspace/usePrefs.ts";
 import type { T } from "../workspace/i18n.ts";
 
@@ -65,9 +64,9 @@ export interface TimelineProps {
   variant?: "strip" | "list";
 }
 
-/** A step's icon from components/ui.tsx or workspace/shellIcons.tsx. */
+/** A step's icon (the registry, components/ui.tsx). */
 function StepIconView({ icon }: { icon: StepIcon }) {
-  return icon.set === "shell" ? <ShellIcon name={icon.name as ShellIconName} size={14} /> : <Icon name={icon.name} size={14} />;
+  return <Icon name={icon} size={14} />;
 }
 
 export function Timeline({ timeline, flash, onGoto, onDelete, variant = "strip" }: TimelineProps) {

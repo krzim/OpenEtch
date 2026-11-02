@@ -14,9 +14,9 @@ import { usePrefs, useT } from "../workspace/usePrefs.ts";
 import { useLayoutMode } from "../workspace/layoutMode.ts";
 import { useHud } from "./hudState.ts";
 import { barActions, modToggles, placeActionBar } from "./hudModel.ts";
-import { TouchIcon } from "./icons.tsx";
 import { latch, lock, useVirtualMods, type VirtualMod } from "./virtualMods.ts";
 import "./touch.css";
+import { Icon } from "../components/ui.tsx";
 
 export interface TouchHudProps {
   /** The active canvas tool (picks the modifier toggles: Select, Rect/Ellipse, Line/Pen, Node, ...). */
@@ -115,7 +115,7 @@ export function TouchHud({ tool, selectionCount, onAction }: TouchHudProps) {
               onPointerDown={(e) => e.preventDefault()}
               onClick={() => onAction(a.id)}
             >
-              <TouchIcon name={a.icon} />
+              <Icon name={a.icon} size={24} />
             </button>
           ))}
         </div>
