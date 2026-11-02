@@ -204,6 +204,26 @@
   flex: 1;
 }
 
+/* Start on the tablet rail: the play icon only (the label is the button's aria-label and title). Its label, scope and
+   time, and any reason it is disabled, are in the context strip beside it. */
+.ribbon-vertical .start-toolbar {
+  flex-direction: column;
+}
+
+.ribbon-vertical .btn-start {
+  width: 100%;
+  max-width: none;
+  min-height: var(--hit, 40px);
+  padding: 4px 0;
+  justify-content: center;
+}
+
+.ribbon-vertical .btn-start-label,
+.ribbon-vertical .start-toolbar .start-reason,
+.ribbon-vertical .start-refusal-pill {
+  display: none;
+}
+
 .ribbon-vertical .rb-align-strip,
 .ribbon-vertical .rb-toggles {
   flex-wrap: wrap;

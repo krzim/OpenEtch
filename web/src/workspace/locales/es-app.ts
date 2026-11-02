@@ -28,6 +28,7 @@ export const ES_APP: Messages = {
   "app.fs.exitF11": "Pantalla completa (del navegador): pulsa F11 para salir",
   "app.fs.tipEscape": "Esc salió de la pantalla completa. {key} o el botón de pantalla completa la recupera; una ventana de aplicación lo evita (Ayuda > Usar como aplicación).",
   "app.fs.tipBrowser": "El navegador está en pantalla completa (F11). Pulsa F11 para salir.",
+  "app.fs.tipRefused": "Esta ventana no permite la pantalla completa. Prueba la del navegador (F11).",
   "app.fs.tipOk": "Aceptar",
 
   "app.mode.title": "Usar OpenEtch como aplicación",

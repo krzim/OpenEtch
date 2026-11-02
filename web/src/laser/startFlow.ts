@@ -143,7 +143,8 @@ export function startScope(ctx: Pick<StartCtx, "selection" | "fromSegment">): { 
 
 /** "0:42", "2:14", "1:02:03" (rounded to the second). */
 export function shortClock(s: number): string {
-  const t = Math.max(0, Math.round(s));
+  // A job under a second reads ~0:01, never ~0:00 (which looks like nothing would burn).
+  const t = s > 0 && s < 1 ? 1 : Math.max(0, Math.round(s));
   const h = Math.floor(t / 3600);
   const m = Math.floor((t % 3600) / 60);
   const sec = String(t % 60).padStart(2, "0");

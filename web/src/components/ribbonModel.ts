@@ -51,3 +51,12 @@ export function sameSet(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean
   for (const x of a) if (!b.has(x)) return false;
   return true;
 }
+
+/** Whether a flyout already sits at `r`: placed (no hidden starting style left) and the same box. Its position effect
+ *  runs after every render and sets state only when this is false, so it never re-renders itself forever. */
+export function samePos(
+  old: { left?: unknown; top?: unknown; maxHeight?: unknown; visibility?: unknown },
+  r: { left: number; top: number; maxHeight?: number },
+): boolean {
+  return old.visibility === undefined && old.left === r.left && old.top === r.top && old.maxHeight === r.maxHeight;
+}

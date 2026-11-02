@@ -149,6 +149,7 @@ test("scope and label: Start · selection (3), Start · all · ~2:14, Request ru
 
 test("shortClock", () => {
   assert.equal(shortClock(0), "0:00");
+  assert.equal(shortClock(0.2), "0:01");
   assert.equal(shortClock(42.4), "0:42");
   assert.equal(shortClock(134), "2:14");
   assert.equal(shortClock(3723), "1:02:03");

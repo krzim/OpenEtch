@@ -14,7 +14,7 @@ import { createPortal } from "react-dom";
 import { installEscape, layers } from "./dialogStack.ts";
 import { isInMenu } from "./Menu.tsx";
 import { placeMenu } from "./menuModel.ts";
-import { fitGroups, sameSet, type GroupFit } from "./ribbonModel.ts";
+import { fitGroups, sameSet, samePos, type GroupFit } from "./ribbonModel.ts";
 import { Icon } from "./ui.tsx";
 import "./ribbon.css";
 
@@ -253,7 +253,9 @@ function RibbonFlyout(p: { anchor: HTMLElement | null; side: "right" | "below"; 
     const a = p.anchor?.getBoundingClientRect();
     if (!el || !a) return;
     const r = placeMenu(a, { width: el.offsetWidth, height: el.scrollHeight }, { width: window.innerWidth, height: window.innerHeight }, p.side);
-    setPos({ left: r.left, top: r.top, maxHeight: r.maxHeight });
+    // Runs after every render: set the position only when it moved, or each render would schedule another one
+    // (React error #185, the whole page gone the moment a group flyout opened on the tablet rail).
+    setPos((old) => (samePos(old, r) ? old : { left: r.left, top: r.top, maxHeight: r.maxHeight }));
   });
   useEffect(() => {
     installEscape();
@@ -282,6 +284,22 @@ function RibbonFlyout(p: { anchor: HTMLElement | null; side: "right" | "below"; 
       document.removeEventListener("pointerdown", down, true);
       document.removeEventListener("click", click, true);
     };
+  }, []);
+  // A group whose only tool is a dropdown (Modify, Edit, Arrange on the tablet rail): open that dropdown at once, so
+  // its commands are two taps away (rail button, item) rather than three. The slots portal in a render later, hence
+  // the short retry.
+  useEffect(() => {
+    let tries = 0;
+    let timer = 0;
+    const openSingle = () => {
+      const el = ref.current;
+      if (!el) return;
+      const btns = [...el.querySelectorAll<HTMLButtonElement>("button")].filter((b) => !b.disabled);
+      if (btns.length === 1 && btns[0].getAttribute("aria-haspopup") === "menu") btns[0].click();
+      else if (btns.length === 0 && tries++ < 5) timer = window.setTimeout(openSingle, 16);
+    };
+    timer = window.setTimeout(openSingle, 0);
+    return () => window.clearTimeout(timer);
   }, []);
   return createPortal(
     <div ref={ref} className="ribbon-flyout" role="group" aria-label={p.label} style={pos}>

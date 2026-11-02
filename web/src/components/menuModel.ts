@@ -147,7 +147,9 @@ export function placeMenu(
   margin = 4,
   align: "start" | "end" = "start",
 ): MenuPos {
-  const r: RectLike = "x" in anchor ? { left: anchor.x, top: anchor.y, right: anchor.x, bottom: anchor.y } : anchor;
+  // A rectangle is told apart by its right edge: a DOMRect also has x and y, and read as a point it opened a flyout on
+  // top of its own button instead of beside it.
+  const r: RectLike = "right" in anchor ? anchor : { left: anchor.x, top: anchor.y, right: anchor.x, bottom: anchor.y };
   const vw = view.width;
   const vh = view.height;
   const full = Math.max(0, vh - 2 * margin);

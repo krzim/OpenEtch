@@ -2,7 +2,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { collapseOrder, fitGroups, sameSet, type GroupFit } from "./ribbonModel.ts";
+import { collapseOrder, fitGroups, sameSet, samePos, type GroupFit } from "./ribbonModel.ts";
 
 /** The Design ribbon, roughly as measured in the compact layout. */
 const DESIGN: GroupFit[] = [
@@ -58,4 +58,13 @@ test("sameSet", () => {
   assert.ok(sameSet(new Set(["a", "b"]), new Set(["b", "a"])));
   assert.ok(!sameSet(new Set(["a"]), new Set(["a", "b"])));
   assert.ok(!sameSet(new Set(["a"]), new Set(["b"])));
+});
+
+test("samePos: a flyout's position is set once, then left alone while it does not move (no render loop)", () => {
+  const hidden = { left: -10000, top: -10000, visibility: "hidden" };
+  const r = { left: 52, top: 404, maxHeight: 300 };
+  assert.equal(samePos(hidden, r), false);
+  const placed = { left: 52, top: 404, maxHeight: 300 };
+  assert.equal(samePos(placed, r), true);
+  assert.equal(samePos(placed, { ...r, top: 410 }), false);
 });

@@ -345,6 +345,12 @@
   align-items: center;
   gap: 6px;
   flex: none;
+  /* job.css gives .frame-ctl the dock's full width; in the strip that squeezed Start down to nothing. */
+  width: auto;
+  flex-wrap: nowrap;
+}
+.laser-strip .start-toolbar {
+  flex: none;
 }
 .laser-strip .start-toolbar .start-reason {
   max-width: 220px;

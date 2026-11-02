@@ -85,7 +85,7 @@ export function fullscreenStateOf(caps: FullscreenCaps, mode: DisplayMode): { su
 // ---- the live store (browser only) ---------------------------------------------------------------------------------
 
 /** A one-time tip next to the toggle: why Esc left full screen, or that F11 owns it. */
-export type FullscreenTip = "escape" | "browser";
+export type FullscreenTip = "escape" | "browser" | "refused";
 
 /** localStorage key: the Esc tip was shown once. */
 export const ESC_TIP_KEY = "openetch.fullscreenEscTip";
@@ -200,7 +200,10 @@ async function enter(): Promise<void> {
     if (typeof el.requestFullscreen === "function") await el.requestFullscreen({ navigationUI: "hide" });
     else el.webkitRequestFullscreen?.();
   } catch {
-    return; // Refused (no user gesture, or blocked by a permissions policy): nothing changes.
+    // Refused (no user gesture, or blocked by a permissions policy, as in an embedded frame): say so, rather than a
+    // button that silently does nothing.
+    showTip("refused");
+    return;
   }
   entered = true;
   leaving = false;

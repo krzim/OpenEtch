@@ -49,6 +49,8 @@ export function StartButton({ variant }: StartButtonProps) {
       disabled={!st.enabled}
       onClick={press}
       title={st.reason ? `${st.reason}\n${title}` : title}
+      // The name stays when a narrow layout hides the label (the tablet rail shows the icon only).
+      aria-label={st.label}
       aria-describedby={st.reason ? `start-reason-${variant}` : undefined}
     >
       <Icon name="run" size={18} />

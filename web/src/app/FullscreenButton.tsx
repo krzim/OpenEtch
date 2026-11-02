@@ -59,7 +59,7 @@ export function FullscreenButton({ className = "icon-btn" }: { className?: strin
       </button>
       {tip && (
         <span className="fs-tip" role="status">
-          <span>{tip === "browser" ? t("app.fs.tipBrowser") : t("app.fs.tipEscape", { key: key || "Alt+Enter" })}</span>
+          <span>{tip === "browser" ? t("app.fs.tipBrowser") : tip === "refused" ? t("app.fs.tipRefused") : t("app.fs.tipEscape", { key: key || "Alt+Enter" })}</span>
           <button type="button" className="btn fs-tip-ok" onClick={dismissFullscreenTip}>
             {t("app.fs.tipOk")}
           </button>

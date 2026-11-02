@@ -6,6 +6,7 @@
 // Touch (docs/ux/ui-plan-2026-11.md 1.2): a long-press on a row is its right-click, rows have a ⋯ button, the grip
 // reorders with pointer events (not HTML5 drag-and-drop), and the touch modifier bar's Add / Toggle work for taps.
 
+import { onTreeFocus, onTreeKeyDown } from "./treeKeys.ts";
 import { useRef, useState } from "react";
 import { getVirtualMods } from "../touch/virtualMods.ts";
 import { useLongPress } from "../touch/useLongPress.ts";
@@ -115,7 +116,7 @@ export function BrowserPanel(props: BrowserPanelProps) {
   };
 
   return (
-    <div className="tree" role="tree">
+    <div className="tree" role="tree" tabIndex={0} onKeyDown={onTreeKeyDown} onFocus={onTreeFocus}>
       {renaming !== null ? (
         <div className="tree-head strong">
           <input
@@ -152,6 +153,7 @@ export function BrowserPanel(props: BrowserPanelProps) {
         <div className="tree-children">
           <div
             role="treeitem"
+      tabIndex={-1}
             className={`tree-row${selection.stock ? " selected" : ""}${doc.stock ? "" : " muted"}`}
             // Always forwarded: right after the Stock dialog the tree may still show the old document.
             onClick={() => props.onSelectStock()}
@@ -177,6 +179,7 @@ export function BrowserPanel(props: BrowserPanelProps) {
                 <div
                   key={l.id}
                   role="treeitem"
+      tabIndex={-1}
                   data-reorder-row=""
                   data-kind="layer"
                   data-id={l.id}
@@ -249,6 +252,7 @@ export function BrowserPanel(props: BrowserPanelProps) {
                             <div
                               key={o.id}
                               role="treeitem"
+      tabIndex={-1}
                               data-kind="object"
                               data-id={o.id}
                               className={`tree-row${selection.objects.includes(o.id) ? " selected" : ""}`}
@@ -322,6 +326,7 @@ function TreeHeader(props: {
       onDoubleClick={props.onDoubleClick}
       title={props.title}
       role="treeitem"
+      tabIndex={-1}
       aria-expanded={props.open}
     >
       <span className={`chevron${props.open ? " open" : ""}`}>

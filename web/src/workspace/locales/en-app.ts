@@ -28,6 +28,7 @@ export const EN_APP = {
   "app.fs.exitF11": "Full screen (the browser's): press F11 to leave",
   "app.fs.tipEscape": "Esc left full screen. {key} or the full-screen button brings it back; an app window avoids this (Help > Use as an app).",
   "app.fs.tipBrowser": "The browser is full screen (F11). Press F11 to leave it.",
+  "app.fs.tipRefused": "This window did not allow full screen. Try the browser's own full screen (F11).",
   "app.fs.tipOk": "OK",
 
   // Use as an app (app/AppModeDialog.tsx, app/appMode.ts).

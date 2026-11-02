@@ -123,3 +123,12 @@ test("a submenu opens to the right, flips left at the edge and clamps its top", 
   const low = placeMenu({ left: 300, top: 700, right: 540, bottom: 732 }, { width: 200, height: 300 }, view, "right");
   assert.equal(low.top, 800 - 4 - 300, "moved up to fit");
 });
+
+test("placeMenu: a DOMRect-like anchor (with x and y) opens beside the rectangle, not at its corner", () => {
+  const rect = { x: 6, y: 404, left: 6, top: 404, right: 45, bottom: 434, width: 39, height: 30 };
+  const p = placeMenu(rect, { width: 80, height: 66 }, { width: 1024, height: 768 }, "right");
+  assert.equal(p.left, 45);
+  assert.equal(p.top, 404);
+  const below = placeMenu(rect, { width: 80, height: 66 }, { width: 1024, height: 768 }, "below");
+  assert.equal(below.top, 436);
+});
