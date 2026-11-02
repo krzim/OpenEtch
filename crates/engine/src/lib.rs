@@ -34,6 +34,7 @@ pub mod pin;
 pub mod projects;
 pub mod render;
 pub mod runs;
+pub mod ruida_dsp;
 pub mod security;
 pub mod shutdown;
 pub mod state;
@@ -80,3 +81,5 @@ mod final_tests;
 mod wire_tests;
 #[cfg(test)]
 mod grbl_tests;
+#[cfg(test)]
+mod ruida_tests;

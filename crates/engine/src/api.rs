@@ -74,6 +74,7 @@ pub fn router(state: Arc<AppState>, web_dir: Option<&Path>) -> Router {
         .route("/devices/{id}", get(device_details).delete(device_remove).put(crate::api_machine::device_edit))
         .route("/devices/{id}/activate", post(device_activate))
         .merge(crate::api_machine::routes())
+        .merge(crate::ruida_dsp::routes())
         .merge(crate::api_libs::routes())
         .merge(crate::userfiles::routes())
         .merge(crate::documents::routes())
@@ -294,7 +295,7 @@ async fn machine_status(State(st): State<Arc<AppState>>) -> Json<Value> {
 
 async fn frame_start(State(st): State<Arc<AppState>>, headers: HeaderMap, body: Bytes) -> Result<Json<Value>, EngineError> {
     let req: FrameRequest = body_or_default(&body)?;
-    if st.machine.is_grbl() && has_mcp_marker(&headers) {
+    if st.machine.is_gantry() && has_mcp_marker(&headers) {
         return Err(EngineError::Forbidden(crate::mcp::GANTRY_FRAME.into()));
     }
     Ok(Json(st.frame_start(req).await?))

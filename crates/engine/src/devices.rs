@@ -390,6 +390,7 @@ impl DeviceRegistry {
         v["settings"] = d.settings_view();
         v["profile"] = d.profile.as_ref().map(profile_summary).unwrap_or(Value::Null);
         v["grbl"] = json!(d.grbl);
+        v["ruida"] = json!(d.ruida);
         v["base"] = match (d.base, &d.profile) {
             (Some(ProfileBase::Builtin), _) => json!(self.bases.builtin.name),
             (Some(ProfileBase::GenericJczGalvo), _) => json!(self.bases.generic.name),
@@ -435,6 +436,16 @@ impl DeviceRegistry {
             next.workspace_mm = g.work_area_mm;
             next.origin = g.origin;
             next.grbl = Some(g);
+        } else if let (Some(patch), Some(ruida)) = (patch, &d.ruida) {
+            // A Ruida device: the patch applies to its Ruida profile (made and edited by a person; validated).
+            let mut v = serde_json::to_value(ruida).map_err(|e| EngineError::Internal(e.to_string()))?;
+            machine::merge_patch(&mut v, patch);
+            let r: machine::ruida::RuidaProfile =
+                serde_json::from_value(v).map_err(|e| EngineError::BadRequest(format!("Ruida profile: {e}")))?;
+            r.validate().map_err(|e| EngineError::BadRequest(e.to_string()))?;
+            next.workspace_mm = r.work_area_mm;
+            next.origin = r.origin;
+            next.ruida = Some(r);
         } else if let Some(patch) = patch {
             let (Some(profile), Some(limits)) = (&d.profile, self.limits_for(&d)) else {
                 return Err(EngineError::BadRequest("this device has no machine profile to edit (design-only)".into()));
@@ -485,6 +496,12 @@ impl DeviceRegistry {
         self.add_manual(d)
     }
 
+    /// `POST /api/devices/ruida`: a Ruida gantry made in OpenEtch from a Ruida profile (validated).
+    pub fn add_ruida(&mut self, display_name: &str, profile: machine::ruida::RuidaProfile) -> Result<Device, EngineError> {
+        let d = Device::ruida_device(display_name, profile).map_err(EngineError::BadRequest)?;
+        self.add_manual(d)
+    }
+
     /// `POST /api/devices/{id}/duplicate`: an editable copy ("<name> copy", source `manual`). The copy keeps the
     /// original's limits (its base, or the original profile).
     pub fn duplicate(&mut self, id: &str) -> Result<Device, EngineError> {
@@ -518,6 +535,7 @@ impl DeviceRegistry {
             base: None,
             profile: Some(profile),
             grbl: None,
+            ruida: None,
             lightburn: None,
         };
         self.add_manual(d)

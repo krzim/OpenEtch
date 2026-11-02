@@ -1,0 +1,33 @@
+/* A Ruida gantry's File List window (RuidaFiles.tsx). */
+.ruida-files {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ruida-file-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.ruida-file-table th,
+.ruida-file-table td {
+  text-align: left;
+  padding: 2px 4px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.ruida-file-table td:last-child {
+  text-align: right;
+  white-space: nowrap;
+}
+.ruida-send {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  padding: 6px;
+}
+.ruida-send input:not([type="checkbox"]) {
+  min-width: 0;
+  width: 14em;
+}

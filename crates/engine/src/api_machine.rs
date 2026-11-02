@@ -369,7 +369,7 @@ struct PointerBody {
 async fn machine_pointer(State(st): State<Arc<AppState>>, headers: HeaderMap, body: Bytes) -> Result<Json<Value>, EngineError> {
     let b: PointerBody = serde_json::from_slice(&body).map_err(|e| EngineError::BadRequest(format!("bad JSON body: {e}")))?;
     // On a gantry the "pointer" is the head itself (moved there with the laser off): a person's, like framing.
-    if st.machine.is_grbl() && has_mcp_marker(&headers) {
+    if st.machine.is_gantry() && has_mcp_marker(&headers) {
         return Err(EngineError::Forbidden(crate::mcp::GANTRY_FRAME.into()));
     }
     Ok(Json(st.pointer_to(b.x, b.y, b.max_seconds, b.pointer).await?))
@@ -446,9 +446,9 @@ async fn machine_info(State(st): State<Arc<AppState>>) -> Result<Json<Value>, En
 }
 
 async fn machine_inputs(State(st): State<Arc<AppState>>) -> Result<Json<Value>, EngineError> {
-    // Refused before the board is touched: reading would open the serial port and initialise a GRBL board.
-    if st.machine.is_grbl() {
-        return Err(EngineError::BadRequest("a GRBL gantry has no galvo input port to read".into()));
+    // Refused before the board is touched: reading would open the serial port (or UDP) and initialise a gantry's board.
+    if st.machine.is_gantry() {
+        return Err(EngineError::BadRequest("a gantry has no galvo input port to read".into()));
     }
     if st.machine.is_running() {
         return Err(EngineError::Conflict("a run holds the board; read the inputs when it is idle".into()));

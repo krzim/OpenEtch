@@ -80,6 +80,8 @@ import { jobApi, saveBlob } from "./api/jobApi.ts";
 import { gcodeFileName, isGrblMachine } from "./api/grbl.ts";
 import { GrblConsole } from "./components/GrblConsole.tsx";
 import { GrblMove } from "./components/GrblMove.tsx";
+import { RuidaFiles } from "./components/RuidaFiles.tsx";
+import { isRuidaMachine, rdFileName } from "./api/ruida.ts";
 import { usePrefs, useT } from "./workspace/usePrefs.ts";
 import { alignMoves, distributeMoves, nudgeDelta, nudgeKeyId, queueNudge, rotateKeyDeg, roundMm, type AlignX, type AlignY } from "./editing.ts";
 import { boxCenter, objectBounds, unionBoxes, type Box } from "./geometry.ts";
@@ -1108,6 +1110,19 @@ export function App() {
                       .catch(report)
                 : undefined
             }
+            onSaveRd={
+              isRuidaMachine(machine)
+                ? () =>
+                    void jobApi
+                      .exportRd()
+                      .then(({ blob, filename }) => {
+                        const name = rdFileName(filename, file.projectName ?? file.openedName ?? doc?.name ?? null);
+                        saveBlob(blob, name);
+                        notify(t("fm.rdSaved", { name }));
+                      })
+                      .catch(report)
+                : undefined
+            }
           />
         }
         extra={
@@ -1357,6 +1372,12 @@ export function App() {
                       <GrblConsole notify={notify} report={report} />
                     </Dock>
                   </>
+                )}
+                {/* A Ruida gantry's File List window (LightBurn's): stored files, Send, Start (through approval). */}
+                {isRuidaMachine(machine) && (
+                  <Dock id="files" title={t("win.files")}>
+                    <RuidaFiles notify={notify} projectName={file.projectName ?? file.openedName ?? doc?.name ?? null} selection={selection.objects} />
+                  </Dock>
                 )}
                 <Dock id="machine" title={t("win.machine")}>
                 <MachineCard machine={machine} httpError={engine.httpError}>

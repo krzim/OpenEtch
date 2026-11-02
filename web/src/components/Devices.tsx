@@ -40,6 +40,7 @@ import {
   type GrblForm,
 } from "../api/devices.ts";
 import { diffLabel, formatDiffValue } from "../api/lightburn.ts";
+import { RUIDA_FORM_DEFAULT, ruidaDeviceBody, type RuidaForm } from "../api/ruida.ts";
 import { formatBytes } from "../api/project.ts";
 import type { GDocument, MachineStatus } from "../api/types.ts";
 import { jobApi } from "../api/jobApi.ts";
@@ -244,12 +245,56 @@ function GrblDeviceForm(p: { form: GrblForm; busy: boolean; onChange: (f: GrblFo
   );
 }
 
+/** The New Ruida device form (Devices window footer): controller address, bed, origin, power and speed limits. */
+function RuidaDeviceForm(p: { form: RuidaForm; busy: boolean; onChange: (f: RuidaForm) => void; onCancel: () => void; onAdd: () => void }) {
+  const t = useT();
+  const f = p.form;
+  const text = (key: "displayName" | "address" | "widthMm" | "heightMm" | "maxPowerPct" | "maxSpeedMmS", label: string, mode: "text" | "decimal" = "decimal") => (
+    <label className="dev-select">
+      <span className="dev-select-label">{label}</span>
+      <input inputMode={mode} value={f[key]} onChange={(e) => p.onChange({ ...f, [key]: e.target.value })} />
+    </label>
+  );
+  return (
+    <div className="dev-confirm" role="group" aria-label={t("dv.newRuidaHint")}>
+      {text("displayName", t("dv.grblName"), "text")}
+      {text("address", t("dv.ruidaAddress"), "text")}
+      {text("widthMm", t("dv.grblWidth"))}
+      {text("heightMm", t("dv.grblHeight"))}
+      <label className="dev-select">
+        <span className="dev-select-label">{t("dv.grblOrigin")}</span>
+        <select value={f.origin} onChange={(e) => p.onChange({ ...f, origin: e.target.value as RuidaForm["origin"] })}>
+          {(["top_right", "top_left", "bottom_left", "bottom_right"] as const).map((o) => (
+            <option key={o} value={o}>
+              {originLabel(o)}
+            </option>
+          ))}
+        </select>
+      </label>
+      {text("maxPowerPct", t("dv.ruidaMaxPower"))}
+      {text("maxSpeedMmS", t("dv.ruidaMaxSpeed"))}
+      <label>
+        <input type="checkbox" checked={f.rdc634xg} onChange={(e) => p.onChange({ ...f, rdc634xg: e.target.checked })} /> {t("dv.ruida634xg")}
+      </label>
+      <div className="dev-confirm-actions">
+        <button className="btn" onClick={p.onCancel}>
+          {t("dv.cancel")}
+        </button>
+        <button className="btn btn-primary" disabled={p.busy} onClick={p.onAdd}>
+          {t("dv.add")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /** What the Devices window footer is asking: nothing, to switch, to remove, or which devices of a file to import. */
 type Ask =
   | { kind: "switch"; device: DeviceSummary }
   | { kind: "remove"; device: DeviceSummary }
   | { kind: "import"; file: string; parsed: DeviceImportBody; choice: string }
-  | { kind: "grbl"; form: GrblForm };
+  | { kind: "grbl"; form: GrblForm }
+  | { kind: "ruida"; form: RuidaForm };
 
 /** LightBurn's Devices window. */
 export function DevicesWindow(p: {
@@ -372,6 +417,17 @@ export function DevicesWindow(p: {
       if (r?.device?.id) setSelected(r.device.id);
     });
 
+  const addRuida = (form: RuidaForm) =>
+    task(async () => {
+      const b = ruidaDeviceBody(form);
+      if ("error" in b) throw new Error(b.error);
+      const r = (await jobApi.addRuidaDevice(b.body)) as { device?: { id?: string; display_name?: string } };
+      p.notify(t("dv.ruidaAdded", { name: r?.device?.display_name ?? t("dv.aDevice") }));
+      setAsk(null);
+      await p.devices.refresh();
+      if (r?.device?.id) setSelected(r.device.id);
+    });
+
   const activateBlock = activateBlocker(device, list, p.machine);
   const removeBlock = removeBlocker(device, list);
 
@@ -437,6 +493,8 @@ export function DevicesWindow(p: {
           </div>
         ) : ask?.kind === "grbl" ? (
           <GrblDeviceForm form={ask.form} busy={busy} onChange={(form) => setAsk({ kind: "grbl", form })} onCancel={() => setAsk(null)} onAdd={() => void addGrbl(ask.form)} />
+        ) : ask?.kind === "ruida" ? (
+          <RuidaDeviceForm form={ask.form} busy={busy} onChange={(form) => setAsk({ kind: "ruida", form })} onCancel={() => setAsk(null)} onAdd={() => void addRuida(ask.form)} />
         ) : (
           <>
             <button className="btn" disabled={busy} onClick={() => void runImport(null, "all", t("dv.lightburnOnTheEngineComputer"))}>
@@ -450,6 +508,9 @@ export function DevicesWindow(p: {
             </button>
             <button className="btn" disabled={busy} title={t("dv.newGrblHint")} onClick={() => setAsk({ kind: "grbl", form: GRBL_FORM_DEFAULT })}>
               {t("dv.newGrbl")}
+            </button>
+            <button className="btn" disabled={busy} title={t("dv.newRuidaHint")} onClick={() => setAsk({ kind: "ruida", form: RUIDA_FORM_DEFAULT })}>
+              {t("dv.newRuida")}
             </button>
             <button className="btn" disabled={busy || !device} title={t("dv.editACopyOfTheSelected")} onClick={() => device && void duplicate(device)}>
               {t("dv.duplicate")}

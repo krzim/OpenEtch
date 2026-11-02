@@ -10,7 +10,7 @@
 //! | GET | `/api/print` | `?format=pdf\|svg&colors=black\|layers&line_width_mm=&paper=w,h&margin_mm=&area=&ids=` → the print-ready file, inline (`doc.print`) |
 //! | GET | `/api/images/{id}/file` | the image object's file (`image.export`) |
 //! | GET | `/api/images/{id}/processed.png` | `?sub_layer=n`: Save Processed Bitmap (`image.processed`) |
-//! | POST | `/api/document/import` | `?format=svg\|dxf\|image\|tiff\|tga\|pdf\|ai\|eps\|ezd\|hpgl\|plt\|gcode\|nc\|gerber\|drill\|model\|lbrn&mode=merge\|replace&name=` + the command's options as query parameters, the raw file as the body (≤ 100 MB) → like `/api/execute`; `mode=replace` opens the file as a new, unsaved project (`doc.new` then the import, one undo step; downloads are named after `name`). `tool_layers=true` (LightBurn's "Allow Importing to Tool Layers", default off) allows `layer=T1`/`T2` (added in the same step when missing); off, those names are refused and an import without `layer` skips a tool layer listed first; a `layer` id is used as given |
+//! | POST | `/api/document/import` | `?format=svg\|dxf\|image\|tiff\|tga\|pdf\|ai\|eps\|ezd\|hpgl\|plt\|gcode\|nc\|gerber\|drill\|model\|lbrn\|rd&mode=merge\|replace&name=` + the command's options as query parameters, the raw file as the body (≤ 100 MB) → like `/api/execute`; `mode=replace` opens the file as a new, unsaved project (`doc.new` then the import, one undo step; downloads are named after `name`). `tool_layers=true` (LightBurn's "Allow Importing to Tool Layers", default off) allows `layer=T1`/`T2` (added in the same step when missing); off, those names are refused and an import without `layer` skips a tool layer listed first; a `layer` id is used as given |
 //! | GET | `/api/projects/{name}/thumbnail.png` | `?width=32..=1024` (default 256): the saved project rendered |
 //! | GET | `/api/backups` | `?project=`: `{autosaves: [{file, project, saved_unix_s, size}], backups: [...]}` newest first |
 //! | POST | `/api/backups/restore` | `{kind: "autosave"\|"backup", file, origin?}`: opens it as an unsaved document → like `/api/projects/open` |
@@ -425,6 +425,10 @@ fn gantry_options_note(job: &plan::JobPlan) -> String {
 }
 
 /// The name downloads get: the project, else the opened file, else the document.
+pub(crate) fn download_stem(st: &AppState) -> String {
+    stem(st)
+}
+
 fn stem(st: &AppState) -> String {
     let p = st.project_status();
     p["name"].as_str().or(p["display_name"].as_str()).map(str::to_owned).unwrap_or_else(|| st.document().name)
@@ -590,6 +594,10 @@ pub(crate) fn import_invocation(format: &str, bytes: Vec<u8>, q: &HashMap<String
             params.insert("content".into(), json!(text(bytes)?));
             "art.import_gcode"
         }
+        "rd" => {
+            params.insert("data_base64".into(), json!(STANDARD.encode(&bytes)));
+            "art.import_rd"
+        }
         "gerber" | "drill" => {
             params.insert("content".into(), json!(text(bytes)?));
             if format == "drill" {
@@ -625,7 +633,7 @@ pub(crate) fn import_invocation(format: &str, bytes: Vec<u8>, q: &HashMap<String
         }
         other => {
             return Err(EngineError::BadRequest(format!(
-                "unknown format '{other}' (svg, dxf, image, tiff, tga, pdf, ai, eps, ezd, hpgl, plt, gcode, nc, gerber, drill, model, lbrn)"
+                "unknown format '{other}' (svg, dxf, image, tiff, tga, pdf, ai, eps, ezd, hpgl, plt, gcode, nc, gerber, drill, model, lbrn, rd)"
             )));
         }
     };
@@ -643,6 +651,9 @@ pub(crate) fn import_invocation(format: &str, bytes: Vec<u8>, q: &HashMap<String
             "model_format" => {
                 params.insert("format".into(), json!(v));
             }
+            "rd_origin" => {
+                params.insert("origin".into(), json!(v));
+            }
             _ => {
                 params.insert(k.clone(), qvalue(k, v)?);
             }
@@ -657,7 +668,8 @@ async fn import(State(st): State<Arc<AppState>>, q: Q, body: Result<Bytes, Bytes
         &[
             "format", "mode", "name", "layer", "width_mm", "keep_position", "split", "page", "hidden_layers", "units_per_mm",
             "invert", "kind", "model_format", "dpi", "outline", "sixteen_bit", "transparent_background", "depth_cutoff_mm",
-            "equalize", "rotation_deg", "mime", "field_mm", "tool_layers", "pen_layers",
+            "equalize", "rotation_deg", "mime", "field_mm", "tool_layers", "pen_layers", "rd_origin", "bed_width_mm",
+            "bed_height_mm", "rd_layers",
         ],
     )?;
     let mut q = q;
@@ -686,6 +698,12 @@ async fn import(State(st): State<Arc<AppState>>, q: Q, body: Result<Bytes, Bytes
             // The file's name without its extension names the document (and the import's group).
             let display = q.get("name").and_then(|n| projects::display_name(n.rsplit_once('.').map_or(n.as_str(), |(stem, _)| stem)));
             let mut q = q;
+            if format == "rd" {
+                // The active Ruida gantry's origin corner and bed, unless the request names them.
+                for (k, v) in crate::ruida_dsp::import_params(st) {
+                    q.entry(k).or_insert(v);
+                }
+            }
             let before = if lightburn { Vec::new() } else { import_layer(st, &mut q, tool_layers, replace)? };
             let mut inv = import_invocation(&format, Vec::from(body), &q)?;
             if lightburn {

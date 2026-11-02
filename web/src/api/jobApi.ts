@@ -141,6 +141,18 @@ export const jobApi = {
   /** GET /api/export/gcode: the job as G-code for the active GRBL gantry (sends nothing to the machine). */
   exportGcode: () => download("/api/export/gcode"),
 
+  // ---- a Ruida gantry: File List window, Send, Save RD file ----
+  /** GET /api/machine/files: the files stored on the controller (reads only). */
+  ruidaFiles: () => call("GET", "/api/machine/files"),
+  /** Send: the job (or the objects `ids`) stored on the controller as `name`; never started. UI only. */
+  ruidaSend: (name: string, ids?: readonly string[]) => call("POST", "/api/machine/files/send", { name, ...(ids ? { ids } : {}), origin: UI_ORIGIN }),
+  /** A pending run of stored file `index` (named `name`): it starts only when approved in the Runs card. UI only. */
+  ruidaRun: (index: number, name: string) => call("POST", `/api/machine/files/${index}/run`, { name, origin: UI_ORIGIN }),
+  /** Delete stored file `index` if it is still named `name`. UI only. */
+  ruidaDelete: (index: number, name: string) => call("POST", `/api/machine/files/${index}/delete`, { name, origin: UI_ORIGIN }),
+  /** GET /api/export/rd: the job as an RDWorks .rd file for the active Ruida gantry (sends nothing to the machine). */
+  exportRd: () => download("/api/export/rd"),
+
   // ---- preview ----
   previewPng: (width: number, jumps: boolean) => download(`/api/preview.png?width=${Math.round(width)}&jumps=${jumps}`),
 
@@ -161,6 +173,9 @@ export const jobApi = {
   /** POST /api/devices/grbl: a GRBL gantry from a profile (UI only). */
   addGrblDevice: (body: { display_name: string; profile: Record<string, unknown> }) =>
     call("POST", "/api/devices/grbl", { ...body, origin: UI_ORIGIN }),
+  /** POST /api/devices/ruida: a Ruida gantry from a profile (UI only). */
+  addRuidaDevice: (body: { display_name: string; profile: Record<string, unknown> }) =>
+    call("POST", "/api/devices/ruida", { ...body, origin: UI_ORIGIN }),
   importMarkcfg: (file: Blob, name: string) =>
     call("POST", `/api/devices/import/markcfg?name=${enc(name)}&origin=${UI_ORIGIN}`, undefined, { body: file, type: "application/octet-stream" }),
 };

@@ -327,7 +327,7 @@ impl GalvoMcp {
                  \"hull\" or \"outline\"; individually, outside_only, tool_layers_only, continuous (default true), \
                  speed_mm_s, pointer (red|focus|both), live (follow edits), max_seconds (default 120). Keeps tracing \
                  until frame_stop, machine_stop, or the time limit. Galvos only: on a gantry (machine_status driver \
-                 \"grbl\") framing moves the head, so only a person can start it in the app.",
+                 \"grbl\" or \"ruida\") framing moves the head, so only a person can start it in the app.",
                 false,
             ),
             tool::<NoArgs>("frame_stop", "Stop framing", "Stop the red-pointer frame.", false),
@@ -488,7 +488,7 @@ impl GalvoMcp {
             }
             "frame_start" => {
                 let req: FrameRequest = args(name, a)?;
-                if st.machine.is_grbl() {
+                if st.machine.is_gantry() {
                     return Err(EngineError::Forbidden(GANTRY_FRAME.into()));
                 }
                 Ok(ok_json(st.frame_start(req).await?))
