@@ -16,10 +16,11 @@ import {
   boxInside,
   boxesIntersect,
   distToPolylines,
+  cmdsBounds,
   flattenCmds,
   geometryCmds,
+  geometryKey,
   insideEvenOdd,
-  objectBounds,
   polylinesTouchBox,
   type Box,
   type Polyline,
@@ -61,12 +62,27 @@ function isVisible(doc: GDocument, o: DocObject, visible: Set<string> = visibleL
   return visible.has(o.layer) || !doc.layers.some((l) => l.id === o.layer);
 }
 
+/** Objects by id and group parents per document (documents are immutable values), so group lookups are O(depth). */
+const lookups = new WeakMap<GDocument, { byId: Map<string, DocObject>; parents: Map<string, string | null> }>();
+
+function lookupOf(doc: GDocument) {
+  let l = lookups.get(doc);
+  if (!l) {
+    const byId = new Map<string, DocObject>();
+    // The first object with an id wins, as Array.find did.
+    for (const o of doc.objects) if (!byId.has(o.id)) byId.set(o.id, o);
+    l = { byId, parents: new Map((doc.groups ?? []).map((x) => [x.id, x.parent ?? null])) };
+    lookups.set(doc, l);
+  }
+  return l;
+}
+
 /** The outermost group an object belongs to, or null. Cycles in `parent` are cut. */
 export function topGroup(doc: GDocument, objectId: string): string | null {
-  const o = doc.objects.find((x) => x.id === objectId);
+  const { byId, parents } = lookupOf(doc);
+  const o = byId.get(objectId);
   let g: string | null = o?.group ?? null;
   if (!g) return null;
-  const parents = new Map<string, string | null>((doc.groups ?? []).map((x) => [x.id, x.parent ?? null]));
   const seen = new Set<string>();
   for (;;) {
     const p: string | null = parents.get(g) ?? null;
@@ -106,9 +122,13 @@ export function expandToUnits(doc: GDocument, ids: readonly string[]): string[] 
 /** The units (group ids or loose object ids) covered by `ids`, in first-seen order. */
 export function unitsOf(doc: GDocument, ids: readonly string[]): string[] {
   const out: string[] = [];
+  const seen = new Set<string>();
   for (const id of ids) {
     const u = unitOf(doc, id);
-    if (!out.includes(u)) out.push(u);
+    if (!seen.has(u)) {
+      seen.add(u);
+      out.push(u);
+    }
   }
   return out;
 }
@@ -276,17 +296,30 @@ export interface ShapeEntry {
   area: number;
 }
 
+/** Entries by object id, reused while an object's geometry and transform are unchanged (geometry.ts geometryKey). */
+const shapeCache = new Map<string, { key: string; t: readonly number[]; entry: ShapeEntry | null }>();
+
 /** Hit-test data for the visible objects in draw order. Build once per document. */
 export function buildShapeIndex(doc: GDocument): ShapeEntry[] {
   const visible = visibleLayerIds(doc);
   const out: ShapeEntry[] = [];
+  const seen = new Set<string>();
   for (const o of doc.objects) {
     if (!isVisible(doc, o, visible)) continue;
-    const box = objectBounds(o);
-    if (!box) continue;
-    const polys = flattenCmds(geometryCmds(o.geometry), o.transform);
-    out.push({ id: o.id, polys, box, closed: polys.some((p) => p.closed), area: boxArea(box) });
+    seen.add(o.id);
+    const key = geometryKey(o.geometry);
+    const t = o.transform;
+    let c = shapeCache.get(o.id);
+    if (!c || c.key !== key || c.t.some((v, i) => v !== t[i])) {
+      const cmds = geometryCmds(o.geometry);
+      const box = cmdsBounds(cmds, t);
+      const polys = box ? flattenCmds(cmds, t) : [];
+      c = { key, t: [...t], entry: box ? { id: o.id, polys, box, closed: polys.some((p) => p.closed), area: boxArea(box) } : null };
+      shapeCache.set(o.id, c);
+    }
+    if (c.entry) out.push(c.entry);
   }
+  for (const id of shapeCache.keys()) if (!seen.has(id)) shapeCache.delete(id);
   return out;
 }
 

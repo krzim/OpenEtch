@@ -1,10 +1,13 @@
 // The centre canvas, in field millimetres with +Y up, drawn as stacked layers that each carry the same view transform
-// (pan/zoom and the y-flip): the field, grid and stock (SVG), images (canvas), object outlines and fills (SVG), the
-// toolpath preview (canvas), and on top the interaction SVG (handles, marquee, rubber bands, the canvas tool, snap
-// glyphs). The scene layers are memoized on document and preview data, not on the view: a zoom or pan only changes
-// their transform (SVG strokes use vector-effect: non-scaling-stroke) and repaints the canvases' visible region from
-// view-independent caches (components/SceneCanvas.tsx, sceneLayers.ts). Wheel, pinch and pan updates are coalesced
-// to one per animation frame. Overlay strokes are divided by the zoom so they stay a constant number of screen px.
+// (pan/zoom and the y-flip): the field, grid, axes and stock (2D canvas, vectorScene.ts paintBack), the canvas tool's
+// underlay (SVG), images (canvas), object outlines and fills (WebGL2, VectorLayer.tsx), the toolpath preview
+// (WebGL2), and on top the interaction SVG (handles, marquee, rubber bands, the canvas tool, snap glyphs). Every
+// scene layer is raster, repainted for each view from caches built per document or preview, never per view
+// (vectorScene.ts, sceneLayers.ts, components/SceneCanvas.tsx): a zoom or pan costs a GPU redraw of a few
+// milliseconds, never a re-rasterization of SVG (which showed blurry low-resolution tiles while zooming). Wheel,
+// pinch and pan updates are coalesced to one per animation frame, and the layers repaint in that frame's commit, so
+// they stay in step with the interaction SVG. Hit-testing is geometric (selection.ts hitTest), never by element.
+// Overlay strokes are divided by the zoom so they stay a constant number of screen px.
 //
 // Interaction uses Pointer Events only (mouse, pen and touch alike), following LightBurn:
 // - click an object (its line, or inside a closed shape) to select it; Shift adds, Ctrl toggles, Ctrl+Shift removes;
@@ -65,10 +68,8 @@ import {
   cmdsBounds,
   distToPolylines,
   flattenCmds,
-  geometryCmds,
   mul,
   stockCmds,
-  toPathData,
   unionBoxes,
   type Box,
 } from "../geometry.ts";
@@ -106,7 +107,9 @@ import "../touch/touch.css";
 import { useDitheredHref } from "./ImageSettings.tsx";
 import { CanvasLayer, ToolpathLayer, originalHref, paintImages, useBitmaps, useDpr, type ImageItem, type PaintArgs } from "./SceneCanvas.tsx";
 import { maskClips } from "../files/fileFormats.ts";
-import { buildToolpath, frameCoalescer, gridSpacing, type ToolpathStyle, type View } from "../sceneLayers.ts";
+import { buildToolpath, frameCoalescer, type ToolpathStyle, type View } from "../sceneLayers.ts";
+import { buildVectorScene, paintBack, segmentFlags } from "../vectorScene.ts";
+import { VectorLayer, useCanvasTokens } from "./VectorLayer.tsx";
 import {
   SNAP_TOL_PX,
   buildSnapIndex,
@@ -125,7 +128,7 @@ import {
   type SnapPoint,
 } from "../snapping.ts";
 import { Icon } from "./ui.tsx";
-import { TOOLPATH_INK, canvasColor, type Theme } from "../workspace/theme.ts";
+import { TOOLPATH_INK } from "../workspace/theme.ts";
 import { usePrefs, useResolvedTheme } from "../workspace/usePrefs.ts";
 import { fixedLength, fixedNumber, formatLength, lengthDigits, lengthToDisplay, trimNumber } from "../workspace/units.ts";
 import { onRevealSelection, onViewCommand, publishViewStatus, revealShift } from "../workspace/viewStatus.ts";
@@ -264,6 +267,8 @@ export function Viewport(props: ViewportProps) {
     viewRef.current = typeof next === "function" ? next(viewRef.current) : next;
     frames.current?.push(viewRef.current);
   }, []);
+  /** A coalesced view update waits for the next frame (the vector layer's ants then leave that frame's draw to it). */
+  const viewPending = useCallback(() => frames.current?.pending() ?? false, []);
   /** Set the view now (fit, zoom to selection). */
   const setView = useCallback((v: View) => {
     viewRef.current = v;
@@ -508,8 +513,9 @@ export function Viewport(props: ViewportProps) {
   const selBoundsRaw = useMemo(() => unionBoxes(selection.objects.map((id) => boundsById.get(id) ?? null)), [selection.objects, boundsById]);
   const selBounds = useMemo(() => (selBoundsRaw && liveObjects ? mapBox(selBoundsRaw, liveObjects) : selBoundsRaw), [selBoundsRaw, liveObjects]);
 
-  const stock = doc?.stock ? stockCmds(doc.stock) : null;
-  const stockBox = stock ? cmdsBounds(stock.cmds, stock.transform) : null;
+  const docStock = doc?.stock ?? null;
+  const stock = useMemo(() => (docStock ? stockCmds(docStock) : null), [docStock]);
+  const stockBox = useMemo(() => (stock ? cmdsBounds(stock.cmds, stock.transform) : null), [stock]);
 
   /** Snap data per visible object and the stock, built lazily on the first snap after the document changes. */
   const extParts = props.canvasTool?.snapParts;
@@ -1191,6 +1197,7 @@ export function Viewport(props: ViewportProps) {
   });
 
   // The touch HUD (touch/TouchHud.tsx) places the action bar above the selection and picks Group or Ungroup.
+  const selGrouped = useMemo(() => !!doc && anyGrouped(doc, selection.objects), [doc, selection.objects]);
   useEffect(() => {
     const r = svgRef.current?.getBoundingClientRect();
     const canvasRect = r ? { left: r.left, top: r.top, right: r.right, bottom: r.bottom } : null;
@@ -1200,9 +1207,9 @@ export function Viewport(props: ViewportProps) {
       const b = toScreen([selBounds.x1, selBounds.y0]);
       selRect = { left: r.left + a[0], top: r.top + a[1], right: r.left + b[0], bottom: r.top + b[1] };
     }
-    publishHud({ selRect, canvasRect, grouped: !!doc && anyGrouped(doc, selection.objects), rotateMode: rotMode && handleCls !== "mouse" });
+    publishHud({ selRect, canvasRect, grouped: selGrouped, rotateMode: rotMode && handleCls !== "mouse" });
     // toScreen follows view and size.
-  }, [selBounds, view, size, doc, selection.objects, rotMode, handleCls, tool, showPreview]);
+  }, [selBounds, view, size, selGrouped, selection.objects, rotMode, handleCls, tool, showPreview]);
 
   // Hotkeys (zoom in/out, fit) and the status bar talk to the canvas through workspace/viewStatus.ts.
   useEffect(
@@ -1253,54 +1260,11 @@ export function Viewport(props: ViewportProps) {
   const halfY = wsH / 2;
   const matrix = `matrix(${view.scale},0,0,${-view.scale},${size[0] / 2 - view.scale * view.cx},${size[1] / 2 + view.scale * view.cy})`;
 
-  // The grid path only changes when its spacing does (a handful of steps over the zoom range).
-  const spacing = gridSpacing(view.scale, uiPrefs.gridMm, Math.max(halfX, halfY));
-  const grid = useMemo(() => {
-    if (!uiPrefs.gridVisible) return { dMinor: "", dMajor: "" };
-    const { minor, major } = spacing;
-    let dMinor = "";
-    let dMajor = "";
-    // Lines through the origin (the field centre), across the whole workspace.
-    const isMajor = (v: number) => Math.abs(v / major - Math.round(v / major)) < 1e-9;
-    const nx = Math.floor(halfX / minor);
-    for (let i = -nx; i <= nx; i++) {
-      const v = i * minor;
-      const line = `M${v},${-halfY}V${halfY}`;
-      if (isMajor(v)) dMajor += line;
-      else dMinor += line;
-    }
-    const ny = Math.floor(halfY / minor);
-    for (let i = -ny; i <= ny; i++) {
-      const v = i * minor;
-      const line = `M${-halfX},${v}H${halfX}`;
-      if (isMajor(v)) dMajor += line;
-      else dMinor += line;
-    }
-    return { dMinor, dMajor };
-    // `spacing` stands for its two numbers.
-  }, [halfX, halfY, spacing.minor, spacing.major, uiPrefs.gridVisible]);
-
-  /** Object path data in the field frame, cached per document. */
-  const paths = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const o of doc?.objects ?? []) m.set(o.id, toPathData(geometryCmds(o.geometry), o.transform));
-    return m;
-  }, [doc]);
-
-  // Filled view (LightBurn "Filled"): fill and fill+line layers are drawn as even-odd regions in their layer colour.
-  const fills = useMemo(() => {
-    if (!doc || viewStyle !== "filled") return [];
-    const out: { layer: Layer; d: string }[] = [];
-    for (const l of doc.layers) {
-      if (!l.visible || l.settings.mode === "line") continue;
-      const d = doc.objects
-        .filter((o) => o.layer === l.id && o.geometry.kind !== "image" && !(liveObjects && selectedSet.has(o.id)))
-        .map((o) => paths.get(o.id) ?? "")
-        .join(" ");
-      if (d) out.push({ layer: l, d });
-    }
-    return out;
-  }, [doc, viewStyle, paths, liveObjects, selectedSet]);
+  // The document's vectors as raster-layer data, built once per document; the flags follow the selection
+  // (vectorScene.ts, drawn by VectorLayer.tsx). A view change or a drag only changes uniforms.
+  const scene = useMemo(() => buildVectorScene(doc), [doc]);
+  const flags = useMemo(() => segmentFlags(scene, selectedSet, outside), [scene, selectedSet, outside]);
+  const tokens = useCanvasTokens();
 
   // The toolpath preview, packed by style and tile once per preview (drawn on a canvas, sceneLayers.ts).
   const { hidden: tpHidden, hiddenPasses: tpHiddenPasses, upTo: tpUpTo, jumps: tpJumps, shade: tpShade } = previewOptions;
@@ -1351,45 +1315,39 @@ export function Viewport(props: ViewportProps) {
     [imageItems, showPreview, bitmapVersion],
   );
 
-  // The field, grid and stock: view-independent SVG under the images.
-  const stockD = stock ? toPathData(stock.cmds, liveStock ? mul(liveStock, stock.transform) : stock.transform) : null;
-  const back = useMemo(
-    () => (
-      <>
-        {/* the active device's workspace: a galvo field (square) or a gantry bed (rectangle) */}
-        <rect className="field-bg" x={-halfX} y={-halfY} width={wsW} height={wsH} />
-        <path className="grid-minor" d={grid.dMinor} strokeWidth={0.6} vectorEffect={NSS} />
-        <path className="grid-major" d={grid.dMajor} strokeWidth={0.9} vectorEffect={NSS} />
-        <path className="axis-x" d={`M${-halfX},0H${halfX}`} strokeWidth={1.2} vectorEffect={NSS} />
-        <path className="axis-y" d={`M0,${-halfY}V${halfY}`} strokeWidth={1.2} vectorEffect={NSS} />
-        <rect className="field-edge" x={-halfX} y={-halfY} width={wsW} height={wsH} strokeWidth={1.5} vectorEffect={NSS} />
-        {stockD && (
-          <path
-            className={`stock${selection.stock ? " selected" : ""}`}
-            d={stockD}
-            strokeWidth={selection.stock ? 2 : 1.5}
-            strokeDasharray="6 3"
-            vectorEffect={NSS}
-          />
-        )}
-      </>
-    ),
-    [halfX, halfY, wsW, wsH, grid, stockD, selection.stock],
+  // The field, grid, axes and stock: painted per frame in device px under the images (vectorScene.ts paintBack).
+  const stockM = useMemo(() => (stock ? (liveStock ? mul(liveStock, stock.transform) : stock.transform) : null), [stock, liveStock]);
+  const paintBackLayer = useMemo(
+    () => (ctx: CanvasRenderingContext2D, a: PaintArgs) =>
+      paintBack(ctx, a, {
+        half: [halfX, halfY],
+        grid: { visible: uiPrefs.gridVisible, prefMm: uiPrefs.gridMm },
+        stock: stock && stockM ? { cmds: stock.cmds, m: stockM, selected: selection.stock } : null,
+        colors: tokens,
+      }),
+    [halfX, halfY, uiPrefs.gridVisible, uiPrefs.gridMm, stock, stockM, selection.stock, tokens],
   );
+  const underlay = props.canvasTool?.underlay?.(renderCtx);
 
   const drawBox = draw ? boxFromPoints(draw.a, draw.b) : null;
   const marqueeBox = marquee ? boxFromPoints(marquee.a, marquee.b) : null;
   const crossing = marquee ? marquee.b[0] < marquee.a[0] : false;
 
-  // Groups among the selection get a dot-dot-dash outline around their bounds.
-  const selectedGroups = useMemo(() => {
+  // Groups among the selection get a dot-dot-dash outline around their bounds (once per selection, in one pass, so a
+  // drag of thousands of selected objects does no per-move work here beyond mapping the boxes).
+  const selectedGroupBoxes = useMemo(() => {
     if (!doc) return [];
-    return unitsOf(doc, selection.objects)
-      .filter((u) => !doc.objects.some((o) => o.id === u && !o.group))
-      .map((u) => unionBoxes(doc.objects.filter((o) => selectedSet.has(o.id) && unitOf(doc, o.id) === u).map((o) => boundsById.get(o.id) ?? null)))
-      .filter((b): b is Box => b !== null)
-      .map((b) => (liveObjects ? mapBox(b, liveObjects) : b));
-  }, [doc, selection.objects, selectedSet, boundsById, liveObjects]);
+    const loose = new Set(doc.objects.filter((o) => !o.group).map((o) => o.id));
+    const members = new Map<string, (Box | null)[]>();
+    for (const u of unitsOf(doc, selection.objects)) if (!loose.has(u)) members.set(u, []);
+    if (!members.size) return [];
+    for (const o of doc.objects) {
+      if (!selectedSet.has(o.id)) continue;
+      members.get(unitOf(doc, o.id))?.push(boundsById.get(o.id) ?? null);
+    }
+    return [...members.values()].map(unionBoxes).filter((b): b is Box => b !== null);
+  }, [doc, selection.objects, selectedSet, boundsById]);
+  const selectedGroups = useMemo(() => (liveObjects ? selectedGroupBoxes.map((b) => mapBox(b, liveObjects)) : selectedGroupBoxes), [selectedGroupBoxes, liveObjects]);
 
   const showHandles = tool === "select" && selBounds && selection.objects.length > 0 && !showPreview;
   // Handles follow the last pointer used on the canvas. A mouse keeps LightBurn's: 16 px scale handles plus the round
@@ -1407,7 +1365,6 @@ export function Viewport(props: ViewportProps) {
   const scaleHandles = smallSel ? HANDLES.filter((h) => h.length === 2) : HANDLES;
   /** Touch: the snap label and readout go in a bubble above the finger instead of under it (T16). */
   const fingerAt = lastCls === "touch" && pointers.current.size > 0 ? (lastMove.current?.s ?? null) : null;
-  const liveM = liveObjects ? `matrix(${liveObjects.join(",")})` : undefined;
   const outsideCount = outside.size;
 
   return (
@@ -1435,29 +1392,29 @@ export function Viewport(props: ViewportProps) {
       {imageObjects.map((o) => (
         <DitheredSource key={o.id} id={o.id} g={o.geometry as ImageGeom} layer={layerById.get(o.layer)} onHref={onDithered} />
       ))}
-      <svg className="vp-layer vp-back" width={size[0]} height={size[1]} aria-hidden="true">
-        <g transform={matrix}>
-          {back}
-          {props.canvasTool?.underlay?.(renderCtx)}
-        </g>
-      </svg>
+      <CanvasLayer className="vp-back" view={view} size={size} dpr={dpr} paint={paintBackLayer} />
+      {underlay != null && underlay !== false && (
+        <svg className="vp-layer vp-under" width={size[0]} height={size[1]} aria-hidden="true">
+          <g transform={matrix}>{underlay}</g>
+        </svg>
+      )}
       {paintImageLayer && <CanvasLayer className="vp-images" view={view} size={size} dpr={dpr} paint={paintImageLayer} />}
-      <svg className="vp-layer vp-objects" width={size[0]} height={size[1]} aria-hidden="true">
-        <g transform={matrix}>
-          <ObjectsLayer
-            doc={doc}
-            paths={paths}
-            fills={fills}
-            layerById={layerById}
-            selectedSet={selectedSet}
-            liveM={liveM}
-            outside={outside}
-            theme={theme}
-            viewStyle={viewStyle}
-            dimmed={showPreview}
-          />
-        </g>
-      </svg>
+      <VectorLayer
+        view={view}
+        size={size}
+        dpr={dpr}
+        doc={doc}
+        scene={scene}
+        flags={flags}
+        selected={selectedSet}
+        outside={outside}
+        live={liveObjects}
+        theme={theme}
+        filled={viewStyle === "filled"}
+        dimmed={showPreview}
+        tokens={tokens}
+        viewPending={viewPending}
+      />
       {toolpath && toolpath.segments > 0 && <ToolpathLayer view={view} size={size} dpr={dpr} toolpath={toolpath} style={toolpathStyle} />}
       <svg
         ref={svgRef}
@@ -1716,9 +1673,6 @@ function ConstraintGuide({ line, at, size }: { line: ConstraintLine; at: (p: Vec
 
 type ImageGeom = Extract<GDocument["objects"][number]["geometry"], { kind: "image" }>;
 
-/** SVG `vector-effect`: strokes keep their width in screen px whatever the zoom. */
-const NSS = "non-scaling-stroke";
-
 /** Reports an image's dithered preview (when the image view is "dithered" or Adjust image is open), else null. */
 const DitheredSource = memo(function DitheredSource(p: { id: string; g: ImageGeom; layer?: Layer; onHref: (id: string, href: string | null) => void }) {
   const { id, onHref } = p;
@@ -1726,49 +1680,6 @@ const DitheredSource = memo(function DitheredSource(p: { id: string; g: ImageGeo
   useEffect(() => onHref(id, href), [id, href, onHref]);
   useEffect(() => () => onHref(id, null), [id, onHref]);
   return null;
-});
-
-/**
- * Object outlines and fills in field mm. Memoized on document data, not the view: a zoom or pan changes only the
- * transform of the group around it, and strokes keep their screen width with vector-effect.
- */
-const ObjectsLayer = memo(function ObjectsLayer(p: {
-  doc: GDocument | null;
-  paths: ReadonlyMap<string, string>;
-  fills: { layer: Layer; d: string }[];
-  layerById: ReadonlyMap<string, Layer>;
-  selectedSet: ReadonlySet<string>;
-  liveM: string | undefined;
-  outside: ReadonlySet<string>;
-  theme: Theme;
-  viewStyle: ViewStyle;
-  dimmed: boolean;
-}) {
-  const { doc, paths, layerById, selectedSet, liveM, outside, theme, viewStyle } = p;
-  return (
-    <g className={p.dimmed ? "objects dimmed" : "objects"}>
-      {p.fills.map(({ layer, d }) => (
-        <path key={`fill-${layer.id}`} className="obj-fill" d={d} fill={canvasColor(layer.color, theme)} fillOpacity={layer.output ? 0.35 : 0.15} fillRule="evenodd" />
-      ))}
-      {doc?.objects.map((o) => {
-        const layer = layerById.get(o.layer);
-        if (layer && !layer.visible) return null;
-        const d = paths.get(o.id) ?? "";
-        const sel = selectedSet.has(o.id);
-        const moving = sel && !!liveM;
-        const out = outside.has(o.id);
-        const fillHere = moving && viewStyle === "filled" && layer && layer.settings.mode !== "line" && o.geometry.kind !== "image";
-        return (
-          <g key={o.id} data-oid={o.id} transform={moving ? liveM : undefined} className={layer && !layer.output ? "no-output" : undefined}>
-            {fillHere && <path className="obj-fill" d={d} fill={canvasColor(layer.color, theme)} fillOpacity={0.35} fillRule="evenodd" />}
-            <path className="obj" d={d} stroke={canvasColor(layer?.color, theme)} strokeWidth={1.3} vectorEffect={NSS} />
-            {sel && <path className="obj-selected" d={d} strokeWidth={1.6} strokeDasharray="5 4" vectorEffect={NSS} />}
-            {out && <path className="obj-outside" d={d} strokeWidth={3} vectorEffect={NSS} />}
-          </g>
-        );
-      })}
-    </g>
-  );
 });
 
 /** Where the dragged handle is: its start point moved by the pointer's travel (the grab is a few px off the handle). */
