@@ -5,7 +5,8 @@
 //!   R12), [`pdf_out`] (PDF, also print-ready and the PDF-compatible Adobe Illustrator `.ai`).
 //! - Imports into [`Art`] (paths in mm, +Y up): [`pdf_in`] (PDF and PDF-based `.ai`), [`postscript`] (EPS and
 //!   PostScript-based `.ai`), [`hpgl`] (HPGL/PLT), [`gcode_in`] (G-code toolpaths), [`gerber`] (Gerber RS-274X and
-//!   Excellon drill), [`mesh`] (3D models to a depth map image), [`bitmap`] (TIFF/TGA to PNG).
+//!   Excellon drill), [`mesh`] (3D models to a depth map image), [`bitmap`] (TIFF/TGA to PNG), [`rd_in`] (RDWorks
+//!   `.rd` Ruida jobs).
 //! - Image tools: [`trace`] (Trace Image, outline and centre line), [`raster`] (Convert to Bitmap), [`bitmap`] (masks).
 //! - [`zip`]: a small zip reader and writer (3MF, user bundles, LightBurn `.lbzip` bundles).
 //! - [`lbart`]: LightBurn Art Library files (`.lbart`), the binary container around `<LightBurnShapes>` XML.
@@ -31,6 +32,7 @@ pub mod pdf_out;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod pdf_in;
 pub mod postscript;
+pub mod rd_in;
 pub mod raster;
 pub mod svg_out;
 pub mod trace;

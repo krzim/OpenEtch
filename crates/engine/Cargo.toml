@@ -28,6 +28,8 @@ commands = { workspace = true }
 plan = { workspace = true }
 machine = { workspace = true }
 lmc = { workspace = true }
+# Ruida `.rd` jobs (machine::ruida drives the controller).
+ruida = { workspace = true }
 corfile = { workspace = true }
 kurbo = { workspace = true }
 serde = { workspace = true }

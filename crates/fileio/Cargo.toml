@@ -9,6 +9,8 @@ publish.workspace = true
 [dependencies]
 doc = { workspace = true }
 geom = { path = "../geom" }
+# RDWorks .rd files (the Ruida protocol crate; pure, wasm-ok).
+ruida = { workspace = true }
 kurbo = { workspace = true }
 thiserror = { workspace = true }
 roxmltree = { workspace = true }

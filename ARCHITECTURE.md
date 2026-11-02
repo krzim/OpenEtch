@@ -53,7 +53,7 @@ the laser: tested on the simulator only.
 | Crate | Role | Depends on | Native-only? |
 |---|---|---|---|
 | `lmc` | LMC wire protocol: opcodes, 12-byte single commands, 3072-byte list packets, unit conversions, list builders, decoder/disassembler. **Pure, no I/O.** | – | no (wasm-ok) |
-| `ruida` | Ruida DSP controller protocol (see "Ruida protocol"): byte scrambling, UDP/serial framing, commands, 7-bit number encodings, memory registers, `.rd` job files (read/write), controller simulator (feature `sim`). **Pure, no I/O** except a blocking UDP channel (feature `udp`). Not yet used by any other crate. | – | no (wasm-ok) |
+| `ruida` | Ruida DSP controller protocol (see "Ruida protocol"): byte scrambling, UDP/serial framing, commands, 7-bit number encodings, memory registers, `.rd` job files (read/write), controller simulator (feature `sim`). **Pure, no I/O** except a blocking UDP channel (feature `udp`). Used by `machine` (the Ruida driver, with `sim` and `udp`) and `fileio` (`.rd` import). | – | no (wasm-ok) |
 | `corfile` | EzCad lens correction files (`JCZ_COR_2_1`, `LMC1COR_1.0`): parse, produce the WriteCorLine upload sequence, host-side bilinear correction. **Pure.** | – | no |
 | `doc` | Document model: stock, layers with MOPA cut settings, objects (kurbo paths + affine transforms), guides, output curve tolerance. **Pure data + geometry helpers.** | kurbo, geom (polygon outlines) | no |
 | `lbrn` | LightBurn `.lbrn2` projects and `.clb` material libraries: parse, write, convert to and from `doc` for a galvo field or a gantry bed (`lbrn::Frame`, see "File formats"). **Pure.** | doc, kurbo, roxmltree | no |
@@ -61,7 +61,7 @@ the laser: tested on the simulator only.
 | `text` | Text like LightBurn (see "Text"): fonts (installed TrueType/OpenType via fontdb + harfrust shaping + skrifa outlines, the bundled single-line Hershey fonts, AutoCAD `.shx`, EzCad `.jsf`), layout, variable text, barcodes (rxing). **Pure** except font discovery and the clock (feature `system`). | doc, geom, kurbo | `system` feature only (wasm-ok without) |
 | `commands` | Command registry: every change to a document goes through a registered command with a JSON Schema. Session with a Fusion-style timeline (see "History timeline"). | doc, geom, text | no |
 | `plan` | Document → job: flatten paths, hatch fills, Offset Fill and kerf offsets (through `geom`), raster images (decode, adjust, dither; see "Image engraving"), order travel, encode to LMC list packets for a `MachineProfile`. Also simulation (decode packets to a preview). | doc, lmc, geom, image | no |
-| `machine` | Machine profile (TOML, importable from EzCad `markcfg7` and from a LightBurn device, see "LightBurn devices"), devices (`machine::device`: LightBurn-style device model, family, workspace, origin), the `Link` transport trait, `SimLink`, `UsbLink` (nusb, feature `usb`), `Controller` (init, .cor upload, light framing, run, abort). | lmc, corfile | `usb` feature only |
+| `machine` | Machine profile (TOML, importable from EzCad `markcfg7` and from a LightBurn device, see "LightBurn devices"), devices (`machine::device`: LightBurn-style device model, family, workspace, origin), the `Link` transport trait, `SimLink`, `UsbLink` (nusb, feature `usb`), `Controller` (init, .cor upload, light framing, run, abort); the GRBL driver (`machine::grbl`) and the Ruida driver (`machine::ruida`). | lmc, corfile, ruida | `usb` feature only |
 | `fileio` | File formats and image tools (see "Files and image tools"): SVG/DXF/PDF/AI export and print, PDF/AI/EPS/HPGL/Gerber/Excellon/EzCad/legacy `.lbrn` import, 3D models to depth maps, TIFF/TGA, zip, trace, rasterise, masks. **Pure** except PDF reading (native only). | doc, geom, kurbo, image, roxmltree, miniz_oxide, lopdf | no (wasm-ok without PDF reading) |
 | `engine` | Binary. axum HTTP + WebSocket API for the web UI, MCP server (rmcp), run approval, serves `web/dist`. | all | yes |
 | `web/` | Fusion-style UI: React + TypeScript + Vite. Talks to the engine over HTTP + WebSocket. | – | – |
@@ -269,9 +269,9 @@ computer while nobody watches it; the foot switch is the approval path that need
 - **Machine drivers** (`machine::driver`). Every driver implements `MachineDriver` (state, light-only
   `frame_styled` and `stop_frame`, `run_job(job, Armed)`, the never-gated `abort`, and the `AbortHandle` /
   `RunControl` a stop or pause button uses from another thread); the engine holds the `machine::Driver` enum
-  (`Lmc(Controller)` | `Grbl(GrblController)`) rather than a boxed trait object because the drivers' jobs differ
-  (LMC list parts, G-code lines) and so do their extra abilities (input port and extension axis; homing, jogging and
-  the console): a mismatched job is refused in one place and a new driver does not compile until every safety path
+  (`Lmc(Controller)` | `Grbl(GrblController)` | `Ruida(RuidaController)`) rather than a boxed trait object because the
+  drivers' jobs differ (LMC list parts, G-code lines, Ruida programs and stored files) and so do their extra abilities
+  (input port and extension axis; homing, jogging and the console; the controller's file list): a mismatched job is refused in one place and a new driver does not compile until every safety path
   handles it. `Driver::Lmc` calls straight through to the unchanged `Controller`, and the engine's wire test pins
   the B6 galvo's bytes (`engine::wire_tests`). Every rule in this section holds for every driver.
 - **GRBL gantries** (`machine::grbl`, a device of kind `grbl`; unverified on hardware, tested on `SimGrbl`):
@@ -312,6 +312,41 @@ computer while nobody watches it; the foot switch is the approval path that need
     frame or homing). Air assist (`M8`) is a coolant output that cannot fire; GRBL's soft reset (Stop) turns it off.
   - Approval, Require Framing, the checklist and the stop epoch apply unchanged; the foot switch and IO ports are
     galvo inputs and are not read for a GRBL device. MCP can request a GRBL run like a galvo run and never approve it.
+- **Ruida gantries** (`machine::ruida`, a device of kind `ruida`; unverified on hardware, tested on `ruida::sim`):
+  - Only an armed run fires: `RuidaController::run_program` (a job planned from the document) and
+    `RuidaController::start_file` (a file stored on the controller) both need the `Armed` token. A program is checked
+    first (`check_program`: only a plain job's commands as `ruida::rd` writes them, no stored-file, memory, homing,
+    jog, rapid or single-axis commands, no process or array repeat, no offsets, one start and one end of file; layer
+    min/max powers of every laser within `max_power_pct`, no immediate, end or through power; speeds within
+    `max_speed_mm_s`; the first motion absolute; every point and bound on the bed); what is checked is what is sent
+    (the commands are parsed back from the bytes). Before either starts, the controller's status register must show
+    no running job.
+  - Starting a stored file (the File List's Start) is a run: `POST /api/machine/files/{index}/run` (UI only) makes a
+    pending run whose job is `DriverJob::RuidaFile {index, name}`, approved only through `approve` (the PIN or Start in
+    the app; never the foot switch, whose cycle burns only the document it framed; never MCP, which has no tool for
+    it). The driver re-reads the name at that index before starting and refuses a changed list. A stored file cannot be
+    read back, so it is run as stored (OpenEtch's own Send checked it); Require Framing cannot be met for it (refused
+    when requested and when approved); the Job Checklist, Stop At, the stop epoch and the device generation apply.
+  - Send (`POST /api/machine/files/send`, UI only) stores a program that starts with its file name (`E7 01`), which
+    makes a controller store it rather than run it (MeerK40t's emulator; unverified on hardware). It needs no
+    approval because it does not fire; as a guard against a controller that ran it instead, the status register is
+    read after every datagram while the controller answers, and the upload is stopped (`D8 01`) the moment it shows a
+    running job. A controller that takes the stream into a file (the simulator's model) keeps that read instead of
+    answering it, so the reads stop there and the status is read again after the end of file. An upload that fails or
+    is stopped part way is ended (`D8 01`, `D7`, `D8 01`) and its half file deleted, so no partial job is left to be
+    started and the controller is not left taking later commands (a Stop, the next run) into the file; when that
+    cannot be done the error says a partial file may remain, and the next connect, run, frame, Send or Start that
+    finds the controller still storing (its status read unanswered) ends that file (`D7`, `D8 01`) and refuses once,
+    naming the partial file to delete. A Send or Delete cancels pending stored-file runs (the list's numbering
+    changed).
+  - Framing is light-only: rapid moves `D9 10` with the option byte `02` ("nothing": no cut, not the red-light options,
+    whose meaning is unverified), at the controller's own travel speed, refused off the bed. Framing and the pointer
+    move the head, so they refuse MCP as for GRBL.
+  - Stop always wins: stop process `D8 01`, sent at once; a stop request is noticed between datagrams and between
+    status polls; any error, an early return or a panic in a run sends it too (a drop guard). Pause is `D8 02`,
+    resume `D8 03`. UDP is stop-and-wait and a datagram whose ACK was lost is never sent again unless it only reads.
+  - The controller's own door and water protection stay the controller's: no status bit for them is known, so the
+    approval reads no door for a Ruida device; the foot switch and the galvo IO ports are not read.
 - **Shutdown never fires and never cuts a burn short by itself** (see "Deployment", "Stopping and restarting"): once
   shutting down, `approve` refuses (before the PIN is checked) and the machine claim refuses atomically; nothing new is
   armed, framed or moved; a run already armed keeps every gate above and is only aborted by Stop, a second signal or
@@ -382,6 +417,13 @@ says otherwise. While the engine shuts down (see "Deployment"), requests for new
 | GET | `/api/machine/ports` | the engine computer's serial ports (`serial` build feature) |
 | POST | `/api/devices/grbl` | `{display_name, profile}`: a new GRBL device (UI only) |
 | GET | `/api/export/gcode` | `?ids=`: the document as a `.gcode` file for the active GRBL gantry (the lines a run would stream, checked like a run, after a `;` header); sends nothing |
+| POST | `/api/devices/ruida` | `{display_name, profile}`: a new Ruida device from a `RuidaProfile` (`address`, `magic`, `work_area_mm`, `origin`, `max_power_pct`, `max_speed_mm_s`; UI only) |
+| GET | `/api/machine/ruida` | `?refresh=true` reads an idle controller's status register and head position first. `{profile, controller: {card_id, status, running, moving, position_mm}, position: {machine, field}}`; 409 unless a Ruida gantry is active |
+| GET | `/api/machine/files` | `{files: [{index, name}]}`: the files stored on the Ruida controller (reads only; 409 while a run or frame holds it) |
+| POST | `/api/machine/files/send` | `{name, ids?}`: Send. The document (or `ids`) planned like a run and stored on the controller as `name` (1-32 printable ASCII), never started (UI only; Safety model) → `{ok, file}` |
+| POST | `/api/machine/files/{index}/delete` | `{name}`: delete stored file `index` if it is still named `name` (UI only; 409 when the list changed) |
+| POST | `/api/machine/files/{index}/run` | `{name}` → `{ok, run}`: a pending run that starts stored file `index`; approved like any run (UI only, never MCP; 409 with Require Framing on) |
+| GET | `/api/export/rd` | `?ids=`: Save RD file. The document as an `.rd` file for the active Ruida gantry (the bytes a run would send, checked like a run); sends nothing; 409 without a Ruida gantry |
 | POST | `/api/machine/axis` | `{ "z_mm" }` or `{ "steps" }` (+ `origin`): move the extension axis; UI only; no axis 400; a Z lift's `steps` must stay within its travel (400); claims the machine while it moves (a run in progress 409) |
 | GET | `/api/machine/info` | `{ connected, profile, laser_source, laser_kind, fiber_kind, axis, serial_words?, version_words?, serial_hex? }` (GetSerialNo / GetVersion, read again when idle; words not decoded) |
 | GET | `/api/preview.png` | `?width=64..=8192` (default 1600), `?jumps=false`: the preview as a PNG download (Save Preview Image) |
@@ -1090,6 +1132,15 @@ Pages, Show Notes, Managing Preferences, User Bundles, Import 3D Model, 3D Slice
   feed move when the program never uses `M3`/`M4`), one path set per `S` value; `G20`/`G21`, `G90`/`G91` and `G92`
   honoured, `G28`/`G30`/`G53`, work coordinate systems and other planes reported in a warning; travel, Z and feeds are
   not imported. The export side is `GET /api/export/gcode` (a GRBL device only: the G-code depends on the machine).
+  `art.import_rd {data_base64, origin?, bed_width_mm?, bed_height_mm?, rd_layers?}` (`.rd`, RDWorks / Ruida jobs;
+  LightBurn's third-party project import, UX-037; `fileio::rd_in` on `ruida::rd::read_rd`): the scrambling key is
+  detected, every layer's cut polylines become paths on a line layer with the file's speed, laser 1 maximum power and
+  colour (closed when they end where they start). An `.rd` file is the controller's command stream, so curves arrive
+  as polylines, fills as scan lines, images as dot rows; laser 2, a differing minimum power and unknown commands are
+  warned. Coordinates count from the machine's origin corner (`origin`, default `top_right`, as MeerK40t's writer
+  implies; unverified); `POST /api/document/import?format=rd` passes the active Ruida device's corner and bed, so with
+  `keep_position` a file saved for it lands where it was. The export side is `GET /api/export/rd` (a Ruida device
+  only); the round trip is tested.
   `art.import_gerber {content, kind: auto|gerber|excellon, invert?}` (LightBurn 2.2): RS-274X copper as closed
   outlines (`FS`, `MO`, apertures C/R/O/P with holes, `LP` clear polarity cut out, G01/G02/G03 in G74/G75, D01/D02/D03,
   regions G36/G37; draws stroked with round ends through `geom` offsets, everything unioned), `invert` gives the board
@@ -1304,6 +1355,19 @@ Origin), the public WAZER `.lbdev`, xTool/Creality `.lbdev` posts and the owner'
   a GRBL gantry is active. Not yet for GRBL: the ramp on Threshold images, Cut Through pauses (laser on), leads and
   overcut in the preview, Repeat Marking tables, queues, the
   start input, dot mode, rotary/Z jobs. LightBurn GRBL devices stay design-only gantries.
+- **Ruida gantries** (kind `ruida`, made in OpenEtch with `POST /api/devices/ruida` or the Devices window's New Ruida;
+  unverified on hardware): controllable through the Ruida driver (Safety model, "Ruida gantries"). The device holds a
+  `machine::ruida::RuidaProfile` `{address (IP; UDP 50200), magic (0x88, 0x11 for the RDC634XG), max_power_pct,
+  max_speed_mm_s, work_area_mm, origin (a corner, default rear right)}`, edited with a JSON merge patch like a GRBL
+  profile. Activation swaps the driver (`hw::Machine::swap_ruida`: a fresh `SimRuida` on the simulator; on real
+  hardware UDP to the address, no build feature needed) and back. A run is planned on the bed's target like GRBL's,
+  then each pass becomes `.rd` layers in machine mm (`ruida_dsp::rd_job_from_plan`: a new layer whenever the pass or
+  the power changes, at most 128; min and max power both the layer's power) and a `RuidaProgram`. Refused for Ruida
+  (not built): rotary/Z jobs, dot mode, pauses before/after a pass, the GRBL layer options (constant power, air
+  assist, overscan, overcut, leads and path pauses from `PassPlan.gantry`; the fill ramp, which a gantry target plans
+  into the pass's powers, from the pass's own settings), the start input, Repeat Marking tables and queues. The web UI offers the File List window (stored files: Refresh, Start…, Delete; Send the
+  current job or the selection under a name) and File > Save RD file only while a Ruida gantry is active; Start asks
+  for a pending run that is approved in the Laser window's Runs card. LightBurn DSP devices stay design-only gantries.
 - **Family** (LightBurn's `Name` is an open set, never matched against a closed list): a galvo when `Type` is
   `LibUSB`, `Name` contains Fiber or EZCad, or any `Galvo_*` setting exists; JCZ when such a `Name` contains JCZ
   (BSLFiber and EZCad3 are `galvo_other`); `unknown` for "No Machine"; everything else is a gantry (GCode/DSP).
@@ -1348,8 +1412,9 @@ Origin), the public WAZER `.lbdev`, xTool/Creality `.lbdev` posts and the owner'
 ## Ruida protocol
 
 `crates/ruida` is the protocol layer for Ruida DSP controllers (gantry CO2 machines driven by RDWorks or LightBurn),
-step 3 of the gantry roadmap (`docs/parity/ROADMAP.md`). It is protocol only: no driver, no engine integration yet
-(the gantry driver interface is built separately). Everything comes from MeerK40t's Ruida module (MIT, facts
+step 3 of the gantry roadmap (`docs/parity/ROADMAP.md`). The driver on top of it is `machine::ruida`
+(`RuidaController`, the `Driver::Ruida` variant; Safety model, "Ruida gantries"), wired into the engine by
+`engine::ruida_dsp` (Devices, "Ruida gantries"). Everything comes from MeerK40t's Ruida module (MIT, facts
 re-written in Rust; the crate docs list every command with its source). **It has never talked to Ruida hardware**:
 the in-crate simulator follows MeerK40t's emulator and client.
 
@@ -1368,7 +1433,8 @@ the in-crate simulator follows MeerK40t's emulator and client.
 - **Simulator** (`ruida::sim`, feature `sim`): ACKs datagrams (NAK on a bad checksum, as MeerK40t's emulator),
   runs commands, tracks X/Y/Z/U, records every segment and whether the laser would be on (a cut while any laser 1/2
   min or max power is non-zero), answers memory reads, stores named jobs (controller file list: count, names, run,
-  delete).
+  delete). `machine::ruida::SimRuida` puts it behind the same checksummed datagram framing as UDP for the engine's
+  simulator mode.
 
 ## CAD integrations
 

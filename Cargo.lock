@@ -419,6 +419,7 @@ dependencies = [
  "lbrn",
  "plan",
  "roxmltree 0.21.2",
+ "ruida",
  "schemars",
  "serde",
  "serde_json",
@@ -757,6 +758,7 @@ dependencies = [
  "plan",
  "resvg",
  "rmcp",
+ "ruida",
  "schemars",
  "serde",
  "serde_json",
@@ -831,6 +833,7 @@ dependencies = [
  "lopdf",
  "miniz_oxide 0.8.9",
  "roxmltree 0.21.2",
+ "ruida",
  "thiserror",
 ]
 
@@ -1518,6 +1521,7 @@ dependencies = [
  "corfile",
  "lmc",
  "nusb",
+ "ruida",
  "serde",
  "serde_json",
  "serial2",

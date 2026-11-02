@@ -9,6 +9,8 @@ publish.workspace = true
 [dependencies]
 lmc = { workspace = true }
 corfile = { workspace = true }
+# The Ruida protocol layer, with its simulator and blocking UDP channel (std only).
+ruida = { workspace = true, features = ["sim", "udp"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }

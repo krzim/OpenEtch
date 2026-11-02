@@ -549,7 +549,7 @@ fn grbl_leads_and_path_pauses_refuse_tabs_and_perforation() {
     d.object_options.insert("obj-1".into(), ObjectOptions { tabs: vec![[0.0, -5.0]], ..ObjectOptions::default() });
     assert!(matches!(plan_job(&d, &gantry), Err(PlanError::Target(m)) if m.contains("tabs or perforation")));
     // Tab settings kept with the Tabs / Bridges switch off cut no tabs: the lead is allowed and the outline is whole.
-    let off = Some(Tabs { enabled: false, ..tabs.unwrap() });
+    let off = Some(Tabs { enabled: false, count: 4, size_mm: 1.0, ..Tabs::default() });
     let d = doc_with(objects(), with_options(CutSettings::default(), CutOptions { lead_in: lead, tabs: off, ..CutOptions::default() }));
     let plan = plan_job(&d, &gantry).unwrap();
     assert_eq!((plan.passes[0].polylines.len(), plan.passes[0].gantry.lead_in), (1, lead));

@@ -66,6 +66,12 @@ impl EngineError {
             EngineError::Machine(ControllerError::Grbl(
                 machine::grbl::GrblError::Locked(_) | machine::grbl::GrblError::DoorOpen | machine::grbl::GrblError::NotIdle(_),
             )) => StatusCode::CONFLICT,
+            EngineError::Machine(ControllerError::Ruida(
+                machine::ruida::RuidaDriverError::JobRunning | machine::ruida::RuidaDriverError::FileChanged(_),
+            )) => StatusCode::CONFLICT,
+            EngineError::Machine(ControllerError::Ruida(machine::ruida::RuidaDriverError::Program(_))) => {
+                StatusCode::UNPROCESSABLE_ENTITY
+            }
             EngineError::Machine(
                 ControllerError::Refused(_)
                 | ControllerError::Field(_)

@@ -146,6 +146,7 @@ const ALL_IDS: &[&str] = &[
     "art.import_ezd",
     "art.import_hpgl",
     "art.import_gcode",
+    "art.import_rd",
     "art.import_gerber",
     "art.import_model",
     "image.edit_model",

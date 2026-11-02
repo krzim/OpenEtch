@@ -47,6 +47,7 @@ mod testgen;
 pub mod testgen_presets;
 // Files and image tools (crate fileio): exports, further imports, trace, masks, pages, notes.
 pub(crate) mod files;
+mod rd_import;
 mod image_tools;
 mod pages;
 
@@ -150,6 +151,7 @@ fn register_files(r: &mut Registry) {
     r.register::<files::ImportEzd>();
     r.register::<files::ImportHpgl>();
     r.register::<files::ImportGcode>();
+    r.register::<rd_import::ImportRd>();
     r.register::<files::ImportGerber>();
     r.register::<files::ImportModel>();
     r.register::<files::EditModel>();

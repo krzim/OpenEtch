@@ -153,6 +153,11 @@ pub(crate) async fn check_before_approve(st: &Arc<AppState>, run_revision: u64, 
             Some(Err(e)) => Err(EngineError::Machine(e)),
         };
     }
+    if st.machine.is_ruida() {
+        // A Ruida controller's door and water protection are its own (no status bit for them is known): nothing to
+        // read here. The driver refuses to start while the controller shows a job running.
+        return Ok(());
+    }
     let door = st.machine.profile().io.door_protect;
     if let Some(d) = door {
         // Reading the input waits for the controller, which a running job holds until it ends: the approval would
@@ -301,8 +306,8 @@ pub fn spawn_io_watch(st: Arc<AppState>) -> tokio::task::JoinHandle<()> {
         loop {
             let poll = if crate::approve::foot_switch_port(&st).is_some() { crate::pin::CONFIRM_POLL } else { IO_POLL };
             tokio::time::sleep(poll).await;
-            // A GRBL gantry has no input port: nothing to watch.
-            let frame_port = if st.machine.is_grbl() { None } else { st.machine.profile().io.start_framing };
+            // A gantry (GRBL, Ruida) has no galvo input port: nothing to watch.
+            let frame_port = if st.machine.is_gantry() { None } else { st.machine.profile().io.start_framing };
             let foot_port = crate::approve::foot_switch_port(&st);
             crate::cycle::sync(&st, foot_port.is_some());
             if frame_port.is_none() {

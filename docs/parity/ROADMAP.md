@@ -113,6 +113,13 @@ These are `na` today because OpenEtch only drives JCZ/BJJCZ galvos. They become 
    projects (MIT/BSD ones only). Unlocks controller file lists (`OTH-017`), Send / machine files (`JOB-065`),
    RDWorks `.rd` import (`UX-037`), rotary mode on gantries (`OTH-014`), auto-focus (`JOB-073`) and feeders
    (`OTH-016`).
+   *Status (unverified on hardware, no Ruida controller; tested on `ruida::sim`):* the Ruida driver
+   (`machine::ruida::RuidaController`, `Driver::Ruida`) over UDP, a Ruida device kind (Devices window, New Ruida),
+   runs planned to checked `.rd` programs and approved like any run, light-only framing with rapid moves, Stop as stop
+   process; the File List window (list, Start through approval, Delete) and Send (`OTH-017`, `JOB-065`); File > Save
+   RD file (`UX-007`); `.rd` import with round-trip tests (`UX-037`; SmoothieCut and MillMage files not read).
+   Still open for Ruida: rotary, auto-focus, feeders, layer pauses, air assist and the other layer options, the
+   Move window (jogging) and a real controller.
 4. **Gantry camera features** (head camera, Camera Print and Cut; `OTH-018`) and the Center Finder (`OTH-015`) once
    a gantry can move the head.
 5. **Dual-source galvos** (`LAY-018`) when someone with such a machine can test.

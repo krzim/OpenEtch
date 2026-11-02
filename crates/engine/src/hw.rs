@@ -1,5 +1,5 @@
 //! The engine's side of the laser: [`Machine`] owns the machine driver (`machine::Driver`: the galvo's LMC
-//! `Controller`, or a GRBL gantry's `GrblController`) behind its own mutex and drives it from blocking tasks, so a
+//! `Controller`, a GRBL gantry's `GrblController` or a Ruida gantry's `RuidaController`) behind its own mutex and drives it from blocking tasks, so a
 //! slow USB or serial transfer never stalls the async runtime. Also the links the engine can use
 //! ([`CountingSimLink`], [`OfflineLink`], the GRBL simulator) and the profile -> `plan::Target` mapping.
 //!
@@ -9,7 +9,8 @@
 //! `Driver::read_port` ([`Machine::read_inputs`]).
 //!
 //! The profile, correction table, GRBL profile and planning target form one [`MachineConfig`] that a device change
-//! swaps as a whole ([`Machine::swap_config`] for a galvo, [`Machine::swap_grbl`] for a GRBL gantry, under the
+//! swaps as a whole ([`Machine::swap_config`] for a galvo, [`Machine::swap_grbl`] for a GRBL gantry,
+//! [`Machine::swap_ruida`] for a Ruida gantry (simulator: `machine::ruida::SimRuida`; real hardware: UDP), under the
 //! controller lock, re-initialising the board and changing the driver when the kind changes); its `generation`
 //! tells runs planned for an earlier device apart. The link kind (simulator or real hardware) never changes: a GRBL
 //! device on the simulator runs on `machine::grbl::SimGrbl`, on real hardware on the profile's serial port.
@@ -22,6 +23,7 @@ use lmc::{LASER_ENABLE_BIT, Packet, Single};
 use machine::grbl::{
     GrblController, GrblPoll, GrblProfile, GrblSnapshot, OfflineSerial, SerialLink, SimGrbl, SimGrblConfig, SimGrblHandle, SimGrblReport,
 };
+use machine::ruida::{OfflineRuida, RuidaController, RuidaLink, RuidaPoll, RuidaProfile, RuidaSnapshot, SimRuida, SimRuidaHandle, SimRuidaReport};
 use machine::{
     AbortHandle, AxisRole, BoardInfo, Controller, ControllerError, ControllerState, Driver, DriverKind, FiberKind, InitSettings,
     InputSamples, Link, LinkError, MachineDriver, MachineProfile, PollConfig, Reply, RunControl, RunProgress, SimLink,
@@ -97,6 +99,22 @@ pub fn target_from_grbl(g: &GrblProfile) -> Target {
     gcode_settings(g).target()
 }
 
+/// The planning target for a Ruida profile: the bed (as for GRBL), its power limit, its speed limit for rapid-move
+/// time estimates.
+pub fn target_from_ruida(r: &RuidaProfile) -> Target {
+    let (mirror_x, mirror_y) = r.mirror();
+    GcodeSettings {
+        work_area_mm: r.work_area_mm,
+        mirror_x,
+        mirror_y,
+        s_max: 1000.0,
+        max_power_pct: r.max_power_pct,
+        max_feed_mm_min: r.max_speed_mm_s * 60.0,
+        dynamic_power: false,
+    }
+    .target()
+}
+
 /// What the simulated board has been sent, for the status page and for tests that prove nothing fired.
 #[derive(Debug, Default)]
 pub struct SimCounters {
@@ -113,6 +131,8 @@ pub struct SimCounters {
     wire: Mutex<Option<Vec<u8>>>,
     /// The simulated GRBL board of the current GRBL device (none while a galvo is active).
     grbl: Mutex<Option<SimGrblHandle>>,
+    /// The simulated Ruida controller of the current Ruida device.
+    ruida: Mutex<Option<SimRuidaHandle>>,
 }
 
 impl SimCounters {
@@ -169,6 +189,20 @@ impl SimCounters {
         self.grbl.lock().unwrap_or_else(PoisonError::into_inner).clone()
     }
 
+    /// The simulated Ruida controller: what it ran and stored, and whether the laser would have fired.
+    pub fn ruida_report(&self) -> Option<SimRuidaReport> {
+        self.ruida.lock().unwrap_or_else(PoisonError::into_inner).as_ref().map(SimRuidaHandle::report)
+    }
+
+    /// The simulated Ruida controller, for tests.
+    pub fn ruida_handle(&self) -> Option<SimRuidaHandle> {
+        self.ruida.lock().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
+    fn set_ruida(&self, h: Option<SimRuidaHandle>) {
+        *self.ruida.lock().unwrap_or_else(PoisonError::into_inner) = h;
+    }
+
     fn json(&self) -> Value {
         let mut v = json!({
             "singles": self.singles(),
@@ -185,6 +219,9 @@ impl SimCounters {
                 "overflowed": r.overflowed,
                 "state": r.state,
             });
+        }
+        if let Some(r) = self.ruida_report() {
+            v["ruida"] = json!(r);
         }
         v
     }
@@ -276,6 +313,8 @@ pub struct MachineConfig {
     /// The GRBL profile when a GRBL gantry is active (the driver is then GRBL and `target` is its bed); `None` for a
     /// galvo. `profile` and `cor` keep the last galvo's, unused while a GRBL device is active.
     pub grbl: Option<GrblProfile>,
+    /// The Ruida profile when a Ruida gantry is active (the driver is then Ruida and `target` is its bed).
+    pub ruida: Option<RuidaProfile>,
 }
 
 /// `Machine::running`: a run holds the machine.
@@ -298,6 +337,7 @@ pub struct Machine {
     /// The galvo controller's and the GRBL controller's polling (kept for driver changes).
     poll: PollConfig,
     grbl_poll: GrblPoll,
+    ruida_poll: RuidaPoll,
     /// [`RUN_CLAIMED`]: an approved run (or an axis move, a device change) holds the machine, from approval until it
     /// ends. [`SHUTTING_DOWN`]: the engine is shutting down and no new claim is granted. One word, so a claim and the
     /// start of a shutdown can never miss each other (module `shutdown`).
@@ -338,16 +378,26 @@ impl Machine {
     ) -> Self {
         let ctl = Controller::with_settings(link, InitSettings::default(), poll);
         let grbl_poll = if poll.interval.is_zero() { GrblPoll::immediate() } else { GrblPoll::default() };
+        // The simulated controller runs a job as it arrives, so a simulated machine needs no waiting either way.
+        let ruida_poll = if poll.interval.is_zero() || kind == LinkKind::Simulated { RuidaPoll::immediate() } else { RuidaPoll::default() };
         Machine {
             abort: ctl.abort_handle(),
             control: ctl.run_control(),
             samples: ctl.input_samples(),
             ctl: Arc::new(Mutex::new(Driver::Lmc(ctl))),
-            config: RwLock::new(Arc::new(MachineConfig { target: target_from_profile(&profile), profile, cor, generation: 0, grbl: None })),
+            config: RwLock::new(Arc::new(MachineConfig {
+                target: target_from_profile(&profile),
+                profile,
+                cor,
+                generation: 0,
+                grbl: None,
+                ruida: None,
+            })),
             kind,
             sim,
             poll,
             grbl_poll,
+            ruida_poll,
             running: AtomicU8::new(0),
             stop_epoch: AtomicU64::new(0),
             frame_gen: AtomicU64::new(0),
@@ -387,7 +437,7 @@ impl Machine {
         let generation = {
             let mut c = self.config.write().unwrap_or_else(PoisonError::into_inner);
             let generation = c.generation + 1;
-            *c = Arc::new(MachineConfig { target: target_from_profile(&profile), profile, cor, generation, grbl: None });
+            *c = Arc::new(MachineConfig { target: target_from_profile(&profile), profile, cor, generation, grbl: None, ruida: None });
             generation
         };
         let link: Box<dyn Link> = match (&self.sim, self.kind) {
@@ -396,9 +446,10 @@ impl Machine {
         };
         match ctl {
             Driver::Lmc(c) => c.replace_link(link),
-            Driver::Grbl(_) => {
+            Driver::Grbl(_) | Driver::Ruida(_) => {
                 if let Some(counters) = &self.sim {
                     *counters.grbl.lock().unwrap_or_else(PoisonError::into_inner) = None;
+                    counters.set_ruida(None);
                 }
                 *ctl = Driver::Lmc(Controller::with_handles(
                     link,
@@ -428,6 +479,7 @@ impl Machine {
                 cor: c.cor.clone(),
                 generation,
                 grbl: Some(grbl.clone()),
+                ruida: None,
             });
             generation
         };
@@ -436,6 +488,7 @@ impl Machine {
                 let sim =
                     SimGrbl::with_config(&SimGrblConfig { s_max: grbl.s_max, s_min: grbl.s_min, homing: grbl.homing, ..SimGrblConfig::default() });
                 *counters.grbl.lock().unwrap_or_else(PoisonError::into_inner) = Some(sim.handle());
+                counters.set_ruida(None);
                 Box::new(sim)
             }
             _ => Box::new(OfflineSerial),
@@ -446,9 +499,69 @@ impl Machine {
         self.ensure_ready(ctl).map(|()| generation)
     }
 
+    /// Make a Ruida gantry the machine (a device change): the driver becomes a `RuidaController` (sharing the stop and
+    /// pause handles) on a fresh simulated controller, or on real hardware on UDP to the profile's address (opened by
+    /// [`Machine::ensure_ready`]). The galvo profile stays in the config, unused. Same rules as
+    /// [`Machine::swap_config`].
+    pub fn swap_ruida(&self, ctl: &mut Ctl, ruida: RuidaProfile) -> Result<u64, ControllerError> {
+        ruida.validate()?;
+        let generation = {
+            let mut c = self.config.write().unwrap_or_else(PoisonError::into_inner);
+            let generation = c.generation + 1;
+            *c = Arc::new(MachineConfig {
+                target: target_from_ruida(&ruida),
+                profile: c.profile.clone(),
+                cor: c.cor.clone(),
+                generation,
+                grbl: None,
+                ruida: Some(ruida.clone()),
+            });
+            generation
+        };
+        let link: Box<dyn RuidaLink> = match (&self.sim, self.kind) {
+            (Some(counters), LinkKind::Simulated) => {
+                let sim = SimRuida::new(ruida.magic);
+                *counters.grbl.lock().unwrap_or_else(PoisonError::into_inner) = None;
+                counters.set_ruida(Some(sim.handle()));
+                Box::new(sim)
+            }
+            _ => Box::new(OfflineRuida),
+        };
+        let mut r = RuidaController::with_handles(link, self.ruida_poll, self.abort.clone(), self.control.clone());
+        r.set_frame_cancel(self.frame_cancel.clone());
+        *ctl = Driver::Ruida(r);
+        self.ensure_ready(ctl).map(|()| generation)
+    }
+
     /// Whether the active machine is a GRBL gantry.
     pub fn is_grbl(&self) -> bool {
         self.config().grbl.is_some()
+    }
+
+    /// Whether the active machine is a Ruida gantry.
+    pub fn is_ruida(&self) -> bool {
+        self.config().ruida.is_some()
+    }
+
+    /// Whether the active machine is a gantry (GRBL or Ruida): framing moves its head, it has no galvo inputs.
+    pub fn is_gantry(&self) -> bool {
+        let c = self.config();
+        c.grbl.is_some() || c.ruida.is_some()
+    }
+
+    /// The Ruida profile of the active machine.
+    pub fn ruida_profile(&self) -> Option<RuidaProfile> {
+        self.config().ruida.clone()
+    }
+
+    /// The Ruida controller as last seen, without waiting for the driver (`None` while a run or frame holds it, or for
+    /// another driver).
+    pub fn ruida_snapshot(&self) -> Option<RuidaSnapshot> {
+        match self.ctl.try_lock() {
+            Ok(ctl) => ctl.ruida().map(RuidaController::snapshot),
+            Err(TryLockError::Poisoned(p)) => p.into_inner().ruida().map(RuidaController::snapshot),
+            Err(TryLockError::WouldBlock) => None,
+        }
     }
 
     /// The GRBL profile of the active machine.
@@ -459,12 +572,18 @@ impl Machine {
     /// The default frame (pointer or head) speed, mm/s: the galvo's red-light speed, or the GRBL frame feed.
     pub fn frame_speed_mm_s(&self) -> f64 {
         let c = self.config();
+        if let Some(r) = &c.ruida {
+            return r.max_speed_mm_s;
+        }
         c.grbl.as_ref().map_or(c.profile.red_light_speed_mm_s, |g| g.frame_feed_mm_min / 60.0)
     }
 
     /// The fastest frame speed allowed, mm/s.
     pub fn max_frame_speed_mm_s(&self) -> f64 {
         let c = self.config();
+        if let Some(r) = &c.ruida {
+            return r.max_speed_mm_s;
+        }
         c.grbl.as_ref().map_or(c.profile.max_jump_speed_mm_s, |g| g.max_feed_mm_min / 60.0)
     }
 
@@ -638,6 +757,26 @@ impl Machine {
         let config = self.config();
         let ctl = match ctl {
             Driver::Lmc(c) => c,
+            Driver::Ruida(r) => {
+                let profile = config.ruida.clone().ok_or_else(|| ControllerError::Refused("a Ruida driver without a Ruida profile".into()))?;
+                if self.kind == LinkKind::Usb {
+                    r.replace_link(open_ruida(&profile)?);
+                }
+                return match r.init(&profile) {
+                    Ok(info) => {
+                        tracing::info!(card_id = %info.card_id, job_running = info.running, "Ruida controller initialised");
+                        self.set_error(None);
+                        Ok(())
+                    }
+                    Err(e) => {
+                        if self.kind == LinkKind::Usb {
+                            r.replace_link(Box::new(OfflineRuida));
+                        }
+                        self.set_error(Some(e.to_string()));
+                        Err(e)
+                    }
+                };
+            }
             Driver::Grbl(g) => {
                 let grbl = config.grbl.clone().ok_or_else(|| ControllerError::Refused("a GRBL driver without a GRBL profile".into()))?;
                 if self.kind == LinkKind::Usb {
@@ -740,11 +879,16 @@ impl Machine {
         let framing = self.is_framing();
         let simulated = self.kind == LinkKind::Simulated;
         let config = self.config();
-        let driver = if config.grbl.is_some() { DriverKind::Grbl } else { DriverKind::Lmc };
+        let driver = match (&config.grbl, &config.ruida) {
+            (Some(_), _) => DriverKind::Grbl,
+            (None, Some(_)) => DriverKind::Ruida,
+            (None, None) => DriverKind::Lmc,
+        };
         let link = match (simulated, driver) {
             (true, _) => "sim",
             (false, DriverKind::Lmc) => "usb",
             (false, DriverKind::Grbl) => "serial",
+            (false, DriverKind::Ruida) => "udp",
         };
         let mut v = json!({
             "connected": initialised,
@@ -771,6 +915,13 @@ impl Machine {
             v["max_power_pct"] = json!(g.max_power_pct);
             v["grbl"] = json!({ "profile": g, "board": self.grbl_snapshot() });
         }
+        if let Some(r) = &config.ruida {
+            v["work_area_mm"] = json!(r.work_area_mm);
+            v["field_mm"] = json!(r.work_area_mm[0]);
+            v["field_height_mm"] = json!(r.work_area_mm[1]);
+            v["max_power_pct"] = json!(r.max_power_pct);
+            v["ruida"] = json!({ "profile": r, "controller": self.ruida_snapshot() });
+        }
         v
     }
 }
@@ -793,6 +944,14 @@ fn open_usb() -> Result<Box<dyn Link>, ControllerError> {
 #[cfg(not(feature = "usb"))]
 fn open_usb() -> Result<Box<dyn Link>, ControllerError> {
     Err(LinkError::Unsupported("this build has no USB support (build with --features usb)".into()).into())
+}
+
+/// UDP to a Ruida controller (std only, no build feature): the profile's address, port 50200.
+fn open_ruida(r: &RuidaProfile) -> Result<Box<dyn RuidaLink>, ControllerError> {
+    let ip = r
+        .ip()
+        .ok_or_else(|| ControllerError::Refused("the Ruida device has no controller address; set it in Devices".into()))?;
+    Ok(Box::new(machine::ruida::UdpRuidaLink::open(ip, r.magic)?))
 }
 
 #[cfg(feature = "serial")]

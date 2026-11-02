@@ -17,10 +17,11 @@ import type { MachineStatus, Vec2 } from "./types.ts";
 import { tr } from "../workspace/tr.ts";
 
 /**
- * What kind of controller a device is. OpenEtch drives `jcz_galvo` and `grbl` (a GRBL 1.1 gantry made in OpenEtch;
- * unverified on hardware); `gantry` is a LightBurn gantry kept design-only.
+ * What kind of controller a device is. OpenEtch drives `jcz_galvo`, `grbl` (a GRBL 1.1 gantry made in OpenEtch) and
+ * `ruida` (a Ruida DSP gantry made in OpenEtch; both unverified on hardware); `gantry` is a LightBurn gantry kept
+ * design-only.
  */
-export type DeviceKind = "jcz_galvo" | "grbl" | "gantry" | "galvo_other" | "unknown";
+export type DeviceKind = "jcz_galvo" | "grbl" | "ruida" | "gantry" | "galvo_other" | "unknown";
 
 /** Where a device came from. */
 export type DeviceSource = "builtin" | "lightburn-prefs" | "lbdev" | "manual";
@@ -97,7 +98,7 @@ function pos(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null;
 }
 
-const KINDS: readonly DeviceKind[] = ["jcz_galvo", "grbl", "gantry", "galvo_other", "unknown"];
+const KINDS: readonly DeviceKind[] = ["jcz_galvo", "grbl", "ruida", "gantry", "galvo_other", "unknown"];
 
 /** Whether a device kind is a galvo (square field, centre origin). */
 export function isGalvo(kind: DeviceKind | string): boolean {
@@ -402,6 +403,8 @@ export function kindLabel(kind: DeviceKind | string): string {
       return "Galvo";
     case "grbl":
       return "GRBL gantry";
+    case "ruida":
+      return "Ruida gantry";
     case "gantry":
       return "Gantry";
     default:
