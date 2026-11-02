@@ -570,6 +570,11 @@ function TextOverlay(p: {
     const px = Math.min(300, Math.max(12, look.height_mm * editor.scale * r.scale));
     const lines = editor.value.split("\n");
     const cols = Math.max(4, ...lines.map((l) => l.length + 2));
+    // Touch (T11): iOS zooms the page into a field under 16 px. The field keeps a 16 px font and is scaled down to the
+    // canvas size instead (scale before translate, so the alignment offset is in the visible size).
+    const coarse = typeof document !== "undefined" && document.documentElement.dataset.pointer === "coarse";
+    const fontPx = coarse ? Math.max(16, px) : px;
+    const k = px / fontPx;
     edit = (
       <textarea
         ref={p.areaRef}
@@ -585,13 +590,13 @@ function TextOverlay(p: {
           left: s[0],
           top: s[1],
           fontFamily: look.font ? cssFontFamily(look.font) : "sans-serif",
-          fontSize: px,
+          fontSize: fontPx,
           fontWeight: look.bold ? 700 : 400,
           fontStyle: look.italic ? "italic" : "normal",
           textTransform: look.upper ? "uppercase" : "none",
           textAlign: cssTextAlign(alignH),
           width: `${cols}ch`,
-          transform: `rotate(${-editor.rot}deg) translate(${tx}%, ${ty}%)`,
+          transform: `rotate(${-editor.rot}deg)${k !== 1 ? ` scale(${k})` : ""} translate(${tx}%, ${ty}%)`,
         }}
         onChange={(e) => p.onChange(e.target.value)}
         onBlur={(e) => {

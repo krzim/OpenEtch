@@ -72,4 +72,6 @@ export const EN_RIBBON = {
   "rb.lightburn": "LightBurn",
   "rb.laserMenu": "Laser",
   "rb.settings": "Settings",
+  "rb.decrease": "Decrease {label}",
+  "rb.increase": "Increase {label}",
 };

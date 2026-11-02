@@ -1,0 +1,31 @@
+/* Number field steppers (components/ui.tsx NumberField `stepper`, coarse pointers only). Owner: P2. */
+
+.field-input .field-step {
+  flex: none;
+  min-width: var(--hit, 44px);
+  min-height: var(--hit, 44px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md, 4px);
+  background: var(--chrome);
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: pointer;
+}
+
+.field-input .field-step:active:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.field-input .field-step:disabled {
+  opacity: 0.4;
+  cursor: default;
+}

@@ -72,4 +72,6 @@ export const ES_RIBBON: Messages = {
   "rb.lightburn": "LightBurn",
   "rb.laserMenu": "Láser",
   "rb.settings": "Configuración",
+  "rb.decrease": "Disminuir {label}",
+  "rb.increase": "Aumentar {label}",
 };

@@ -3,7 +3,10 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { evalNumber } from "../editing.ts";
-import { useUnitConversion } from "../workspace/usePrefs.ts";
+import { useT, useUnitConversion } from "../workspace/usePrefs.ts";
+import { useLayoutMode } from "../workspace/layoutMode.ts";
+import { holdDelay, numericInputProps, stepValue } from "./numericInput.ts";
+import "./fields.css";
 import { trimNumber } from "../workspace/units.ts";
 
 /**
@@ -20,12 +23,82 @@ export function fmt(v: number | null | undefined, digits = 3): string {
   return Object.is(r, -0) ? "0" : String(r);
 }
 
+/** A coarse pointer (or Density = Touch): number fields with `stepper` show −/+ buttons. */
+function useTouchFields(): boolean {
+  const l = useLayoutMode();
+  return l.pointer === "coarse" || l.density === "touch";
+}
+
+/**
+ * −/+ buttons beside a number field (coarse pointers). A tap steps once and commits; holding repeats (the field shows
+ * the running value) and commits once on release, so a hold is one undo step.
+ */
+function Steppers(p: { label: string; value: number | null; step: number; min?: number; max?: number; disabled?: boolean; onShow: (v: number) => void; onCommit: (v: number) => void }) {
+  const t = useT();
+  const held = useRef<number | null>(null);
+  const timer = useRef<number | undefined>(undefined);
+  const P = useRef(p);
+  P.current = p;
+  const stop = (commit: boolean) => {
+    window.clearTimeout(timer.current);
+    const v = held.current;
+    held.current = null;
+    if (commit && v !== null && v !== P.current.value) P.current.onCommit(v);
+  };
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  const start = (dir: 1 | -1) => {
+    const q = P.current;
+    held.current = stepValue(q.value, q.step, dir, q.min, q.max);
+    q.onShow(held.current);
+    let n = 0;
+    const tick = () => {
+      const r = P.current;
+      if (held.current === null) return;
+      held.current = stepValue(held.current, r.step, dir, r.min, r.max);
+      r.onShow(held.current);
+      timer.current = window.setTimeout(tick, holdDelay(++n));
+    };
+    timer.current = window.setTimeout(tick, holdDelay(0));
+  };
+  const btn = (dir: 1 | -1) => (
+    <button
+      type="button"
+      className="field-step"
+      tabIndex={-1}
+      disabled={p.disabled}
+      aria-label={t(dir < 0 ? "rb.decrease" : "rb.increase", { label: p.label })}
+      onPointerDown={(e) => {
+        e.preventDefault();
+        e.currentTarget.setPointerCapture?.(e.pointerId);
+        start(dir);
+      }}
+      onPointerUp={() => stop(true)}
+      onPointerCancel={() => stop(false)}
+      onLostPointerCapture={() => stop(true)}
+      onClick={(e) => {
+        // Keyboard or assistive activation (no pointer press): one step.
+        if (e.detail !== 0) return;
+        const q = P.current;
+        q.onCommit(stepValue(q.value, q.step, dir, q.min, q.max));
+      }}
+    >
+      {dir < 0 ? "−" : "+"}
+    </button>
+  );
+  return (
+    <>
+      {btn(-1)}
+      {btn(1)}
+    </>
+  );
+}
+
 /**
  * A number entry whose value stays in engine units (mm): with Preferences set to inches the field shows and takes
  * inches (workspace/usePrefs.ts) and hands the converted mm text back, like NumberField. For dialogs that keep the
  * text and parse it on submit.
  */
-export function UnitTextField(props: { label: string; value: string; onChange: (v: string) => void; unit?: string; title?: string }) {
+export function UnitTextField(props: { label: string; value: string; onChange: (v: string) => void; unit?: string; title?: string; signed?: boolean }) {
   const conv = useUnitConversion(props.unit);
   // What the user typed, kept while the parent's value is still the one that text produced.
   const [typed, setTyped] = useState<{ text: string; value: string } | null>(null);
@@ -46,7 +119,7 @@ export function UnitTextField(props: { label: string; value: string; onChange: (
     <label className="field" title={props.title}>
       <span className="field-label">{props.label}</span>
       <span className="field-input">
-        <input type="text" inputMode="decimal" value={shown} onChange={(e) => change(e.target.value)} />
+        <input type="text" {...numericInputProps(!!props.signed)} aria-label={props.label} value={shown} onChange={(e) => change(e.target.value)} />
         {conv.unit && <span className="unit">{conv.unit}</span>}
       </span>
     </label>
@@ -70,6 +143,10 @@ export function NumberField(props: {
   allowEmpty?: boolean;
   placeholder?: string;
   disabled?: boolean;
+  /** Takes a sign (X/Y, rotation, offsets): the text keyboard on phones and tablets, which has "-" and "/". */
+  signed?: boolean;
+  /** −/+ buttons with press-and-hold on coarse pointers (power, speed, passes, frequency, size). */
+  stepper?: boolean;
 }) {
   // Lengths and speeds show in the display unit chosen in Preferences; the value committed is always the engine's.
   const conv = useUnitConversion(props.unit);
@@ -82,6 +159,7 @@ export function NumberField(props: {
   const [text, setText] = useState(fmt(value, digits));
   const [clamped, setClamped] = useState<string | null>(null);
   const editing = useRef(false);
+  const touch = useTouchFields();
   useEffect(() => {
     if (!editing.current) setText(fmt(value, digits));
   }, [value, digits]);
@@ -124,7 +202,8 @@ export function NumberField(props: {
       <span className="field-input">
         <input
           type="text"
-          inputMode="decimal"
+          {...numericInputProps(!!props.signed)}
+          aria-label={props.label}
           value={text}
           placeholder={props.placeholder}
           disabled={props.disabled}
@@ -148,6 +227,21 @@ export function NumberField(props: {
           }}
         />
         {unit && <span className="unit">{unit}</span>}
+        {props.stepper && touch && (
+          <Steppers
+            label={props.label}
+            value={value}
+            step={props.step ?? 1}
+            min={min}
+            max={max}
+            disabled={props.disabled}
+            onShow={(v) => setText(fmt(v, digits))}
+            onCommit={(v) => {
+              setText(fmt(v, digits));
+              if (value === null || Math.abs(v - value) > 1e-9) onCommit(v);
+            }}
+          />
+        )}
       </span>
       {clamped && (
         <span className="field-note" role="status">
@@ -162,7 +256,15 @@ export function NumberField(props: {
  * Two numbers edited together (X and Y): one commit, so one undo step, when Enter is pressed or focus leaves the pair.
  * Values commit rounded to micrometres. Maths works as in NumberField.
  */
-export function PairField(props: { labels: [string, string]; unit?: string; value: [number, number]; onCommit: (v: [number, number]) => void; digits?: number }) {
+export function PairField(props: {
+  labels: [string, string];
+  unit?: string;
+  value: [number, number];
+  onCommit: (v: [number, number]) => void;
+  digits?: number;
+  /** The values take a sign (positions): the text keyboard on touch, with "-" and "/". */
+  signed?: boolean;
+}) {
   const conv = useUnitConversion(props.unit);
   const digits = (props.digits ?? 3) + conv.extraDigits;
   const value: [number, number] = [conv.to(props.value[0]), conv.to(props.value[1])];
@@ -196,7 +298,8 @@ export function PairField(props: { labels: [string, string]; unit?: string; valu
       <span className="field-input">
         <input
           type="text"
-          inputMode="decimal"
+          {...numericInputProps(!!props.signed)}
+          aria-label={props.labels[i]}
           value={text[i]}
           onFocus={() => (editing.current = true)}
           onChange={(e) => {
