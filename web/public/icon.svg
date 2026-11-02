@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- OpenEtch app icon: the top bar's orange/blue brand mark on the dark chrome tile. Source of icon-192.png,
+       icon-512.png and favicon-32.png (rendered with resvg 0.49; icon-maskable.svg is the full-bleed variant). -->
+  <defs>
+    <clipPath id="m">
+      <rect x="112" y="112" width="288" height="288" rx="44" />
+    </clipPath>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="#23262a" />
+  <g clip-path="url(#m)">
+    <path d="M112 112H400L112 400Z" fill="#f37021" />
+    <path d="M400 112V400H112Z" fill="#0696d7" />
+  </g>
+  <path d="M106 406L406 106" stroke="#23262a" stroke-width="14" stroke-linecap="round" />
+  <circle cx="256" cy="256" r="22" fill="#ffffff" />
+  <circle cx="256" cy="256" r="40" fill="none" stroke="#ffffff" stroke-opacity="0.35" stroke-width="6" />
+</svg>

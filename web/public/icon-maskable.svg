@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Full-bleed variant of icon.svg for icon-maskable-512.png and apple-touch-icon.png: the platform cuts its own
+       shape, so the tile is square and the mark stays inside the 80 % safe circle. -->
+  <defs>
+    <clipPath id="m">
+      <rect x="136" y="136" width="240" height="240" rx="36" />
+    </clipPath>
+  </defs>
+  <rect width="512" height="512" fill="#23262a" />
+  <g clip-path="url(#m)">
+    <path d="M136 136H376L136 376Z" fill="#f37021" />
+    <path d="M376 136V376H136Z" fill="#0696d7" />
+  </g>
+  <path d="M131 381L381 131" stroke="#23262a" stroke-width="12" stroke-linecap="round" />
+  <circle cx="256" cy="256" r="18" fill="#ffffff" />
+  <circle cx="256" cy="256" r="33" fill="none" stroke="#ffffff" stroke-opacity="0.35" stroke-width="5" />
+</svg>
