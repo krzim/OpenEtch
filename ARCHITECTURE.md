@@ -11,6 +11,40 @@ One engine binary (`crates/engine`) runs either on a Raspberry Pi 4/5 that sits 
 USB, or on a Mac/PC cabled to the laser. It serves the web UI and an MCP endpoint over the network. Browsers (iPad,
 Mac, PC, phone) and Claude are clients of the same live document. The engine is the only process that touches USB.
 
+**Stopping and restarting** (module `engine::shutdown`). A stop or restart never cuts a burn short by itself. On the
+first SIGTERM (what `systemctl stop|restart` sends) or SIGINT (Ctrl-C; Ctrl-C on Windows) the engine refuses new work
+for good (approvals, Start, the foot switch, run requests including MCP's `job_request_run`, frames and the red-dot
+jog, axis and GRBL moves, device changes: **503** `code: "shutting_down"`), cancels pending runs, ends the foot switch
+cycle and stops any frame (pointer off). A run that already holds the machine (approved, waiting for its confirmation
+or start input, running, paused) is left to end by itself, still obeying Stop, the door and the stop input; a
+continuous run is asked to end after its current iteration, a run of N iterations finishes all N. The log says what
+it waits for, with the time estimate, every 30 s. Then the engine exits with the pointer off and the board idle (an
+idle board gets no abort sequence; the next start's board init is harmless then). A **second signal**, or the grace
+limit `--shutdown-grace-secs` (default 3600 s, at most 604800; **0** aborts at once) running out, aborts the run with
+the normal abort sequence (as Stop) before exiting. The HTTP server keeps serving until the engine exits, so Stop
+works throughout and `GET /api/machine` reports `shutting_down: true` and `shutdown` (signal, since, grace,
+`abort_at_unix_s`, `aborting`, `waiting_for_run`); the web app shows an "ENGINE SHUTTING DOWN" badge. The run claim
+and the shutdown share one atomic word (`hw::Machine::begin_shutdown`), so an approval racing a signal is either
+refused or waited for, never lost. Afterwards open event sockets are closed and other connections get 5 s.
+
+**Raspberry Pi service (systemd).** systemd sends SIGKILL `TimeoutStopSec` after SIGTERM (90 s by default), which
+would cut the burn short after all, so the unit needs `TimeoutStopSec` at least the grace limit, e.g.:
+
+```ini
+[Service]
+ExecStart=/home/pi/openetch/openetch --usb --listen 0.0.0.0:7878 --shutdown-grace-secs 3600
+TimeoutStopSec=3660
+KillMode=mixed
+```
+
+(`KillMode=mixed` sends SIGTERM to the engine only; `systemctl restart` then returns once the job has finished and the
+engine has exited.) `tools/pi/safe-restart.sh [--force] [--url URL] [--service NAME]` (POSIX sh; curl and jq or
+python3) restarts the service only while `GET /api/machine` shows no run (`running`, `job.active`); with a token
+listening off loopback it takes `OPENETCH_TOKEN` from the environment and hands it to curl on stdin, never on a
+command line and never printed. It refuses (exit 3) while a burn runs, or when it cannot read the state, unless
+`--force` (and even then the engine still lets the job finish within the grace limit). Unverified on the Pi and on
+the laser: tested on the simulator only.
+
 ## Crates
 
 | Crate | Role | Depends on | Native-only? |
@@ -264,6 +298,10 @@ computer while nobody watches it; the foot switch is the approval path that need
     parser state at `M5` (a start-up block cleared after the reset that ran it can leave `M3 S...` active).
   - Approval, Require Framing, the checklist and the stop epoch apply unchanged; the foot switch and IO ports are
     galvo inputs and are not read for a GRBL device. MCP can request a GRBL run like a galvo run and never approve it.
+- **Shutdown never fires and never cuts a burn short by itself** (see "Deployment", "Stopping and restarting"): once
+  shutting down, `approve` refuses (before the PIN is checked) and the machine claim refuses atomically; nothing new is
+  armed, framed or moved; a run already armed keeps every gate above and is only aborted by Stop, a second signal or
+  the grace limit, through the normal abort sequence.
 - The engine holds no link of its own and reaches the board only through `Controller` methods: a freshly opened USB
   link is swapped in with `Controller::replace_link` (which forgets the init), and the physical confirmation reads
   inputs with `Controller::read_port`.
@@ -271,7 +309,8 @@ computer while nobody watches it; the foot switch is the approval path that need
 ## Engine API (HTTP, JSON)
 
 Errors are `{ "ok": false, "error": "..." }` with a real HTTP status (400, 403, 404, 409, 422, 502) unless the row
-says otherwise. `origin` is `"ui"` (default), `"script"` or `"agent:<name>"`.
+says otherwise. While the engine shuts down (see "Deployment"), requests for new work answer **503**
+`{ ok: false, error, code: "shutting_down" }`. `origin` is `"ui"` (default), `"script"` or `"agent:<name>"`.
 
 | Method | Path | Body / result |
 |---|---|---|
@@ -287,7 +326,7 @@ says otherwise. `origin` is `"ui"` (default), `"script"` or `"agent:<name>"`.
 | GET | `/api/preview` | planned job: `{ segments: [{kind: "jump"|"mark", layer, pass, from: [x,y], to: [x,y], emits, power_pct?}], passes: [{layer_id, sub_layer, repeat, segments, mark_length_mm, jump_length_mm, estimated_time_s}], stats, layers: [{layer_id, name, color, mode, output, visible, passes, segments, mark_length_mm, jump_length_mm, estimated_time_s, sub_layers: [{sub_layer, name, label, cleanup, mode, power_pct, speed_mm_s, frequency_khz, pulse_width_ns, passes, planned_passes, segments, mark_length_mm, jump_length_mm, estimated_time_s}]}], warnings }` in field mm. `pass` indexes `passes`, the job's passes in burn order (a jump belongs to the pass it travels into); `sub_layer` is 0 for a layer's main settings and n for `sub_layers[n - 1]`; `layers` lists every document layer in order (zeros for layers with nothing to mark or output off; layer times leave out the job's start-up delay), each with its main settings and sub-layers (`label` "Main", the name, "Cleanup" or "Sub-layer n"; `passes` asked for, `planned_passes` planned, and their share of the layer's totals); `power_pct` is set on marks whose power differs from their pass's (grayscale image runs); `warnings` are things the plan left out (none at present). `?layers=id1,id2` keeps only those layers' segments and entries (stats and `passes` stay the whole job's). An empty document is an empty preview; a planning error (out of field, power above the limit, too many passes/segments) is **422** |
 | GET | `/api/fill_regions` | `{ layers: [{layer_id, name, color, mode, visible, output, paths: [d], object_ids: [id]}] }`: for every layer whose mode is `fill` or `fill_then_line`, one SVG path per object (its closed subpaths, field mm, +Y up, flattened at 0.05 mm) to draw with `fill-rule: evenodd`, which is exactly the area the hatch covers. Display only |
 | GET | `/api/preview.svg` | rendered preview (stock, objects, toolpath; `?jumps=false` hides travel); still renders the document on a planning error |
-| GET | `/api/machine` | `connected`, `simulated`, `busy`, `state`, `running`, `framing`, `field_mm`, `profile`, `device` (the active device's summary, see `GET /api/devices`), `max_power_pct`, `last_error`, `sim_counters`, `approval: { pin_set, pin_changed, locked_until_unix_s: null \| n, sim_pin (the simulator test PIN is in use, see "Safety model"), physical_confirm: null \| { input_bit, timeout_s }, mode: "pin" \| "click" (no PIN: Start in the app or the foot switch), foot_switch: null \| { input_bit, active_low } (the input that drives the foot switch cycle, in the click mode only) }`, `foot_cycle: { available, phase: "off" \| "framing" \| "burning", revision, run_id, since_unix_s, idle_timeout_s, notice }` (the foot switch cycle, see "Safety model"), `focus_light` (the active device can light a focus pointer: framing's `pointer: focus \| both` work), `lightburn: null \| { device, field_mm, diffs: [{field, base_value, lightburn_value, note}] }` (the active profile compared with the matched LightBurn device, see "LightBurn devices"), `pending_runs: [Run]`, `runs: [Run]` |
+| GET | `/api/machine` | `connected`, `simulated`, `busy`, `state`, `running`, `framing`, `field_mm`, `profile`, `device` (the active device's summary, see `GET /api/devices`), `max_power_pct`, `last_error`, `sim_counters`, `approval: { pin_set, pin_changed, locked_until_unix_s: null \| n, sim_pin (the simulator test PIN is in use, see "Safety model"), physical_confirm: null \| { input_bit, timeout_s }, mode: "pin" \| "click" (no PIN: Start in the app or the foot switch), foot_switch: null \| { input_bit, active_low } (the input that drives the foot switch cycle, in the click mode only) }`, `foot_cycle: { available, phase: "off" \| "framing" \| "burning", revision, run_id, since_unix_s, idle_timeout_s, notice }` (the foot switch cycle, see "Safety model"), `shutting_down` (bool) and `shutdown: null \| { signal, since_unix_s, grace_s, abort_at_unix_s, aborting, waiting_for_run }` (a graceful shutdown, see "Deployment"), `focus_light` (the active device can light a focus pointer: framing's `pointer: focus \| both` work), `lightburn: null \| { device, field_mm, diffs: [{field, base_value, lightburn_value, note}] }` (the active profile compared with the matched LightBurn device, see "LightBurn devices"), `pending_runs: [Run]`, `runs: [Run]` |
 | GET | `/api/lightburn` | `{ available, source: "file" \| "uploaded" \| null, default_device: name \| null, devices: [{name, display_name, field_mm, width_mm, height_mm}] }` (only these fields); `default_device` is the device used when a LightBurn file names none |
 | POST | `/api/lightburn/prefs` | LightBurn's `prefs.ini` as the raw body (at most 2 MB, else **413**): parses `DeviceList` in memory and stores only the parsed devices (`<config-dir>/lightburn-devices.json`), for an engine on a Pi without LightBurn; answers like `GET /api/lightburn`; no devices, not JSON or not UTF-8 is 400. Emits `machine` event `lightburn` |
 | DELETE | `/api/lightburn/prefs` | forgets the uploaded devices (the local `prefs.ini` is used again, if any); answers like `GET /api/lightburn`; emits `machine` event `lightburn` |
@@ -829,7 +868,8 @@ Default listen address `127.0.0.1:7878`. Other options: `--profile`, `--web-dir`
 location, a missing file is fine), `--lightburn-device <name>` (the LightBurn device `GET /api/lightburn` and the
 machine status compare with), `--device <id or name>` (the OpenEtch device for this run, overriding the stored active
 one without changing it), `--sim-pin <digits>` (simulator only: a test operator PIN held in memory, see "Safety
-model"); `openetch devices list` and `openetch devices import <file> [--add all|<name>]` (both
+model"), `--shutdown-grace-secs <s>` (how long SIGTERM/SIGINT waits for a running job, default 3600, 0 aborts at
+once; see "Deployment"); `openetch devices list` and `openetch devices import <file> [--add all|<name>]` (both
 `[--config-dir P] [--profile P]`; see "Devices"); `openetch set-pin [--reset] [--config-dir <path>]` sets, changes
 or deletes the operator PIN (restart the engine afterwards); `openetch profile from-lightburn [--prefs P] [--device
 NAME] [--base PROFILE] --out FILE [--force]` prints the diff table and writes a profile TOML for a LightBurn device
