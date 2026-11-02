@@ -742,6 +742,31 @@ geometry in place drops its `extras` (kept LightBurn shape data no longer descri
   layer and outline to 1 µm, whole document by default), `path.convert`, `path.optimize` (below), `path.fillet {ids,
   radius_mm, corners: "all" | [node]}` (negative radius bites; a whole rectangle keeps its corner radius), `path.trim
   {id, at, pick_mm?}`, `path.reverse`.
+- `path.fill_region {points, layer?, boundary_ids? | boundary_layers?, open_paths = true, gap_mm = 0, holes = true,
+  name?}` (Fill Region, a paint bucket; `fill_region.rs`, `geom::fill_region`): one new closed shape per area that the
+  lines around a point enclose, on `layer` (default the first layer; the UI sends the current one). Lines are every
+  vector object on a visible layer, output on or off (or only the listed objects / groups, or the objects on the
+  listed layers, shown or hidden); text counts by its outline, images never. Crossings, T-junctions, shared and
+  duplicated edges and self-intersections all split the plane (a planar arrangement), lines that end inside an area
+  do not, and islands inside the area become holes (the pupil in an eye white) unless `holes: false`. `gap_mm` (at
+  most 10) closes openings narrower than it: the lines are thickened to a band that wide, the free space around the
+  point is grown back by half of it and clipped to the exact area, so only the closed gaps (a bulge at most `gap/2`)
+  and corners sharper than the band differ from the lines. Points in one area make one shape; all of them are one undo
+  step, and a point that is not inside a closed area (or lies on a line) fails the whole command with a message per
+  point, changing nothing. At most 256 points. Curves are flattened at 0.01 mm. How it scales: `i_overlay` slices a
+  square window around each point by only the lines that reach into it (chunks of 32 segments in a uniform grid); the
+  piece holding the point is the area when it stays clear of the window's border (lines outside the window cannot cut
+  it), else the window grows x4 until it holds every line, and a piece that still reaches the border is open. A piece
+  that reaches the border is first checked against a coarse map of the free space joined to the outside (grid cells
+  no line comes near; conservative), so a point in open space fails after one small window instead of slicing the
+  whole drawing; with a gap, only the lines within half the gap of the exact area are thickened. Gaps below 0.001 mm
+  count as 0.
+  `path.fill_region_preview {points, ...the same options}` (query) returns the outlines without creating anything:
+  `faces [{contours, area_mm2, bounds}]`, `points [{point, face} | {point, face: null, error, code: not_enclosed |
+  on_line}]`. The web tool (ribbon MODIFY > Fill Region, also the tablet rail, the phone strip and command search,
+  `web/src/fill/`) highlights the area under the pointer from the preview (debounced; faces cached for the document
+  revision), fills it on a click (Shift+click collects areas, Enter fills them, Esc clears or leaves) and on touch
+  shows the tapped area first and fills it on a second tap or the bar's Add; the bar picks the layer, the gap and holes.
 - `path.optimize {ids, tolerance_mm?, arcs_mm?, smooth_mm?}` follows LightBurn's Optimize Selected Shapes: each option
   has its own tolerance and they run smooth, arcs, lines (`geom::fit`: smoothing is Schneider's least-squares cubic
   fitting with tangent continuity, real corners over ~60° between longer lines kept; arc fitting greedily grows

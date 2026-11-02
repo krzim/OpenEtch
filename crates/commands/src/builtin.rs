@@ -33,6 +33,8 @@ mod util;
 // Geometry commands (crates/geom): booleans, offsets, path tools, nodes, generators, arrays, arrange.
 mod arrays;
 mod boolean;
+// Fill Region (paint bucket): a closed shape for the area around a point.
+mod fill_region;
 mod generate;
 mod node;
 mod offset;
@@ -59,6 +61,8 @@ mod design;
 mod design_review_tests;
 #[cfg(test)]
 mod design_tests;
+#[cfg(test)]
+mod fill_region_tests;
 #[cfg(test)]
 mod geom_tests;
 #[cfg(test)]
@@ -204,6 +208,8 @@ fn register_geometry(r: &mut Registry) {
     r.register::<path_tools::Unfillet>();
     r.register::<path_tools::Trim>();
     r.register::<path_tools::Reverse>();
+    r.register::<fill_region::FillRegion>();
+    r.register::<fill_region::FillRegionPreview>();
     r.register::<node::NodeList>();
     r.register::<node::NodeMove>();
     r.register::<node::NodeInsert>();
