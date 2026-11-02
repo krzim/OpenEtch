@@ -189,34 +189,136 @@ fn uncovered(a: Point, b: Point, len: f64, kept: &[[Point; 2]], tol: f64) -> Vec
     free
 }
 
-/// Tabs: leave `count` gaps of `size_mm` (or one every `spacing_mm` when that is positive) evenly along a closed
-/// polyline, the first half a spacing from its start. Returns the marked pieces; an open polyline is returned as is.
-pub fn tabs(poly: Vec<Point>, closed: bool, count: u32, spacing_mm: f64, size_mm: f64) -> Vec<Vec<Point>> {
-    if !closed || poly.len() < 2 {
-        return vec![poly];
+/// Automatic tabs of one closed outline (LightBurn's Tabs Per Shape / Even Spacing, see [`tab_pieces`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AutoTabs {
+    /// Tabs per outline (used when `spacing_mm` is 0).
+    pub count: u32,
+    /// About this far apart along the outline, mm (0: use `count`).
+    pub spacing_mm: f64,
+    /// With a spacing, at most this many (0: no limit).
+    pub max_tabs: u32,
+}
+
+/// Arc length of the point of `poly` nearest `p`.
+fn project(poly: &[Point], cum: &[f64], p: Point) -> f64 {
+    let mut best = (f64::INFINITY, 0.0);
+    for i in 1..poly.len() {
+        let (a, b) = (poly[i - 1], poly[i]);
+        let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+        let l2 = dx * dx + dy * dy;
+        let t = if l2 > 0.0 { (((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2).clamp(0.0, 1.0) } else { 0.0 };
+        let q = [a[0] + dx * t, a[1] + dy * t];
+        let d = dist(p, q);
+        if d < best.0 {
+            best = (d, cum[i - 1] + (cum[i] - cum[i - 1]) * t);
+        }
+    }
+    best.1
+}
+
+/// Tabs (LightBurn's Tabs / Bridges) on one closed polyline: gaps of `size_mm` centred on the automatic positions
+/// (`auto`: `count` per outline, or one about every `spacing_mm` capped at `max_tabs`, spread evenly with the first
+/// half a spacing from the start) and on the nearest points to `manual` (field mm). Returns the pieces in order, each
+/// with whether it is a tab: tabs are returned only with `keep_tabs` (LightBurn's Tab Cut Power: the caller marks
+/// them at a lower power); otherwise they are left out (a gap). An open polyline, or one without tabs, is returned
+/// as is. When the automatic tabs would cover the whole outline, it is all tab.
+pub fn tab_pieces(poly: Vec<Point>, closed: bool, auto: Option<AutoTabs>, manual: &[Point], size_mm: f64, keep_tabs: bool) -> Vec<(Vec<Point>, bool)> {
+    if !closed || poly.len() < 2 || size_mm.is_nan() || size_mm <= 0.0 {
+        return vec![(poly, false)];
     }
     let cum = arc_lengths(&poly);
     let total = *cum.last().unwrap_or(&0.0);
-    let n = if spacing_mm > 0.0 { (total / spacing_mm).floor().max(1.0) } else { f64::from(count.max(1)) };
-    let step = total / n;
-    if size_mm >= step {
-        return Vec::new();
+    if total <= 0.0 {
+        return vec![(poly, false)];
+    }
+    let all_tab = |poly: Vec<Point>| if keep_tabs { vec![(poly, true)] } else { Vec::new() };
+    let mut centres = Vec::new();
+    if let Some(a) = auto {
+        let mut n = if a.spacing_mm > 0.0 { (total / a.spacing_mm).floor().max(1.0) } else { f64::from(a.count.max(1)) };
+        if a.spacing_mm > 0.0 && a.max_tabs > 0 {
+            n = n.min(f64::from(a.max_tabs));
+        }
+        let step = total / n;
+        if size_mm >= step {
+            return all_tab(poly);
+        }
+        centres.extend((0..n as usize).map(|k| (k as f64 + 0.5) * step));
+    }
+    centres.extend(manual.iter().map(|&m| project(&poly, &cum, m)));
+    if centres.is_empty() {
+        return vec![(poly, false)];
+    }
+    if size_mm >= total {
+        return all_tab(poly);
+    }
+    // Gap intervals within 0..=total (a gap across the start is split in two), merged where they overlap.
+    let h = size_mm / 2.0;
+    let mut gaps: Vec<(f64, f64)> = Vec::new();
+    for c in centres {
+        let (a, b) = (c - h, c + h);
+        if a < 0.0 {
+            gaps.push((a + total, total));
+            gaps.push((0.0, b));
+        } else if b > total {
+            gaps.push((a, total));
+            gaps.push((0.0, b - total));
+        } else {
+            gaps.push((a, b));
+        }
+    }
+    gaps.sort_by(|x, y| x.0.total_cmp(&y.0));
+    let mut merged: Vec<(f64, f64)> = Vec::new();
+    for (a, b) in gaps {
+        match merged.last_mut() {
+            Some(last) if a <= last.1 => last.1 = last.1.max(b),
+            _ => merged.push((a, b)),
+        }
     }
     let mut out = Vec::new();
-    // Gaps centred at (k + 0.5) * step; marks in between.
-    let mut start = 0.0;
-    for k in 0..n as usize {
-        let centre = (k as f64 + 0.5) * step;
-        let (g0, g1) = (centre - size_mm / 2.0, centre + size_mm / 2.0);
-        if g0 > start {
-            out.push(between(&poly, &cum, start, g0));
+    let mut pos = 0.0;
+    const MIN: f64 = 1e-9;
+    for (a, b) in merged {
+        if a - pos > MIN {
+            out.push((between(&poly, &cum, pos, a), false));
         }
-        start = g1;
+        if keep_tabs && b - a > MIN {
+            out.push((between(&poly, &cum, a, b), true));
+        }
+        pos = pos.max(b);
     }
-    if total > start {
-        out.push(between(&poly, &cum, start, total));
+    if total - pos > MIN {
+        out.push((between(&poly, &cum, pos, total), false));
     }
     out
+}
+
+/// For each ring, whether it lies inside another of them (bounding box within, first point inside by even-odd; of
+/// two equal rings the later one counts as inside). LightBurn's Skip Inner Shapes.
+pub fn inner_rings(rings: &[&[Point]]) -> Vec<bool> {
+    let boxes: Vec<[f64; 4]> = rings
+        .iter()
+        .map(|r| r.iter().fold([f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY], |b, p| [b[0].min(p[0]), b[1].min(p[1]), b[2].max(p[0]), b[3].max(p[1])]))
+        .collect();
+    rings
+        .iter()
+        .enumerate()
+        .map(|(i, r)| {
+            let Some(&probe) = r.first() else { return false };
+            let a = boxes[i];
+            rings.iter().enumerate().any(|(j, q)| {
+                let b = boxes[j];
+                j != i
+                    && q.len() > 2
+                    && b[0] <= a[0]
+                    && b[1] <= a[1]
+                    && b[2] >= a[2]
+                    && b[3] >= a[3]
+                    && (a != b || j < i)
+                    && crate::order::inside(probe, q)
+            })
+        })
+        .collect()
 }
 
 /// Perforation: mark `cut_mm`, skip `skip_mm`, repeating from the start of the polyline.
@@ -318,6 +420,9 @@ mod tests {
 
     #[test]
     fn tabs_leave_evenly_spaced_gaps() {
+        let tabs = |poly: Vec<Point>, closed: bool, count: u32, spacing_mm: f64, size: f64| -> Vec<Vec<Point>> {
+            tab_pieces(poly, closed, Some(AutoTabs { count, spacing_mm, max_tabs: 0 }), &[], size, false).into_iter().map(|(p, _)| p).collect()
+        };
         let pieces = tabs(square(), true, 4, 0.0, 1.0);
         let marked: f64 = pieces.iter().map(|p| polyline_length(p)).sum();
         assert!((marked - 36.0).abs() < 1e-9, "{marked}");
@@ -325,6 +430,39 @@ mod tests {
         let pieces = tabs(square(), true, 0, 20.0, 1.0);
         assert!((pieces.iter().map(|p| polyline_length(p)).sum::<f64>() - 38.0).abs() < 1e-9);
         assert_eq!(tabs(vec![[0.0, 0.0], [1.0, 0.0]], false, 4, 0.0, 0.1).len(), 1, "open lines get no tabs");
+        // Limit Max Tabs caps an even spacing.
+        let capped = tab_pieces(square(), true, Some(AutoTabs { count: 0, spacing_mm: 5.0, max_tabs: 3 }), &[], 1.0, false);
+        assert!((capped.iter().map(|(p, _)| polyline_length(p)).sum::<f64>() - 37.0).abs() < 1e-9, "3 tabs, not 8");
+        // Tabs that would cover the outline leave nothing to cut.
+        assert!(tabs(square(), true, 40, 0.0, 1.0).is_empty());
+    }
+
+    #[test]
+    fn manual_tabs_sit_on_the_nearest_point_and_can_be_cut_at_power() {
+        // A tab clicked just outside the middle of the bottom edge, and one across the start corner.
+        let manual = [[5.0, -0.2], [0.0, 0.0]];
+        let pieces = tab_pieces(square(), true, None, &manual, 2.0, false);
+        assert!((pieces.iter().map(|(p, _)| polyline_length(p)).sum::<f64>() - 36.0).abs() < 1e-9);
+        assert!(pieces.iter().all(|(_, tab)| !tab));
+        assert_eq!(pieces[0].0.first(), Some(&[1.0, 0.0]), "the corner tab is split across the start");
+        assert_eq!(pieces[0].0.last(), Some(&[4.0, 0.0]), "the bottom tab is centred on x = 5");
+        // With a tab cut power the tabs come back as their own pieces, in order around the loop.
+        let all = tab_pieces(square(), true, None, &manual, 2.0, true);
+        let tabs: f64 = all.iter().filter(|(_, t)| *t).map(|(p, _)| polyline_length(p)).sum();
+        let total: f64 = all.iter().map(|(p, _)| polyline_length(p)).sum();
+        assert!((tabs - 4.0).abs() < 1e-9 && (total - 40.0).abs() < 1e-9, "{tabs} {total}");
+        // No tabs: the loop is untouched; overlapping tabs merge.
+        assert_eq!(tab_pieces(square(), true, None, &[], 1.0, false), vec![(square(), false)]);
+        let merged = tab_pieces(square(), true, None, &[[5.0, 0.0], [5.5, 0.0]], 2.0, true);
+        assert_eq!(merged.iter().filter(|(_, t)| *t).count(), 1);
+    }
+
+    #[test]
+    fn inner_rings_are_found() {
+        let outer: Vec<Point> = vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]];
+        let hole: Vec<Point> = vec![[2.0, 2.0], [4.0, 2.0], [4.0, 4.0], [2.0, 4.0]];
+        let apart: Vec<Point> = vec![[20.0, 0.0], [30.0, 0.0], [30.0, 10.0], [20.0, 10.0]];
+        assert_eq!(inner_rings(&[&outer, &hole, &apart]), vec![false, true, false]);
     }
 
     #[test]

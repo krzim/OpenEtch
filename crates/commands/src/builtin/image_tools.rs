@@ -82,7 +82,7 @@ pub struct TraceInput {
 }
 
 /// Trace an image object: the field-frame path, contours, nodes.
-fn trace_object(cmd: &str, doc: &Document, i: &TraceInput) -> Result<(BezPath, usize, usize)> {
+pub(super) fn trace_object(cmd: &str, doc: &Document, i: &TraceInput) -> Result<(BezPath, usize, usize)> {
     let o = image_of(cmd, doc, &i.id)?;
     let Geometry::Image { width_mm, height_mm, .. } = o.geometry else { unreachable!("an image") };
     let (img, _) = decoded(cmd, o)?;

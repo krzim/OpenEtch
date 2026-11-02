@@ -2,7 +2,7 @@
 
 use doc::{
     CutOptions, CutSettings, Document, DotMode, FillGrouping, FillMode, Geometry, Group, Object, ObjectOptions, OrderBy,
-    Rotary, Tabs,
+    Rotary, TabGeneration, Tabs,
 };
 use kurbo::Affine;
 use lmc::{ListCommand, decode};
@@ -111,7 +111,7 @@ fn dot_mode_fires_points() {
 
 #[test]
 fn tabs_perforation_and_wobble_shape_the_lines() {
-    let o = CutOptions { tabs: Some(Tabs { count: 4, spacing_mm: 0.0, size_mm: 1.0 }), ..CutOptions::default() };
+    let o = CutOptions { tabs: Some(Tabs { count: 4, spacing_mm: 0.0, size_mm: 1.0, ..Tabs::default() }), ..CutOptions::default() };
     let d = doc_with(vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0))], with_options(CutSettings::default(), o));
     let plan = plan_job(&d, &target()).unwrap();
     assert!((plan.stats.mark_length_mm - 36.0).abs() < 1e-6);
@@ -122,6 +122,61 @@ fn tabs_perforation_and_wobble_shape_the_lines() {
     let o = CutOptions { wobble: Some(doc::Wobble { step_mm: 0.5, size_mm: 0.4 }), ..CutOptions::default() };
     let d = doc_with(vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0))], with_options(CutSettings::default(), o));
     assert!(plan_job(&d, &target()).unwrap().stats.mark_length_mm > 40.0 * 2.0);
+}
+
+#[test]
+fn hand_placed_tabs_skip_inner_and_tab_cut_power() {
+    // A 10 x 10 square at the origin (local frame centred) with a hole: a 4 x 4 square inside it.
+    let mut outer = rect("obj-1", 10.0, 10.0, (0.0, 0.0));
+    outer.geometry = Geometry::Path {
+        path: {
+            let mut p = kurbo::BezPath::new();
+            for ring in [[(-5.0, -5.0), (5.0, -5.0), (5.0, 5.0), (-5.0, 5.0)], [(-2.0, -2.0), (2.0, -2.0), (2.0, 2.0), (-2.0, 2.0)]] {
+                p.move_to(ring[0]);
+                for q in &ring[1..] {
+                    p.line_to(*q);
+                }
+                p.close_path();
+            }
+            p
+        },
+    };
+    let base = CutSettings { power_pct: 40.0, ..CutSettings::default() };
+    let marked = |d: &Document| plan_job(d, &target()).unwrap().stats.mark_length_mm;
+    // Automatic: 4 tabs of 1 mm on both outlines (40 + 16 mm of outline).
+    let tabs = Tabs { count: 4, size_mm: 1.0, ..Tabs::default() };
+    let d = doc_with(vec![outer.clone()], with_options(base.clone(), CutOptions { tabs: Some(tabs.clone()), ..CutOptions::default() }));
+    assert!((marked(&d) - 48.0).abs() < 1e-6, "{}", marked(&d));
+    // Skip Inner Shapes: the hole is cut through.
+    let skip = Tabs { skip_inner: true, ..tabs.clone() };
+    let d = doc_with(vec![outer.clone()], with_options(base.clone(), CutOptions { tabs: Some(skip), ..CutOptions::default() }));
+    assert!((marked(&d) - 52.0).abs() < 1e-6, "{}", marked(&d));
+    // The switch off cuts everything; the settings stay.
+    let off = Tabs { enabled: false, ..tabs.clone() };
+    let d = doc_with(vec![outer.clone()], with_options(base.clone(), CutOptions { tabs: Some(off), ..CutOptions::default() }));
+    assert!((marked(&d) - 56.0).abs() < 1e-6);
+    // Hand-placed tabs (moved with the object): a shape with them gets only those, on the outline nearest each.
+    let mut moved = outer.clone();
+    moved.transform = Affine::translate((20.0, 0.0));
+    let mut d = doc_with(vec![moved], with_options(base.clone(), CutOptions { tabs: Some(tabs.clone()), ..CutOptions::default() }));
+    d.object_options.insert("obj-1".into(), ObjectOptions { tabs: vec![[0.0, -5.2], [2.1, 0.0]], ..ObjectOptions::default() });
+    let plan = plan_job(&d, &target()).unwrap();
+    assert!((plan.stats.mark_length_mm - 54.0).abs() < 1e-6, "{}", plan.stats.mark_length_mm);
+    let ends: Vec<[f64; 2]> = plan.passes[0].polylines.iter().flat_map(|p| [p[0], p[p.len() - 1]]).collect();
+    assert!(ends.iter().any(|e| (e[0] - 19.5).abs() < 1e-9 && (e[1] + 5.0).abs() < 1e-9), "a gap centred under the bottom edge's middle: {ends:?}");
+    // Manual generation: shapes without hand-placed tabs are cut through.
+    let manual = Tabs { generation: TabGeneration::Manual, ..tabs.clone() };
+    let mut d = doc_with(vec![outer.clone(), rect("obj-2", 10.0, 10.0, (30.0, 0.0))], with_options(base.clone(), CutOptions { tabs: Some(manual), ..CutOptions::default() }));
+    d.object_options.insert("obj-1".into(), ObjectOptions { tabs: vec![[5.0, 0.0]], ..ObjectOptions::default() });
+    assert!((marked(&d) - 95.0).abs() < 1e-6, "{}", marked(&d));
+    // Tab Cut Power: the tabs are marked at that share of the power.
+    let powered = Tabs { cut_power_pct: 25.0, ..tabs };
+    let d = doc_with(vec![rect("obj-2", 10.0, 10.0, (0.0, 0.0))], with_options(base, CutOptions { tabs: Some(powered), ..CutOptions::default() }));
+    let plan = plan_job(&d, &target()).unwrap();
+    let pass = &plan.passes[0];
+    assert!((plan.stats.mark_length_mm - 40.0).abs() < 1e-6);
+    let tab_len: f64 = (0..pass.polylines.len()).filter(|&i| pass.power_of(i) == 10.0).map(|i| crate::geom::polyline_length(&pass.polylines[i])).sum();
+    assert!((tab_len - 4.0).abs() < 1e-6, "4 tabs of 1 mm at 25 % of 40 %: {tab_len}");
 }
 
 #[test]
