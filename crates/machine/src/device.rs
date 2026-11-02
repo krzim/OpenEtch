@@ -30,6 +30,7 @@ use serde_json::{Value, json};
 use crate::grbl::GrblProfile;
 use crate::lightburn::{LightBurnDevice, ProfileDiff, profile_from_lightburn};
 use crate::profile::MachineProfile;
+use crate::ruida::RuidaProfile;
 
 /// Largest galvo field accepted, mm.
 pub const MAX_FIELD_MM: f64 = 2000.0;
@@ -50,6 +51,8 @@ pub enum DeviceKind {
     Gantry,
     /// A GRBL 1.1 gantry over a serial port, with a [`GrblProfile`]: OpenEtch can drive it.
     Grbl,
+    /// A Ruida DSP gantry over Ethernet, with a [`RuidaProfile`]: OpenEtch can drive it (unverified on hardware).
+    Ruida,
     /// Another galvo board (BSL, EzCad3; design-only).
     GalvoOther,
     /// LightBurn's "No Machine" placeholder (design-only).
@@ -62,6 +65,7 @@ impl DeviceKind {
             DeviceKind::JczGalvo => "jcz_galvo",
             DeviceKind::Gantry => "gantry",
             DeviceKind::Grbl => "grbl",
+            DeviceKind::Ruida => "ruida",
             DeviceKind::GalvoOther => "galvo_other",
             DeviceKind::Unknown => "unknown",
         }
@@ -202,6 +206,9 @@ pub struct Device {
     /// The GRBL profile (GRBL gantries only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grbl: Option<GrblProfile>,
+    /// The Ruida profile (Ruida gantries only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ruida: Option<RuidaProfile>,
     /// The typed LightBurn settings it was made from (never anything else of the file).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lightburn: Option<LightBurnDevice>,
@@ -330,6 +337,7 @@ pub fn from_lightburn(dev: &LightBurnDevice, source: DeviceSource, bases: &Bases
         base,
         profile,
         grbl: None,
+        ruida: None,
         lightburn: Some(dev.clone()),
     })
 }
@@ -351,6 +359,7 @@ impl Device {
             base: None,
             profile: Some(profile),
             grbl: None,
+            ruida: None,
             lightburn: None,
         }
     }
@@ -374,6 +383,31 @@ impl Device {
             base: None,
             profile: None,
             grbl: Some(profile),
+            ruida: None,
+            lightburn: None,
+        })
+    }
+
+    /// A Ruida gantry made in OpenEtch (source `manual`; the registry assigns the id): its bed and origin come from
+    /// the profile. Refused when the profile does not validate.
+    pub fn ruida_device(display_name: &str, profile: RuidaProfile) -> Result<Self, String> {
+        profile.validate().map_err(|e| e.to_string())?;
+        let name = display_name.trim();
+        let name = if name.is_empty() { "Ruida laser" } else { name };
+        Ok(Device {
+            id: String::new(),
+            name: "Ruida".into(),
+            display_name: name.to_owned(),
+            source: DeviceSource::Manual,
+            kind: DeviceKind::Ruida,
+            lightburn_type: "UDP".into(),
+            workspace_mm: profile.work_area_mm,
+            origin: profile.origin,
+            controllable: true,
+            base: None,
+            profile: None,
+            grbl: None,
+            ruida: Some(profile),
             lightburn: None,
         })
     }
@@ -408,6 +442,7 @@ impl Device {
         let what = match self.kind {
             DeviceKind::JczGalvo => "it has no machine profile".to_owned(),
             DeviceKind::Grbl => "it has no GRBL profile".to_owned(),
+            DeviceKind::Ruida => "it has no Ruida profile".to_owned(),
             DeviceKind::Gantry => format!("OpenEtch can't drive {} controllers yet (only JCZ/LMC galvos)", self.name),
             DeviceKind::GalvoOther => format!("OpenEtch can't drive {} galvos yet (only JCZ/LMC boards)", self.name),
             DeviceKind::Unknown => "it is a placeholder without a controller".to_owned(),
@@ -448,6 +483,12 @@ impl Device {
                 return Err("a GRBL profile belongs to a GRBL device with the profile's bed and origin".into());
             }
         }
+        if let Some(r) = &d.ruida {
+            r.validate().map_err(|e| e.to_string())?;
+            if d.kind != DeviceKind::Ruida || r.work_area_mm != d.workspace_mm || r.origin != d.origin {
+                return Err("a Ruida profile belongs to a Ruida device with the profile's bed and origin".into());
+            }
+        }
         let max = if d.kind.is_galvo() { MAX_FIELD_MM } else { MAX_BED_MM };
         if !d.workspace_mm.iter().all(|v| v.is_finite() && *v > 0.0 && *v <= max) {
             return Err(format!("unusable workspace {:?} mm", d.workspace_mm));
@@ -456,7 +497,9 @@ impl Device {
             return Err("a galvo's origin is its centre and a gantry's a corner".into());
         }
         // Only a JCZ galvo with a profile, or a GRBL device with a GRBL profile, can be driven, whatever the file says.
-        d.controllable = (d.kind == DeviceKind::JczGalvo && d.profile.is_some()) || (d.kind == DeviceKind::Grbl && d.grbl.is_some());
+        d.controllable = (d.kind == DeviceKind::JczGalvo && d.profile.is_some())
+            || (d.kind == DeviceKind::Grbl && d.grbl.is_some())
+            || (d.kind == DeviceKind::Ruida && d.ruida.is_some());
         Ok(d)
     }
 
@@ -512,6 +555,16 @@ impl Device {
                 row("Frame / jog feed (mm/min)", None, json!(g.frame_feed_mm_min)),
                 row("Homing ($22)", None, json!(g.homing)),
                 row("Power mode", None, json!(if g.dynamic_power { "M4 dynamic" } else { "M3 constant" })),
+            ]}));
+            return json!(sections);
+        }
+        if let Some(r) = &self.ruida {
+            sections.push(json!({ "title": "Device", "rows": general }));
+            sections.push(json!({ "title": "Ruida", "rows": [
+                row("Controller address (UDP 50200)", None, json!(r.address)),
+                row("Scrambling key", None, json!(format!("{:#04x}", r.magic))),
+                row("Max power (%)", None, json!(r.max_power_pct)),
+                row("Max speed (mm/s)", None, json!(r.max_speed_mm_s)),
             ]}));
             return json!(sections);
         }

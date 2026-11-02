@@ -15,7 +15,8 @@
 //!   [`Controller::abort`] is never gated.
 //!
 //! - [`MachineDriver`] / [`Driver`] ([`driver`]): the machine-driver interface. The galvo [`Controller`] is one
-//!   driver; [`grbl::GrblController`] (GRBL 1.1 over a serial port, [`grbl`]) is the other.
+//!   driver; [`grbl::GrblController`] (GRBL 1.1 over a serial port, [`grbl`]) and [`ruida::RuidaController`] (Ruida
+//!   DSP controllers over UDP, [`ruida`]) are the others.
 //!
 //! [`field_to_galvo`] wraps `lmc::units::field_to_galvo`, the one field mm -> galvo word conversion (field bounds,
 //! negate in the field frame, then swap) that `plan::Target` encodes jobs with too.
@@ -27,6 +28,7 @@ mod controller;
 pub mod device;
 pub mod driver;
 pub mod grbl;
+pub mod ruida;
 mod geometry;
 mod init;
 pub mod lightburn;
@@ -50,7 +52,7 @@ pub use lightburn::{
     LightBurnDevice, LightBurnError, LightBurnPrefs, LightBurnSettings, ProfileDiff, find_device, parse_devices,
     parse_lbdev, profile_from_lightburn, to_lbdev,
 };
-pub use driver::{Driver, DriverJob, DriverKind, GrblDriver, LmcDriver, MachineDriver};
+pub use driver::{Driver, DriverJob, DriverKind, GrblDriver, LmcDriver, MachineDriver, RuidaDriver};
 pub use device::{Bases, Device, DeviceKind, DeviceSource, Origin, ProfileBase, edit_profile, merge_patch};
 pub use markcfg::MarkcfgImport;
 pub use profile::{
