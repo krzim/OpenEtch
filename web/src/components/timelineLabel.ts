@@ -97,6 +97,8 @@ function labelFor(cmd: string, summary: string, t: T): StepLabel | null {
     case "tabs.remove":
     case "tabs.clear":
       return { text: t("tlx.removeTabs"), icon: "minus" };
+    case "path.fill_region":
+      return { text: t("tlx.fillRegion"), icon: "fillRegion" };
     case "path.dogbone":
       return { text: t("tlx.dogbone"), icon: "path" };
     case "path.resize_slots":

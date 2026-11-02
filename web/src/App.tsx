@@ -48,6 +48,7 @@ import { ShutdownBadge, SimPinBadge } from "./libs/JobSafety.tsx";
 import { LaserExtras } from "./libs/LaserExtras.tsx";
 import { useLibsUi } from "./libs/useLibsUi.tsx";
 import { useToolsUi } from "./tools/useToolsUi.tsx";
+import { useFillRegionTool } from "./fill/useFillRegionTool.tsx";
 import { useDesignUi } from "./design/useDesignUi.tsx";
 import { MachineCard, PreviewStatsCard, RunsCard } from "./components/LaserPanel.tsx";
 import { frameWithOptions } from "./components/FramingOptions.tsx";
@@ -432,6 +433,19 @@ export function App() {
   });
   // Text and Barcode tools, text/barcode properties, the Variable Text window (text/useTextTools.tsx).
   const text = useTextTools({ doc, selection, selectIds, tool, setTool, activeLayer, design: workspace === "design", has, run, notify, report });
+  // Fill Region (paint bucket): a closed shape for the area around a click, on a chosen layer (src/fill/).
+  const fillTool = useFillRegionTool({
+    doc,
+    tool,
+    setTool,
+    activeLayer,
+    design: workspace === "design",
+    has,
+    run,
+    notify,
+    selectIds,
+    onStart: () => toolsUi.stopTabTool(),
+  });
 
   // ---- import: drop and picker share one router ------------------------------------------------------------------
 
@@ -1120,6 +1134,7 @@ export function App() {
       ...libsUi.handlers,
       ...designUi.handlers,
       ...edit.handlers,
+      ...fillTool.handlers,
       // LightBurn 2.0 defaults (workspace/hotkeys.ts): Trim Ctrl+K, Measure Alt+M, Align centres Alt+Home, Move together
       // Alt+Shift+H / V, Position laser Alt+L, Rotary setup Ctrl+Shift+R; Docking and Toggle Side Panels unbound.
       "tool.trim": () => (workspace === "design" && has("path.trim") ? setTool("trim") : false),
@@ -1354,6 +1369,7 @@ export function App() {
         <>
           {text.toolbar}
           {edit.toolbar}
+          {fillTool.toolbar}
           {designUi.toolbar}
           {libsUi.toolbar}
           {toolsUi.toolbar}
@@ -1544,7 +1560,7 @@ export function App() {
         notify={notify}
         report={report}
         canvasTool={withPositionLaser(
-          withLayerFlash(designUi.wrap(toolsUi.wrap(libsUi.wrap(text.wrap(edit.canvas)))), doc, flash),
+          withLayerFlash(designUi.wrap(toolsUi.wrap(libsUi.wrap(text.wrap(fillTool.wrap(edit.canvas))))), doc, flash),
           positioning,
           (pt) =>
             void machineAction(jobApi.pointer(roundMm(pt[0]), roundMm(pt[1])), t("poslaser.done", { x: roundMm(pt[0]), y: roundMm(pt[1]) })),

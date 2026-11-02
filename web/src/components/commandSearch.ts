@@ -33,6 +33,7 @@ export const ALIASES: Readonly<Record<string, readonly string[]>> = {
   "tool.union": ["merge", "add"],
   "tool.subtract": ["difference", "minus", "cut out"],
   "tool.trim": ["cut lines", "scissors"],
+  "tool.fillRegion": ["paint bucket", "bucket", "flood fill", "fill area", "enclosed area"],
   "tool.offset": ["outline", "inset", "grow", "shrink"],
   "tool.measure": ["ruler", "distance", "dimension"],
   "arrange.group": ["combine"],

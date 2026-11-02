@@ -1,0 +1,59 @@
+/* The Fill Region tool (useFillRegionTool.tsx): the area highlight on the canvas and the options bar. The highlight
+   takes the target layer's colour (--fr-color) so it shows where the new shape will go. */
+
+.viewport.tool-fill svg {
+  cursor: crosshair;
+}
+
+.fr-face {
+  fill: var(--fr-color, var(--accent));
+  stroke: var(--fr-color, var(--accent));
+  stroke-linejoin: round;
+}
+.fr-hover {
+  fill-opacity: 0.22;
+  stroke-opacity: 0.8;
+}
+.fr-armed {
+  fill-opacity: 0.35;
+  stroke-opacity: 1;
+}
+.fr-pending {
+  fill-opacity: 0.45;
+  stroke-opacity: 1;
+}
+.fr-bar select {
+  min-height: 26px;
+  max-width: 14em;
+}
+.fr-bar .fr-gap {
+  width: 56px;
+  min-height: 26px;
+  padding: 0 4px;
+}
+.fr-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  border: 1px solid var(--border, #c9cbcf);
+  background: var(--fr-color, transparent);
+}
+.fr-error {
+  color: var(--danger, #d32f2f);
+  font-size: 12px;
+  max-width: 42em;
+}
+
+/* Touch: the bar's controls get finger-sized targets. */
+@media (pointer: coarse) {
+  .fr-bar select,
+  .fr-bar .fr-gap,
+  .fr-bar .btn {
+    min-height: 44px;
+  }
+  .fr-bar input[type="checkbox"] {
+    width: 22px;
+    height: 22px;
+  }
+}

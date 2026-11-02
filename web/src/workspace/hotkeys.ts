@@ -89,6 +89,8 @@ export const ACTIONS: HotkeyAction[] = [
   // LightBurn 2.0 moved Cut Shapes to Alt+Shift+C (Alt+C captures the camera image there); both work here.
   app("tool.cutShapes", "tools", "Cut shapes", ["Alt+C"], ["Alt+Shift+C"]),
   ws("tool.trim", "tools", "Trim shapes", ["Ctrl+K"]),
+  // Fill Region (paint bucket; src/fill/): no LightBurn equivalent, so no default key.
+  ws("tool.fillRegion", "tools", "Fill region", []),
   ws("tool.measure", "tools", "Measure", ["Alt+M"]),
   ws("tool.mirrorLine", "tools", "Mirror across line", ["Ctrl+Shift+M"]),
   app("tool.offset", "tools", "Offset shapes", ["Alt+O"]),
