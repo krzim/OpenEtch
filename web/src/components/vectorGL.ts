@@ -145,9 +145,17 @@ export class VectorGL {
   /** Per group: holds a selected segment (its moving fill is drawn separately during a drag). */
   private groupSel: boolean[] = [];
   lost = false;
+  private canvas: HTMLCanvasElement;
+  private onLostChange: ((lost: boolean) => void) | undefined;
 
-  /** Throws when WebGL2 is not available. */
-  constructor(private canvas: HTMLCanvasElement) {
+  /**
+   * Throws when WebGL2 is not available. `onLostChange` hears when the context is lost (true: nothing reaches the
+   * screen until it is restored, so draw another way meanwhile) and restored (false: everything is uploaded again,
+   * draw now).
+   */
+  constructor(canvas: HTMLCanvasElement, onLostChange?: (lost: boolean) => void) {
+    this.canvas = canvas;
+    this.onLostChange = onLostChange;
     const gl = canvas.getContext("webgl2", { antialias: true, stencil: true, premultipliedAlpha: true, alpha: true });
     if (!gl) throw new Error("no WebGL2");
     this.gl = gl;
@@ -161,6 +169,7 @@ export class VectorGL {
     this.lost = true;
     this.segBuf = null;
     this.flagBuf = null;
+    this.onLostChange?.(true);
   };
 
   private onRestored = () => {
@@ -171,6 +180,7 @@ export class VectorGL {
     this.scene = null;
     if (s) this.setScene(s);
     if (f) this.setFlags(f);
+    this.onLostChange?.(false);
   };
 
   private program(vs: string, fs: string): Prog {
@@ -351,12 +361,27 @@ export class VectorGL {
   dispose(): void {
     this.canvas.removeEventListener("webglcontextlost", this.onLost);
     this.canvas.removeEventListener("webglcontextrestored", this.onRestored);
-    if (this.lost) return;
+    this.onLostChange = undefined;
     const gl = this.gl;
+    releaseWhenDetached(this.canvas, gl);
+    if (this.lost) return;
     if (this.segBuf) gl.deleteBuffer(this.segBuf);
     if (this.flagBuf) gl.deleteBuffer(this.flagBuf);
     if (this.vao) gl.deleteVertexArray(this.vao);
     if (this.emptyVao) gl.deleteVertexArray(this.emptyVao);
     for (const p of [this.stroke, this.fill, this.cover]) if (p) gl.deleteProgram(p.p);
   }
+}
+
+/**
+ * Frees a disposed renderer's context once its canvas has left the page, instead of when the canvas is collected.
+ * Browsers keep about 16 WebGL contexts and lose the oldest beyond that, which would be the canvas's long-lived vector
+ * layer after the preview layer was shown and hidden a few times. A canvas still in the page (an effect run again on
+ * the same element) keeps its context.
+ */
+export function releaseWhenDetached(canvas: HTMLCanvasElement, gl: WebGL2RenderingContext): void {
+  setTimeout(() => {
+    if (canvas.isConnected || gl.isContextLost()) return;
+    gl.getExtension("WEBGL_lose_context")?.loseContext();
+  }, 0);
 }

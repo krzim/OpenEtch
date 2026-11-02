@@ -18,6 +18,7 @@ import {
   antsPhase,
   buildVectorScene,
   crisp,
+  flatCacheSize,
   flattenSegments,
   gridLines,
   groupLook,
@@ -157,6 +158,16 @@ test("a refetched document reuses the flattened objects; a moved or reshaped one
   (reshaped.objects[1].geometry as { path: string }).path = "M0,0 L20,0 L20,20 Z";
   const s3 = buildVectorScene(reshaped);
   assert.equal(s3.count, 4 + 3);
+});
+
+test("the flattening cache holds the shown objects only, and nothing once the document is closed", () => {
+  const d = docOf([layer("L1"), layer("L2", { visible: false })], [rect("r", 0, 0), rect("s", 20, 0), rect("h", 40, 0, 10, 10, "L2")]);
+  buildVectorScene(d);
+  assert.equal(flatCacheSize(), 2);
+  buildVectorScene({ ...d, objects: d.objects.slice(1) });
+  assert.equal(flatCacheSize(), 1);
+  buildVectorScene(null);
+  assert.equal(flatCacheSize(), 0);
 });
 
 test("flags: selected and outside bits on exactly their objects' segments", () => {

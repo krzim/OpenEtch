@@ -8,6 +8,7 @@
 
 import type { Toolpath } from "../sceneLayers.ts";
 import type { View } from "../sceneLayers.ts";
+import { releaseWhenDetached } from "./vectorGL.ts";
 
 export interface BatchStyle {
   /** Straight (not premultiplied) RGBA, 0..1. */
@@ -183,6 +184,8 @@ export class ToolpathGL {
   dispose(): void {
     this.canvas.removeEventListener("webglcontextlost", this.onLost);
     this.canvas.removeEventListener("webglcontextrestored", this.onRestored);
+    // The preview layer comes and goes with the preview: free its context rather than let them pile up.
+    releaseWhenDetached(this.canvas, this.gl);
     if (this.lost) return;
     const gl = this.gl;
     for (const u of this.uploaded) gl.deleteBuffer(u.buffer);

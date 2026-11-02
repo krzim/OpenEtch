@@ -1,6 +1,6 @@
 // The document's outlines and fills as a raster layer repainted every frame from view-independent caches, instead of
 // SVG that the browser re-rasterizes after every zoom step (blurry low-resolution tiles first, then the sharp redraw).
-// WebGL2 (vectorGL.ts) with the scene's segments uploaded once per document; without WebGL2, a 2D canvas strokes and
+// WebGL2 (vectorGL.ts) with the scene's segments uploaded once per document; without WebGL2 (or while its context is lost), a 2D canvas strokes and
 // fills cached Path2Ds per object under the view matrix. Both repaint in the commit of a view or drag update, so they
 // stay in step with the interaction SVG, at most once per animation frame (the Viewport coalesces view updates). The
 // marching ants of the selected outline advance from their own animation frame loop, half a pixel at a time, and only
@@ -213,10 +213,13 @@ export const VectorLayer = memo(function VectorLayer(p: VectorLayerProps) {
   const ref = useRef<HTMLCanvasElement>(null);
   const gl = useRef<VectorGL | null>(null);
   const [fallback, setFallback] = useState(false);
+  // The GPU context is lost (driver reset, GPU process restart, too many contexts): the 2D canvas draws until it is
+  // restored, so the design never disappears.
+  const [lost, setLost] = useState(false);
   useLayoutEffect(() => {
     if (fallback || !ref.current) return;
     try {
-      gl.current = new VectorGL(ref.current);
+      gl.current = new VectorGL(ref.current, setLost);
     } catch {
       setFallback(true);
       return;
@@ -259,11 +262,11 @@ export const VectorLayer = memo(function VectorLayer(p: VectorLayerProps) {
   };
   const viewPending = useRef(p.viewPending);
   viewPending.current = p.viewPending;
-  useLayoutEffect(() => drawGL.current(), [view, size, dpr, frame, scene, flags, fallback]);
+  useLayoutEffect(() => drawGL.current(), [view, size, dpr, frame, scene, flags, fallback, lost]);
 
   // Marching ants: redraw when the phase moves (half-pixel steps); the 2D fallback keeps them still.
   useEffect(() => {
-    if (!anySelected || fallback || reduced.current) return;
+    if (!anySelected || fallback || lost || reduced.current) return;
     let raf = 0;
     const tick = () => {
       if (antsPhase(performance.now()) !== lastPhase.current && !viewPending.current?.()) drawGL.current();
@@ -271,10 +274,11 @@ export const VectorLayer = memo(function VectorLayer(p: VectorLayerProps) {
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [anySelected, fallback]);
+  }, [anySelected, fallback, lost]);
 
-  // 2D fallback: Path2Ds per object once per document, joined per selection.
-  const s2d = useMemo(() => (fallback ? buildScene2D(p.doc, scene) : null), [fallback, p.doc, scene]);
+  // 2D fallback (also while the GPU context is lost): Path2Ds per object once per document, joined per selection.
+  const use2d = fallback || lost;
+  const s2d = useMemo(() => (use2d ? buildScene2D(p.doc, scene) : null), [use2d, p.doc, scene]);
   const combined = useMemo(() => (s2d ? combine2D(s2d, p.selected, p.outside, !!live) : null), [s2d, p.selected, p.outside, !!live]);
   const paint2d = useCallback(
     (ctx: CanvasRenderingContext2D, a: PaintArgs) => {
@@ -284,13 +288,17 @@ export const VectorLayer = memo(function VectorLayer(p: VectorLayerProps) {
   );
   const data = useMemo(() => ({ "vector-segments": scene.count, "vector-renderer": "2d" }), [scene]);
   if (fallback) return <CanvasLayer className="vp-objects" view={view} size={size} dpr={dpr} paint={paint2d} data={data} />;
+  // While lost, the WebGL canvas stays mounted (its restore event arrives there) and the 2D canvas draws over it.
   return (
-    <canvas
-      ref={ref}
-      className="vp-layer vp-objects"
-      style={{ width: size[0], height: size[1] }}
-      data-vector-segments={scene.count}
-      data-vector-renderer="webgl2"
-    />
+    <>
+      <canvas
+        ref={ref}
+        className="vp-layer vp-objects"
+        style={{ width: size[0], height: size[1] }}
+        data-vector-segments={scene.count}
+        data-vector-renderer={lost ? "webgl2-lost" : "webgl2"}
+      />
+      {lost && <CanvasLayer className="vp-objects-2d" view={view} size={size} dpr={dpr} paint={paint2d} data={data} />}
+    </>
   );
 });

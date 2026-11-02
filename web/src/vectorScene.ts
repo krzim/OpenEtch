@@ -228,6 +228,11 @@ export function flattenSegments(cmds: readonly PathCmd[], t: Affine, tolMm = REN
  */
 const flatCache = new Map<string, { key: string; t: Affine; segs: Float32Array }>();
 
+/** Objects held in the flattening cache (tests). */
+export function flatCacheSize(): number {
+  return flatCache.size;
+}
+
 function objectSegments(o: GDocument["objects"][number], live: Set<string>): Float32Array {
   live.add(o.id);
   const key = geometryKey(o.geometry);
@@ -247,7 +252,11 @@ export function buildVectorScene(doc: GDocument | null): VectorScene {
   const groups: SceneGroup[] = [];
   const objects: SceneObject[] = [];
   const objIndex = new Map<string, number>();
-  if (!doc) return { segs: new Float32Array(0), count: 0, groups, objects, objIndex };
+  if (!doc) {
+    // No document (closed): nothing to keep.
+    flatCache.clear();
+    return { segs: new Float32Array(0), count: 0, groups, objects, objIndex };
+  }
   const known = new Map(doc.layers.map((l) => [l.id, l]));
   const byLayer = new Map<string, GDocument["objects"]>();
   for (const o of doc.objects) {
