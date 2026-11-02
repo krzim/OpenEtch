@@ -422,6 +422,10 @@ async fn machine_info(State(st): State<Arc<AppState>>) -> Result<Json<Value>, En
 }
 
 async fn machine_inputs(State(st): State<Arc<AppState>>) -> Result<Json<Value>, EngineError> {
+    // Refused before the board is touched: reading would open the serial port and initialise a GRBL board.
+    if st.machine.is_grbl() {
+        return Err(EngineError::BadRequest("a GRBL gantry has no galvo input port to read".into()));
+    }
     if st.machine.is_running() {
         return Err(EngineError::Conflict("a run holds the board; read the inputs when it is idle".into()));
     }

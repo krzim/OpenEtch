@@ -265,6 +265,7 @@ async fn input_port_features_are_galvo_only_and_survive_a_driver_switch() {
     let (app, st, _grbl, galvo) = grbl_engine(false).await;
     let (s, v) = send(&app, req("GET", "/api/machine/inputs", None)).await;
     assert!(s.is_client_error(), "a gantry has no input port: {s} {v}");
+    assert_eq!(sim(&st).report().lines_received, 3, "refused before the board is touched: init's queries only");
     assert!(crate::approve::foot_switch_port(&st).is_none());
     let (s, v) = send(&app, req("POST", &format!("/api/devices/{galvo}/activate"), None)).await;
     assert_eq!(s, StatusCode::OK, "{v}");
