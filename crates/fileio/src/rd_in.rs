@@ -21,6 +21,11 @@ use crate::{Art, ArtLayer, ArtPath, FileError, Result};
 pub const MAX_BYTES: usize = 64 * 1024 * 1024;
 /// Most polylines imported.
 pub const MAX_POLYLINES: usize = 200_000;
+/// Most points imported (all polylines together): one polyline of relative cuts can otherwise hold millions.
+pub const MAX_POINTS: usize = 5_000_000;
+/// Largest coordinate accepted, mm from the origin corner (no laser bed is 10 m; relative moves in a damaged or
+/// hostile file can add up to far more).
+pub const MAX_COORD_MM: f64 = 10_000.0;
 
 /// The machine frame of the file.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -54,12 +59,27 @@ fn hex(c: [u8; 3]) -> String {
     format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2])
 }
 
-/// Read an `.rd` file into art. Refused when the key cannot be found, the file holds no cuts, or it is too large.
+/// Read an `.rd` file into art. Refused when the key cannot be found, the file holds no cuts, it is too large
+/// (bytes, polylines, points) or a point lies more than [`MAX_COORD_MM`] from the origin.
 pub fn parse(bytes: &[u8], frame: RdFrame) -> Result<Art> {
+    parse_limited(bytes, frame, MAX_POINTS)
+}
+
+fn parse_limited(bytes: &[u8], frame: RdFrame, max_points: usize) -> Result<Art> {
     if bytes.len() > MAX_BYTES {
         return Err(FileError::TooLarge(format!("the .rd file is larger than {} MB", MAX_BYTES / (1024 * 1024))));
     }
     let read = ruida::rd::read_rd(bytes, None).map_err(|e| FileError::Invalid(format!("not a readable .rd file: {e}")))?;
+    // Checked before any path is made, so a hostile file costs no more than reading it.
+    let points: usize = read.job.layers.iter().flat_map(|l| &l.polylines).map(Vec::len).sum();
+    if points > max_points {
+        return Err(FileError::TooLarge(format!("the .rd file holds {points} points (at most {max_points} are imported)")));
+    }
+    if read.job.layers.iter().flat_map(|l| &l.polylines).flatten().any(|p| !p.iter().all(|v| v.abs() <= MAX_COORD_MM)) {
+        return Err(FileError::Invalid(format!(
+            "the .rd file has points more than {MAX_COORD_MM} mm from the origin; it is damaged or not a job for a laser bed"
+        )));
+    }
     let mut art = Art::default();
     for w in &read.warnings {
         art.warn(w.clone());
@@ -195,5 +215,50 @@ mod tests {
         assert!(parse(b"not an rd file at all", RdFrame::default()).is_err());
         let empty = write_rd(&RdJob::default(), &WriteOptions::default()).unwrap();
         assert!(parse(&empty, RdFrame::default()).is_err());
+    }
+
+    fn scrambled(cmds: &[ruida::command::Command]) -> Vec<u8> {
+        ruida::Swizzle::new(ruida::DEFAULT_MAGIC).scramble(&ruida::encode_all(cmds).unwrap())
+    }
+
+    #[test]
+    fn hostile_files_are_refused_without_panicking() {
+        use ruida::command::Command as C;
+        let good = write_rd(&job(), &WriteOptions::default()).unwrap();
+        // Truncated at every length, and single bytes changed: an error or art, never a panic.
+        for n in 0..good.len() {
+            let _ = parse(&good[..n], RdFrame::default());
+        }
+        let mut x: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut next = || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        };
+        for _ in 0..150 {
+            let mut v = good.clone();
+            let i = (next() as usize) % v.len();
+            v[i] ^= (next() as u8) | 1;
+            let _ = parse(&v, RdFrame::default());
+            let noise: Vec<u8> = (0..(next() % 300)).map(|_| next() as u8).collect();
+            let _ = parse(&noise, RdFrame::default());
+        }
+        // Bad scrambling: a valid file scrambled with a key no detection finds is refused.
+        let plain = ruida::encode_all(&[C::StartProcess, C::MoveAbs { x: 0, y: 0 }, C::CutAbs { x: 1000, y: 0 }, C::EndOfFile]).unwrap();
+        let garbled: Vec<u8> = plain.iter().map(|b| b.rotate_left(3) ^ 0x5A).collect();
+        assert!(parse(&garbled, RdFrame::default()).is_err());
+        // Huge counts: more points than the limit (small here, the real one is MAX_POINTS) are refused before any
+        // path is made; relative cuts adding up to kilometres are refused.
+        let mut many = vec![C::StartProcess, C::MoveAbs { x: 0, y: 0 }];
+        many.extend((0..1000).map(|_| C::CutRelX { dx: 1 }));
+        many.push(C::EndOfFile);
+        assert!(parse_limited(&scrambled(&many), RdFrame::default(), 1000).unwrap_err().to_string().contains("points"));
+        assert_eq!(parse_limited(&scrambled(&many), RdFrame::default(), 1001).unwrap().paths.len(), 1);
+        let mut far = vec![C::StartProcess, C::MoveAbs { x: 0, y: 0 }];
+        far.extend((0..10).map(|_| C::CutAbs { x: i32::MAX, y: 0 }));
+        far.extend((0..10).map(|_| C::CutRel { dx: 8191, dy: 0 }));
+        far.push(C::EndOfFile);
+        assert!(parse(&scrambled(&far), RdFrame::default()).unwrap_err().to_string().contains("from the origin"));
     }
 }
