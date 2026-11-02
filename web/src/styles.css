@@ -1967,8 +1967,16 @@ textarea {
 }
 
 .tl-cmd {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-weight: 500;
   white-space: nowrap;
+}
+
+.tl-cmd .icon {
+  color: var(--icon);
+  flex: none;
 }
 
 .tl-rev {
@@ -1976,23 +1984,112 @@ textarea {
   font-size: calc(10.5px * var(--ui-scale, 1));
 }
 
+/* The marker: a 4 px line in a 32 px hit area (it overlaps the chips' edges, not their middles), with a grip to drag. */
 .tl-marker {
   flex: none;
-  width: 4px;
+  position: relative;
+  z-index: 1;
+  width: 32px;
+  margin: 0 -12px;
   align-self: stretch;
-  background: var(--accent);
-  border-radius: 2px;
   touch-action: none;
 }
 
-.tl-marker.draggable {
-  width: 8px;
-  cursor: ew-resize;
-  background: linear-gradient(90deg, transparent 2px, var(--accent) 2px, var(--accent) 6px, transparent 6px);
+.tl-marker::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 14px;
+  width: 4px;
+  border-radius: 2px;
+  background: var(--accent);
 }
 
-.tl-marker.dragging {
-  background: linear-gradient(90deg, transparent 1px, var(--warn) 1px, var(--warn) 7px, transparent 7px);
+.tl-marker.draggable {
+  cursor: ew-resize;
+}
+
+.tl-grip {
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  width: 14px;
+  height: 18px;
+  margin-top: -9px;
+  border-radius: 4px;
+  background: var(--accent);
+  box-shadow: 0 0 0 1px var(--panel);
+  /* Two rows of dots: the grip affordance. */
+  background-image: radial-gradient(circle, var(--on-accent) 1px, transparent 1.3px);
+  background-size: 5px 5px;
+  background-position: 2px 2px;
+}
+
+.tl-marker.dragging::before,
+.tl-marker.dragging .tl-grip {
+  background-color: var(--warn);
+}
+
+/* History as a list (the phone's More sheet). */
+.timeline-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.tl-list-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 2px 0;
+  padding: 0 0 0 4px;
+  height: auto;
+  min-height: var(--hit);
+  flex-direction: row;
+  border-bottom-width: 1px;
+}
+
+.tl-list-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--hit);
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tl-list-main .tl-cmd {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tl-now {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0;
+  color: var(--accent);
+  font-weight: 600;
+  font-size: calc(var(--fs-xs) * var(--ui-scale, 1));
+  text-transform: uppercase;
+  letter-spacing: var(--caption-ls);
+}
+
+.tl-now::before,
+.tl-now::after {
+  content: "";
+  flex: 1;
+  height: 2px;
+  background: var(--accent);
 }
 
 .ctx-menu {
