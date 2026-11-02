@@ -317,6 +317,49 @@ fn preview_times_run_up_to_the_estimate() {
 }
 
 #[test]
+fn estimate_times_motion_at_the_speed_words_and_the_motion_scale() {
+    // 300 mm/s on a 153.75 mm field is the speed word 127 (truncated), 297.95 mm/s; 2000 mm/s jumps are 852, 1999.3.
+    let t = Target { field_mm: 153.75, ..target() };
+    let d = doc_with(vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0)), rect("obj-2", 10.0, 10.0, (30.0, 0.0))], fill(0.5));
+    let mut d300 = d.clone();
+    d300.layers[0].settings.speed_mm_s = 300.0;
+    let plan = plan_job(&d300, &t).unwrap();
+    let s = &plan.passes[0].settings;
+    let word_speed = 127.0 * 153.75 * 1000.0 / 65535.0;
+    assert!((s.motion.mark_speed_mm_s - word_speed).abs() < 1e-9, "{:?}", s.motion);
+    assert!((s.mark_us(word_speed) - 1e6).abs() < 1e-6, "one second of marking");
+    assert_eq!(s.motion.scale, 1.0);
+    // The board's motion takes 1.3 times as long: only the motion grows, the delays stay.
+    let scaled = plan_job(&d300, &Target { motion_time_scale: 1.3, ..t.clone() }).unwrap();
+    let motion_s = (s.mark_us(plan.stats.mark_length_mm) + s.jump_us(plan.stats.jump_length_mm)) / 1e6;
+    let grown = scaled.stats.estimated_time_s - plan.stats.estimated_time_s;
+    assert!((grown - 0.3 * motion_s).abs() < 1e-9, "{grown} vs {}", 0.3 * motion_s);
+    // The timeline and the encoded list agree with the stats.
+    let preview = preview_plan(&scaled);
+    assert!((preview.segments.last().unwrap().t_s - scaled.stats.estimated_time_s).abs() < 1e-9);
+    let t13 = Target { motion_time_scale: 1.3, ..t.clone() };
+    let sim = simulate(&encode(&scaled, &t13).unwrap(), &t13);
+    assert!((sim.stats.estimated_time_s / scaled.stats.estimated_time_s - 1.0).abs() < 0.01);
+    // Out of range: refused.
+    assert!(plan_job(&d300, &Target { motion_time_scale: 3.0, ..t }).is_err());
+}
+
+#[test]
+fn scale_times_scales_every_time_of_a_preview() {
+    let d = doc_with(vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0))], fill(0.5));
+    let plan = plan_job(&d, &target()).unwrap();
+    let mut p = preview_document(&d, &plan);
+    let before = p.clone();
+    scale_times(&mut p, 1.25);
+    assert!((p.stats.estimated_time_s - 1.25 * before.stats.estimated_time_s).abs() < 1e-12);
+    assert!((p.layers[0].estimated_time_s - 1.25 * before.layers[0].estimated_time_s).abs() < 1e-12);
+    assert!((p.passes[0].estimated_time_s - 1.25 * before.passes[0].estimated_time_s).abs() < 1e-12);
+    assert!((p.segments.last().unwrap().t_s - p.stats.estimated_time_s).abs() < 1e-9);
+    scale_times(&mut p, f64::NAN);
+    assert!((p.stats.estimated_time_s - 1.25 * before.stats.estimated_time_s).abs() < 1e-12);
+}
+
+#[test]
 fn calibration_changes_the_encoded_words() {
     let d = doc_with(vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0))], CutSettings::default());
     let plan = plan_job(&d, &target()).unwrap();

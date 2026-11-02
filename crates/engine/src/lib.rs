@@ -27,6 +27,7 @@ pub mod events;
 pub mod frame;
 pub mod hw;
 pub mod job;
+pub mod marktime;
 pub mod lightburn;
 pub mod mcp;
 pub mod pin;

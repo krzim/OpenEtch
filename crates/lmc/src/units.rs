@@ -181,6 +181,10 @@ pub fn speed_to_units(mm_s: f64, field_mm: f64) -> Result<u16> {
     whole_word(w, "speed", mm_s, "<= 65535 galvo units/ms")
 }
 
+/// Accepted range of a motion time scale: how many times longer a board takes to move than distance / commanded
+/// speed (`machine::MachineProfile::motion_time_scale`, `plan::Target::motion_time_scale`; time estimates only).
+pub const MOTION_TIME_SCALE_RANGE: std::ops::RangeInclusive<f64> = 0.5..=2.0;
+
 /// Galvo units per ms → mm/s (display).
 pub fn units_to_speed(units: u16, field_mm: f64) -> f64 {
     f64::from(units) * field_mm * 1000.0 / WORD_MAX

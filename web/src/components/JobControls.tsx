@@ -20,6 +20,7 @@ import {
   jobStateKey,
   jobStatus,
   progressPct,
+  remainingLine,
   repeating,
   runOptionsSummary,
   runRequestBody,
@@ -161,6 +162,7 @@ export function JobProgress(p: { state: JobState; notify: Notify; report: (e: un
   const st = jobStateKey(job);
   const it = iterationText(job);
   const pct = progressPct(job);
+  const left = remainingLine(job);
   const notYet = unsupported ? t("laser.notYet") : undefined;
   return (
     <div className="job-progress" aria-label={t("job.progress")}>
@@ -178,7 +180,7 @@ export function JobProgress(p: { state: JobState; notify: Notify; report: (e: un
       {job.active && (
         <div className="job-times">
           <span>{t("job.elapsed", { time: formatDuration(job.elapsed_s) })}</span>
-          <span>{t("job.remaining", { time: formatDuration(job.remaining_s) })}</span>
+          <span>{left.key === "job.finishing" ? t("job.finishing") : t("job.remaining", { time: formatDuration(left.time) })}</span>
           {job.packets_total > 0 && <span className="muted">{t("job.packets", { sent: job.packets_sent, total: job.packets_total })}</span>}
         </div>
       )}

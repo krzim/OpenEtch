@@ -82,6 +82,14 @@ fn default_open_mo_delay() -> f64 {
     DEFAULT_OPEN_MO_DELAY_US
 }
 
+fn default_motion_time_scale() -> f64 {
+    1.0
+}
+
+fn is_one(v: &f64) -> bool {
+    *v == 1.0
+}
+
 fn default_true() -> bool {
     true
 }
@@ -424,6 +432,11 @@ pub struct MachineProfile {
     /// [`DEFAULT_OPEN_MO_DELAY_US`].
     #[serde(default = "default_open_mo_delay")]
     pub open_mo_delay_us: f64,
+    /// How many times longer the board takes to move than distance / commanded speed, for the time estimate only
+    /// (`plan::Target::motion_time_scale`; what is sent never changes). 0.5..=2; missing: 1 (as commanded). The
+    /// B6 fixture's 1.30 comes from two runs measured with the board's `GetMarkTime` (see the fixture).
+    #[serde(default = "default_motion_time_scale", skip_serializing_if = "is_one")]
+    pub motion_time_scale: f64,
     /// Input bit of the start-mark signal (a foot pedal or button; LightBurn `StartMarkPortBit`, markcfg
     /// `STARTMARKPORT`), 0..=15; `None` when there is none. A run asked to wait for the start input waits for this bit
     /// before each iteration (LightBurn's Start Marking input); `--confirm-input` is the separate approval
@@ -501,6 +514,7 @@ impl MachineProfile {
             max_delay_us: DEFAULT_MAX_DELAY_US,
             pulse_width_enabled: true,
             open_mo_delay_us: DEFAULT_OPEN_MO_DELAY_US,
+            motion_time_scale: 1.0,
             start_mark_input_bit: None,
             start_mark_active_low: false,
             stop_mark_input_bit: None,
@@ -640,6 +654,10 @@ impl MachineProfile {
         if !(self.open_mo_delay_us.is_finite() && (0.0..=MAX_OPEN_MO_DELAY_US).contains(&self.open_mo_delay_us)) {
             return invalid("open_mo_delay_us", format!("{} must be 0..={MAX_OPEN_MO_DELAY_US} µs", self.open_mo_delay_us));
         }
+        let (lo, hi) = (*units::MOTION_TIME_SCALE_RANGE.start(), *units::MOTION_TIME_SCALE_RANGE.end());
+        if !(self.motion_time_scale.is_finite() && (lo..=hi).contains(&self.motion_time_scale)) {
+            return invalid("motion_time_scale", format!("{} must be {lo}..={hi}", self.motion_time_scale));
+        }
         if let Some(bit) = self.start_mark_input_bit.filter(|b| *b > 15) {
             return invalid("start_mark_input_bit", format!("{bit} is not an input bit 0-15"));
         }
@@ -743,7 +761,9 @@ mod tests {
     fn b6_fixture_loads() {
         let p = MachineProfile::from_toml(B6).expect("fixture is valid");
         assert_eq!(p.field_mm, 153.75);
+        // Swapped since 2026-11-01 (the owner's red frame came out transposed without it).
         assert!(p.swap_xy && !p.negate_x && !p.negate_y);
+        assert_eq!(p.motion_time_scale, 1.30);
         assert_eq!(p.cor_file.as_deref(), Some(Path::new("jcz150.cor")));
         assert_eq!(p.pulse_widths_ns, units::JPT_M7_PULSE_WIDTHS_NS.to_vec());
         assert_eq!((p.frequency_khz_min, p.frequency_khz_max), (1.0, 4000.0));
@@ -770,7 +790,8 @@ mod tests {
         let fixture = MachineProfile::from_toml(B6).unwrap();
         let imported = MachineProfile::from_markcfg_bytes(MARKCFG).unwrap();
         assert_eq!(imported.field_mm, fixture.field_mm);
-        assert_eq!((imported.swap_xy, imported.negate_x, imported.negate_y), (fixture.swap_xy, fixture.negate_x, fixture.negate_y));
+        assert_eq!((imported.negate_x, imported.negate_y), (fixture.negate_x, fixture.negate_y));
+        assert_eq!(imported.swap_xy, fixture.swap_xy);
         assert_eq!(imported.cor_file, fixture.cor_file);
         assert_eq!(imported.red_light_speed_mm_s, fixture.red_light_speed_mm_s);
         assert_eq!(imported.mark_speed, fixture.mark_speed);

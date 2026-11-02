@@ -62,6 +62,7 @@ pub fn target_from_profile(p: &MachineProfile) -> Target {
             jump_distance_limit_mm: p.timing.jump_distance_limit_mm,
         },
         open_mo_delay_us: p.open_mo_delay_us,
+        motion_time_scale: p.motion_time_scale,
         calibration: p.calibration,
         pulse_width_enabled: p.pulse_width_enabled && p.fiber_kind == FiberKind::Mopa,
         z_axis: p.axis.as_ref().is_some_and(|a| a.role == AxisRole::Z),

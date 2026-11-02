@@ -250,6 +250,7 @@ async fn run(config: Config) -> Result<(), String> {
     }
     state.install_devices(registry);
     state.job.open(config.config_dir.join(engine::job::COUNTERS_FILE));
+    state.job.times.open(config.config_dir.join(engine::marktime::MARK_TIMES_FILE));
     // Libraries, preferences, job log, camera calibrations (module `libs`).
     for note in state.libs.open(&config.config_dir) {
         println!("openetch: {note}");

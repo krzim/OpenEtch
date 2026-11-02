@@ -180,7 +180,7 @@ pub fn preview_plan(plan: &JobPlan) -> Preview {
             let Some(&first) = poly.first() else { continue };
             let jump = dist(pos, first);
             if jump > 0.0 {
-                t_us += jump / tm.jump_speed_mm_s * 1e6 + crate::encode::jump_delay_us(tm, jump).max(0.0);
+                t_us += pass.settings.jump_us(jump) + crate::encode::jump_delay_us(tm, jump).max(0.0);
             }
             if first != pos {
                 segments.push(at(SegmentKind::Jump, pos, first, false, None, t_us));
@@ -196,7 +196,7 @@ pub fn preview_plan(plan: &JobPlan) -> Preview {
                 if k > 0 {
                     t_us += polygon;
                 }
-                t_us += dist(w[0], w[1]) / pass.settings.speed_mm_s * 1e6;
+                t_us += pass.settings.mark_us(dist(w[0], w[1]));
                 segments.push(at(SegmentKind::Mark, w[0], w[1], true, power, t_us));
             }
             t_us += tm.laser_off_delay_us.max(0.0) + tm.end_delay_us.max(0.0);
@@ -208,6 +208,22 @@ pub fn preview_plan(plan: &JobPlan) -> Preview {
         t_us += pass.pause_after_us;
     }
     Preview { segments, passes, stats: plan.stats, layers: Vec::new(), warnings: plan.warnings.clone() }
+}
+
+/// Multiply every estimated time of `preview` by `factor` (the stats, each pass, layer and sub-layer, and every
+/// segment's `t_s`), so a learned correction (`engine::marktime`) keeps the totals and the timeline in step.
+/// A factor that is not finite and positive changes nothing.
+pub fn scale_times(preview: &mut Preview, factor: f64) {
+    if !(factor.is_finite() && factor > 0.0) || factor == 1.0 {
+        return;
+    }
+    preview.stats.estimated_time_s *= factor;
+    preview.passes.iter_mut().for_each(|p| p.estimated_time_s *= factor);
+    for l in &mut preview.layers {
+        l.estimated_time_s *= factor;
+        l.sub_layers.iter_mut().for_each(|s| s.estimated_time_s *= factor);
+    }
+    preview.segments.iter_mut().for_each(|s| s.t_s *= factor);
 }
 
 /// [`preview_plan`] plus a [`LayerPreview`] for every layer of `doc` (the document `plan` was planned from).
@@ -380,9 +396,11 @@ pub fn simulate(packets: &[Packet], target: &Target) -> Preview {
     Preview { segments, passes: Vec::new(), stats, layers: Vec::new(), warnings: Vec::new() }
 }
 
-/// Nominal run time of a decoded list in µs, with the same model as the plan's estimate: motion at the set speeds,
-/// jump delays, laser on/off delays per mark run, polygon delays between consecutive marks, and explicit waits.
+/// Estimated run time of a decoded list in µs, with the same model as the plan's estimate: motion at the speeds the
+/// words give (times [`Target::motion_time_scale`]), jump delays, laser on/off delays per mark run, polygon delays
+/// between consecutive marks, and explicit waits.
 fn list_time_us(cmds: &[ListCommand], target: &Target) -> f64 {
+    let scale = target.motion_time_scale;
     let unit = target.galvo_unit_mm();
     let speed = |units: u16| units_to_speed(units, target.transform().speed_field_mm());
     let (mut jump_speed, mut mark_speed) = (0.0, 0.0);
@@ -405,14 +423,14 @@ fn list_time_us(cmds: &[ListCommand], target: &Target) -> f64 {
             ListCommand::DelayTime { time_10us } | ListCommand::LaserOnPoint { time_10us } => t += f64::from(time_10us) * 10.0,
             ListCommand::JumpTo { x, y, .. } => {
                 if jump_speed > 0.0 {
-                    t += galvo_dist(pos, (x, y)) / jump_speed * 1e6;
+                    t += galvo_dist(pos, (x, y)) / jump_speed * 1e6 * scale;
                 }
                 t += jump_delay;
                 pos = (x, y);
             }
             ListCommand::MarkTo { x, y, .. } => {
                 if mark_speed > 0.0 {
-                    t += galvo_dist(pos, (x, y)) / mark_speed * 1e6;
+                    t += galvo_dist(pos, (x, y)) / mark_speed * 1e6 * scale;
                 }
                 t += if prev_mark { polygon } else { on + off };
                 is_mark = true;
