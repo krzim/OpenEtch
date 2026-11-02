@@ -1167,8 +1167,11 @@ Origin), the public WAZER `.lbdev`, xTool/Creality `.lbdev` posts and the owner'
   `M4 S0`, `G0` travel, `G1` cuts with `S = power % x $30` and `F` = mm/s x 60, pauses as `M5` + `G4`, `M5` at the end;
   feeds, powers and points off the bed refused, never clamped). The GRBL layer options (`doc::CutOptions`, LightBurn's
   GRBL layer settings): `constant_power` runs the pass with `M3` when the device's default is `M4` (every spindle
-  change is written `M3 S0` / `M4 S0`, so the power only comes with the next cut); `air_assist` writes `M8` before the
-  pass's first cut and `M9` for a pass without it and after the final `M5`; `overscan_mm` (fill hatch lines and image
+  change is written `M3 S0` / `M4 S0`, so the power only comes with the next cut); `air_assist` writes `M8` after the travel
+  to the pass's first cut and `M9` for a pass without it and after the final `M5` (after the travel, never straight
+  after a cut: GRBL waits for the head to stand still before a coolant change, and in `M3` the laser keeps its S while
+  it stands; a job that uses air assist sets it for its first pass either way, since the console may have left it
+  on); `overscan_mm` (fill hatch lines and image
   runs: every two-point scan line) adds a run-in from `overscan` mm before the line and a run-out past it, both `G1 ...
   S0` at the cut's feed and shortened at the bed's edge; `overcut_mm` cuts a closed outline on past its start (at most
   once around). The web UI offers the Move and Console windows and File > Save G-code only while a GRBL gantry is
