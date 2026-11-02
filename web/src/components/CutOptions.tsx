@@ -38,6 +38,7 @@ import { onEngineEvent } from "../api/events.ts";
 import type { CutSettings, GDocument, Layer } from "../api/types.ts";
 import { useT } from "../workspace/usePrefs.ts";
 import { CheckField, NumberField } from "./ui.tsx";
+import { TabFields } from "../tools/TabFields.tsx";
 import "./job.css";
 
 type Run = (inv: Invocation | Invocation[]) => Promise<unknown>;
@@ -171,32 +172,15 @@ export function CutOptionsSection(p: {
               <NumberField label={t("cut.perfSkip")} unit="mm" value={r.perforation.skip_mm} min={0.001} digits={3} onCommit={num((v) => opt({ perforation: { ...r.perforation, skip_mm: v } }))} />
             </div>
           )}
-          <CheckField label={t("cut.tabs")} checked={r.tabs !== null} onChange={(on) => opt({ tabs: on ? OPTION_DEFAULTS.tabs : null })} />
-          {r.tabs && (
-            <div className="job-indent">
-              <NumberField label={t("cut.tabSize")} unit="mm" value={r.tabs.size_mm} min={0.001} digits={3} onCommit={num((v) => opt({ tabs: { ...r.tabs, size_mm: v } }))} />
-              <NumberField
-                label={t("cut.tabCount")}
-                value={r.tabs.spacing_mm > 0 ? null : r.tabs.count}
-                min={1}
-                max={1000}
-                digits={0}
-                placeholder={t("cut.bySpacing")}
-                onCommit={num((v) => opt({ tabs: { ...r.tabs, count: Math.round(v), spacing_mm: 0 } }))}
-              />
-              <NumberField
-                label={t("cut.tabSpacing")}
-                unit="mm"
-                value={r.tabs.spacing_mm > 0 ? r.tabs.spacing_mm : null}
-                min={0}
-                digits={3}
-                allowEmpty
-                placeholder={t("cut.byCount")}
-                onCommit={(v) => opt({ tabs: { ...r.tabs, spacing_mm: v ?? 0, count: v ? (r.tabs?.count ?? 0) : Math.max(1, r.tabs?.count || 4) } })}
-              />
-            </div>
+          <CheckField
+            label={t("cut.tabs")}
+            checked={r.tabs?.enabled === true}
+            onChange={(on) => opt({ tabs: r.tabs ? { ...r.tabs, enabled: on } : on ? OPTION_DEFAULTS.tabs : null })}
+          />
+          {r.tabs?.enabled && (
+            <TabFields tabs={r.tabs} onChange={(tabs) => opt({ tabs })} />
           )}
-          {(r.dot_mode || r.wobble || r.perforation || r.tabs) && <p className="hint">{t("cut.lineOrder")}</p>}
+          {(r.dot_mode || r.wobble || r.perforation || r.tabs?.enabled) && <p className="hint">{t("cut.lineOrder")}</p>}
           <NumberField label={t("cut.kerf")} unit="mm" value={r.kerf_offset_mm} min={-50} max={50} digits={3} onCommit={num((kerf_offset_mm) => opt({ kerf_offset_mm }))} />
           {r.kerf_offset_mm !== 0 && <p className="hint">{t("cut.kerfHint")}</p>}
         </fieldset>

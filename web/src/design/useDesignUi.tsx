@@ -85,6 +85,8 @@ export interface DesignUiProps {
   cursor: { current: Vec2 | null };
   /** Refetch the document (after an edit made through another route than /api/execute). */
   refreshDoc: () => void;
+  /** More Tools dropdown entries (src/tools/: tabs, dogbone, Resize Slots, Multi-File Trace), after a separator. */
+  extraTools?: MenuItem[];
 }
 
 type Dlg = { kind: "movePosition" } | { kind: "moveTogether"; axis: "x" | "y" } | { kind: "curveTolerance" } | { kind: "array"; edit?: VirtualArray };
@@ -765,6 +767,7 @@ export function useDesignUi(p: DesignUiProps): DesignUi {
     },
     { sep: true },
     { label: t("dz.menu.artLibrary"), action: openArtDock },
+    ...(p.extraTools?.length ? [{ sep: true } as MenuItem, ...p.extraTools] : []),
   ];
   const arrangeItems: MenuItem[] = [
     { sep: true },

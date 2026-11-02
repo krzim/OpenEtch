@@ -289,6 +289,8 @@ struct ShapeIn<'a> {
     scale: f64,
     /// The user start point (field mm) and reverse flag of the shape's closed outlines (Set Start Point).
     start: Option<(Point, bool)>,
+    /// Tabs placed by hand on the shape (field mm; LightBurn's Add Tabs tool).
+    tabs: Vec<Point>,
 }
 
 /// [`plan_job`] with a segment budget of `max_segments` (tests use a small one).
@@ -370,7 +372,19 @@ pub(crate) fn plan_job_within(doc: &Document, target: &Target, max_segments: usi
                 let p = obj.transform * kurbo::Point::new(s.local[0], s.local[1]);
                 ([p.x, p.y], s.reverse)
             });
-            shapes.push(ShapeIn { object: obj, subs, group, key, scale, start });
+            // (A document edited by hand may hold more tabs than tabs.add allows, or ones that are not numbers.)
+            let tabs = options
+                .map(|o| {
+                    o.tabs
+                        .iter()
+                        .map(|t| obj.transform * kurbo::Point::new(t[0], t[1]))
+                        .filter(|p| p.is_finite())
+                        .take(doc::MAX_MANUAL_TABS)
+                        .map(|p| [p.x, p.y])
+                        .collect()
+                })
+                .unwrap_or_default();
+            shapes.push(ShapeIn { object: obj, subs, group, key, scale, start, tabs });
         }
     }
     if !outside.is_empty() {
@@ -513,9 +527,10 @@ pub(crate) fn plan_job_within(doc: &Document, target: &Target, max_segments: usi
             let o = &cut.options;
             let path_extras = cut.mode == FillMode::Line
                 && (o.lead_in.is_some() || o.lead_out.is_some() || o.start_pause_ms > 0.0 || o.end_pause_ms > 0.0);
-            if target.gantry && path_extras && (o.tabs.is_some() || o.perforation.is_some()) {
-                // Tabs and perforation cut a path into pieces; a lead (and a dwell) at every piece would cut across
-                // the bridges and the skips.
+            if target.gantry && path_extras && (o.tabs.as_ref().is_some_and(|t| t.enabled) || o.perforation.is_some()) {
+                // Tabs (automatic or placed by hand, while the layer's Tabs / Bridges switch is on) and perforation
+                // cut a path into pieces; a lead (and a dwell) at every piece would cut across the bridges and the
+                // skips. Tab settings kept with the switch off cut nothing, so they do not count.
                 return Err(PlanError::Target(format!(
                     "layer {}: lead-in, lead-out and start/end pauses cannot be combined with tabs or perforation",
                     layer.id
@@ -870,6 +885,13 @@ fn pass_polylines(
     let mut scales = Vec::new();
     let mut pos = start;
     let mut lines_made = 0usize;
+    let tabs = o.tabs.as_ref().filter(|t| t.enabled);
+    let (line_chunks_of, tab_info) = if line {
+        line_buckets(layer, buckets, o, !(ctx.order.enabled && ctx.order.best_start), ctx.remove_overlaps.is_some(), max)?
+    } else {
+        (Vec::new(), Vec::new())
+    };
+    let mut line_iter = line_chunks_of.into_iter();
     for bucket in buckets {
         if fill {
             // Fill grouping: which shapes share one hatch.
@@ -953,25 +975,133 @@ fn pass_polylines(
             pos = end;
         }
         if line {
-            let user_start = !(ctx.order.enabled && ctx.order.best_start);
-            let mut chunks: Vec<(Chunk, f64)> = Vec::new();
-            for s in bucket {
-                chunks.extend(line_chunks(layer, s, o.kerf_offset_mm, user_start, max)?.into_iter().map(|c| (c, s.scale)));
-            }
-            if let Some(tol) = ctx.remove_overlaps {
-                chunks = cutopts::remove_overlaps(chunks, tol);
-            }
+            let chunks = line_iter.next().unwrap_or_default();
+            let chunks = match ctx.remove_overlaps {
+                Some(tol) => cutopts::remove_overlaps(chunks, tol),
+                None => chunks,
+            };
             let (polylines, end) = order_with(chunks, pos, &ctx.order);
-            for (p, k) in polylines {
-                for piece in line_options(p, o) {
+            for (p, (k, i)) in polylines {
+                for (piece, tab) in line_options(p, o, &tab_info[i]) {
                     out.push(piece);
-                    scales.push(k);
+                    scales.push(if tab { k * tabs.map_or(0.0, |t| t.cut_power_pct) / 100.0 } else { k });
                 }
             }
             pos = end;
         }
     }
     Ok((out, scales, pos))
+}
+
+/// Line chunks of every bucket (tagged with the power scale and an index into the returned [`ChunkTabs`]), made
+/// before any is ordered so Skip Inner Shapes sees the whole pass. A tab placed by hand belongs to the shape's closed
+/// outline nearest it. With `keep_rings` (Remove Overlapping Lines may open the outlines) each closed outline is kept
+/// too, so the pieces left of it still get its tabs.
+#[allow(clippy::type_complexity)]
+fn line_buckets(
+    layer: &str,
+    buckets: &[Vec<&ShapeIn>],
+    o: &doc::CutOptions,
+    user_start: bool,
+    keep_rings: bool,
+    max: usize,
+) -> Result<(Vec<Vec<(Chunk, (f64, usize))>>, Vec<ChunkTabs>)> {
+    let tabs = o.tabs.as_ref().filter(|t| t.enabled);
+    let mut per_bucket: Vec<Vec<(Chunk, (f64, usize))>> = Vec::with_capacity(buckets.len());
+    let mut info: Vec<ChunkTabs> = Vec::new();
+    for bucket in buckets {
+        let mut chunks: Vec<(Chunk, (f64, usize))> = Vec::new();
+        for s in bucket {
+            let first = chunks.len();
+            for c in line_chunks(layer, s, o.kerf_offset_mm, user_start, max)? {
+                let ring = match &c {
+                    Chunk::Closed(r) if keep_rings && tabs.is_some() && !r.is_empty() => Some(r.iter().chain(std::iter::once(&r[0])).copied().collect()),
+                    _ => None,
+                };
+                chunks.push((c, (s.scale, info.len())));
+                info.push(ChunkTabs { manual: Vec::new(), auto: s.tabs.is_empty(), inner: false, ring });
+            }
+            if tabs.is_none() {
+                continue;
+            }
+            for &t in &s.tabs {
+                let nearest = chunks[first..]
+                    .iter()
+                    .filter_map(|(c, (_, k))| match c {
+                        Chunk::Closed(r) => Some((ring_distance(r, t), *k)),
+                        _ => None,
+                    })
+                    .min_by(|a, b| a.0.total_cmp(&b.0));
+                if let Some((_, k)) = nearest {
+                    info[k].manual.push(t);
+                }
+            }
+        }
+        per_bucket.push(chunks);
+    }
+    if tabs.is_some_and(|t| t.skip_inner) {
+        let rings: Vec<(usize, &[Point])> = per_bucket
+            .iter()
+            .flatten()
+            .filter_map(|(c, (_, k))| match c {
+                Chunk::Closed(r) => Some((*k, r.as_slice())),
+                _ => None,
+            })
+            .collect();
+        let flags = cutopts::inner_rings(&rings.iter().map(|(_, r)| *r).collect::<Vec<_>>());
+        for ((k, _), inner) in rings.iter().zip(flags) {
+            info[*k].inner = inner;
+        }
+    }
+    // Automatic tabs by spacing scale with the outline's length: a tiny spacing on a long outline would make
+    // millions of pieces before the segment budget is counted, so it is refused here.
+    if let Some(t) = tabs.filter(|t| t.generation == doc::TabGeneration::Auto && t.spacing_mm > 0.0) {
+        let mut pieces = 0.0;
+        for (c, (_, k)) in per_bucket.iter().flatten() {
+            let Chunk::Closed(r) = c else { continue };
+            if !info[*k].auto || (t.skip_inner && info[*k].inner) || r.len() < 2 {
+                continue;
+            }
+            let len = polyline_length(r) + dist(r[r.len() - 1], r[0]);
+            let mut n = (len / t.spacing_mm).floor().max(1.0);
+            if t.max_tabs > 0 {
+                n = n.min(f64::from(t.max_tabs));
+            }
+            if t.size_mm < len / n {
+                pieces += n;
+            }
+            if pieces > max as f64 {
+                return Err(PlanError::TooManySegments { max });
+            }
+        }
+    }
+    Ok((per_bucket, info))
+}
+
+/// What the tabs of one line chunk need (see [`line_buckets`]).
+struct ChunkTabs {
+    /// Tabs placed by hand that belong to this outline (field mm).
+    manual: Vec<Point>,
+    /// Automatic tabs may go here: the shape has no hand-placed tabs.
+    auto: bool,
+    /// Inside another closed outline of the pass (Skip Inner Shapes).
+    inner: bool,
+    /// The closed outline (ending where it starts), kept while Remove Overlapping Lines may open it.
+    ring: Option<Vec<Point>>,
+}
+
+/// Distance from `p` to the nearest point of the closed ring `r`.
+fn ring_distance(r: &[Point], p: Point) -> f64 {
+    let n = r.len();
+    (0..n)
+        .map(|i| {
+            let (a, b) = (r[i], r[(i + 1) % n]);
+            let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+            let l2 = dx * dx + dy * dy;
+            let t = if l2 > 0.0 { (((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2).clamp(0.0, 1.0) } else { 0.0 };
+            dist(p, [a[0] + dx * t, a[1] + dy * t])
+        })
+        .fold(f64::INFINITY, f64::min)
 }
 
 /// `group` split by power scale, in order of each scale's first shape (one group when all share one).
@@ -1013,23 +1143,34 @@ fn offset_error(layer: &str, what: &str, e: crate::offsets::OffsetError, max: us
     }
 }
 
-/// The line options of one ordered outline, in order: tabs (closed outlines), perforation, wobble, dot mode.
-fn line_options(p: Vec<Point>, o: &doc::CutOptions) -> Vec<Vec<Point>> {
+/// The line options of one ordered outline, in order: tabs (closed outlines; LightBurn's Tabs / Bridges: automatic
+/// ones unless the generation is manual, the shape has tabs placed by hand or Skip Inner Shapes applies, and the
+/// hand-placed ones), perforation, wobble, dot mode. Each piece says whether it is a tab (marked at the tab cut
+/// power; without one, tabs are left out).
+fn line_options(p: Vec<Point>, o: &doc::CutOptions, info: &ChunkTabs) -> Vec<(Vec<Point>, bool)> {
     let closed = p.len() > 2 && p.first() == p.last();
-    let mut pieces = match &o.tabs {
-        Some(t) => cutopts::tabs(p, closed, t.count, t.spacing_mm, t.size_mm),
-        None => vec![p],
+    let mut pieces = match o.tabs.as_ref().filter(|t| t.enabled) {
+        Some(t) => {
+            let auto = (t.generation == doc::TabGeneration::Auto && info.auto && !(t.skip_inner && info.inner))
+                .then_some(cutopts::AutoTabs { count: t.count, spacing_mm: t.spacing_mm, max_tabs: t.max_tabs });
+            match &info.ring {
+                // What Remove Overlapping Lines left of a closed outline keeps that outline's tabs.
+                Some(ring) if !closed => cutopts::tab_pieces_of_part(p, ring, auto, &info.manual, t.size_mm, t.cut_power_pct > 0.0),
+                _ => cutopts::tab_pieces(p, closed, auto, &info.manual, t.size_mm, t.cut_power_pct > 0.0),
+            }
+        }
+        None => vec![(p, false)],
     };
     if let Some(perf) = &o.perforation {
-        pieces = pieces.iter().flat_map(|p| cutopts::perforate(p, perf.cut_mm, perf.skip_mm)).collect();
+        pieces = pieces.iter().flat_map(|(p, t)| cutopts::perforate(p, perf.cut_mm, perf.skip_mm).into_iter().map(|q| (q, *t))).collect();
     }
     if let Some(w) = &o.wobble {
-        pieces = pieces.iter().map(|p| cutopts::wobble(p, w.step_mm, w.size_mm)).collect();
+        pieces = pieces.iter().map(|(p, t)| (cutopts::wobble(p, w.step_mm, w.size_mm), *t)).collect();
     }
     if let Some(d) = &o.dot_mode {
-        return pieces.iter().flat_map(|p| cutopts::dots(p, d.dot_spacing_mm)).map(|p| vec![p]).collect();
+        return pieces.iter().flat_map(|(p, t)| cutopts::dots(p, d.dot_spacing_mm).into_iter().map(|q| (vec![q], *t))).collect();
     }
-    pieces.retain(|p| p.len() >= 2);
+    pieces.retain(|(p, _)| p.len() >= 2);
     pieces
 }
 

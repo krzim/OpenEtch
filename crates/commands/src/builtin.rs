@@ -23,6 +23,10 @@ mod shape;
 mod stock;
 mod sub_layer;
 mod svg_import;
+// Tabs placed by hand, dogbones, slot resizing and tracing several images (LightBurn's Tools menu extras).
+mod joinery;
+mod tabs;
+mod trace_many;
 // Text, variable text and barcodes (crates/text).
 pub(crate) mod text;
 mod util;
@@ -119,6 +123,20 @@ pub(crate) fn register_all(r: &mut Registry) {
     register_text(r);
     register_libs(r);
     register_files(r);
+    register_tools(r);
+}
+
+/// Tabs, dogbones, Resize Slots and Multi-File Trace (`tabs`, `joinery`, `trace_many`).
+fn register_tools(r: &mut Registry) {
+    r.register::<tabs::AddTabs>();
+    r.register::<tabs::MoveTab>();
+    r.register::<tabs::RemoveTabs>();
+    r.register::<tabs::ClearTabs>();
+    r.register::<tabs::ListTabs>();
+    r.register::<joinery::Dogbone>();
+    r.register::<joinery::ResizeSlots>();
+    r.register::<trace_many::TraceMany>();
+    r.register::<trace_many::TraceFiles>();
 }
 
 /// Exports, imports, image tools, pages and notes (`files`, `image_tools`, `pages`).

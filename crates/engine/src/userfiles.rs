@@ -926,11 +926,23 @@ fn prefs_value(st: &AppState) -> Result<Value, EngineError> {
 fn set_prefs(st: &AppState, prefs: Value, files: Option<FileSettings>) -> Result<(), EngineError> {
     let p: crate::prefs::Preferences = serde_json::from_value(prefs).map_err(|e| EngineError::BadRequest(format!("bad preferences: {e}")))?;
     // Everything is checked before anything changes: the same rules as `PUT /api/prefs` (a Job Checklist that can
-    // be ticked) and `PUT /api/files/settings`.
+    // be ticked, console macros that pass the GRBL console policy, saved Move positions on the device's bed, User
+    // Tools of document commands only) and `PUT /api/files/settings`.
     for (device, d) in &p.devices {
-        if let Some(problem) = d.checklist.problem() {
+        // A saved position must be on that device's bed when it is a GRBL gantry here; a device this engine does not
+        // know (preferences from another machine) only gets the name and count checks.
+        let bed = st.devices().get(device).map(|dev| dev.grbl.as_ref().map(|g| g.work_area_mm));
+        let problem = d.checklist.problem().or_else(|| crate::prefs::macros_problem(&d.console_macros)).or_else(|| match bed {
+            Some(None) if !d.move_positions.is_empty() => Some("saved Move positions need a GRBL gantry".to_owned()),
+            Some(Some(bed)) => crate::prefs::move_positions_problem(&d.move_positions, bed),
+            _ => crate::prefs::move_positions_problem(&d.move_positions, [f64::MAX, f64::MAX]),
+        });
+        if let Some(problem) = problem {
             return Err(EngineError::BadRequest(format!("bad preferences: device {device}: {problem}")));
         }
+    }
+    if let Some(problem) = crate::api_libs::user_tools_problem(st, &p.user_tools) {
+        return Err(EngineError::BadRequest(format!("bad preferences: user tools: {problem}")));
     }
     if let Some(problem) = files.as_ref().and_then(FileSettings::problem) {
         return Err(EngineError::BadRequest(format!("bad file settings: {problem}")));

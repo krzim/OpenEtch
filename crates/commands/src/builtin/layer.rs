@@ -45,8 +45,8 @@ pub struct SettingsPatch {
     /// Cut options (partial, merged like a JSON merge patch; `null` resets one): output (sub-layer output toggle),
     /// pause_before_ms / pause_after_ms, dot_mode {dot_time_ms, dot_spacing_mm}, wobble {step_mm, size_mm},
     /// fill_dot_width_mm, fill_grouping (all_at_once, as new layers have | individually, what null resets to |
-    /// by_group), auto_rotate, flood_fill, perforation {cut_mm, skip_mm}, tabs {count, spacing_mm, size_mm},
-    /// z_offset_mm, z_step_mm.
+    /// by_group), auto_rotate, flood_fill, perforation {cut_mm, skip_mm}, tabs {enabled, generation auto|manual, count,
+    /// spacing_mm, max_tabs, size_mm, skip_inner, cut_power_pct} (hand-placed tabs: tabs.add), z_offset_mm, z_step_mm.
     #[schemars(with = "Option<doc::CutOptions>")]
     pub options: Option<Value>,
 }

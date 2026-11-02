@@ -32,7 +32,7 @@ export interface CutOptions {
   auto_rotate?: boolean;
   flood_fill?: boolean;
   perforation?: { cut_mm: number; skip_mm: number } | null;
-  tabs?: { count?: number; spacing_mm?: number; size_mm: number } | null;
+  tabs?: Partial<TabSettings> | null;
   z_offset_mm?: number;
   z_step_mm?: number;
   /** Kerf Offset: closed outlines of line passes traced outward (+) or inward (-), -50..=50 mm. */
@@ -78,7 +78,7 @@ export interface ResolvedOptions {
   auto_rotate: boolean;
   flood_fill: boolean;
   perforation: { cut_mm: number; skip_mm: number } | null;
-  tabs: { count: number; spacing_mm: number; size_mm: number } | null;
+  tabs: TabSettings | null;
   z_offset_mm: number;
   z_step_mm: number;
   kerf_offset_mm: number;
@@ -95,6 +95,22 @@ export interface ResolvedOptions {
   end_pause_ms: number;
 }
 
+/** A pass's tabs (`doc::Tabs`, LightBurn's Tabs / Bridges). */
+export interface TabSettings {
+  /** The Tabs / Bridges switch: off keeps the settings and the hand-placed tabs. */
+  enabled: boolean;
+  /** "auto": spread evenly (shapes with hand-placed tabs use those); "manual": hand-placed tabs only. */
+  generation: "auto" | "manual";
+  count: number;
+  spacing_mm: number;
+  /** With a spacing: at most this many per outline (0: no limit). */
+  max_tabs: number;
+  size_mm: number;
+  skip_inner: boolean;
+  /** Tab Cut Power, % of the pass's power (0: leave a gap). */
+  cut_power_pct: number;
+}
+
 /** Longest overscan, overcut, ramp and lead, mm (`doc::MAX_GANTRY_EXTRA_MM`). */
 export const MAX_GANTRY_EXTRA_MM = 50;
 /** Longest start or end pause of a GRBL path, ms (`doc::MAX_PATH_PAUSE_MS`). */
@@ -105,7 +121,7 @@ export const OPTION_DEFAULTS = {
   dot_mode: { dot_time_ms: 0.5, dot_spacing_mm: 0.1 },
   wobble: { step_mm: 0.1, size_mm: 0.5 },
   perforation: { cut_mm: 1, skip_mm: 1 },
-  tabs: { count: 4, spacing_mm: 0, size_mm: 0.5 },
+  tabs: { enabled: true, generation: "auto", count: 4, spacing_mm: 0, max_tabs: 0, size_mm: 0.5, skip_inner: false, cut_power_pct: 0 } as TabSettings,
   lead: { style: "line", length_mm: 2, angle_deg: 90 } as Lead,
 };
 
@@ -142,7 +158,18 @@ export function resolveOptions(settings: CutSettings | null | undefined): Resolv
     auto_rotate: r.auto_rotate === true,
     flood_fill: r.flood_fill === true,
     perforation: per ? { cut_mm: n(per.cut_mm, 1), skip_mm: n(per.skip_mm, 1) } : null,
-    tabs: tabs ? { count: Math.round(n(tabs.count, 0)), spacing_mm: n(tabs.spacing_mm, 0), size_mm: n(tabs.size_mm, 0.5) } : null,
+    tabs: tabs
+      ? {
+          enabled: tabs.enabled !== false,
+          generation: tabs.generation === "manual" ? "manual" : "auto",
+          count: Math.round(n(tabs.count, 0)),
+          spacing_mm: n(tabs.spacing_mm, 0),
+          max_tabs: Math.round(n(tabs.max_tabs, 0)),
+          size_mm: n(tabs.size_mm, 0.5),
+          skip_inner: tabs.skip_inner === true,
+          cut_power_pct: n(tabs.cut_power_pct, 0),
+        }
+      : null,
     z_offset_mm: n(r.z_offset_mm, 0),
     z_step_mm: n(r.z_step_mm, 0),
     kerf_offset_mm: n(r.kerf_offset_mm, 0),
@@ -176,7 +203,7 @@ export function activeOptionCount(r: ResolvedOptions, gantry = false): number {
   if (r.auto_rotate) c++;
   if (r.flood_fill) c++;
   if (r.perforation) c++;
-  if (r.tabs) c++;
+  if (r.tabs?.enabled) c++;
   if (r.z_offset_mm) c++;
   if (r.z_step_mm) c++;
   if (r.kerf_offset_mm) c++;
