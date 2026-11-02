@@ -9,8 +9,8 @@ Work goes in batches. Each batch is built against a written contract, verified e
 swapped into the running server. Every finished item gets its tracker line updated in the same commit
 (`python -I docs/parity/set_status.py ID STATUS EVIDENCE [NOTE]`).
 
-Audit of 2026-11-01 (after the final pass, plus the last barcode types): 315 galvo items, **306 done, 6 partial,
-0 missing, 3 n/a** (343 items in all: 306 done, 6 partial, 6 missing, 25 n/a). Every batch below is done; what is left of each is listed under
+Audit of 2026-11-02 (after the B6 hardware session, the gantry merge and the GRBL UI): 315 galvo items, **311 done,
+1 partial, 0 missing, 3 n/a** (343 items in all: 315 done, 9 partial, 4 missing, 15 n/a). Every batch below is done; what is left of each is listed under
 [Remaining galvo items](#remaining-galvo-items). UX-061 (language) counts as done because every UI string is in the
 message tables and the language switches live; only English is complete (the machine-translated Spanish covers 568
 of 2807 keys), and more languages are translation content, not code.
@@ -28,10 +28,19 @@ of 2807 keys), and more languages are translation content, not code.
 
 Items that need hardware the B6 lacks (galvo camera, rotary, Z axis, focus light, foot pedal inputs) are built and
 tested on the simulator and marked "unverified on hardware" in their notes until someone runs them on a machine.
-39 galvo items carry that note today (LAY-023, LAY-030..032, LAY-049, LAY-058, JOB-001..002, JOB-004, JOB-006..007,
-JOB-028, JOB-036..038, JOB-041..044, JOB-049..050, JOB-052..053, JOB-055..059, JOB-061, JOB-071, JOB-082..084,
-DES-054, OTH-006, OTH-009, OTH-012, OTH-027, OTH-029). They count as done; a run on the B6 (and on a rotary, camera,
-pedal or non-square field where named) is the only check left for them.
+30 galvo items carry that note today (LAY-023, LAY-030..032, LAY-049, LAY-058, JOB-001..002, JOB-004, JOB-006..007,
+JOB-028, JOB-036..037, JOB-041..042, JOB-044, JOB-050, JOB-057..058, JOB-061, JOB-071, JOB-082..084, DES-054,
+OTH-006, OTH-012, OTH-027, OTH-029); the B6 session of 2026-11-01 verified JOB-038, JOB-043, JOB-049, JOB-052..053
+and JOB-055..056 among others. They count as done; a run on the B6 (and on a rotary, camera, pedal or non-square
+field where named) is the only check left for them.
+
+### Next checks on the B6 (no new code needed)
+
+The build on the Pi since 2026-11-02 carries fixes tested on the simulator only. On the next burns: the foot switch
+should take the burn press first time while the cycle frames (JOB-053); a slow, dense fill whose packets take the
+board over 5 s should run instead of failing with "did not report READY" (JOB-050); and `sudo systemctl restart
+openetch` (or `tools/pi/safe-restart.sh`) during a burn should let it finish (JOB-047; the Pi's unit has
+`TimeoutStopSec=3700`). The time estimate (motion_time_scale 1.30) should be compared with the wall clock again.
 
 ## Remaining galvo items
 
@@ -67,7 +76,7 @@ Bitmap shapes (no Polygon), every Enhance value in them is 0, and no .lbart, .lb
 ## Logged for later (owner, 2026-11-01)
 
 - **Red-light frame slightly trapezoidal on the B6.** With the field trammed (0.6°) and the red pointer scaled
-  (X 1.005, Y 1.02), the framed jig rectangle's left side matched but the right side did not; the burn itself is
+  (X 1.005, Y 1.02 then; Y is 1.01 since), the framed jig rectangle's left side matched but the right side did not; the burn itself is
   square (a 100 mm test square measured 100 x 100). `machine::RedDot::correction` (frame-only angle, skew,
   trapezoid, bulge) exists for this but is neutral and untuned. The owner treats it as a non-issue for now: the
   coin circles frame close enough. Next: tune `red_dot.correction.trapezoid_*` by eye against the jig outline.
@@ -79,7 +88,7 @@ These are `na` today because OpenEtch only drives JCZ/BJJCZ galvos. They become 
 1. **A machine-driver trait for gantries.** Split `machine::Controller` into a driver interface with the current LMC
    driver as one implementation. Planning already produces polylines; gantries need motion planning in mm/min and
    a job-origin model (`JOB-063`, `JOB-062`).
-   *Status (branch `gantry-grbl`):* done. `machine::MachineDriver` + the `machine::Driver` enum (LMC | GRBL); the
+   *Status (on main since 2026-11-02):* done. `machine::MachineDriver` + the `machine::Driver` enum (LMC | GRBL); the
    engine drives the enum, the LMC `Controller` is unchanged and its wire bytes are pinned by a test. Feeds are
    mm/min in G-code; the job origin is the bed centre for now (absolute coordinates; `JOB-062`/`JOB-063` still open).
 2. **GRBL over serial (USB).** The simplest open protocol: G-code streaming with character-counting flow control.
@@ -87,12 +96,12 @@ These are `na` today because OpenEtch only drives JCZ/BJJCZ galvos. They become 
    layer options (`LAY-060`), air assist (`LAY-059`), overscanning (`LAY-012`), ramp, lead-in/out and overcut
    (`LAY-053`, `LAY-054`), hide backlash (`JOB-019`), scanning offset table (`OTH-013`), framing with the laser on
    (`JOB-035`), and G-code import/export (`UX-036`, `UX-007`). Test on GRBL's simulator before hardware.
-   *Status (branch `gantry-grbl`, all unverified on hardware, no gantry):* the GRBL 1.1 driver over serial
+   *Status (on main since 2026-11-02, all unverified on hardware, no gantry):* the GRBL 1.1 driver over serial
    (`serial2`, feature `serial`) with character counting, status polling, feed hold / resume / soft reset, alarms,
    door, homing `$H`, unlock `$X`, jogs `$J=` and a console that refuses anything that could fire; G-code from the
    planner (M4 by default, M3 option, S scaled to `$30`); `.gcode` export (`GET /api/export/gcode`) and import
    (`art.import_gcode`); OpenEtch's own GRBL simulator (`machine::grbl::SimGrbl`) in place of GRBL's (GPL).
-   *Branch `grbl-ui` (unverified on hardware, no gantry):* the web Move window (jog grid, distance and speed, arrow
+   *Also on main (unverified on hardware, no gantry):* the web Move window (jog grid, distance and speed, arrow
    keys, Home, Unlock, Go to origin, Move to position, position readout), the Console window with history and macros
    saved per device (checked against the console policy when saved and when sent), File > Save G-code, and the GRBL
    layer options constant power (M3), air assist (M8/M9), overscan and overcut, all shown only for GRBL devices.
