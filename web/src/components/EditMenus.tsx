@@ -3,35 +3,14 @@
 
 import type { CanvasToolId } from "../canvasTool.ts";
 import { MenuButton, type MenuItem } from "./Menu.tsx";
+import { Icon } from "./ui.tsx";
 import type { Tool } from "./Viewport.tsx";
 import { useT } from "../workspace/usePrefs.ts";
-
-const ICONS: Record<string, string> = {
-  line: "M4 18L10 8l5 7 5-10 M4 18h.01 M10 8h.01 M15 15h.01 M20 5h.01",
-  pen: "M12 19l7-7 2 2-7 7z M18 13l-1.5-7.5L3 2l3.5 13.5L14 17z M3 2l7.6 7.6 M11 11a1 1 0 100 .01",
-  polygon: "M12 3l8 5.5-3 9.5H7L4 8.5z",
-  node: "M5 19C5 10 12 5 19 5 M3 17h4v4H3z M17 3h4v4h-4z M5 19l6-11 M11 6h2v2h-2z",
-  trim: "M6 4a2 2 0 100 4 2 2 0 000-4z M6 16a2 2 0 100 4 2 2 0 000-4z M7.6 7.2L20 18 M7.6 16.8L20 6",
-  measure: "M3 17L17 3l4 4L7 21z M7 13l2 2 M10 10l2 2 M13 7l2 2",
-  modify: "M4 12h6 M14 12h6 M12 4v6 M12 14v6 M7 7h10v10H7z",
-  arrange: "M4 4h10v10H4z M10 10h10v10H10z",
-  edit: "M8 4h8v3H8z M6 6H4v14h16V6h-2 M8 12h8 M8 16h5",
-  tools: "M14.7 6.3a4 4 0 00-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 005.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z",
-  chevronDown: "M8 10l4 4 4-4",
-};
-
-function EIcon({ name, size = 22 }: { name: string; size?: number }) {
-  return (
-    <svg className="icon" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d={ICONS[name] ?? ""} />
-    </svg>
-  );
-}
 
 function ToolBtn(props: { icon: string; label: string; active?: boolean; disabled?: boolean; title: string; onClick: () => void }) {
   return (
     <button className={`tool-btn${props.active ? " active" : ""}`} onClick={props.onClick} disabled={props.disabled} title={props.title} aria-pressed={props.active}>
-      <EIcon name={props.icon} />
+      <Icon name={props.icon} size={20} />
       <span>{props.label}</span>
     </button>
   );
@@ -41,12 +20,12 @@ function ToolBtn(props: { icon: string; label: string; active?: boolean; disable
 export function Dropdown(props: { icon: string; label: string; title: string; items: MenuItem[] }) {
   return (
     <MenuButton className="tool-btn et-dropdown" label={props.label} title={props.title} items={props.items}>
-      <EIcon name={props.icon} />
+      <Icon name={props.icon} size={20} />
       <span>
         {props.label}
-        <svg className="et-caret" width={10} height={10} viewBox="0 0 24 24" aria-hidden="true">
-          <path d={ICONS.chevronDown} fill="none" stroke="currentColor" strokeWidth="2.5" />
-        </svg>
+        <span className="et-caret" aria-hidden="true">
+          <Icon name="chevronDown" size={10} />
+        </span>
       </span>
     </MenuButton>
   );

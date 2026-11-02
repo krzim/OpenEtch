@@ -300,65 +300,598 @@ export function CheckField(props: { label: string; checked: boolean; onChange: (
   );
 }
 
+// The icon registry (docs/ux/ui-plan-2026-11.md 1.4): path data copied from Lucide (lucide-static 0.460.0, ISC) and,
+// for CAD gaps, Tabler Icons (3.19.0, MIT); licence texts in src/icons/THIRD_PARTY_NOTICES.txt. 24x24, stroke 1.5,
+// coloured by currentColor. Sizes: 20 px toolbar, 16 px menus and inspector, 24 px touch HUD.
+// L = Lucide, T = Tabler, with the source icon's name in brackets.
 const ICONS: Record<string, ReactNode> = {
-  stock: <path d="M3 8l9-4 9 4v8l-9 4-9-4z M3 8l9 4 9-4 M12 12v8" />,
-  rect: <rect x="4" y="6" width="16" height="12" rx="1" />,
-  path: <path d="M5 18C7 9 17 15 19 6 M3.5 16.5h3v3h-3z M17.5 4.5h3v3h-3z" />,
-  image: <path d="M4 5h16v14H4z M4 16l5-5 4 4 3-3 4 4 M15.5 8.5h.01" />,
-  ellipse: <ellipse cx="12" cy="12" rx="9" ry="6" />,
-  circle: <path d="M12 4a8 8 0 100 16 8 8 0 000-16z M12 11.2v1.6 M11.2 12h1.6" />,
-  import: <path d="M12 3v12 M7 10l5 5 5-5 M4 17v3h16v-3" />,
-  place: <path d="M4 4h16v16H4z M9 9h6v6H9z M12 4v5 M12 15v5 M4 12h5 M15 12h5" />,
-  array: <path d="M4 4h5v5H4z M15 4h5v5h-5z M4 15h5v5H4z M15 15h5v5h-5z" />,
-  delete: <path d="M5 7h14 M9 7V4h6v3 M7 7l1 13h8l1-13" />,
-  preview: <path d="M3 17l5-6 4 4 4-7 5 9 M3 20h18" />,
-  frame: <path d="M4 9V4h5 M15 4h5v5 M20 15v5h-5 M9 20H4v-5" />,
-  frameStop: <path d="M4 9V4h5 M15 4h5v5 M20 15v5h-5 M9 20H4v-5 M9.5 9.5h5v5h-5z" />,
-  run: <path d="M7 4l12 8-12 8z" />,
-  stop: <rect x="6" y="6" width="12" height="12" rx="1" />,
-  undo: <path d="M9 14L4 9l5-5 M4 9h11a5 5 0 010 10h-3" />,
-  redo: <path d="M15 14l5-5-5-5 M20 9H9a5 5 0 000 10h3" />,
-  close: <path d="M6 6l12 12 M18 6L6 18" />,
-  eye: <path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z M12 9a3 3 0 100 6 3 3 0 000-6z" />,
-  eyeOff: <path d="M3 3l18 18 M10.6 5.1A10 10 0 0112 5c6 0 10 7 10 7a17 17 0 01-3 3.7 M6.6 6.6C3.8 8.5 2 12 2 12s4 7 10 7a9.6 9.6 0 004.4-1" />,
-  laser: <path d="M12 2v6 M12 16v6 M2 12h6 M16 12h6 M12 9a3 3 0 100 6 3 3 0 000-6z" />,
-  noLaser: <path d="M12 9a3 3 0 100 6 3 3 0 000-6z M4 4l16 16" />,
-  panelLeft: <path d="M3 4h18v16H3z M9 4v16" />,
-  panelRight: <path d="M3 4h18v16H3z M15 4v16" />,
-  plus: <path d="M12 5v14 M5 12h14" />,
-  terminal: <path d="M4 5h16v14H4z M7 9l3 3-3 3 M12 15h5" />,
-  fit: <path d="M4 9V4h5 M15 4h5v5 M20 15v5h-5 M9 20H4v-5 M9 9h6v6H9z" />,
-  chevron: <path d="M9 6l6 6-6 6" />,
-  chevronDown: <path d="M6 9l6 6 6-6" />,
-  chevronUp: <path d="M6 15l6-6 6 6" />,
-  upload: <path d="M12 16V4 M7 9l5-5 5 5 M4 17v3h16v-3" />,
-  first: <path d="M6 5v14 M18 6l-8 6 8 6z" />,
-  prev: <path d="M15 6l-6 6 6 6" />,
-  next: <path d="M9 6l6 6-6 6" />,
-  last: <path d="M18 5v14 M6 6l8 6-8 6z" />,
-  play: <path d="M8 5l11 7-11 7z" />,
-  pause: <path d="M8 5v14 M16 5v14" />,
-  alignLeft: <path d="M4 3v18 M7 7h10v4H7z M7 14h6v4H7z" />,
-  alignHCenter: <path d="M12 3v18 M6 7h12v4H6z M8 14h8v4H8z" />,
-  alignRight: <path d="M20 3v18 M7 7h10v4H7z M11 14h6v4h-6z" />,
-  alignTop: <path d="M3 4h18 M7 7v10h4V7z M14 7v6h4V7z" />,
-  alignVCenter: <path d="M3 12h18 M7 6v12h4V6z M14 8v8h4V8z" />,
-  alignBottom: <path d="M3 20h18 M7 7v10h4V7z M14 11v6h4v-6z" />,
-  distH: <path d="M3 4v16 M21 4v16 M9 8h6v8H9z" />,
-  distV: <path d="M4 3h16 M4 21h16 M8 9h8v6H8z" />,
-  distHc: <path d="M5 8v8 M12 8v8 M19 8v8 M3 12h4 M10 12h4 M17 12h4" />,
-  distVc: <path d="M8 5h8 M8 12h8 M8 19h8 M12 3v4 M12 10v4 M12 17v4" />,
-  centerStock: <path d="M3 6h18v12H3z M12 9v6 M9 12h6" />,
-  centerField: <path d="M4 4h16v16H4z M12 8v8 M8 12h8 M4 4l3 3 M20 4l-3 3 M4 20l3-3 M20 20l-3-3" />,
-  group: <path d="M3 3h4 M3 3v4 M21 3h-4 M21 3v4 M3 21h4 M3 21v-4 M21 21h-4 M21 21v-4 M7 7h5v5H7z M12 12h5v5h-5z" />,
-  ungroup: <path d="M4 4h6v6H4z M14 14h6v6h-6z M14 4l6 6 M20 4l-6 6" />,
-  flipH: <path d="M12 3v18 M9 6L3 18h6z M15 6l6 12h-6z" />,
-  flipV: <path d="M3 12h18 M6 9L18 3v6z M6 15l12 6v-6z" />,
-  magnet: <path d="M6 4v8a6 6 0 0012 0V4 M6 4h4v8a2 2 0 004 0V4h4 M6 8h4 M14 8h4" />,
-  gridSnap: <path d="M4 4h16v16H4z M4 9.3h16 M4 14.6h16 M9.3 4v16 M14.6 4v16" />,
-  filled: <path d="M4 6h10v10H4z M10 10h10v10H10z M4 6l10 10" />,
-  more: <path d="M5 12h.01 M12 12h.01 M19 12h.01" />,
+  // L [box]
+  stock: (
+    <>
+      <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" />
+      <path d="m3.3 7 8.7 5 8.7-5" />
+      <path d="M12 22V12" />
+    </>
+  ),
+  // L [square]
+  rect: <rect width="18" height="18" x="3" y="3" rx="2" />,
+  // L [spline]
+  path: (
+    <>
+      <circle cx="19" cy="5" r="2" />
+      <circle cx="5" cy="19" r="2" />
+      <path d="M5 17A12 12 0 0 1 17 5" />
+    </>
+  ),
+  // L [image]
+  image: (
+    <>
+      <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+      <circle cx="9" cy="9" r="2" />
+      <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+    </>
+  ),
+  // T [oval], turned on its side
+  ellipse: <path d="M12 12m-6 0a6 9 0 1 0 12 0a6 9 0 1 0 -12 0" transform="rotate(90 12 12)" />,
+  // L [circle-dot]
+  circle: (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <circle cx="12" cy="12" r="1" />
+    </>
+  ),
+  // L [type]
+  text: (
+    <>
+      <polyline points="4 7 4 4 20 4 20 7" />
+      <line x1="9" x2="15" y1="20" y2="20" />
+      <line x1="12" x2="12" y1="4" y2="20" />
+    </>
+  ),
+  // L [qr-code]
+  barcode: (
+    <>
+      <rect width="5" height="5" x="3" y="3" rx="1" />
+      <rect width="5" height="5" x="16" y="3" rx="1" />
+      <rect width="5" height="5" x="3" y="16" rx="1" />
+      <path d="M21 16h-3a2 2 0 0 0-2 2v3" />
+      <path d="M21 21v.01" />
+      <path d="M12 7v3a2 2 0 0 1-2 2H7" />
+      <path d="M3 12h.01" />
+      <path d="M12 3h.01" />
+      <path d="M12 16v.01" />
+      <path d="M16 12h1" />
+      <path d="M21 12v.01" />
+      <path d="M12 21v-1" />
+    </>
+  ),
+  // T [line]
+  line: (
+    <>
+      <path d="M6 18m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0" />
+      <path d="M18 6m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0" />
+      <path d="M7.5 16.5l9 -9" />
+    </>
+  ),
+  // L [pen-tool]
+  pen: (
+    <>
+      <path d="M15.707 21.293a1 1 0 0 1-1.414 0l-1.586-1.586a1 1 0 0 1 0-1.414l5.586-5.586a1 1 0 0 1 1.414 0l1.586 1.586a1 1 0 0 1 0 1.414z" />
+      <path d="m18 13-1.375-6.874a1 1 0 0 0-.746-.776L3.235 2.028a1 1 0 0 0-1.207 1.207L5.35 15.879a1 1 0 0 0 .776.746L13 18" />
+      <path d="m2.3 2.3 7.286 7.286" />
+      <circle cx="11" cy="11" r="2" />
+    </>
+  ),
+  // L [pentagon]
+  polygon: <path d="M10.83 2.38a2 2 0 0 1 2.34 0l8 5.74a2 2 0 0 1 .73 2.25l-3.04 9.26a2 2 0 0 1-1.9 1.37H7.04a2 2 0 0 1-1.9-1.37L2.1 10.37a2 2 0 0 1 .73-2.25z" />,
+  // T [vector-bezier-2]
+  node: (
+    <>
+      <path d="M3 3m0 1a1 1 0 0 1 1 -1h2a1 1 0 0 1 1 1v2a1 1 0 0 1 -1 1h-2a1 1 0 0 1 -1 -1z" />
+      <path d="M17 17m0 1a1 1 0 0 1 1 -1h2a1 1 0 0 1 1 1v2a1 1 0 0 1 -1 1h-2a1 1 0 0 1 -1 -1z" />
+      <path d="M7 5l7 0" />
+      <path d="M10 19l7 0" />
+      <path d="M9 19m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+      <path d="M15 5m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+      <path d="M7 5.5a5 6.5 0 0 1 5 6.5a5 6.5 0 0 0 5 6.5" />
+    </>
+  ),
+  // L [scissors]
+  trim: (
+    <>
+      <circle cx="6" cy="6" r="3" />
+      <path d="M8.12 8.12 12 12" />
+      <path d="M20 4 8.12 15.88" />
+      <circle cx="6" cy="18" r="3" />
+      <path d="M14.8 14.8 20 20" />
+    </>
+  ),
+  // L [ruler]
+  measure: (
+    <>
+      <path d="M21.3 15.3a2.4 2.4 0 0 1 0 3.4l-2.6 2.6a2.4 2.4 0 0 1-3.4 0L2.7 8.7a2.41 2.41 0 0 1 0-3.4l2.6-2.6a2.41 2.41 0 0 1 3.4 0Z" />
+      <path d="m14.5 12.5 2-2" />
+      <path d="m11.5 9.5 2-2" />
+      <path d="m8.5 6.5 2-2" />
+      <path d="m17.5 15.5 2-2" />
+    </>
+  ),
+  // L [settings-2]
+  modify: (
+    <>
+      <path d="M20 7h-9" />
+      <path d="M14 17H5" />
+      <circle cx="17" cy="17" r="3" />
+      <circle cx="7" cy="7" r="3" />
+    </>
+  ),
+  // L [layers]
+  arrange: (
+    <>
+      <path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z" />
+      <path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65" />
+      <path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65" />
+    </>
+  ),
+  // L [clipboard]
+  edit: (
+    <>
+      <rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
+      <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+    </>
+  ),
+  // L [wrench]
+  tools: <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />,
+  // L [import]
+  import: (
+    <>
+      <path d="M12 3v12" />
+      <path d="m8 11 4 4 4-4" />
+      <path d="M8 5H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-4" />
+    </>
+  ),
+  // L [file-input]
+  insert: (
+    <>
+      <path d="M4 22h14a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v4" />
+      <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+      <path d="M2 15h10" />
+      <path d="m9 18 3-3-3-3" />
+    </>
+  ),
+  // L [layout-template]
+  place: (
+    <>
+      <rect width="18" height="7" x="3" y="3" rx="1" />
+      <rect width="9" height="7" x="3" y="14" rx="1" />
+      <rect width="5" height="7" x="16" y="14" rx="1" />
+    </>
+  ),
+  // L [layout-grid]
+  array: (
+    <>
+      <rect width="7" height="7" x="3" y="3" rx="1" />
+      <rect width="7" height="7" x="14" y="3" rx="1" />
+      <rect width="7" height="7" x="14" y="14" rx="1" />
+      <rect width="7" height="7" x="3" y="14" rx="1" />
+    </>
+  ),
+  // L [shapes]
+  art: (
+    <>
+      <path d="M8.3 10a.7.7 0 0 1-.626-1.079L11.4 3a.7.7 0 0 1 1.198-.043L16.3 8.9a.7.7 0 0 1-.572 1.1Z" />
+      <rect x="3" y="14" width="7" height="7" rx="1" />
+      <circle cx="17.5" cy="17.5" r="3.5" />
+    </>
+  ),
+  // L [square-plus]
+  create: (
+    <>
+      <rect width="18" height="18" x="3" y="3" rx="2" />
+      <path d="M8 12h8" />
+      <path d="M12 8v8" />
+    </>
+  ),
+  // L [trash-2]
+  delete: (
+    <>
+      <path d="M3 6h18" />
+      <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+      <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+      <line x1="10" x2="10" y1="11" y2="17" />
+      <line x1="14" x2="14" y1="11" y2="17" />
+    </>
+  ),
+  // L [route]
+  preview: (
+    <>
+      <circle cx="6" cy="19" r="3" />
+      <path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15" />
+      <circle cx="18" cy="5" r="3" />
+    </>
+  ),
+  // L [scan]
+  frame: (
+    <>
+      <path d="M3 7V5a2 2 0 0 1 2-2h2" />
+      <path d="M17 3h2a2 2 0 0 1 2 2v2" />
+      <path d="M21 17v2a2 2 0 0 1-2 2h-2" />
+      <path d="M7 21H5a2 2 0 0 1-2-2v-2" />
+    </>
+  ),
+  // T [frame-off]
+  frameStop: (
+    <>
+      <path d="M4 7h3m4 0h9" />
+      <path d="M4 17h13" />
+      <path d="M7 7v13" />
+      <path d="M17 4v9m0 4v3" />
+      <path d="M3 3l18 18" />
+    </>
+  ),
+  // L [play]
+  run: <polygon points="6 3 20 12 6 21 6 3" />,
+  play: <polygon points="6 3 20 12 6 21 6 3" />,
+  // L [pause]
+  pause: (
+    <>
+      <rect x="14" y="4" width="4" height="16" rx="1" />
+      <rect x="6" y="4" width="4" height="16" rx="1" />
+    </>
+  ),
+  // L [square]
+  stop: <rect width="18" height="18" x="3" y="3" rx="2" />,
+  // T [flame]
+  laserTools: <path d="M12 12c2 -2.96 0 -7 -1 -8c0 3.038 -1.773 4.741 -3 6c-1.226 1.26 -2 3.24 -2 5a6 6 0 1 0 12 0c0 -1.532 -1.056 -3.94 -2 -5c-1.786 3 -2.791 3 -4 2z" />,
+  // L [undo-2] / [redo-2]
+  undo: (
+    <>
+      <path d="M9 14 4 9l5-5" />
+      <path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11" />
+    </>
+  ),
+  redo: (
+    <>
+      <path d="m15 14 5-5-5-5" />
+      <path d="M20 9H9.5A5.5 5.5 0 0 0 4 14.5A5.5 5.5 0 0 0 9.5 20H13" />
+    </>
+  ),
+  // L [x]
+  close: (
+    <>
+      <path d="M18 6 6 18" />
+      <path d="m6 6 12 12" />
+    </>
+  ),
+  // L [eye] / [eye-off]
+  eye: (
+    <>
+      <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" />
+      <circle cx="12" cy="12" r="3" />
+    </>
+  ),
+  eyeOff: (
+    <>
+      <path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49" />
+      <path d="M14.084 14.158a3 3 0 0 1-4.242-4.242" />
+      <path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143" />
+      <path d="m2 2 20 20" />
+    </>
+  ),
+  // L [crosshair] / [locate-off]
+  laser: (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <line x1="22" x2="18" y1="12" y2="12" />
+      <line x1="6" x2="2" y1="12" y2="12" />
+      <line x1="12" x2="12" y1="6" y2="2" />
+      <line x1="12" x2="12" y1="22" y2="18" />
+    </>
+  ),
+  noLaser: (
+    <>
+      <line x1="2" x2="5" y1="12" y2="12" />
+      <line x1="19" x2="22" y1="12" y2="12" />
+      <line x1="12" x2="12" y1="2" y2="5" />
+      <line x1="12" x2="12" y1="19" y2="22" />
+      <path d="M7.11 7.11C5.83 8.39 5 10.1 5 12c0 3.87 3.13 7 7 7 1.9 0 3.61-.83 4.89-2.11" />
+      <path d="M18.71 13.96c.19-.63.29-1.29.29-1.96 0-3.87-3.13-7-7-7-.67 0-1.33.1-1.96.29" />
+      <line x1="2" x2="22" y1="2" y2="22" />
+    </>
+  ),
+  // L [panel-left] / [panel-right]
+  panelLeft: (
+    <>
+      <rect width="18" height="18" x="3" y="3" rx="2" />
+      <path d="M9 3v18" />
+    </>
+  ),
+  panelRight: (
+    <>
+      <rect width="18" height="18" x="3" y="3" rx="2" />
+      <path d="M15 3v18" />
+    </>
+  ),
+  // L [plus] / [minus]
+  plus: (
+    <>
+      <path d="M5 12h14" />
+      <path d="M12 5v14" />
+    </>
+  ),
+  minus: <path d="M5 12h14" />,
+  // L [square-terminal]
+  terminal: (
+    <>
+      <path d="m7 11 2-2-2-2" />
+      <path d="M11 13h4" />
+      <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+    </>
+  ),
+  // L [search]
+  search: (
+    <>
+      <circle cx="11" cy="11" r="8" />
+      <path d="m21 21-4.3-4.3" />
+    </>
+  ),
+  // L [maximize] / [minimize]
+  fit: (
+    <>
+      <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+      <path d="M21 8V5a2 2 0 0 0-2-2h-3" />
+      <path d="M3 16v3a2 2 0 0 0 2 2h3" />
+      <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
+    </>
+  ),
+  fullscreen: (
+    <>
+      <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+      <path d="M21 8V5a2 2 0 0 0-2-2h-3" />
+      <path d="M3 16v3a2 2 0 0 0 2 2h3" />
+      <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
+    </>
+  ),
+  fullscreenExit: (
+    <>
+      <path d="M8 3v3a2 2 0 0 1-2 2H3" />
+      <path d="M21 8h-3a2 2 0 0 1-2-2V3" />
+      <path d="M3 16h3a2 2 0 0 1 2 2v3" />
+      <path d="M16 21v-3a2 2 0 0 1 2-2h3" />
+    </>
+  ),
+  // L [chevron-right] / [chevron-down] / [chevron-up] / [chevron-left]
+  chevron: <path d="m9 18 6-6-6-6" />,
+  chevronDown: <path d="m6 9 6 6 6-6" />,
+  chevronUp: <path d="m18 15-6-6-6 6" />,
+  prev: <path d="m15 18-6-6 6-6" />,
+  next: <path d="m9 18 6-6-6-6" />,
+  // L [upload]
+  upload: (
+    <>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="17 8 12 3 7 8" />
+      <line x1="12" x2="12" y1="3" y2="15" />
+    </>
+  ),
+  // L [skip-back] / [skip-forward]
+  first: (
+    <>
+      <polygon points="19 20 9 12 19 4 19 20" />
+      <line x1="5" x2="5" y1="19" y2="5" />
+    </>
+  ),
+  last: (
+    <>
+      <polygon points="5 4 15 12 5 20 5 4" />
+      <line x1="19" x2="19" y1="5" y2="19" />
+    </>
+  ),
+  // L [align-start-vertical] [align-center-vertical] [align-end-vertical]
+  alignLeft: (
+    <>
+      <rect width="9" height="6" x="6" y="14" rx="2" />
+      <rect width="16" height="6" x="6" y="4" rx="2" />
+      <path d="M2 2v20" />
+    </>
+  ),
+  alignHCenter: (
+    <>
+      <path d="M12 2v20" />
+      <path d="M8 10H4a2 2 0 0 1-2-2V6c0-1.1.9-2 2-2h4" />
+      <path d="M16 10h4a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-4" />
+      <path d="M8 20H7a2 2 0 0 1-2-2v-2c0-1.1.9-2 2-2h1" />
+      <path d="M16 14h1a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2h-1" />
+    </>
+  ),
+  alignRight: (
+    <>
+      <rect width="16" height="6" x="2" y="4" rx="2" />
+      <rect width="9" height="6" x="9" y="14" rx="2" />
+      <path d="M22 22V2" />
+    </>
+  ),
+  // L [align-start-horizontal] [align-center-horizontal] [align-end-horizontal]
+  alignTop: (
+    <>
+      <rect width="6" height="16" x="4" y="6" rx="2" />
+      <rect width="6" height="9" x="14" y="6" rx="2" />
+      <path d="M22 2H2" />
+    </>
+  ),
+  alignVCenter: (
+    <>
+      <path d="M2 12h20" />
+      <path d="M10 16v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-4" />
+      <path d="M10 8V4a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v4" />
+      <path d="M20 16v1a2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2v-1" />
+      <path d="M14 8V7c0-1.1.9-2 2-2h2a2 2 0 0 1 2 2v1" />
+    </>
+  ),
+  alignBottom: (
+    <>
+      <rect width="6" height="16" x="4" y="2" rx="2" />
+      <rect width="6" height="9" x="14" y="9" rx="2" />
+      <path d="M22 22H2" />
+    </>
+  ),
+  // L [align-horizontal-space-around] [align-horizontal-distribute-center]
+  distH: (
+    <>
+      <rect width="6" height="10" x="9" y="7" rx="2" />
+      <path d="M4 22V2" />
+      <path d="M20 22V2" />
+    </>
+  ),
+  distHc: (
+    <>
+      <rect width="6" height="14" x="4" y="5" rx="2" />
+      <rect width="6" height="10" x="14" y="7" rx="2" />
+      <path d="M17 22v-5" />
+      <path d="M17 7V2" />
+      <path d="M7 22v-3" />
+      <path d="M7 5V2" />
+    </>
+  ),
+  // L [align-vertical-space-around] [align-vertical-distribute-center]
+  distV: (
+    <>
+      <rect width="10" height="6" x="7" y="9" rx="2" />
+      <path d="M22 20H2" />
+      <path d="M22 4H2" />
+    </>
+  ),
+  distVc: (
+    <>
+      <path d="M22 17h-3" />
+      <path d="M22 7h-5" />
+      <path d="M5 17H2" />
+      <path d="M7 7H2" />
+      <rect x="5" y="14" width="14" height="6" rx="2" />
+      <rect x="7" y="4" width="10" height="6" rx="2" />
+    </>
+  ),
+  // T [focus-centered]
+  centerStock: (
+    <>
+      <path d="M12 12m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+      <path d="M4 8v-2a2 2 0 0 1 2 -2h2" />
+      <path d="M4 16v2a2 2 0 0 0 2 2h2" />
+      <path d="M16 4h2a2 2 0 0 1 2 2v2" />
+      <path d="M16 20h2a2 2 0 0 0 2 -2v-2" />
+    </>
+  ),
+  // L [focus]
+  centerField: (
+    <>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M3 7V5a2 2 0 0 1 2-2h2" />
+      <path d="M17 3h2a2 2 0 0 1 2 2v2" />
+      <path d="M21 17v2a2 2 0 0 1-2 2h-2" />
+      <path d="M7 21H5a2 2 0 0 1-2-2v-2" />
+    </>
+  ),
+  // L [group] / [ungroup]
+  group: (
+    <>
+      <path d="M3 7V5c0-1.1.9-2 2-2h2" />
+      <path d="M17 3h2c1.1 0 2 .9 2 2v2" />
+      <path d="M21 17v2c0 1.1-.9 2-2 2h-2" />
+      <path d="M7 21H5c-1.1 0-2-.9-2-2v-2" />
+      <rect width="7" height="5" x="7" y="7" rx="1" />
+      <rect width="7" height="5" x="10" y="12" rx="1" />
+    </>
+  ),
+  ungroup: (
+    <>
+      <rect width="8" height="6" x="5" y="4" rx="1" />
+      <rect width="8" height="6" x="11" y="14" rx="1" />
+    </>
+  ),
+  // L [flip-horizontal-2] / [flip-vertical-2]
+  flipH: (
+    <>
+      <path d="m3 7 5 5-5 5V7" />
+      <path d="m21 7-5 5 5 5V7" />
+      <path d="M12 20v2" />
+      <path d="M12 14v2" />
+      <path d="M12 8v2" />
+      <path d="M12 2v2" />
+    </>
+  ),
+  flipV: (
+    <>
+      <path d="m17 3-5 5-5-5h10" />
+      <path d="m17 21-5-5-5 5h10" />
+      <path d="M4 12H2" />
+      <path d="M10 12H8" />
+      <path d="M16 12h-2" />
+      <path d="M22 12h-2" />
+    </>
+  ),
+  // L [magnet]
+  magnet: (
+    <>
+      <path d="m6 15-4-4 6.75-6.77a7.79 7.79 0 0 1 11 11L13 22l-4-4 6.39-6.36a2.14 2.14 0 0 0-3-3L6 15" />
+      <path d="m5 8 4 4" />
+      <path d="m12 15 4 4" />
+    </>
+  ),
+  // L [grid-3x3]
+  gridSnap: (
+    <>
+      <rect width="18" height="18" x="3" y="3" rx="2" />
+      <path d="M3 9h18" />
+      <path d="M3 15h18" />
+      <path d="M9 3v18" />
+      <path d="M15 3v18" />
+    </>
+  ),
+  // L [paint-bucket]
+  filled: (
+    <>
+      <path d="m19 11-8-8-8.6 8.6a2 2 0 0 0 0 2.8l5.2 5.2c.8.8 2 .8 2.8 0L19 11Z" />
+      <path d="m5 2 5 5" />
+      <path d="M2 13h15" />
+      <path d="M22 20a2 2 0 1 1-4 0c0-1.6 1.7-2.4 2-4 .3 1.6 2 2.4 2 4Z" />
+    </>
+  ),
+  // L [ellipsis]
+  more: (
+    <>
+      <circle cx="12" cy="12" r="1" />
+      <circle cx="19" cy="12" r="1" />
+      <circle cx="5" cy="12" r="1" />
+    </>
+  ),
+  // L [menu]
+  menu: (
+    <>
+      <line x1="4" x2="20" y1="12" y2="12" />
+      <line x1="4" x2="20" y1="6" y2="6" />
+      <line x1="4" x2="20" y1="18" y2="18" />
+    </>
+  ),
+  // L [history]
+  history: (
+    <>
+      <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+      <path d="M3 3v5h5" />
+      <path d="M12 7v5l4 2" />
+    </>
+  ),
+  // L [save]
+  save: (
+    <>
+      <path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" />
+      <path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7" />
+      <path d="M7 3v4a1 1 0 0 0 1 1h7" />
+    </>
+  ),
 };
+
+/** Every registered icon name. */
+export const ICON_NAMES: readonly string[] = Object.keys(ICONS);
 
 /** Stroke icon, 24x24 viewBox, inherits `currentColor`. */
 export function Icon({ name, size = 20 }: { name: keyof typeof ICONS | string; size?: number }) {
@@ -373,7 +906,7 @@ export function Icon({ name, size = 20 }: { name: keyof typeof ICONS | string; s
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth="1.7"
+      strokeWidth="1.5"
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"

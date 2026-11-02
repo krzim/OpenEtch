@@ -20,6 +20,7 @@ import type { GDocument, Vec2 } from "../api/types.ts";
 import type { CanvasCtx, CanvasTool, PointerInfo, RenderCtx } from "../canvasTool.ts";
 import type { MenuItem } from "../components/ContextMenu.tsx";
 import type { Tool } from "../components/Viewport.tsx";
+import { Icon } from "../components/ui.tsx";
 import type { Mods } from "../editing.ts";
 import { objectBounds } from "../geometry.ts";
 import { unitsOf, type Selection } from "../selection.ts";
@@ -412,9 +413,7 @@ export function useTextTools(p: TextToolsProps): TextTools {
         aria-pressed={tool === "text"}
         title={canText ? t("text.toolTitle") : t("text.unsupported")}
       >
-        <svg className="icon" width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M5 6V4h14v2 M12 4v16 M9 20h6" />
-        </svg>
+        <Icon name="text" size={20} />
         <span>{t("text.tool")}</span>
       </button>
       <button
@@ -424,9 +423,7 @@ export function useTextTools(p: TextToolsProps): TextTools {
         aria-pressed={tool === "barcode"}
         title={canBarcode ? t("barcode.toolTitle") : t("barcode.unsupported")}
       >
-        <svg className="icon" width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M4 4h6v6H4z M14 4h6v6h-6z M4 14h6v6H4z M14 14h2v2h-2z M18 18h2v2h-2z M14 18h2 M18 14h2" />
-        </svg>
+        <Icon name="barcode" size={20} />
         <span>{t("barcode.tool")}</span>
       </button>
     </div>
