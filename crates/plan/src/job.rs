@@ -17,6 +17,7 @@ use crate::geom::{Point, Subpath, dist, flatten_within, polyline_length};
 use crate::hatch::{HatchError, MAX_SCANLINES, hatch};
 use crate::image::{Gray, MAX_IMAGE_DOTS, Placed, RasterError, Run, clip_runs, raster_slice};
 use crate::cutopts;
+use crate::ramp::{RampEdges, ramp_line};
 use crate::order::{Chunk, OrderOpts, order_with};
 use crate::{PlanError, Result, Target};
 
@@ -108,8 +109,9 @@ pub struct PassPlan {
     pub gantry: GantryPass,
 }
 
-/// A pass's GRBL layer options ([`doc::CutOptions`] `constant_power`, `air_assist`, `overscan_mm`, `overcut_mm`), as
-/// the G-code output uses them. `overscan_mm` is set only for passes that hold scan lines (fill hatches, images).
+/// A pass's GRBL layer options ([`doc::CutOptions`] `constant_power`, `air_assist`, `overscan_mm`, `overcut_mm`, the
+/// leads and path pauses), as the G-code output uses them (the fill ramp is planned into the pass's powers).
+/// `overscan_mm` is set only for passes that hold scan lines (fill hatches, images).
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub struct GantryPass {
     #[serde(default, skip_serializing_if = "is_false")]
@@ -120,6 +122,20 @@ pub struct GantryPass {
     pub overscan_mm: f64,
     #[serde(default, skip_serializing_if = "is_zero_f64")]
     pub overcut_mm: f64,
+    /// Line passes only: a lead-in / lead-out cut at each path ([`doc::CutOptions::lead_in`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lead_in: Option<doc::Lead>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lead_out: Option<doc::Lead>,
+    /// Line passes only: a laser-off dwell before / after each path, µs.
+    #[serde(default, skip_serializing_if = "is_zero_f64")]
+    pub start_pause_us: f64,
+    #[serde(default, skip_serializing_if = "is_zero_f64")]
+    pub end_pause_us: f64,
+    /// The pass's first `image_runs` polylines are image scan runs (an image on a Line-mode layer): leads and path
+    /// pauses are for the vector paths after them, never for raster runs. Set only when a lead or pause is.
+    #[serde(default, skip_serializing_if = "is_zero_usize")]
+    pub image_runs: usize,
 }
 
 impl GantryPass {
@@ -369,6 +385,7 @@ pub(crate) fn plan_job_within(doc: &Document, target: &Target, max_segments: usi
     let ctx = PassCtx {
         order: OrderOpts::from(&doc.optimization),
         remove_overlaps: (doc.optimization.enabled && doc.optimization.remove_overlaps).then_some(doc.optimization.overlap_distance_mm),
+        gantry: target.gantry,
     };
 
     let mut plan = JobPlan::default();
@@ -477,6 +494,7 @@ pub(crate) fn plan_job_within(doc: &Document, target: &Target, max_segments: usi
                     start = run.to;
                 }
             }
+            let image_runs = polylines.len();
             let budget = (max_segments - segments - polylines.len(), max_segments);
             let (vectors, scales, end) = pass_polylines(&layer.id, cut, angle, &buckets, start, budget, &ctx)?;
             powers.extend(scales.iter().map(|k| settings.power_pct * k));
@@ -492,6 +510,17 @@ pub(crate) fn plan_job_within(doc: &Document, target: &Target, max_segments: usi
                 return Err(PlanError::TooManySegments { max: max_segments });
             }
             pos = end;
+            let o = &cut.options;
+            let path_extras = cut.mode == FillMode::Line
+                && (o.lead_in.is_some() || o.lead_out.is_some() || o.start_pause_ms > 0.0 || o.end_pause_ms > 0.0);
+            if target.gantry && path_extras && (o.tabs.is_some() || o.perforation.is_some()) {
+                // Tabs and perforation cut a path into pieces; a lead (and a dwell) at every piece would cut across
+                // the bridges and the skips.
+                return Err(PlanError::Target(format!(
+                    "layer {}: lead-in, lead-out and start/end pauses cannot be combined with tabs or perforation",
+                    layer.id
+                )));
+            }
             plan.passes.push(PassPlan {
                 layer_id: layer.id.clone(),
                 sub_layer,
@@ -514,6 +543,12 @@ pub(crate) fn plan_job_within(doc: &Document, target: &Target, max_segments: usi
                         0.0
                     },
                     overcut_mm: cut.options.overcut_mm,
+                    // Lead-ins, lead-outs and path pauses are Line-mode settings (LightBurn's Advanced tab).
+                    lead_in: if cut.mode == FillMode::Line { cut.options.lead_in } else { None },
+                    lead_out: if cut.mode == FillMode::Line { cut.options.lead_out } else { None },
+                    start_pause_us: if cut.mode == FillMode::Line { cut.options.start_pause_ms * 1000.0 } else { 0.0 },
+                    end_pause_us: if cut.mode == FillMode::Line { cut.options.end_pause_ms * 1000.0 } else { 0.0 },
+                    image_runs: if path_extras { image_runs } else { 0 },
                 },
             });
         }
@@ -560,6 +595,8 @@ struct PassCtx {
     order: OrderOpts,
     /// Remove overlapping lines within this distance, mm.
     remove_overlaps: Option<f64>,
+    /// The job is for a GRBL gantry (`Target::gantry`): the planner applies the gantry-only fill ramp.
+    gantry: bool,
 }
 
 /// Image runs by (image, settings index, scan angle bits), rows in burn order.
@@ -827,6 +864,8 @@ fn pass_polylines(
     let fill = matches!(cut.mode, FillMode::Fill | FillMode::FillThenLine | FillMode::OffsetFill);
     let line = matches!(cut.mode, FillMode::Line | FillMode::FillThenLine);
     let o = &cut.options;
+    // LightBurn's Ramp Length: hatch fills only (Offset Fill has none), GRBL gantries only.
+    let ramp = ctx.gantry && o.ramp_length_mm > 0.0 && cut.power_pct > 0.0 && matches!(cut.mode, FillMode::Fill | FillMode::FillThenLine);
     let mut out = Vec::new();
     let mut scales = Vec::new();
     let mut pos = start;
@@ -850,11 +889,15 @@ fn pass_polylines(
             };
             // One hatch marks at one power: shapes with different power scales do not share one.
             let groups: Vec<Vec<&ShapeIn>> = groups.into_iter().flat_map(by_scale).collect();
-            let mut chunks: Vec<(Chunk, f64)> = Vec::new();
-            for group in groups {
+            // Chunks tagged with their power scale and their group (whose edges a GRBL ramp measures from).
+            let mut chunks: Vec<(Chunk, (f64, usize))> = Vec::new();
+            let mut ramp_edges: Vec<RampEdges> = Vec::new();
+            for (gi, group) in groups.into_iter().enumerate() {
                 let rings: Vec<Vec<Point>> =
                     group.iter().flat_map(|s| s.subs.iter()).filter(|s| s.closed).map(|s| s.points.clone()).collect();
                 let scale = group.first().map_or(1.0, |s| s.scale);
+                ramp_edges.push(if ramp { RampEdges::new(&rings, o.ramp_outer_edge) } else { RampEdges::default() });
+                let scale = (scale, gi);
                 if cut.mode == FillMode::OffsetFill {
                     // LightBurn's Offset Fill: concentric inward offsets at the line interval (no scan angle).
                     let made = crate::offsets::offset_fill(&rings, cut.hatch.interval_mm, budget.saturating_sub(lines_made))
@@ -890,9 +933,22 @@ fn pass_polylines(
                 }
             }
             let (polylines, end) = order_with(chunks, pos, &ctx.order);
-            for (p, k) in polylines {
-                out.push(p);
-                scales.push(k);
+            for (p, (k, gi)) in polylines {
+                match (ramp, p.as_slice()) {
+                    (true, &[a, b]) => {
+                        // Power at the edge (never above this line's own), rising to the line's power.
+                        let full = cut.power_pct * k;
+                        let edge = o.ramp_min_power_pct.min(full);
+                        for (piece, f) in ramp_line(a, b, &ramp_edges[gi], o.ramp_length_mm) {
+                            out.push(piece.to_vec());
+                            scales.push((edge + (full - edge) * f) / cut.power_pct);
+                        }
+                    }
+                    _ => {
+                        out.push(p);
+                        scales.push(k);
+                    }
+                }
             }
             pos = end;
         }

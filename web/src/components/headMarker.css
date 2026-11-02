@@ -1,0 +1,10 @@
+/* Show Last Position: the GRBL head's last known position on the canvas (components/HeadMarker.tsx). */
+.head-marker line,
+.head-marker circle {
+  fill: none;
+  stroke: var(--accent);
+  vector-effect: none;
+}
+.head-marker circle {
+  fill: var(--accent-fill);
+}

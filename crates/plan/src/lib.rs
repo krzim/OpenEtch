@@ -23,6 +23,7 @@ mod job;
 pub mod offsets;
 mod order;
 mod preview;
+mod ramp;
 mod regions;
 mod rotary;
 mod target;

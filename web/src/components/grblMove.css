@@ -1,0 +1,14 @@
+/* The Move window's saved positions (components/GrblMove.tsx). */
+.grbl-saved {
+  display: inline-flex;
+  gap: 1px;
+}
+.grbl-save-row {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+}
+.grbl-save-row input {
+  flex: 1;
+  min-width: 0;
+}

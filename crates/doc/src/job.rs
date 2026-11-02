@@ -89,6 +89,34 @@ pub struct Tabs {
     pub size_mm: f64,
 }
 
+/// The shape of a lead-in or lead-out (LightBurn's Lead-In / Lead-Out style).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LeadStyle {
+    /// A straight line.
+    #[default]
+    Line,
+    /// A short arc that meets the cut along its direction.
+    Arc,
+}
+
+/// A lead-in or lead-out (LightBurn's Line-mode Lead-In / Lead-Out, GRBL gantries only): a short cut added before the
+/// start (or after the end) of every path, so the mark a cut leaves where it starts and stops lands off the shape.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Lead {
+    #[serde(default)]
+    pub style: LeadStyle,
+    /// Length of the lead, mm (straight-line distance from the path's start or end to the lead's far end), > 0 and at
+    /// most [`MAX_GANTRY_EXTRA_MM`].
+    pub length_mm: f64,
+    /// Angle between the lead and the path's own direction, degrees, -90..=90: positive puts the lead outside a closed
+    /// shape (for a hole, an outline inside another one of the same pass, inside the hole: the waste side) and above
+    /// an open path (to the left of its direction), negative on the other side; 90 meets the path square, 0 runs
+    /// along it.
+    pub angle_deg: f64,
+}
+
 /// Per-pass cut options (LightBurn's layer settings beyond the laser parameters). The defaults change nothing; they
 /// fill all at once ([`FillGrouping`]), as LightBurn does.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -156,6 +184,31 @@ pub struct CutOptions {
     /// jobs.
     #[serde(skip_serializing_if = "is_zero")]
     pub overcut_mm: f64,
+    /// GRBL gantries only (LightBurn's Fill-mode Ramp Length, for stamps): the power of a fill rises from
+    /// `ramp_min_power_pct` at the edge of the design to the layer's power this far into the fill, in steps, so the
+    /// engraving's sides slope. Only the edges inside the fill (holes, the design's own outlines) ramp unless
+    /// `ramp_outer_edge`. 0..=50 mm; 0 is off. Ignored by galvo jobs and by non-fill passes.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub ramp_length_mm: f64,
+    /// GRBL ramp: also ramp the outermost edges of the fill (LightBurn's Ramp Outer Edge).
+    #[serde(skip_serializing_if = "is_false")]
+    pub ramp_outer_edge: bool,
+    /// GRBL ramp: the power at the edge, % (LightBurn ramps from Min Power to Max Power); at most the layer's power.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub ramp_min_power_pct: f64,
+    /// GRBL gantries only, line passes: a lead-in cut before each path's start (LightBurn's Lead-In).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lead_in: Option<Lead>,
+    /// GRBL gantries only, line passes: a lead-out cut after each path's end (LightBurn's Lead-Out).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lead_out: Option<Lead>,
+    /// GRBL gantries only, line passes: a dwell with the laser off before each path is cut (after the travel to it),
+    /// ms (LightBurn's Start Pause Time without Cut Through). 0..=60,000 ms.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub start_pause_ms: f64,
+    /// GRBL line passes: a dwell with the laser off after each path, ms (LightBurn's End Pause Time).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub end_pause_ms: f64,
 }
 
 impl Default for CutOptions {
@@ -179,6 +232,13 @@ impl Default for CutOptions {
             air_assist: false,
             overscan_mm: 0.0,
             overcut_mm: 0.0,
+            ramp_length_mm: 0.0,
+            ramp_outer_edge: false,
+            ramp_min_power_pct: 0.0,
+            lead_in: None,
+            lead_out: None,
+            start_pause_ms: 0.0,
+            end_pause_ms: 0.0,
         }
     }
 }
@@ -187,6 +247,8 @@ impl Default for CutOptions {
 pub const MAX_PAUSE_MS: f64 = 600_000.0;
 /// Longest overscan and overcut, mm ([`CutOptions::overscan_mm`], [`CutOptions::overcut_mm`]).
 pub const MAX_GANTRY_EXTRA_MM: f64 = 50.0;
+/// Longest start or end pause of a GRBL path, ms ([`CutOptions::start_pause_ms`]).
+pub const MAX_PATH_PAUSE_MS: f64 = 60_000.0;
 
 impl CutOptions {
     pub fn is_default(&self) -> bool {
@@ -213,6 +275,19 @@ impl CutOptions {
             .or_else(|| range("kerf_offset_mm", self.kerf_offset_mm, -50.0, 50.0))
             .or_else(|| range("overscan_mm", self.overscan_mm, 0.0, MAX_GANTRY_EXTRA_MM))
             .or_else(|| range("overcut_mm", self.overcut_mm, 0.0, MAX_GANTRY_EXTRA_MM))
+            .or_else(|| range("ramp_length_mm", self.ramp_length_mm, 0.0, MAX_GANTRY_EXTRA_MM))
+            .or_else(|| range("ramp_min_power_pct", self.ramp_min_power_pct, 0.0, 100.0))
+            .or_else(|| range("start_pause_ms", self.start_pause_ms, 0.0, MAX_PATH_PAUSE_MS))
+            .or_else(|| range("end_pause_ms", self.end_pause_ms, 0.0, MAX_PATH_PAUSE_MS))
+            .or_else(|| {
+                [("lead_in", &self.lead_in), ("lead_out", &self.lead_out)].into_iter().find_map(|(name, l)| {
+                    l.as_ref().and_then(|l| {
+                        (!(l.length_mm.is_finite() && l.length_mm > 0.0 && l.length_mm <= MAX_GANTRY_EXTRA_MM))
+                            .then(|| format!("options.{name}.length_mm must be within 0..={MAX_GANTRY_EXTRA_MM} and > 0 (got {})", l.length_mm))
+                            .or_else(|| range(&format!("{name}.angle_deg"), l.angle_deg, -90.0, 90.0))
+                    })
+                })
+            })
             .or_else(|| {
                 self.dot_mode.as_ref().and_then(|d| {
                     range("dot_mode.dot_time_ms", d.dot_time_ms, 0.01, 1000.0)

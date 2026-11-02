@@ -417,6 +417,9 @@ fn gantry_options_note(job: &plan::JobPlan) -> String {
         (g(|p| p.air_assist), "air assist M8/M9"),
         (g(|p| p.overscan_mm > 0.0), "overscan"),
         (g(|p| p.overcut_mm > 0.0), "overcut"),
+        (g(|p| p.lead_in.is_some()), "lead-in"),
+        (g(|p| p.lead_out.is_some()), "lead-out"),
+        (g(|p| p.start_pause_us > 0.0 || p.end_pause_us > 0.0), "start/end pauses"),
     ]
     .into_iter()
     .filter_map(|(on, n)| on.then_some(n))

@@ -394,7 +394,7 @@ fn gantry_layer_options_reach_the_passes_and_never_the_galvo_list() {
     let objects = || vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0))];
     let line = plan_job(&doc_with(objects(), with_options(CutSettings::default(), o.clone())), &target()).unwrap();
     // Overscan is for scan lines only: a line layer has none.
-    assert_eq!(line.passes[0].gantry, GantryPass { constant_power: true, air_assist: true, overscan_mm: 0.0, overcut_mm: 1.5 });
+    assert_eq!(line.passes[0].gantry, GantryPass { constant_power: true, air_assist: true, overscan_mm: 0.0, overcut_mm: 1.5, ..GantryPass::default() });
     let filled = plan_job(&doc_with(objects(), with_options(fill(1.0), o.clone())), &target()).unwrap();
     assert_eq!(filled.passes[0].gantry.overscan_mm, 2.0);
     // The galvo's list is the same with or without them.
@@ -402,4 +402,95 @@ fn gantry_layer_options_reach_the_passes_and_never_the_galvo_list() {
     assert_eq!(encode(&filled, &target()).unwrap(), encode(&plain, &target()).unwrap());
     assert!(plain.passes[0].gantry.is_default());
     assert!(serde_json::to_value(&plain.passes[0]).unwrap().get("gantry").is_none(), "left out of JSON while off");
+}
+
+#[test]
+fn a_gantry_fill_ramps_its_power_near_the_inner_edges_only() {
+    let gantry = Target { gantry: true, ..target() };
+    // A 20 mm square with a 4 mm hole, filled at 50 %; ramp 1 mm from 10 % at the hole's edge.
+    let objects = || vec![rect("obj-1", 20.0, 20.0, (0.0, 0.0)), rect("obj-2", 4.0, 4.0, (0.0, 0.0))];
+    let mut settings = fill(0.5);
+    settings.power_pct = 50.0;
+    let o = CutOptions { ramp_length_mm: 1.0, ramp_min_power_pct: 10.0, ..CutOptions::default() };
+    let ramped = plan_job(&doc_with(objects(), with_options(settings.clone(), o.clone())), &gantry).unwrap();
+    let plain = plan_job(&doc_with(objects(), settings.clone()), &gantry).unwrap();
+    let p = &ramped.passes[0];
+    assert!(p.polylines.len() > plain.passes[0].polylines.len(), "hatch lines split into ramp pieces");
+    let powers: Vec<f64> = (0..p.polylines.len()).map(|i| p.power_of(i)).collect();
+    assert!(powers.iter().all(|w| (10.0 - 1e-9..=50.0 + 1e-9).contains(w)), "{powers:?}");
+    assert!(powers.iter().any(|w| (*w - 10.0).abs() < 1e-9) && powers.contains(&50.0), "{powers:?}");
+    // The ramp is only near the hole: a hatch line far from it (near the outer edge) keeps the full power.
+    for (i, q) in p.polylines.iter().enumerate() {
+        if q.iter().all(|pt| pt[1].abs() > 4.0) {
+            assert_eq!(p.power_of(i), 50.0, "{q:?}");
+        }
+    }
+    // Ramp Outer Edge ramps the outer square's sides too.
+    let outer = plan_job(&doc_with(objects(), with_options(settings.clone(), CutOptions { ramp_outer_edge: true, ..o.clone() })), &gantry).unwrap();
+    let q = &outer.passes[0];
+    assert!(q.polylines.len() > p.polylines.len());
+    // A galvo job ignores the ramp: the same list as without it.
+    let galvo = plan_job(&doc_with(objects(), with_options(settings.clone(), o)), &target()).unwrap();
+    assert_eq!(encode(&galvo, &target()).unwrap(), encode(&plan_job(&doc_with(objects(), settings), &target()).unwrap(), &target()).unwrap());
+}
+
+#[test]
+fn leads_and_path_pauses_reach_line_passes_only() {
+    let lead = doc::Lead { style: doc::LeadStyle::Arc, length_mm: 2.0, angle_deg: 45.0 };
+    let o = CutOptions { lead_in: Some(lead), lead_out: Some(lead), start_pause_ms: 5.0, end_pause_ms: 2.0, ..CutOptions::default() };
+    let objects = || vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0))];
+    let line = plan_job(&doc_with(objects(), with_options(CutSettings::default(), o.clone())), &target()).unwrap();
+    let g = line.passes[0].gantry;
+    assert_eq!((g.lead_in, g.lead_out, g.start_pause_us, g.end_pause_us), (Some(lead), Some(lead), 5000.0, 2000.0));
+    let filled = plan_job(&doc_with(objects(), with_options(fill(1.0), o.clone())), &target()).unwrap();
+    assert!(filled.passes[0].gantry.is_default(), "fills get no leads");
+    // A lead longer than 50 mm or steeper than 90 degrees is refused.
+    let bad = CutOptions { lead_in: Some(doc::Lead { angle_deg: 91.0, ..lead }), ..CutOptions::default() };
+    assert!(plan_job(&doc_with(objects(), with_options(CutSettings::default(), bad)), &target()).is_err());
+    let bad = CutOptions { lead_out: Some(doc::Lead { length_mm: 0.0, ..lead }), ..CutOptions::default() };
+    assert!(plan_job(&doc_with(objects(), with_options(CutSettings::default(), bad)), &target()).is_err());
+}
+
+#[test]
+fn grbl_leads_and_path_pauses_refuse_tabs_and_perforation() {
+    // Tabs and perforation cut each path into pieces: a lead at every piece would cut across the bridges and skips.
+    let gantry = Target { gantry: true, ..target() };
+    let lead = Some(doc::Lead { style: doc::LeadStyle::Line, length_mm: 2.0, angle_deg: 90.0 });
+    let objects = || vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0))];
+    let tabs = Some(Tabs { count: 4, spacing_mm: 0.0, size_mm: 1.0 });
+    let perf = Some(doc::Perforation { cut_mm: 1.0, skip_mm: 1.0 });
+    for o in [
+        CutOptions { lead_in: lead, tabs: tabs.clone(), ..CutOptions::default() },
+        CutOptions { lead_out: lead, perforation: perf.clone(), ..CutOptions::default() },
+        CutOptions { start_pause_ms: 5.0, tabs: tabs.clone(), ..CutOptions::default() },
+    ] {
+        let d = doc_with(objects(), with_options(CutSettings::default(), o));
+        assert!(matches!(plan_job(&d, &gantry), Err(PlanError::Target(m)) if m.contains("tabs or perforation")));
+        // A galvo ignores the GRBL-only settings.
+        plan_job(&d, &target()).unwrap();
+    }
+    plan_job(&doc_with(objects(), with_options(CutSettings::default(), CutOptions { tabs, ..CutOptions::default() })), &gantry).unwrap();
+}
+
+#[test]
+fn start_here_part_way_along_a_path_drops_that_paths_grbl_leads() {
+    // Resuming in the middle of a closed outline: the rest of it is an open path, and a lead measured from there
+    // would land on the wrong side (into the part). It is cut on its own without leads; later paths keep theirs.
+    let gantry = Target { gantry: true, ..target() };
+    let lead = Some(doc::Lead { style: doc::LeadStyle::Line, length_mm: 2.0, angle_deg: 90.0 });
+    let o = CutOptions { lead_in: lead, lead_out: lead, ..CutOptions::default() };
+    let d = doc_with(vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0)), rect("obj-2", 10.0, 10.0, (30.0, 0.0))], with_options(CutSettings::default(), o));
+    let plan = plan_job(&d, &gantry).unwrap();
+    let mid = start_at(&plan, 3, &gantry).unwrap();
+    assert_eq!(mid.passes.len(), 2, "{:?}", mid.passes);
+    assert_eq!((mid.passes[0].gantry.lead_in, mid.passes[0].gantry.lead_out), (None, None));
+    assert_eq!(mid.passes[0].polylines.len(), 1);
+    assert_eq!((mid.passes[1].gantry.lead_in, mid.passes[1].polylines.len()), (lead, 1));
+    assert!((mid.stats.mark_length_mm - 60.0).abs() < 1e-9, "{}", mid.stats.mark_length_mm);
+    // From a path's start (a jump), nothing is split.
+    let from_second = start_at(&plan, 5, &gantry).unwrap();
+    assert_eq!((from_second.passes.len(), from_second.passes[0].gantry.lead_in), (1, lead));
+    // The last path resumed part-way: its pass is replaced, keeping the pass's pause after.
+    let last = start_at(&plan, 8, &gantry).unwrap();
+    assert_eq!((last.passes.len(), last.passes[0].gantry.lead_in), (1, None));
 }

@@ -529,3 +529,94 @@ async fn console_air_does_not_leak_into_passes_without_air_assist() {
     assert!(sub.iter().all(|f| f.air), "the pass with air assist ran with air: {:?}", r.fires);
     assert!(!r.air_now && !r.lit_now, "air and laser off after the run");
 }
+
+/// Ramp, lead-in/out and path pauses through the whole engine on the simulator: set as layer options (an edit fires
+/// nothing), they shape the run's G-code, every lit move is a cut inside the approved run (the pauses dwell with the
+/// laser off), and the ramp steps the power down towards the edges. Unverified on hardware (no gantry).
+#[tokio::test]
+async fn ramps_leads_and_path_pauses_fire_only_as_cuts_in_the_armed_run() {
+    let (app, st, _, _) = grbl_engine(false).await;
+    let board = sim(&st);
+    exec(&app, "shape.rect", json!({"width_mm": 20, "height_mm": 10})).await;
+    exec(&app, "layer.update", json!({"id": "layer-1", "settings": {"power_pct": 40, "speed_mm_s": 20, "options": {
+        "lead_in": {"style": "arc", "length_mm": 3.0, "angle_deg": 90.0},
+        "lead_out": {"length_mm": 2.0, "angle_deg": 45.0},
+        "start_pause_ms": 20.0, "end_pause_ms": 10.0}}})).await;
+    let (s, v) = send(&app, req("POST", "/api/execute", Some(json!({"id": "layer.update", "params": {"id": "layer-1", "settings": {
+        "options": {"lead_in": {"length_mm": 2.0, "angle_deg": 120.0}}}}})))).await;
+    assert_eq!((s, &v["ok"]), (StatusCode::OK, &json!(false)), "a lead angle beyond 90 degrees is refused: {v}");
+    let res = app.clone().oneshot(req("GET", "/api/export/gcode", None)).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let text = String::from_utf8(res.into_body().collect().await.unwrap().to_bytes().to_vec()).unwrap();
+    assert!(text.contains("lead-in, lead-out, start/end pauses"), "{text}");
+    assert!(text.contains("G4 P0.02") && text.contains("G4 P0.01"), "{text}");
+    assert!(board.report().fires.is_empty());
+
+    let (s, v) = send(&app, req("POST", "/api/runs", None)).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let id = v["id"].as_str().unwrap().to_owned();
+    let (s, v) = approve(&app, &id).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let run = wait_final(&st, &id).await;
+    assert_eq!(run.state, RunState::Finished, "{:?}", run.error);
+    let r = board.report();
+    assert!(r.fires.iter().all(|f| f.kind == FireKind::Cut && f.s == 400.0), "no dwell ever fired: {:?}", r.fires);
+    // The leads cut outside the rectangle (x 190..210, y 145..155 on the bed); the sides themselves are cut too.
+    let outside = |p: [f64; 2]| p[0] < 190.0 - 1e-6 || p[0] > 210.0 + 1e-6 || p[1] < 145.0 - 1e-6 || p[1] > 155.0 + 1e-6;
+    assert!(r.fires.iter().any(|f| outside(f.from)), "the lead-in starts outside: {:?}", r.fires);
+    assert!(r.fires.iter().any(|f| outside(f.to)), "the lead-out ends outside: {:?}", r.fires);
+    assert!(!r.lit_now);
+
+    // A fill with a 2 mm ramp on its outer edge: the power steps from 10 % at the edge to 40 %.
+    exec(&app, "layer.update", json!({"id": "layer-1", "settings": {"mode": "fill", "hatch": {"interval_mm": 1.0, "angle_deg": 0.0},
+        "options": {"ramp_length_mm": 2.0, "ramp_outer_edge": true, "ramp_min_power_pct": 10.0, "overscan_mm": 2.0}}})).await;
+    let (s, v) = send(&app, req("POST", "/api/runs", None)).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let id = v["id"].as_str().unwrap().to_owned();
+    let before = board.report().fires.len();
+    let (s, v) = approve(&app, &id).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let run = wait_final(&st, &id).await;
+    assert_eq!(run.state, RunState::Finished, "{:?}", run.error);
+    let r = board.report();
+    let fires = &r.fires[before..];
+    assert!(fires.iter().all(|f| f.kind == FireKind::Cut && (100.0..=400.0).contains(&f.s)), "{fires:?}");
+    assert!(fires.iter().any(|f| f.s == 400.0) && fires.iter().any(|f| f.s < 200.0), "stepped power: {fires:?}");
+    // Overscan stays dark: every lit move lies within the rectangle.
+    assert!(fires.iter().all(|f| !outside(f.from) && !outside(f.to)), "{fires:?}");
+    assert!(!r.lit_now);
+}
+
+/// Saved Move positions are stored with the device in the engine's preferences (UI only: an agent cannot save them),
+/// must lie on the bed, need a GRBL device, and going to one is an ordinary laser-off jog.
+#[tokio::test]
+async fn saved_move_positions_are_ui_only_and_on_the_bed() {
+    let (app, st, id, galvo) = grbl_engine(false).await;
+    let board = sim(&st);
+    let put = |v: Value| req("PUT", "/api/prefs", Some(v));
+    let spots = json!([{"name": "Jig corner", "x_mm": 12.5, "y_mm": 30.0}, {"name": "Park", "x_mm": 400.0, "y_mm": 300.0}]);
+    let mut r = put(json!({"move_positions": spots}));
+    r.headers_mut().insert("mcp-session-id", "x".parse().unwrap());
+    assert_eq!(send(&app, r).await.0, StatusCode::FORBIDDEN, "agents cannot save positions");
+    let (s, v) = send(&app, put(json!({"move_positions": [{"name": "Off", "x_mm": 401.0, "y_mm": 0.0}]}))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
+    assert!(v["error"].as_str().unwrap().contains("off the 400 x 300 mm bed"), "{v}");
+    let (s, v) = send(&app, put(json!({"move_positions": [{"name": " ", "x_mm": 1.0, "y_mm": 1.0}]}))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
+    let (s, v) = send(&app, put(json!({"move_positions": spots}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (_, v) = send(&app, req("GET", "/api/prefs", None)).await;
+    assert_eq!((&v["device"], &v["device_prefs"]["move_positions"]), (&json!(id), &spots), "{v}");
+    // Going to one: the Move window jogs to its field position (machine 12.5, 30 on a front-left origin).
+    let (s, v) = send(&app, req("POST", "/api/machine/jog", Some(json!({"x": -187.5, "y": -120.0, "feed": 3000})))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    board.run_blocks(5);
+    let (_, g) = send(&app, req("GET", "/api/machine/grbl?refresh=true", None)).await;
+    assert_eq!(g["position"]["machine"], json!([12.5, 30.0]), "{g}");
+    assert!(board.report().fires.is_empty());
+    // A galvo has no Move positions.
+    let (s, _) = send(&app, req("POST", &format!("/api/devices/{galvo}/activate"), None)).await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, v) = send(&app, put(json!({"move_positions": []}))).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+}

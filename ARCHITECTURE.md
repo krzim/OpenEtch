@@ -303,6 +303,10 @@ computer while nobody watches it; the foot switch is the approval path that need
   - Console macros (the Console window's buttons) are stored per device in the engine's preferences (`PUT
     /api/prefs` `console_macros`, UI only; every line must pass the console policy to be saved) and run line by line
     through `POST /api/machine/console`, so they get the same refusals; a macro stops at its first refused line.
+  - Saved Move positions (`PUT /api/prefs` `move_positions` `[{name, x_mm, y_mm}]`, machine mm on the active GRBL
+    device's bed, at most 32, UI only, never MCP) are only names for places: going to one is an ordinary jog through
+    `POST /api/machine/jog`, with every jog rule above. Show Last Position (the canvas crosshair, web `HeadMarker.tsx`)
+    is a drawing of the last status report's position and asks the board for nothing.
   - The Move window (web `GrblMove.tsx`) only jogs, homes and unlocks through the endpoints above; its position comes
     from `GET /api/machine/grbl?refresh=true`, a `?` status query sent only to an idle board (never behind a run,
     frame or homing). Air assist (`M8`) is a coolant output that cannot fire; GRBL's soft reset (Stop) turns it off.
@@ -610,7 +614,9 @@ hatch over every shape of the pass (shapes with different power scales apart), s
 run of the job, the job counter, instead of per pass; repeats of one approval keep one angle), `flood_fill` (the hatch
 split into connected regions), `perforation` {cut_mm, skip_mm}, `tabs` {count | spacing_mm, size_mm} (gaps on
 closed outlines), `z_offset_mm` / `z_step_mm` (needs a board-driven Z axis, else a plan warning; each Z position is a
-part), and the GRBL layer options (`constant_power`, `air_assist`, `overscan_mm` and `overcut_mm` 0..=50; G-code
+part), and the GRBL layer options (`constant_power`, `air_assist`, `overscan_mm` and `overcut_mm` 0..=50,
+`ramp_length_mm` 0..=50 with `ramp_outer_edge` and `ramp_min_power_pct`, `lead_in` / `lead_out` {style line|arc,
+length_mm 0..=50, angle_deg -90..=90}, `start_pause_ms` / `end_pause_ms` 0..=60000; G-code
 output only, carried to the G-code writer as `plan::PassPlan.gantry`, never read by the LMC encoder; the UI shows them
 only while a GRBL gantry is active; see Devices, "GRBL gantries"). Line options apply in that order after ordering: tabs, perforation, wobble, dots. `hatch.lines_per_inch` sets
 the interval to 25.4 / LPI. Per-object `power_scale_pct` (`object.set_cut_properties`) scales a shape's power,
@@ -1217,8 +1223,21 @@ Origin), the public WAZER `.lbdev`, xTool/Creality `.lbdev` posts and the owner'
   on); `overscan_mm` (fill hatch lines and image
   runs: every two-point scan line) adds a run-in from `overscan` mm before the line and a run-out past it, both `G1 ...
   S0` at the cut's feed and shortened at the bed's edge; `overcut_mm` cuts a closed outline on past its start (at most
-  once around). The web UI offers the Move and Console windows and File > Save G-code only while a GRBL gantry is
-  active; ramps and lead-in/out are not built. Not yet for GRBL: Repeat Marking tables, queues, the
+  once around); `ramp_length_mm` (Fill and Fill+Line hatches, planned by `plan::ramp` for gantry targets only) splits
+  each hatch line into collinear pieces whose power steps (10 steps) from `ramp_min_power_pct` at the design's inner
+  edges (rings nested in another ring; every ring with `ramp_outer_edge`) to the layer power `ramp_length_mm` in, and
+  the writer emits them as consecutive `G1` moves with stepped S and one overscan per scan line; `lead_in` /
+  `lead_out` (Line passes) add a straight or arc cut at the pass's power before each path's start and after its end
+  (after the overcut), a positive angle on the waste side (outside a closed outline by its winding, inside a hole: an
+  outline nested in an odd number of the pass's others; above an open path); `start_pause_ms` / `end_pause_ms` (Line
+  passes) dwell at each path with `M5` + `G4`, the spindle mode coming back as `M3 S0` / `M4 S0`. Leads and path
+  pauses are for vector paths only (an image's scan runs on the same Line layer get none, `GantryPass.image_runs`);
+  combined with tabs or perforation they are refused (a lead at every piece would cut across the bridges); Start Here
+  part-way along a path cuts the rest of that path without its leads (from the resume point a lead would land on the
+  wrong side). The web UI offers the
+  Move window (with saved positions and Show Last Position) and the Console window and File > Save G-code only while
+  a GRBL gantry is active. Not yet for GRBL: the ramp on Threshold images, Cut Through pauses (laser on), leads and
+  overcut in the preview, Repeat Marking tables, queues, the
   start input, dot mode, rotary/Z jobs. LightBurn GRBL devices stay design-only gantries.
 - **Family** (LightBurn's `Name` is an open set, never matched against a closed list): a galvo when `Type` is
   `LibUSB`, `Name` contains Fiber or EZCad, or any `Galvo_*` setting exists; JCZ when such a `Name` contains JCZ
