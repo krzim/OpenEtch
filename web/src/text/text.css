@@ -416,3 +416,9 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* In the context strip only the hint gives way: the B / I / AA / W toggles keep their width. */
+.context-strip-slot .tx-bar .tx-toggles {
+  flex: none;
+  overflow: visible;
+}

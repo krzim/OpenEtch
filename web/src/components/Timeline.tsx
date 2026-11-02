@@ -200,7 +200,8 @@ export function Timeline({ timeline, flash, onGoto, onDelete, variant = "strip" 
       .filter(Boolean)
       .join(" ");
     const title = [
-      `${h.commands || h.label}`,
+      // The friendly name first ("Rectangle"), the engine's command id after it for the curious.
+      `${timelineLabel(h, t).text} (${h.commands || h.label})`,
       h.summary,
       `by ${b.label}`,
       h.state === "failed" ? `Failed on replay: ${h.error ?? t("tl.theStepNoLongerApplies")}` : "",

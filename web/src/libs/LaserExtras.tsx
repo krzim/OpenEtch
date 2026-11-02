@@ -57,9 +57,10 @@ export function LaserExtras(p: { designOnly: string | null; tools?: DropItem[]; 
   return (
     <div className="lx-laser-extras">
       {io && (
-        <label className="field field-check" title={t("lx.redDotTitle")}>
-          <span className="field-label">{t("lx.redDot")}</span>
+        // Same look as the dock's other checkboxes (box first, one line), not a form field with a fixed-width label.
+        <label className="laser-check" title={t("lx.redDotTitle")}>
           <input type="checkbox" checked={io.red_dot_always_on} disabled={busy || !!p.designOnly} onChange={(e) => setRedDot(e.target.checked)} />
+          {t("lx.redDot")}
         </label>
       )}
       <div className="laser-buttons laser-more">

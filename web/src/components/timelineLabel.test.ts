@@ -25,6 +25,8 @@ test("timelineLabel: transforms are named by their first part", () => {
 
 test("timelineLabel: text shows what it says", () => {
   assert.equal(timelineLabel(step("text.add", 'added text t3 "Hello"'), t).text, 'Text "Hello"');
+  // What the Text tool actually sends (seen in the app: the chip read "text").
+  assert.equal(timelineLabel(step("shape.text", 'added text obj-3 "Hello"'), t).text, 'Text "Hello"');
   assert.equal(timelineLabel(step("text.add", "added text t3"), t).text, "Text");
   assert.equal(timelineLabel(step("text.add", `added text t4 "${"x".repeat(40)}"`), t).text, `Text "${"x".repeat(23)}…"`, "long texts are shortened");
   assert.equal(timelineLabel(step("text.update", "edited text t3"), t).text, "Edit text");

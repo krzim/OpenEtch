@@ -41,6 +41,7 @@ function labelFor(cmd: string, summary: string, t: T): StepLabel | null {
     }
     case "shape.path":
       return { text: t("tlx.path"), icon: ui("path") };
+    case "shape.text":
     case "text.add":
     case "text.create": {
       const q = quoted(summary);

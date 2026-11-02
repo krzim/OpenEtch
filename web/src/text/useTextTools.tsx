@@ -28,6 +28,7 @@ import { objectBounds } from "../geometry.ts";
 import { unitsOf, type Selection } from "../selection.ts";
 import { useT, useUnitConversion } from "../workspace/usePrefs.ts";
 import { trimNumber } from "../workspace/units.ts";
+import { ContextStripPortal } from "../workspace/contextStrip.tsx";
 import { BarcodeDialog, NEW_BARCODE } from "./Barcode.tsx";
 import { FontPicker } from "./FontPicker.tsx";
 import { ApplyPathCard, BarcodeSection, Segmented, TextSection, alignOptions, warnFrom } from "./TextProperties.tsx";
@@ -668,7 +669,10 @@ function OptionsBar(p: { values: TextDefaults; editingText: boolean; fonts: Font
       {label}
     </button>
   );
+  // In the context strip like the other tools' bars (plan V16), not floating in two rows over the rulers and the
+  // canvas top; where no strip is mounted (the phone) it stays over the canvas.
   return (
+    <ContextStripPortal>
     <div className="vp-overlay et-bar tx-bar" role="toolbar" aria-label={t("text.options")}>
       <b>{p.editingText ? t("text.optionsSelected") : t("text.optionsNew")}</b>
       <FontPicker compact value={v.font} fonts={p.fonts} onPick={(font) => p.onChange({ font })} onReload={p.onReloadFonts} placeholder={t("text.font.default")} />
@@ -685,6 +689,7 @@ function OptionsBar(p: { values: TextDefaults; editingText: boolean; fonts: Font
       </span>
       <span className="et-hint">{t("text.barHint")}</span>
     </div>
+    </ContextStripPortal>
   );
 }
 
