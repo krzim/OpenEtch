@@ -35,7 +35,7 @@ use std::time::{Duration, Instant};
 use machine::{Armed, ControllerError, RunPart, RunReport};
 use serde_json::{Value, json};
 
-use crate::hw::Machine;
+use crate::hw::{LinkKind, Machine};
 use crate::pin::{ApprovalMode, CONFIRM_POLL, CONFIRM_READS, PhysicalConfirm};
 use crate::runs::{RunOptions, RunState};
 use crate::{AppState, EngineError, Event};
@@ -117,7 +117,7 @@ pub(crate) async fn approve(
             state.job.stop_at().unwrap_or_default()
         )));
     }
-    let (parts, epoch, run_state, options, estimate) = {
+    let (parts, epoch, run_state, options, estimate, planned_s) = {
         let mut store = state.runs();
         let run = store.get_mut(id).ok_or_else(|| EngineError::NotFound(format!("no run with id '{id}'")))?;
         if run.state != RunState::Pending {
@@ -155,14 +155,15 @@ pub(crate) async fn approve(
         // Captured after claiming the machine, still under the runs lock (see the module docs).
         let epoch = state.machine.stop_epoch();
         run.state = if confirm.is_some() || run.options.start_input { RunState::AwaitingConfirm } else { RunState::Approved };
-        (run.parts.clone(), epoch, run.state, run.options.clone(), run.stats.estimated_time_s)
+        let planned_s = run.stats.estimated_time_s / run.estimate_correction;
+        (run.parts.clone(), epoch, run.state, run.options.clone(), run.stats.estimated_time_s, planned_s)
     };
     // End any frame loop; `Controller::run_parts` stops a frame still on the board itself.
     state.machine.bump_frame_gen();
     // A pause asked for before this approval (e.g. as the previous job ended) does not carry over.
     state.machine.clear_pause();
     tracing::warn!(run_id = id, approved_by = approver.label(), physical_confirm = confirm.is_some(), iterations = ?options.iterations(), "run approved");
-    state.job.begin(id, &device, options.iterations(), estimate);
+    state.job.begin(id, &device, options.iterations(), estimate, estimate / planned_s);
     state.emit(Event::machine("run_approved", Some(id.to_owned())));
 
     let foot_switch = approver == Approver::FootSwitch;
@@ -172,7 +173,7 @@ pub(crate) async fn approve(
     tokio::spawn(progress_ticker(state.clone(), id.to_owned()));
     tokio::spawn(async move {
         let table = options.table.clone();
-        let job = Job { id: &run_id, device: &device, parts, epoch, confirm, options, foot_switch };
+        let job = Job { id: &run_id, device: &device, parts, epoch, confirm, options, foot_switch, planned_s };
         let (final_state, report, error) = execute(&st, job).await;
         // Repeat Marking: back to the table's start once the job finished (not after a stop).
         if final_state == RunState::Finished
@@ -276,6 +277,8 @@ struct Job<'a> {
     options: RunOptions,
     /// Approved with the foot switch: that press was the first iteration's start-input press.
     foot_switch: bool,
+    /// The planner's estimate of one iteration, before the learned correction (module `marktime`), s.
+    planned_s: f64,
 }
 
 /// Wait for the physical confirmation (if configured), then run the iterations the options ask for, each after the
@@ -348,6 +351,7 @@ async fn execute(st: &Arc<AppState>, job: Job<'_>) -> Outcome {
         hold_while_paused(st, job.epoch).await;
         match run_once(st, id, &job.parts, job.epoch, iteration).await {
             Once::Done(report) => {
+                learn_run_time(st, &job, &report);
                 completed += 1;
                 last = Some(report);
                 let count = st.job.increment(job.device);
@@ -375,6 +379,27 @@ async fn execute(st: &Arc<AppState>, job: Job<'_>) -> Outcome {
             Once::Ended(outcome) => return outcome,
         }
     }
+}
+
+/// Record what a finished iteration took on a real board next to the planner's estimate (module `marktime`), so the
+/// device's next estimates are corrected. Not for the simulated board, a job of several lists (the board's count may
+/// cover only the last one), an iteration that was paused (the controller's count of `StopList`s, so a pause too
+/// short for the progress ticker to see counts too), or a reply without a mark time.
+fn learn_run_time(st: &Arc<AppState>, job: &Job<'_>, report: &RunReport) {
+    if st.machine.kind() != LinkKind::Usb || job.parts.len() != 1 || st.machine.progress().pauses > 0 || st.job.iteration_paused() {
+        return;
+    }
+    let Some(measured_s) = report.mark_time_s() else { return };
+    let c = st.job.times.record(job.device, job.planned_s, measured_s);
+    tracing::info!(
+        run_id = job.id,
+        device = job.device,
+        planned_s = job.planned_s,
+        measured_s,
+        correction = c.factor,
+        runs = c.runs,
+        "run time recorded"
+    );
 }
 
 /// Wait while a pause is asked for, unless a stop came in (the caller's next step sees the stop).

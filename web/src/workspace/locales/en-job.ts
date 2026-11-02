@@ -14,6 +14,7 @@ export const EN_JOB = {
   "job.part": "Part {part} of {parts}",
   "job.elapsed": "{time} elapsed",
   "job.remaining": "{time} left",
+  "job.finishing": "Finishing…",
   "job.packets": "{sent}/{total} packets",
   "job.pauseTitle": "Hold the job where it is (never gated). Resume continues it; STOP ends it.",
   "job.resumeTitle": "Continue the paused job",

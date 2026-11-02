@@ -255,6 +255,17 @@ pub fn parse_reply(bytes: &[u8]) -> Result<[u16; 4]> {
     Ok([u16::from_le_bytes([a0, a1]), u16::from_le_bytes([b0, b1]), u16::from_le_bytes([c0, c1]), u16::from_le_bytes([d0, d1])])
 }
 
+/// Seconds in a `GetMarkTime(3)` reply: words 1 (low) and 2 (high) as one count of 10 µs, the time the board took
+/// for its last list; `None` when the count is 0 (no list ran). Word 3 is the status word, as in every reply
+/// (`0x0220`, idle, after a run). Neither reference decodes the reply (galvoplotter / meerk40t only log it); the
+/// layout and the 10 µs unit are inferred from two runs on the owner's B6 (2026-11-01): a 30 x 30 mm fill gave
+/// `[0, 63040, 35, 544]` = 2 356 800 x 10 µs = 23.568 s, matching the ~23 s the run took by the wall clock, and an
+/// "F" outline `[0, 12182, 1, 544]` = 0.777 s. Whether word 0 is ever non-zero (and what it means) is unknown.
+pub fn mark_time_s(reply: [u16; 4]) -> Option<f64> {
+    let ticks = u32::from(reply[2]) << 16 | u32::from(reply[1]);
+    (ticks > 0).then(|| f64::from(ticks) * 1e-5)
+}
+
 /// The board status: word 3 of a reply. Unknown bits are kept (one board idles at `0x0220`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct StatusWord(pub u16);
@@ -298,6 +309,16 @@ impl StatusWord {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mark_time_reply_is_a_10_us_count_in_words_1_and_2() {
+        // The owner's B6, 2026-11-01: the 30 x 30 mm fill and the "F" outline.
+        assert!((mark_time_s([0, 63040, 35, 544]).unwrap() - 23.568).abs() < 1e-9);
+        assert!((mark_time_s([0, 12182, 1, 544]).unwrap() - 0.77718).abs() < 1e-9);
+        assert!(StatusWord::from_reply([0, 63040, 35, 544]).idle());
+        assert_eq!(mark_time_s([0, 0, 0, 544]), None);
+        assert!((mark_time_s([0, 0xFFFF, 0xFFFF, 0]).unwrap() - 42_949.672_95).abs() < 1e-6);
+    }
 
     #[test]
     fn bytes_are_six_le_words() {

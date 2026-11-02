@@ -29,7 +29,11 @@ export interface JobStatus {
   elapsed_s: number;
   estimated_time_s: number;
   remaining_s: number;
-  /** 0..1, by time. */
+  /** The estimate is used up (or under a second is left) while the job still runs: show "Finishing…", never "0 s left". */
+  finishing: boolean;
+  /** The device's learned correction already in `estimated_time_s` (1: none yet). */
+  estimate_correction: number;
+  /** 0..1, from the packets the board has finished and the clock; below 1 while the job runs. */
   progress: number;
   /** The job counter of the active device (LightBurn's Count). */
   count: number;
@@ -52,6 +56,8 @@ export const IDLE_JOB: JobStatus = {
   elapsed_s: 0,
   estimated_time_s: 0,
   remaining_s: 0,
+  finishing: false,
+  estimate_correction: 1,
   progress: 0,
   count: 0,
   stop_at: null,
@@ -87,6 +93,8 @@ export function jobStatus(raw: unknown): JobStatus {
     elapsed_s: nonNeg(o.elapsed_s),
     estimated_time_s: nonNeg(o.estimated_time_s),
     remaining_s: nonNeg(o.remaining_s),
+    finishing: o.finishing === true,
+    estimate_correction: num(o.estimate_correction, 1) > 0 ? num(o.estimate_correction, 1) : 1,
     progress: Math.min(1, nonNeg(o.progress)),
     count: nonNeg(o.count),
     stop_at: stopAt,
@@ -134,6 +142,13 @@ export function iterationText(j: JobStatus): string {
 /** Progress in percent, 0..100, one decimal. */
 export function progressPct(j: JobStatus): number {
   return Math.round(j.progress * 1000) / 10;
+}
+
+/** The "time left" line: the seconds left, or "Finishing…" once the engine says so (or, from an engine that does not,
+ * under a second is left while marking), so a job still running never shows "0 s left". */
+export function remainingLine(j: JobStatus): { key: "job.remaining"; time: number } | { key: "job.finishing" } {
+  if (j.finishing || (j.active && j.state === "running" && !j.paused && j.remaining_s < 1)) return { key: "job.finishing" };
+  return { key: "job.remaining", time: j.remaining_s };
 }
 
 /** Whether Stop At blocks the next approval (the engine refuses approvals once the count reaches it). */

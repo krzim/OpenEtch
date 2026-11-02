@@ -18,6 +18,7 @@ import {
   normalizeFrameOptions,
   normalizeRunOptions,
   progressPct,
+  remainingLine,
   repeating,
   runOptionsSummary,
   runRequestBody,
@@ -79,6 +80,18 @@ test("job status from GET /api/job (the engine's idle answer and a running one)"
   assert.equal(odd.iterations, null);
   assert.equal(odd.stop_at, null);
   assert.equal(iterationText(jobStatus({ active: true, iterations: 1, iteration: 1 })), "");
+});
+
+test("a running job past its estimate shows Finishing…, never 0 s left", () => {
+  const on = jobStatus({ active: true, state: "running", remaining_s: 12.4, finishing: false, estimate_correction: 1.05 });
+  assert.deepEqual(remainingLine(on), { key: "job.remaining", time: 12.4 });
+  assert.equal(on.estimate_correction, 1.05);
+  assert.deepEqual(remainingLine(jobStatus({ active: true, state: "running", remaining_s: 0, finishing: true })), { key: "job.finishing" });
+  // An engine that sends no `finishing`: under a second while marking is finishing too.
+  assert.deepEqual(remainingLine(jobStatus({ active: true, state: "running", remaining_s: 0.4 })), { key: "job.finishing" });
+  // Waiting for the pedal: the whole estimate is still to come.
+  assert.deepEqual(remainingLine(jobStatus({ active: true, state: "waiting_for_start_input", remaining_s: 23.6 })), { key: "job.remaining", time: 23.6 });
+  assert.equal(jobStatus({ active: true, estimate_correction: -2 }).estimate_correction, 1);
 });
 
 test("run request bodies follow LightBurn's Laser window options", () => {

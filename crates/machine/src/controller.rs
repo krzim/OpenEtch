@@ -158,6 +158,13 @@ impl RunPart {
 pub struct RunProgress {
     /// Packets sent to the board so far in this run.
     pub packets_sent: usize,
+    /// Packets the board has certainly finished: every packet of a part it has finished, and within a part those
+    /// its list buffer can no longer hold. The buffer size is learned when the board first refuses a packet of a
+    /// running list (READY low on [`FULL_POLLS`] polls in a row): it held at most the packets sent until then. 0 until
+    /// then, so a board that takes the whole list at once reports nothing before the end. That READY low means a
+    /// full buffer is galvoplotter's reading, unverified on the B6.
+    #[serde(default)]
+    pub packets_done: usize,
     /// Packets of the whole run.
     pub packets_total: usize,
     /// The part being run (0-based) and how many there are.
@@ -165,6 +172,9 @@ pub struct RunProgress {
     pub parts: usize,
     /// The list is paused (`StopList` sent, `RestartList` not yet).
     pub paused: bool,
+    /// Pauses in this run so far (each `StopList`); the board's own run time then includes them.
+    #[serde(default)]
+    pub pauses: usize,
 }
 
 #[derive(Debug, Default)]
@@ -172,9 +182,11 @@ struct RunShared {
     pause_requested: AtomicBool,
     paused: AtomicBool,
     packets_sent: AtomicUsize,
+    packets_done: AtomicUsize,
     packets_total: AtomicUsize,
     part: AtomicUsize,
     parts: AtomicUsize,
+    pauses: AtomicUsize,
 }
 
 /// Pause, resume and progress of the controller's runs, usable from another thread while [`Controller::run`]
@@ -213,10 +225,12 @@ impl RunControl {
     pub fn progress(&self) -> RunProgress {
         RunProgress {
             packets_sent: self.0.packets_sent.load(Ordering::SeqCst),
+            packets_done: self.0.packets_done.load(Ordering::SeqCst),
             packets_total: self.0.packets_total.load(Ordering::SeqCst),
             part: self.0.part.load(Ordering::SeqCst),
             parts: self.0.parts.load(Ordering::SeqCst),
             paused: self.is_paused(),
+            pauses: self.0.pauses.load(Ordering::SeqCst),
         }
     }
 
@@ -224,6 +238,8 @@ impl RunControl {
         // `pause_requested` is kept (see the type docs).
         self.0.paused.store(false, Ordering::SeqCst);
         self.0.packets_sent.store(0, Ordering::SeqCst);
+        self.0.packets_done.store(0, Ordering::SeqCst);
+        self.0.pauses.store(0, Ordering::SeqCst);
         self.0.packets_total.store(parts.iter().map(|p| p.packets.len()).sum(), Ordering::SeqCst);
         self.0.part.store(0, Ordering::SeqCst);
         self.0.parts.store(parts.len(), Ordering::SeqCst);
@@ -253,9 +269,23 @@ impl FrameStyle {
 pub struct RunReport {
     pub run_id: String,
     pub packets: usize,
-    /// Raw `GetMarkTime(3)` reply (meaning not decoded).
+    /// Raw `GetMarkTime(3)` reply, read once the board is idle; [`RunReport::mark_time_s`] decodes it.
     pub mark_time: Option<Reply>,
 }
+
+impl RunReport {
+    /// How long the board took for the run's (last) list, s ([`lmc::mark_time_s`]); `None` without a usable reply.
+    /// For a job of several parts it is unverified whether this covers more than the last list.
+    pub fn mark_time_s(&self) -> Option<f64> {
+        self.mark_time.and_then(lmc::mark_time_s)
+    }
+}
+
+/// Not-ready polls in a row after which a waiting packet counts as refused for a full list buffer
+/// ([`RunProgress::packets_done`]): at the default 10 ms poll interval about 40 ms or more. A short not-ready spell
+/// may be the board still taking the previous packet; counting that as full would put the progress far ahead of the
+/// board, while missing a real refusal only leaves the progress to the clock.
+pub const FULL_POLLS: usize = 5;
 
 /// Status polling. galvoplotter polls every 10 ms with no timeout; here waiting for READY is bounded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -676,6 +706,9 @@ impl<L: Link> Controller<L> {
             }
             self.stream(&part.packets)?;
             self.wait_idle()?;
+            // The board is idle: every packet sent so far has run.
+            let sent = self.control.0.packets_sent.load(Ordering::SeqCst);
+            self.control.0.packets_done.fetch_max(sent, Ordering::SeqCst);
         }
         self.single(Single::fiber_set_mo(false))?;
         let idle = profile.io.idle_outputs();
@@ -768,6 +801,7 @@ impl<L: Link> Controller<L> {
         let start = Instant::now();
         self.single(Single::stop_list())?;
         self.control.0.paused.store(true, Ordering::SeqCst);
+        self.control.0.pauses.fetch_add(1, Ordering::SeqCst);
         tracing::info!("run paused");
         while self.control.pause_requested() {
             self.check_abort()?;
@@ -810,13 +844,16 @@ impl<L: Link> Controller<L> {
         }
     }
 
-    fn wait_ready(&mut self) -> Result<()> {
+    /// Wait for READY; returns how many polls found the board not ready.
+    fn wait_ready(&mut self) -> Result<usize> {
         let mut start = Instant::now();
+        let mut refused = 0;
         loop {
             start += self.service_run()?;
             if self.poll_status()?.ready() {
-                return Ok(());
+                return Ok(refused);
             }
+            refused += 1;
             if start.elapsed() >= self.poll.ready_timeout {
                 return Err(ControllerError::NotReady(self.poll.ready_timeout));
             }
@@ -842,14 +879,24 @@ impl<L: Link> Controller<L> {
 
     /// galvoplotter's `_list_end` loop: wait READY, send the packet, `SetEndOfList(0)`, and `ExecuteList` once more
     /// than two packets are queued; `ExecuteList` after the last packet if it has not been sent yet.
+    ///
+    /// While running, the packets the board has certainly finished are counted ([`RunProgress::packets_done`]): once
+    /// the executing list first refuses a packet, at most the packets sent until then fit in the board, so after
+    /// each later packet all but that many of this list are done.
     fn stream(&mut self, packets: &[Packet]) -> Result<()> {
         let mut executing = false;
+        let before = self.control.0.packets_sent.load(Ordering::SeqCst);
+        let mut held: Option<usize> = None;
         for (i, packet) in packets.iter().enumerate() {
-            self.wait_ready()?;
+            let refused = self.wait_ready()?;
             self.check_abort()?;
             self.link.send_packet(packet)?;
             if self.state == ControllerState::Running {
                 self.control.0.packets_sent.fetch_add(1, Ordering::SeqCst);
+                if executing && refused >= FULL_POLLS {
+                    let held = *held.get_or_insert(i);
+                    self.control.0.packets_done.fetch_max(before + (i + 1).saturating_sub(held), Ordering::SeqCst);
+                }
             }
             self.single(Single::set_end_of_list())?;
             if i + 1 > 2 && !executing {
@@ -915,9 +962,14 @@ fn light_packets(profile: &MachineProfile, outline: &[Vec<(f64, f64)>], loops: u
             profile.max_jump_speed_mm_s
         )));
     }
+    // Steps along an outline are short, so they settle with the short jump delay; the long one is kept for the move
+    // to each shape's start. A delay after every outline point made a multi-shape frame crawl.
+    let (long, short) = (
+        units::delay_word(profile.timing.jump_delay_max_us)?,
+        units::delay_word(profile.timing.jump_delay_min_us.min(profile.timing.jump_delay_max_us))?,
+    );
     let mut list = LightList::new();
     list.jump_speed(units::speed_to_units(speed, profile.field_transform().speed_field_mm())?)?;
-    list.jump_delay(units::delay_word(profile.timing.jump_delay_max_us)?);
     let mut lit = false;
     for _ in 0..loops {
         for poly in &polys {
@@ -926,11 +978,13 @@ fn light_packets(profile: &MachineProfile, outline: &[Vec<(f64, f64)>], loops: u
                 list.red_pointer_off();
                 lit = false;
             }
+            list.jump_delay(long);
             list.jump_to(x0, y0);
             if !lit {
                 list.pointer_on(style.pointer);
                 lit = true;
             }
+            list.jump_delay(short);
             for &(x, y) in rest {
                 list.jump_to(x, y);
             }
@@ -1477,7 +1531,56 @@ mod tests {
         let progress = control.progress();
         assert_eq!((progress.packets_sent, progress.packets_total, progress.paused), (packets.len(), packets.len(), false));
         assert_eq!((progress.part, progress.parts), (0, 1));
+        assert_eq!(progress.pauses, 1, "the pause is counted for the run (the engine learns no time from it)");
         assert_eq!(c.link().inner.packets(), packets, "every packet was sent once");
+    }
+
+    /// Notes, as each packet goes out, how many packets were sent and how many the controller counts as finished.
+    struct DoneLink {
+        inner: SimLink,
+        control: Arc<std::sync::Mutex<Option<RunControl>>>,
+        seen: Vec<(usize, usize)>,
+    }
+
+    impl Link for DoneLink {
+        fn send_single(&mut self, cmd: Single) -> Result<Option<Reply>, LinkError> {
+            self.inner.send_single(cmd)
+        }
+
+        fn send_packet(&mut self, packet: &Packet) -> Result<(), LinkError> {
+            if let Some(c) = self.control.lock().unwrap().as_ref() {
+                let p = c.progress();
+                self.seen.push((p.packets_sent, p.packets_done));
+            }
+            self.inner.send_packet(packet)
+        }
+    }
+
+    #[test]
+    fn packets_count_as_done_once_the_board_shows_how_many_it_holds() {
+        let mut l = MarkingList::new();
+        l.jump_to(30000, 30000);
+        for i in 0..2000u16 {
+            l.mark_to(30000 + i % 700, 31000);
+        }
+        let packets = l.finish();
+        assert_eq!(packets.len(), 8);
+        // A short not-ready spell after a packet (fewer than FULL_POLLS polls) is the board taking it: nothing is
+        // counted before the end. FULL_POLLS in a row once the list runs: the board refused packet 3 while holding
+        // three, so after packet 4 one is done.
+        for (not_ready_polls, expected) in [(1, [0; 8]), (FULL_POLLS - 1, [0; 8]), (FULL_POLLS, [0, 0, 0, 0, 1, 2, 3, 4])] {
+            let control = Arc::new(std::sync::Mutex::new(None));
+            let board = SimBoard { not_ready_polls, busy_polls: 3, ..SimBoard::default() };
+            let link = DoneLink { inner: SimLink::with_board(board), control: control.clone(), seen: Vec::new() };
+            let mut c = Controller::with_settings(link, InitSettings::default(), PollConfig::immediate());
+            *control.lock().unwrap() = Some(c.run_control());
+            c.init(&b6(), None).unwrap();
+            c.run(&packets, Armed::approved_in_ui("run-d".into())).unwrap();
+            let done: Vec<usize> = c.link().seen.iter().map(|s| s.1).collect();
+            assert_eq!(done, expected, "not ready for {not_ready_polls} polls");
+            let end = c.run_control().progress();
+            assert_eq!((end.packets_sent, end.packets_done), (8, 8), "all done once the board is idle");
+        }
     }
 
     #[test]

@@ -18,7 +18,7 @@
 //! | LightBurn | Profile field | Note |
 //! |---|---|---|
 //! | `Width`, `Height` | `field_mm`, `field_height_mm` | A difference of at most 0.05 mm from the base keeps the base: LightBurn shows the field to 0.1 mm, so 153.8 is EzCad's 153.75. A height more than 0.05 mm from the width is a non-square field (`field_height_mm`); otherwise the field is square. |
-//! | `Galvo_1_is_X` | `swap_xy = Galvo_1_is_X` | **UNVERIFIED** on hardware, see below. |
+//! | `Galvo_1_is_X` | `swap_xy = !Galvo_1_is_X` | Verified on the owner's B6 (2026-11-01), see below. |
 //! | `Galvo_1_Sign`, `Galvo_2_Sign`, `MirrorX`, `MirrorY` | `negate_x`, `negate_y` | Sign -1 of the galvo carrying the axis, XOR the mirror. **UNVERIFIED.** |
 //! | `CorrectionFile` | `cor_file` (file name only) | Missing or empty keeps the base's file. |
 //! | `Default_LaserOn_TC`, `_LaserOff_TC`, `_Polygon_TC`, `_End_TC` | `timing.*_delay_us` | Clamped to `max_delay_us`. |
@@ -29,24 +29,22 @@
 //! | `Laser_QPulseWidthEnabled` | `pulse_width_enabled` | |
 //! | `Laser_OpenMODelay` | `open_mo_delay_us` | |
 //! | `StartMarkPortBit` | `start_mark_input_bit` (-1 = none) | |
-//! | `StartMarkBitHigh` | `start_mark_active_low` (= not the flag) | false: the pedal is pressed while the input reads low. Written back from the profile. |
+//! | `StartMarkBitHigh` | `start_mark_active_low` (= not the flag) | false: the pedal is pressed while the input reads low. Written back from the profile. The owner's B6 has `true`, yet its foot switch reads low while pressed (measured 2026-11-01; LightBurn's `StartMarkPulseMode = true` may make the level moot there), so an import onto the B6 profile reports this difference. |
 //! | `FrameSpeed` | `red_light_speed_mm_s` | Clamped to `max_jump_speed_mm_s`. |
 //! | `RedLightPortBit` | `red_light_port_bit` | -1 is LightBurn's default; any other bit than 8 is reported and not applied (`lmc` drives bit 8). |
 //! | `FieldOffsetX/Y`, `FieldAngle` | `calibration.offset_*_mm`, `calibration.angle_deg` | |
-//! | `Galvo_n_Scale`, `_Bulge`, `_Skew`, `_Trapezoid` | `calibration.{scale,bulge,skew,trapezoid}_{x,y}` | Galvo 2 is field X unless swapped (as for the signs). OpenEtch's correction model (`lmc::calibration`) is its own: same neutral values and direction, exact effect **unverified against LightBurn**. Values outside its accepted range are reported and not applied. |
+//! | `Galvo_n_Scale`, `_Bulge`, `_Skew`, `_Trapezoid` | `calibration.{scale,bulge,skew,trapezoid}_{x,y}` | Galvo 1 is field X unless swapped (as for the signs). OpenEtch's correction model (`lmc::calibration`) is its own: same neutral values and direction, exact effect **unverified against LightBurn**. Values outside its accepted range are reported and not applied. |
 //!
 //! Hard limits (`max_power_pct`, `max_jump_speed_mm_s`, `max_delay_us`, the pulse-width table) are never raised by an
 //! import, and every change is checked with [`MachineProfile::validate`] one field at a time: a value it refuses is
 //! not applied and is reported, so the result always validates (given a valid base).
 //!
 //! **Axis swap: LightBurn and EzCad on the B6.** The owner's B6 runs correctly from both programs with LightBurn's
-//! `Galvo_1_is_X = false` and EzCad's `markcfg7` `GALVOX = 1`. [`MachineProfile::from_markcfg`] maps `GALVOX = 1` to
-//! `swap_xy = false`, so for the two imports to agree on the same machine this one maps `Galvo_1_is_X = false` to
-//! `swap_xy = false` too (`swap_xy = Galvo_1_is_X`): the two programs label the galvo channels the opposite way
-//! round. With that mapping LightBurn's galvo 2 carries field X when not swapped, so `negate_x` follows
-//! `Galvo_2_Sign` (and `Galvo_1_Sign` when swapped). Both are **UNVERIFIED on hardware**: if a red-light frame comes
-//! out mirrored across the diagonal, both mappings are wrong together; the signs are 1 on the B6, so their
-//! assignment is untested.
+//! `Galvo_1_is_X = false` and EzCad's `markcfg7` `GALVOX = 1`, and OpenEtch needs `swap_xy = true` on it: with
+//! `swap_xy = false` a red-light frame of an "F" came out mirrored across the diagonal (2026-11-01). So this import
+//! maps `swap_xy = !Galvo_1_is_X` and [`MachineProfile::from_markcfg`] maps `GALVOX = 1` to `swap_xy = true`.
+//! Unswapped, OpenEtch's field X is LightBurn's galvo 1, so `negate_x` follows `Galvo_1_Sign` (and `Galvo_2_Sign`
+//! when swapped). The signs are 1 on the B6, so their assignment is still **UNVERIFIED on hardware**.
 //!
 //! Not modelled (reported when not at their defaults): `CorScaleOverride`, `Laser_PWMEnabled`,
 //! `StartMarkPulseMode`, `RedLightJumpDelay`. Written from scratch from the owner's own prefs files.
@@ -721,15 +719,16 @@ pub fn profile_from_lightburn(dev: &LightBurnDevice, base: &MachineProfile) -> (
         }
     }
 
-    // Axes. See the module docs: swap_xy = Galvo_1_is_X, matching from_markcfg's GALVOX = 1 -> no swap on the B6.
+    // Axes. See the module docs: swap_xy = !Galvo_1_is_X (verified on the B6, matching from_markcfg's GALVOX = 1).
     const UNVERIFIED: &str = "UNVERIFIED on hardware";
     if let Some(g1x) = s.galvo_1_is_x {
-        let note = format!("swap_xy = Galvo_1_is_X (false, like EzCad GALVOX=1, is no swap); {UNVERIFIED}");
-        let note = if g1x != base.swap_xy { note } else { String::new() };
-        im.set("swap_xy", j(base.swap_xy), j(g1x), note, |p| p.swap_xy = g1x);
+        let swap = !g1x;
+        let note = "swap_xy = !Galvo_1_is_X (Galvo_1_is_X false, like EzCad GALVOX=1, is the swap)".to_owned();
+        let note = if swap != base.swap_xy { note } else { String::new() };
+        im.set("swap_xy", j(base.swap_xy), j(swap), note, |p| p.swap_xy = swap);
     }
     let swapped = im.p.swap_xy;
-    let (x_sign, y_sign) = if swapped { (s.galvo_1_sign, s.galvo_2_sign) } else { (s.galvo_2_sign, s.galvo_1_sign) };
+    let (x_sign, y_sign) = if swapped { (s.galvo_2_sign, s.galvo_1_sign) } else { (s.galvo_1_sign, s.galvo_2_sign) };
     for (field, sign, mirror, base_v) in [
         ("negate_x", x_sign, dev.mirror_x, base.negate_x),
         ("negate_y", y_sign, dev.mirror_y, base.negate_y),
@@ -887,8 +886,8 @@ pub fn profile_from_lightburn(dev: &LightBurnDevice, base: &MachineProfile) -> (
         im.diff("red_light_port_bit", j(base.red_light_port_bit), j(bit), "unsupported: lmc drives the red pointer on bit 8; not applied");
     }
 
-    // Lens corrections (see the module docs). Galvo 2 carries field X unless swapped.
-    let (x_shape, y_shape) = if swapped { (s.galvo_1_shape, s.galvo_2_shape) } else { (s.galvo_2_shape, s.galvo_1_shape) };
+    // Lens corrections (see the module docs). Galvo 1 carries field X unless swapped.
+    let (x_shape, y_shape) = if swapped { (s.galvo_2_shape, s.galvo_1_shape) } else { (s.galvo_1_shape, s.galvo_2_shape) };
     let cal = base.calibration;
     type Field = fn(&mut lmc::Calibration) -> &mut f64;
     let corrections: [(&str, &str, Option<f64>, f64, Field); 11] = [
@@ -919,7 +918,7 @@ pub fn profile_from_lightburn(dev: &LightBurnDevice, base: &MachineProfile) -> (
         note.push_str(&format!(" (Laser_Type {t}, Laser_FiberType {f})"));
     }
     p.notes.push(note);
-    p.notes.push("LightBurn Galvo_1_is_X / galvo signs / Mirror mapping onto swap_xy and negate is unverified".into());
+    p.notes.push("LightBurn galvo signs / Mirror mapping onto negate is unverified (the swap is verified on the B6)".into());
     debug_assert!(base.validate().is_err() || p.validate().is_ok());
     (p, diffs)
 }
@@ -965,12 +964,12 @@ pub fn to_lbdev(display_name: &str, lightburn: Option<&LightBurnDevice>, profile
     put("CorrectionFile", json!(profile.and_then(|p| p.cor_file.as_ref()).map(|c| c.display().to_string()).or(lb.correction_file.clone())));
     match profile {
         Some(p) => {
-            put("Galvo_1_is_X", json!(p.swap_xy));
-            let (g1_neg, g2_neg) = if p.swap_xy { (p.negate_x, p.negate_y) } else { (p.negate_y, p.negate_x) };
+            put("Galvo_1_is_X", json!(!p.swap_xy));
+            let (g1_neg, g2_neg) = if p.swap_xy { (p.negate_y, p.negate_x) } else { (p.negate_x, p.negate_y) };
             // Signs XOR the mirror flags on import; write the sign that gives the same negate back.
             let mirror = |m: Option<bool>| m.unwrap_or(false);
             let (mx, my) = (mirror(lb.mirror_x), mirror(lb.mirror_y));
-            let (g1_mirror, g2_mirror) = if p.swap_xy { (mx, my) } else { (my, mx) };
+            let (g1_mirror, g2_mirror) = if p.swap_xy { (my, mx) } else { (mx, my) };
             put("Galvo_1_Sign", json!(if g1_neg ^ g1_mirror { -1 } else { 1 }));
             put("Galvo_2_Sign", json!(if g2_neg ^ g2_mirror { -1 } else { 1 }));
             let t = &p.timing;
@@ -994,9 +993,9 @@ pub fn to_lbdev(display_name: &str, lightburn: Option<&LightBurnDevice>, profile
             put("FieldOffsetY", json!(c.offset_y_mm));
             put("FieldAngle", json!(c.angle_deg));
             let (g1, g2) = if p.swap_xy {
-                ([c.scale_x, c.skew_x, c.trapezoid_x, c.bulge_x], [c.scale_y, c.skew_y, c.trapezoid_y, c.bulge_y])
-            } else {
                 ([c.scale_y, c.skew_y, c.trapezoid_y, c.bulge_y], [c.scale_x, c.skew_x, c.trapezoid_x, c.bulge_x])
+            } else {
+                ([c.scale_x, c.skew_x, c.trapezoid_x, c.bulge_x], [c.scale_y, c.skew_y, c.trapezoid_y, c.bulge_y])
             };
             for (n, shape) in [(1, g1), (2, g2)] {
                 for (k, v) in ["Scale", "Skew", "Trapezoid", "Bulge"].iter().zip(shape) {

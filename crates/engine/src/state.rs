@@ -1027,12 +1027,18 @@ impl AppState {
         // The next run's index (the job counter), as `request_run_with` plans it: auto-rotating fills preview at the
         // angle they will be marked at, and Start Here segment numbers match the run.
         let run_index = self.job.count(&self.active_device().id);
+        // The device's learned estimate correction (module `marktime`), applied to every time of the preview.
+        let correction = self.job.times.correction(&self.active_device().id).factor;
         Ok(tokio::task::spawn_blocking(move || {
             let preview = match design_only {
                 // Still a result, so the SVG preview renders the document.
                 Some(reason) => Err(PlanError::Target(reason)),
                 None => match plan::plan_job_with(&doc, &target, &plan::JobOptions { preview: true, run_index, ..Default::default() }) {
-                    Ok(job) => Ok(plan::preview_document(&doc, &job)),
+                    Ok(job) => {
+                        let mut p = plan::preview_document(&doc, &job);
+                        plan::scale_times(&mut p, correction);
+                        Ok(p)
+                    }
                     Err(PlanError::Empty) => Ok(Preview::default()),
                     Err(e) => Err(e),
                 },
@@ -1111,6 +1117,7 @@ impl AppState {
         let config = self.machine.config();
         let generation = config.generation;
         let run_index = self.job.count(&self.active_device().id);
+        let correction = self.job.times.correction(&self.active_device().id).factor;
         // Batch: the queued projects are read now and planned on their own (module `runs`).
         let queue = match &options.queue {
             Some(names) => Some(self.read_queue(names).await?),
@@ -1124,7 +1131,8 @@ impl AppState {
             let doc = commands::prepare_output(&doc).map_err(|e| EngineError::BadRequest(format!("text: {e}")))?;
             runs::prepare_job_with(&doc, &config.target, &config.profile, &options, run_index)
         })
-        .await??;
+        .await??
+        .with_correction(correction);
         prepared.generation = generation;
         let view = {
             let mut store = self.runs();

@@ -131,6 +131,56 @@ pub struct PassSettings {
     pub timing: GalvoTiming,
     /// Hatch angle used by this pass (base angle plus `repeat × angle_increment_deg`).
     pub hatch_angle_deg: f64,
+    /// How the board times this pass's motion (estimate only).
+    #[serde(default)]
+    pub motion: MotionTime,
+}
+
+/// How long the board takes to move, for the time estimate: the speeds its speed words stand for and the target's
+/// [`Target::motion_time_scale`].
+///
+/// The speed words are truncated (`lmc::units::speed_to_units`), so the board is asked for a little less than the
+/// layer's speed: 300 mm/s on a 153.75 mm field is 127 units/ms, 297.9 mm/s (2.35 mm/s per unit, which matters most
+/// at low speeds). On top of that the owner's B6 took 1.29 to 1.33 times the commanded motion time in both runs
+/// measured on 2026-11-01 (see `fixtures/b6-mopa-60w.toml`); `scale` carries that.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct MotionTime {
+    /// Mark speed the pass's speed word stands for, mm/s; 0 uses [`PassSettings::speed_mm_s`].
+    pub mark_speed_mm_s: f64,
+    /// Jump speed the pass's jump speed word stands for, mm/s; 0 uses the timing's `jump_speed_mm_s`.
+    pub jump_speed_mm_s: f64,
+    /// [`Target::motion_time_scale`].
+    pub scale: f64,
+}
+
+impl Default for MotionTime {
+    /// As commanded: the settings' speeds, scale 1.
+    fn default() -> Self {
+        MotionTime { mark_speed_mm_s: 0.0, jump_speed_mm_s: 0.0, scale: 1.0 }
+    }
+}
+
+impl MotionTime {
+    /// The board's view of `s` on `target`: the speeds its truncated words give, and the target's scale.
+    pub(crate) fn for_pass(s: &PassSettings, target: &Target) -> Self {
+        let field = target.transform().speed_field_mm();
+        let word = |mm_s: f64| lmc::units::speed_to_units(mm_s, field).map_or(0.0, |u| lmc::units::units_to_speed(u, field));
+        MotionTime { mark_speed_mm_s: word(s.speed_mm_s), jump_speed_mm_s: word(s.timing.jump_speed_mm_s), scale: target.motion_time_scale }
+    }
+}
+
+impl PassSettings {
+    /// Estimated time to mark `mm`, µs ([`MotionTime`]).
+    pub fn mark_us(&self, mm: f64) -> f64 {
+        let v = if self.motion.mark_speed_mm_s > 0.0 { self.motion.mark_speed_mm_s } else { self.speed_mm_s };
+        mm / v * 1e6 * self.motion.scale
+    }
+
+    /// Estimated time to jump `mm`, µs, without the jump delay ([`MotionTime`]).
+    pub fn jump_us(&self, mm: f64) -> f64 {
+        let v = if self.motion.jump_speed_mm_s > 0.0 { self.motion.jump_speed_mm_s } else { self.timing.jump_speed_mm_s };
+        mm / v * 1e6 * self.motion.scale
+    }
 }
 
 /// Totals over a job or preview.
@@ -582,7 +632,9 @@ fn resolve(layer: &str, cut: &CutSettings, target: &Target) -> Result<PassSettin
         pulse_width_ns,
         timing: cut.timing.clone().unwrap_or_else(|| target.timing.clone()),
         hatch_angle_deg: cut.hatch.angle_deg,
+        motion: MotionTime::default(),
     };
+    let settings = PassSettings { motion: MotionTime::for_pass(&settings, target), ..settings };
     // Everything the encoder will need must convert now, so a plan that exists can be encoded.
     crate::encode::PassWords::new(&settings, target)
         .map_err(|e| PlanError::Encode { layer: layer.into(), source: e })?;
@@ -883,6 +935,13 @@ fn line_options(p: Vec<Point>, o: &doc::CutOptions) -> Vec<Vec<Point>> {
 }
 
 /// Lengths, counts and an estimated time for a plan, following the encoder's list layout.
+///
+/// The time model (JOB-050): the open-MO wait of every list; per polyline the jump (at the speed the jump word
+/// stands for), its jump delay, the marks (at the speed the mark word stands for), the laser-on (when positive),
+/// laser-off and end delays, and a polygon delay per corner; both motion times scaled by
+/// [`Target::motion_time_scale`]. On the owner's B6 this put both runs measured on 2026-11-01 within 3 % of the
+/// board's own `GetMarkTime` (a 30 x 30 mm fill at 1000 mm/s: 23.57 s measured; an "F" outline at 300 mm/s: 0.777 s).
+/// The engine multiplies the result by a correction learned from the device's finished runs (`engine::marktime`).
 pub(crate) fn plan_stats(plan: &JobPlan, target: &Target) -> Stats {
     let mut s = Stats::default();
     let mut pos: Point = [0.0, 0.0];
@@ -921,9 +980,9 @@ pub(crate) fn pass_stats(pass: &PassPlan, mut pos: Point) -> (Stats, f64, Point)
         s.segment_count += segments;
         s.polyline_count += 1;
         if jump > 0.0 {
-            time_us += jump / t.jump_speed_mm_s * 1e6 + crate::encode::jump_delay_us(t, jump).max(0.0);
+            time_us += pass.settings.jump_us(jump) + crate::encode::jump_delay_us(t, jump).max(0.0);
         }
-        time_us += mark / pass.settings.speed_mm_s * 1e6;
+        time_us += pass.settings.mark_us(mark);
         time_us += t.laser_on_delay_us.max(0.0) + t.laser_off_delay_us.max(0.0) + t.end_delay_us.max(0.0);
         #[allow(clippy::cast_precision_loss)]
         let corners = segments.saturating_sub(1) as f64;
