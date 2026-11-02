@@ -4,7 +4,8 @@
 // - Canvas: the tool strip and, with a selection, the selection sheet (it peeks open when something is selected, so
 //   the shape stays visible above it);
 // - Layers: Cuts / Layers with the palette;
-// - Job: the Laser panel (App shows the Laser workspace, so the canvas previews the job);
+// - Job: the Laser panel (App shows the Laser workspace, so the canvas previews the job), with Start (and the Job
+//   Checklist) pinned under the sheet's header so it is in view at every sheet height;
 // - More: File, Import, Objects, History, Preferences, "Use as an app", Help and the desktop-only features.
 // A tap on the active tab opens or closes its sheet.
 
@@ -44,7 +45,10 @@ export interface PhoneShellProps {
   selectionSheet: ReactNode | null;
   layersSheet: ReactNode;
   jobSheet: ReactNode;
-  moreItems: ReactNode;
+  /** Pinned under the Job sheet's header, outside its scrolling body (Start). */
+  jobPinned?: ReactNode;
+  /** The More sheet's sections; `close` closes the sheet (a row that hands over to the canvas). */
+  moreItems: (close: () => void) => ReactNode;
   /** The tab changed (App shows the Laser workspace while Job is the tab). */
   onTab?: (tab: PhoneTab) => void;
   /** Dialogs, menus, toasts: rendered after the shell. */
@@ -142,7 +146,14 @@ export function PhoneShell(p: PhoneShellProps) {
     ),
     layers: p.layersSheet,
     job: p.jobSheet,
-    more: <div className="phone-more">{p.moreItems}</div>,
+    more: (
+      <div className="phone-more">
+        {p.moreItems(() => {
+          setOpen(false);
+          bySelection.current = false;
+        })}
+      </div>
+    ),
   };
   return (
     <div className={`app phone-shell${p.className ? ` ${p.className}` : ""}`}>
@@ -161,6 +172,7 @@ export function PhoneShell(p: PhoneShellProps) {
           snap={snap}
           onSnap={setSnap}
           title={titles[tab]}
+          pinned={tab === "job" ? p.jobPinned : undefined}
           onClose={() => {
             setOpen(false);
             bySelection.current = false;

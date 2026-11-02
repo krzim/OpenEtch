@@ -18,6 +18,7 @@ import {
   removeTab,
   slotsInvocation,
   slotsProblem,
+  tabHitPx,
   tabMarks,
   traceFilesInvocation,
   traceManyInvocation,
@@ -133,4 +134,11 @@ test("the menu opens only http(s) pages, whatever preferences.json holds", () =>
     ],
   });
   assert.deepEqual(tools.map(userToolUrl), ["https://example.com/box", null, null, null]);
+});
+
+test("a tab mark is picked within 8 px of the mouse and a finger's reach on touch", () => {
+  assert.equal(tabHitPx("mouse"), 8);
+  assert.equal(tabHitPx(undefined), 8);
+  assert.equal(tabHitPx("touch"), 18);
+  assert.equal(tabHitPx("pen"), 10);
 });

@@ -26,24 +26,9 @@ import { formatLength } from "../workspace/units.ts";
 import { formatChord } from "./formatChord.ts";
 import { hintFor } from "../workspace/hotkeys.ts";
 
-export type ArrangeAction =
-  | "left"
-  | "hcenter"
-  | "right"
-  | "top"
-  | "vcenter"
-  | "bottom"
-  | "centers"
-  | "distH"
-  | "distV"
-  | "distHc"
-  | "distVc"
-  | "stock"
-  | "field"
-  | "group"
-  | "ungroup"
-  | "flipH"
-  | "flipV";
+import { ARRANGE_ACTION_ID, type ArrangeAction } from "./arrangeActions.ts";
+
+export type { ArrangeAction };
 
 export interface ToolbarProps {
   workspace: Workspace;
@@ -184,15 +169,15 @@ export function Toolbar(p: ToolbarProps) {
       icon: "alignLeft",
       disabled: !two,
       submenu: [
-        { label: t("rb.alignLeft"), icon: "alignLeft", actionId: "arrange.alignLeft", hint: "L", disabled: !two, action: a("left") },
-        { label: t("rb.alignHCenter"), icon: "alignHCenter", hint: "C", disabled: !two, action: a("hcenter") },
-        { label: t("rb.alignRight"), icon: "alignRight", hint: "R", disabled: !two, action: a("right") },
+        { label: t("rb.alignLeft"), icon: "alignLeft", hint: "L", actionId: ARRANGE_ACTION_ID.left, disabled: !two, action: a("left") },
+        { label: t("rb.alignHCenter"), icon: "alignHCenter", hint: "C", actionId: ARRANGE_ACTION_ID.hcenter, disabled: !two, action: a("hcenter") },
+        { label: t("rb.alignRight"), icon: "alignRight", hint: "R", actionId: ARRANGE_ACTION_ID.right, disabled: !two, action: a("right") },
         { sep: true },
-        { label: t("rb.alignTop"), icon: "alignTop", hint: "T", disabled: !two, action: a("top") },
-        { label: t("rb.alignVCenter"), icon: "alignVCenter", hint: "E", disabled: !two, action: a("vcenter") },
-        { label: t("rb.alignBottom"), icon: "alignBottom", hint: "B", disabled: !two, action: a("bottom") },
+        { label: t("rb.alignTop"), icon: "alignTop", hint: "T", actionId: ARRANGE_ACTION_ID.top, disabled: !two, action: a("top") },
+        { label: t("rb.alignVCenter"), icon: "alignVCenter", hint: "E", actionId: ARRANGE_ACTION_ID.vcenter, disabled: !two, action: a("vcenter") },
+        { label: t("rb.alignBottom"), icon: "alignBottom", hint: "B", actionId: ARRANGE_ACTION_ID.bottom, disabled: !two, action: a("bottom") },
         { sep: true },
-        { label: t("rb.alignCenters"), actionId: "arrange.alignCenters", disabled: !two, action: a("centers") },
+        { label: t("rb.alignCenters"), actionId: ARRANGE_ACTION_ID.centers, disabled: !two, action: a("centers") },
       ],
     },
     ...(beginnerMode
@@ -203,22 +188,22 @@ export function Toolbar(p: ToolbarProps) {
             icon: "distH",
             disabled: !three,
             submenu: [
-              { label: t("rb.distH"), icon: "distH", actionId: "arrange.distHSpaced", disabled: !three, action: a("distH") },
-              { label: t("rb.distHc"), icon: "distHc", actionId: "arrange.distHCentered", disabled: !three, action: a("distHc") },
-              { label: t("rb.distV"), icon: "distV", actionId: "arrange.distVSpaced", disabled: !three, action: a("distV") },
-              { label: t("rb.distVc"), icon: "distVc", actionId: "arrange.distVCentered", disabled: !three, action: a("distVc") },
+              { label: t("rb.distH"), icon: "distH", actionId: ARRANGE_ACTION_ID.distH, disabled: !three, action: a("distH") },
+              { label: t("rb.distHc"), icon: "distHc", actionId: ARRANGE_ACTION_ID.distHc, disabled: !three, action: a("distHc") },
+              { label: t("rb.distV"), icon: "distV", actionId: ARRANGE_ACTION_ID.distV, disabled: !three, action: a("distV") },
+              { label: t("rb.distVc"), icon: "distVc", actionId: ARRANGE_ACTION_ID.distVc, disabled: !three, action: a("distVc") },
             ],
           } as MenuItem,
         ]),
     { sep: true },
-    { label: t("rb.group"), icon: "group", actionId: "arrange.group", disabled: !two || !p.canGroup, action: a("group") },
-    { label: t("rb.ungroup"), icon: "ungroup", actionId: "arrange.ungroup", disabled: !p.grouped || !p.canGroup, action: a("ungroup") },
+    { label: t("rb.group"), icon: "group", actionId: ARRANGE_ACTION_ID.group, disabled: !two || !p.canGroup, action: a("group") },
+    { label: t("rb.ungroup"), icon: "ungroup", actionId: ARRANGE_ACTION_ID.ungroup, disabled: !p.grouped || !p.canGroup, action: a("ungroup") },
     { sep: true },
-    { label: t("rb.flipH"), icon: "flipH", actionId: "arrange.flipH", disabled: !p.hasSelection, action: a("flipH") },
-    { label: t("rb.flipV"), icon: "flipV", actionId: "arrange.flipV", disabled: !p.hasSelection, action: a("flipV") },
+    { label: t("rb.flipH"), icon: "flipH", actionId: ARRANGE_ACTION_ID.flipH, disabled: !p.hasSelection, action: a("flipH") },
+    { label: t("rb.flipV"), icon: "flipV", actionId: ARRANGE_ACTION_ID.flipV, disabled: !p.hasSelection, action: a("flipV") },
     { sep: true },
-    { label: t("tb.centreStock"), icon: "centerStock", disabled: !p.hasSelection || !p.hasStock, action: a("stock") },
-    { label: t("rb.centreField"), icon: "centerField", actionId: "arrange.centerField", disabled: !p.hasSelection, action: a("field") },
+    { label: t("tb.centreStock"), icon: "centerStock", actionId: ARRANGE_ACTION_ID.stock, disabled: !p.hasSelection || !p.hasStock, action: a("stock") },
+    { label: t("rb.centreField"), icon: "centerField", actionId: ARRANGE_ACTION_ID.field, disabled: !p.hasSelection, action: a("field") },
     ...(editArrange.length ? [{ sep: true } as MenuItem, ...editArrange] : []),
   ];
 

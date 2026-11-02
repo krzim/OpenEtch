@@ -131,7 +131,25 @@ export function LaserDock(p: LaserDockProps) {
   const canOpt = p.has("job.set_optimization") && !beginnerMode;
   const canRotary = p.has("job.set_rotary") && !beginnerMode;
   // Tablet: the status chip, Frame and Start in the context strip, reachable without opening the drawer (P5).
-  const tablet = useLayoutMode().layout === "tablet";
+  const layoutMode = useLayoutMode().layout;
+  const tablet = layoutMode === "tablet";
+  // Phone: Start (with the Job Checklist) is pinned under the Job sheet's header (App.tsx, StartButton "sheet"), so it
+  // shows at every sheet height; here Frame comes right after the status, before the step bar and the progress.
+  const phone = layoutMode === "phone";
+  const framing = (
+    <div className="laser-buttons">
+      <FramingControls
+        machine={p.machine}
+        doc={p.doc}
+        selection={p.selection}
+        designOnly={p.designOnly}
+        run={p.run}
+        notify={p.notify}
+        report={p.report}
+        onChanged={p.onChanged}
+      />
+    </div>
+  );
   return (
     <Dock id="laser" title={t("laser.title")}>
       {tablet && (
@@ -160,6 +178,7 @@ export function LaserDock(p: LaserDockProps) {
         {p.pendingRuns > 0 && <span className="pill">{t("laser.pending", { count: p.pendingRuns })}</span>}
       </div>
       {p.designOnly && <p className="hint">{p.designOnly}</p>}
+      {phone && framing}
       {beginnerMode && (
         <StepBar
           previewed={facts.estimateS !== null}
@@ -172,25 +191,16 @@ export function LaserDock(p: LaserDockProps) {
 
       <JobProgress state={job} notify={p.notify} report={p.report} />
 
-      <div className="laser-buttons">
-        <FramingControls
-          machine={p.machine}
-          doc={p.doc}
-          selection={p.selection}
-          designOnly={p.designOnly}
-          run={p.run}
-          notify={p.notify}
-          report={p.report}
-          onChanged={p.onChanged}
-        />
-      </div>
-      {noPin && <ApprovalChecks state={gates} disabled={flow.starting} showDoor={false} />}
-      <div className="laser-start-row">
-        <StartButton variant="dock" />
-        <button className="btn btn-stop laser-stop" onClick={p.onStop} title={t("lz.stopTitle")}>
-          <Icon name="stop" size={20} /> {t("laser.stop")}
-        </button>
-      </div>
+      {!phone && framing}
+      {!phone && noPin && <ApprovalChecks state={gates} disabled={flow.starting} showDoor={false} />}
+      {!phone && (
+        <div className="laser-start-row">
+          <StartButton variant="dock" />
+          <button className="btn btn-stop laser-stop" onClick={p.onStop} title={t("lz.stopTitle")}>
+            <Icon name="stop" size={20} /> {t("laser.stop")}
+          </button>
+        </div>
+      )}
       <PendingApprovals machine={p.machine} docRevision={p.doc?.revision ?? null} onChanged={p.onChanged} report={p.report} />
 
       {cycleText && (

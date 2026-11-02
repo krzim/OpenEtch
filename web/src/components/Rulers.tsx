@@ -9,6 +9,7 @@ import type { Vec2 } from "../api/types.ts";
 import { rulerTicks } from "../drawTools.ts";
 import { usePrefs } from "../workspace/usePrefs.ts";
 import { useT } from "../workspace/usePrefs.ts";
+import { Icon } from "./ui.tsx";
 
 /** Ruler thickness, px. */
 export const RULER_PX = 20;
@@ -132,6 +133,12 @@ export function Rulers(props: {
         onClick={props.onClearGuides}
       >
         {unit}
+        {/* Density = Touch: the corner is a 44 px button, and with guides placed it shows that it clears them. */}
+        {props.guides > 0 && (
+          <span className="et-ruler-clear" aria-hidden="true">
+            <Icon name="close" size={12} />
+          </span>
+        )}
       </button>
     </>
   );

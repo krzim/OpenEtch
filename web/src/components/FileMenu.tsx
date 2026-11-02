@@ -555,6 +555,7 @@ export function collectFileParts(node: ReactNode, t: T, out: Partial<Record<File
  * window (absent on engines without the device registry).
  */
 export function FileMenu({
+  label,
   file,
   onImport,
   onDevices,
@@ -564,6 +565,8 @@ export function FileMenu({
   onSaveGcode,
   onSaveRd,
 }: {
+  /** The button's text (default "File"; the phone's More > File section names it "All file commands"). */
+  label?: string;
   file: FileActions;
   onImport: () => void;
   onDevices?: () => void;
@@ -618,8 +621,8 @@ export function FileMenu({
   usePublish("menu.file", { label: t("fm.file"), items });
   return (
     <div className="file-menu">
-      <MenuButton className="file-btn" label={t("fm.file")} items={items}>
-        {t("fm.file")}
+      <MenuButton className="file-btn" label={label ?? t("fm.file")} items={items}>
+        {label ?? t("fm.file")}
         <Icon name="chevronDown" size={16} />
       </MenuButton>
     </div>

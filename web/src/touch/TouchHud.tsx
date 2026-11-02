@@ -6,14 +6,15 @@
 //   Always, Never): Copy, Paste, Duplicate, Delete, Group / Ungroup, Rotate 90, Flip and ⋯ (the full context menu).
 // P1 mounts it in `.center-stage`: `<TouchHud tool={tool} selectionCount={n} onAction={runTouchAction} />`
 // (touch/actions.ts runs each id through the action's own hotkey, so App.tsx keeps the one implementation).
-// The bars never cover STOP (they sit inside the canvas at --z-float, below --z-stop) and fade during a gesture.
+// The action bar hides while a bottom sheet covers the selection (hudState coverTop). The bars never cover STOP
+// (they sit inside the canvas at --z-float, below --z-stop) and fade during a gesture.
 
 import { useLayoutEffect, useRef, useState } from "react";
 import type { Tool } from "../components/Viewport.tsx";
 import { usePrefs, useT } from "../workspace/usePrefs.ts";
 import { useLayoutMode } from "../workspace/layoutMode.ts";
 import { useHud } from "./hudState.ts";
-import { barActions, modToggles, placeActionBar } from "./hudModel.ts";
+import { actionBarSpot, barActions, modToggles } from "./hudModel.ts";
 import { latch, lock, useVirtualMods, type VirtualMod } from "./virtualMods.ts";
 import "./touch.css";
 import { Icon } from "../components/ui.tsx";
@@ -67,7 +68,8 @@ export function TouchHud({ tool, selectionCount, onAction }: TouchHudProps) {
     if (w !== barSize[0] || h !== barSize[1]) setBarSize([w, h]);
   });
   const canvas = hud.canvasRect;
-  const at = showBar && canvas ? placeActionBar(hud.selRect, canvas, barSize[0], barSize[1]) : null;
+  // Hidden while a sheet (the phone's Layers, Job or More) covers the selection; kept above the sheet otherwise.
+  const at = showBar && canvas ? actionBarSpot(hud.selRect, canvas, barSize[0], barSize[1], hud.coverTop) : null;
 
   if (!toggles.length && !actions.length) return null;
   return (

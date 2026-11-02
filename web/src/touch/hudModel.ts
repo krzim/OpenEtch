@@ -109,6 +109,27 @@ export function placeActionBar(sel: Rect | null, canvas: Rect, w: number, h: num
   return { left, top: minT };
 }
 
+/**
+ * Whether a sheet whose top edge is at client y `coverTop` hides the selection: less than half of it (and less than
+ * 16 px) is left above the sheet. A selection fully above the sheet is not covered.
+ */
+export function selectionCovered(sel: Rect, coverTop: number | null): boolean {
+  if (coverTop === null) return false;
+  const visible = Math.min(sel.bottom, coverTop) - sel.top;
+  return visible < Math.max(16, (sel.bottom - sel.top) / 2);
+}
+
+/**
+ * Where the action bar goes with a sheet over the canvas (`coverTop`, client y, or null): nowhere while the sheet
+ * covers the selection (it would float over the sheet, next to nothing), else `placeActionBar` within the part of
+ * the canvas above the sheet.
+ */
+export function actionBarSpot(sel: Rect | null, canvas: Rect, w: number, h: number, coverTop: number | null): { left: number; top: number } | null {
+  if (sel && selectionCovered(sel, coverTop)) return null;
+  const visible = coverTop === null ? canvas : { ...canvas, bottom: Math.max(canvas.top, Math.min(canvas.bottom, coverTop)) };
+  return placeActionBar(sel, visible, w, h);
+}
+
 function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
 }

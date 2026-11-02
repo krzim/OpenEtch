@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { barActions, modToggles, placeActionBar } from "./hudModel.ts";
+import { actionBarSpot, barActions, modToggles, placeActionBar, selectionCovered } from "./hudModel.ts";
 import { LongPressTracker } from "./useLongPress.ts";
 import { TOUCH_ACTIONS, chordForAction, keyInitFor } from "./actions.ts";
 
@@ -92,4 +92,25 @@ test("touch actions are sent as the action's current chord (rebinding follows)",
   assert.equal(keyInitFor("menu", {}), null, "the menu is a contextmenu, not a key");
   assert.equal(keyInitFor("unknown", {}), null);
   assert.equal(keyInitFor("undo", {})?.key, "z");
+});
+
+test("the action bar hides while a sheet covers the selection, and stays above a sheet otherwise", () => {
+  const canvas = { left: 0, top: 50, right: 375, bottom: 700 };
+  const sel = { left: 100, top: 500, right: 200, bottom: 560 };
+  // No sheet: placed as before.
+  assert.deepEqual(actionBarSpot(sel, canvas, 200, 50, null), placeActionBar(sel, canvas, 200, 50));
+  // The Layers sheet at half height (top edge at y 400) covers the shape: no bar.
+  assert.equal(selectionCovered(sel, 400), true);
+  assert.equal(actionBarSpot(sel, canvas, 200, 50, 400), null);
+  // Covered by more than half (only 20 of 60 px show): still hidden.
+  assert.equal(actionBarSpot(sel, canvas, 200, 50, 520), null);
+  // Mostly above the sheet: shown, and inside the part of the canvas above it.
+  const spot = actionBarSpot(sel, canvas, 200, 50, 545);
+  assert.ok(spot);
+  assert.ok(spot.top + 50 <= 545, "the bar stays above the sheet");
+  // A shape well above the peek sheet keeps its bar above it.
+  const high = { left: 100, top: 200, right: 200, bottom: 260 };
+  assert.deepEqual(actionBarSpot(high, canvas, 200, 50, 500), { left: 50, top: 138 });
+  // A sheet at full height covers everything.
+  assert.equal(actionBarSpot(high, canvas, 200, 50, 50), null);
 });

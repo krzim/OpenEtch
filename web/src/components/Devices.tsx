@@ -130,7 +130,8 @@ function SwitchConfirm(p: { next: DeviceSummary; current: DeviceSummary | null; 
 export function DeviceBar(p: {
   devices: DevicesState;
   machine: MachineStatus | null;
-  onOpenWindow: () => void;
+  /** Opens the Devices window; without it (the phone, where device editing is a desktop feature) no "Devices…". */
+  onOpenWindow?: () => void;
   /** After a switch: refetch the machine status and the document. */
   onSwitched: () => void;
   notify: Notify;
@@ -165,9 +166,11 @@ export function DeviceBar(p: {
             ))}
           </select>
         </label>
-        <button className="btn" onClick={p.onOpenWindow} title={t("dv.addRemoveAndInspectDevices")}>
-          {t("dv.devices")}
-        </button>
+        {p.onOpenWindow && (
+          <button className="btn" onClick={p.onOpenWindow} title={t("dv.addRemoveAndInspectDevices")}>
+            {t("dv.devices")}
+          </button>
+        )}
       </div>
       {blocker && <p className="hint">Switching devices waits: {blocker}</p>}
       {designOnly && (

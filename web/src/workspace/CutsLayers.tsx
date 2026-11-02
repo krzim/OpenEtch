@@ -13,9 +13,14 @@
 // on the canvas (flash.tsx); tool layers T1 / T2 (`Layer.tool`) read "Tool", never output and can be made or cleared
 // from the menu; a layer imported from LightBurn with settings OpenEtch will not execute gets a warning badge listing
 // them (GET /api/layers/unsupported); a layer with sub-layers shows a tab per sub-layer above the quick-edit fields
-// (LightBurn's sub-layer tabs): the fields edit the chosen tab's pass, and dragging a tab reorders the sub-layers.
+// (LightBurn's sub-layer tabs): the fields edit the chosen tab's pass, and dragging a tab reorders the sub-layers (with
+// the mouse anywhere on the tab, or by its grip with a finger, a pen or the mouse: pointer events, touch/reorder.ts).
+//
+// Narrow windows (a 300 px dock, the phone's Layers sheet): the table drops its least important columns (up/down,
+// passes, mode, then speed/power; layersTable.ts cutsColumns) and shows their values in a second line under each
+// layer's name, so it never scrolls sideways. On a coarse pointer the quick-edit numbers get -/+ steppers.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Invocation } from "../api/client.ts";
 import * as C from "../api/commands.ts";
 import { createdIds } from "../api/drop.ts";
@@ -33,6 +38,8 @@ import { layerLink } from "../libs/model.ts";
 import { WsModal } from "./WsModal.tsx";
 import {
   copyLayerSettings,
+  cutsColumns,
+  cutsIconHeads,
   invertAll,
   layerRows,
   onlyThis,
@@ -43,6 +50,7 @@ import {
 } from "./layersTable.ts";
 import { formatSpeed, speedToDisplay, trimNumber } from "./units.ts";
 import { usePrefs, useT } from "./usePrefs.ts";
+import { useLayoutMode } from "./layoutMode.ts";
 import { getVirtualMods } from "../touch/virtualMods.ts";
 import { useLongPress } from "../touch/useLongPress.ts";
 import { useReorder } from "../touch/reorder.ts";
@@ -76,6 +84,40 @@ export function CutsLayers(p: CutsLayersProps) {
   const [passTab, setPassTab] = useState<Record<string, number>>({});
   const tabDrag = useRef<number | null>(null);
   const { doc, run, report } = p;
+  const lm = useLayoutMode();
+  const coarse = lm.pointer === "coarse" || lm.density === "touch";
+
+  // The table's width decides which columns it shows (layersTable.ts cutsColumns).
+  const [wrapEl, setWrapEl] = useState<HTMLDivElement | null>(null);
+  const [wrapW, setWrapW] = useState(Infinity);
+  useLayoutEffect(() => {
+    if (!wrapEl) return;
+    const measure = () => setWrapW(wrapEl.clientWidth || Infinity);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(wrapEl);
+    return () => ro.disconnect();
+  }, [wrapEl]);
+
+  // Sub-layer tabs: reordered by their grips (pointer events, so a finger works too; the mouse can also drag the tab).
+  const tabsRef = useRef<HTMLDivElement>(null);
+  const subOf = doc && p.selection.layer ? doc.layers.find((l) => l.id === p.selection.layer) : undefined;
+  const subLayerId = useRef<string | null>(null);
+  subLayerId.current = subOf?.id ?? null;
+  const subReorder = useReorder(
+    tabsRef,
+    subOf?.sub_layers?.length ?? 0,
+    (from, to) => {
+      const id = subLayerId.current;
+      if (!id) return;
+      // The moved tab stays selected (tab n is sub-layer n - 1).
+      void run(C.layerSubMove(id, from, to))
+        .then(() => setPassTab((x) => ({ ...x, [id]: to + 1 })))
+        .catch(report);
+    },
+    "row",
+  );
 
   // LightBurn settings the engine will not execute, per layer: asked again when the document changes, and only for
   // documents with LightBurn layer settings in them.
@@ -117,6 +159,9 @@ export function CutsLayers(p: CutsLayersProps) {
   const rows = layerRows(doc);
   const current = p.selection.layer;
   const canMove = p.has(C.OPT.layerMove);
+  const cols = cutsColumns(wrapW, { canMove, coarse });
+  const iconHeads = cutsIconHeads(wrapW, { canMove, coarse });
+  const show = (c: Parameters<typeof cols.has>[0]) => cols.has(c);
   const canSub = p.has(C.OPT.layerSubAdd) && p.has(C.OPT.layerSubDelete);
   const editLayer = editing ? doc.layers.find((l) => l.id === editing) : undefined;
   const delLayer = confirmDelete ? doc.layers.find((l) => l.id === confirmDelete) : undefined;
@@ -220,6 +265,15 @@ export function CutsLayers(p: CutsLayersProps) {
     m === "line" ? t("layers.modeLine") : m === "fill" ? t("layers.modeFill") : m === "offset_fill" ? t("layers.modeOffset") : t("layers.modeFillLine");
   const passName = (l: Layer, n: number) => (n === 0 ? t("layers.main") : l.sub_layers[n - 1]?.name?.trim() || t("layers.subN", { n }));
   const subLabel = (n: number) => t("layers.subN", { n });
+  const spdPwr = (speed: number, power: number) => `${trimNumber(speedToDisplay(speed, prefs.speedUnit), 1)} / ${trimNumber(power, 1)}`;
+  // The values of the columns a narrow table leaves out, as a second line under the name ("Fill · 100 / 20 · ×2").
+  const detail = (mode: string, sp: string, passes: number) => {
+    const parts: string[] = [];
+    if (!show("mode")) parts.push(mode);
+    if (!show("spdPwr") && sp !== parts[parts.length - 1]) parts.push(sp);
+    if (!show("passes")) parts.push(`×${passes}`);
+    return parts.length ? <span className="cuts-detail">{parts.join(" · ")}</span> : null;
+  };
 
   return (
     <Dock
@@ -233,31 +287,37 @@ export function CutsLayers(p: CutsLayersProps) {
         </>
       }
     >
-      <div className="cuts-wrap">
+      <div className="cuts-wrap" ref={setWrapEl}>
         <table className="cuts-table">
           <thead>
             <tr>
               <th className="c-num">#</th>
               <th className="c-sw" aria-label={t("layers.colour")} />
               <th className="c-name">{t("layers.name")}</th>
-              <th>{t("layers.mode")}</th>
-              <th title={t("layers.spdPwrTitle", { unit: prefs.speedUnit })}>{t("layers.spdPwr")}</th>
-              <th title={t("layers.passes")}>#P</th>
+              {show("mode") && <th>{t("layers.mode")}</th>}
+              {show("spdPwr") && <th title={t("layers.spdPwrTitle", { unit: prefs.speedUnit })}>{t("layers.spdPwr")}</th>}
+              {show("passes") && <th title={t("layers.passes")}>#P</th>}
               <th className="c-tog">
                 <button
                   className="th-btn"
                   title={t("layers.outputHeader")}
+                  aria-label={t("layers.output")}
                   onClick={(e) => setMenu({ x: e.clientX, y: e.clientY, items: headerMenu("output") })}
                 >
-                  {t("layers.output")}
+                  {iconHeads ? <Icon name="laser" size={14} /> : t("layers.output")}
                 </button>
               </th>
               <th className="c-tog">
-                <button className="th-btn" title={t("layers.showHeader")} onClick={(e) => setMenu({ x: e.clientX, y: e.clientY, items: headerMenu("visible") })}>
-                  {t("layers.show")}
+                <button
+                  className="th-btn"
+                  title={t("layers.showHeader")}
+                  aria-label={t("layers.show")}
+                  onClick={(e) => setMenu({ x: e.clientX, y: e.clientY, items: headerMenu("visible") })}
+                >
+                  {iconHeads ? <Icon name="eye" size={14} /> : t("layers.show")}
                 </button>
               </th>
-              {canMove && <th className="c-tog" aria-label={t("layers.order")} />}
+              {show("order") && <th className="c-tog" aria-label={t("layers.order")} />}
             </tr>
           </thead>
           <tbody ref={bodyRef}>
@@ -265,6 +325,9 @@ export function CutsLayers(p: CutsLayersProps) {
               const l = r.layer;
               const open = !!expanded[l.id];
               const main = r.passes[0];
+              const modeCell = l.tool ? t("layers.modeTool") : r.multi ? t("layers.multi") : modeText(main.mode);
+              const spdPwrCell = l.tool ? "–" : r.multi ? t("layers.multi") : spdPwr(main.speed_mm_s, main.power_pct);
+              const passCount = r.passes.reduce((n, x) => n + x.passes, 0);
               return [
                 <tr
                   key={l.id}
@@ -344,12 +407,11 @@ export function CutsLayers(p: CutsLayersProps) {
                     >
                       <Icon name="more" size={16} />
                     </button>
+                    {detail(modeCell, spdPwrCell, passCount)}
                   </td>
-                  <td>{l.tool ? t("layers.modeTool") : r.multi ? t("layers.multi") : modeText(main.mode)}</td>
-                  <td className="c-num-r">
-                    {l.tool ? "–" : r.multi ? t("layers.multi") : `${trimNumber(speedToDisplay(main.speed_mm_s, prefs.speedUnit), 1)} / ${trimNumber(main.power_pct, 1)}`}
-                  </td>
-                  <td className="c-num-r">{r.passes.reduce((n, x) => n + x.passes, 0)}</td>
+                  {show("mode") && <td>{modeCell}</td>}
+                  {show("spdPwr") && <td className="c-num-r">{spdPwrCell}</td>}
+                  {show("passes") && <td className="c-num-r">{passCount}</td>}
                   <td className="c-tog">
                     <button
                       className={`tog${l.output && !l.tool ? " on" : ""}`}
@@ -380,7 +442,7 @@ export function CutsLayers(p: CutsLayersProps) {
                       <Icon name={l.visible ? "eye" : "eyeOff"} size={16} />
                     </button>
                   </td>
-                  {canMove && (
+                  {show("order") && (
                     <td className="c-tog c-order">
                       <button
                         className="tog"
@@ -429,13 +491,14 @@ export function CutsLayers(p: CutsLayersProps) {
                             {passName(l, ps.pass)}
                             {ps.cleanup ? ` · ${t("layers.cleanup")}` : ""}
                           </span>
+                          {detail(modeText(ps.mode), spdPwr(ps.speed_mm_s, ps.power_pct), ps.passes)}
                         </td>
-                        <td>{modeText(ps.mode)}</td>
-                        <td className="c-num-r">{`${trimNumber(speedToDisplay(ps.speed_mm_s, prefs.speedUnit), 1)} / ${trimNumber(ps.power_pct, 1)}`}</td>
-                        <td className="c-num-r">{ps.passes}</td>
+                        {show("mode") && <td>{modeText(ps.mode)}</td>}
+                        {show("spdPwr") && <td className="c-num-r">{spdPwr(ps.speed_mm_s, ps.power_pct)}</td>}
+                        {show("passes") && <td className="c-num-r">{ps.passes}</td>}
                         <td />
                         <td />
-                        {canMove && <td />}
+                        {show("order") && <td />}
                       </tr>
                     ))
                   : []),
@@ -451,7 +514,8 @@ export function CutsLayers(p: CutsLayersProps) {
           <div className="cuts-quick-head">
             <span className="swatch small" style={{ background: sel.color }} />
             <span className="cuts-quick-name">{sel.name}</span>
-            <span className="muted">{sel.tool ? t("layers.modeTool") : ""}</span>
+            {/* The mode, which a narrow table leaves out of its columns. */}
+            <span className="muted">{sel.tool ? t("layers.modeTool") : passSettings ? modeText(passSettings.mode) : ""}</span>
             <span className="tool-spacer" />
             <button className="btn small" onClick={() => copy(sel)} title={t("layers.copySettings")}>
               {t("layers.copy")}
@@ -464,39 +528,67 @@ export function CutsLayers(p: CutsLayersProps) {
             </button>
           </div>
           {subCount > 0 && (
-            <div className="cuts-tabs" role="tablist" aria-label={t("layers.subTabs")}>
-              {[0, ...sel.sub_layers.map((_, i) => i + 1)].map((n) => (
-                <button
-                  key={n}
-                  role="tab"
-                  aria-selected={pass === n}
-                  className={`cuts-tab${pass === n ? " active" : ""}${sel.sub_layers[n - 1]?.cleanup ? " cleanup" : ""}`}
-                  title={n === 0 ? t("layers.mainTabTitle") : p.has(C.OPT.layerSubMove) ? t("layers.subTabTitle") : undefined}
-                  draggable={n > 0 && p.has(C.OPT.layerSubMove) && !layerLink(sel)}
-                  onClick={() => setPassTab((x) => ({ ...x, [sel.id]: n }))}
-                  onDragStart={(e) => {
-                    tabDrag.current = n;
-                    e.dataTransfer.effectAllowed = "move";
-                    e.dataTransfer.setData("text/plain", String(n));
-                  }}
-                  onDragOver={(e) => {
-                    if (tabDrag.current !== null && n > 0) e.preventDefault();
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    const from = tabDrag.current;
-                    tabDrag.current = null;
-                    if (from === null || n === 0 || from === n) return;
-                    // Sub-layers burn left to right after the main settings; the dragged tab stays selected.
-                    void run(C.layerSubMove(sel.id, from - 1, n - 1))
-                      .then(() => setPassTab((x) => ({ ...x, [sel.id]: n })))
-                      .catch(report);
-                  }}
-                  onDragEnd={() => (tabDrag.current = null)}
-                >
-                  {passName(sel, n)}
-                </button>
-              ))}
+            <div className="cuts-tabs" role="tablist" aria-label={t("layers.subTabs")} ref={tabsRef}>
+              {[0, ...sel.sub_layers.map((_, i) => i + 1)].map((n) => {
+                const movable = n > 0 && p.has(C.OPT.layerSubMove) && !layerLink(sel);
+                const tab = (
+                  <button
+                    key={n}
+                    role="tab"
+                    aria-selected={pass === n}
+                    className={`cuts-tab${pass === n ? " active" : ""}${sel.sub_layers[n - 1]?.cleanup ? " cleanup" : ""}`}
+                    title={n === 0 ? t("layers.mainTabTitle") : p.has(C.OPT.layerSubMove) ? t("layers.subTabTitle") : undefined}
+                    draggable={movable}
+                    onClick={() => setPassTab((x) => ({ ...x, [sel.id]: n }))}
+                    onDragStart={(e) => {
+                      tabDrag.current = n;
+                      e.dataTransfer.effectAllowed = "move";
+                      e.dataTransfer.setData("text/plain", String(n));
+                    }}
+                    onDragOver={(e) => {
+                      if (tabDrag.current !== null && n > 0) e.preventDefault();
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const from = tabDrag.current;
+                      tabDrag.current = null;
+                      if (from === null || n === 0 || from === n) return;
+                      // Sub-layers burn left to right after the main settings; the dragged tab stays selected.
+                      void run(C.layerSubMove(sel.id, from - 1, n - 1))
+                        .then(() => setPassTab((x) => ({ ...x, [sel.id]: n })))
+                        .catch(report);
+                    }}
+                    onDragEnd={() => (tabDrag.current = null)}
+                  >
+                    {passName(sel, n)}
+                  </button>
+                );
+                if (n === 0) return tab;
+                // A sub-layer tab with its grip (the same pointer-event reorder as the layer rows' grips).
+                const k = n - 1;
+                return (
+                  <span
+                    key={n}
+                    role="presentation"
+                    data-reorder-row=""
+                    className={`cuts-tab-wrap${subReorder.dropClass(k)}${subReorder.dragging === k ? " dragging" : ""}`}
+                  >
+                    {tab}
+                    {movable && (
+                      <button
+                        type="button"
+                        className="row-grip tab-grip"
+                        title={t("touch.reorder")}
+                        aria-label={`${t("touch.reorder")}: ${passName(sel, n)}`}
+                        onClick={(e) => e.stopPropagation()}
+                        {...subReorder.grip(k)}
+                      >
+                        <Icon name="grip" size={14} />
+                      </button>
+                    )}
+                  </span>
+                );
+              })}
             </div>
           )}
           <div
@@ -509,10 +601,10 @@ export function CutsLayers(p: CutsLayersProps) {
           >
             {passSettings && (
               <>
-                <NumberField label={t("layers.speed")} unit="mm/s" value={passSettings.speed_mm_s} min={0.01} onCommit={(v) => v !== null && patch(sel, { speed_mm_s: v })} />
-                <NumberField label={t("layers.power")} unit="%" value={passSettings.power_pct} min={0} max={100} onCommit={(v) => v !== null && patch(sel, { power_pct: v })} />
-                <NumberField label={t("layers.passes")} value={passSettings.passes} min={1} max={1000} digits={0} onCommit={(v) => v !== null && patch(sel, { passes: Math.round(v) })} />
-                <NumberField label={t("layers.frequency")} unit="kHz" value={passSettings.frequency_khz} min={1} onCommit={(v) => v !== null && patch(sel, { frequency_khz: v })} />
+                <NumberField label={t("layers.speed")} unit="mm/s" value={passSettings.speed_mm_s} min={0.01} stepper onCommit={(v) => v !== null && patch(sel, { speed_mm_s: v })} />
+                <NumberField label={t("layers.power")} unit="%" value={passSettings.power_pct} min={0} max={100} stepper onCommit={(v) => v !== null && patch(sel, { power_pct: v })} />
+                <NumberField label={t("layers.passes")} value={passSettings.passes} min={1} max={1000} digits={0} stepper onCommit={(v) => v !== null && patch(sel, { passes: Math.round(v) })} />
+                <NumberField label={t("layers.frequency")} unit="kHz" value={passSettings.frequency_khz} min={1} stepper onCommit={(v) => v !== null && patch(sel, { frequency_khz: v })} />
                 {/* LightBurn's Q-Pulse (MOPA): empty keeps the source's current pulse width. */}
                 <NumberField
                   label={t("layers.qpulse")}

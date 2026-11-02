@@ -6,6 +6,7 @@
 import type { Invocation } from "../api/client.ts";
 import type { GDocument, Vec2 } from "../api/types.ts";
 import { traceParams, type TraceOptions } from "../files/fileFormats.ts";
+import { TOL, pointerClass } from "../pointer.ts";
 
 export const TOOLS_CMD = {
   tabsAdd: "tabs.add",
@@ -50,6 +51,12 @@ export function tabMarks(doc: GDocument | null): TabMark[] {
     });
   }
   return out;
+}
+
+/** How near (screen px) a press must be to a tab mark to pick it: 8 px for a mouse, a finger's or a pen's node reach
+ *  (pointer.ts TOL) for a touch or a pen. */
+export function tabHitPx(pointerType: string | undefined): number {
+  return Math.max(8, TOL[pointerClass({ pointerType })].node);
 }
 
 /** The tab mark nearest `p` within `tolMm`, or null. */

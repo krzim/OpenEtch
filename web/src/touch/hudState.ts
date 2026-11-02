@@ -1,5 +1,5 @@
 // What the canvas tells the touch HUD (touch/TouchHud.tsx): where the selection is on screen (the action bar sits
-// above it), whether it holds a group (Group or Ungroup), whether the touch handles are in rotate mode (the modifier
+// above it), where a sheet covers the canvas (the bar hides while it covers the selection), whether it holds a group (Group or Ungroup), whether the touch handles are in rotate mode (the modifier
 // bar then offers 15° / 5° steps), and whether a gesture is under way (the bars fade out of the way). A small external
 // store, so pointer moves re-render only the HUD.
 
@@ -16,9 +16,11 @@ export interface HudState {
   rotateMode: boolean;
   /** A drag, pan or pinch is under way. */
   busy: boolean;
+  /** The top edge (client px) of a sheet over the canvas's lower part (the phone's bottom sheet), or null. */
+  coverTop: number | null;
 }
 
-const INITIAL: HudState = { selRect: null, canvasRect: null, grouped: false, rotateMode: false, busy: false };
+const INITIAL: HudState = { selRect: null, canvasRect: null, grouped: false, rotateMode: false, busy: false, coverTop: null };
 let state: HudState = INITIAL;
 const listeners = new Set<() => void>();
 
@@ -34,7 +36,8 @@ export function publishHud(patch: Partial<HudState>): void {
     sameRect(next.canvasRect, state.canvasRect) &&
     next.grouped === state.grouped &&
     next.rotateMode === state.rotateMode &&
-    next.busy === state.busy
+    next.busy === state.busy &&
+    (next.coverTop === state.coverTop || (next.coverTop !== null && state.coverTop !== null && Math.abs(next.coverTop - state.coverTop) < 0.5))
   )
     return;
   state = next;

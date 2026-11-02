@@ -2,6 +2,11 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { ACTION_BY_ID, ACTIONS } from "../workspace/hotkeys.ts";
+import { ARRANGE_ACTION_ID, type ArrangeAction } from "./arrangeActions.ts";
 import { ALIASES, mergeCommands, normalize, pushRecent, scoreCommand, searchCommands, type Command } from "./commandSearch.ts";
 
 const noop = () => {};
@@ -89,4 +94,41 @@ test("a menu item that runs an action replaces its entry; nothing is listed twic
   assert.equal(out[0].path, "Edit");
   const keys = out.map((c) => c.key);
   assert.equal(new Set(keys).size, keys.length);
+});
+
+test("every Arrange action but centre-on-stock is a hotkeys.ts action, each a different one", () => {
+  const ids = Object.entries(ARRANGE_ACTION_ID).filter(([a]) => a !== "stock").map(([, id]) => id);
+  for (const id of ids) assert.ok(id && ACTION_BY_ID.has(id), String(id));
+  assert.equal(new Set(ids).size, ids.length);
+  assert.equal(ARRANGE_ACTION_ID.stock, undefined);
+});
+
+test("the Align menu, the context menu's align items and the hotkey actions list each Align command once", () => {
+  // The toolbar's Arrange > Align submenu and the edit hook's Arrange items, as menuCommands flattens them, with the
+  // action ids they now carry; before, five of the six had none and read twice ("Align right" and "Align right").
+  const aligns: ArrangeAction[] = ["left", "hcenter", "right", "top", "vcenter", "bottom", "centers", "distH", "distHc", "distV", "distVc"];
+  const actions = ACTIONS.filter((a) => a.id.startsWith("arrange.") && !a.fixed).map((a) => cmd(a.id, a.label));
+  const menu = [
+    ...aligns.map((a) => cmd(`menu:Arrange › Align/${a}`, `Align ${a}`, { actionId: ARRANGE_ACTION_ID[a], path: "Arrange › Align" })),
+    ...aligns.map((a) => cmd(`menu:Arrange/${a}`, `Align ${a}`, { actionId: ARRANGE_ACTION_ID[a], path: "Arrange" })),
+  ];
+  const out = mergeCommands(actions, menu);
+  for (const a of aligns) assert.equal(out.filter((c) => c.actionId === ARRANGE_ACTION_ID[a]).length, 1, a);
+  assert.equal(out.length, actions.length, "no menu entry beside its action");
+});
+
+test("every action id a menu item names in the source is a hotkeys.ts action", () => {
+  const src = join(fileURLToPath(new URL(".", import.meta.url)), "..");
+  const bad: string[] = [];
+  const walk = (dir: string) => {
+    for (const name of readdirSync(dir)) {
+      const p = join(dir, name);
+      if (statSync(p).isDirectory()) walk(p);
+      else if (/\.tsx?$/.test(p) && !p.endsWith(".test.ts")) {
+        for (const m of readFileSync(p, "utf8").matchAll(/actionId: "([\w.]+)"/g)) if (!ACTION_BY_ID.has(m[1])) bad.push(`${name}: ${m[1]}`);
+      }
+    }
+  };
+  walk(src);
+  assert.deepEqual(bad, []);
 });

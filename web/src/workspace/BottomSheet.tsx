@@ -2,10 +2,13 @@
 // three heights (peek about 30 % of the space under the top bar, half, full), with a drag handle (touch-action none,
 // so a drag on it never scrolls or zooms the page). The handle is a button: a tap or Enter cycles the heights, Arrow
 // Up / Down change them, and Esc closes the sheet (unless a dialog is open over it). It never covers the top bar, so
-// STOP stays in view and hit-testable.
+// STOP stays in view and hit-testable. While open it tells the touch HUD where its top edge is (touch/hudState.ts
+// coverTop), so the selection action bar hides when the sheet covers the selection. `pinned` sits under the header, outside
+// the scrolling body, so it is visible at every height (the Job sheet's Start).
 
-import { useEffect, useRef, useState, type KeyboardEvent as RKeyboardEvent, type PointerEvent as RPointerEvent, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as RKeyboardEvent, type PointerEvent as RPointerEvent, type ReactNode } from "react";
 import { Icon } from "../components/ui.tsx";
+import { publishHud } from "../touch/hudState.ts";
 import { escapeTakenElsewhere } from "./DockHost.tsx";
 import { SHEET_SNAPS, snapFor, type SheetSnap } from "./phone.ts";
 import { useT } from "./usePrefs.ts";
@@ -21,6 +24,8 @@ export interface BottomSheetProps {
   children: ReactNode;
   /** Closing (Esc, the close button, dragging it down); without it the sheet cannot be closed by the user. */
   onClose?: () => void;
+  /** Controls under the header that do not scroll with the body (visible at every height). */
+  pinned?: ReactNode;
 }
 
 export function BottomSheet(p: BottomSheetProps) {
@@ -43,6 +48,25 @@ export function BottomSheet(p: BottomSheetProps) {
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [open, onClose]);
+
+  // Where the sheet covers the canvas, for the touch HUD (measured after every height change and on resize).
+  useLayoutEffect(() => {
+    const el = root.current;
+    if (!open || !el) {
+      publishHud({ coverTop: null });
+      return;
+    }
+    const measure = () => publishHud({ coverTop: el.getBoundingClientRect().top });
+    measure();
+    const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    ro?.observe(el);
+    window.addEventListener("resize", measure);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener("resize", measure);
+      publishHud({ coverTop: null });
+    };
+  }, [open]);
 
   if (!p.open) return null;
 
@@ -122,6 +146,7 @@ export function BottomSheet(p: BottomSheetProps) {
           </button>
         )}
       </div>
+      {p.pinned && <div className="sheet-pinned">{p.pinned}</div>}
       <div className="sheet-body">{p.children}</div>
     </section>
   );

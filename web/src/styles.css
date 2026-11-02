@@ -3536,11 +3536,23 @@ html {
   min-width: 44px;
 }
 
-/* The ruler corner (Clear guides) stays 20 px to match the rulers, with a 44 px touch area around it. */
-:root[data-density="touch"] .et-ruler-corner::after {
-  content: "";
-  position: absolute;
-  inset: 0 -24px -24px 0;
+/* The ruler corner (Clear guides): a visible 44 px button over the rulers' start (20 px with a fine pointer). */
+:root[data-density="touch"] .et-ruler-corner {
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  font-size: 11px;
+  border-radius: 0 0 var(--r-md) 0;
+  box-shadow: var(--shadow-pop);
+  z-index: 2;
+}
+
+:root[data-density="touch"] .et-ruler-corner:not(:disabled) {
+  color: var(--accent);
 }
 
 :root[data-density="touch"][data-layout="tablet"] .palette-bar .pal-swatch {

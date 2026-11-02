@@ -40,6 +40,8 @@ export type MenuItem =
       icon?: string;
       /** Hover text (a disabled item's reason). */
       title?: string;
+      /** Left out on the phone (workspace/desktopOnly.ts): More > Desktop features offers it there. */
+      desktopOnly?: boolean;
       /**
        * Where a long context menu files this item ("arrange", "modify", "laser", "select", ...; see contextMenu.ts).
        * Ignored by short menus.

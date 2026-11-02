@@ -66,6 +66,8 @@ import {
 } from "./model.ts";
 import { ShapeProperties } from "./ShapeProperties.tsx";
 import { SYSTEM_CLIPBOARD_EVENT } from "../files/LightBurnPrefsImport.tsx";
+import { desktopFeatures, forLayout } from "../workspace/desktopOnly.ts";
+import { useLayoutMode } from "../workspace/layoutMode.ts";
 import "./design.css";
 
 type Run = (inv: Invocation | Invocation[]) => Promise<unknown>;
@@ -770,10 +772,10 @@ export function useDesignUi(p: DesignUiProps): DesignUi {
     { label: t("dz.menu.curveTolerance"), disabled: !p.doc || !has(DCMD.curveTolerance), action: () => setDlg({ kind: "curveTolerance" }) },
   ];
   const toolsItems: MenuItem[] = [
-    { label: t("dz.menu.warp"), disabled: !nSel || !has(DCMD.warp), action: () => startWarp("perspective") },
-    { label: t("dz.menu.deform"), disabled: !nSel || !has(DCMD.warp), action: () => startWarp("grid") },
+    { label: t("dz.menu.warp"), actionId: "tools.warp", disabled: !nSel || !has(DCMD.warp), action: () => startWarp("perspective") },
+    { label: t("dz.menu.deform"), actionId: "tools.deform", disabled: !nSel || !has(DCMD.warp), action: () => startWarp("grid") },
     { sep: true },
-    { label: t("dz.menu.tangent"), disabled: nUnits !== 3 || !has(DCMD.tangentCandidates), action: startTangent },
+    { label: t("dz.menu.tangent"), actionId: "tools.tangentCircle", disabled: nUnits !== 3 || !has(DCMD.tangentCandidates), action: startTangent },
     {
       label: t("dz.menu.rubberBand"),
       disabled: !nSel || !has(DCMD.rubberBand),
@@ -785,38 +787,44 @@ export function useDesignUi(p: DesignUiProps): DesignUi {
       action: () => need(DCMD.toolpathToPath, "dz.cannot.toolpath") && void exec(toolpathToPath(nSel ? units() : null), selectResult),
     },
     { sep: true },
-    { label: t("dz.menu.artLibrary"), action: openArtDock },
+    { label: t("dz.menu.artLibrary"), actionId: "window.artLibrary", action: openArtDock },
     ...(p.extraTools?.length ? [{ sep: true } as MenuItem, ...p.extraTools] : []),
   ];
   const arrangeItems: MenuItem[] = [
     { sep: true },
-    { label: t("dz.menu.movePosition"), disabled: !nSel || !has(DCMD.pagePosition), action: () => setDlg({ kind: "movePosition" }) },
-    { label: t("dz.menu.moveH"), disabled: nUnits < 2, action: () => setDlg({ kind: "moveTogether", axis: "x" }) },
-    { label: t("dz.menu.moveV"), disabled: nUnits < 2, action: () => setDlg({ kind: "moveTogether", axis: "y" }) },
+    { label: t("dz.menu.movePosition"), actionId: "arrange.movePosition", disabled: !nSel || !has(DCMD.pagePosition), action: () => setDlg({ kind: "movePosition" }) },
+    { label: t("dz.menu.moveH"), actionId: "arrange.moveHTogether", disabled: nUnits < 2, action: () => setDlg({ kind: "moveTogether", axis: "x" }) },
+    { label: t("dz.menu.moveV"), actionId: "arrange.moveVTogether", disabled: nUnits < 2, action: () => setDlg({ kind: "moveTogether", axis: "y" }) },
     ...arrayItems,
   ];
   const menuItems: MenuItem[] = [
     { label: t("dz.menu.pasteInPlace"), hint: "Alt+V", section: "top", disabled: !canPaste, action: () => paste(true) },
     { label: t("dz.menu.warp"), section: "modify", disabled: !nSel || !has(DCMD.warp), action: () => startWarp("perspective") },
     { label: t("dz.menu.deform"), section: "modify", disabled: !nSel || !has(DCMD.warp), action: () => startWarp("grid") },
-    { label: t("dz.menu.addArt"), section: "modify", disabled: !nSel, action: openArtDock },
+    // The Art library is a dock: a desktop feature (the phone shows no docks).
+    { label: t("dz.menu.addArt"), section: "modify", desktopOnly: true, disabled: !nSel, action: openArtDock },
     ...arrayItems.map((it) => (it.sep ? it : { ...it, section: "arrange" })),
   ];
 
+  // The phone leaves out the desktop features (workspace/desktopOnly.ts): the Art library and main's Add Tabs tool.
+  const layout = useLayoutMode().layout;
+  const toolsShown = forLayout(toolsItems, layout);
   usePublish("menu.edit", { label: t("dz.edit"), items: editItems });
-  usePublish("menu.tools", { label: t("dz.tools"), items: toolsItems });
+  usePublish("menu.tools", { label: t("dz.tools"), items: toolsShown });
   const toolbar = p.design ? (
     <>
       <RibbonSlot group="modify" order={30}>
         <Dropdown icon="edit" label={t("dz.edit")} title={t("dz.editTitle")} items={editItems} />
-        <Dropdown icon="tools" label={t("dz.tools")} title={t("dz.toolsTitle")} items={toolsItems} />
+        <Dropdown icon="tools" label={t("dz.tools")} title={t("dz.toolsTitle")} items={toolsShown} />
       </RibbonSlot>
-      <RibbonSlot group="insert" order={10}>
-        <button type="button" className="tool-btn" onClick={openArtDock} title={t("rb.artTitle")} aria-label={t("rb.art")}>
-          <Icon name="art" size={20} />
-          <span className="tool-caption">{t("rb.art")}</span>
-        </button>
-      </RibbonSlot>
+      {desktopFeatures(layout) && (
+        <RibbonSlot group="insert" order={10}>
+          <button type="button" className="tool-btn" onClick={openArtDock} title={t("rb.artTitle")} aria-label={t("rb.art")}>
+            <Icon name="art" size={20} />
+            <span className="tool-caption">{t("rb.art")}</span>
+          </button>
+        </RibbonSlot>
+      )}
     </>
   ) : null;
 

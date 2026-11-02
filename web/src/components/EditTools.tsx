@@ -1443,14 +1443,14 @@ export function useEditTools(p: EditToolsProps): EditTools {
   const anyLocked = p.selection.objects.some((id) => lockedIds.has(id));
   const allLocked = p.selection.objects.length > 0 && p.selection.objects.every((id) => lockedIds.has(id));
   const modifyItems: MenuItem[] = [
-    { label: t("et.weld"), hint: "Ctrl+W", disabled: n < 1 || !has(G.GEO.weld), action: act.weld },
-    { label: t("et.union"), hint: "Alt++", disabled: n < 2 || !has(G.GEO.boolean), action: () => act.boolean("union") },
-    { label: t("et.subtractLastSelected"), hint: "Alt+-", disabled: n < 2 || !has(G.GEO.boolean), action: () => act.boolean("subtract") },
-    { label: t("et.intersect"), hint: "Alt+*", disabled: n < 2 || !has(G.GEO.boolean), action: () => act.boolean("intersect") },
+    { label: t("et.weld"), actionId: "tool.weld", hint: "Ctrl+W", disabled: n < 1 || !has(G.GEO.weld), action: act.weld },
+    { label: t("et.union"), actionId: "tool.union", hint: "Alt++", disabled: n < 2 || !has(G.GEO.boolean), action: () => act.boolean("union") },
+    { label: t("et.subtractLastSelected"), actionId: "tool.subtract", hint: "Alt+-", disabled: n < 2 || !has(G.GEO.boolean), action: () => act.boolean("subtract") },
+    { label: t("et.intersect"), actionId: "tool.intersect", hint: "Alt+*", disabled: n < 2 || !has(G.GEO.boolean), action: () => act.boolean("intersect") },
     { label: t("et.exclusiveOrXor"), disabled: n < 2 || !has(G.GEO.boolean), action: () => act.boolean("xor") },
-    { label: t("et.cutShapesLastSelectedCuts"), hint: "Alt+C", disabled: n < 2 || !has(G.GEO.cutShapes), action: act.cutShapes },
+    { label: t("et.cutShapesLastSelectedCuts"), actionId: "tool.cutShapes", hint: "Alt+C", disabled: n < 2 || !has(G.GEO.cutShapes), action: act.cutShapes },
     { sep: true },
-    { label: t("et.offsetShapes"), hint: "Alt+O", disabled: n < 1 || !has(G.GEO.offset), action: () => act.dialog({ kind: "offset" }, 1, "offset", G.GEO.offset) },
+    { label: t("et.offsetShapes"), actionId: "tool.offset", hint: "Alt+O", disabled: n < 1 || !has(G.GEO.offset), action: () => act.dialog({ kind: "offset" }, 1, "offset", G.GEO.offset) },
     {
       label: t("et.filletCorners"),
       disabled: n < 1 || !has(G.GEO.fillet),
@@ -1460,24 +1460,24 @@ export function useEditTools(p: EditToolsProps): EditTools {
       },
     },
     { sep: true },
-    { label: t("et.breakApart"), hint: "Alt+B", disabled: n < 1 || !has(G.GEO.breakApart), action: act.breakApart },
-    { label: t("et.autoJoin"), hint: "Alt+J", disabled: n < 1 || !has(G.GEO.autoJoin), action: act.autoJoin },
+    { label: t("et.breakApart"), actionId: "tool.breakApart", hint: "Alt+B", disabled: n < 1 || !has(G.GEO.breakApart), action: act.breakApart },
+    { label: t("et.autoJoin"), actionId: "tool.autoJoin", hint: "Alt+J", disabled: n < 1 || !has(G.GEO.autoJoin), action: act.autoJoin },
     { label: t("et.autoJoinWithTolerance"), disabled: n < 1 || !has(G.GEO.autoJoin), action: () => act.dialog({ kind: "autojoin" }, 1, "join", G.GEO.autoJoin) },
     { label: t("et.closePath"), disabled: n < 1 || !has(G.GEO.close), action: act.close },
     { label: t("et.closePathsWithTolerance"), disabled: n < 1 || !has(G.GEO.close), action: () => act.dialog({ kind: "close" }, 1, "close", G.GEO.close) },
-    { label: t("et.deleteDuplicates"), hint: "Alt+D", disabled: !doc?.objects.length || !has(G.GEO.deleteDuplicates), action: act.deleteDuplicates },
-    { label: t("et.convertToPath"), hint: "Ctrl+Shift+C", disabled: n < 1 || !has(G.GEO.convert), action: act.convert },
-    { label: t("et.optimizeShapes"), hint: "Alt+Shift+O", disabled: n < 1 || !has(G.GEO.optimize), action: () => act.dialog({ kind: "optimize" }, 1, "optimize", G.GEO.optimize) },
+    { label: t("et.deleteDuplicates"), actionId: "tool.deleteDuplicates", hint: "Alt+D", disabled: !doc?.objects.length || !has(G.GEO.deleteDuplicates), action: act.deleteDuplicates },
+    { label: t("et.convertToPath"), actionId: "edit.convertToPath", hint: "Ctrl+Shift+C", disabled: n < 1 || !has(G.GEO.convert), action: act.convert },
+    { label: t("et.optimizeShapes"), actionId: "tool.optimize", hint: "Alt+Shift+O", disabled: n < 1 || !has(G.GEO.optimize), action: () => act.dialog({ kind: "optimize" }, 1, "optimize", G.GEO.optimize) },
     { label: t("et.reverseDirection"), disabled: n < 1 || !has(G.GEO.reverse), action: act.reverse },
     { sep: true },
-    { label: tool === "node" ? t("et.stopNodes") : t("et.editNodes"), hint: "Ctrl+`", disabled: !has(G.GEO.nodeList), action: act.nodeTool },
-    { label: t("et.trimClickPieces"), disabled: !has(G.GEO.trim), action: () => p.setTool("trim") },
+    { label: tool === "node" ? t("et.stopNodes") : t("et.editNodes"), actionId: "tool.nodes", hint: "Ctrl+`", disabled: !has(G.GEO.nodeList), action: act.nodeTool },
+    { label: t("et.trimClickPieces"), actionId: "tool.trim", disabled: !has(G.GEO.trim), action: () => p.setTool("trim") },
   ];
   const arrangeItems: MenuItem[] = [
-    { label: t("et.bringToFront"), hint: "Ctrl+PgUp", disabled: n < 1 || !has(G.GEO.order), action: () => act.order("front") },
-    { label: t("et.bringForward"), hint: "PgUp", disabled: n < 1 || !has(G.GEO.order), action: () => act.order("forward") },
-    { label: t("et.sendBackward"), hint: "PgDn", disabled: n < 1 || !has(G.GEO.order), action: () => act.order("backward") },
-    { label: t("et.sendToBack"), hint: "Ctrl+PgDn", disabled: n < 1 || !has(G.GEO.order), action: () => act.order("back") },
+    { label: t("et.bringToFront"), actionId: "arrange.front", hint: "Ctrl+PgUp", disabled: n < 1 || !has(G.GEO.order), action: () => act.order("front") },
+    { label: t("et.bringForward"), actionId: "arrange.forward", hint: "PgUp", disabled: n < 1 || !has(G.GEO.order), action: () => act.order("forward") },
+    { label: t("et.sendBackward"), actionId: "arrange.backward", hint: "PgDn", disabled: n < 1 || !has(G.GEO.order), action: () => act.order("backward") },
+    { label: t("et.sendToBack"), actionId: "arrange.back", hint: "Ctrl+PgDn", disabled: n < 1 || !has(G.GEO.order), action: () => act.order("back") },
     { sep: true },
     { label: t("et.lock"), disabled: n < 1 || allLocked || !has(G.GEO.lock), action: () => act.lock(true) },
     { label: t("et.unlock"), disabled: !anyLocked || !has(G.GEO.lock), action: () => act.lock(false) },
@@ -1487,13 +1487,13 @@ export function useEditTools(p: EditToolsProps): EditTools {
     { label: t("et.makeSameSize"), disabled: n < 2 || !has(G.GEO.makeSame), action: () => act.makeSame("both") },
     { sep: true },
     { label: t("et.transform"), disabled: n < 1 || !has(G.GEO.transform), action: () => act.dialog({ kind: "transform" }, 1, "transform", G.GEO.transform) },
-    { label: t("et.twoPointRotate"), hint: "Ctrl+2", disabled: n < 1 || !has(G.GEO.rotateTo), action: () => act.pick("rotate2") },
+    { label: t("et.twoPointRotate"), actionId: "tool.rotate2", hint: "Ctrl+2", disabled: n < 1 || !has(G.GEO.rotateTo), action: () => act.pick("rotate2") },
     { label: t("et.twoPointScale"), disabled: n < 1 || !has(G.GEO.scaleTo), action: () => act.pick("scale2") },
     // Beginner Mode hides Mirror Across Line, as LightBurn's does.
     ...(beginnerMode
       ? []
       : [
-          { label: t("et.mirrorAcrossLine"), disabled: n < 1 || !has(G.GEO.transform), action: () => act.pick("mirror") },
+          { label: t("et.mirrorAcrossLine"), actionId: "tool.mirrorLine", disabled: n < 1 || !has(G.GEO.transform), action: () => act.pick("mirror") },
           { label: t("et.mirrorAcrossLineKeepOriginal"), disabled: n < 1 || !has(G.GEO.transform), action: () => act.pick("mirrorCopy") },
         ]),
     { sep: true },
@@ -1512,12 +1512,12 @@ export function useEditTools(p: EditToolsProps): EditTools {
   ];
 
   const menuItems: MenuItem[] = [
-    { label: t("et.editNodes"), hint: "Ctrl+`", disabled: n !== 1 || !has(G.GEO.nodeList), action: () => p.setTool("node") },
-    { label: t("et.weld"), hint: "Ctrl+W", disabled: n < 1 || !has(G.GEO.weld), action: act.weld },
-    { label: t("et.breakApart"), hint: "Alt+B", disabled: n < 1 || !has(G.GEO.breakApart), action: act.breakApart },
-    { label: t("et.convertToPath"), hint: "Ctrl+Shift+C", disabled: n < 1 || !has(G.GEO.convert), action: act.convert },
-    { label: t("et.bringToFront"), hint: "Ctrl+PgUp", disabled: n < 1 || !has(G.GEO.order), action: () => act.order("front") },
-    { label: t("et.sendToBack"), hint: "Ctrl+PgDn", disabled: n < 1 || !has(G.GEO.order), action: () => act.order("back") },
+    { label: t("et.editNodes"), actionId: "tool.nodes", hint: "Ctrl+`", disabled: n !== 1 || !has(G.GEO.nodeList), action: () => p.setTool("node") },
+    { label: t("et.weld"), actionId: "tool.weld", hint: "Ctrl+W", disabled: n < 1 || !has(G.GEO.weld), action: act.weld },
+    { label: t("et.breakApart"), actionId: "tool.breakApart", hint: "Alt+B", disabled: n < 1 || !has(G.GEO.breakApart), action: act.breakApart },
+    { label: t("et.convertToPath"), actionId: "edit.convertToPath", hint: "Ctrl+Shift+C", disabled: n < 1 || !has(G.GEO.convert), action: act.convert },
+    { label: t("et.bringToFront"), actionId: "arrange.front", hint: "Ctrl+PgUp", disabled: n < 1 || !has(G.GEO.order), action: () => act.order("front") },
+    { label: t("et.sendToBack"), actionId: "arrange.back", hint: "Ctrl+PgDn", disabled: n < 1 || !has(G.GEO.order), action: () => act.order("back") },
     allLocked
       ? { label: t("et.unlock"), disabled: !has(G.GEO.lock), action: () => act.lock(false) }
       : { label: t("et.lock"), disabled: n < 1 || !has(G.GEO.lock), action: () => act.lock(true) },

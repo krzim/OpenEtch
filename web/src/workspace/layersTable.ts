@@ -179,3 +179,60 @@ export function stepIndex(from: number, step: -1 | 1, count: number): number | n
   const to = from + step;
   return from >= 0 && from < count && to >= 0 && to < count ? to : null;
 }
+
+// --- responsive columns -----------------------------------------------------------------------------------------------
+
+/** The Cuts / Layers table's columns. */
+export type CutsColumn = "num" | "swatch" | "name" | "mode" | "spdPwr" | "passes" | "output" | "show" | "order";
+
+/** The columns that may be left out when the window is narrow, least important first. Their values then read in a
+ *  second line under the layer's name (and the selected layer's quick-edit fields below the table). */
+export const CUTS_OPTIONAL: readonly CutsColumn[] = ["order", "passes", "mode", "spdPwr"];
+
+/** The least width (px, padding included) each column needs; `coarse` is a finger's (44 px buttons and grip). The
+ *  Output and Show headers are icons here; their words need TEXT_HEADS_EXTRA more (shown only with every column). */
+export function cutsColumnWidth(c: CutsColumn, o: { canMove: boolean; coarse: boolean }): number {
+  switch (c) {
+    case "num":
+      return 22 + (o.canMove ? (o.coarse ? 44 : 18) : 0);
+    case "swatch":
+      return 24;
+    case "name":
+      return 80;
+    case "mode":
+      return 58;
+    case "spdPwr":
+      return 66;
+    case "passes":
+      return 30;
+    case "output":
+    case "show":
+      return o.coarse ? 50 : 32;
+    case "order":
+      return o.coarse ? 88 : 28;
+  }
+}
+
+/** What the words "Output" and "Show" add to their header cells over the icons. */
+export const TEXT_HEADS_EXTRA = 24;
+
+/**
+ * The columns shown in a table `width` px wide: everything that fits, dropping the optional columns (CUTS_OPTIONAL
+ * order) until the rest fits. #, colour, name, Output and Show always stay. `order` exists only with `canMove`.
+ */
+export function cutsColumns(width: number, o: { canMove: boolean; coarse: boolean }): Set<CutsColumn> {
+  const cols = new Set<CutsColumn>(["num", "swatch", "name", "mode", "spdPwr", "passes", "output", "show"]);
+  if (o.canMove) cols.add("order");
+  const sum = () => [...cols].reduce((n, c) => n + cutsColumnWidth(c, o), 0);
+  for (const c of CUTS_OPTIONAL) {
+    if (sum() <= width) break;
+    cols.delete(c);
+  }
+  return cols;
+}
+
+/** Whether the Output and Show headers are icons: the table has no room for every column with the words. */
+export function cutsIconHeads(width: number, o: { canMove: boolean; coarse: boolean }): boolean {
+  const all: CutsColumn[] = ["num", "swatch", "name", "mode", "spdPwr", "passes", "output", "show", ...(o.canMove ? (["order"] as const) : [])];
+  return all.reduce((n, c) => n + cutsColumnWidth(c, o), 0) + TEXT_HEADS_EXTRA > width;
+}

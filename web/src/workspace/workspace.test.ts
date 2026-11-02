@@ -21,7 +21,8 @@ import {
   unbindChord,
 } from "./hotkeys.ts";
 import { interpolate, languages, registerLocale, translate, translateDynamic } from "./i18n.ts";
-import { copyLayerSettings, dropIndex, invertAll, layerRows, onlyThis, pasteLayerSettings, setAll, settingsPatch, stepIndex } from "./layersTable.ts";
+import { copyLayerSettings, CUTS_OPTIONAL, cutsColumns, cutsColumnWidth, cutsIconHeads, dropIndex, invertAll, layerRows, onlyThis, pasteLayerSettings, setAll, settingsPatch, stepIndex } from "./layersTable.ts";
+import { panelCaption } from "./layout.ts";
 import { anchorPoint, getAnchor, moveTo, parseAnchor, resizeTo, rotationDelta, scalePercent, setAnchor, subscribeAnchor } from "./numeric.ts";
 import { assignPlan, entryForLayer, layerForEntry, normColor, PALETTE } from "./palette.ts";
 import { DEFAULT_PREFS, sanitizePrefs } from "./prefs.ts";
@@ -527,4 +528,40 @@ test("readout lengths follow the display unit", () => {
   assert.equal(fixedNumber(-0.001, "mm"), "0.00", "no -0");
   assert.equal(lengthText(512.34, "mm"), "512.3 mm");
   assert.equal(lengthText(512.34, "in", 0), "20.2 in");
+});
+
+test("Cuts / Layers columns: everything when wide, the optional ones dropped in order when narrow", () => {
+  const mouse = { canMove: true, coarse: false };
+  const all = ["num", "swatch", "name", "mode", "spdPwr", "passes", "output", "show", "order"];
+  assert.deepEqual([...cutsColumns(Infinity, mouse)].sort(), [...all].sort());
+  assert.ok(!cutsColumns(Infinity, { canMove: false, coarse: false }).has("order"), "no up/down without layer.move");
+  // A 300-320 px dock (about 284-304 px of table) with a mouse: no sideways scroll, speed/power still in its column.
+  for (const w of [284, 304]) {
+    const c = cutsColumns(w, mouse);
+    assert.ok(!c.has("order") && !c.has("passes") && !c.has("mode"), `${w}: ${[...c]}`);
+    assert.ok(c.has("spdPwr"), `${w}: speed / power stays`);
+    assert.ok([...c].reduce((n, x) => n + cutsColumnWidth(x, mouse), 0) <= w, `${w}: fits`);
+  }
+  // A finger in the same width: speed / power goes to the second line too; the essentials always stay.
+  const touch = cutsColumns(300, { canMove: true, coarse: true });
+  for (const keep of ["num", "swatch", "name", "output", "show"] as const) assert.ok(touch.has(keep), keep);
+  for (const gone of CUTS_OPTIONAL) assert.ok(!touch.has(gone), gone);
+  // The Output / Show headers turn into icons before any column goes, and stay icons once one has.
+  assert.equal(cutsIconHeads(1000, mouse), false);
+  assert.equal(cutsIconHeads(304, mouse), true);
+  assert.equal(cutsColumns(400, mouse).size, 9, "every column with icon headers");
+  // Dropping follows CUTS_OPTIONAL: whatever is missing is a prefix of it.
+  for (let w = 150; w <= 520; w += 10) {
+    const c = cutsColumns(w, mouse);
+    const missing = CUTS_OPTIONAL.filter((x) => !c.has(x));
+    assert.deepEqual(missing, CUTS_OPTIONAL.slice(0, missing.length), `${w}`);
+  }
+});
+
+test("a side panel's bar names the area, unless its one window already shows that name", () => {
+  assert.equal(panelCaption("Browser", ["Browser"]), null, "the Browser overlay read Browser twice");
+  assert.equal(panelCaption("Design panels", ["Cuts / Layers", "Shape Properties"]), "Design panels");
+  assert.equal(panelCaption("Design panels", ["Shape Properties"]), "Design panels");
+  assert.equal(panelCaption("Browser", []), "Browser");
+  assert.equal(panelCaption("Browser", ["browser "]), null);
 });

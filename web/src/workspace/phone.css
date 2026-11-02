@@ -164,6 +164,20 @@
   margin-top: 6px;
 }
 
+/* Controls pinned under the sheet's header (the Job sheet's Start and its checklist): visible at every height. */
+.sheet-pinned {
+  flex: none;
+  max-height: 50%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.sheet-pinned .btn-start {
+  min-height: 48px;
+}
+
 .sheet-body {
   flex: 1 1 auto;
   min-height: 0;

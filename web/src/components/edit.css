@@ -116,6 +116,13 @@
 .et-ruler-corner:disabled {
   cursor: default;
 }
+/* The "clears the guides" mark shows only with Density = Touch (styles.css). */
+.et-ruler-clear {
+  display: none;
+}
+:root[data-density="touch"] .et-ruler-clear {
+  display: inline-flex;
+}
 
 /* ---- guides ---- */
 .et-guide {

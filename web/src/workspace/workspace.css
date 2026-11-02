@@ -303,6 +303,41 @@
   cursor: grab;
 }
 
+/* A sub-layer tab with its reorder grip (pointer events: a finger works too), and where a dragged tab lands. */
+.cuts-tab-wrap {
+  display: inline-flex;
+  align-items: stretch;
+}
+.cuts-tab-wrap .cuts-tab {
+  border-top-right-radius: 0;
+}
+.cuts-tab-wrap .tab-grip {
+  margin: 0;
+  align-self: center;
+}
+.cuts-tab-wrap.drop-before {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.cuts-tab-wrap.drop-after {
+  box-shadow: inset -2px 0 0 var(--accent);
+}
+
+/* The columns a narrow table leaves out (layersTable.ts cutsColumns), as a second line under the layer's name. */
+.cuts-detail {
+  display: block;
+  color: var(--text-2);
+  font-size: calc(11px * var(--ui-scale, 1));
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Touch: one quick-edit field per row, so the -/+ steppers leave the number room. */
+:root[data-pointer="coarse"] .cuts-quick-grid,
+:root[data-density="touch"] .cuts-quick-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 /* Tool layer T1 / T2 and the "settings that will not be executed" badge in a layer row. */
 .tool-badge,
 .unsup-badge {

@@ -399,3 +399,12 @@ export function reloadLayout(): void {
   current = loadLayout();
   for (const l of listeners) l();
 }
+
+/**
+ * The caption on a side panel's bar: the area's name, or null when the one window docked there already shows that name
+ * in its own title row (the Browser overlay read "Browser" twice).
+ */
+export function panelCaption(label: string, windowTitles: readonly string[]): string | null {
+  const same = (a: string) => a.trim().toLowerCase() === label.trim().toLowerCase();
+  return windowTitles.length === 1 && same(windowTitles[0]) ? null : label;
+}

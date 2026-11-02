@@ -17,6 +17,7 @@ import {
   DEFAULT_SIZES,
   getLayout,
   LAYOUT_PRESETS,
+  panelCaption,
   placeOf,
   resetLayout,
   setActiveTab,
@@ -504,7 +505,7 @@ export interface SidePanelProps {
   /** A rail's overlay is open. */
   overlay: boolean;
   onOverlay: (open: boolean) => void;
-  /** The panel's name (accessible name, the bar's caption). */
+  /** The area's name (accessible name, and the bar's caption unless the one window in it has the same title). */
   label: string;
   /** Draw the rail strip (false: the side opens only from its toolbar toggle; the tablet's left side, whose Browser
    * button sits in the tool rail, so the canvas keeps its width). */
@@ -527,6 +528,12 @@ export function SidePanel(p: SidePanelProps) {
   const railVisible = rail && p.railVisible !== false;
   const overlayOpen = rail && p.overlay;
   const shown = p.mode === "pinned" || overlayOpen;
+  const lay = useLayout();
+  const mounted = useMountedWindows();
+  const caption = panelCaption(
+    p.label,
+    areaUnits(lay, p.side, [...mounted.keys()]).flatMap((u) => u.members.map((id) => mounted.get(id) ?? id)),
+  );
   useEffect(() => {
     if (aside.current) aside.current.inert = !shown;
   }, [shown]);
@@ -573,7 +580,7 @@ export function SidePanel(p: SidePanelProps) {
     >
       {p.mode !== "hidden" && (
         <div className="panel-bar">
-          <span className="panel-bar-title">{p.label}</span>
+          <span className="panel-bar-title">{caption}</span>
           {rail ? (
             <>
               <button

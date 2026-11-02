@@ -17,6 +17,8 @@ import { RibbonSlot, usePublish } from "../components/Ribbon.tsx";
 import { libsApi } from "../libs/api.ts";
 import { ConfirmDialog, errText } from "../libs/ui.tsx";
 import { useT } from "../workspace/usePrefs.ts";
+import { forLayout } from "../workspace/desktopOnly.ts";
+import { useLayoutMode } from "../workspace/layoutMode.ts";
 import {
   addTab,
   clearTabs,
@@ -26,6 +28,7 @@ import {
   parseUserTools,
   removeTab,
   removeTabs,
+  tabHitPx,
   tabMarks,
   userToolInvocations,
   userToolUrl,
@@ -76,6 +79,7 @@ function acceptNotice() {
 
 export function useToolsUi(p: ToolsUiProps) {
   const t = useT();
+  const layout = useLayoutMode().layout;
   const P = useRef(p);
   P.current = p;
   const [win, setWin] = useState<Win>(null);
@@ -130,14 +134,17 @@ export function useToolsUi(p: ToolsUiProps) {
   // ---- the canvas: tab marks always, the Add Tabs tool while on ----
   const drag = useRef<{ mark: TabMark; from: Vec2; moved: boolean } | null>(null);
   const lastClick = useRef<{ key: string; time: number } | null>(null);
+  const hitPx = useRef(tabHitPx("mouse"));
   const [hover, setHover] = useState<string | null>(null);
   const wrap = (inner: CanvasTool): CanvasTool => {
     if (!tabTool && marks.length === 0) return inner;
-    const tolMm = (scale: number) => 8 / Math.max(scale, 1e-6);
+    // A finger or a pen gets a larger reach than the mouse's 8 px (pointer.ts TOL), set by the press that began.
+    const tolMm = (scale: number) => hitPx.current / Math.max(scale, 1e-6);
     return {
       ...inner,
       down: (f, m, info, ctx) => {
         if (!tabTool) return inner.down(f, m, info, ctx);
+        hitPx.current = tabHitPx(info.pointerType);
         const mark = nearestTab(marks, f, tolMm(ctx.scale));
         if (mark) {
           const key = `${mark.id}:${mark.index}`;
@@ -181,6 +188,7 @@ export function useToolsUi(p: ToolsUiProps) {
       },
       hover: (f, m, ctx) => {
         if (!tabTool) return inner.hover(f, m, ctx);
+        hitPx.current = tabHitPx("mouse");
         const mark = nearestTab(marks, f, tolMm(ctx.scale));
         const id = mark ? null : ctx.hitObject(f);
         const key = mark ? `${mark.id}:${mark.index}` : null;
@@ -227,7 +235,8 @@ export function useToolsUi(p: ToolsUiProps) {
   const layerHasTabs = !!p.activeLayer && marks.some((m) => p.doc?.objects.find((o) => o.id === m.id)?.layer === p.activeLayer);
   const imageIds = (p.doc?.objects ?? []).filter((o) => objIds.has(o.id) && (o.geometry as { type?: string }).type === "image").map((o) => o.id);
   const toolsItems: MenuItem[] = [
-    { label: tabTool ? t("tools.stopTabs") : t("tools.addTabs"), action: toggleTabTool },
+    // A desktop feature on the phone (placing tabs on an outline wants a pointer), offered there from More while on.
+    { label: tabTool ? t("tools.stopTabs") : t("tools.addTabs"), desktopOnly: !tabTool, action: toggleTabTool },
     { label: t("tools.removeTabs"), disabled: !hasTabs, action: () => exec(removeTabs(ids), t("tabs.cleared", { n: marks.filter((m) => objIds.has(m.id)).length })) },
     {
       label: t("tools.clearTabs", { layer: p.doc?.layers.find((l) => l.id === p.activeLayer)?.name ?? p.activeLayer ?? "" }),
@@ -264,14 +273,15 @@ export function useToolsUi(p: ToolsUiProps) {
     else webItems.push(...rows);
   }
   if (webItems.length === 0) webItems.push({ label: t("ut.none"), disabled: true, action: () => undefined });
-  webItems.push({ sep: true }, { label: t("ut.manage"), disabled: !supported, action: () => setWin("userTools") });
+  webItems.push({ sep: true }, { label: t("ut.manage"), desktopOnly: true, disabled: !supported, action: () => setWin("userTools") });
 
   // In the ribbon's MODIFY group beside Edit and Tools (and so in its overflow, the tablet rail and the phone strip);
   // command search lists the user tools and Manage User Tools as "Web Tools › ...".
-  usePublish("menu.webTools", { label: t("ut.menu"), items: p.design ? webItems : [] });
+  const webShown = forLayout(webItems, layout);
+  usePublish("menu.webTools", { label: t("ut.menu"), items: p.design ? webShown : [] });
   const toolbar: ReactNode = p.design ? (
     <RibbonSlot group="modify" order={35}>
-      <Dropdown icon="web" label={t("ut.menu")} title={t("ut.menuTitle")} items={webItems} />
+      <Dropdown icon="web" label={t("ut.menu")} title={t("ut.menuTitle")} items={webShown} />
     </RibbonSlot>
   ) : null;
 
@@ -317,5 +327,16 @@ export function useToolsUi(p: ToolsUiProps) {
       </>
     );
 
-  return { toolsItems, toolbar, wrap, dialogs, tabToolActive: tabTool, stopTabTool: () => setTabTool(false), modalOpen: win !== null || notice !== null };
+  return {
+    toolsItems,
+    toolbar,
+    wrap,
+    dialogs,
+    tabToolActive: tabTool,
+    stopTabTool: () => setTabTool(false),
+    modalOpen: win !== null || notice !== null,
+    // For the phone's More > Desktop features (App.tsx).
+    toggleTabTool,
+    openUserTools: supported ? () => setWin("userTools") : null,
+  };
 }

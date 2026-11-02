@@ -1,10 +1,13 @@
 // Command search (S, or the toolbar's search button): type to find any command, Enter runs it. Lists every
 // hotkeys.ts action (run exactly as its key would run it, commands.ts) and the menu items other parts of the app
 // publish (File, Edit, Tools, Modify, Arrange, Laser Tools, the ribbon's own buttons), each with its shortcut and its
-// action id. Request run / Start is deliberately not listed: a burn starts only from Start or the foot switch.
+// action id. Request run / Start is deliberately not listed: a burn starts only from Start or the foot switch. On the
+// phone the desktop features (workspace/desktopOnly.ts) are left out, as in its menus.
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { ACTIONS, hintFor } from "../workspace/hotkeys.ts";
+import { actionOffered } from "../workspace/desktopOnly.ts";
+import { useLayoutMode } from "../workspace/layoutMode.ts";
 import { usePrefs, useT, useTD } from "../workspace/usePrefs.ts";
 import { canRunAction, runHotkeyAction } from "./commands.ts";
 import { mergeCommands, pushRecent, searchCommands, ALIASES, type Command } from "./commandSearch.ts";
@@ -68,6 +71,7 @@ export function CommandSearch(p: { onClose: () => void; onEngineConsole: () => v
   const t = useT();
   const td = useTD();
   const { hotkeys } = usePrefs();
+  const layout = useLayoutMode().layout;
   const [q, setQ] = useState("");
   const [active, setActive] = useState(0);
   const [recents, setRecents] = useState(loadRecents);
@@ -85,7 +89,7 @@ export function CommandSearch(p: { onClose: () => void; onEngineConsole: () => v
   };
 
   const all = useMemo(() => {
-    const actions: Command[] = ACTIONS.filter((a) => !a.fixed && !HIDDEN.has(a.id)).map((a) => ({
+    const actions: Command[] = ACTIONS.filter((a) => !a.fixed && !HIDDEN.has(a.id) && actionOffered(layout, a.id)).map((a) => ({
       key: a.id,
       label: td(`hk.${a.id}`, a.label),
       path: td(`hk.group.${a.group}`, a.group[0].toUpperCase() + a.group.slice(1)),
@@ -98,9 +102,12 @@ export function CommandSearch(p: { onClose: () => void; onEngineConsole: () => v
     const menu: Command[] = [];
     for (const m of Object.values(menus)) if (m) menu.push(...menuCommands(m.items, m.label, hotkeys));
     menu.push({ key: "dev.engineConsole", label: t("rb.engineCommands"), path: t("rb.developer"), aliases: ["json", "mcp", "api", "commands"], run: p.onEngineConsole });
-    return mergeCommands(actions, menu);
+    return mergeCommands(
+      actions,
+      menu.filter((c) => actionOffered(layout, c.actionId)),
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [td, t, hotkeys, ...Object.values(menus)]);
+  }, [td, t, hotkeys, layout, ...Object.values(menus)]);
 
   const found = useMemo(() => searchCommands(all, q, recents), [all, q, recents]);
   const act = Math.min(active, Math.max(0, found.length - 1));

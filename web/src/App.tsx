@@ -57,6 +57,8 @@ import { LightBurnDevices, useLightBurn } from "./components/LightBurn.tsx";
 import { LayerSection, PropertiesPanel } from "./components/PropertiesPanel.tsx";
 import { Timeline } from "./components/Timeline.tsx";
 import { Toolbar, type ArrangeAction } from "./components/Toolbar.tsx";
+import { runHotkeyAction } from "./components/commands.ts";
+import { StartButton } from "./laser/StartButton.tsx";
 import { TopBar, type Workspace } from "./components/TopBar.tsx";
 import { Icon } from "./components/ui.tsx";
 import { Viewport, type PreviewOptions, type SnapSettings, type Tool, type ViewStyle } from "./components/Viewport.tsx";
@@ -80,6 +82,7 @@ import { useLayout } from "./workspace/windows.ts";
 import { useFullscreen } from "./workspace/fullscreen.ts";
 import { appModeDialogOpen, openAppModeDialog } from "./app/AppModeDialog.tsx";
 import { useLayoutMode } from "./workspace/layoutMode.ts";
+import { desktopFeatures, forLayout } from "./workspace/desktopOnly.ts";
 import { ContextStripHost, useContextStripBusy } from "./workspace/contextStrip.tsx";
 import { bottomRow, windowTitle } from "./workspace/shell.ts";
 import { syncThemeColor } from "./app/appMode.ts";
@@ -393,10 +396,10 @@ export function App() {
     ? []
     : [
         { sep: true },
-        { label: t("app.distHSpaced"), hint: hintFor("arrange.distHSpaced", prefHotkeys), disabled: nUnits < 3, action: () => arrangeRef.current("distH") },
-        { label: t("app.distHCentered"), hint: hintFor("arrange.distHCentered", prefHotkeys), disabled: nUnits < 3, action: () => arrangeRef.current("distHc") },
-        { label: t("app.distVSpaced"), hint: hintFor("arrange.distVSpaced", prefHotkeys), disabled: nUnits < 3, action: () => arrangeRef.current("distV") },
-        { label: t("app.distVCentered"), hint: hintFor("arrange.distVCentered", prefHotkeys), disabled: nUnits < 3, action: () => arrangeRef.current("distVc") },
+        { label: t("app.distHSpaced"), actionId: "arrange.distHSpaced", hint: hintFor("arrange.distHSpaced", prefHotkeys), disabled: nUnits < 3, action: () => arrangeRef.current("distH") },
+        { label: t("app.distHCentered"), actionId: "arrange.distHCentered", hint: hintFor("arrange.distHCentered", prefHotkeys), disabled: nUnits < 3, action: () => arrangeRef.current("distHc") },
+        { label: t("app.distVSpaced"), actionId: "arrange.distVSpaced", hint: hintFor("arrange.distVSpaced", prefHotkeys), disabled: nUnits < 3, action: () => arrangeRef.current("distV") },
+        { label: t("app.distVCentered"), actionId: "arrange.distVCentered", hint: hintFor("arrange.distVCentered", prefHotkeys), disabled: nUnits < 3, action: () => arrangeRef.current("distVc") },
       ];
 
   // Node editing, line/pen/polygon, measure, trim, rulers and guides, the Modify and Arrange menus (EditTools.tsx).
@@ -1022,21 +1025,21 @@ export function App() {
     ...designUi.menuItems,
     ...(text.menuItems.length ? [{ sep: true } as const, ...text.menuItems] : []),
     { sep: true },
-    { label: t("app.alignLeft"), hint: "L", disabled: units < 2, action: () => alignTo("left") },
-    { label: t("app.alignHCenter"), hint: "C", disabled: units < 2, action: () => alignTo("center") },
-    { label: t("app.alignRight"), hint: "R", disabled: units < 2, action: () => alignTo("right") },
-    { label: t("app.alignTop"), hint: "T", disabled: units < 2, action: () => alignTo(undefined, "top") },
-    { label: t("app.alignVCenter"), hint: "E", disabled: units < 2, action: () => alignTo(undefined, "center") },
-    { label: t("app.alignBottom"), hint: "B", disabled: units < 2, action: () => alignTo(undefined, "bottom") },
+    { label: t("app.alignLeft"), actionId: "arrange.alignLeft", hint: "L", disabled: units < 2, action: () => alignTo("left") },
+    { label: t("app.alignHCenter"), actionId: "arrange.alignHCenter", hint: "C", disabled: units < 2, action: () => alignTo("center") },
+    { label: t("app.alignRight"), actionId: "arrange.alignRight", hint: "R", disabled: units < 2, action: () => alignTo("right") },
+    { label: t("app.alignTop"), actionId: "arrange.alignTop", hint: "T", disabled: units < 2, action: () => alignTo(undefined, "top") },
+    { label: t("app.alignVCenter"), actionId: "arrange.alignVCenter", hint: "E", disabled: units < 2, action: () => alignTo(undefined, "center") },
+    { label: t("app.alignBottom"), actionId: "arrange.alignBottom", hint: "B", disabled: units < 2, action: () => alignTo(undefined, "bottom") },
     { label: t("app.centreStock"), disabled: !hasSel || !doc?.stock, action: () => centreOn("stock") },
-    { label: t("app.centreField"), hint: "P", disabled: !hasSel, action: () => centreOn("field") },
+    { label: t("app.centreField"), actionId: "arrange.centerField", hint: "P", disabled: !hasSel, action: () => centreOn("field") },
     { sep: true },
     ...docking.menuItems,
     { sep: true },
-    { label: t("app.flipH"), hint: "Ctrl+Shift+H", disabled: !hasSel, action: () => flip("x") },
-    { label: t("app.flipV"), hint: "Ctrl+Shift+V", disabled: !hasSel, action: () => flip("y") },
+    { label: t("app.flipH"), actionId: "arrange.flipH", hint: "Ctrl+Shift+H", disabled: !hasSel, action: () => flip("x") },
+    { label: t("app.flipV"), actionId: "arrange.flipV", hint: "Ctrl+Shift+V", disabled: !hasSel, action: () => flip("y") },
     { sep: true },
-    { label: t("app.selectAll"), hint: "Ctrl+A", disabled: !doc, action: () => doc && setSelection(selectAll(doc)) },
+    { label: t("app.selectAll"), actionId: "edit.selectAll", hint: "Ctrl+A", disabled: !doc, action: () => doc && setSelection(selectAll(doc)) },
     { label: t("app.invertSelection"), actionId: "edit.invert", hint: "Ctrl+Shift+I", disabled: !doc, action: () => doc && setSelection(invertSelection(selection, doc)) },
   ];
 
@@ -1205,11 +1208,12 @@ export function App() {
 
   // ---- the shell's parts (placed per layout mode below) ----------------------------------------------------------
 
-  const fileMenu = (
+  const fileMenuFor = (label?: string) => (
     <FileMenu
+      label={label}
       file={file}
       onImport={openImport}
-      onDevices={canDevices ? () => setDevicesOpen(true) : undefined}
+      onDevices={canDevices && desktopFeatures(layout) ? () => setDevicesOpen(true) : undefined}
       recent={(close) => (
         <RecentProjects
           current={file.projectName}
@@ -1267,6 +1271,10 @@ export function App() {
       }
     />
   );
+
+  const fileMenu = fileMenuFor();
+  // The phone's More > File section has New / Open / Save rows of its own; the full menu under them gets another name.
+  const phoneFileMenu = layout === "phone" ? fileMenuFor(t("shell.moreFileAll")) : null;
 
   const topBar = (onMenu?: () => void) => (
     <TopBar
@@ -1415,7 +1423,8 @@ export function App() {
                 <DeviceBar
                   devices={devices}
                   machine={machine}
-                  onOpenWindow={() => setDevicesOpen(true)}
+                  // Device editing (and its lens wizard) is a desktop feature: on the phone it is under More.
+                  onOpenWindow={desktopFeatures(layout) ? () => setDevicesOpen(true) : undefined}
                   onSwitched={onDeviceSwitched}
                   notify={notify}
                   report={report}
@@ -1455,9 +1464,12 @@ export function App() {
               <Dock id="move" title={t("win.move")}>
                 <GrblMove notify={notify} report={report} />
               </Dock>
-              <Dock id="console" title={t("win.console")}>
-                <GrblConsole notify={notify} report={report} />
-              </Dock>
+              {/* The console is a desktop feature (workspace/desktopOnly.ts): not in the phone's Job sheet. */}
+              {desktopFeatures(layout) && (
+                <Dock id="console" title={t("win.console")}>
+                  <GrblConsole notify={notify} report={report} />
+                </Dock>
+              )}
             </>
           )}
           {/* A Ruida gantry's File List window (LightBurn's): stored files, Send, Start (through approval). */}
@@ -1620,7 +1632,7 @@ export function App() {
         />
       )}
       {layout !== "phone" && <FloatHost />}
-      {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />}
+      {menu && <ContextMenu x={menu.x} y={menu.y} items={forLayout(menuItems, layout)} onClose={() => setMenu(null)} />}
       {dropLabel && <DropOverlay label={dropLabel} />}
       <div className="toasts">
         {toasts.map((x) => (
@@ -1709,11 +1721,14 @@ export function App() {
           </>
         }
         jobSheet={workspace === "laser" ? rightContent : null}
+        // Start (with the Job Checklist when there is no PIN) pinned under the Job sheet's header: in view at every
+        // sheet height. LaserDock leaves its own Start row out on the phone; STOP stays in the top bar.
+        jobPinned={workspace === "laser" ? <StartButton variant="sheet" /> : null}
         onTab={(tab) => {
           const w: Workspace = tab === "job" ? "laser" : "design";
           if (w !== workspace) switchWorkspace(w);
         }}
-        moreItems={
+        moreItems={(closeMore) => (
           <>
             {/* Command search lives in the Canvas sheet's tool strip; this opens it from here (PhoneShell). */}
             <div className="phone-more-body phone-more-search">
@@ -1730,7 +1745,8 @@ export function App() {
                 {moreRow(t("fm.save"), () => saveFile(), file.busy)}
                 {moreRow(t("fm.saveAs"), () => file.setModal({ kind: "saveAs" }), file.busy)}
                 {moreRow(t("fm.import"), openImport, file.busy)}
-                <div className="phone-filemenu">{fileMenu}</div>
+                {/* The full File menu (Export, Save RD / G-code, templates...), named so it does not read "File" twice. */}
+                <div className="phone-filemenu">{phoneFileMenu}</div>
               </div>
             </details>
             <details>
@@ -1763,7 +1779,6 @@ export function App() {
               <div className="phone-more-body">
                 {moreRow(t("prefs.title"), () => ws.open("prefs"))}
                 {moreRow(t("theme.switchTitle", { theme: themeName }), () => updatePrefs({ theme: nextTheme }))}
-                {canDevices && moreRow(t("shell.devices"), () => setDevicesOpen(true))}
               </div>
             </details>
             <details>
@@ -1780,22 +1795,30 @@ export function App() {
                 <Icon name="monitor" />
                 {t("shell.desktopFeatures")}
               </summary>
+              {/* Left out of the phone's strip and menus (workspace/desktopOnly.ts); the ones a phone can still run open
+                  from here, the tools close the sheet so the canvas is in view. */}
+              <p className="phone-note hint">{t("shell.desktopFeaturesHint")}</p>
+              <div className="phone-more-body">
+                {moreRow(t("em.editNodes"), () => (closeMore(), setTool("node")), !hasSel)}
+                {moreRow(t("em.pen"), () => (closeMore(), setTool("pen")))}
+                {moreRow(t("em.polygon"), () => (closeMore(), setTool("polygon")))}
+                {moreRow(t("em.trim"), () => (closeMore(), setTool("trim")))}
+                {moreRow(t("et.weld"), () => (closeMore(), runHotkeyAction("tool.weld")), !hasSel)}
+                {moreRow(toolsUi.tabToolActive ? t("tools.stopTabs") : t("tools.addTabs"), () => (closeMore(), toolsUi.toggleTabTool()))}
+                {toolsUi.openUserTools && moreRow(t("ut.manage"), toolsUi.openUserTools)}
+                {canDevices && moreRow(t("shell.dfDevicesOpen"), () => setDevicesOpen(true))}
+              </div>
               <div className="phone-note hint">
-                {t("shell.desktopFeaturesHint")}
+                {t("shell.dfElsewhere")}
                 <ul>
-                  <li>{t("shell.dfNodes")}</li>
-                  <li>{t("shell.dfPen")}</li>
-                  <li>{t("shell.dfTrim")}</li>
                   <li>{t("shell.dfDocking")}</li>
                   <li>{t("shell.dfArt")}</li>
-                  <li>{t("shell.dfDevices")}</li>
-                  <li>{t("shell.dfLens")}</li>
-                  <li>{t("shell.dfConsole")}</li>
+                  {isGrblMachine(machine) && <li>{t("shell.dfConsole")}</li>}
                 </ul>
               </div>
             </details>
           </>
-        }
+        )}
         overlays={overlays}
       />
     );
@@ -1850,7 +1873,8 @@ export function App() {
           mode={rightMode}
           overlay={overlay === "right"}
           onOverlay={setRightOverlay}
-          label={workspace === "laser" ? t("win.machine") : t("win.properties")}
+          // The area's name, not one of its windows' (Cuts / Layers, the libraries, Shape Properties; Laser, Machine...).
+          label={workspace === "laser" ? t("shell.areaLaser") : t("shell.areaDesign")}
         >
           <DockAreaHost area="right" />
           {rightContent}

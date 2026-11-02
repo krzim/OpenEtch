@@ -31,3 +31,29 @@
   min-width: 0;
   width: 14em;
 }
+
+/* Coarse pointers (tablet, phone Job sheet): 44 px name field and "only selected" row, room for a finger. */
+:root[data-pointer="coarse"] .ruida-send input:not([type="checkbox"]),
+:root[data-density="touch"] .ruida-send input:not([type="checkbox"]) {
+  min-height: 44px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+:root[data-pointer="coarse"] .ruida-send label,
+:root[data-density="touch"] .ruida-send label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  max-width: 100%;
+}
+:root[data-pointer="coarse"] .ruida-send input[type="checkbox"],
+:root[data-density="touch"] .ruida-send input[type="checkbox"] {
+  width: 22px;
+  height: 22px;
+}
+/* The file table's Run / Delete buttons wrap under the name instead of pushing the table sideways. */
+:root[data-pointer="coarse"] .ruida-file-table td:last-child,
+:root[data-density="touch"] .ruida-file-table td:last-child {
+  white-space: normal;
+}

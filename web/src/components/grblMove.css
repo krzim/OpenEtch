@@ -12,3 +12,13 @@
   flex: 1;
   min-width: 0;
 }
+
+/* Coarse pointers (tablet, phone Job sheet): the position-name field as tall as the 44 px buttons beside it. */
+:root[data-pointer="coarse"] .grbl-save-row input,
+:root[data-density="touch"] .grbl-save-row input {
+  min-height: 44px;
+}
+:root[data-pointer="coarse"] .grbl-saved,
+:root[data-density="touch"] .grbl-saved {
+  gap: 4px;
+}
