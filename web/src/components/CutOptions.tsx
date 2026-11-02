@@ -14,6 +14,7 @@ import { useEffect, useState } from "react";
 import { api, type Invocation } from "../api/client.ts";
 import {
   MAX_GANTRY_EXTRA_MM,
+  MAX_PATH_PAUSE_MS,
   OPTION_DEFAULTS,
   TIMING_KEYS,
   activeOptionCount,
@@ -30,6 +31,7 @@ import {
   timingPatch,
   type FillGrouping,
   type GalvoTiming,
+  type Lead,
   type PassRef,
 } from "../api/cutOptions.ts";
 import { onEngineEvent } from "../api/events.ts";
@@ -218,6 +220,28 @@ export function CutOptionsSection(p: {
               {r.overcut_mm > 0 && <p className="hint">{t("cut.overcutHint")}</p>}
             </>
           )}
+          {(p.settings.mode === "fill" || p.settings.mode === "fill_then_line") && (
+            <>
+              <NumberField label={t("cut.ramp")} unit="mm" value={r.ramp_length_mm} min={0} max={MAX_GANTRY_EXTRA_MM} digits={2} onCommit={num((ramp_length_mm) => opt({ ramp_length_mm }))} />
+              {r.ramp_length_mm > 0 && (
+                <>
+                  <NumberField label={t("cut.rampMin")} unit="%" value={r.ramp_min_power_pct} min={0} max={100} digits={1} onCommit={num((ramp_min_power_pct) => opt({ ramp_min_power_pct }))} />
+                  <CheckField label={t("cut.rampOuter")} checked={r.ramp_outer_edge} onChange={(ramp_outer_edge) => opt({ ramp_outer_edge })} />
+                  <p className="hint">{t("cut.rampHint")}</p>
+                </>
+              )}
+            </>
+          )}
+          {p.settings.mode === "line" && (
+            <>
+              <LeadFields label={t("cut.leadIn")} lead={r.lead_in} onChange={(lead_in) => opt({ lead_in })} />
+              <LeadFields label={t("cut.leadOut")} lead={r.lead_out} onChange={(lead_out) => opt({ lead_out })} />
+              {(r.lead_in || r.lead_out) && <p className="hint">{t("cut.leadHint")}</p>}
+              <NumberField label={t("cut.startPause")} unit="ms" value={r.start_pause_ms} min={0} max={MAX_PATH_PAUSE_MS} digits={1} onCommit={num((start_pause_ms) => opt({ start_pause_ms }))} />
+              <NumberField label={t("cut.endPause")} unit="ms" value={r.end_pause_ms} min={0} max={MAX_PATH_PAUSE_MS} digits={1} onCommit={num((end_pause_ms) => opt({ end_pause_ms }))} />
+              {(r.start_pause_ms > 0 || r.end_pause_ms > 0) && <p className="hint">{t("cut.pathPauseHint")}</p>}
+            </>
+          )}
         </fieldset>
       )}
 
@@ -293,5 +317,31 @@ export function ShapeCutProperties(p: { doc: GDocument; ids: string[]; run: Run;
       />
       <p className="hint">{t("shape.hint")}</p>
     </section>
+  );
+}
+
+/** A GRBL lead-in or lead-out: on/off, then its style, length and angle (LightBurn's Lead-In / Lead-Out). */
+function LeadFields(p: { label: string; lead: Lead | null; onChange: (lead: Lead | null) => void }) {
+  const t = useT();
+  const l = p.lead;
+  return (
+    <>
+      <CheckField label={p.label} checked={l !== null} onChange={(on) => p.onChange(on ? OPTION_DEFAULTS.lead : null)} />
+      {l && (
+        <div className="job-indent">
+          <label className="field">
+            <span className="field-label">{t("cut.leadStyle")}</span>
+            <span className="field-input">
+              <select value={l.style} onChange={(e) => p.onChange({ ...l, style: e.target.value === "arc" ? "arc" : "line" })}>
+                <option value="line">{t("cut.leadLine")}</option>
+                <option value="arc">{t("cut.leadArc")}</option>
+              </select>
+            </span>
+          </label>
+          <NumberField label={t("cut.leadLength")} unit="mm" value={l.length_mm} min={0.01} max={MAX_GANTRY_EXTRA_MM} digits={2} onCommit={(v) => v !== null && p.onChange({ ...l, length_mm: v })} />
+          <NumberField label={t("cut.leadAngle")} unit="°" value={l.angle_deg} min={-90} max={90} digits={1} onCommit={(v) => v !== null && p.onChange({ ...l, angle_deg: v })} />
+        </div>
+      )}
+    </>
   );
 }

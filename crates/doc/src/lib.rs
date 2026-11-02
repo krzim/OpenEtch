@@ -15,7 +15,7 @@ pub mod job;
 pub mod text;
 
 pub use job::{
-    CutDirection, CutOptions, DotMode, FillGrouping, MAX_GANTRY_EXTRA_MM, ObjectOptions, Optimization, OrderBy, Perforation, Rotary, RotaryKind,
+    CutDirection, CutOptions, DotMode, FillGrouping, Lead, LeadStyle, MAX_GANTRY_EXTRA_MM, MAX_PATH_PAUSE_MS, ObjectOptions, Optimization, OrderBy, Perforation, Rotary, RotaryKind,
     StartPoint, Tabs, Taper, Wobble,
 };
 pub use text::{AlignH, AlignV, CsvData, FontKind, FontSpec, Text, TextPath, VarMode, VarText, VariableState};

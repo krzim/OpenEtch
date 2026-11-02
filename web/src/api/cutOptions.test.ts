@@ -66,6 +66,17 @@ test("cut options resolve with the engine's defaults", () => {
   assert.equal(activeOptionCount(g), 1, "only the missing fill grouping, on a galvo");
   assert.equal(activeOptionCount(g, true), 5);
   assert.deepEqual([r.constant_power, r.air_assist, r.overscan_mm, r.overcut_mm], [false, false, 0, 0]);
+  // Ramp, leads and path pauses (GRBL): read with their defaults, counted only for a gantry.
+  const x = resolveOptions(
+    settings({
+      options: { ramp_length_mm: 1.5, ramp_outer_edge: true, ramp_min_power_pct: 8, lead_in: { style: "arc", length_mm: 3, angle_deg: -45 }, lead_out: { length_mm: 1 }, start_pause_ms: 20 },
+    }),
+  );
+  assert.deepEqual([x.ramp_length_mm, x.ramp_outer_edge, x.ramp_min_power_pct, x.start_pause_ms, x.end_pause_ms], [1.5, true, 8, 20, 0]);
+  assert.deepEqual(x.lead_in, { style: "arc", length_mm: 3, angle_deg: -45 });
+  assert.deepEqual(x.lead_out, { style: "line", length_mm: 1, angle_deg: 90 });
+  assert.equal(activeOptionCount(x, true) - activeOptionCount(x), 4);
+  assert.deepEqual([r.ramp_length_mm, r.lead_in, r.lead_out, r.start_pause_ms], [0, null, null, 0]);
   assert.deepEqual(optionsPatch({ layer: "layer-1", sub: 0 }, { air_assist: true }), {
     id: "layer.sub_update",
     params: { layer: "layer-1", index: 0, settings: { options: { air_assist: true } } },

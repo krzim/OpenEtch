@@ -45,6 +45,25 @@ export interface CutOptions {
   overscan_mm?: number;
   /** GRBL gantries only: closed outlines cut on past their start, 0..=50 mm. */
   overcut_mm?: number;
+  /** GRBL gantries only, fills: power ramps up from `ramp_min_power_pct` at the design's edges over this distance, 0..=50 mm. */
+  ramp_length_mm?: number;
+  /** GRBL ramp: also ramp the outermost edges (LightBurn's Ramp Outer Edge). */
+  ramp_outer_edge?: boolean;
+  /** GRBL ramp: power at the edge, %. */
+  ramp_min_power_pct?: number;
+  /** GRBL gantries only, line passes: lead-in / lead-out of every path. */
+  lead_in?: Lead | null;
+  lead_out?: Lead | null;
+  /** GRBL gantries only, line passes: laser-off dwell before / after every path, ms (0..=60000). */
+  start_pause_ms?: number;
+  end_pause_ms?: number;
+}
+
+/** A lead-in or lead-out (`doc::Lead`): angle -90..=90 (positive outside a closed shape), length 0..=50 mm. */
+export interface Lead {
+  style: "line" | "arc";
+  length_mm: number;
+  angle_deg: number;
 }
 
 /** The resolved options of a pass (defaults filled in). */
@@ -67,10 +86,19 @@ export interface ResolvedOptions {
   air_assist: boolean;
   overscan_mm: number;
   overcut_mm: number;
+  ramp_length_mm: number;
+  ramp_outer_edge: boolean;
+  ramp_min_power_pct: number;
+  lead_in: Lead | null;
+  lead_out: Lead | null;
+  start_pause_ms: number;
+  end_pause_ms: number;
 }
 
-/** Longest overscan and overcut, mm (`doc::MAX_GANTRY_EXTRA_MM`). */
+/** Longest overscan, overcut, ramp and lead, mm (`doc::MAX_GANTRY_EXTRA_MM`). */
 export const MAX_GANTRY_EXTRA_MM = 50;
+/** Longest start or end pause of a GRBL path, ms (`doc::MAX_PATH_PAUSE_MS`). */
+export const MAX_PATH_PAUSE_MS = 60000;
 
 /** LightBurn-like starting values when an option is switched on. */
 export const OPTION_DEFAULTS = {
@@ -78,7 +106,14 @@ export const OPTION_DEFAULTS = {
   wobble: { step_mm: 0.1, size_mm: 0.5 },
   perforation: { cut_mm: 1, skip_mm: 1 },
   tabs: { count: 4, spacing_mm: 0, size_mm: 0.5 },
+  lead: { style: "line", length_mm: 2, angle_deg: 90 } as Lead,
 };
+
+function lead(v: unknown): Lead | null {
+  const l = o(v);
+  if (!l) return null;
+  return { style: l.style === "arc" ? "arc" : "line", length_mm: n(l.length_mm, 2), angle_deg: n(l.angle_deg, 90) };
+}
 
 function o(v: unknown): Record<string, unknown> | null {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
@@ -115,6 +150,13 @@ export function resolveOptions(settings: CutSettings | null | undefined): Resolv
     air_assist: r.air_assist === true,
     overscan_mm: n(r.overscan_mm, 0),
     overcut_mm: n(r.overcut_mm, 0),
+    ramp_length_mm: n(r.ramp_length_mm, 0),
+    ramp_outer_edge: r.ramp_outer_edge === true,
+    ramp_min_power_pct: n(r.ramp_min_power_pct, 0),
+    lead_in: lead(r.lead_in),
+    lead_out: lead(r.lead_out),
+    start_pause_ms: n(r.start_pause_ms, 0),
+    end_pause_ms: n(r.end_pause_ms, 0),
   };
 }
 
@@ -143,6 +185,11 @@ export function activeOptionCount(r: ResolvedOptions, gantry = false): number {
     if (r.air_assist) c++;
     if (r.overscan_mm) c++;
     if (r.overcut_mm) c++;
+    if (r.ramp_length_mm) c++;
+    if (r.lead_in) c++;
+    if (r.lead_out) c++;
+    if (r.start_pause_ms) c++;
+    if (r.end_pause_ms) c++;
   }
   return c;
 }
