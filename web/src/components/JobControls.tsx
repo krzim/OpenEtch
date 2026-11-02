@@ -23,19 +23,15 @@ import {
   remainingLine,
   repeating,
   runOptionsSummary,
-  runRequestBody,
   stopAtReached,
   type JobStatus,
 } from "../api/job.ts";
 import { jobApi } from "../api/jobApi.ts";
 import { formatDuration } from "../api/laser.ts";
-import { approvalErrorText } from "../api/runs.ts";
-import { approvalRefusalText } from "../libs/model.ts";
 import type { LinkState } from "../api/useEngine.ts";
 import { usePrefs, useT } from "../workspace/usePrefs.ts";
-import { getPrefs } from "../workspace/prefs.ts";
 import { tr } from "../workspace/tr.ts";
-import { getRunOptions, setRunOptions, useRunOptions } from "./jobStore.ts";
+import { setRunOptions, useRunOptions } from "./jobStore.ts";
 import { Icon } from "./ui.tsx";
 import "./job.css";
 
@@ -94,54 +90,21 @@ export function useJobStatus(link: LinkState): JobState {
   return { job, unsupported, refresh };
 }
 
-/** Request a run with the Laser window's options (and the selection for Cut Selected Graphics). */
-export async function requestRunWithOptions(selection: readonly string[], fromSegment: number | null = null): Promise<string> {
-  // Beginner Mode hides Cut Selected Graphics and ignores it (LightBurn ignores hidden optional settings).
-  const o = getRunOptions();
-  const body = runRequestBody(fromSegment === null && !getPrefs().beginnerMode ? o : { ...o, cutSelected: false }, { selection, fromSegment });
-  await jobApi.requestRun(body);
-  return fromSegment === null ? tr("rest.runRequested") : tr("rest.runFromRequested", { n: fromSegment });
-}
-
-/**
- * Start (no-PIN engine: plan and burn now, with the Job Checklist ticks when it is on) or Request run (PIN engine: a
- * pending run to approve with the PIN), with the Laser window's options. Resolves to the toast text; a refused Start
- * throws an Error with a readable reason (door open, checklist, Require Framing, ...). `revision`: the document
- * revision this page shows; the engine starts nothing when the document is at another one (an agent's edit came in
- * just before the click), so Start burns only what the person was looking at.
- */
-export async function runJob(
-  noPin: boolean,
-  selection: readonly string[],
-  fromSegment: number | null = null,
-  checklist: boolean[] | null = null,
-  revision: number | null = null,
-): Promise<string> {
-  if (!noPin) return requestRunWithOptions(selection, fromSegment);
-  const o = getRunOptions();
-  const body = runRequestBody(fromSegment === null && !getPrefs().beginnerMode ? o : { ...o, cutSelected: false }, { selection, fromSegment });
-  try {
-    await jobApi.start({ ...body, ...(checklist ? { checklist } : {}), ...(revision === null ? {} : { revision }) });
-  } catch (e) {
-    if (!(e instanceof ApiError)) throw e;
-    const detail = e.detail || e.message;
-    throw new Error(approvalErrorText(e.code, approvalRefusalText(detail) ?? detail));
-  }
-  return fromSegment === null ? tr("rest.jobStarted") : tr("rest.jobStartedFrom", { n: fromSegment });
-}
+// Request run / Start moved to laser/runJob.ts (the one Start flow calls it); re-exported for existing callers.
+export { requestRunWithOptions, runJob } from "../laser/runJob.ts";
 
 /** Pause a running job, or resume a paused one (the Pause / resume hotkey). Resolves to the toast text. */
 export async function togglePause(): Promise<string> {
   const j = jobStatus(await jobApi.job());
   if (canResume(j)) {
     await jobApi.resume();
-    return "Job resumed.";
+    return tr("lz.resumed");
   }
   if (canPause(j)) {
     await jobApi.pause();
-    return "Pausing the job.";
+    return tr("lz.paused");
   }
-  throw new Error("No job is running.");
+  throw new Error(tr("lz.noJob"));
 }
 
 /** Progress bar, state, iteration, times and the Pause / Resume / End after this run buttons. */

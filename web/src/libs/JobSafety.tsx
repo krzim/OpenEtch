@@ -4,10 +4,11 @@
 // `job_finished_sound` event; muted per browser), and the device's job settings page (Device Settings > Job).
 // Preferences are per device and UI only (PUT /api/prefs); the engine checks every gate again on approval.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { MachineStatus } from "../api/types.ts";
 import { CheckField } from "../components/ui.tsx";
 import { useT } from "../workspace/usePrefs.ts";
+import { getLaserFlow, setLaserFlow, useLaserFlow } from "../laser/laserContext.ts";
 import {
   CHIME,
   DEFAULT_CHECKLIST,
@@ -68,6 +69,40 @@ export function useApprovalGates() {
 }
 
 export type ApprovalGatesState = ReturnType<typeof useApprovalGates>;
+
+/**
+ * The same gates with the ticks shared by every Start (the Laser dock, the phone's Job sheet, the toolbar Start and the
+ * hotkey; laser/laserContext.ts), so a checklist ticked in the dock lets the toolbar Start fire. Also publishes the
+ * gates, so laser/startFlow.ts knows whether the checklist is complete without a component.
+ */
+export function useSharedApprovalGates(): ApprovalGatesState {
+  const { prefs } = useDevicePrefs();
+  const dev = useActiveDevice();
+  const gates = approvalGates(prefs, dev ? ioPorts(dev.profile) : null);
+  const { ticks } = useLaserFlow();
+  const key = `${gates.checklist.enabled}|${gates.checklist.items.join("\n")}`;
+  const n = gates.checklist.items.length;
+  useEffect(() => {
+    setLaserFlow({ gates: { checklistOn: gates.checklist.enabled, items: n, requireFraming: gates.requireFraming } });
+  }, [gates.checklist.enabled, n, gates.requireFraming]);
+  // A changed checklist is ticked again (the first render keeps ticks made by another Start).
+  const seen = useRef(key);
+  useEffect(() => {
+    if (seen.current !== key) setLaserFlow({ ticks: [] });
+    seen.current = key;
+  }, [key]);
+  const setTicks = (v: boolean[] | ((cur: boolean[]) => boolean[])) => {
+    const cur = [...getLaserFlow().ticks];
+    setLaserFlow({ ticks: typeof v === "function" ? v(cur) : v });
+  };
+  return {
+    gates,
+    ticks: ticks as boolean[],
+    setTicks: setTicks as ApprovalGatesState["setTicks"],
+    complete: checklistComplete(gates.checklist, ticks),
+    reset: () => setLaserFlow({ ticks: [] }),
+  };
+}
 
 /**
  * Require Framing, Door Protect and the Job Checklist in the approval card's confirm step, or inline above Start

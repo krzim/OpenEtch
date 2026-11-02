@@ -39,6 +39,8 @@ import { libsApi } from "../libs/api.ts";
 import { approvalRefusalText, checklistTicks } from "../libs/model.ts";
 import { formatSpeed, lengthText } from "../workspace/units.ts";
 import { useT } from "../workspace/usePrefs.ts";
+import { useLaserFacts } from "../laser/laserContext.ts";
+import "../laser/laser.css";
 
 /** Machine status; `children` (the LightBurn devices section) render at the bottom of the card. */
 export function MachineCard({ machine, httpError, children }: { machine: MachineStatus | null; httpError: string | null; children?: ReactNode }) {
@@ -134,6 +136,8 @@ export function RunsCard(props: {
   const approval = props.machine?.approval;
   const nowUnixS = useLockClock(props.machine);
   const notice = approvalNotice(props.machine, nowUnixS);
+  // The Laser dock shows the approval right under Request run; this card then only points there.
+  const inDock = useLaserFacts().approvalsInDock;
   return (
     <>
       {active.length > 0 && (
@@ -155,6 +159,8 @@ export function RunsCard(props: {
         )}
         {pending.length === 0 ? (
           <p className="muted">{t("lp.noneRequestRunCreatesOneNothing")}</p>
+        ) : inDock ? (
+          <p className="muted">{t("lz.approvalsInDock")}</p>
         ) : (
           pending.map((r) => (
             <PendingRunRow
@@ -179,6 +185,42 @@ export function RunsCard(props: {
         </section>
       )}
     </>
+  );
+}
+
+/**
+ * The pending runs' approval, for the Laser dock right under Request run (docs/ux/ui-plan-2026-11.md P5): the
+ * machine-wide notice and one row per pending run (PIN confirm step, or Start without a PIN). Nothing when none wait.
+ */
+export function PendingApprovals(props: { machine: MachineStatus | null; docRevision: number | null; onChanged: () => void; report: (e: unknown) => void }) {
+  const t = useT();
+  const pending = pendingRuns(props.machine);
+  const nowUnixS = useLockClock(props.machine);
+  const notice = approvalNotice(props.machine, nowUnixS);
+  if (pending.length === 0) return null;
+  return (
+    <div className="pending-approvals" role="group" aria-label={t("lz.pendingTitle")}>
+      <div className="pending-approvals-h">
+        {t("lz.pendingTitle")} <SimPinBadge machine={props.machine} />
+      </div>
+      {notice && (
+        <p className="run-hint" role="status">
+          {notice}
+        </p>
+      )}
+      {pending.map((r) => (
+        <PendingRunRow
+          key={r.id}
+          run={r}
+          machine={props.machine}
+          docRevision={props.docRevision}
+          nowUnixS={nowUnixS}
+          notice={notice}
+          onChanged={props.onChanged}
+          report={props.report}
+        />
+      ))}
+    </div>
   );
 }
 
@@ -330,7 +372,7 @@ function PendingRunRow(props: {
       {noPin && (
         <>
           <ApprovalChecks state={gates} disabled={step === "sending"} showDoor={false} />
-          <button className="btn btn-danger" onClick={() => void approve()} disabled={!canFire} title={t("laser.startTitle")}>
+          <button className="btn btn-start" onClick={() => void approve()} disabled={!canFire} title={t("lz.startTitle")}>
             {step === "sending" ? t("rest.approving") : t("lp.start")}
           </button>
         </>

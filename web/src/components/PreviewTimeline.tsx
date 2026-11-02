@@ -9,7 +9,11 @@ import { PLAYBACK_SPEEDS, clockText, segmentTimes, segmentsDoneAt, startHereSegm
 import { jobApi, saveBlob } from "../api/jobApi.ts";
 import type { Preview } from "../api/types.ts";
 import { useT } from "../workspace/usePrefs.ts";
-import { runJob } from "./JobControls.tsx";
+import { noPinMode } from "../api/runs.ts";
+import { useLaserSource } from "../laser/laserContext.ts";
+import { startCtxOf } from "../laser/StartButton.tsx";
+import { startFlow, startState } from "../laser/startFlow.ts";
+import { useLaserLive } from "../laser/useLaserLive.ts";
 import { Icon } from "./ui.tsx";
 import type { PreviewOptions } from "./Viewport.tsx";
 import "./job.css";
@@ -45,6 +49,10 @@ export function PreviewTimeline(p: {
   const at = clock ?? timeOfSegments(times, done);
   const optsRef = useRef(options);
   optsRef.current = options;
+  const { facts } = useLaserLive();
+  // The whole job's estimate for the Start label ("Start · all · ~2:14").
+  const estimateS = typeof preview.stats?.estimated_time_s === "number" ? preview.stats.estimated_time_s : duration > 0 ? duration : null;
+  useLaserSource("preview", { estimateS });
 
   // A new preview (an edit) resets the playhead's own clock.
   useEffect(() => setClock(null), [preview]);
@@ -87,16 +95,20 @@ export function PreviewTimeline(p: {
     setClock(v);
     onOptions({ ...options, upTo: segmentsDoneAt(times, v) });
   };
+  // Start here goes through the one Start flow (laser/startFlow.ts): the same gates, refusals and checklist as Start.
+  const startCtx = startCtxOf(facts, "startHere", {
+    fromSegment: startAt,
+    designOnly: p.designOnly,
+    revision: p.docRevision ?? facts.revision,
+    notify: (m) => p.notify(m),
+    report: (e) => (e instanceof Error && !("status" in e) ? p.notify(e.message, "error") : p.report(e)),
+    refreshMachine: p.onRequested,
+  });
+  const startSt = startState(startCtx);
   const startHere = () => {
     if (startAt === null) return;
     setBusy(true);
-    runJob(!!p.noPin, [], startAt, null, p.docRevision ?? null)
-      .then((msg) => p.notify(msg))
-      .catch((e: unknown) => (e instanceof Error && !("status" in e) ? p.notify(e.message, "error") : p.report(e)))
-      .finally(() => {
-        setBusy(false);
-        p.onRequested();
-      });
+    void startFlow(startCtx).finally(() => setBusy(false));
   };
   const saveImage = () => {
     setBusy(true);
@@ -143,9 +155,12 @@ export function PreviewTimeline(p: {
         ))}
       </select>
       <button
-        className="btn small"
-        disabled={busy || startAt === null || !!p.designOnly}
-        title={p.designOnly ?? (startAt === null ? t("pvt.startHereEnd") : t("pvt.startHereTitle", { segment: startAt }))}
+        className="btn small btn-start btn-start-here"
+        disabled={busy || startAt === null || !startSt.enabled}
+        title={
+          startSt.reason ??
+          (startAt === null ? t("pvt.startHereEnd") : noPinMode(facts.machine) ? t("lz.startHereTitle", { segment: startAt }) : t("lz.requestHereTitle", { segment: startAt }))
+        }
         onClick={startHere}
       >
         {t("pvt.startHere")}

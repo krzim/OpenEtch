@@ -13,10 +13,12 @@ import type { GDocument, MachineStatus } from "../api/types.ts";
 import type { LinkState } from "../api/useEngine.ts";
 import { FramingControls } from "../components/FramingOptions.tsx";
 import { MachineJog } from "../components/MachineJog.tsx";
-import { JobCounter, JobProgress, RunOptionsPanel, runJob, useJobStatus } from "../components/JobControls.tsx";
+import { JobCounter, JobProgress, RunOptionsPanel, useJobStatus } from "../components/JobControls.tsx";
+import { PendingApprovals } from "../components/LaserPanel.tsx";
 import { footCycle, footCycleText, noPinMode } from "../api/runs.ts";
-import { ApprovalChecks, useApprovalGates } from "../libs/JobSafety.tsx";
-import { checklistTicks } from "../libs/model.ts";
+import { ApprovalChecks, useSharedApprovalGates } from "../libs/JobSafety.tsx";
+import { useLaserSource } from "../laser/laserContext.ts";
+import { StartButton } from "../laser/StartButton.tsx";
 import { OptimizationDialog } from "../components/OptimizationDialog.tsx";
 import { RotaryDialog } from "../components/RotaryDialog.tsx";
 import { Icon } from "../components/ui.tsx";
@@ -80,7 +82,6 @@ export function LaserDock(p: LaserDockProps) {
       rotaryListeners.delete(take);
     };
   }, [canRotaryNow]);
-  const [requesting, setRequesting] = useState(false);
   const st = machineState(p.machine);
   const stateText = {
     offline: p.httpError ? t("laser.unreachable") : t("laser.loading"),
@@ -91,25 +92,28 @@ export function LaserDock(p: LaserDockProps) {
     noLaser: t("laser.noLaser"),
   }[st.text];
   const dotClass = st.text === "ready" || st.text === "framing" || st.text === "running" ? "ok" : st.text === "busy" ? "wait" : "bad";
-  // No PIN on this engine: Start burns at once (LightBurn's Start); else Request run makes a run to approve with the PIN.
+  // No PIN on this engine: Start burns at once (LightBurn's Start); else Request run makes a run to approve with the PIN,
+  // right below it. Both go through laser/startFlow.ts, like the toolbar, the hotkey and Start here.
   const noPin = noPinMode(p.machine);
-  const gates = useApprovalGates();
+  const gates = useSharedApprovalGates();
   const cycle = footCycle(p.machine);
   const cycleText = footCycleText(p.machine);
-  const request = () => {
-    setRequesting(true);
-    runJob(noPin, p.selection, null, noPin ? checklistTicks(gates.gates.checklist, gates.ticks) : null, p.doc?.revision ?? null)
-      .then((msg) => {
-        p.notify(msg);
-        // The checklist is ticked again for every job.
-        gates.reset();
-      })
-      .catch(p.report)
-      .finally(() => {
-        setRequesting(false);
-        p.onChanged();
-      });
-  };
+  const pending = p.pendingRuns > 0;
+  // What the Start button, the status chip and the banner need from here (laser/laserContext.ts).
+  useLaserSource("dock", {
+    machine: p.machine,
+    link: p.link,
+    httpError: p.httpError,
+    designOnly: p.designOnly,
+    workspace: "laser",
+    selection: p.selection,
+    revision: p.doc?.revision ?? null,
+    docEmpty: !!p.doc && p.doc.objects.length === 0,
+    notify: p.notify,
+    report: p.report,
+    refreshMachine: p.onChanged,
+    approvalsInDock: pending,
+  });
   // Beginner Mode hides Optimization Settings and the rotary controls, as LightBurn's does.
   const beginnerMode = usePrefs().beginnerMode;
   const canOpt = p.has("job.set_optimization") && !beginnerMode;
@@ -138,20 +142,14 @@ export function LaserDock(p: LaserDockProps) {
           onChanged={p.onChanged}
         />
       </div>
-      {noPin && <ApprovalChecks state={gates} disabled={requesting} showDoor={false} />}
-      <div className="laser-buttons">
-        <button
-          className="btn btn-primary"
-          disabled={!!p.designOnly || requesting || (noPin && !gates.complete)}
-          onClick={request}
-          title={p.designOnly ?? (noPin ? t("laser.startTitle") : t("laser.requestTitle"))}
-        >
-          <Icon name="run" size={18} /> {noPin ? t("laser.start") : t("laser.request")}
-        </button>
-        <button className="btn btn-stop laser-stop" onClick={p.onStop} title={t("laser.stopTitle")}>
-          <Icon name="stop" size={18} /> {t("laser.stop")}
+      {noPin && <ApprovalChecks state={gates} disabled={false} showDoor={false} />}
+      <div className="laser-start-row">
+        <StartButton variant="dock" />
+        <button className="btn btn-stop laser-stop" onClick={p.onStop} title={t("lz.stopTitle")}>
+          <Icon name="stop" size={20} /> {t("laser.stop")}
         </button>
       </div>
+      <PendingApprovals machine={p.machine} docRevision={p.doc?.revision ?? null} onChanged={p.onChanged} report={p.report} />
 
       {cycleText && (
         <p className={`foot-cycle foot-cycle-${cycle?.phase ?? "off"}${cycle?.phase === "off" ? " hint" : " run-hint"}`} role="status">
