@@ -38,6 +38,7 @@ export const EN_LASER = {
   "lz.chipIdleSim": "Idle (simulator)",
   "lz.chipBusy": "Busy",
   "lz.chipFraming": "Framing",
+  "lz.chipRunningPlain": "Running",
   "lz.chipRunning": "Running {pct}%",
   "lz.chipRunningLeft": "Running {pct}% · {time}",
   "lz.chipStarting": "Starting…",
