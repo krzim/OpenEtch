@@ -7,6 +7,11 @@
 // api/history.ts). Each chip carries an origin badge so it is obvious what the user, an AI agent or a script changed,
 // and an edit announced live by an agent or script (`document_changed.origin`) briefly flashes its chip. Older engines
 // without the timeline show a read-only log.
+//
+// Chips say what a step did ("Rectangle", "Move", Text "Hello": timelineLabel.ts). A tap with a finger or pen, a
+// right-click or a long press opens the step's popover (details, Roll here / Roll before / Delete) instead of hiding the
+// details in a tooltip; a mouse click still rolls the marker. The marker has a 32 px hit area with a visible grip. On a
+// phone the timeline is a list (`variant="list"`, More > History).
 
 import { useEffect, useRef, useState } from "react";
 import {
@@ -22,7 +27,11 @@ import {
 import type { Origin } from "../api/types.ts";
 import type { RemoteEdit } from "../api/useEngine.ts";
 import { capturePointer } from "../pointer.ts";
+import { useLongPress } from "../touch/useLongPress.ts";
+import { Menu, type MenuAnchor, type MenuItem } from "./Menu.tsx";
+import { timelineLabel, type StepIcon } from "./timelineLabel.ts";
 import { Icon } from "./ui.tsx";
+import { ShellIcon, type ShellIconName } from "../workspace/shellIcons.tsx";
 import { useT } from "../workspace/usePrefs.ts";
 import type { T } from "../workspace/i18n.ts";
 
@@ -52,41 +61,47 @@ export interface TimelineProps {
   flash?: RemoteEdit | null;
   onGoto: (marker: number) => void;
   onDelete: (index: number) => void;
+  /** "strip" (the bottom row, default) or "list" (the phone's History in More). */
+  variant?: "strip" | "list";
 }
 
-export function Timeline({ timeline, flash, onGoto, onDelete }: TimelineProps) {
+/** A step's icon from components/ui.tsx or workspace/shellIcons.tsx. */
+function StepIconView({ icon }: { icon: StepIcon }) {
+  return icon.set === "shell" ? <ShellIcon name={icon.name as ShellIconName} size={14} /> : <Icon name={icon.name} size={14} />;
+}
+
+export function Timeline({ timeline, flash, onGoto, onDelete, variant = "strip" }: TimelineProps) {
   const t = useT();
   const stripRef = useRef<HTMLDivElement>(null);
-  const [menu, setMenu] = useState<{ step: TimelineStep; x: number; y: number } | null>(null);
+  const listRef = useRef<HTMLOListElement>(null);
+  const [menu, setMenu] = useState<{ step: TimelineStep; at: MenuAnchor } | null>(null);
   /** Slot the marker is being dragged to, or null. */
   const [dragSlot, setDragSlot] = useState<number | null>(null);
+  /** The kind of pointer that pressed a chip last: a mouse click rolls the marker, a tap opens the step's popover. */
+  const pressedWith = useRef<string>("mouse");
   const slot = markerSlot(timeline);
   const shownSlot = dragSlot ?? slot;
   const { steps, editable } = timeline;
+  // The touch right-click: a long press on a chip opens its popover (touch/useLongPress.ts).
+  const longPress = useLongPress((x, y, target) => {
+    const i = Number((target as HTMLElement).dataset.step);
+    const step = steps[i];
+    if (step) setMenu({ step, at: { x, y } });
+  });
 
   // Keep the marker in view when it moves or a step is added.
   useEffect(() => {
+    if (variant === "list") {
+      listRef.current?.querySelector(".tl-now")?.scrollIntoView?.({ block: "nearest" });
+      return;
+    }
     const el = stripRef.current;
     const m = el?.querySelector<HTMLElement>(".tl-marker");
     if (el && m) {
       const left = m.offsetLeft - el.offsetLeft;
       if (left < el.scrollLeft + 40 || left > el.scrollLeft + el.clientWidth - 40) el.scrollLeft = left - el.clientWidth + 80;
     }
-  }, [steps.length, slot]);
-
-  useEffect(() => {
-    if (!menu) return;
-    const close = () => setMenu(null);
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && close();
-    window.addEventListener("pointerdown", close);
-    window.addEventListener("keydown", onKey);
-    window.addEventListener("blur", close);
-    return () => {
-      window.removeEventListener("pointerdown", close);
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("blur", close);
-    };
-  }, [menu]);
+  }, [steps.length, slot, variant]);
 
   const slotAt = (clientX: number): number => {
     const el = stripRef.current;
@@ -122,6 +137,31 @@ export function Timeline({ timeline, flash, onGoto, onDelete }: TimelineProps) {
     if (clamped !== slot) onGoto(markerForSlot(timeline, clamped));
   };
 
+  /** The step's popover: what it is, who made it, its state, and Roll here / Roll before / Delete. */
+  const stepItems = (h: TimelineStep): MenuItem[] => {
+    const i = steps.findIndex((s) => s.index === h.index);
+    const b = originBadge(h.origin, t);
+    const lbl = timelineLabel(h, t);
+    const summary = h.summary.length > 90 ? `${h.summary.slice(0, 89)}…` : h.summary;
+    const applied = isApplied(timeline, h);
+    const items: MenuItem[] = [
+      { label: lbl.text, disabled: true },
+      ...(summary ? [{ label: summary, disabled: true }] : []),
+      { label: t("shell.tlBy", { name: b.label }), disabled: true },
+    ];
+    if (h.state === "failed") items.push({ label: `${t("shell.tlFailedShort")}: ${h.error ?? t("tl.theStepNoLongerApplies")}`, disabled: true });
+    else if (!applied) items.push({ label: discardedByNextEdit(timeline, h) ? t("shell.tlUndone") : t("shell.tlRolledBack"), disabled: true });
+    if (!editable) return items;
+    items.push(
+      { sep: true },
+      { label: t("tl.rollMarkerHere"), action: () => onGoto(h.index) },
+      { label: t("tl.rollMarkerBeforeThisStep"), action: () => onGoto(markerForSlot(timeline, i)) },
+      { sep: true },
+      { label: t("tl.deleteStep"), danger: true, action: () => onDelete(h.index) },
+    );
+    return items;
+  };
+
   const marker = (
     <div
       key="marker"
@@ -136,12 +176,12 @@ export function Timeline({ timeline, flash, onGoto, onDelete }: TimelineProps) {
       onPointerMove={onMarkerMove}
       onPointerUp={onMarkerUp}
       onPointerCancel={() => setDragSlot(null)}
-    />
+    >
+      {editable && <span className="tl-grip" aria-hidden="true" />}
+    </div>
   );
 
-  const chips: React.ReactNode[] = [];
-  steps.forEach((h, i) => {
-    if (i === shownSlot) chips.push(marker);
+  const entryClass = (h: TimelineStep, i: number) => {
     const b = originBadge(h.origin, t);
     const flashing = !!flash && h.revision !== null && flash.revision === h.revision;
     const applied = dragSlot !== null ? i < dragSlot : isApplied(timeline, h);
@@ -169,22 +209,84 @@ export function Timeline({ timeline, flash, onGoto, onDelete }: TimelineProps) {
     ]
       .filter(Boolean)
       .join("\n");
+    return { cls, title, badge: b, flashing };
+  };
+
+  const menuView = menu && <Menu items={stepItems(menu.step)} anchor={menu.at} placement="above" onClose={() => setMenu(null)} />;
+
+  if (variant === "list") {
+    const rows: React.ReactNode[] = [];
+    const now = (
+      <li key="now" className="tl-now" aria-current="step">
+        <span>{t("shell.tlNow")}</span>
+      </li>
+    );
+    steps.forEach((h, i) => {
+      if (i === slot) rows.push(now);
+      const { cls, badge } = entryClass(h, i);
+      const lbl = timelineLabel(h, t);
+      rows.push(
+        <li key={`${h.index}-${i}`} className={`tl-list-row ${cls}`}>
+          <button type="button" className="tl-list-main" onClick={() => editable && goSlot(i + 1)}>
+            <StepIconView icon={lbl.icon} />
+            <span className="tl-cmd">{lbl.text}</span>
+            <span className={`badge ${badge.cls}`}>{badge.label}</span>
+          </button>
+          <button
+            type="button"
+            className="icon-btn small tl-list-more"
+            aria-label={t("shell.tlStepMenu")}
+            title={t("shell.tlStepMenu")}
+            onClick={(e) => setMenu({ step: h, at: e.currentTarget.getBoundingClientRect() })}
+          >
+            <Icon name="more" size={16} />
+          </button>
+        </li>,
+      );
+    });
+    if (slot >= steps.length) rows.push(now);
+    return (
+      <div className="timeline-list-wrap">
+        {steps.length === 0 ? <p className="muted tl-empty">{t("tl.noEditsYet")}</p> : <ol className="timeline-list" ref={listRef}>{rows}</ol>}
+        {menuView}
+      </div>
+    );
+  }
+
+  const chips: React.ReactNode[] = [];
+  steps.forEach((h, i) => {
+    if (i === shownSlot) chips.push(marker);
+    const { cls, title, badge, flashing } = entryClass(h, i);
+    const lbl = timelineLabel(h, t);
     chips.push(
       <button
         type="button"
         // A new seq remounts the chip so the flash animation replays.
-        key={`${h.index}-${i}${flashing ? `-f${flash.seq}` : ""}`}
+        key={`${h.index}-${i}${flashing ? `-f${flash?.seq}` : ""}`}
         className={cls}
         title={title}
-        onClick={() => editable && goSlot(i + 1)}
+        data-step={i}
+        {...longPress}
+        onPointerDown={(e) => {
+          pressedWith.current = e.pointerType;
+          longPress.onPointerDown?.(e);
+        }}
+        onClick={(e) => {
+          // A tap (finger or pen) shows the step and its actions; a mouse click rolls the marker there (Fusion).
+          if (pressedWith.current === "touch" || pressedWith.current === "pen") setMenu({ step: h, at: e.currentTarget.getBoundingClientRect() });
+          else if (editable) goSlot(i + 1);
+        }}
         onContextMenu={(e) => {
-          if (!editable) return;
+          longPress.onContextMenu?.(e);
           e.preventDefault();
-          setMenu({ step: h, x: e.clientX, y: e.clientY });
+          setMenu({ step: h, at: { x: e.clientX, y: e.clientY } });
         }}
       >
-        <span className={`badge ${b.cls}`}>{b.label}</span>
-        <span className="tl-cmd">{h.label}</span>
+        <span className={`badge ${badge.cls}`}>{badge.label}</span>
+        <span className="tl-cmd">
+          <StepIconView icon={lbl.icon} />
+          {lbl.text}
+        </span>
       </button>,
     );
   });
@@ -212,42 +314,7 @@ export function Timeline({ timeline, flash, onGoto, onDelete }: TimelineProps) {
       <div className="timeline-strip" ref={stripRef} onPointerMove={onMarkerMove} onPointerUp={onMarkerUp}>
         {steps.length === 0 ? <span className="muted tl-empty">{t("tl.noEditsYet")}</span> : chips}
       </div>
-      {menu && (
-        <div className="menu ctx-menu" role="menu" style={{ left: menu.x, top: menu.y }} onPointerDown={(e) => e.stopPropagation()}>
-          <button
-            role="menuitem"
-            className="menu-item"
-            onClick={() => {
-              setMenu(null);
-              onGoto(menu.step.index);
-            }}
-          >
-            {t("tl.rollMarkerHere")}
-          </button>
-          <button
-            role="menuitem"
-            className="menu-item"
-            onClick={() => {
-              setMenu(null);
-              const i = steps.findIndex((s) => s.index === menu.step.index);
-              onGoto(markerForSlot(timeline, i));
-            }}
-          >
-            {t("tl.rollMarkerBeforeThisStep")}
-          </button>
-          <div className="menu-sep" role="separator" />
-          <button
-            role="menuitem"
-            className="menu-item danger"
-            onClick={() => {
-              setMenu(null);
-              onDelete(menu.step.index);
-            }}
-          >
-            {t("tl.deleteStep")}
-          </button>
-        </div>
-      )}
+      {menuView}
     </div>
   );
 }

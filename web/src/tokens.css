@@ -7,9 +7,11 @@
    - data-pointer: fine | coarse
    - data-density: comfortable | compact | touch
 
-   Names that styles.css already uses for something else are not redefined here: --icon is a colour there (the size
-   token is --icon-size), and --tap / --ui-scale stay where they are until P1 moves them (--tap is meant to follow
-   --hit). */
+   Plus data-bottom (split | merged | none, App.tsx): whether the timeline and the status bar are two rows or one.
+
+   --icon is a colour in styles.css, so the icon size token is --icon-size. The chrome budget here matches
+   workspace/shell.ts `chromeBudget` (tokens.test.ts keeps them in step). Bar heights never include the safe areas;
+   the rows that touch an edge add them (the top bar --safe-top, .app's padding --safe-bottom). */
 
 :root {
   /* Space scale. */
@@ -55,10 +57,13 @@
   --z-drop: 400;
   --z-stop: 1000;
 
-  /* Density (fine pointer). --ui-scale (Preferences > UI scale) also scales the control and row heights. */
+  /* Density (fine pointer). --ui-scale (Preferences > UI scale, set on <html> by usePrefs.ts) also scales the control
+     and row heights. --tap is the minimum size of a button: it follows --hit. */
+  --ui-scale: 1;
   --ctl-h: calc(28px * var(--ui-scale, 1));
   --row-h: calc(28px * var(--ui-scale, 1));
   --hit: 28px;
+  --tap: var(--hit);
   --icon-size: 20px;
 
   /* Safe areas (notches, home indicator; 0 elsewhere). */
@@ -75,8 +80,6 @@
   --bar-timeline: 52px;
   --bar-status: 24px;
   --bar-nav: 0px;
-  /* Everything under the canvas: toasts and the warnings panel sit at calc(var(--bar-bottom) + 18px). */
-  --bar-bottom: calc(var(--bar-timeline) + var(--bar-status));
   --tool-rail-w: 0px;
   --dock-rail-w: 32px;
   --dock-left-w: 260px;
@@ -118,17 +121,28 @@
 
 /* Phone: top bar, full-bleed canvas, bottom sheets and a bottom tab bar. */
 :root[data-layout="phone"] {
-  --bar-top: calc(48px + var(--safe-top));
+  --bar-top: 48px;
   --bar-tool: 0px;
   --bar-context: 0px;
   --bar-palette: 0px;
   --bar-timeline: 0px;
   --bar-status: 0px;
-  --bar-nav: calc(56px + var(--safe-bottom));
-  --bar-bottom: var(--bar-nav);
+  --bar-nav: 56px;
   --dock-rail-w: 0px;
   --dock-left-w: 0px;
   --dock-right-w: 0px;
+}
+
+/* Compact with the timeline pinned open: timeline and status bar as two rows again. */
+:root[data-layout="compact"][data-bottom="split"] {
+  --bar-timeline: 52px;
+  --bar-status: 24px;
+}
+
+/* Everything under the canvas, home indicator included: toasts and the warnings panel sit 18 px above it (var() is
+   resolved with the mode's own row heights). */
+:root {
+  --bar-bottom: calc(var(--bar-timeline) + var(--bar-status) + var(--bar-nav) + var(--safe-bottom));
 }
 
 /* Coarse pointers: 44 px hit targets (WCAG 2.5.8 and Apple HIG), 24 px icons. */

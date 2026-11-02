@@ -1,5 +1,6 @@
 // Preferences (LightBurn's File > Settings, the display side): theme, language, UI scale, units, grid, snapping,
-// nudge steps, mouse wheel and the crosshair cursor. Changes apply at once and are kept in this browser; the engine
+// nudge steps, mouse wheel and the crosshair cursor, and the layout and input choices (layout mode, density, trackpad,
+// touch: docs/ux/ui-plan-2026-11.md 1.1 and 1.2). Changes apply at once and are kept in this browser; the engine
 // and the document are never touched (and stay in mm). Plus Beginner Mode (LightBurn's Editor Settings) and the
 // engine's Project locations (files/ProjectFolders.tsx, saved by the engine).
 
@@ -9,13 +10,28 @@ import { ProjectLocationsSection } from "../files/ProjectFolders.tsx";
 import { LightBurnPrefsImport } from "../files/LightBurnPrefsImport.tsx";
 import { libsToast } from "../libs/store.ts";
 import { languages, type MsgKey } from "./i18n.ts";
-import { DEFAULT_NUDGE, SNAP_TOGGLES, resetPrefs, updatePrefs, type LengthUnit, type SpeedUnit, type ThemePref } from "./prefs.ts";
+import {
+  DEFAULT_NUDGE,
+  SNAP_TOGGLES,
+  resetPrefs,
+  updatePrefs,
+  type DensityPref,
+  type LayoutOverride,
+  type LengthUnit,
+  type ShowSelectionBar,
+  type SpeedUnit,
+  type ThemePref,
+  type TouchOneFinger,
+  type TrackpadPans,
+} from "./prefs.ts";
+import { useLayoutMode } from "./layoutMode.ts";
 import { usePrefs, useT } from "./usePrefs.ts";
 import { WsModal } from "./WsModal.tsx";
 
 export function PreferencesDialog(p: { onClose: () => void; onHotkeys: () => void }) {
   const t = useT();
   const prefs = usePrefs();
+  const mode = useLayoutMode();
   const seg = <V extends string>(value: V, options: { v: V; label: string }[], set: (v: V) => void, aria: string) => (
     <div className="segmented" role="radiogroup" aria-label={aria}>
       {options.map((o) => (
@@ -117,6 +133,79 @@ export function PreferencesDialog(p: { onClose: () => void; onHotkeys: () => voi
             <span className="pref-value">{Math.round(prefs.handleScale * 100)}%</span>
           </label>
           {check(t("prefs.crosshair"), prefs.crosshair, (crosshair) => updatePrefs({ crosshair }))}
+        </section>
+
+        <section className="prefs-section">
+          <h4>{t("shell.prefsLayout")}</h4>
+          <div className="pref-row">
+            <span className="pref-label">{t("shell.prefLayout")}</span>
+            {seg<LayoutOverride>(
+              prefs.layoutOverride,
+              [
+                { v: "auto", label: t("shell.auto") },
+                { v: "wide", label: t("shell.layoutWide") },
+                { v: "compact", label: t("shell.layoutCompact") },
+                { v: "tablet", label: t("shell.layoutTablet") },
+                { v: "phone", label: t("shell.layoutPhone") },
+              ],
+              (layoutOverride) => updatePrefs({ layoutOverride }),
+              t("shell.prefLayout"),
+            )}
+          </div>
+          <div className="pref-row">
+            <span className="pref-label">{t("shell.prefDensity")}</span>
+            {seg<DensityPref>(
+              prefs.density,
+              [
+                { v: "auto", label: t("shell.auto") },
+                { v: "comfortable", label: t("shell.densityComfortable") },
+                { v: "compact", label: t("shell.densityCompact") },
+                { v: "touch", label: t("shell.densityTouch") },
+              ],
+              (density) => updatePrefs({ density }),
+              t("shell.prefDensity"),
+            )}
+          </div>
+          <p className="hint">{t("shell.prefLayoutNow", { layout: mode.layout, pointer: mode.pointer, density: mode.density })}</p>
+          <div className="pref-row">
+            <span className="pref-label">{t("shell.prefTrackpad")}</span>
+            {seg<TrackpadPans>(
+              prefs.trackpadPans,
+              [
+                { v: "auto", label: t("shell.auto") },
+                { v: "on", label: t("shell.on") },
+                { v: "off", label: t("shell.off") },
+              ],
+              (trackpadPans) => updatePrefs({ trackpadPans }),
+              t("shell.prefTrackpad"),
+            )}
+          </div>
+          <div className="pref-row">
+            <span className="pref-label">{t("shell.prefOneFinger")}</span>
+            {seg<TouchOneFinger>(
+              prefs.touchOneFinger,
+              [
+                { v: "select", label: t("shell.oneFingerSelect") },
+                { v: "pan", label: t("shell.oneFingerPan") },
+              ],
+              (touchOneFinger) => updatePrefs({ touchOneFinger }),
+              t("shell.prefOneFinger"),
+            )}
+          </div>
+          <div className="pref-row">
+            <span className="pref-label">{t("shell.prefSelectionBar")}</span>
+            {seg<ShowSelectionBar>(
+              prefs.showSelectionBar,
+              [
+                { v: "auto", label: t("shell.auto") },
+                { v: "always", label: t("shell.always") },
+                { v: "never", label: t("shell.never") },
+              ],
+              (showSelectionBar) => updatePrefs({ showSelectionBar }),
+              t("shell.prefSelectionBar"),
+            )}
+          </div>
+          {check(t("shell.prefTimelinePinned"), prefs.timelinePinned, (timelinePinned) => updatePrefs({ timelinePinned }))}
         </section>
 
         <section className="prefs-section">

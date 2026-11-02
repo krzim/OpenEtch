@@ -1,6 +1,8 @@
-// Application shell: top bar, toolbar, Browser | Viewport | Properties, Timeline. On narrow screens (iPad portrait,
-// phones) the side panels become drawers over the viewport. All document state comes from the engine; the only
-// client state is the view: workspace, tool, selection, clipboard, open panels and dialogs, display options.
+// Application shell: top bar, toolbar, Browser | Viewport | Properties, Timeline, laid out per layout mode
+// (workspace/layoutMode.ts, docs/ux/ui-plan-2026-11.md 1.1): wide, compact (MacBook), tablet and phone. The side
+// panels are pinned beside the canvas or rails that open as overlays (workspace/layout.ts `dockPolicy`); the phone gets
+// its own shell (workspace/PhoneShell.tsx). All document state comes from the engine; the only client state is the
+// view: workspace, tool, selection, clipboard, open panels and dialogs, display options.
 //
 // Files dropped anywhere on the window (or picked with Import / Ctrl+I) are routed by api/drop.ts: SVG, DXF and bitmaps
 // are imported into the document, a LightBurn .lbrn2 opens the Open/Import dialog, a .openetch opens the project.
@@ -9,7 +11,7 @@
 // device's rectangle. File > Devices… (Alt+Shift+M, as in LightBurn) opens the Devices window, and the Laser workspace
 // has the device dropdown.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { api } from "./api/client.ts";
 import * as C from "./api/commands.ts";
 import {
@@ -55,13 +57,15 @@ import { LayerSection, PropertiesPanel } from "./components/PropertiesPanel.tsx"
 import { Timeline } from "./components/Timeline.tsx";
 import { Toolbar, type ArrangeAction } from "./components/Toolbar.tsx";
 import { TopBar, type Workspace } from "./components/TopBar.tsx";
+import { Icon } from "./components/ui.tsx";
 import { Viewport, type PreviewOptions, type SnapSettings, type Tool, type ViewStyle } from "./components/Viewport.tsx";
 import { CutsLayers } from "./workspace/CutsLayers.tsx";
-import { TopActions } from "./workspace/HelpMenu.tsx";
+import { AboutDialog, HelpItems, TopActions } from "./workspace/HelpMenu.tsx";
+import { PhoneShell } from "./workspace/PhoneShell.tsx";
 import { LaserDock, machineState } from "./workspace/LaserDock.tsx";
 import { NumericBar } from "./workspace/NumericBar.tsx";
 import { PaletteBar } from "./workspace/PaletteBar.tsx";
-import { getPrefs } from "./workspace/prefs.ts";
+import { getPrefs, updatePrefs } from "./workspace/prefs.ts";
 import { hintFor, stopChordActs } from "./workspace/hotkeys.ts";
 import { VIEW_PREFS_EVENT } from "./files/LightBurnPrefsImport.tsx";
 import { RecentProjects } from "./workspace/RecentProjects.tsx";
@@ -69,8 +73,19 @@ import { StatusBar } from "./workspace/StatusBar.tsx";
 import { sendViewCommand } from "./workspace/viewStatus.ts";
 import { WorkspaceFileItems, useWorkspaceUi } from "./workspace/useWorkspace.tsx";
 import { Dock } from "./workspace/Dock.tsx";
-import { DockAreaHost, FloatHost, WindowMenu, WindowMenuEntries, useAreaHasWindows } from "./workspace/DockHost.tsx";
+import { DockAreaHost, FloatHost, SidePanel, Splitter, WindowMenu, WindowMenuEntries, useAreaHasWindows, useWindowSize } from "./workspace/DockHost.tsx";
+import { dockPolicy, setAreaMode, updateLayout, type AreaMode, type SideArea } from "./workspace/layout.ts";
+import { useLayout } from "./workspace/windows.ts";
+import { useFullscreen } from "./workspace/fullscreen.ts";
+import { openAppModeDialog } from "./app/AppModeDialog.tsx";
 import { useLayoutMode } from "./workspace/layoutMode.ts";
+import { ContextStripHost, useContextStripBusy } from "./workspace/contextStrip.tsx";
+import { bottomRow, windowTitle } from "./workspace/shell.ts";
+import { ShellIcon } from "./workspace/shellIcons.tsx";
+import { ConnectScreen } from "./app/ConnectScreen.tsx";
+import { ConnectionBanner } from "./laser/ConnectionBanner.tsx";
+import { EmptyCanvasCard } from "./laser/EmptyCanvasCard.tsx";
+import { TouchHud } from "./touch/TouchHud.tsx";
 import { useDocTabs } from "./workspace/DocTabs.tsx";
 import { useDocking } from "./workspace/DockingTool.tsx";
 import { useFlash, withLayerFlash } from "./workspace/flash.tsx";
@@ -103,8 +118,6 @@ import {
 
 /** Field size until /api/machine reports `field_mm`. */
 const DEFAULT_FIELD_MM = 153.75;
-/** Below this width the side panels are drawers. */
-const NARROW_QUERY = "(max-width: 1023px)";
 const VIEW_KEY = "openetch.view";
 
 type Dialog = "stock" | "place" | "commands" | null;
@@ -112,17 +125,6 @@ interface Toast {
   id: number;
   msg: string;
   kind: "info" | "error";
-}
-
-function useMediaQuery(q: string): boolean {
-  const [m, setM] = useState(() => window.matchMedia(q).matches);
-  useEffect(() => {
-    const mq = window.matchMedia(q);
-    const on = () => setM(mq.matches);
-    mq.addEventListener("change", on);
-    return () => mq.removeEventListener("change", on);
-  }, [q]);
-  return m;
 }
 
 interface ViewPrefs {
@@ -142,13 +144,6 @@ function loadPrefs(): ViewPrefs {
   } catch {
     return DEFAULT_PREFS;
   }
-}
-
-/** A callback ref that makes a closed drawer or overlay `inert` (no focus, no clicks, hidden from assistive tech). */
-function inertRef(inert: boolean): (el: HTMLElement | null) => void {
-  return (el) => {
-    if (el) el.inert = inert;
-  };
 }
 
 /** Typing in a field (or a dialog button) keeps its keys. */
@@ -174,10 +169,16 @@ export function App() {
   const [previewOptions, setPreviewOptions] = useState<PreviewOptions>({ hidden: new Set(), hiddenPasses: new Set(), upTo: null, shade: true, jumps: true });
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [devicesOpen, setDevicesOpen] = useState(false);
-  const narrow = useMediaQuery(NARROW_QUERY);
-  const { layout } = useLayoutMode();
-  const [leftOpen, setLeftOpen] = useState(!narrow);
-  const [rightOpen, setRightOpen] = useState(!narrow);
+  // Layout mode (workspace/layoutMode.ts): wide, compact (MacBook), tablet, phone; the pointer and the density.
+  const { layout, pointer } = useLayoutMode();
+  // Side panels shown (the toolbar's Browser / Properties toggles, Window > Toggle side panels); pinned or rail is the
+  // layout's business (dockPolicy below). `overlay`: a rail opened over the canvas. `focus`: Focus canvas.
+  const [leftOpen, setLeftOpen] = useState(true);
+  const [rightOpen, setRightOpen] = useState(true);
+  const [overlay, setOverlay] = useState<SideArea | null>(null);
+  const [focus, setFocus] = useState(false);
+  const [about, setAbout] = useState(false);
+  const stripBusy = useContextStripBusy();
   const fileRef = useRef<HTMLInputElement>(null);
   const toastId = useRef(0);
   const cursor = useRef<Vec2 | null>(null);
@@ -216,11 +217,8 @@ export function App() {
   // Engine errors name objects and layers rather than internal ids, without the HTTP prefix.
   const report = useCallback((e: unknown) => notify(friendlyError(e instanceof Error ? e.message : String(e), docRef.current), "error"), [notify]);
 
-  // Drawers start closed when the layout becomes narrow, open when it becomes wide.
-  useEffect(() => {
-    setLeftOpen(!narrow);
-    setRightOpen(!narrow);
-  }, [narrow]);
+  // A rail's overlay never outlives a change of layout.
+  useEffect(() => setOverlay(null), [layout]);
 
   useEffect(() => setSelectionRaw((s) => pruneSelection(s, doc)), [doc]);
 
@@ -332,10 +330,44 @@ export function App() {
   const [moveTogether, setMoveTogether] = useState<"x" | "y" | null>(null);
   const positioning = usePositionLaser();
   const rightHasWindows = useAreaHasWindows("right");
+  const bottomHasWindows = useAreaHasWindows("bottom");
+  const dockLayout = useLayout();
+  const view = useWindowSize();
+  const fullscreen = useFullscreen();
+  // What each side is now: pinned, a rail, or hidden (closed with its toggle, empty, Focus canvas, or a phone).
+  const policy = dockPolicy(view.w, dockLayout.sizes, { layout, modes: dockLayout.areaMode, reserved: layout === "tablet" ? 52 : 0 });
+  const sideMode = (side: SideArea): AreaMode => {
+    const has = side === "left" ? leftHasWindows : rightHasWindows;
+    const open = side === "left" ? leftOpen : rightOpen;
+    return layout === "phone" || focus || !has || !open ? "hidden" : policy[side];
+  };
+  const leftMode = sideMode("left");
+  const rightMode = sideMode("right");
+  // The toolbar's Browser / Properties buttons: a rail opens its overlay; a pinned side hides; a hidden one comes back.
+  const toggleSide = (side: SideArea) => {
+    const mode = side === "left" ? leftMode : rightMode;
+    const setOpen = side === "left" ? setLeftOpen : setRightOpen;
+    if (mode === "rail") return setOverlay((o) => (o === side ? null : side));
+    if (mode === "pinned") {
+      if (overlay === side) setOverlay(null);
+      return setOpen(false);
+    }
+    if (dockLayout.areaMode[side] === "hidden") updateLayout((l) => setAreaMode(l, side, null));
+    setFocus(false);
+    setOpen(true);
+    if (policy[side] === "rail") setOverlay(side);
+  };
+  const setLeftOverlay = useCallback((o: boolean) => setOverlay((cur) => (o ? "left" : cur === "left" ? null : cur)), []);
+  const setRightOverlay = useCallback((o: boolean) => setOverlay((cur) => (o ? "right" : cur === "right" ? null : cur)), []);
 
   // LightBurn's Arrange > Distribute (H-Spaced / H-Centered / V-Spaced / V-Centered), hidden in Beginner Mode like
   // LightBurn's. The arrange handler is defined further down; the menu reaches it through a ref.
-  const { beginnerMode, hotkeys: prefHotkeys } = usePrefs();
+  const { beginnerMode, hotkeys: prefHotkeys, timelinePinned, theme: themePref } = usePrefs();
+  // Timeline and status bar: two rows (wide, pinned compact) or one merged row (compact, tablet).
+  const row = bottomRow(layout, timelinePinned);
+  useEffect(() => {
+    document.documentElement.dataset.bottom = row;
+  }, [row]);
   const arrangeRef = useRef<(a: ArrangeAction) => void>(() => {});
   const nUnits = doc ? unitsOf(doc, selection.objects).length : 0;
   const distributeItems: MenuItem[] = beginnerMode
@@ -722,6 +754,8 @@ export function App() {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
       const k = e.key.toLowerCase();
+      // Ctrl/Cmd with = + - 0 never zooms the page (the canvas has its own zoom keys).
+      if (mod && !e.altKey && (k === "=" || k === "+" || k === "-" || k === "0")) e.preventDefault();
       if (mod && !e.altKey && k === "s") {
         // Never the browser's "save page"; Save prompts for a name the first time, Ctrl+Shift+S always.
         e.preventDefault();
@@ -1050,12 +1084,60 @@ export function App() {
         requestRotarySetup();
       },
       "window.sidePanels": () => {
-        const open = !(leftOpen || rightOpen);
+        const open = !(leftOpen || rightOpen) || focus;
+        setFocus(false);
         setLeftOpen(open);
         setRightOpen(open);
       },
       "window.newTab": () => (tabs.api.supported ? tabs.api.newTab() : false),
+      // Focus canvas: the docks, the palette and the bottom row go; the top bar (STOP) and the context strip stay.
+      "view.focusCanvas": () => (layout === "phone" ? false : toggleFocus()),
+      // Full screen (Alt+Enter): not while a line or pen is being drawn (Alt+Enter also finishes those).
+      "view.fullscreen": () => (!fullscreen.supported || tool === "line" || tool === "pen" ? false : fullscreen.toggle()),
+      "help.useAsApp": () => openAppModeDialog(),
+      // S: command search (P2 turns the Commands dialog into it); in node editing plain S makes a node smooth.
+      "app.commandSearch": () => (tool === "node" || tool === "text" ? false : setDialog("commands")),
     },
+  };
+
+  function toggleFocus() {
+    setFocus((f) => !f);
+    setOverlay(null);
+  }
+
+  // The window title follows the document and its unsaved state ("Plate • — OpenEtch").
+  const titleName = file.projectName ?? file.openedName ?? doc?.name ?? null;
+  useEffect(() => {
+    document.title = windowTitle(titleName, file.dirty);
+  }, [titleName, file.dirty]);
+
+  // The touch HUD's selection action bar (touch/TouchHud.tsx).
+  const touchAction = (id: string) => {
+    switch (id) {
+      case "copy":
+        return copy(false);
+      case "cut":
+        return copy(true);
+      case "paste":
+        return paste(false);
+      case "duplicate":
+        return duplicate();
+      case "delete":
+        return deleteSelection();
+      case "group":
+        return group();
+      case "ungroup":
+        return ungroup();
+      case "rotate90":
+        if (selection.objects.length) void exec(C.transform(selection.objects, { rotate_deg: 90, about: "center" }));
+        return;
+      case "flipH":
+        return flip("x");
+      case "flipV":
+        return flip("y");
+      case "menu":
+        return setMenu({ x: Math.round(window.innerWidth / 2), y: Math.round(window.innerHeight / 2) });
+    }
   };
 
   const onSelectObject = (id: string, op: SelectOp | boolean) => {
@@ -1064,364 +1146,377 @@ export function App() {
     setSelection(applySelect(selection, doc, [id], o));
   };
 
-  return (
-    <div className={`app ws-${workspace}${narrow ? " narrow" : ""}`}>
-      <TopBar
-        fileMenu={
-          <FileMenu
-            file={file}
-            onImport={openImport}
-            onDevices={canDevices ? () => setDevicesOpen(true) : undefined}
-            recent={(close) => (
-              <RecentProjects
-                current={file.projectName}
-                disabled={file.busy}
-                onOpen={(name) => {
-                  close();
-                  file.openProject(name);
-                }}
-              />
-            )}
-            extra={(close) => (
-              <>
-                {tabs.api.supported && (
-                  <button
-                    role="menuitem"
-                    className="menu-item"
-                    onClick={() => {
-                      close();
-                      tabs.api.newTab();
-                    }}
-                  >
-                    <span>{t("tabs.newTab")}</span>
-                  </button>
-                )}
-                <WorkspaceFileItems close={close} open={ws.open} />
-                {libsUi.fileItems(close)}
-              </>
-            )}
-            files={filesUi.menu}
-            onSaveGcode={
-              isGrblMachine(machine)
-                ? () =>
-                    void jobApi
-                      .exportGcode()
-                      .then(({ blob, filename }) => {
-                        const name = gcodeFileName(filename, file.projectName ?? file.openedName ?? doc?.name ?? null);
-                        saveBlob(blob, name);
-                        notify(t("fm.gcodeSaved", { name }));
-                      })
-                      .catch(report)
-                : undefined
-            }
-          />
-        }
-        extra={
-          <>
-            {layout === "wide" && <WindowMenu />}
-            <SimPinBadge machine={machine} />
-            <ShutdownBadge machine={machine} />
-            <TopActions
-              machine={machine}
-              onHotkeys={() => ws.open("hotkeys")}
-              onPreferences={() => ws.open("prefs")}
-              helpExtra={libsUi.helpItems}
-              overflow={layout !== "wide"}
-              windowItems={(close) => <WindowMenuEntries close={close} />}
-            />
-          </>
-        }
-        workspace={workspace}
-        onWorkspace={switchWorkspace}
-        onUndo={() => void undo()}
-        onRedo={() => void redo()}
-        onStop={stop}
-        link={engine.link}
-        httpError={engine.httpError}
-        machine={machine}
-        missingCommands={missingCommands}
-        docName={file.openedName ?? doc?.name ?? null}
-        projectName={file.projectName}
-        dirty={file.dirty}
-        pendingRuns={runs.length}
-        docExtra={tabs.addButton}
-      />
-      {tabs.bar && <div className="doc-tabs-row">{tabs.bar}</div>}
-      <Toolbar
-        workspace={workspace}
-        tool={tool}
-        hasSelection={hasSel}
-        units={units}
-        grouped={grouped}
-        hasStock={!!doc?.stock}
-        showPreview={showPreview}
-        leftOpen={leftOpen}
-        rightOpen={rightOpen}
-        snap={prefs.snap}
-        viewStyle={prefs.viewStyle}
-        canGroup={has(C.OPT.groupCreate)}
-        onTool={setTool}
-        onStock={() => setDialog("stock")}
-        onImport={openImport}
-        onPlace={() => setDialog("place")}
-        onArray={designUi.openArray}
-        onDelete={deleteSelection}
-        onArrange={arrange}
-        onSnap={(snap) => setPrefs((p) => ({ ...p, snap }))}
-        onViewStyle={(viewStyle) => setPrefs((p) => ({ ...p, viewStyle }))}
-        onCommands={() => setDialog("commands")}
-        onTogglePreview={() => setShowPreview((v) => !v)}
-        onFrame={() => void machineAction(frameWithOptions(selection.objects), t("app.framing"))}
-        onFrameStop={() => void machineAction(api.frameStop(), t("app.frameStopped"))}
-        onRequestRun={requestRun}
-        startMode={noPinMode(machine)}
-        designOnly={designOnlyReason(device)}
-        onToggleLeft={() => setLeftOpen((v) => !v)}
-        onToggleRight={() => setRightOpen((v) => !v)}
-        extra={
-          <>
-            {text.toolbar}
-            {edit.toolbar}
-            {designUi.toolbar}
-            {libsUi.toolbar}
-          </>
-        }
-      />
-      <div className="main">
-        {narrow && (leftOpen || rightOpen) && (
-          <div
-            className="drawer-scrim"
-            onClick={() => {
-              setLeftOpen(false);
-              setRightOpen(false);
-            }}
-          />
-        )}
-        <aside
-          ref={inertRef(narrow && !(leftOpen && leftHasWindows))}
-          className={`panel panel-left${leftOpen && leftHasWindows ? " open" : ""}`}
-          aria-label={t("win.browser")}
-        >
-          <div className="panel-body">
-            <DockAreaHost area="left" />
-            <Dock id="browser" title={t("win.browser")}>
-            <BrowserPanel
-              doc={doc}
-              selection={selection}
-              has={has}
-              onSelectObject={onSelectObject}
-              onSelectLayer={(id, all) => {
-                if (all && doc) setSelection(selectLayerObjects(doc, id));
-                else setSelection({ objects: [], layer: id, stock: false });
-              }}
-              onSelectStock={() => setSelection({ objects: [], layer: null, stock: true })}
-              onObjectMenu={(x, y, id) => {
-                if (doc && !selection.objects.includes(id)) setSelection(applySelect(selection, doc, [id], "replace"));
-                setMenu({ x, y });
-              }}
-              run={run}
-              report={report}
-            />
-            </Dock>
-          </div>
-        </aside>
+  // ---- the shell's parts (placed per layout mode below) ----------------------------------------------------------
 
-        <section className="center">
-          {workspace === "design" && <NumericBar doc={doc} selection={selection} run={run} report={report} />}
-          <div className="center-stage">
-          <Viewport
+  const fileMenu = (
+    <FileMenu
+      file={file}
+      onImport={openImport}
+      onDevices={canDevices ? () => setDevicesOpen(true) : undefined}
+      recent={(close) => (
+        <RecentProjects
+          current={file.projectName}
+          disabled={file.busy}
+          onOpen={(name) => {
+            close();
+            file.openProject(name);
+          }}
+        />
+      )}
+      extra={(close) => (
+        <>
+          {tabs.api.supported && (
+            <button
+              role="menuitem"
+              className="menu-item"
+              onClick={() => {
+                close();
+                tabs.api.newTab();
+              }}
+            >
+              <span>{t("tabs.newTab")}</span>
+            </button>
+          )}
+          <WorkspaceFileItems close={close} open={ws.open} />
+          {libsUi.fileItems(close)}
+        </>
+      )}
+      files={filesUi.menu}
+      onSaveGcode={
+        isGrblMachine(machine)
+          ? () =>
+              void jobApi
+                .exportGcode()
+                .then(({ blob, filename }) => {
+                  const name = gcodeFileName(filename, file.projectName ?? file.openedName ?? doc?.name ?? null);
+                  saveBlob(blob, name);
+                  notify(t("fm.gcodeSaved", { name }));
+                })
+                .catch(report)
+          : undefined
+      }
+    />
+  );
+
+  const topBar = (onMenu?: () => void) => (
+    <TopBar
+      fileMenu={fileMenu}
+      onMenu={onMenu}
+      extra={
+        <>
+          {layout === "wide" && <WindowMenu focusCanvas={focus} onFocusCanvas={toggleFocus} />}
+          <SimPinBadge machine={machine} />
+          <ShutdownBadge machine={machine} />
+          <TopActions
+            machine={machine}
+            onHotkeys={() => ws.open("hotkeys")}
+            onPreferences={() => ws.open("prefs")}
+            helpExtra={libsUi.helpItems}
+            overflow={layout !== "wide"}
+            windowItems={(close) => <WindowMenuEntries close={close} focusCanvas={focus} onFocusCanvas={toggleFocus} />}
+          />
+        </>
+      }
+      workspace={workspace}
+      onWorkspace={switchWorkspace}
+      onUndo={() => void undo()}
+      onRedo={() => void redo()}
+      onStop={stop}
+      link={engine.link}
+      httpError={engine.httpError}
+      machine={machine}
+      missingCommands={missingCommands}
+      docName={file.openedName ?? doc?.name ?? null}
+      projectName={file.projectName}
+      dirty={file.dirty}
+      pendingRuns={runs.length}
+      docExtra={tabs.addButton}
+    />
+  );
+
+  const toolbar = (
+    <Toolbar
+      workspace={workspace}
+      tool={tool}
+      hasSelection={hasSel}
+      units={units}
+      grouped={grouped}
+      hasStock={!!doc?.stock}
+      showPreview={showPreview}
+      leftOpen={leftMode === "pinned" || overlay === "left"}
+      rightOpen={rightMode === "pinned" || overlay === "right"}
+      snap={prefs.snap}
+      viewStyle={prefs.viewStyle}
+      canGroup={has(C.OPT.groupCreate)}
+      onTool={setTool}
+      onStock={() => setDialog("stock")}
+      onImport={openImport}
+      onPlace={() => setDialog("place")}
+      onArray={designUi.openArray}
+      onDelete={deleteSelection}
+      onArrange={arrange}
+      onSnap={(snap) => setPrefs((p) => ({ ...p, snap }))}
+      onViewStyle={(viewStyle) => setPrefs((p) => ({ ...p, viewStyle }))}
+      onCommands={() => setDialog("commands")}
+      onTogglePreview={() => setShowPreview((v) => !v)}
+      onFrame={() => void machineAction(frameWithOptions(selection.objects), t("app.framing"))}
+      onFrameStop={() => void machineAction(api.frameStop(), t("app.frameStopped"))}
+      onRequestRun={requestRun}
+      startMode={noPinMode(machine)}
+      designOnly={designOnlyReason(device)}
+      onToggleLeft={() => toggleSide("left")}
+      onToggleRight={() => toggleSide("right")}
+      extra={
+        <>
+          {text.toolbar}
+          {edit.toolbar}
+          {designUi.toolbar}
+          {libsUi.toolbar}
+        </>
+      }
+    />
+  );
+
+  const leftContent = (
+    <Dock id="browser" title={t("win.browser")}>
+    <BrowserPanel
+      doc={doc}
+      selection={selection}
+      has={has}
+      onSelectObject={onSelectObject}
+      onSelectLayer={(id, all) => {
+        if (all && doc) setSelection(selectLayerObjects(doc, id));
+        else setSelection({ objects: [], layer: id, stock: false });
+      }}
+      onSelectStock={() => setSelection({ objects: [], layer: null, stock: true })}
+      onObjectMenu={(x, y, id) => {
+        if (doc && !selection.objects.includes(id)) setSelection(applySelect(selection, doc, [id], "replace"));
+        setMenu({ x, y });
+      }}
+      run={run}
+      report={report}
+    />
+    </Dock>
+  );
+
+  const rightContent = (
+    <>
+      {workspace === "design" ? (
+        <>
+        {filesUi.pagesDock}
+        <CutsLayers
+          doc={doc}
+          selection={selection}
+          machine={machine}
+          has={has}
+          run={run}
+          report={report}
+          notify={notify}
+          onSelectLayer={(id, all) => {
+            if (all && doc) setSelection(selectLayerObjects(doc, id));
+            else setSelection({ objects: [], layer: id, stock: false });
+          }}
+        />
+        {libsUi.dock}
+        {designUi.dock}
+        {docking.window}
+        <Dock id="properties" title={t("win.properties")}>
+        <PropertiesPanel
+          doc={doc}
+          selection={selection}
+          machine={machine}
+          workspaceMm={workspaceMm}
+          has={has}
+          run={run}
+          report={report}
+          onEditStock={() => setDialog("stock")}
+          onArrange={arrange}
+        />
+        {designUi.properties}
+        {text.properties}
+        </Dock>
+        </>
+      ) : (
+        <div className="props">
+          <LaserDock
+            machine={machine}
+            httpError={engine.httpError}
+            device={
+              canDevices ? (
+                <DeviceBar
+                  devices={devices}
+                  machine={machine}
+                  onOpenWindow={() => setDevicesOpen(true)}
+                  onSwitched={onDeviceSwitched}
+                  notify={notify}
+                  report={report}
+                />
+              ) : undefined
+            }
+            designOnly={laserDisabled}
+            link={engine.link}
             doc={doc}
-            workspaceMm={workspaceMm}
-            selection={selection}
-            tool={tool}
-            activeLayer={activeLayer}
-            preview={engine.preview}
-            showPreview={previewOn}
-            previewOptions={previewOptions}
-            viewStyle={prefs.viewStyle}
-            snap={prefs.snap}
-            outside={outside}
+            selection={selection.objects}
+            pendingRuns={runs.length}
             has={has}
-            onSelection={setSelection}
-            onToolDone={() => setTool("select")}
-            onContextMenu={(x, y) => setMenu({ x, y })}
-            onCursor={(p) => (cursor.current = p)}
             run={run}
             notify={notify}
             report={report}
-            canvasTool={withPositionLaser(
-              withLayerFlash(designUi.wrap(libsUi.wrap(text.wrap(edit.canvas))), doc, flash),
-              positioning,
-              (pt) =>
-                void machineAction(jobApi.pointer(roundMm(pt[0]), roundMm(pt[1])), t("poslaser.done", { x: roundMm(pt[0]), y: roundMm(pt[1]) })),
-              (end) => (
-                <div className="vp-overlay lx-sp-bar" role="status">
-                  <span>{t("poslaser.bar")}</span>
-                  <button className="btn small" onClick={end}>
-                    {t("common.cancel")}
-                  </button>
-                </div>
-              ),
-            )}
+            onChanged={() => void engine.refreshMachine()}
+            onStop={stop}
+            extras={<LaserExtras designOnly={laserDisabled} tools={libsUi.laserTools} notify={notify} report={report} />}
           />
-          {previewOn && engine.preview && (
-            <PreviewTimeline
-              preview={engine.preview}
-              options={previewOptions}
-              onOptions={setPreviewOptions}
-              designOnly={laserDisabled}
-              docName={file.projectName ?? file.openedName ?? doc?.name ?? null}
-              notify={notify}
-              report={report}
-              onRequested={() => void engine.refreshMachine()}
-              noPin={noPinMode(machine)}
-              docRevision={doc?.revision ?? null}
-            />
-          )}
-          </div>
-          <DockAreaHost area="bottom" />
-          {workspace === "design" && <PaletteBar doc={doc} selected={selection.objects} run={run} report={report} notify={notify} has={has} />}
-        </section>
-
-        <aside
-          ref={inertRef(narrow && !(rightOpen && rightHasWindows))}
-          className={`panel panel-right${rightOpen && rightHasWindows ? " open" : ""}`}
-          aria-label={workspace === "laser" ? t("win.machine") : t("win.properties")}
-        >
-          <div className="panel-body">
-            <DockAreaHost area="right" />
-            {workspace === "design" ? (
-              <>
-              {filesUi.pagesDock}
-              <CutsLayers
-                doc={doc}
-                selection={selection}
-                machine={machine}
-                has={has}
-                run={run}
-                report={report}
-                notify={notify}
-                onSelectLayer={(id, all) => {
-                  if (all && doc) setSelection(selectLayerObjects(doc, id));
-                  else setSelection({ objects: [], layer: id, stock: false });
-                }}
-              />
-              {libsUi.dock}
-              {designUi.dock}
-              {docking.window}
-              <Dock id="properties" title={t("win.properties")}>
-              <PropertiesPanel
-                doc={doc}
-                selection={selection}
-                machine={machine}
-                workspaceMm={workspaceMm}
-                has={has}
-                run={run}
-                report={report}
-                onEditStock={() => setDialog("stock")}
-                onArrange={arrange}
-              />
-              {designUi.properties}
-              {text.properties}
+          <CutsLayers
+            doc={doc}
+            selection={selection}
+            machine={machine}
+            has={has}
+            run={run}
+            report={report}
+            notify={notify}
+            onSelectLayer={(id, all) => {
+              if (all && doc) setSelection(selectLayerObjects(doc, id));
+              else setSelection({ objects: [], layer: id, stock: false });
+            }}
+          />
+          {libsUi.dock}
+          {/* A GRBL gantry's Move and Console windows (LightBurn's); galvos have neither. */}
+          {isGrblMachine(machine) && (
+            <>
+              <Dock id="move" title={t("win.move")}>
+                <GrblMove notify={notify} report={report} />
               </Dock>
-              </>
-            ) : (
-              <div className="props">
-                <LaserDock
-                  machine={machine}
-                  httpError={engine.httpError}
-                  device={
-                    canDevices ? (
-                      <DeviceBar
-                        devices={devices}
-                        machine={machine}
-                        onOpenWindow={() => setDevicesOpen(true)}
-                        onSwitched={onDeviceSwitched}
-                        notify={notify}
-                        report={report}
-                      />
-                    ) : undefined
-                  }
-                  designOnly={laserDisabled}
-                  link={engine.link}
-                  doc={doc}
-                  selection={selection.objects}
-                  pendingRuns={runs.length}
-                  has={has}
-                  run={run}
-                  notify={notify}
-                  report={report}
-                  onChanged={() => void engine.refreshMachine()}
-                  onStop={stop}
-                  extras={<LaserExtras designOnly={laserDisabled} tools={libsUi.laserTools} notify={notify} report={report} />}
-                />
-                <CutsLayers
-                  doc={doc}
-                  selection={selection}
-                  machine={machine}
-                  has={has}
-                  run={run}
-                  report={report}
-                  notify={notify}
-                  onSelectLayer={(id, all) => {
-                    if (all && doc) setSelection(selectLayerObjects(doc, id));
-                    else setSelection({ objects: [], layer: id, stock: false });
-                  }}
-                />
-                {libsUi.dock}
-                {/* A GRBL gantry's Move and Console windows (LightBurn's); galvos have neither. */}
-                {isGrblMachine(machine) && (
-                  <>
-                    <Dock id="move" title={t("win.move")}>
-                      <GrblMove notify={notify} report={report} />
-                    </Dock>
-                    <Dock id="console" title={t("win.console")}>
-                      <GrblConsole notify={notify} report={report} />
-                    </Dock>
-                  </>
-                )}
-                <Dock id="machine" title={t("win.machine")}>
-                <MachineCard machine={machine} httpError={engine.httpError}>
-                  {/* Engines without the device registry: LightBurn's devices and the profile diffs. */}
-                  {!canDevices && (
-                    <LightBurnDevices
-                      lightburn={lightburn}
-                      machine={machine}
-                      onChanged={() => void engine.refreshMachine()}
-                      notify={notify}
-                      report={report}
-                    />
-                  )}
-                </MachineCard>
-                <RunsCard
-                  machine={machine}
-                  docRevision={doc?.revision ?? null}
-                  onChanged={() => void engine.refreshMachine()}
-                  report={report}
-                />
-                <PreviewStatsCard
-                  preview={engine.preview}
-                  error={engine.previewError ? friendlyError(engine.previewError, doc) : null}
-                  enabled={previewOn}
-                  doc={doc}
-                  options={previewOptions}
-                  onOptions={setPreviewOptions}
-                />
-                {selectedLayer && <LayerSection layer={selectedLayer} machine={machine} run={run} report={report} has={has} />}
-                </Dock>
-              </div>
+              <Dock id="console" title={t("win.console")}>
+                <GrblConsole notify={notify} report={report} />
+              </Dock>
+            </>
+          )}
+          <Dock id="machine" title={t("win.machine")}>
+          <MachineCard machine={machine} httpError={engine.httpError}>
+            {/* Engines without the device registry: LightBurn's devices and the profile diffs. */}
+            {!canDevices && (
+              <LightBurnDevices
+                lightburn={lightburn}
+                machine={machine}
+                onChanged={() => void engine.refreshMachine()}
+                notify={notify}
+                report={report}
+              />
             )}
-          </div>
-        </aside>
-      </div>
-      <Timeline
-        timeline={engine.timeline}
-        flash={engine.remoteEdit}
-        onGoto={(marker) => void engine.historyGoto(marker).catch(report)}
-        onDelete={(index) => void engine.historyDelete(index).catch(report)}
-      />
-      <StatusBar doc={doc} selection={selection} snap={prefs.snap} machineText={statusMachineText(machineState(machine), t)} />
+          </MachineCard>
+          <RunsCard
+            machine={machine}
+            docRevision={doc?.revision ?? null}
+            onChanged={() => void engine.refreshMachine()}
+            report={report}
+          />
+          <PreviewStatsCard
+            preview={engine.preview}
+            error={engine.previewError ? friendlyError(engine.previewError, doc) : null}
+            enabled={previewOn}
+            doc={doc}
+            options={previewOptions}
+            onOptions={setPreviewOptions}
+          />
+          {selectedLayer && <LayerSection layer={selectedLayer} machine={machine} run={run} report={report} has={has} />}
+          </Dock>
+        </div>
+      )}
+    </>
+  );
 
+  const emptyDoc = !!doc && doc.objects.length === 0 && workspace === "design";
+  const canvasStage = (
+    <div className="center-stage">
+      <Viewport
+        doc={doc}
+        workspaceMm={workspaceMm}
+        selection={selection}
+        tool={tool}
+        activeLayer={activeLayer}
+        preview={engine.preview}
+        showPreview={previewOn}
+        previewOptions={previewOptions}
+        viewStyle={prefs.viewStyle}
+        snap={prefs.snap}
+        outside={outside}
+        has={has}
+        onSelection={setSelection}
+        onToolDone={() => setTool("select")}
+        onContextMenu={(x, y) => setMenu({ x, y })}
+        onCursor={(p) => (cursor.current = p)}
+        run={run}
+        notify={notify}
+        report={report}
+        canvasTool={withPositionLaser(
+          withLayerFlash(designUi.wrap(libsUi.wrap(text.wrap(edit.canvas))), doc, flash),
+          positioning,
+          (pt) =>
+            void machineAction(jobApi.pointer(roundMm(pt[0]), roundMm(pt[1])), t("poslaser.done", { x: roundMm(pt[0]), y: roundMm(pt[1]) })),
+          (end) => (
+            <div className="vp-overlay lx-sp-bar" role="status">
+              <span>{t("poslaser.bar")}</span>
+              <button className="btn small" onClick={end}>
+                {t("common.cancel")}
+              </button>
+            </div>
+          ),
+        )}
+      />
+      {previewOn && engine.preview && (
+        <PreviewTimeline
+          preview={engine.preview}
+          options={previewOptions}
+          onOptions={setPreviewOptions}
+          designOnly={laserDisabled}
+          docName={file.projectName ?? file.openedName ?? doc?.name ?? null}
+          notify={notify}
+          report={report}
+          onRequested={() => void engine.refreshMachine()}
+          noPin={noPinMode(machine)}
+          docRevision={doc?.revision ?? null}
+        />
+      )}
+      {emptyDoc && (
+        <EmptyCanvasCard
+          onImport={openImport}
+          onOpen={() => file.setModal({ kind: "open" })}
+          onDraw={(d) => setTool(d === "rect" ? "rect" : "text")}
+          onTemplates={() => file.setModal({ kind: "open" })}
+        />
+      )}
+      {pointer === "coarse" && <TouchHud tool={tool} selectionCount={selection.objects.length} onAction={touchAction} />}
+    </div>
+  );
+
+  // The context strip (Fusion): the selection's X / Y / W / H, a tool's option bar (ContextStripPortal), or the hint.
+  const contextStrip = (
+    <div role="group" className={`context-strip${stripBusy ? " busy" : ""}${workspace !== "design" && !stripBusy ? " idle" : ""}`} aria-label={t("shell.contextStrip")}>
+      <ContextStripHost />
+      {!stripBusy && workspace === "design" && (selection.objects.length > 0 ? (
+        <NumericBar doc={doc} selection={selection} run={run} report={report} />
+      ) : (
+        <span className="cs-hint">{tool === "select" ? t("shell.hintSelect") : t("shell.hintTool")}</span>
+      ))}
+    </div>
+  );
+
+  const palette = workspace === "design" && <PaletteBar doc={doc} selected={selection.objects} run={run} report={report} notify={notify} has={has} />;
+
+  const timeline = (
+    <Timeline
+      timeline={engine.timeline}
+      flash={engine.remoteEdit}
+      onGoto={(marker) => void engine.historyGoto(marker).catch(report)}
+      onDelete={(index) => void engine.historyDelete(index).catch(report)}
+    />
+  );
+  const statusBar = (
+    <StatusBar doc={doc} selection={selection} snap={prefs.snap} machineText={statusMachineText(machineState(machine), t)} />
+  );
+
+  const overlays = (
+    <>
       <input ref={fileRef} type="file" accept={importAccept(has("art.import_pdf") ? ENGINE_ACCEPT : null)} multiple hidden onChange={onPick} />
 
       {dialog === "stock" && <StockDialog doc={doc} run={run} onClose={closeDialog} />}
@@ -1447,17 +1542,262 @@ export function App() {
           run={run}
         />
       )}
-      <FloatHost />
+      {layout !== "phone" && <FloatHost />}
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />}
       {dropLabel && <DropOverlay label={dropLabel} />}
-
-      <div className="toasts" aria-live="polite">
-        {toasts.map((t) => (
-          <div key={t.id} className={`toast toast-${t.kind}`} onClick={() => setToasts((x) => x.filter((y) => y.id !== t.id))}>
-            {t.msg}
-          </div>
+      <div className="toasts">
+        {toasts.map((x) => (
+          <button
+            type="button"
+            key={x.id}
+            className={`toast toast-${x.kind}`}
+            role={x.kind === "error" ? "alert" : "status"}
+            title={t("shell.dismiss")}
+            onClick={() => setToasts((all) => all.filter((y) => y.id !== x.id))}
+          >
+            {x.msg}
+          </button>
         ))}
       </div>
+      {about && <AboutDialog machine={machine} onClose={() => setAbout(false)} />}
+      <ConnectScreen
+        onConnected={() => {
+          void engine.refreshDoc();
+          void engine.refreshMachine();
+        }}
+      />
+    </>
+  );
+
+  if (layout === "phone") {
+    const themeName = { light: t("theme.light"), dark: t("theme.dark"), system: t("theme.system") }[themePref];
+    const nextTheme = ({ light: "dark", dark: "system", system: "light" } as const)[themePref];
+    const moreRow = (label: string, action: () => void, disabled = false) => (
+      <button type="button" className="menu-item" disabled={disabled} onClick={action}>
+        <span>{label}</span>
+      </button>
+    );
+    return (
+      <PhoneShell
+        className={`ws-${workspace}`}
+        topBar={(openMenu) => topBar(openMenu)}
+        banner={<ConnectionBanner />}
+        canvas={canvasStage}
+        canvasHud={
+          <>
+            <button type="button" className="icon-btn phone-hud-btn" title={t("top.undo")} aria-label={t("top.undo")} onClick={() => void undo()}>
+              <Icon name="undo" />
+            </button>
+            <button type="button" className="icon-btn phone-hud-btn" title={t("top.redo")} aria-label={t("top.redo")} onClick={() => void redo()}>
+              <Icon name="redo" />
+            </button>
+          </>
+        }
+        toolStrip={workspace === "design" ? toolbar : null}
+        selectionSheet={
+          workspace === "design" && hasSel ? (
+            <div className="phone-selection">
+              <NumericBar doc={doc} selection={selection} run={run} report={report} />
+              <div className="phone-actions">
+                <button type="button" className="btn" disabled={!doc?.stock} onClick={() => centreOn("stock")}>
+                  {t("app.centreStock")}
+                </button>
+                <button type="button" className="btn" onClick={() => centreOn("field")}>
+                  {t("app.centreField")}
+                </button>
+                <button type="button" className="btn" onClick={() => touchAction("rotate90")}>
+                  {t("shell.rotate90")}
+                </button>
+                <button type="button" className="btn btn-danger" onClick={deleteSelection}>
+                  {t("app.delete")}
+                </button>
+              </div>
+            </div>
+          ) : null
+        }
+        layersSheet={
+          <>
+            {doc && (
+              <CutsLayers
+                doc={doc}
+                selection={selection}
+                machine={machine}
+                has={has}
+                run={run}
+                report={report}
+                notify={notify}
+                onSelectLayer={(id, all) => {
+                  if (all && doc) setSelection(selectLayerObjects(doc, id));
+                  else setSelection({ objects: [], layer: id, stock: false });
+                }}
+              />
+            )}
+            <div className="phone-palette">
+              <PaletteBar doc={doc} selected={selection.objects} run={run} report={report} notify={notify} has={has} />
+            </div>
+          </>
+        }
+        jobSheet={workspace === "laser" ? rightContent : null}
+        onTab={(tab) => {
+          const w: Workspace = tab === "job" ? "laser" : "design";
+          if (w !== workspace) switchWorkspace(w);
+        }}
+        moreItems={
+          <>
+            <details open>
+              <summary>
+                <ShellIcon name="file" />
+                {t("shell.moreFile")}
+              </summary>
+              <div className="phone-more-body">
+                {moreRow(t("fm.new"), () => file.newDocument(), file.busy)}
+                {moreRow(t("fm.open"), () => file.setModal({ kind: "open" }), file.busy)}
+                {moreRow(t("fm.save"), () => saveFile(), file.busy)}
+                {moreRow(t("fm.saveAs"), () => file.setModal({ kind: "saveAs" }), file.busy)}
+                {moreRow(t("fm.import"), openImport, file.busy)}
+                <div className="phone-filemenu">{fileMenu}</div>
+              </div>
+            </details>
+            <details>
+              <summary>
+                <ShellIcon name="layers" />
+                {t("win.browser")}
+              </summary>
+              <div className="phone-more-body">{leftContent}</div>
+            </details>
+            <details>
+              <summary>
+                <ShellIcon name="history" />
+                {t("shell.history")}
+              </summary>
+              <div className="phone-more-body">
+                <Timeline
+                  variant="list"
+                  timeline={engine.timeline}
+                  flash={engine.remoteEdit}
+                  onGoto={(marker) => void engine.historyGoto(marker).catch(report)}
+                  onDelete={(index) => void engine.historyDelete(index).catch(report)}
+                />
+              </div>
+            </details>
+            <details>
+              <summary>
+                <ShellIcon name="settings" />
+                {t("shell.moreSettings")}
+              </summary>
+              <div className="phone-more-body">
+                {moreRow(t("prefs.title"), () => ws.open("prefs"))}
+                {moreRow(t("theme.switchTitle", { theme: themeName }), () => updatePrefs({ theme: nextTheme }))}
+                {moreRow(t("shell.useAsApp"), () => openAppModeDialog())}
+                {canDevices && moreRow(t("shell.devices"), () => setDevicesOpen(true))}
+              </div>
+            </details>
+            <details>
+              <summary>
+                <Icon name="more" />
+                {t("help.menu")}
+              </summary>
+              <div className="phone-more-body">
+                <HelpItems close={() => {}} onHotkeys={() => ws.open("hotkeys")} onAbout={() => setAbout(true)} helpExtra={libsUi.helpItems} />
+              </div>
+            </details>
+            <details>
+              <summary>
+                <ShellIcon name="monitor" />
+                {t("shell.desktopFeatures")}
+              </summary>
+              <div className="phone-note hint">
+                {t("shell.desktopFeaturesHint")}
+                <ul>
+                  <li>{t("shell.dfNodes")}</li>
+                  <li>{t("shell.dfPen")}</li>
+                  <li>{t("shell.dfTrim")}</li>
+                  <li>{t("shell.dfDocking")}</li>
+                  <li>{t("shell.dfArt")}</li>
+                  <li>{t("shell.dfDevices")}</li>
+                  <li>{t("shell.dfLens")}</li>
+                  <li>{t("shell.dfConsole")}</li>
+                </ul>
+              </div>
+            </details>
+          </>
+        }
+        overlays={overlays}
+      />
+    );
+  }
+
+  const sizeVars = {
+    "--dock-left-size": `${dockLayout.sizes.left}px`,
+    "--dock-right-size": `${dockLayout.sizes.right}px`,
+    "--dock-bottom-size": `${dockLayout.sizes.bottom}px`,
+  } as CSSProperties;
+  // Tablet: a selection's settings open on request, from a pill over the canvas (selecting never opens a drawer).
+  const propertiesPill = layout === "tablet" && workspace === "design" && rightMode === "rail" && overlay !== "right" && (selection.objects.length > 0 || selection.stock) && (
+    <button className="btn properties-pill" title={t("shell.propertiesPillTitle")} onClick={() => setOverlay("right")}>
+      <ShellIcon name="sliders" size={16} />
+      {t("shell.propertiesPill")}
+    </button>
+  );
+
+  return (
+    <div className={`app ws-${workspace}`} style={sizeVars} data-focus={focus ? "" : undefined}>
+      {topBar()}
+      <ConnectionBanner />
+      {tabs.bar && <div className="doc-tabs-row">{tabs.bar}</div>}
+      {layout !== "tablet" && toolbar}
+      <div className="main">
+        {layout === "tablet" && <div className="tool-rail">{toolbar}</div>}
+        <SidePanel
+          side="left"
+          mode={leftMode}
+          overlay={overlay === "left"}
+          onOverlay={setLeftOverlay}
+          label={t("win.browser")}
+          // Tablet: the tool rail's Browser button opens the left side, so it needs no rail of its own (the canvas keeps
+          // 900 px at 1024 wide and 700 at 820).
+          railVisible={layout !== "tablet"}
+        >
+          <DockAreaHost area="left" />
+          {leftContent}
+        </SidePanel>
+
+        <section className="center">
+          {contextStrip}
+          {canvasStage}
+          {propertiesPill}
+          {bottomHasWindows && !focus && <Splitter area="bottom" label={t("shell.resize", { name: t("shell.bottomStrip") })} />}
+          <DockAreaHost area="bottom" />
+          {!focus && palette}
+        </section>
+
+        <SidePanel
+          side="right"
+          mode={rightMode}
+          overlay={overlay === "right"}
+          onOverlay={setRightOverlay}
+          label={workspace === "laser" ? t("win.machine") : t("win.properties")}
+        >
+          <DockAreaHost area="right" />
+          {rightContent}
+        </SidePanel>
+      </div>
+      <div className="bottom-row" data-bottom={row}>
+        {timeline}
+        {layout === "compact" && (
+          <button
+            className={`icon-btn small tl-pin${timelinePinned ? " active" : ""}`}
+            aria-pressed={timelinePinned}
+            title={timelinePinned ? t("shell.timelineUnpin") : t("shell.timelinePin")}
+            aria-label={t("shell.timelinePin")}
+            onClick={() => updatePrefs({ timelinePinned: !timelinePinned })}
+          >
+            <ShellIcon name="pin" size={16} />
+          </button>
+        )}
+        {statusBar}
+      </div>
+      {overlays}
     </div>
   );
 }

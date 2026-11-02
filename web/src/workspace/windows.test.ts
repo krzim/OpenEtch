@@ -5,7 +5,24 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Vec2 } from "../api/types.ts";
 import { contactDistance, dockMoves, polysBox, type DockShape, type Polyline } from "./docking.ts";
-import { areaUnits, DEFAULT_LAYOUT, dockTo, moveInArea, placeOf, sanitizeLayout, setActiveTab, setVisible, tabWith, untab } from "./layout.ts";
+import {
+  applyPreset,
+  areaUnits,
+  DEFAULT_LAYOUT,
+  DEFAULT_SIZES,
+  defaultAreaMode,
+  dockPolicy,
+  dockTo,
+  moveInArea,
+  placeOf,
+  sanitizeLayout,
+  setActiveTab,
+  setAreaMode,
+  setDockSize,
+  setVisible,
+  tabWith,
+  untab,
+} from "./layout.ts";
 import { hasLightBurnExtras, neighbourAfterClose, parseDocuments, parseUnsupported, unsupportedText } from "./wsApi.ts";
 
 const KNOWN = ["browser", "laser", "cuts", "library", "properties"];
@@ -65,6 +82,80 @@ test("layout: moving a frame up keeps the others in order; garbage is sanitised"
   assert.ok(!("bad id!" in s.windows));
   assert.equal(placeOf(s, "lone").group, null, "a group of one is no group");
   assert.deepEqual(sanitizeLayout(null), DEFAULT_LAYOUT);
+});
+
+// --- sizes, rails, presets ------------------------------------------------------------------------------------------------
+
+test("layout: sizes are clamped and kept, area modes validated, bad input gives the defaults", () => {
+  const l = sanitizeLayout({ sizes: { left: 900, right: 100, bottom: "x" }, areaMode: { left: "rail", right: "sideways", bottom: "rail" } });
+  assert.deepEqual(l.sizes, { left: 420, right: 260, bottom: DEFAULT_SIZES.bottom }, "clamped to 200-420 / 260-480 / 120-600");
+  assert.deepEqual(l.areaMode, { left: "rail" }, "unknown modes and areas are dropped");
+  assert.deepEqual(sanitizeLayout({ sizes: null, areaMode: 5 }).sizes, DEFAULT_SIZES);
+  assert.deepEqual(sanitizeLayout({ sizes: { left: 333.4, right: Infinity } }).sizes, { left: 333, right: DEFAULT_SIZES.right, bottom: DEFAULT_SIZES.bottom });
+  // Every change keeps them.
+  const r = setDockSize(DEFAULT_LAYOUT, "right", 400);
+  assert.equal(r.sizes.right, 400);
+  assert.equal(setDockSize(r, "right", 10).sizes.right, 260);
+  const t = tabWith(dockTo(setAreaMode(r, "left", "pinned"), "cuts", "bottom", KNOWN), "laser", "cuts");
+  assert.equal(t.sizes.right, 400, "docking and tabbing keep the sizes");
+  assert.equal(t.areaMode.left, "pinned", "... and the area modes");
+  assert.deepEqual(setAreaMode(t, "left", null).areaMode, {}, "null lets the layout decide again");
+  // A stored layout survives a round trip.
+  assert.deepEqual(sanitizeLayout(JSON.parse(JSON.stringify(t))), t);
+});
+
+test("dockPolicy: defaults per layout mode", () => {
+  assert.equal(defaultAreaMode("wide", "left"), "pinned");
+  assert.equal(defaultAreaMode("compact", "left"), "rail", "compact rails the Browser (owner decision 9)");
+  assert.equal(defaultAreaMode("compact", "right"), "pinned");
+  assert.equal(defaultAreaMode("tablet", "right"), "rail");
+  assert.deepEqual(dockPolicy(1920, DEFAULT_SIZES, { layout: "wide" }), { left: "pinned", right: "pinned" });
+  assert.deepEqual(dockPolicy(1280, DEFAULT_SIZES, { layout: "compact" }), { left: "rail", right: "pinned" });
+  assert.deepEqual(dockPolicy(1024, DEFAULT_SIZES, { layout: "tablet", reserved: 52 }), { left: "rail", right: "rail" });
+  assert.deepEqual(dockPolicy(390, DEFAULT_SIZES, { layout: "phone" }), { left: "hidden", right: "hidden" });
+});
+
+test("dockPolicy: the canvas keeps 640 px; the left side rails first, then the right", () => {
+  const sizes = { left: 260, right: 320, bottom: 240 };
+  // 1280 wide with both pinned: 1280 - 260 - 320 = 700, fine.
+  assert.deepEqual(dockPolicy(1280, sizes, { layout: "wide" }), { left: "pinned", right: "pinned" });
+  // 1200: 620 < 640, so the left rails (1200 - 32 - 320 = 848).
+  assert.deepEqual(dockPolicy(1200, sizes, { layout: "wide" }), { left: "rail", right: "pinned" });
+  // 960: even with the left on a rail 960 - 32 - 320 = 608, so the right rails too.
+  assert.deepEqual(dockPolicy(960, sizes, { layout: "wide" }), { left: "rail", right: "rail" });
+  // Wider panels rail sooner.
+  assert.deepEqual(dockPolicy(1440, { left: 420, right: 480, bottom: 240 }, { layout: "wide" }), { left: "rail", right: "pinned" });
+  // A side the user pinned explicitly goes last: here the right rails instead of the left.
+  assert.deepEqual(dockPolicy(1200, sizes, { layout: "wide", modes: { left: "pinned" } }), { left: "pinned", right: "rail" });
+  // Hidden stays hidden and frees the room.
+  assert.deepEqual(dockPolicy(1000, sizes, { layout: "wide", modes: { left: "hidden" } }), { left: "hidden", right: "pinned" });
+  // The tablet's tool rail counts: 1100 - 52 - 260 - 40 = 748 with the left pinned by the user and the right a rail.
+  assert.deepEqual(dockPolicy(1100, sizes, { layout: "tablet", reserved: 52, modes: { left: "pinned" } }), { left: "pinned", right: "rail" });
+});
+
+test("applyPreset: compact and touch make the plan's tab groups; wide is the default layout pinned", () => {
+  const known = ["browser", "laser", "pages", "cuts", "library", "artLibrary", "varText", "docking", "properties", "machine"];
+  const sized = setDockSize(dockTo(DEFAULT_LAYOUT, "cuts", "float", known), "right", 400);
+  const c = applyPreset(sized, "compact");
+  const g = (id: string) => placeOf(c, id).group;
+  assert.ok(g("cuts") && g("cuts") === g("properties"), "Cuts/Layers and Properties share a frame");
+  assert.ok(g("library") && [g("artLibrary"), g("varText"), g("docking")].every((x) => x === g("library")), "the libraries share a frame");
+  assert.ok(g("laser") && g("laser") === g("machine"), "Laser and Machine share a frame");
+  assert.equal(placeOf(c, "cuts").area, "right", "the preset starts from the default places");
+  const units = areaUnits(c, "right", known);
+  assert.deepEqual(
+    units.map((u) => u.active),
+    ["laser", "pages", "cuts", "library"],
+    "four frames on the right, the first member of each group shown",
+  );
+  assert.deepEqual(c.areaMode, { left: "rail", right: "pinned" });
+  assert.equal(c.sizes.right, 400, "sizes are kept");
+  assert.deepEqual(applyPreset(c, "touch").areaMode, { left: "rail", right: "rail" });
+  assert.equal(placeOf(applyPreset(c, "touch"), "properties").group, placeOf(applyPreset(c, "touch"), "cuts").group);
+  const w = applyPreset(c, "wide");
+  assert.equal(placeOf(w, "properties").group, null, "wide has no groups");
+  assert.deepEqual(w.areaMode, { left: "pinned", right: "pinned" });
+  assert.equal(w.sizes.right, 400);
 });
 
 // --- Docking ---------------------------------------------------------------------------------------------------------------

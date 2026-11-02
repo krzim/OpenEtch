@@ -1,0 +1,284 @@
+/* The phone shell (PhoneShell.tsx, BottomSheet.tsx): docs/ux/ui-plan-2026-11.md 1.1 "Phone". Owner: P1. */
+
+.phone-shell {
+  /* The canvas takes everything between the top bar and the tab bar. */
+  overflow: hidden;
+}
+
+.phone-main {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.phone-main > .center-stage {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+/* Undo, redo and the tools button over the canvas, bottom right (above the touch HUD's bars on the left). */
+.phone-hud {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  z-index: var(--z-canvas-ui);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.phone-hud .icon-btn {
+  min-width: 44px;
+  min-height: 44px;
+  border-radius: 50%;
+  background: var(--overlay-bg);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-pop);
+  color: var(--text);
+}
+
+/* Bottom tabs: 56 px above the home indicator (.app pads the safe area). */
+.phone-tabs {
+  flex: none;
+  display: flex;
+  height: var(--bar-nav);
+  background: var(--chrome);
+  border-top: 1px solid var(--border);
+}
+
+.phone-tab {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-size: calc(var(--fs-xs) * var(--ui-scale, 1));
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.phone-tab.active {
+  color: var(--accent);
+}
+
+.phone-tab:active {
+  background: var(--surface-hover);
+}
+
+/* The sheet: over the canvas, from the tab bar up to at most the top bar (STOP stays visible). */
+.bottom-sheet {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: var(--z-float);
+  display: flex;
+  flex-direction: column;
+  max-height: 100%;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  border-radius: 12px 12px 0 0;
+  box-shadow: 0 -6px 24px var(--shadow);
+}
+
+.bottom-sheet.snap-peek {
+  height: 30%;
+}
+
+.bottom-sheet.snap-half {
+  height: 55%;
+}
+
+.bottom-sheet.snap-full {
+  height: 100%;
+  border-radius: 0;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .bottom-sheet:not(.dragging) {
+    transition: height 0.18s ease-out;
+  }
+}
+
+.sheet-head {
+  flex: none;
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 4px 0 14px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+/* The handle: the whole top strip is the grab area; touch-action none keeps the page from scrolling on a drag. */
+.sheet-handle {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  transform: translateX(-50%);
+  width: 96px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: none;
+  cursor: grab;
+  touch-action: none;
+}
+
+.sheet-grip {
+  width: 40px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--border);
+}
+
+.sheet-handle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: var(--r-md);
+}
+
+.sheet-title {
+  flex: 1;
+  min-width: 0;
+  padding-top: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sheet-close {
+  margin-top: 6px;
+}
+
+.sheet-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 6px 0 12px;
+}
+
+/* The tool strip in the Canvas sheet: the ribbon in one scrolling row. */
+.phone-tools .toolbar {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  border: 0;
+  background: none;
+}
+
+.phone-tools .mini-label {
+  display: none;
+}
+
+/* The selection sheet: its numeric row and the quick actions. */
+.phone-selection {
+  padding: 0 8px 8px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.phone-selection .numeric-bar {
+  height: 48px;
+  padding: 0;
+  background: none;
+}
+
+.phone-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.phone-actions .btn {
+  min-height: 44px;
+}
+
+/* More: collapsible sections of menu rows. */
+.phone-more details {
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.phone-more summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 0 14px;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+
+.phone-more summary::-webkit-details-marker {
+  display: none;
+}
+
+.phone-more summary .icon {
+  color: var(--icon);
+}
+
+.phone-more .menu-item {
+  width: 100%;
+  min-height: 48px;
+  padding: 0 14px 0 44px;
+}
+
+.phone-more .phone-more-body {
+  padding: 0 0 8px;
+}
+
+.phone-more .phone-note {
+  margin: 4px 14px 8px 44px;
+}
+
+.phone-more .phone-note ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+/* The File menu opened from More: a full-width panel under the top bar instead of a dropdown inside the sheet. */
+.phone-more .file-menu .menu {
+  position: fixed;
+  top: calc(var(--bar-top) + var(--safe-top) + 4px);
+  left: 8px;
+  right: 8px;
+  min-width: 0;
+}
+
+/* Dialogs on a phone: full screen under the top bar, so STOP stays visible and hit-testable. */
+:root[data-layout="phone"] .modal-backdrop {
+  top: calc(var(--bar-top) + var(--safe-top));
+  padding: 0;
+  align-items: stretch;
+}
+
+:root[data-layout="phone"] .modal,
+:root[data-layout="phone"] .modal-wide {
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+}
+
+:root[data-layout="phone"] .modal-head {
+  border-radius: 0;
+}
+
+:root[data-layout="phone"] .modal-foot {
+  padding-bottom: calc(10px + var(--safe-bottom));
+}
