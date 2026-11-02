@@ -1009,7 +1009,11 @@ options; nothing here reaches the machine except through a normal, approved run.
   hand-placed tabs (each belongs to the shape's outline nearest it) and, in `auto` generation on shapes without
   hand-placed tabs, on evenly spread positions (`count`, or `spacing_mm` rounded to fit, the first half a step from
   the outline's start, as OpenEtch always did; LightBurn's own placement rule is documented loosely and not copied).
-  Gaps across the start are split, overlapping ones merged. Open paths get no tabs. Galvo and gantry alike.
+  Gaps across the start are split, overlapping ones merged. Open paths get no tabs. With Remove Overlapping Lines,
+  an outline that loses a shared line is cut as open pieces that keep its tabs (`tab_pieces_of_part`: the tabs
+  placed on the whole outline, kept where their centres fall on a piece; one on the removed line goes with it, as
+  the other shape cuts that line). Automatic tabs by spacing that would make more pieces than the segment budget are
+  refused before they are made; hand-placed tabs that are not finite numbers are ignored. Galvo and gantry alike.
 - **Resize Slots** (`path.resize_slots {ids, old_thickness_mm, new_thickness_mm, tolerance_mm = 0.1,
   adjust_slot_depth = true, adjust_slot_width, adjust_tab_height}`, `geom::slots`): LightBurn documents the effect,
   not the detection, so the rule is OpenEtch's. On closed outlines of straight lines (collinear nodes merged first) a
@@ -1024,8 +1028,10 @@ options; nothing here reaches the machine except through a normal, approved run.
   MillMage's / CNC CAM's tool, not in LightBurn's documentation): every inside corner between two straight lines
   (reflex corners of parts and every corner of holes, by even-odd nesting) gets a circle of the tool diameter that
   passes through the corner: on the bisector (dogbone, biting into both walls) or tangent to one wall and biting into
-  the longer or shorter line (T-bone). Arcs are cubic Béziers; a relief that does not fit on its lines is skipped
-  with the reason; open paths and corners at curves are left alone.
+  the longer or shorter line (T-bone). Arcs are cubic Béziers; a relief is skipped with the reason when what it
+  takes of its two lines (with the relief at each line's other end) would leave nothing, or when its arc would cross
+  any other line or curve of the shape (a nearby hole, the far wall of a thin part) or another relief; open paths,
+  corners at curves and outlines that cross themselves are left alone.
 
 ## User Tools
 
