@@ -1,9 +1,8 @@
 // Design toolbar groups for the editing tools, Fusion-style (icon over label): Line, Pen and Polygon; Edit nodes, Trim
 // and Measure; and the Modify and Arrange dropdowns, which open a menu under the button with LightBurn's hotkeys.
 
-import { useRef, useState } from "react";
 import type { CanvasToolId } from "../canvasTool.ts";
-import { ContextMenu, type MenuItem } from "./ContextMenu.tsx";
+import { MenuButton, type MenuItem } from "./Menu.tsx";
 import type { Tool } from "./Viewport.tsx";
 import { useT } from "../workspace/usePrefs.ts";
 
@@ -40,44 +39,16 @@ function ToolBtn(props: { icon: string; label: string; active?: boolean; disable
 
 /** A toolbar button that opens a menu under itself (Fusion's dropdown panels). Also used by src/design/. */
 export function Dropdown(props: { icon: string; label: string; title: string; items: MenuItem[] }) {
-  const ref = useRef<HTMLButtonElement>(null);
-  const [at, setAt] = useState<{ x: number; y: number } | null>(null);
-  const justClosed = useRef(0);
   return (
-    <>
-      <button
-        ref={ref}
-        className={`tool-btn et-dropdown${at ? " active" : ""}`}
-        title={props.title}
-        aria-haspopup="menu"
-        aria-expanded={!!at}
-        onClick={() => {
-          // A press on the button while open closes the menu (outside press) and must not reopen it.
-          if (Date.now() - justClosed.current < 250) return;
-          const r = ref.current?.getBoundingClientRect();
-          if (r) setAt({ x: r.left, y: r.bottom + 2 });
-        }}
-      >
-        <EIcon name={props.icon} />
-        <span>
-          {props.label}
-          <svg className="et-caret" width={10} height={10} viewBox="0 0 24 24" aria-hidden="true">
-            <path d={ICONS.chevronDown} fill="none" stroke="currentColor" strokeWidth="2.5" />
-          </svg>
-        </span>
-      </button>
-      {at && (
-        <ContextMenu
-          x={at.x}
-          y={at.y}
-          items={props.items}
-          onClose={() => {
-            justClosed.current = Date.now();
-            setAt(null);
-          }}
-        />
-      )}
-    </>
+    <MenuButton className="tool-btn et-dropdown" label={props.label} title={props.title} items={props.items}>
+      <EIcon name={props.icon} />
+      <span>
+        {props.label}
+        <svg className="et-caret" width={10} height={10} viewBox="0 0 24 24" aria-hidden="true">
+          <path d={ICONS.chevronDown} fill="none" stroke="currentColor" strokeWidth="2.5" />
+        </svg>
+      </span>
+    </MenuButton>
   );
 }
 
