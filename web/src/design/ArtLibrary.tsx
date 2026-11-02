@@ -5,6 +5,9 @@
 // "Add to project" (centred on the field), and rename, delete, copy or move items (right-click). LightBurn's .lbart
 // libraries load (Load), import into the current library (Import) and download (Download .lbart) on engines that list
 // "lbart" among their formats. Follows `art_library_changed`.
+// Touch (docs/ux/ui-plan-2026-11.md 1.2): a long-press on an item is its right-click, the selected item has a visible
+// Insert and ⋯ button (no double-click needed), items are not HTML5-draggable on coarse pointers (an iPad long-press
+// would start a system drag), and the Load picker has no `accept` on iOS (checked after the pick, touch/filePick.ts).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { onEngineEvent } from "../api/events.ts";
@@ -17,6 +20,12 @@ import { updatePrefs } from "../workspace/prefs.ts";
 import { Dock } from "../workspace/Dock.tsx";
 import { artApi, type ArtItem, type ArtLibraryRow } from "./designApi.ts";
 import { artImportFormat, libraryNameProblem } from "./model.ts";
+import { useLongPress } from "../touch/useLongPress.ts";
+import { acceptLabel, acceptsFile, pickerAccept } from "../touch/filePick.ts";
+import { TouchIcon } from "../touch/icons.tsx";
+import { useLayoutMode } from "../workspace/layoutMode.ts";
+
+const LOAD_ACCEPT = ".oeart,.lbart";
 
 /** The drag payload type of an Art Library item (`{library, id}` JSON). */
 export const ART_DRAG_TYPE = "application/x-openetch-art";
@@ -247,16 +256,36 @@ export function ArtLibraryDock(p: {
               />
             ))}
         </div>
+        {current && active && shown.some((it) => it.id === active) && (
+          <div className="dz-art-row row-actions">
+            <button className="btn btn-small" onClick={() => p.onInsert(current, active, null)}>
+              {t("touch.insert")}
+            </button>
+            <button
+              className="btn btn-small"
+              title={t("touch.rowMenu")}
+              aria-label={t("touch.rowMenu")}
+              onClick={(e) => {
+                const it = items.find((x) => x.id === active);
+                const b = e.currentTarget.getBoundingClientRect();
+                if (it) setMenu({ x: b.left, y: b.bottom, item: it });
+              }}
+            >
+              <TouchIcon name="more" size={16} />
+            </button>
+          </div>
+        )}
         {current && items.length > 0 && <p className="hint">{t("art.hint")}</p>}
         <input
           ref={loadRef}
           type="file"
-          accept=".oeart,.lbart"
+          accept={pickerAccept(LOAD_ACCEPT)}
           hidden
           onChange={(e) => {
             const f = e.target.files?.[0];
             e.target.value = "";
-            if (f) loadFile(f);
+            if (f && !acceptsFile(f, LOAD_ACCEPT)) notify(t("touch.wrongFileType", { name: f.name, types: acceptLabel(LOAD_ACCEPT) }), "error");
+            else if (f) loadFile(f);
           }}
         />
         <input
@@ -361,19 +390,18 @@ function ArtThumb(p: { library: string; item: ArtItem; active: boolean; onSelect
     };
   }, [url]);
   const size = p.item.size_mm ? `${p.item.size_mm[0].toFixed(1)} × ${p.item.size_mm[1].toFixed(1)} mm` : "";
+  const longPress = useLongPress((x, y) => p.onMenu(x, y));
+  const coarse = useLayoutMode().pointer === "coarse";
   return (
     <button
       className={`dz-art-item${p.active ? " active" : ""}`}
       role="option"
       aria-selected={p.active}
-      draggable
+      draggable={!coarse}
       title={`${p.item.name}${size ? ` · ${size}` : ""}${p.item.objects ? ` · ${p.item.objects === 1 ? t("art.objects1") : t("art.objectsN", { n: p.item.objects })}` : ""}`}
+      {...longPress}
       onClick={p.onSelect}
       onDoubleClick={p.onInsert}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        p.onMenu(e.clientX, e.clientY);
-      }}
       onDragStart={(e) => {
         e.dataTransfer.setData(ART_DRAG_TYPE, JSON.stringify({ library: p.library, id: p.item.id }));
         e.dataTransfer.effectAllowed = "copy";

@@ -1,6 +1,71 @@
 // Spanish (es), MACHINE TRANSLATED like es.ts: touch and canvas input: the touch HUD, long-press, row buttons and the
-// trackpad (owner: P3; table en-touch.ts). Spread into ES (es.ts). Empty in Stage A.
+// trackpad (owner: P3; table en-touch.ts). Spread into ES (es.ts).
 
 import type { Messages } from "../i18n.ts";
 
-export const ES_TOUCH: Messages = {};
+export const ES_TOUCH: Messages = {
+  "touch.undoPoint": "Deshacer punto",
+  "touch.insertNode": "Insertar nodo",
+  "touch.tipInsertNode": "Añadir un nodo en el centro del segmento seleccionado",
+  "touch.selectSegmentToInsert": "Seleccione dos nodos vecinos, o un nodo, para insertar un nodo después.",
+
+  "touch.modBar": "Teclas modificadoras",
+  "touch.modHint": "Toque: solo el siguiente gesto · doble toque: mantener",
+  "touch.modAdd": "Añadir",
+  "touch.modAddSub": "restringir",
+  "touch.modToggle": "Alternar",
+  "touch.modToggleSub": "sin ajuste",
+  "touch.modGuides": "Guías",
+  "touch.modSquare": "Cuadrado",
+  "touch.modFromCentre": "Desde el centro",
+  "touch.modNoSnap": "Sin ajuste",
+  "touch.mod15": "Pasos de 15°",
+  "touch.mod5": "Pasos de 5°",
+  "touch.modAddNode": "Añadir",
+  "touch.tipShift": "Mayús: añadir a la selección; al arrastrar, horizontal, vertical o 45°",
+  "touch.tipCtrl": "Ctrl: alternar la selección; al arrastrar, sin ajuste",
+  "touch.tipAlt": "Alt: ajustar solo a las guías",
+  "touch.tipSquare": "Mayús: un cuadrado o un círculo",
+  "touch.tipFromCentre": "Ctrl: dibujar desde el centro",
+  "touch.tipNoSnap": "Ctrl: sin ajuste",
+  "touch.tip15": "Mayús: pasos de 15°",
+  "touch.tip5": "Ctrl: pasos de 5°",
+  "touch.tipAddNode": "Mayús: añadir nodos a la selección de nodos",
+  "touch.locked": "{name} (bloqueado)",
+
+  "touch.actionBar": "Acciones de la selección",
+  "touch.copy": "Copiar",
+  "touch.paste": "Pegar",
+  "touch.duplicate": "Duplicar",
+  "touch.delete": "Eliminar",
+  "touch.group": "Agrupar",
+  "touch.ungroup": "Desagrupar",
+  "touch.rotate90": "Girar 90°",
+  "touch.flipH": "Voltear en horizontal",
+  "touch.flipV": "Voltear en vertical",
+  "touch.more": "Más…",
+
+  "touch.nudge": "Desplazar",
+  "touch.nudgeLeft": "Desplazar a la izquierda",
+  "touch.nudgeRight": "Desplazar a la derecha",
+  "touch.nudgeUp": "Desplazar arriba",
+  "touch.nudgeDown": "Desplazar abajo",
+  "touch.nudgeStep": "Paso",
+  "touch.stepNormal": "Normal",
+  "touch.stepLarge": "Grande",
+  "touch.stepSmall": "Pequeño",
+  "touch.stepTiny": "Mínimo",
+
+  "touch.rowMenu": "Más acciones",
+  "touch.rename": "Cambiar nombre",
+  "touch.insert": "Insertar",
+  "touch.assign": "Asignar",
+  "touch.reorder": "Arrastrar para reordenar",
+  "touch.moveUp": "Subir",
+  "touch.moveDown": "Bajar",
+  "touch.expand": "Expandir",
+  "touch.collapse": "Contraer",
+  "touch.open": "Abrir",
+
+  "touch.wrongFileType": "{name} no es un archivo que se pueda abrir (se esperaba {types}).",
+};

@@ -292,13 +292,31 @@ export function buildShapeIndex(doc: GDocument): ShapeEntry[] {
 
 /**
  * The object under field point `p`: the topmost whose line is within `tolMm`, else the smallest closed shape that
- * contains the point (even-odd, so a hole does not select its ring). Null when nothing is hit.
+ * contains the point (even-odd, so a hole does not select its ring). Null when nothing is hit. With `nearest` (touch
+ * and pen, whose tolerances are large) the outline nearest the point wins instead of the topmost one, so a finger on
+ * one of two close lines picks that line (mouse clicks keep LightBurn's topmost rule).
  */
-export function hitTest(index: readonly ShapeEntry[], p: Vec2, tolMm: number): string | null {
+export function hitTest(index: readonly ShapeEntry[], p: Vec2, tolMm: number, nearest = false): string | null {
   const near: Box = { x0: p[0] - tolMm, y0: p[1] - tolMm, x1: p[0] + tolMm, y1: p[1] + tolMm };
-  for (let i = index.length - 1; i >= 0; i--) {
-    const s = index[i];
-    if (boxesIntersect(s.box, near) && distToPolylines(p, s.polys) <= tolMm) return s.id;
+  if (nearest) {
+    // Touch and pen (large tolerances): the outline nearest the point wins; equal distances go to the topmost.
+    let bestOutline: string | null = null;
+    let bestD = Infinity;
+    for (let i = index.length - 1; i >= 0; i--) {
+      const s = index[i];
+      if (!boxesIntersect(s.box, near)) continue;
+      const d = distToPolylines(p, s.polys);
+      if (d <= tolMm && d < bestD) {
+        bestD = d;
+        bestOutline = s.id;
+      }
+    }
+    if (bestOutline) return bestOutline;
+  } else {
+    for (let i = index.length - 1; i >= 0; i--) {
+      const s = index[i];
+      if (boxesIntersect(s.box, near) && distToPolylines(p, s.polys) <= tolMm) return s.id;
+    }
   }
   let best: ShapeEntry | null = null;
   for (const s of index) {

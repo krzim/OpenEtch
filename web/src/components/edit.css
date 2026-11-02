@@ -337,3 +337,54 @@
   gap: 6px;
   margin: 4px 0;
 }
+
+/* ---- the option bars in the context strip (docs/ux/ui-plan-2026-11.md 1.1, V16) ----
+   With the shell's context strip mounted (ContextStripHost), the tool option bar and the draw-tool hint move out of the
+   canvas into that one row: inline, no float, no wrap (the row scrolls sideways if it must). */
+.context-strip-slot .vp-overlay.et-bar,
+.context-strip-slot .vp-overlay.hint {
+  position: static;
+  inset: auto;
+  max-width: none;
+  margin: 0;
+  box-shadow: none;
+  border: 0;
+  background: transparent;
+  padding: 0 var(--sp-2, 8px);
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  overflow-x: auto;
+  min-width: 0;
+}
+.context-strip-slot .et-bar > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- coarse pointers: 44 px targets and 16 px inputs (T11, T14) ---- */
+@media (pointer: coarse) {
+  .et-bar .btn-small,
+  .et-bar .btn {
+    min-height: 44px;
+    min-width: 44px;
+    padding: 0 12px;
+  }
+  .et-opt input[type="number"] {
+    min-height: 44px;
+    font-size: max(16px, 1em);
+    width: 72px;
+  }
+  .et-opt input[type="checkbox"] {
+    width: 24px;
+    height: 24px;
+  }
+}
+:root[data-density="touch"] .et-bar .btn-small,
+:root[data-density="touch"] .et-bar .btn {
+  min-height: 44px;
+  min-width: 44px;
+}
+:root[data-density="touch"] .et-opt input[type="number"] {
+  min-height: 44px;
+  font-size: max(16px, 1em);
+}

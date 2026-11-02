@@ -207,3 +207,15 @@ test("hit test: line tolerance, inside closed shapes, smallest wins, holes do no
   assert.equal(hitTest(idx, [220.3, 10], 0.5), "open");
   assert.equal(hitTest(idx, [500, 500], 1), null);
 });
+
+test("hitTest nearest (touch and pen): the closest outline within the tolerance wins, not the topmost", () => {
+  const two: GDocument = { ...doc, objects: [rect("a", 0, 0, 10, 10), rect("b", 2, 0, 10, 10)] };
+  const idx = buildShapeIndex(two);
+  // a's right edge is at x = 5, b's (on top) at x = 7. A finger at 5.5 with a 2 mm tolerance touches both.
+  assert.equal(hitTest(idx, [5.5, 0], 2), "b", "mouse rule: the topmost line within the tolerance");
+  assert.equal(hitTest(idx, [5.5, 0], 2, true), "a", "touch rule: the nearest line");
+  assert.equal(hitTest(idx, [6.5, 0], 2, true), "b");
+  assert.equal(hitTest(idx, [6, 0], 2, true), "b", "a tie goes to the topmost");
+  assert.equal(hitTest(idx, [0, 0], 0.5, true), "b", "no line near: inside the smaller closed shape, as before");
+  assert.equal(hitTest(idx, [50, 50], 2, true), null);
+});

@@ -1,2 +1,349 @@
-/* Touch HUD, modifier bar, selection action bar and long-press ring (owner: P3, docs/ux/ui-plan-2026-11.md 1.2).
-   Empty in Stage A. */
+/* Touch and canvas input (owner: P3, docs/ux/ui-plan-2026-11.md 1.2): the long-press ring, the snap bubble above the
+   finger, the Space+drag cursor, the touch HUD (modifier bar and selection action bar) and the touch row controls. */
+
+/* ---- canvas ------------------------------------------------------------------------------------------------------ */
+
+.viewport.space-pan .vp-main {
+  cursor: grab;
+}
+.viewport.space-pan .vp-main:active {
+  cursor: grabbing;
+}
+
+/* The long-press ring: appears after a short rest and closes over the remaining time to 500 ms. */
+.lp-ring {
+  position: absolute;
+  width: 56px;
+  height: 56px;
+  margin: -28px 0 0 -28px;
+  border-radius: 50%;
+  border: 3px solid var(--accent, #0a73ad);
+  pointer-events: none;
+  z-index: var(--z-canvas-ui, 5);
+  opacity: 0;
+  transform: scale(1.4);
+  animation: lp-ring 350ms ease-out 150ms forwards;
+}
+@keyframes lp-ring {
+  to {
+    opacity: 0.85;
+    transform: scale(0.7);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lp-ring {
+    animation: none;
+    opacity: 0.85;
+    transform: none;
+  }
+}
+
+/* Snap label and readout above the finger, where the fingertip does not hide them (T16). */
+.snap-bubble {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  padding: 4px 8px;
+  border-radius: var(--r-md, 4px);
+  background: var(--panel, #2b2f34);
+  color: var(--text, #e6e6e6);
+  border: 1px solid var(--border, #555);
+  box-shadow: var(--shadow-pop, 0 2px 8px rgba(0, 0, 0, 0.3));
+  font-size: var(--fs-sm, 12px);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: var(--z-canvas-ui, 5);
+}
+
+/* ---- the touch HUD (TouchHud.tsx) ---------------------------------------------------------------------------------- */
+
+/* The modifier bar: bottom-left of the canvas, above the cursor readout, clear of the left ruler. */
+.touch-mods {
+  position: absolute;
+  left: calc(28px + var(--safe-left, 0px));
+  bottom: 30px;
+  z-index: var(--z-float, 60);
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 12px;
+  background: var(--surface, #2b2f34);
+  border: 1px solid var(--border, #555);
+  box-shadow: var(--shadow-pop, 0 2px 8px rgba(0, 0, 0, 0.3));
+  transition: opacity 120ms;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: manipulation;
+}
+.touch-mod {
+  min-width: 52px;
+  min-height: 44px;
+  padding: 2px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text, #e6e6e6);
+  font: inherit;
+  font-size: var(--fs-sm, 12px);
+  line-height: 1.1;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.touch-mod-sub {
+  font-size: var(--fs-xs, 11px);
+  color: var(--muted, #9aa1a9);
+}
+.touch-mod.on {
+  background: var(--accent-soft, rgba(10, 115, 173, 0.18));
+  border-color: var(--accent, #0a73ad);
+}
+.touch-mod.on .touch-mod-sub {
+  color: inherit;
+}
+/* Locked: a solid fill, so latched (one gesture) and locked (stays on) read differently. */
+.touch-mod.locked {
+  background: var(--accent-fill, var(--accent, #0a73ad));
+  border-color: var(--accent, #0a73ad);
+  color: var(--on-accent, #fff);
+}
+.touch-mod:focus-visible,
+.touch-action:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--panel, #fff),
+    0 0 0 4px var(--accent, #0a73ad);
+}
+
+/* The selection action bar: a pill above the selection (placed in client px by TouchHud). */
+.touch-actions {
+  position: fixed;
+  z-index: var(--z-float, 60);
+  display: flex;
+  gap: 2px;
+  padding: 4px;
+  max-width: calc(100vw - 16px);
+  overflow-x: auto;
+  border-radius: 26px;
+  background: var(--surface, #2b2f34);
+  border: 1px solid var(--border, #555);
+  box-shadow: var(--shadow-pop, 0 2px 8px rgba(0, 0, 0, 0.3));
+  transition: opacity 120ms;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: manipulation;
+  scrollbar-width: none;
+}
+.touch-action {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 22px;
+  background: transparent;
+  color: var(--text, #e6e6e6);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.touch-action.danger {
+  color: var(--danger, #c62828);
+}
+.touch-mods.busy,
+.touch-actions.busy {
+  opacity: 0;
+  pointer-events: none;
+}
+@media (hover: hover) {
+  .touch-mod:hover,
+  .touch-action:hover {
+    background: var(--surface-hover, rgba(127, 127, 127, 0.15));
+  }
+}
+.touch-mod:active,
+.touch-action:active {
+  background: var(--surface-hover, rgba(127, 127, 127, 0.25));
+}
+@media (prefers-reduced-motion: reduce) {
+  .touch-mods,
+  .touch-actions {
+    transition: none;
+  }
+}
+
+/* ---- touch rows: grips, ⋯ and rename buttons, drop lines (BrowserPanel, CutsLayers, PagesDock, ArtLibrary) ---------- */
+
+/* The reorder grip: pointer events, so it works for a finger as for the mouse (touch/reorder.ts). */
+.row-grip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 20px;
+  margin: 0 2px 0 -4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted, #8a8e95);
+  cursor: grab;
+  touch-action: none;
+  vertical-align: middle;
+}
+.row-grip:active {
+  cursor: grabbing;
+}
+.dragging {
+  opacity: 0.6;
+}
+
+/* ⋯ and rename: always there on touch; with a mouse on the hovered or selected row (right-click and double-click stay). */
+.row-more,
+.row-rename {
+  display: none;
+}
+.tree-row.selected .row-more,
+.cuts-row.selected .row-more,
+.pages-row.active .row-more,
+.pages-row.active .row-rename,
+.tree-head .row-rename {
+  display: inline-flex;
+}
+@media (hover: hover) {
+  .tree-row:hover .row-more,
+  .cuts-row:hover .row-more,
+  .pages-row:hover .row-more,
+  .pages-row:hover .row-rename {
+    display: inline-flex;
+  }
+}
+:root[data-pointer="coarse"] .row-more,
+:root[data-pointer="coarse"] .row-rename,
+:root[data-density="touch"] .row-more,
+:root[data-density="touch"] .row-rename {
+  display: inline-flex;
+}
+.cuts-row .row-more {
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+/* Where a dragged page lands. */
+.pages-row.drop-before {
+  box-shadow: inset 0 2px 0 var(--accent, #0a73ad);
+}
+.pages-row.drop-after {
+  box-shadow: inset 0 -2px 0 var(--accent, #0a73ad);
+}
+
+.row-actions {
+  margin-top: 4px;
+}
+
+/* Coarse pointers: 44 px grips and row buttons, 40 px order buttons (T13, T14). */
+:root[data-pointer="coarse"] .row-grip,
+:root[data-density="touch"] .row-grip {
+  width: 44px;
+  height: 44px;
+  margin: 0;
+}
+:root[data-pointer="coarse"] .row-more,
+:root[data-pointer="coarse"] .row-rename,
+:root[data-density="touch"] .row-more,
+:root[data-density="touch"] .row-rename {
+  min-width: 44px;
+  min-height: 44px;
+}
+:root[data-pointer="coarse"] .c-order,
+:root[data-density="touch"] .c-order {
+  width: auto;
+  white-space: nowrap;
+}
+:root[data-pointer="coarse"] .c-order .tog,
+:root[data-density="touch"] .c-order .tog {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+}
+:root[data-pointer="coarse"] .folder-twisty,
+:root[data-density="touch"] .folder-twisty {
+  min-width: 40px;
+  min-height: 40px;
+}
+@media (pointer: coarse) {
+  .tree-rename,
+  .dz-art-search,
+  .lx-search {
+    font-size: max(16px, 1em);
+  }
+}
+
+/* ---- the nudge pad (NudgePad.tsx, Properties on coarse pointers) ------------------------------------------------ */
+.nudge-pad {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 6px 0;
+}
+.nudge-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 44px);
+  grid-template-rows: repeat(3, 44px);
+  gap: 2px;
+}
+.nudge-btn {
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border, #c9cbcf);
+  border-radius: var(--r-md, 4px);
+  background: var(--surface, transparent);
+  color: var(--text, inherit);
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.nudge-btn:active {
+  background: var(--surface-hover, rgba(127, 127, 127, 0.2));
+}
+.nudge-step {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--fs-sm, 12px);
+}
+.nudge-step select {
+  min-height: 44px;
+  font-size: max(16px, 1em);
+}
+
+/* The selected objects' layer as one row in Properties (V12). */
+.prop-layer-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.prop-layer-name {
+  font-weight: var(--fw-semibold, 600);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.prop-layer-line .muted {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}

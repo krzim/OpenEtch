@@ -15,8 +15,15 @@
 //   circle stays round while "Keep round" is on) and the round handles outside the corners to rotate (Shift 15°,
 //   Ctrl 5°); Esc before release cancels;
 // - drag the stock to move it while it is selected (click its outline to select it);
-// - middle-drag pans, the wheel zooms (Ctrl+wheel is a trackpad pinch, sideways scrolling pans), touch: one finger on
-//   empty space pans, two fingers pan and pinch;
+// - middle-drag or Space+drag pans, the wheel zooms (Ctrl+wheel is a trackpad pinch, sideways and Shift+wheel
+//   scrolling pans; with Preferences > Trackpad on, the default on a Mac, two-finger scrolling pans), and the pan-or-zoom
+//   decision holds for a whole wheel stream (touch/wheelIntent.ts); Safari's pinch gesture events zoom the canvas;
+// - touch (docs/ux/ui-plan-2026-11.md 1.2, touch/gesture.ts): one finger is the left mouse button (a drag on empty
+//   space draws the same marquee; Preferences can make it pan instead), two fingers pan and pinch, a second finger
+//   cancels a drag, a long-press is the right-click, two- and three-finger taps undo and redo, and while a pen draws
+//   a resting palm is ignored. Tolerances, handles and snapping follow the pointer (pointer.ts TOL); a tap on a
+//   selected object switches the touch handles between scale and rotate (LightBurn's click-again rotate). The touch
+//   modifier bar's virtual keys (touch/virtualMods.ts) count as held keys;
 // - with the Rectangle or Ellipse tool, drag to draw (Shift: square or circle); the Circle tool draws from the centre
 //   (a tap places a 20 mm shape);
 // - snapping is Fusion 360-style on real geometry (snapping.ts): centres, quadrants, vertices, midpoints,
@@ -66,6 +73,7 @@ import {
   type Box,
 } from "../geometry.ts";
 import {
+  anyGrouped,
   applySelect,
   boxHits,
   buildShapeIndex,
@@ -76,7 +84,25 @@ import {
   type SelectOp,
   type Selection,
 } from "../selection.ts";
-import { modifierReplay } from "../pointer.ts";
+import {
+  TOL,
+  capturePointer,
+  isApplePlatform,
+  isMacContextClick,
+  modifierReplay,
+  modsOf as modsOfKeys,
+  pointerClass,
+  type KeyMods,
+  type PointerClass,
+} from "../pointer.ts";
+import { GestureArbiter, type Effect } from "../touch/gesture.ts";
+import { publishHud } from "../touch/hudState.ts";
+import { runTouchAction } from "../touch/actions.ts";
+import { clearLatched, getVirtualMods, subscribeVirtualMods } from "../touch/virtualMods.ts";
+import { newWheelLatch, wheelIntent, wheelPanDelta } from "../touch/wheelIntent.ts";
+import { ContextStripPortal } from "../workspace/contextStrip.tsx";
+import { useLayoutMode } from "../workspace/layoutMode.ts";
+import "../touch/touch.css";
 import { useDitheredHref } from "./ImageSettings.tsx";
 import { CanvasLayer, ToolpathLayer, originalHref, paintImages, useBitmaps, useDpr, type ImageItem, type PaintArgs } from "./SceneCanvas.tsx";
 import { maskClips } from "../files/fileFormats.ts";
@@ -135,8 +161,8 @@ export interface PreviewOptions {
 
 type Gesture =
   | { kind: "none" }
-  | { kind: "pan"; start: Vec2; view: View; moved: boolean; clearOnTap: boolean }
-  | { kind: "marquee"; start: Vec2; startScreen: Vec2; op: SelectOp; moved: boolean }
+  | { kind: "pan"; start: Vec2; view: View; moved: boolean; clearOnTap: boolean; slop: number }
+  | { kind: "marquee"; start: Vec2; startScreen: Vec2; op: SelectOp; moved: boolean; slop: number }
   | {
       kind: "move";
       startField: Vec2;
@@ -150,11 +176,15 @@ type Gesture =
       index: SnapIndex;
       /** Selection to narrow to when this turns out to be a click without a drag. */
       tapSelect: string | null;
+      /** Screen px before the press becomes a drag (the pointer's slop). */
+      slop: number;
+      /** A touch tap on an object that was already selected: switches the handles between scale and rotate. */
+      rotToggle: boolean;
     }
   /** `index`: snap candidates without the selection; `target`: the dragged handle's snapped position (smart guides). */
   | { kind: "scale"; handle: Handle; box: Box; ids: string[]; start: Vec2; round: boolean; index: SnapIndex; target: Vec2 | null }
   | { kind: "rotate"; center: Vec2; start: Vec2; ids: string[] }
-  | { kind: "draw"; start: Vec2; tool: DrawTool; index: SnapIndex }
+  | { kind: "draw"; start: Vec2; tool: DrawTool; index: SnapIndex; slop: number }
   | { kind: "pinch"; dist: number; mid: Vec2; view: View }
   /** A gesture the canvas tool (EditTools) took. */
   | { kind: "ext" }
@@ -168,10 +198,8 @@ interface Transient {
 
 const MIN_SCALE = 0.2;
 const MAX_SCALE = 400;
-/** Screen px a pointer may wander before a tap becomes a drag. */
-const TAP_SLOP = 4;
-/** Click tolerance, screen px (LightBurn "Click Selection Tolerance"). */
-const CLICK_TOL_PX = 5;
+// Screen px a pointer may wander before a tap becomes a drag, and the click tolerance (LightBurn "Click Selection
+// Tolerance"), per pointer class: pointer.ts TOL (the mouse row is the old TAP_SLOP 4 and CLICK_TOL_PX 5).
 /** Default size of a shape placed with a tap, mm. */
 const TAP_SIZE_MM = 20;
 
@@ -257,6 +285,38 @@ export function Viewport(props: ViewportProps) {
   const lastMove = useRef<{ s: Vec2; m: Mods } | null>(null);
   /** The last hover position (screen px, mouse or pen, no button down), or null off the canvas. */
   const lastHover = useRef<Vec2 | null>(null);
+  /** The gesture arbiter: touch presses, pinch, long-press, palm rejection (touch/gesture.ts). */
+  const arbRef = useRef<GestureArbiter | null>(null);
+  arbRef.current ??= new GestureArbiter();
+  const arb = arbRef.current;
+  /** Per pointer: what its down event said (with touch the press starts later, past the slop or on lift). */
+  const downInfo = useRef(new Map<number, { target: Element | null; button: number; time: number; cls: PointerClass }>());
+  /** The keyboard modifiers of the last pointer event. */
+  const lastKeys = useRef<KeyMods>({ shiftKey: false, ctrlKey: false, metaKey: false, altKey: false });
+  /** Pointer class of the gesture in progress (tolerances, snapping). */
+  const clsRef = useRef<PointerClass>("mouse");
+  const layout = useLayoutMode();
+  /** The pointer class the handles are drawn for: the last one used on the canvas (a coarse screen starts with touch). */
+  const [lastCls, setLastCls] = useState<PointerClass>(() => (layout.pointer === "coarse" ? "touch" : "mouse"));
+  // Preferences > Density = Touch asks for touch-sized handles (and tap-again rotate) whatever the pointer.
+  const touchDensity = layout.density === "touch";
+  const handleCls: PointerClass = lastCls === "mouse" && touchDensity ? "touch" : lastCls;
+  /** Touch handles show the rotate handles instead of the scale handles (a tap on the selection toggles). */
+  const [rotMode, setRotMode] = useState(false);
+  /** The long-press ring under a resting finger, screen px. */
+  const [lpRing, setLpRing] = useState<Vec2 | null>(null);
+  const lpTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Space is held: a drag pans (grab cursor). */
+  const [spacePan, setSpacePan] = useState(false);
+  const spaceRef = useRef(false);
+  const wheelLatch = useRef(newWheelLatch());
+  const trackpadRef = useRef(uiPrefs.trackpadPans);
+  trackpadRef.current = uiPrefs.trackpadPans;
+  /** Safari's pinch (gesturestart) is under way: its own events zoom, so the wheel stays out of it. */
+  const safariPinch = useRef<{ view: View; at: Vec2 } | null>(null);
+  const apple = useMemo(() => isApplePlatform(), []);
+  /** Time of the last touch press, so the browser's own touch long-press menu does not open a second menu. */
+  const lastTouchT = useRef(-Infinity);
   /** The view follows the field (refit on resize) until the user pans or zooms. */
   const autoFit = useRef(true);
   const fittedField = useRef<string | null>(null);
@@ -290,16 +350,28 @@ export function Viewport(props: ViewportProps) {
   }, [fitBox, fieldBox]);
 
   // Fit the field once the canvas has a real size, again when the field size changes, and on every resize until the
-  // user pans or zooms (so the first fit never leaves the field clipped).
+  // user pans or zooms (so the first fit never leaves the field clipped). After that a resize (a dock opening or
+  // closing, a rotation) keeps the view centre, and when the whole field was in view it stays in view (V9).
+  const prevSize = useRef<Vec2 | null>(null);
   useEffect(() => {
     if (size[0] <= 20 || size[1] <= 20) return;
+    const before = prevSize.current;
+    prevSize.current = size;
     // The workspace changes with the active device: fit the new one.
     const key = `${wsW}x${wsH}`;
     if (autoFit.current || fittedField.current !== key) {
       fittedField.current = key;
       fitBox(fieldBox);
+      return;
     }
-  }, [size, fitBox, fieldBox, wsW, wsH]);
+    if (!before || (before[0] === size[0] && before[1] === size[1])) return;
+    const v = viewRef.current;
+    const fits = (sz: Vec2, sc: number) => Math.abs(v.cx) + wsW / 2 <= sz[0] / 2 / sc + 1e-6 && Math.abs(v.cy) + wsH / 2 <= sz[1] / 2 / sc + 1e-6;
+    if (fits(before, v.scale) && !fits(size, v.scale)) {
+      const need = Math.min(size[0] / 2 / (Math.abs(v.cx) + wsW / 2), size[1] / 2 / (Math.abs(v.cy) + wsH / 2));
+      setView({ ...v, scale: clamp(need, MIN_SCALE, MAX_SCALE) });
+    }
+  }, [size, fitBox, fieldBox, wsW, wsH, setView]);
 
   useEffect(() => {
     if (settling && doc && doc.revision !== settling.rev) setSettling(null);
@@ -315,27 +387,113 @@ export function Viewport(props: ViewportProps) {
     return r ? [e.clientX - r.left, e.clientY - r.top] : [e.clientX, e.clientY];
   };
 
-  // Wheel zooms about the pointer. Sideways scrolling (two-finger trackpad) pans; Ctrl+wheel is a trackpad pinch.
-  // A non-passive listener is needed to keep the page from scrolling or zooming.
+  // Wheel zooms about the pointer; Ctrl+wheel is a trackpad pinch; sideways and Shift+wheel scrolling pan, and with
+  // Preferences > Trackpad on (Auto: a Mac, or once a trackpad was seen) two-finger scrolling pans. The decision holds
+  // for the whole wheel stream (touch/wheelIntent.ts). Safari sends its trackpad pinch as gesture events instead.
+  // Non-passive listeners keep the page from scrolling or zooming.
   useEffect(() => {
     const el = svgRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
+      if (safariPinch.current) return;
       autoFit.current = false;
       const s = local(e);
-      const pixel = e.deltaMode === 0;
-      if (!e.ctrlKey && pixel && e.deltaX !== 0) {
-        queueView((v) => ({ ...v, cx: v.cx + e.deltaX / v.scale, cy: v.cy - e.deltaY / v.scale }));
+      const intent = wheelIntent(wheelLatch.current, e as WheelEvent & { wheelDeltaY?: number }, trackpadRef.current, apple);
+      if (intent === "pan") {
+        const [dx, dy] = wheelPanDelta(e);
+        queueView((v) => ({ ...v, cx: v.cx + dx / v.scale, cy: v.cy - dy / v.scale }));
         return;
       }
+      const pixel = e.deltaMode === 0;
       const dy = (pixel ? e.deltaY : e.deltaY * 40) * (e.ctrlKey ? 1 : wheelSign.current);
       const factor = Math.exp(-clamp(dy, -300, 300) * (e.ctrlKey ? 0.01 : 0.0015));
       queueView((v) => zoomAtPure(v, size, s, factor));
     };
-    el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
-  }, [size, queueView]);
+    type GestureEv = Event & { scale?: number; clientX?: number; clientY?: number };
+    const onGestureStart = (e: Event) => {
+      e.preventDefault();
+      const g = e as GestureEv;
+      autoFit.current = false;
+      safariPinch.current = { view: viewRef.current, at: local({ clientX: g.clientX ?? 0, clientY: g.clientY ?? 0 }) };
+    };
+    const onGestureChange = (e: Event) => {
+      e.preventDefault();
+      const p = safariPinch.current;
+      const k = (e as GestureEv).scale;
+      if (!p || typeof k !== "number" || !(k > 0)) return;
+      queueView(zoomAtPure(p.view, size, p.at, k));
+    };
+    const onGestureEnd = (e: Event) => {
+      e.preventDefault();
+      safariPinch.current = null;
+    };
+    const opts = { passive: false } as AddEventListenerOptions;
+    el.addEventListener("wheel", onWheel, opts);
+    el.addEventListener("gesturestart", onGestureStart, opts);
+    el.addEventListener("gesturechange", onGestureChange, opts);
+    el.addEventListener("gestureend", onGestureEnd, opts);
+    return () => {
+      el.removeEventListener("wheel", onWheel);
+      el.removeEventListener("gesturestart", onGestureStart);
+      el.removeEventListener("gesturechange", onGestureChange);
+      el.removeEventListener("gestureend", onGestureEnd);
+    };
+  }, [size, queueView, apple]);
+
+  // Outside the canvas, Ctrl+wheel and pinch gestures must not zoom the page (the panels and bars would scale).
+  useEffect(() => {
+    const outside = (t: EventTarget | null) => !(t instanceof Element && t.closest(".viewport"));
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey && outside(e.target)) e.preventDefault();
+    };
+    const onGesture = (e: Event) => {
+      if (outside(e.target)) e.preventDefault();
+    };
+    const opts = { passive: false } as AddEventListenerOptions;
+    window.addEventListener("wheel", onWheel, opts);
+    document.addEventListener("gesturestart", onGesture, opts);
+    document.addEventListener("gesturechange", onGesture, opts);
+    return () => {
+      window.removeEventListener("wheel", onWheel);
+      document.removeEventListener("gesturestart", onGesture);
+      document.removeEventListener("gesturechange", onGesture);
+    };
+  }, []);
+
+  // Space held with the canvas focused: a left drag pans (Space+drag, as in most design apps).
+  useEffect(() => {
+    const typing = (t: EventTarget | null) => {
+      const el = t as HTMLElement | null;
+      return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || !!el.isContentEditable);
+    };
+    const canvasKeys = () => {
+      const a = document.activeElement;
+      return !a || a === document.body || !!a.closest?.(".viewport");
+    };
+    const set = (on: boolean) => {
+      if (spaceRef.current === on) return;
+      spaceRef.current = on;
+      setSpacePan(on);
+    };
+    const down = (e: KeyboardEvent) => {
+      if (e.code !== "Space" || e.ctrlKey || e.metaKey || e.altKey || typing(e.target) || !canvasKeys()) return;
+      e.preventDefault();
+      set(true);
+    };
+    const up = (e: KeyboardEvent) => {
+      if (e.code === "Space") set(false);
+    };
+    const blur = () => set(false);
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    window.addEventListener("blur", blur);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+      window.removeEventListener("blur", blur);
+    };
+  }, []);
 
   const selectedSet = useMemo(() => new Set(selection.objects), [selection.objects]);
   const layerById = useMemo(() => new Map((doc?.layers ?? []).map((l) => [l.id, l])), [doc]);
@@ -392,8 +550,10 @@ export function Viewport(props: ViewportProps) {
     const guidesOnly = !!m.alt;
     const [x0, y1] = toField(0, 0);
     const [x1, y0] = toField(size[0], size[1]);
+    // Touch and pen snap from farther away (pointer.ts TOL); the mouse keeps Preferences > Snap distance.
+    const tolPx = Math.max(uiPrefs.snapTolPx || SNAP_TOL_PX, clsRef.current === "mouse" ? 0 : TOL[clsRef.current].snap);
     return {
-      tol: (uiPrefs.snapTolPx || SNAP_TOL_PX) / view.scale,
+      tol: tolPx / view.scale,
       kinds: uiPrefs.snapKinds,
       points: objects && !guidesOnly,
       nearest: objects && !guidesOnly,
@@ -463,7 +623,7 @@ export function Viewport(props: ViewportProps) {
   useEffect(() => {
     const onMod = (e: KeyboardEvent) => {
       const replay = modifierReplay(e.key, gesture.current.kind, lastHover.current !== null && pointers.current.size === 0);
-      const m: Mods = { shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey, alt: e.altKey };
+      const m: Mods = modsOf(e);
       if (replay === "hover" && lastHover.current) {
         hoverAt(lastHover.current, m);
         return;
@@ -481,56 +641,79 @@ export function Viewport(props: ViewportProps) {
     };
   });
 
-  const modsOf = (e: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean; altKey: boolean }): Mods => ({
-    shift: e.shiftKey,
-    ctrl: e.ctrlKey || e.metaKey,
-    alt: e.altKey,
-  });
+  /** LightBurn's modifiers of an event: the keys OR the touch modifier bar (Cmd is Ctrl on a Mac; pointer.ts). */
+  const modsOf = (e: KeyMods): Mods => modsOfKeys(e, getVirtualMods(), apple);
+  const keysOf = (e: KeyMods): KeyMods => ({ shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey, altKey: e.altKey });
+
+  /** Arm (or clear) the long-press timer for the arbiter's next deadline. */
+  const armTimer = () => {
+    if (lpTimer.current) clearTimeout(lpTimer.current);
+    lpTimer.current = null;
+    const due = arb.nextDeadline();
+    if (due === null) return;
+    lpTimer.current = setTimeout(() => {
+      lpTimer.current = null;
+      effectsRef.current(arb.feed({ kind: "tick", t: performance.now() }));
+    }, Math.max(0, due - performance.now()));
+  };
+  useEffect(
+    () => () => {
+      if (lpTimer.current) clearTimeout(lpTimer.current);
+      publishHud({ selRect: null, canvasRect: null, busy: false });
+    },
+    [],
+  );
 
   const onPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
     if (!doc) return;
-    const mouse = e.pointerType === "mouse";
+    const cls = pointerClass(e);
+    const mouse = cls === "mouse";
     if (mouse && e.button === 2) return; // context menu
+    if (isMacContextClick(e, apple)) return; // Ctrl+click on a Mac is the right-click: the context menu follows
     if (mouse && e.button !== 0 && e.button !== 1) return;
     e.preventDefault(); // no text selection, no middle-click autoscroll
     wrapRef.current?.focus({ preventScroll: true });
     const s = local(e);
     pointers.current.set(e.pointerId, s);
-    try {
-      svgRef.current?.setPointerCapture(e.pointerId);
-    } catch {
-      // Capture can fail for synthetic events; harmless.
-    }
-    if (pointers.current.size === 2) {
-      // Second finger: abandon the single-pointer gesture and pinch instead.
-      cancelGesture();
-      const [p, q] = [...pointers.current.values()] as [Vec2, Vec2];
-      gesture.current = { kind: "pinch", dist: dist(p, q), mid: mid(p, q), view: viewRef.current };
-      return;
-    }
-    if (pointers.current.size > 2) return;
-    const m = modsOf(e);
+    capturePointer(svgRef.current, e.pointerId);
+    if (cls === "touch") lastTouchT.current = performance.now();
+    if (cls !== lastCls) setLastCls(cls);
+    lastKeys.current = keysOf(e);
+    downInfo.current.set(e.pointerId, { target: e.target as Element, button: e.button, time: e.timeStamp, cls });
+    // The arbiter decides when the press starts: at once for a mouse or pen, past the slop or on lift for a finger.
+    applyEffects(arb.feed({ kind: "down", id: e.pointerId, cls, p: s, t: e.timeStamp }));
+    // A finger resting in the Select tool shows the long-press ring coming.
+    if (arb.state === "pending" && tool === "select") setLpRing(s);
+  };
+
+  /** Start a one-pointer gesture at screen point `s` (the arbiter's press; the old pointerdown). */
+  const beginPress = (id: number, s: Vec2, cls: PointerClass, longPress: boolean) => {
+    if (!doc) return;
+    const info = downInfo.current.get(id) ?? { target: null, button: 0, time: performance.now(), cls };
+    clsRef.current = cls;
+    const tl = TOL[cls];
+    const m = modsOf(lastKeys.current);
     lastMove.current = { s, m };
-    if (mouse && e.button === 1) {
-      gesture.current = { kind: "pan", start: s, view: viewRef.current, moved: false, clearOnTap: false };
+    if (cls === "mouse" && (info.button === 1 || (spaceRef.current && info.button === 0))) {
+      gesture.current = { kind: "pan", start: s, view: viewRef.current, moved: false, clearOnTap: false, slop: tl.slop };
       return;
     }
     const f = toField(s[0], s[1]);
     const ext = props.canvasTool;
-    if (ext && ext.down(f, m, { target: e.target as Element, pointerType: e.pointerType, time: e.timeStamp, screen: s }, canvasCtx())) {
+    if (ext && ext.down(f, m, { target: info.target, pointerType: cls, time: info.time, screen: s, longPress }, canvasCtx())) {
       gesture.current = { kind: "ext" };
       return;
     }
     if (isDrawTool(tool)) {
       const index = snapIndexFor(new Set(), true);
       const sp = snapPoint(f, index, m).p;
-      gesture.current = { kind: "draw", start: sp, tool, index };
+      gesture.current = { kind: "draw", start: sp, tool, index, slop: tl.slop };
       setDraw({ a: sp, b: sp, tool });
       return;
     }
 
     // Handles of the current selection come first.
-    const handleEl = (e.target as Element).closest?.("[data-handle]");
+    const handleEl = info.target?.closest?.("[data-handle]");
     if (handleEl && selBoundsRaw) {
       const h = handleEl.getAttribute("data-handle") ?? "";
       if (h.startsWith("rot")) {
@@ -543,8 +726,8 @@ export function Viewport(props: ViewportProps) {
       return;
     }
 
-    const tol = CLICK_TOL_PX / view.scale;
-    const hit = hitTest(shapeIndex, f, tol);
+    const tol = tl.click / view.scale;
+    const hit = hitTest(shapeIndex, f, tol, cls !== "mouse");
     const op = selectOpFor(m);
     if (hit) {
       const isSel = selectedSet.has(hit);
@@ -573,6 +756,8 @@ export function Viewport(props: ViewportProps) {
         ref: referencePoint(own, f) ?? grabPoint(f),
         index: snapIndexFor(new Set(ids), true),
         tapSelect: op === "replace" && isSel && selection.objects.length > 1 ? hit : null,
+        slop: tl.slop,
+        rotToggle: (cls !== "mouse" || touchDensity) && op === "replace" && isSel,
       };
       return;
     }
@@ -596,18 +781,121 @@ export function Viewport(props: ViewportProps) {
           ref: referencePoint(snapData().stock?.points ?? [], f) ?? grabPoint(f),
           index: snapIndexFor(new Set(), false),
           tapSelect: null,
+          slop: tl.slop,
+          rotToggle: false,
         };
         return;
       }
     }
 
-    if (e.pointerType === "touch") {
-      // One finger on empty space pans; a tap clears the selection.
-      gesture.current = { kind: "pan", start: s, view: viewRef.current, moved: false, clearOnTap: op === "replace" };
+    if (cls === "touch" && uiPrefs.touchOneFinger === "pan") {
+      // Preferences > One finger on empty canvas: Pan (the old touch behaviour); a tap clears the selection.
+      gesture.current = { kind: "pan", start: s, view: viewRef.current, moved: false, clearOnTap: op === "replace", slop: tl.slop };
       return;
     }
-    gesture.current = { kind: "marquee", start: f, startScreen: s, op, moved: false };
+    // Empty space: the selection box, the same for a finger as for the mouse.
+    gesture.current = { kind: "marquee", start: f, startScreen: s, op, moved: false, slop: tl.slop };
   };
+
+  /** Run the arbiter's effects (touch/gesture.ts). */
+  const applyEffects = (fx: Effect[]) => {
+    for (const ef of fx) {
+      switch (ef.kind) {
+        case "press":
+          beginPress(ef.id, ef.p, ef.cls, !!ef.longPress);
+          break;
+        case "drag": {
+          const m = modsOf(lastKeys.current);
+          lastMove.current = { s: ef.p, m };
+          update(ef.p, m);
+          break;
+        }
+        case "release":
+          releasePress(ef.p);
+          break;
+        case "abort":
+          cancelGesture();
+          break;
+        case "navStart":
+          startNav(ef.pts);
+          break;
+        case "nav":
+          navTo(ef.pts);
+          break;
+        case "navEnd":
+          gesture.current = pointers.current.size ? { kind: "idle" } : { kind: "none" };
+          break;
+        case "longPress":
+          longPressAt(ef.id, ef.p);
+          break;
+        case "multiTap":
+          // Two fingers undo, three redo (Procreate, Fusion on iPad).
+          runTouchAction(ef.fingers >= 3 ? "redo" : "undo");
+          break;
+      }
+    }
+    if (arb.state !== "pending") setLpRing(null);
+    const gk = gesture.current.kind;
+    publishHud({ busy: gk !== "none" && gk !== "idle" });
+    armTimer();
+  };
+  const effectsRef = useRef(applyEffects);
+  effectsRef.current = applyEffects;
+
+  /** Two fingers pinch and pan; one finger (palm mode, after a pen) pans. */
+  const startNav = (pts: Vec2[]) => {
+    if (pts.length >= 2) {
+      const [p, q] = pts as [Vec2, Vec2];
+      gesture.current = { kind: "pinch", dist: dist(p, q), mid: mid(p, q), view: viewRef.current };
+    } else if (pts.length === 1) {
+      gesture.current = { kind: "pan", start: pts[0], view: viewRef.current, moved: false, clearOnTap: false, slop: TOL.touch.slop };
+    }
+  };
+  const navTo = (pts: Vec2[]) => {
+    const g = gesture.current;
+    if (g.kind === "pinch" && pts.length >= 2) {
+      const [p, q] = pts as [Vec2, Vec2];
+      const m = mid(p, q);
+      const factor = dist(p, q) / Math.max(g.dist, 1);
+      autoFit.current = false;
+      // Zoom about the starting midpoint, then pan by the midpoint's travel.
+      const z = zoomAtPure(g.view, size, g.mid, factor);
+      queueView({ ...z, cx: z.cx - (m[0] - g.mid[0]) / z.scale, cy: z.cy + (m[1] - g.mid[1]) / z.scale });
+    } else if (g.kind === "pan" && pts.length >= 1) update(pts[0], { shift: false, ctrl: false });
+  };
+
+  /** A finger held still: the right-click (select what is under it, then the context menu), else an ordinary press. */
+  const longPressAt = (id: number, p: Vec2) => {
+    setLpRing(null);
+    const target = downInfo.current.get(id)?.target ?? null;
+    const onControl = !!target?.closest?.("[data-guide],[data-handle]");
+    if (doc && tool === "select" && !onControl) {
+      const hit = hitTest(shapeIndex, toField(p[0], p[1]), TOL.touch.click / view.scale, true);
+      if (hit && !selectedSet.has(hit)) props.onSelection(applySelect(selection, doc, [hit], "replace"));
+      navigator.vibrate?.(10);
+      const r = svgRef.current?.getBoundingClientRect();
+      props.onContextMenu((r?.left ?? 0) + p[0], (r?.top ?? 0) + p[1]);
+      return;
+    }
+    // Nothing here wants a long-press: it is a press after all (a guide grabbed on purpose, a held Line point).
+    applyEffects(arb.feed({ kind: "promote", t: performance.now() }));
+  };
+
+  // A toggle on the touch modifier bar mid-drag re-evaluates the drag, as a key press does.
+  useEffect(() =>
+    subscribeVirtualMods(() => {
+      const lm = lastMove.current;
+      const g = gesture.current.kind;
+      if (!lm || g === "none" || g === "idle" || g === "pinch" || g === "pan") return;
+      const m = modsOf(lastKeys.current);
+      lastMove.current = { s: lm.s, m };
+      update(lm.s, m);
+    }),
+  );
+
+  // A new selection starts with the scale handles.
+  const selKey = selection.objects.join(",");
+  useEffect(() => setRotMode(false), [selKey]);
 
   /** Advance the current drag to screen point `s` with modifiers `m`. */
   const update = (s: Vec2, m: Mods) => {
@@ -617,20 +905,20 @@ export function Viewport(props: ViewportProps) {
       case "pan": {
         const dx = s[0] - g.start[0];
         const dy = s[1] - g.start[1];
-        if (!g.moved && Math.hypot(dx, dy) < TAP_SLOP) return;
+        if (!g.moved && Math.hypot(dx, dy) < g.slop) return;
         g.moved = true;
         autoFit.current = false;
         queueView({ ...g.view, cx: g.view.cx - dx / g.view.scale, cy: g.view.cy + dy / g.view.scale });
         break;
       }
       case "marquee": {
-        if (!g.moved && Math.hypot(s[0] - g.startScreen[0], s[1] - g.startScreen[1]) < TAP_SLOP) return;
+        if (!g.moved && Math.hypot(s[0] - g.startScreen[0], s[1] - g.startScreen[1]) < g.slop) return;
         g.moved = true;
         setMarquee({ a: g.start, b: f });
         break;
       }
       case "move": {
-        if (!g.moved && Math.hypot(s[0] - g.startScreen[0], s[1] - g.startScreen[1]) < TAP_SLOP) return;
+        if (!g.moved && Math.hypot(s[0] - g.startScreen[0], s[1] - g.startScreen[1]) < g.slop) return;
         g.moved = true;
         let d: Vec2 = [f[0] - g.startField[0], f[1] - g.startField[1]];
         if (m.shift) d = constrainDelta(d);
@@ -707,32 +995,24 @@ export function Viewport(props: ViewportProps) {
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     const s = local(e);
     const f = toField(s[0], s[1]);
-    setCursor(f);
-    props.onCursor?.(f);
+    const cls = pointerClass(e);
+    // Fingers that pan or pinch skip the cursor readout: one re-render less per move (T20).
+    const palm = cls === "touch" && pointers.current.has(e.pointerId) && !arb.tracks(e.pointerId);
+    if (!(cls === "touch" && (arb.navigating || gesture.current.kind === "pinch" || palm))) {
+      setCursor(f);
+      props.onCursor?.(f);
+    }
     // Also kept through a drag, so a modifier pressed after the button comes up acts where the pointer is.
-    lastHover.current = e.pointerType === "touch" ? null : s;
+    lastHover.current = cls === "touch" ? null : s;
     if (!pointers.current.has(e.pointerId)) {
-      if (e.pointerType !== "touch") hoverAt(s, modsOf(e));
+      if (arb.state === "idle") clsRef.current = cls;
+      if (cls !== "touch") hoverAt(s, modsOf(e));
       else if (doc) props.canvasTool?.hover(f, modsOf(e), canvasCtx());
       return;
     }
     pointers.current.set(e.pointerId, s);
-    const g = gesture.current;
-    if (g.kind === "pinch") {
-      const pts = [...pointers.current.values()];
-      if (pts.length < 2) return;
-      const [p, q] = pts as [Vec2, Vec2];
-      const m = mid(p, q);
-      const factor = dist(p, q) / Math.max(g.dist, 1);
-      autoFit.current = false;
-      // Zoom about the starting midpoint, then pan by the midpoint's travel.
-      const z = zoomAtPure(g.view, size, g.mid, factor);
-      queueView({ ...z, cx: z.cx - (m[0] - g.mid[0]) / z.scale, cy: z.cy + (m[1] - g.mid[1]) / z.scale });
-      return;
-    }
-    const m = modsOf(e);
-    lastMove.current = { s, m };
-    update(s, m);
+    lastKeys.current = keysOf(e);
+    applyEffects(arb.feed({ kind: "move", id: e.pointerId, p: s, t: e.timeStamp }));
   };
 
   const commit = (inv: Invocation, t: Transient, done?: (result: unknown) => void) => {
@@ -749,25 +1029,32 @@ export function Viewport(props: ViewportProps) {
   const endPointer = (e: React.PointerEvent<SVGSVGElement>, cancelled: boolean) => {
     if (!pointers.current.has(e.pointerId)) return;
     pointers.current.delete(e.pointerId);
+    lastKeys.current = keysOf(e);
+    const s = local(e);
+    applyEffects(arb.feed(cancelled ? { kind: "cancel", id: e.pointerId, t: e.timeStamp } : { kind: "up", id: e.pointerId, p: s, t: e.timeStamp }));
+    downInfo.current.delete(e.pointerId);
+    // Lifting one finger of a pinch ends it; the remaining finger does nothing until lifted.
+    if (pointers.current.size === 0 && (gesture.current.kind === "idle" || gesture.current.kind === "pinch")) gesture.current = { kind: "none" };
+  };
+
+  /** The press ended normally at screen point `s`: commit what the gesture did (the old pointerup). */
+  const releasePress = (s: Vec2) => {
     const g = gesture.current;
-    if (g.kind === "pinch") {
-      // Lifting one finger of a pinch ends the gesture; the remaining finger does nothing until lifted.
-      if (pointers.current.size === 0) gesture.current = { kind: "none" };
-      return;
-    }
-    if (pointers.current.size === 0) gesture.current = { kind: "none" };
+    gesture.current = pointers.current.size ? { kind: "idle" } : { kind: "none" };
     const t = transient;
     setTransient(null);
     setSnapShown(null);
     setConstraint(null);
     setReadout(null);
-    if (cancelled || !doc) {
+    // The modifiers as the gesture ends (a latched toggle of the touch bar still counts), then the latch is used up.
+    const m = modsOf(lastKeys.current);
+    clearLatched();
+    if (!doc) {
       if (g.kind === "ext") props.canvasTool?.cancel();
       setDraw(null);
       setMarquee(null);
       return;
     }
-    const s = local(e);
     const f = toField(s[0], s[1]);
     switch (g.kind) {
       case "pan":
@@ -786,7 +1073,12 @@ export function Viewport(props: ViewportProps) {
       }
       case "move": {
         if (!g.moved || !t) {
-          if (g.tapSelect) props.onSelection(applySelect(selection, doc, [g.tapSelect], "replace"));
+          // A click on one of several selected objects narrows the selection to it; a touch tap on the selection
+          // (already narrowed) switches the handles between scale and rotate, LightBurn's click-again rotate.
+          const narrowed = g.tapSelect ? applySelect(selection, doc, [g.tapSelect], "replace") : null;
+          const same = !!narrowed && narrowed.objects.length === selection.objects.length && narrowed.objects.every((id) => selectedSet.has(id));
+          if (narrowed && !(same && g.rotToggle)) props.onSelection(narrowed);
+          else if (g.rotToggle) setRotMode((r) => !r);
           break;
         }
         const d: Vec2 = [roundMm(t.m[4]), roundMm(t.m[5])];
@@ -805,7 +1097,7 @@ export function Viewport(props: ViewportProps) {
       }
       case "scale": {
         if (!t) break;
-        const sc0 = scaleFromHandle(g.box, g.handle, g.target ?? handleTarget(g, f), modsOf(e));
+        const sc0 = scaleFromHandle(g.box, g.handle, g.target ?? handleTarget(g, f), m);
         const sc = g.round ? keepRound(sc0, g.handle) : sc0;
         if (Math.abs(sc.sx - 1) < 1e-6 && Math.abs(sc.sy - 1) < 1e-6) break;
         const about: Vec2 = [roundMm(sc.about[0]), roundMm(sc.about[1])];
@@ -816,7 +1108,7 @@ export function Viewport(props: ViewportProps) {
       }
       case "rotate": {
         if (!t) break;
-        const deg = rotateFromHandle(g.center, g.start, f, modsOf(e));
+        const deg = rotateFromHandle(g.center, g.start, f, m);
         if (Math.abs(deg) < 1e-6) break;
         const about: Vec2 = [roundMm(g.center[0]), roundMm(g.center[1])];
         commit(C.transform(g.ids, { rotate_deg: round6(deg), about }), { m: rotateAbout(deg, about), stock: false });
@@ -824,17 +1116,18 @@ export function Viewport(props: ViewportProps) {
       }
       case "draw": {
         setDraw(null);
-        const end = drawEnd(g, f, modsOf(e));
-        finishDraw(end.a, end.p, g.tool);
+        const end = drawEnd(g, f, m);
+        finishDraw(end.a, end.p, g.tool, g.slop);
         break;
       }
       case "ext":
-        props.canvasTool?.up(f, modsOf(e), canvasCtx());
+        props.canvasTool?.up(f, m, canvasCtx());
         break;
     }
   };
 
-  const finishDraw = (a: Vec2, b: Vec2, shape: DrawTool) => {
+  /** `slop`: a drag shorter than this (screen px) is a tap, which places a default-size shape. */
+  const finishDraw = (a: Vec2, b: Vec2, shape: DrawTool, slop: number) => {
     if (!doc) return;
     const layer = props.activeLayer ?? doc.layers[0]?.id;
     if (!layer) {
@@ -845,7 +1138,7 @@ export function Viewport(props: ViewportProps) {
     if (shape === "circle") {
       // Centre and radius (Fusion's centre-diameter circle); stored as an ellipse with equal radii.
       let r = dist(a, b);
-      if (r * view.scale < TAP_SLOP) r = TAP_SIZE_MM / 2;
+      if (r * view.scale < slop) r = TAP_SIZE_MM / 2;
       r = Math.max(roundMm(r), 0.005);
       inv = C.shapeEllipse(layer, [roundMm(a[0]), roundMm(a[1])], r, r);
       inv.params.name = "Circle";
@@ -853,7 +1146,7 @@ export function Viewport(props: ViewportProps) {
       let w = Math.abs(b[0] - a[0]);
       let h = Math.abs(b[1] - a[1]);
       let center: Vec2 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
-      if (w * view.scale < TAP_SLOP && h * view.scale < TAP_SLOP) {
+      if (w * view.scale < slop && h * view.scale < slop) {
         // A tap: drop a default-size shape centred on it.
         w = h = TAP_SIZE_MM;
         center = a;
@@ -891,8 +1184,24 @@ export function Viewport(props: ViewportProps) {
     },
     showConstraint: setConstraint,
     readout: setReadout,
-    hitObject: (p) => hitTest(shapeIndex, p, CLICK_TOL_PX / view.scale),
+    hitObject: (p) => hitTest(shapeIndex, p, TOL[clsRef.current].click / view.scale, clsRef.current !== "mouse"),
+    pointerClass: clsRef.current,
+    tol: TOL[clsRef.current],
   });
+
+  // The touch HUD (touch/TouchHud.tsx) places the action bar above the selection and picks Group or Ungroup.
+  useEffect(() => {
+    const r = svgRef.current?.getBoundingClientRect();
+    const canvasRect = r ? { left: r.left, top: r.top, right: r.right, bottom: r.bottom } : null;
+    let selRect: { left: number; top: number; right: number; bottom: number } | null = null;
+    if (r && selBounds && selection.objects.length && tool === "select" && !showPreview) {
+      const a = toScreen([selBounds.x0, selBounds.y1]);
+      const b = toScreen([selBounds.x1, selBounds.y0]);
+      selRect = { left: r.left + a[0], top: r.top + a[1], right: r.left + b[0], bottom: r.top + b[1] };
+    }
+    publishHud({ selRect, canvasRect, grouped: !!doc && anyGrouped(doc, selection.objects), rotateMode: rotMode && handleCls !== "mouse" });
+    // toScreen follows view and size.
+  }, [selBounds, view, size, doc, selection.objects, rotMode, handleCls, tool, showPreview]);
 
   // Hotkeys (zoom in/out, fit) and the status bar talk to the canvas through workspace/viewStatus.ts.
   useEffect(
@@ -1066,19 +1375,42 @@ export function Viewport(props: ViewportProps) {
   }, [doc, selection.objects, selectedSet, boundsById, liveObjects]);
 
   const showHandles = tool === "select" && selBounds && selection.objects.length > 0 && !showPreview;
+  // Handles follow the last pointer used on the canvas. A mouse keeps LightBurn's: 16 px scale handles plus the round
+  // rotate handles outside the corners. Touch draws them about twice the size with 44 px hit areas (pen 24 px), shows
+  // the scale handles or (after a tap on the selection) the rotate handles, and moves them out of a small selection's
+  // way (corners only), so a finger can still grab the object itself.
+  const touchHandles = handleCls !== "mouse";
+  const hitPx = TOL[handleCls].handle;
+  const visK = handleCls === "mouse" ? 1 : handleCls === "pen" ? 1.5 : 2;
+  const selScreenMin = selBounds ? Math.min(selBounds.x1 - selBounds.x0, selBounds.y1 - selBounds.y0) * view.scale : 0;
+  const smallSel = touchHandles && selScreenMin < 2 * hitPx;
+  const boxPad = touchHandles ? (smallSel ? hitPx / 2 + 4 : 10) : 6;
+  const showScale = !touchHandles || !rotMode;
+  const showRot = !touchHandles || rotMode;
+  const scaleHandles = smallSel ? HANDLES.filter((h) => h.length === 2) : HANDLES;
+  /** Touch: the snap label and readout go in a bubble above the finger instead of under it (T16). */
+  const fingerAt = lastCls === "touch" && pointers.current.size > 0 ? (lastMove.current?.s ?? null) : null;
   const liveM = liveObjects ? `matrix(${liveObjects.join(",")})` : undefined;
   const outsideCount = outside.size;
 
   return (
     <div
-      className={`viewport tool-${tool}`}
+      className={`viewport tool-${tool}${spacePan ? " space-pan" : ""}${touchHandles ? " touch-handles" : ""}`}
       ref={wrapRef}
       tabIndex={-1}
       onContextMenu={(e) => {
         e.preventDefault();
+        // A finger opens the menu with the canvas's own long-press: the browser's touch long-press menu (Android) is
+        // ignored, and so is a menu that arrives in the middle of a drag (a Mac Ctrl+drag).
+        if (e.nativeEvent.isTrusted) {
+          const pt = (e.nativeEvent as MouseEvent & { pointerType?: string }).pointerType;
+          if (pt === "touch" || performance.now() - lastTouchT.current < 1000) return;
+          const gk = gesture.current.kind;
+          if (gk !== "none" && gk !== "idle") return;
+        }
         if (!doc || tool !== "select") return;
         const s = local(e);
-        const hit = hitTest(shapeIndex, toField(s[0], s[1]), CLICK_TOL_PX / view.scale);
+        const hit = hitTest(shapeIndex, toField(s[0], s[1]), TOL.mouse.click / view.scale);
         if (hit && !selectedSet.has(hit)) props.onSelection(applySelect(selection, doc, [hit], "replace"));
         props.onContextMenu(e.clientX, e.clientY);
       }}
@@ -1151,15 +1483,26 @@ export function Viewport(props: ViewportProps) {
             <g className="sel-bounds">
               <rect
                 className="sel-box"
-                x={selBounds.x0 - px(6)}
-                y={selBounds.y0 - px(6)}
-                width={selBounds.x1 - selBounds.x0 + px(12)}
-                height={selBounds.y1 - selBounds.y0 + px(12)}
+                x={selBounds.x0 - px(boxPad)}
+                y={selBounds.y0 - px(boxPad)}
+                width={selBounds.x1 - selBounds.x0 + px(2 * boxPad)}
+                height={selBounds.y1 - selBounds.y0 + px(2 * boxPad)}
                 strokeWidth={px(1)}
                 pointerEvents="none"
               />
               {!live &&
+                showRot &&
                 (["rot-nw", "rot-ne", "rot-se", "rot-sw"] as const).map((h) => {
+                  if (touchHandles) {
+                    // Touch rotate mode: the rotate handles take the corners.
+                    const q = handlePoint(pad(selBounds, px(boxPad)), h.slice(4) as Handle);
+                    return (
+                      <g key={h} data-handle={h} className="rot-handle touch">
+                        <circle cx={q[0]} cy={q[1]} r={hpx(hitPx / 2)} className="handle-hit" />
+                        <circle cx={q[0]} cy={q[1]} r={hpx(4.5 * visK)} strokeWidth={px(1.5)} />
+                      </g>
+                    );
+                  }
                   const p = handlePoint(pad(selBounds, px(6)), h.slice(4) as Handle);
                   const o = hpx(14);
                   const cx = p[0] + (h.endsWith("e") ? o : -o);
@@ -1172,12 +1515,15 @@ export function Viewport(props: ViewportProps) {
                   );
                 })}
               {!live &&
-                HANDLES.map((h) => {
-                  const [x, y] = handlePoint(pad(selBounds, px(6)), h);
+                showScale &&
+                scaleHandles.map((h) => {
+                  const [x, y] = handlePoint(pad(selBounds, px(boxPad)), h);
+                  const hh = hitPx / 2;
+                  const vv = 4 * visK;
                   return (
                     <g key={h} data-handle={h} className={`scale-handle h-${h}`}>
-                      <rect x={x - hpx(8)} y={y - hpx(8)} width={hpx(16)} height={hpx(16)} className="handle-hit" />
-                      <rect x={x - hpx(4)} y={y - hpx(4)} width={hpx(8)} height={hpx(8)} strokeWidth={px(1)} className="handle" />
+                      <rect x={x - hpx(hh)} y={y - hpx(hh)} width={hpx(2 * hh)} height={hpx(2 * hh)} className="handle-hit" />
+                      <rect x={x - hpx(vv)} y={y - hpx(vv)} width={hpx(2 * vv)} height={hpx(2 * vv)} strokeWidth={px(1)} className="handle" />
                     </g>
                   );
                 })}
@@ -1221,7 +1567,9 @@ export function Viewport(props: ViewportProps) {
           {props.canvasTool?.render(renderCtx)}
         </g>
         {constraint && <ConstraintGuide line={constraint} at={toScreen} size={size} />}
-        {snapShown && <SnapOverlay hit={snapShown} at={(p) => [(p[0] - view.cx) * view.scale + size[0] / 2, -(p[1] - view.cy) * view.scale + size[1] / 2]} />}
+        {snapShown && (
+          <SnapOverlay hit={snapShown} label={!fingerAt} at={(p) => [(p[0] - view.cx) * view.scale + size[0] / 2, -(p[1] - view.cy) * view.scale + size[1] / 2]} />
+        )}
         {uiPrefs.crosshair && cursor && (
           <path
             className="crosshair"
@@ -1269,11 +1617,21 @@ export function Viewport(props: ViewportProps) {
       </div>
       {props.canvasTool?.overlay(renderCtx)}
       {isDrawTool(tool) && (
-        <div className="vp-overlay vp-top-left hint">
-          {tool === "circle" ? t("rest.drawCircle") : tool === "rect" ? t("rest.drawRect") : t("rest.drawEllipse")} ·{" "}
-          {t(tool === "circle" ? "rest.drawTailCircle" : "rest.drawTail", { size: formatLength(20, lu) })}
+        <ContextStripPortal>
+          <div className="vp-overlay vp-top-left hint">
+            {tool === "circle" ? t("rest.drawCircle") : tool === "rect" ? t("rest.drawRect") : t("rest.drawEllipse")} ·{" "}
+            {t(tool === "circle" ? "rest.drawTailCircle" : "rest.drawTail", { size: formatLength(20, lu) })}
+          </div>
+        </ContextStripPortal>
+      )}
+      {fingerAt && (snapShown?.label || readout) && (
+        <div className="vp-overlay snap-bubble" style={{ left: fingerAt[0], top: Math.max(4, fingerAt[1] - 60) }} aria-hidden="true">
+          {snapShown?.label}
+          {snapShown?.label && readout ? " · " : ""}
+          {readout}
         </div>
       )}
+      {lpRing && <div className="lp-ring" style={{ left: lpRing[0], top: lpRing[1] }} aria-hidden="true" />}
     </div>
   );
 }
@@ -1306,7 +1664,7 @@ function snapGlyph(kind: SnapKind, x: number, y: number): string {
 }
 
 /** The snap glyph, its label and the dotted alignment guides, drawn in screen pixels on top of the canvas. */
-function SnapOverlay({ hit, at }: { hit: SnapHit; at: (p: Vec2) => Vec2 }) {
+function SnapOverlay({ hit, at, label = true }: { hit: SnapHit; at: (p: Vec2) => Vec2; label?: boolean }) {
   const [x, y] = at(hit.p);
   return (
     <g className={`snap-overlay snap-${hit.kind}`} pointerEvents="none">
@@ -1321,7 +1679,7 @@ function SnapOverlay({ hit, at }: { hit: SnapHit; at: (p: Vec2) => Vec2 }) {
       })}
       <path className="snap-marker" d={snapGlyph(hit.kind, x, y)} />
       {hit.kind === "center" && <circle className="snap-dot" cx={x} cy={y} r={1.6} />}
-      {hit.label && (
+      {label && hit.label && (
         <text className="snap-label" x={x + 11} y={y - 9}>
           {hit.label}
         </text>

@@ -108,3 +108,60 @@ test("ruler ticks in inches: labels in inches on round inch values, positions in
   const fine = rulerTicks(0, 10, 40, 60, "in");
   assert.ok(fine.filter((x) => x.major).some((x) => x.label === "0.2"));
 });
+
+// ---- point presses: commit on lift for touch, roll back on cancel (touch/toolPress.ts, audit T4) -------------------
+
+import { beginPress, cancelPress, commitOn, endPress, movePress } from "./touch/toolPress.ts";
+
+type Pt = [number, number];
+const pushPt = (s: { pts: Pt[] }, q: Pt) => ({ pts: [...s.pts, q] });
+
+test("commitOn: touch commits on lift; mouse and pen on the press, as LightBurn", () => {
+  for (const tool of ["line", "measure", "pick", "trim"] as const) {
+    assert.equal(commitOn(tool, "touch"), "up", tool);
+    assert.equal(commitOn(tool, "mouse"), "down", tool);
+    assert.equal(commitOn(tool, "pen"), "down", tool);
+  }
+});
+
+test("line on touch: nothing on the press, dragging adjusts, the lift commits", () => {
+  const s0 = { pts: [[0, 0]] as Pt[] };
+  const b = beginPress(s0, [10, 0] as Pt, commitOn("line", "touch"), pushPt);
+  assert.equal(b.state, s0, "no point yet");
+  const moved = movePress(b.press, [12, 1] as Pt);
+  assert.deepEqual(endPress(b.state, moved, pushPt).pts, [[0, 0], [12, 1]], "the point lands where the finger lifted");
+});
+
+test("line, measure and pick: cancel (a second finger) rolls back what the press did, mouse or touch", () => {
+  const s0 = { pts: [[0, 0]] as Pt[] };
+  // Mouse: applied on the press, rolled back by the cancel.
+  const m = beginPress(s0, [5, 5] as Pt, commitOn("line", "mouse"), pushPt);
+  assert.equal(m.state.pts.length, 2);
+  assert.equal(cancelPress(m.state, m.press), s0);
+  // Touch: never applied; the cancel leaves the state alone.
+  const t = beginPress(s0, [5, 5] as Pt, commitOn("line", "touch"), pushPt);
+  assert.equal(cancelPress(t.state, t.press), s0);
+
+  // Measure: the first point, then the second.
+  type M = { a: Pt; b: Pt; done: boolean } | null;
+  const measureAt = (s: M, q: Pt): M => (s && !s.done ? { a: s.a, b: q, done: true } : { a: q, b: q, done: false });
+  const first = beginPress<M, Pt>(null, [1, 1], "down", measureAt);
+  assert.deepEqual(first.state, { a: [1, 1], b: [1, 1], done: false });
+  assert.equal(cancelPress(first.state, first.press), null, "no stray measure start");
+  const second = beginPress<M, Pt>(first.state, [4, 5], "up", measureAt);
+  assert.deepEqual(endPress(second.state, second.press, measureAt), { a: [1, 1], b: [4, 5], done: true });
+
+  // Pick: two points for a mirror line.
+  const pick = { pts: [[0, 0]] as Pt[] };
+  const pk = beginPress(pick, [3, 3] as Pt, "down", pushPt);
+  assert.equal(pk.state.pts.length, 2);
+  assert.equal(cancelPress(pk.state, pk.press), pick);
+});
+
+test("a mouse press keeps the point it pressed, whatever the pointer does next", () => {
+  const s0 = { pts: [] as Pt[] };
+  const m = beginPress(s0, [5, 5] as Pt, "down", pushPt);
+  const p2 = movePress(m.press, [9, 9] as Pt);
+  assert.equal(p2, m.press);
+  assert.equal(endPress(m.state, p2, pushPt), m.state, "nothing more on release");
+});

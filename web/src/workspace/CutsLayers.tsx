@@ -4,9 +4,10 @@
 // output, select, copy/paste settings, delete), the Output and Show headers toggle every layer, and the quick-edit row
 // under the list changes the selected layer's main speed, power, passes, interval and frequency.
 //
-// The list order is the cut order (jobs burn layer by layer). Drag a row (above or below another), or use the up/down
-// buttons or the right-click menu, to reorder: one `layer.move {id, to_index}` each, shown only on engines that have
-// it. Every change is a `layer.*` command.
+// The list order is the cut order (jobs burn layer by layer). Drag a row by its grip (above or below another), or use
+// the up/down buttons or the right-click menu, to reorder: one `layer.move {id, to_index}` each, shown only on engines
+// that have it. Every change is a `layer.*` command. On touch a long-press is the right-click, each row has a ⋯ button,
+// the grip works with a finger (pointer events, touch/reorder.ts), and the modifier bar's Add counts as Shift.
 //
 // LightBurn's further details: "Flash layer" in the right-click menu (or Shift+right-click) blinks the layer's shapes
 // on the canvas (flash.tsx); tool layers T1 / T2 (`Layer.tool`) read "Tool", never output and can be made or cleared
@@ -32,7 +33,6 @@ import { layerLink } from "../libs/model.ts";
 import { WsModal } from "./WsModal.tsx";
 import {
   copyLayerSettings,
-  dropIndex,
   invertAll,
   layerRows,
   onlyThis,
@@ -43,6 +43,10 @@ import {
 } from "./layersTable.ts";
 import { formatSpeed, speedToDisplay, trimNumber } from "./units.ts";
 import { usePrefs, useT } from "./usePrefs.ts";
+import { getVirtualMods } from "../touch/virtualMods.ts";
+import { useLongPress } from "../touch/useLongPress.ts";
+import { useReorder } from "../touch/reorder.ts";
+import { TouchIcon } from "../touch/icons.tsx";
 
 type Run = (inv: Invocation | Invocation[]) => Promise<unknown>;
 
@@ -69,8 +73,6 @@ export function CutsLayers(p: CutsLayersProps) {
   const [editing, setEditing] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [, bump] = useState(0);
-  const drag = useRef<number | null>(null);
-  const [dropAt, setDropAt] = useState<{ index: number; after: boolean } | null>(null);
   // The quick-edit tab (0 = main settings, n = sub-layer n) per layer, and the sub-layer tab being dragged.
   const [passTab, setPassTab] = useState<Record<string, number>>({});
   const tabDrag = useRef<number | null>(null);
@@ -100,6 +102,18 @@ export function CutsLayers(p: CutsLayersProps) {
     if (invs.length) void run(invs.length === 1 ? invs[0] : invs).catch(report);
   };
 
+  // Reordering by the grip (mouse, pen or finger) and the row menu by long-press or right-click.
+  const bodyRef = useRef<HTMLTableSectionElement>(null);
+  const reorder = useReorder(bodyRef, doc?.layers.length ?? 0, (from, to) => {
+    const id = doc?.layers[from]?.id;
+    if (id) void run(C.layerMove(id, to)).catch(report);
+  });
+  const menuFor = useRef<(id: string, x: number, y: number) => void>(() => {});
+  const longPress = useLongPress((x, y, el) => {
+    const id = el.getAttribute("data-id");
+    if (id) menuFor.current(id, x, y);
+  });
+
   if (!doc) return null;
   const rows = layerRows(doc);
   const current = p.selection.layer;
@@ -111,14 +125,6 @@ export function CutsLayers(p: CutsLayersProps) {
   const moveLayer = (id: string, to: number | null) => {
     if (to === null || to < 0 || to >= doc.layers.length) return;
     void run(C.layerMove(id, to)).catch(report);
-  };
-  const endDrag = () => {
-    drag.current = null;
-    setDropAt(null);
-  };
-  const dropHalf = (e: React.DragEvent<HTMLElement>) => {
-    const r = e.currentTarget.getBoundingClientRect();
-    return e.clientY > r.top + r.height / 2;
   };
 
   const copy = (l: Layer) => {
@@ -199,6 +205,11 @@ export function CutsLayers(p: CutsLayersProps) {
     return items;
   };
 
+  menuFor.current = (id, x, y) => {
+    const index = doc.layers.findIndex((l) => l.id === id);
+    if (index >= 0) setMenu({ x, y, items: layerMenu(doc.layers[index], index) });
+  };
+
   const sel = current ? doc.layers.find((l) => l.id === current) : undefined;
   const subCount = sel?.sub_layers?.length ?? 0;
   // The quick-edit pass: 0 = the main settings, n = sub-layer n (kept in range when sub-layers are deleted).
@@ -250,7 +261,7 @@ export function CutsLayers(p: CutsLayersProps) {
               {canMove && <th className="c-tog" aria-label={t("layers.order")} />}
             </tr>
           </thead>
-          <tbody>
+          <tbody ref={bodyRef}>
             {rows.map((r, index) => {
               const l = r.layer;
               const open = !!expanded[l.id];
@@ -258,44 +269,31 @@ export function CutsLayers(p: CutsLayersProps) {
               return [
                 <tr
                   key={l.id}
-                  className={`cuts-row${current === l.id ? " selected" : ""}${l.output ? "" : " no-output"}${l.visible ? "" : " hidden-layer"}${
-                    dropAt?.index === index ? (dropAt.after ? " drop-after" : " drop-before") : ""
+                  data-reorder-row=""
+                  data-id={l.id}
+                  className={`cuts-row${current === l.id ? " selected" : ""}${l.output ? "" : " no-output"}${l.visible ? "" : " hidden-layer"}${reorder.dropClass(index)}${
+                    reorder.dragging === index ? " dragging" : ""
                   }`}
                   title={canMove ? t("layers.rowTitleMove", { count: r.objects }) : t("layers.rowTitle", { count: r.objects })}
-                  draggable={canMove}
-                  onDragStart={(e) => {
-                    drag.current = index;
-                    e.dataTransfer.effectAllowed = "move";
-                    // Firefox starts a drag only with data set.
-                    e.dataTransfer.setData("text/plain", l.name);
-                  }}
-                  onDragOver={(e) => {
-                    if (!canMove || drag.current === null) return;
-                    e.preventDefault();
-                    e.dataTransfer.dropEffect = "move";
-                    const after = dropHalf(e);
-                    if (dropAt?.index !== index || dropAt.after !== after) setDropAt({ index, after });
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    const from = drag.current;
-                    if (from !== null) {
-                      const id = rows[from]?.layer.id;
-                      if (id) moveLayer(id, dropIndex(from, index, dropHalf(e), rows.length));
-                    }
-                    endDrag();
-                  }}
-                  onDragEnd={endDrag}
-                  onClick={(e) => p.onSelectLayer(l.id, e.shiftKey)}
+                  {...longPress}
+                  onClick={(e) => p.onSelectLayer(l.id, e.shiftKey || getVirtualMods().shift)}
                   onDoubleClick={() => setEditing(l.id)}
                   onContextMenu={(e) => {
-                    e.preventDefault();
                     // LightBurn: Shift+right-click flashes the layer's shapes.
-                    if (e.shiftKey) flashLayer(l.id);
-                    else setMenu({ x: e.clientX, y: e.clientY, items: layerMenu(l, index) });
+                    if (e.shiftKey) {
+                      e.preventDefault();
+                      flashLayer(l.id);
+                    } else longPress.onContextMenu?.(e);
                   }}
                 >
-                  <td className="c-num">{r.number}</td>
+                  <td className="c-num">
+                    {canMove && (
+                      <button type="button" className="row-grip" title={t("touch.reorder")} aria-label={t("touch.reorder")} onClick={(e) => e.stopPropagation()} {...reorder.grip(index)}>
+                        <TouchIcon name="grip" size={14} />
+                      </button>
+                    )}
+                    {r.number}
+                  </td>
                   <td className="c-sw">
                     <span className="swatch small" style={{ background: l.color }} />
                   </td>
@@ -334,6 +332,19 @@ export function CutsLayers(p: CutsLayersProps) {
                         <LinkIcon />
                       </span>
                     )}
+                    <button
+                      type="button"
+                      className="icon-btn small row-more"
+                      title={t("touch.rowMenu")}
+                      aria-label={t("touch.rowMenu")}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const b = e.currentTarget.getBoundingClientRect();
+                        setMenu({ x: b.left, y: b.bottom, items: layerMenu(l, index) });
+                      }}
+                    >
+                      <TouchIcon name="more" size={16} />
+                    </button>
                   </td>
                   <td>{l.tool ? t("layers.modeTool") : r.multi ? t("layers.multi") : modeText(main.mode)}</td>
                   <td className="c-num-r">

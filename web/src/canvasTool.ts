@@ -7,6 +7,7 @@
 import type { ReactNode } from "react";
 import type { GDocument, Vec2 } from "./api/types.ts";
 import type { ConstraintLine, Mods } from "./editing.ts";
+import type { PointerClass, Tolerances } from "./pointer.ts";
 import type { SnapHit, SnapPart, SnapPoint } from "./snapping.ts";
 
 /** Tools implemented by the canvas tool (the Viewport's own are select, rect, ellipse and circle). */
@@ -38,6 +39,10 @@ export interface CanvasCtx {
   readout: (text: string | null) => void;
   /** The object under a field point (click tolerance), or null. */
   hitObject: (p: Vec2) => string | null;
+  /** The pointer class of the gesture (mouse when absent): touch commits point tools on lift. */
+  pointerClass?: PointerClass;
+  /** Screen-px tolerances for that pointer class (pointer.ts TOL; the mouse row when absent). */
+  tol?: Tolerances;
 }
 
 /** What a canvas tool needs to draw. */
@@ -59,6 +64,8 @@ export interface PointerInfo {
   time: number;
   /** Screen position in the canvas, px. */
   screen: Vec2;
+  /** The press came from a touch long-press that nothing else wanted (it grabs a guide on touch). */
+  longPress?: boolean;
 }
 
 export interface CanvasTool {
@@ -66,7 +73,7 @@ export interface CanvasTool {
   down: (f: Vec2, m: Mods, info: PointerInfo, ctx: CanvasCtx) => boolean;
   drag: (f: Vec2, m: Mods, ctx: CanvasCtx) => void;
   up: (f: Vec2, m: Mods, ctx: CanvasCtx) => void;
-  /** The gesture was cancelled (pointercancel, a second finger). */
+  /** The gesture was cancelled (pointercancel, a second finger): roll back whatever the press added. */
   cancel: () => void;
   /** Hover without a press. Return true to suppress the Viewport's own hover snap glyph. */
   hover: (f: Vec2, m: Mods, ctx: CanvasCtx) => boolean;

@@ -2,8 +2,13 @@
 // click to switch (`page.activate`), double-click or the context menu to rename, Add / Duplicate / Delete buttons,
 // move up / down and drag to reorder (`page.move`). Layers and cut settings are shared by every page; jobs, previews
 // and every shape command work on the active page. "Move selection to page" is in the canvas context menu.
+// Touch: a long-press on a row is its right-click; rows have Rename (pencil) and ⋯ buttons and a reorder grip that
+// works with a finger (pointer events, touch/reorder.ts, instead of HTML5 drag-and-drop).
 
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { useLongPress } from "../touch/useLongPress.ts";
+import { useReorder } from "../touch/reorder.ts";
+import { TouchIcon } from "../touch/icons.tsx";
 import type { Invocation } from "../api/client.ts";
 import type { GDocument } from "../api/types.ts";
 import { ContextMenu, type MenuItem } from "../components/ContextMenu.tsx";
@@ -34,9 +39,14 @@ export function PagesDock(p: { doc: GDocument | null; has: (id: string) => boole
   const rows = pagesOf(p.doc);
   const [menu, setMenu] = useState<{ x: number; y: number; row: number } | null>(null);
   const [rename, setRename] = useState<{ row: PageRow; text: string } | null>(null);
-  const [drag, setDrag] = useState<number | null>(null);
-  if (!p.has(PAGE_CMD.add) || !p.doc) return null;
+  const listRef = useRef<HTMLUListElement>(null);
   const go = (inv: Invocation) => void p.run(inv).catch(p.report);
+  const reorder = useReorder(listRef, rows.length, (from, to) => go({ id: PAGE_CMD.move, params: { ...ref(rows[from]), to_index: to } }));
+  const longPress = useLongPress((x, y, el) => {
+    const i = Number(el.getAttribute("data-row"));
+    if (Number.isInteger(i)) setMenu({ x, y, row: i });
+  });
+  if (!p.has(PAGE_CMD.add) || !p.doc) return null;
   const add = () => go({ id: PAGE_CMD.add, params: { name: nextPageName(rows) } });
   const dup = (r: PageRow) => go({ id: PAGE_CMD.duplicate, params: ref(r) });
   const del = (r: PageRow) => go({ id: PAGE_CMD.remove, params: ref(r) });
@@ -82,38 +92,54 @@ export function PagesDock(p: { doc: GDocument | null; has: (id: string) => boole
         </>
       }
     >
-      <ul className="pages-list" role="listbox" aria-label={t("files.pages")}>
+      <ul className="pages-list" role="listbox" aria-label={t("files.pages")} ref={listRef}>
         {rows.map((r, i) => (
           <li
             key={r.id ?? "single"}
             role="option"
             aria-selected={r.active}
-            className={`pages-row${r.active ? " active" : ""}${drag !== null && drag !== i ? " drop-target" : ""}`}
-            draggable={rows.length > 1}
-            onDragStart={(e) => {
-              setDrag(i);
-              e.dataTransfer.effectAllowed = "move";
-              e.dataTransfer.setData("text/x-openetch-page", String(i));
-            }}
-            onDragOver={(e) => drag !== null && e.preventDefault()}
-            onDrop={(e) => {
-              e.preventDefault();
-              if (drag !== null && drag !== i) move(drag, i);
-              setDrag(null);
-            }}
-            onDragEnd={() => setDrag(null)}
+            data-reorder-row=""
+            data-row={i}
+            className={`pages-row${r.active ? " active" : ""}${reorder.dropClass(i)}${reorder.dragging === i ? " dragging" : ""}`}
+            {...longPress}
             onClick={() => activate(r)}
             onDoubleClick={() => setRename({ row: r, text: r.name })}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              setMenu({ x: e.clientX, y: e.clientY, row: i });
-            }}
           >
+            {rows.length > 1 && (
+              <button type="button" className="row-grip" title={t("touch.reorder")} aria-label={t("touch.reorder")} onClick={(e) => e.stopPropagation()} {...reorder.grip(i)}>
+                <TouchIcon name="grip" size={14} />
+              </button>
+            )}
             <span className="pages-thumb" aria-hidden="true">
               {i + 1}
             </span>
             <span className="pages-name">{r.name}</span>
             <span className="pages-meta">{t("files.pageObjects", { n: r.objects })}</span>
+            <button
+              type="button"
+              className="icon-btn small row-rename"
+              title={t("touch.rename")}
+              aria-label={t("touch.rename")}
+              onClick={(e) => {
+                e.stopPropagation();
+                setRename({ row: r, text: r.name });
+              }}
+            >
+              <TouchIcon name="pencil" size={16} />
+            </button>
+            <button
+              type="button"
+              className="icon-btn small row-more"
+              title={t("touch.rowMenu")}
+              aria-label={t("touch.rowMenu")}
+              onClick={(e) => {
+                e.stopPropagation();
+                const b = e.currentTarget.getBoundingClientRect();
+                setMenu({ x: b.left, y: b.bottom, row: i });
+              }}
+            >
+              <TouchIcon name="more" size={16} />
+            </button>
           </li>
         ))}
       </ul>

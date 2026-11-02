@@ -4,12 +4,16 @@
 // settings cannot be edited until unlinked), Edit Cut, Update (from the layer), Edit Description, Duplicate and
 // Delete, plus Create new from layer. Entry edits stay in the engine's memory until Save Library (the dirty dot).
 // Routes: crates/engine/src/api_libs.rs. Linked layers show a link badge in Cuts / Layers and Properties.
+// Touch: a long-press on an entry is its right-click (every entry action also has a button below the tree), and Load
+// has no `accept` on iOS (checked after the pick, touch/filePick.ts).
 
 import { useEffect, useMemo, useState } from "react";
 import type { GDocument, Layer } from "../api/types.ts";
 import { ContextMenu, type MenuItem } from "../components/ContextMenu.tsx";
 import { CheckField, Icon, NumberField } from "../components/ui.tsx";
 import { Dock } from "../workspace/Dock.tsx";
+import { useLongPress } from "../touch/useLongPress.ts";
+import { acceptLabel, acceptsFile, pickerAccept } from "../touch/filePick.ts";
 import { usePrefs, useT } from "../workspace/usePrefs.ts";
 import { formatSpeed } from "../workspace/units.ts";
 import { WsModal } from "../workspace/WsModal.tsx";
@@ -58,6 +62,13 @@ export function LibraryDock(p: { doc: GDocument | null; activeLayer: string | nu
   const [dlg, setDlg] = useState<Dlg>(null);
   const [busy, setBusy] = useState(false);
   const [menu, setMenu] = useState<{ x: number; y: number; entry: LibEntry } | null>(null);
+  // Long-press (touch) or right-click on an entry: its menu. The entry row carries its id.
+  const entryPress = useLongPress((x, y, el) => {
+    const e = entries.find((q) => q.id === el.getAttribute("data-id"));
+    if (!e) return;
+    setPicked(e.id);
+    setMenu({ x, y, entry: e });
+  });
   const [layerId, setLayerId] = useState<string | null>(null);
 
   // The target layer follows the selected layer; the dropdown overrides it until the selection changes.
@@ -187,7 +198,14 @@ export function LibraryDock(p: { doc: GDocument | null; activeLayer: string | nu
             ))}
           </select>
         </label>
-        <FilePick label={t("lib.load")} accept=".clb" className="btn small" onFile={load} disabled={busy} title={t("lib.loadTitle")} />
+        <FilePick
+          label={t("lib.load")}
+          accept={pickerAccept(".clb") ?? ""}
+          className="btn small"
+          onFile={(f) => (acceptsFile(f, ".clb") ? load(f) : p.notify(t("touch.wrongFileType", { name: f.name, types: acceptLabel(".clb") })))}
+          disabled={busy}
+          title={t("lib.loadTitle")}
+        />
         <DropMenu
           label={t("lib.manage")}
           align="right"
@@ -254,13 +272,10 @@ export function LibraryDock(p: { doc: GDocument | null; activeLayer: string | nu
                               aria-selected={picked === e.id}
                               className={`lx-tree-row lx-tree-entry${picked === e.id ? " selected" : ""}`}
                               title={`${e.path}\n${entrySummaryText(e.summary, speed)}`}
+                              data-id={e.id}
+                              {...entryPress}
                               onClick={() => setPicked(e.id)}
                               onDoubleClick={() => assign(e, false)}
-                              onContextMenu={(ev) => {
-                                ev.preventDefault();
-                                setPicked(e.id);
-                                setMenu({ x: ev.clientX, y: ev.clientY, entry: e });
-                              }}
                             >
                               <span className="lx-entry-name">{e.description}</span>
                               {users.length > 0 && (
