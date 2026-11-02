@@ -239,8 +239,9 @@ computer while nobody watches it; the foot switch is the approval path that need
   the B6 galvo's bytes (`engine::wire_tests`). Every rule in this section holds for every driver.
 - **GRBL gantries** (`machine::grbl`, a device of kind `grbl`; unverified on hardware, tested on `SimGrbl`):
   - Only an armed run fires: `GrblController::run_program` needs the `Armed` token and first checks the program
-    (`check_program`: only `G0`/`G1`/`G4`/`G21`/`G90`/`M3`/`M4`/`M5`, `S` within `max_power_pct` of `$30`, feeds within
-    `max_feed_mm_min`, every point on the bed, no dwell with `M3` and `S > 0`, the laser off at the end); it then
+    (`check_program`: only `G0`/`G1`/`G4`/`G21`/`G90`/`M3`/`M4`/`M5` and air assist `M7`/`M8`/`M9`, `S` within
+    `max_power_pct` of `$30`, feeds within `max_feed_mm_min`, every point on the bed, no dwell with `M3` and `S > 0`,
+    the laser and the air off at the end); it then
     re-reads the board and refuses unless laser mode is on (`$32=1`, so `G0` never burns), `$30`/`$31` equal the
     profile's, the board is idle (not in check mode `$C`, where nothing would be marked) and unlocked, the door is
     closed, and no start-up block (`$N0`/`$N1`) can turn the laser on.
@@ -262,6 +263,12 @@ computer while nobody watches it; the foot switch is the approval path that need
     dwell in `M3` keeps the laser on) is sent only while the board's parser state reports `M5`. Homing (`$H`), unlock
     (`$X`) and jogs (`$J=`) are UI only and never fire: homing and jogs (the API's and the console's) also need the
     parser state at `M5` (a start-up block cleared after the reset that ran it can leave `M3 S...` active).
+  - Console macros (the Console window's buttons) are stored per device in the engine's preferences (`PUT
+    /api/prefs` `console_macros`, UI only; every line must pass the console policy to be saved) and run line by line
+    through `POST /api/machine/console`, so they get the same refusals; a macro stops at its first refused line.
+  - The Move window (web `GrblMove.tsx`) only jogs, homes and unlocks through the endpoints above; its position comes
+    from `GET /api/machine/grbl?refresh=true`, a `?` status query sent only to an idle board (never behind a run,
+    frame or homing). Air assist (`M8`) is a coolant output that cannot fire; GRBL's soft reset (Stop) turns it off.
   - Approval, Require Framing, the checklist and the stop epoch apply unchanged; the foot switch and IO ports are
     galvo inputs and are not read for a GRBL device. MCP can request a GRBL run like a galvo run and never approve it.
 - The engine holds no link of its own and reaches the board only through `Controller` methods: a freshly opened USB
@@ -322,7 +329,7 @@ says otherwise. `origin` is `"ui"` (default), `"script"` or `"agent:<name>"`.
 | POST | `/api/machine/pause` | → `{ ok, running }`; not gated |
 | POST | `/api/machine/resume` | optional `{ origin }` → `{ ok }`; UI only (403 otherwise); no job 409 |
 | POST | `/api/machine/pointer` | `{ x, y, pointer?, max_seconds? }`: the red dot held at a field point (red-dot jog; light only) |
-| GET | `/api/machine/grbl` | a GRBL gantry's profile and board (version, last status, alarm, laser mode, `$30`/`$31`, unsafe start-up blocks, messages); 409 for a galvo |
+| GET | `/api/machine/grbl` | `?refresh=true` first asks an idle board for a status report (skipped while a run, frame or homing holds the machine). A GRBL gantry's profile and board (version, last status, alarm, laser mode, `$30`/`$31`, unsafe start-up blocks, messages) and `position` `{machine: [x, y], field: [x, y]}` (mm from the origin corner, and the canvas frame; null when unknown); 409 for a galvo |
 | POST | `/api/machine/home`, `/api/machine/unlock` | GRBL `$H` / `$X` (UI only; motion, never emission) |
 | POST | `/api/machine/jog` | `{dx, dy}` or `{x, y}` mm (field frame), `feed?` mm/min: a GRBL `$J=` jog with the laser off (UI only); `/api/machine/jog/cancel` (0x85) is not gated |
 | POST | `/api/machine/console` | `{line}` → `{line, lines, ok, error}`: one console line to a GRBL board (UI only); lines that could fire are refused (422) before anything is sent (Safety model) |
@@ -561,7 +568,9 @@ hatch over every shape of the pass (shapes with different power scales apart), s
 run of the job, the job counter, instead of per pass; repeats of one approval keep one angle), `flood_fill` (the hatch
 split into connected regions), `perforation` {cut_mm, skip_mm}, `tabs` {count | spacing_mm, size_mm} (gaps on
 closed outlines), `z_offset_mm` / `z_step_mm` (needs a board-driven Z axis, else a plan warning; each Z position is a
-part). Line options apply in that order after ordering: tabs, perforation, wobble, dots. `hatch.lines_per_inch` sets
+part), and the GRBL layer options (`constant_power`, `air_assist`, `overscan_mm` and `overcut_mm` 0..=50; G-code
+output only, carried to the G-code writer as `plan::PassPlan.gantry`, never read by the LMC encoder; the UI shows them
+only while a GRBL gantry is active; see Devices, "GRBL gantries"). Line options apply in that order after ordering: tabs, perforation, wobble, dots. `hatch.lines_per_inch` sets
 the interval to 25.4 / LPI. Per-object `power_scale_pct` (`object.set_cut_properties`) scales a shape's power,
 images included. A source without pulse width (`pulse_width_enabled` false or a Q-switched `fiber_kind`) gets none,
 with a plan warning.
@@ -1156,7 +1165,14 @@ Origin), the public WAZER `.lbdev`, xTool/Creality `.lbdev` posts and the owner'
   feature on real hardware) and back (`swap_config`); the planning target is the bed (`plan::GcodeSettings::target`,
   field-frame mm centred on the bed, `Target.gantry`), and a run is planned to G-code (`plan::gcode_lines`: `G90 G21`,
   `M4 S0`, `G0` travel, `G1` cuts with `S = power % x $30` and `F` = mm/s x 60, pauses as `M5` + `G4`, `M5` at the end;
-  feeds, powers and points off the bed refused, never clamped). Not yet for GRBL: Repeat Marking tables, queues, the
+  feeds, powers and points off the bed refused, never clamped). The GRBL layer options (`doc::CutOptions`, LightBurn's
+  GRBL layer settings): `constant_power` runs the pass with `M3` when the device's default is `M4` (every spindle
+  change is written `M3 S0` / `M4 S0`, so the power only comes with the next cut); `air_assist` writes `M8` before the
+  pass's first cut and `M9` for a pass without it and after the final `M5`; `overscan_mm` (fill hatch lines and image
+  runs: every two-point scan line) adds a run-in from `overscan` mm before the line and a run-out past it, both `G1 ...
+  S0` at the cut's feed and shortened at the bed's edge; `overcut_mm` cuts a closed outline on past its start (at most
+  once around). The web UI offers the Move and Console windows and File > Save G-code only while a GRBL gantry is
+  active; ramps and lead-in/out are not built. Not yet for GRBL: Repeat Marking tables, queues, the
   start input, dot mode, rotary/Z jobs. LightBurn GRBL devices stay design-only gantries.
 - **Family** (LightBurn's `Name` is an open set, never matched against a closed list): a galvo when `Type` is
   `LibUSB`, `Name` contains Fiber or EZCad, or any `Galvo_*` setting exists; JCZ when such a `Name` contains JCZ

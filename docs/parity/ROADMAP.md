@@ -91,9 +91,13 @@ These are `na` today because OpenEtch only drives JCZ/BJJCZ galvos. They become 
    (`serial2`, feature `serial`) with character counting, status polling, feed hold / resume / soft reset, alarms,
    door, homing `$H`, unlock `$X`, jogs `$J=` and a console that refuses anything that could fire; G-code from the
    planner (M4 by default, M3 option, S scaled to `$30`); `.gcode` export (`GET /api/export/gcode`) and import
-   (`art.import_gcode`); OpenEtch's own GRBL simulator (`machine::grbl::SimGrbl`) in place of GRBL's (GPL). Still
-   open: macros, the GRBL layer options (constant power per layer, air assist, overscan, ramps, lead-in/out),
-   backlash, scanning offsets, framing with the laser on, and a Move panel in the web UI.
+   (`art.import_gcode`); OpenEtch's own GRBL simulator (`machine::grbl::SimGrbl`) in place of GRBL's (GPL).
+   *Branch `grbl-ui` (unverified on hardware, no gantry):* the web Move window (jog grid, distance and speed, arrow
+   keys, Home, Unlock, Go to origin, Move to position, position readout), the Console window with history and macros
+   saved per device (checked against the console policy when saved and when sent), File > Save G-code, and the GRBL
+   layer options constant power (M3), air assist (M8/M9), overscan and overcut, all shown only for GRBL devices.
+   Still open: ramps, lead-in/out, saved Move positions, the last-position crosshair, backlash, scanning offsets and
+   framing with the laser on.
 3. **Ruida (UDP and USB).** The most common DSP controller. The protocol is publicly documented by community
    projects (MIT/BSD ones only). Unlocks controller file lists (`OTH-017`), Send / machine files (`JOB-065`),
    RDWorks `.rd` import (`UX-037`), rotary mode on gantries (`OTH-014`), auto-focus (`JOB-073`) and feeders
