@@ -1,7 +1,8 @@
 // User preferences of the web UI (LightBurn's File > Settings, display side only): theme, display units, grid and
-// snapping, nudge steps, mouse wheel, UI scale, crosshair cursor, language and hotkey overrides. They live in this
-// browser's localStorage (every access in try/catch: private mode or blocked storage just means defaults for the
-// visit). The engine never sees them and always works in millimetres.
+// snapping, nudge steps, mouse wheel, UI scale, crosshair cursor, language and hotkey overrides, and the layout,
+// density, trackpad and touch choices. They live in this browser's localStorage (every access in try/catch: private
+// mode or blocked storage just means defaults for the visit). The engine never sees them and always works in
+// millimetres.
 //
 // A tiny external store so non-React code (the keyboard handler, the canvas wheel listener) reads the current values
 // with `getPrefs()` and components re-render through `usePrefs()` (usePrefs.ts). No React import here, so
@@ -13,6 +14,18 @@ export type SpeedUnit = "mm/s" | "mm/min" | "in/s";
 /** Snap kinds the user can switch off one by one (snapping.ts `SnapKind`, without the grid, which has its own toggle). */
 export type SnapToggle = "endpoint" | "intersection" | "center" | "quadrant" | "midpoint" | "nearest" | "guide";
 export const SNAP_TOGGLES: SnapToggle[] = ["endpoint", "intersection", "center", "quadrant", "midpoint", "nearest", "guide"];
+/** Preferences > Appearance > Layout: "auto" picks from the window size and pointer (layoutMode.ts). */
+export type LayoutOverride = "auto" | "wide" | "compact" | "tablet" | "phone";
+export const LAYOUT_OVERRIDES: readonly LayoutOverride[] = ["auto", "wide", "compact", "tablet", "phone"];
+/** Preferences > Appearance > Density: "auto" follows the pointer and the layout (layoutMode.ts). */
+export type DensityPref = "auto" | "comfortable" | "compact" | "touch";
+export const DENSITY_PREFS: readonly DensityPref[] = ["auto", "comfortable", "compact", "touch"];
+/** Trackpad: two-finger scroll pans and pinch zooms; "auto" is on for Apple platforms. */
+export type TrackpadPans = "auto" | "on" | "off";
+/** What one finger dragging on empty canvas does on touch: a marquee (default) or pan. */
+export type TouchOneFinger = "select" | "pan";
+/** The selection action bar above the selection: "auto" shows it on coarse pointers only. */
+export type ShowSelectionBar = "auto" | "always" | "never";
 
 /** Arrow-key nudge distances in mm (LightBurn: Shape move distance; Shift large, Ctrl small). */
 export interface NudgeSteps {
@@ -57,6 +70,18 @@ export interface Prefs {
    * advanced cut settings and tabs, Set Start Point); Cut Selected Graphics is then ignored.
    */
   beginnerMode: boolean;
+  /** Layout mode override (Preferences > Appearance > Layout). */
+  layoutOverride: LayoutOverride;
+  /** Control density override (Preferences > Appearance > Density). */
+  density: DensityPref;
+  /** Trackpad: scroll pans, pinch zooms. */
+  trackpadPans: TrackpadPans;
+  /** One finger on empty canvas: marquee select or pan. */
+  touchOneFinger: TouchOneFinger;
+  /** Compact layouts: the merged timeline + status row pinned open at full height. */
+  timelinePinned: boolean;
+  /** The floating selection action bar (Copy, Paste, Delete, ...). */
+  showSelectionBar: ShowSelectionBar;
 }
 
 export const DEFAULT_NUDGE: NudgeSteps = { normal: 5, shift: 20, ctrl: 1, ctrlShift: 0.1 };
@@ -79,6 +104,12 @@ export const DEFAULT_PREFS: Prefs = {
   hotkeys: {},
   docks: {},
   beginnerMode: false,
+  layoutOverride: "auto",
+  density: "auto",
+  trackpadPans: "auto",
+  touchOneFinger: "select",
+  timelinePinned: false,
+  showSelectionBar: "auto",
 };
 
 export const PREFS_KEY = "openetch.prefs";
@@ -127,6 +158,12 @@ export function sanitizePrefs(raw: unknown): Prefs {
     hotkeys: hk,
     docks,
     beginnerMode: bool(r.beginnerMode, d.beginnerMode),
+    layoutOverride: oneOf(r.layoutOverride, LAYOUT_OVERRIDES, d.layoutOverride),
+    density: oneOf(r.density, DENSITY_PREFS, d.density),
+    trackpadPans: oneOf(r.trackpadPans, ["auto", "on", "off"] as const, d.trackpadPans),
+    touchOneFinger: oneOf(r.touchOneFinger, ["select", "pan"] as const, d.touchOneFinger),
+    timelinePinned: bool(r.timelinePinned, d.timelinePinned),
+    showSelectionBar: oneOf(r.showSelectionBar, ["auto", "always", "never"] as const, d.showSelectionBar),
   };
 }
 

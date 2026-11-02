@@ -7,8 +7,9 @@ import { useEffect, useRef } from "react";
 import { chordOf, eventInitOf, isBareKey, resolveKey } from "./hotkeys.ts";
 import { getPrefs } from "./prefs.ts";
 
-/** A workspace action handler; returning false lets the key through (nothing to do in this state). */
-export type KeyHandler = () => boolean | void;
+/** A workspace action handler, given the chord that was pressed ("Ctrl+."); returning false lets the key through
+ * (nothing to do in this state). */
+export type KeyHandler = (chord: string) => boolean | void;
 
 const synthetic = new WeakSet<Event>();
 
@@ -82,7 +83,7 @@ export function useKeymap(config: { current: KeymapConfig }): void {
         if (!fn || (b() && r.action !== "laser.stop")) return;
         // Plain letter keys act only with the canvas (or nothing) focused, as App.tsx's canvas keys do.
         if (isBareKey(chord) && !canvasOrBody() && chord !== "F1" && chord !== "Shift+?") return;
-        if (fn() === false) return;
+        if (fn(chord) === false) return;
         e.preventDefault();
         e.stopImmediatePropagation();
         return;
@@ -91,7 +92,7 @@ export function useKeymap(config: { current: KeymapConfig }): void {
       // can mean something else in some states (R/E/C align when two or more shapes are selected, as in LightBurn),
       // while Ctrl+R / Ctrl+E or a rebound key always mean the tool.
       const own = live.current.handlers[r.action];
-      if (own && !live.current.blocked() && (!isBareKey(chord) || canvasOrBody()) && own() !== false) {
+      if (own && !live.current.blocked() && (!isBareKey(chord) || canvasOrBody()) && own(chord) !== false) {
         e.preventDefault();
         e.stopImmediatePropagation();
         return;

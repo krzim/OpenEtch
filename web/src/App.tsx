@@ -27,7 +27,7 @@ import { friendlyError, outsideField } from "./api/laser.ts";
 import { activeDevice, asLightBurnDevices, canvasWorkspace, designOnlyReason, machineDevice } from "./api/devices.ts";
 import { engineLightBurnDevice } from "./api/lightburn.ts";
 import { MAX_UPLOAD_BYTES, commandResult, defaultImportMode, fileError, warningList } from "./api/project.ts";
-import { noPinMode, pendingRuns, stopToast } from "./api/runs.ts";
+import { activeRuns, noPinMode, pendingRuns, stopToast } from "./api/runs.ts";
 import type { Vec2 } from "./api/types.ts";
 import { useEngine } from "./api/useEngine.ts";
 import { BrowserPanel } from "./components/BrowserPanel.tsx";
@@ -62,7 +62,7 @@ import { LaserDock, machineState } from "./workspace/LaserDock.tsx";
 import { NumericBar } from "./workspace/NumericBar.tsx";
 import { PaletteBar } from "./workspace/PaletteBar.tsx";
 import { getPrefs } from "./workspace/prefs.ts";
-import { hintFor } from "./workspace/hotkeys.ts";
+import { hintFor, stopChordActs } from "./workspace/hotkeys.ts";
 import { VIEW_PREFS_EVENT } from "./files/LightBurnPrefsImport.tsx";
 import { RecentProjects } from "./workspace/RecentProjects.tsx";
 import { StatusBar } from "./workspace/StatusBar.tsx";
@@ -1016,7 +1016,8 @@ export function App() {
       "laser.frameStop": () => void machineAction(api.frameStop(), t("app.frameStopped")),
       "laser.requestRun": () => (laserDisabled ? false : requestRun()),
       "laser.pauseResume": () => void togglePause().then(notify).catch(report),
-      "laser.stop": stop,
+      // Ctrl+. (Cmd+.) stops only while a run is under way; otherwise it stays LightBurn's rotate key.
+      "laser.stop": (chord) => (stopChordActs(chord, machine?.running === true || activeRuns(machine).length > 0) ? stop() : false),
       ...text.handlers,
       ...filesUi.handlers,
       ...libsUi.handlers,

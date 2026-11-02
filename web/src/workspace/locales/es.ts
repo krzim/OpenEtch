@@ -7,13 +7,24 @@
 // placeholders as they are) and register the table in i18n.ts.
 
 import type { Messages } from "../i18n.ts";
+import { ES_APP } from "./es-app.ts";
 import { ES_DESIGN } from "./es-design.ts";
+import { ES_LASER } from "./es-laser.ts";
+import { ES_RIBBON } from "./es-ribbon.ts";
+import { ES_SHELL } from "./es-shell.ts";
+import { ES_TOUCH } from "./es-touch.ts";
 
 export const ES_MACHINE_TRANSLATED = true;
 
 export const ES: Messages = {
   // The design-engine UI and later additions (es-design.ts).
   ...ES_DESIGN,
+  // The UX plan's packages (docs/ux/ui-plan-2026-11.md).
+  ...ES_SHELL,
+  ...ES_RIBBON,
+  ...ES_TOUCH,
+  ...ES_APP,
+  ...ES_LASER,
   "common.cancel": "Cancelar",
   "common.close": "Cerrar",
   "common.loading": "Cargando…",

@@ -15,7 +15,9 @@ import {
   normalizeChord,
   parseChord,
   resetAction,
+  RESERVED,
   resolveKey,
+  stopChordActs,
   unbindChord,
 } from "./hotkeys.ts";
 import { interpolate, languages, registerLocale, translate, translateDynamic } from "./i18n.ts";
@@ -61,6 +63,44 @@ test("sanitizePrefs keeps valid values and drops garbage", () => {
   assert.equal("extra" in p, false);
   assert.equal(sanitizePrefs({ theme: "purple", language: "../../x" }).theme, "system");
   assert.equal(sanitizePrefs({ language: "../../x" }).language, "en");
+});
+
+test("sanitizePrefs: layout, density, trackpad and touch preferences", () => {
+  const d = sanitizePrefs(null);
+  assert.equal(d.layoutOverride, "auto");
+  assert.equal(d.density, "auto");
+  assert.equal(d.trackpadPans, "auto");
+  assert.equal(d.touchOneFinger, "select", "one finger on empty canvas draws a marquee by default");
+  assert.equal(d.timelinePinned, false);
+  assert.equal(d.showSelectionBar, "auto");
+  const p = sanitizePrefs({
+    layoutOverride: "phone",
+    density: "touch",
+    trackpadPans: "off",
+    touchOneFinger: "pan",
+    timelinePinned: true,
+    showSelectionBar: "never",
+  });
+  assert.deepEqual(
+    [p.layoutOverride, p.density, p.trackpadPans, p.touchOneFinger, p.timelinePinned, p.showSelectionBar],
+    ["phone", "touch", "off", "pan", true, "never"],
+  );
+  for (const l of ["auto", "wide", "compact", "tablet"] as const) assert.equal(sanitizePrefs({ layoutOverride: l }).layoutOverride, l);
+  for (const v of ["auto", "comfortable", "compact"] as const) assert.equal(sanitizePrefs({ density: v }).density, v);
+  assert.equal(sanitizePrefs({ trackpadPans: "on" }).trackpadPans, "on");
+  assert.equal(sanitizePrefs({ showSelectionBar: "always" }).showSelectionBar, "always");
+  const bad = sanitizePrefs({
+    layoutOverride: "huge",
+    density: 3,
+    trackpadPans: true,
+    touchOneFinger: "zoom",
+    timelinePinned: "yes",
+    showSelectionBar: null,
+  });
+  assert.deepEqual(
+    [bad.layoutOverride, bad.density, bad.trackpadPans, bad.touchOneFinger, bad.timelinePinned, bad.showSelectionBar],
+    ["auto", "auto", "auto", "select", false, "auto"],
+  );
 });
 
 // --- units ----------------------------------------------------------------------------------------------------------------
@@ -220,6 +260,35 @@ test("resolveKey: defaults pass, extras translate, workspace keys run", () => {
   assert.deepEqual(resolveKey("Alt+Shift+C", {}), { kind: "translate", action: "tool.cutShapes", to: "Alt+C" });
   assert.deepEqual(resolveKey("Alt+L", {}), { kind: "ws", action: "laser.position" });
   assert.deepEqual(resolveKey("Pause", {}), { kind: "ws", action: "laser.pauseResume" });
+});
+
+test("UX plan actions: full screen, focus canvas, command search, use as an app, Ctrl+. stop", () => {
+  const def = (id: string) => ACTIONS.find((a) => a.id === id)?.defaults;
+  assert.deepEqual(def("view.fullscreen"), ["Alt+Enter"]);
+  assert.deepEqual(def("view.focusCanvas"), ["Ctrl+Alt+F"]);
+  assert.deepEqual(def("app.commandSearch"), ["S"]);
+  assert.deepEqual(def("help.useAsApp"), []);
+  assert.deepEqual(def("laser.stop"), ["Ctrl+Pause", "Ctrl+Cancel", "Ctrl+."]);
+  // None of the new defaults collides with another action, a fixed key or a browser-reserved chord.
+  for (const [id, chord] of [
+    ["view.fullscreen", "Alt+Enter"],
+    ["view.focusCanvas", "Ctrl+Alt+F"],
+    ["app.commandSearch", "S"],
+    ["laser.stop", "Ctrl+."],
+  ] as const) {
+    assert.deepEqual(conflictsOf(chord, id, {}), [], `${id}: ${chord}`);
+    assert.equal(RESERVED.has(chord), false, `${chord} is not reserved`);
+  }
+  assert.ok(RESERVED.has("F11"), "F11 stays the browser's full screen");
+  assert.deepEqual(resolveKey("Alt+Enter", {}), { kind: "ws", action: "view.fullscreen" });
+  assert.deepEqual(resolveKey("Ctrl+.", {}), { kind: "ws", action: "laser.stop" });
+  assert.deepEqual(resolveKey("S", {}), { kind: "ws", action: "app.commandSearch" });
+  // Ctrl+. is also LightBurn's rotate 15 degrees key: it stops only while a run is under way; the other STOP keys
+  // always stop.
+  assert.equal(stopChordActs("Ctrl+.", true), true);
+  assert.equal(stopChordActs("Ctrl+.", false), false);
+  assert.equal(stopChordActs("Ctrl+Pause", false), true);
+  assert.equal(stopChordActs("Ctrl+Cancel", false), true);
 });
 
 test("rebinding moves keys, translates, and swallows the old native key", () => {

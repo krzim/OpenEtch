@@ -1,13 +1,18 @@
 // English UI strings (the source of truth for message keys; see ../i18n.ts). `{name}` marks a placeholder.
 // Hotkey action labels live in ../hotkeys.ts; a translation can override one with a "hk.<action id>" key.
 
+import { EN_APP } from "./en-app.ts";
 import { EN_DESIGN } from "./en-design.ts";
 import { EN_FILES } from "./en-files.ts";
 import { EN_GANTRY } from "./en-gantry.ts";
 import { EN_JOB } from "./en-job.ts";
+import { EN_LASER } from "./en-laser.ts";
 import { EN_LIBS } from "./en-libs.ts";
 import { EN_REST } from "./en-rest.ts";
+import { EN_RIBBON } from "./en-ribbon.ts";
+import { EN_SHELL } from "./en-shell.ts";
 import { EN_TEXT } from "./en-text.ts";
+import { EN_TOUCH } from "./en-touch.ts";
 import { EN_UI } from "./en-ui.ts";
 import { EN_WS } from "./en-ws.ts";
 
@@ -30,6 +35,12 @@ export const EN = {
   ...EN_UI,
   // Strings that were still inline in older components (App, Devices, Edit dialogs, Image settings, Viewport hints).
   ...EN_REST,
+  // The UX plan's packages (docs/ux/ui-plan-2026-11.md): shell, ribbon and menus, touch, app window, laser workflow.
+  ...EN_SHELL,
+  ...EN_RIBBON,
+  ...EN_TOUCH,
+  ...EN_APP,
+  ...EN_LASER,
   "common.cancel": "Cancel",
   "common.close": "Close",
   "common.loading": "Loading…",

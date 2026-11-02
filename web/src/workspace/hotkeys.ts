@@ -142,6 +142,13 @@ export const ACTIONS: HotkeyAction[] = [
   ws("view.zoomOut", "view", "Zoom out", ["Ctrl+-"]),
   ws("view.zoomPage", "view", "Zoom to field", ["Ctrl+0"]),
   ws("view.zoomSelection", "view", "Zoom to selection", []),
+  // UX plan (docs/ux/ui-plan-2026-11.md). F11 stays the browser's own full screen (RESERVED); Alt+Enter toggles the
+  // app's. Focus canvas hides the docks, the palette and the bottom row (the top bar with STOP stays).
+  ws("view.fullscreen", "view", "Full screen", ["Alt+Enter"]),
+  ws("view.focusCanvas", "view", "Focus canvas", ["Ctrl+Alt+F"]),
+  // Fusion's S: search every command.
+  ws("app.commandSearch", "help", "Command search", ["S"]),
+  ws("help.useAsApp", "help", "Use as an app", []),
 
   ws("laser.frameSelection", "laser", "Frame selection", ["Ctrl+Shift+A"]),
   ws("laser.frameSquare", "laser", "Frame (bounding box)", ["Alt+R"]),
@@ -152,7 +159,8 @@ export const ACTIONS: HotkeyAction[] = [
   ws("laser.pauseResume", "laser", "Pause / resume the job", ["Pause"]),
   ws("laser.position", "laser", "Position laser (point the red dot at a click)", ["Alt+L"]),
   ws("laser.rotary", "laser", "Rotary setup", ["Ctrl+Shift+R"]),
-  ws("laser.stop", "laser", "Stop", ["Ctrl+Pause", "Ctrl+Cancel"]),
+  // Ctrl+. (Cmd+. on a Mac) is also LightBurn's rotate-15° key: see `stopChordActs`.
+  ws("laser.stop", "laser", "Stop", ["Ctrl+Pause", "Ctrl+Cancel", "Ctrl+."]),
   // Library, test generators and laser tools (src/libs/useLibsUi.tsx); LightBurn gives these no default keys.
   ws("window.library", "view", "Material Library", []),
   ws("laser.materialTest", "laser", "Material test", []),
@@ -178,6 +186,18 @@ export const ACTIONS: HotkeyAction[] = [
 ];
 
 export const ACTION_BY_ID: ReadonlyMap<string, HotkeyAction> = new Map(ACTIONS.map((a) => [a.id, a]));
+
+/**
+ * STOP chords that are also LightBurn keys of their own: Ctrl+. (Cmd+.) rotates the selection 15° clockwise
+ * (editing.ts `rotateKeyDeg`) and the framed area 45° (api/job.ts). They stop only while a run is under way (approved,
+ * awaiting its confirmation input or running) and otherwise keep their LightBurn meaning; Esc never stops a burn.
+ */
+export const STOP_SHARED_CHORDS: ReadonlySet<string> = new Set(["Ctrl+."]);
+
+/** Whether `chord`, bound to laser.stop, should stop now (every chord does while a run is under way). */
+export function stopChordActs(chord: string, runUnderWay: boolean): boolean {
+  return runUnderWay || !STOP_SHARED_CHORDS.has(chord);
+}
 
 /** Chords a browser keeps for itself (the page never sees them, or cannot stop them). */
 export const RESERVED = new Set(["Ctrl+W", "Ctrl+T", "Ctrl+Tab", "Ctrl+Shift+Tab", "Ctrl+Shift+N", "Ctrl+Shift+T", "Ctrl+Shift+W", "Alt+F4", "F11", "F12"]);

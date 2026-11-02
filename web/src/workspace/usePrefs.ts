@@ -1,9 +1,10 @@
 // React bindings for the preferences store: `usePrefs()` re-renders on change, `useT()` translates in the chosen
 // language, `useResolvedTheme()` follows the system theme when "Match system" is picked, and `useApplyWorkspace()`
-// (once, in App) puts the theme and UI scale on <html>.
+// (once, in App) puts the theme, UI scale and layout mode (layoutMode.ts) on <html>.
 
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 import { translate, translateDynamic, type MsgKey, type T, type Vars } from "./i18n.ts";
+import { useLayoutMode } from "./layoutMode.ts";
 import { getPrefs, reloadPrefs, subscribePrefs, PREFS_KEY, type Prefs } from "./prefs.ts";
 import { resolveTheme, type Theme } from "./theme.ts";
 import { unitConversion, type UnitConversion } from "./units.ts";
@@ -63,9 +64,12 @@ export function useResolvedTheme(): Theme {
   return resolveTheme(pref, dark);
 }
 
-/** Theme, UI scale and language on the document root; preferences changed in another tab are picked up. */
+/** Theme, UI scale, language and the layout attributes on the document root; preferences changed in another tab are
+ * picked up. */
 export function useApplyWorkspace(): void {
   const theme = useResolvedTheme();
+  // Subscribing keeps data-layout / data-pointer / data-density on <html> current.
+  useLayoutMode();
   const { uiScale, iconScale, handleScale, language } = usePrefs();
   useEffect(() => {
     const root = document.documentElement;

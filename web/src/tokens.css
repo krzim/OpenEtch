@@ -1,0 +1,140 @@
+/* Design tokens (docs/ux/ui-plan-2026-11.md 1.1 and 1.4): space, type, radius, elevation, z-index, density and the
+   chrome budget per layout mode. Imported first in main.tsx, so every other stylesheet can use them. Colour tokens stay
+   in styles.css (per theme).
+
+   The attributes come from workspace/layoutMode.ts, which writes them on <html>:
+   - data-layout:  wide | compact | tablet | phone
+   - data-pointer: fine | coarse
+   - data-density: comfortable | compact | touch
+
+   Names that styles.css already uses for something else are not redefined here: --icon is a colour there (the size
+   token is --icon-size), and --tap / --ui-scale stay where they are until P1 moves them (--tap is meant to follow
+   --hit). */
+
+:root {
+  /* Space scale. */
+  --sp-0: 2px;
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+
+  /* Type scale: weights 400, 500 and 600 only; uppercase only for 11 px dock captions. */
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-lg: 15px;
+  --fs-xl: 18px;
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --caption-ls: 0.04em;
+
+  /* Radius. */
+  --r-sm: 2px;
+  --r-md: 4px;
+  --r-lg: 8px;
+
+  /* Elevation. */
+  --shadow-pop: 0 4px 16px rgba(0, 0, 0, 0.18);
+  --shadow-dialog: 0 12px 40px rgba(0, 0, 0, 0.28);
+  --shadow-toast: 0 4px 12px rgba(0, 0, 0, 0.25);
+
+  /* Z-index ladder. STOP sits above everything, modals and menus included. */
+  --z-canvas-ui: 5;
+  --z-drawer: 20;
+  --z-pop-in-panel: 40;
+  --z-float: 60;
+  --z-banner: 90;
+  --z-modal: 100;
+  --z-menu: 150;
+  --z-toast: 200;
+  --z-ctxmenu: 300;
+  --z-drop: 400;
+  --z-stop: 1000;
+
+  /* Density (fine pointer). --ui-scale (Preferences > UI scale) also scales the control and row heights. */
+  --ctl-h: calc(28px * var(--ui-scale, 1));
+  --row-h: calc(28px * var(--ui-scale, 1));
+  --hit: 28px;
+  --icon-size: 20px;
+
+  /* Safe areas (notches, home indicator; 0 elsewhere). */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+
+  /* Chrome budget: wide (also the values before layoutMode.ts has run). */
+  --bar-top: 44px;
+  --bar-tool: 64px;
+  --bar-context: 32px;
+  --bar-palette: 24px;
+  --bar-timeline: 52px;
+  --bar-status: 24px;
+  --bar-nav: 0px;
+  /* Everything under the canvas: toasts and the warnings panel sit at calc(var(--bar-bottom) + 18px). */
+  --bar-bottom: calc(var(--bar-timeline) + var(--bar-status));
+  --tool-rail-w: 0px;
+  --dock-rail-w: 32px;
+  --dock-left-w: 260px;
+  --dock-left-min: 200px;
+  --dock-left-max: 420px;
+  --dock-right-w: 320px;
+  --dock-right-min: 260px;
+  --dock-right-max: 480px;
+  --dock-overlay-w: 320px;
+  /* The canvas column never goes below this before the docks rail (left first, then right). */
+  --canvas-min-w: 640px;
+}
+
+/* Compact (MacBook, 1280x800 / 1440x900 / 1280x720): icon-only ribbon, one merged timeline + status row. */
+:root[data-layout="compact"] {
+  --bar-top: 40px;
+  --bar-tool: 40px;
+  --bar-context: 32px;
+  --bar-palette: 24px;
+  --bar-timeline: 28px;
+  --bar-status: 0px;
+  --dock-rail-w: 32px;
+  --dock-right-w: 300px;
+}
+
+/* Tablet (iPad, narrow windows, any coarse pointer): vertical tool rail, docks as rails with overlays. */
+:root[data-layout="tablet"] {
+  --bar-top: 48px;
+  --bar-tool: 0px;
+  --bar-context: 44px;
+  --bar-palette: 36px;
+  --bar-timeline: 44px;
+  --bar-status: 0px;
+  --tool-rail-w: 52px;
+  --dock-rail-w: 40px;
+  --dock-left-w: 0px;
+  --dock-right-w: 0px;
+}
+
+/* Phone: top bar, full-bleed canvas, bottom sheets and a bottom tab bar. */
+:root[data-layout="phone"] {
+  --bar-top: calc(48px + var(--safe-top));
+  --bar-tool: 0px;
+  --bar-context: 0px;
+  --bar-palette: 0px;
+  --bar-timeline: 0px;
+  --bar-status: 0px;
+  --bar-nav: calc(56px + var(--safe-bottom));
+  --bar-bottom: var(--bar-nav);
+  --dock-rail-w: 0px;
+  --dock-left-w: 0px;
+  --dock-right-w: 0px;
+}
+
+/* Coarse pointers: 44 px hit targets (WCAG 2.5.8 and Apple HIG), 24 px icons. */
+:root[data-density="touch"] {
+  --ctl-h: calc(40px * var(--ui-scale, 1));
+  --row-h: calc(40px * var(--ui-scale, 1));
+  --hit: 44px;
+  --icon-size: 24px;
+}
