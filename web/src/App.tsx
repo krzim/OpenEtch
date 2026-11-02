@@ -1491,7 +1491,7 @@ export function App() {
 
   // The context strip (Fusion): the selection's X / Y / W / H, a tool's option bar (ContextStripPortal), or the hint.
   const contextStrip = (
-    <div className={`context-strip${stripBusy ? " busy" : ""}${workspace !== "design" && !stripBusy ? " idle" : ""}`} aria-label={t("shell.contextStrip")}>
+    <div role="group" className={`context-strip${stripBusy ? " busy" : ""}${workspace !== "design" && !stripBusy ? " idle" : ""}`} aria-label={t("shell.contextStrip")}>
       <ContextStripHost />
       {!stripBusy && workspace === "design" && (selection.objects.length > 0 ? (
         <NumericBar doc={doc} selection={selection} run={run} report={report} />

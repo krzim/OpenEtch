@@ -277,7 +277,7 @@ textarea {
   color: var(--topbar-fg);
   border-bottom: 1px solid var(--topbar-border);
   min-width: 0;
-  overflow: hidden;
+  /* No overflow clipping here: the File, Window and Help dropdowns hang below the bar. What can shrink does (below). */
 }
 
 /* File menu, brand, project name and the "+" tab button: the part that shrinks first. */
