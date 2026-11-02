@@ -180,6 +180,24 @@ fn hand_placed_tabs_skip_inner_and_tab_cut_power() {
 }
 
 #[test]
+fn hostile_tab_settings_neither_hang_nor_cut_where_unintended() {
+    // A spacing of a micrometre with smaller tabs would be 40 million gaps on a 10 mm square: refused at once.
+    let tiny = Tabs { count: 0, spacing_mm: 1e-6, size_mm: 1e-7, ..Tabs::default() };
+    let d = doc_with(vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0))], with_options(CutSettings::default(), CutOptions { tabs: Some(tiny), ..CutOptions::default() }));
+    assert!(matches!(plan_job(&d, &target()), Err(PlanError::TooManySegments { .. })));
+    // A hand-edited document: tabs that are not numbers are ignored; the others still leave their gaps, and only
+    // there (the bottom edge's middle, at x = 0 of the centred local frame).
+    let manual = Tabs { generation: TabGeneration::Manual, size_mm: 1.0, ..Tabs::default() };
+    let mut d = doc_with(vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0))], with_options(CutSettings::default(), CutOptions { tabs: Some(manual), ..CutOptions::default() }));
+    d.object_options.insert("obj-1".into(), ObjectOptions { tabs: vec![[f64::NAN, 0.0], [0.0, f64::INFINITY], [0.0, -5.0]], ..ObjectOptions::default() });
+    let plan = plan_job(&d, &target()).unwrap();
+    assert!((plan.stats.mark_length_mm - 39.0).abs() < 1e-6, "{}", plan.stats.mark_length_mm);
+    let pts: Vec<[f64; 2]> = plan.passes[0].polylines.iter().flatten().copied().collect();
+    assert!(!pts.iter().any(|p| p[1] < -4.999 && p[0].abs() < 0.499), "nothing is cut inside the tab: {pts:?}");
+    assert!(pts.iter().any(|p| (p[0] - 0.5).abs() < 1e-9 && (p[1] + 5.0).abs() < 1e-9));
+}
+
+#[test]
 fn power_scale_lowers_a_shapes_power() {
     let mut d = doc_with(vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0)), rect("obj-2", 10.0, 10.0, (20.0, 0.0))], CutSettings { power_pct: 40.0, ..CutSettings::default() });
     d.object_options.insert("obj-2".into(), ObjectOptions { priority: None, power_scale_pct: 50.0, ..ObjectOptions::default() });
@@ -457,4 +475,27 @@ fn gantry_layer_options_reach_the_passes_and_never_the_galvo_list() {
     assert_eq!(encode(&filled, &target()).unwrap(), encode(&plain, &target()).unwrap());
     assert!(plain.passes[0].gantry.is_default());
     assert!(serde_json::to_value(&plain.passes[0]).unwrap().get("gantry").is_none(), "left out of JSON while off");
+}
+
+#[test]
+fn tabs_survive_remove_overlapping_lines() {
+    // Two 10 mm squares sharing an edge: the second loses that edge to the first and is cut as an open line, but
+    // keeps its tabs. Without overlaps removed: 80 mm, 8 tabs of 1 mm.
+    let o = CutOptions { tabs: Some(Tabs { count: 4, size_mm: 1.0, ..Tabs::default() }), ..CutOptions::default() };
+    let mut d = doc_with(vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0)), rect("obj-2", 10.0, 10.0, (10.0, 0.0))], with_options(CutSettings::default(), o));
+    assert!((plan_job(&d, &target()).unwrap().stats.mark_length_mm - 72.0).abs() < 1e-6);
+    // Overlaps removed: 70 mm of line, less the first square's 4 tabs and the 3 of the second's not on the shared
+    // edge (the tabs sit mid-edge, so one of the second square's is on the line the first one cuts).
+    d.optimization.remove_overlaps = true;
+    let plan = plan_job(&d, &target()).unwrap();
+    assert!((plan.stats.mark_length_mm - 63.0).abs() < 1e-6, "{}", plan.stats.mark_length_mm);
+    // A tab placed by hand on the second square's far edge is honoured too.
+    let manual = CutOptions { tabs: Some(Tabs { generation: TabGeneration::Manual, size_mm: 2.0, ..Tabs::default() }), ..CutOptions::default() };
+    let mut d = doc_with(vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0)), rect("obj-2", 10.0, 10.0, (10.0, 0.0))], with_options(CutSettings::default(), manual));
+    d.optimization.remove_overlaps = true;
+    d.object_options.insert("obj-2".into(), ObjectOptions { tabs: vec![[5.0, 0.0]], ..ObjectOptions::default() });
+    let plan = plan_job(&d, &target()).unwrap();
+    assert!((plan.stats.mark_length_mm - 68.0).abs() < 1e-6, "{}", plan.stats.mark_length_mm);
+    let pts: Vec<[f64; 2]> = plan.passes[0].polylines.iter().flatten().copied().collect();
+    assert!(!pts.iter().any(|p| (p[0] - 15.0).abs() < 0.999 && p[1].abs() < 0.999), "the gap at x = 15 is uncut: {pts:?}");
 }

@@ -200,8 +200,8 @@ pub struct AutoTabs {
     pub max_tabs: u32,
 }
 
-/// Arc length of the point of `poly` nearest `p`.
-fn project(poly: &[Point], cum: &[f64], p: Point) -> f64 {
+/// The distance from `p` to the nearest point of `poly`, and that point's arc length.
+fn project(poly: &[Point], cum: &[f64], p: Point) -> (f64, f64) {
     let mut best = (f64::INFINITY, 0.0);
     for i in 1..poly.len() {
         let (a, b) = (poly[i - 1], poly[i]);
@@ -214,7 +214,58 @@ fn project(poly: &[Point], cum: &[f64], p: Point) -> f64 {
             best = (d, cum[i - 1] + (cum[i] - cum[i - 1]) * t);
         }
     }
-    best.1
+    best
+}
+
+/// The arc lengths where the tabs of a closed polyline (`poly` ends where it starts, `total` long) are centred (see
+/// [`tab_pieces`]), or `None` when they would cover all of it.
+fn tab_centres(poly: &[Point], cum: &[f64], total: f64, auto: Option<AutoTabs>, manual: &[Point], size_mm: f64) -> Option<Vec<f64>> {
+    let mut centres = Vec::new();
+    if let Some(a) = auto {
+        let mut n = if a.spacing_mm > 0.0 { (total / a.spacing_mm).floor().max(1.0) } else { f64::from(a.count.max(1)) };
+        if a.spacing_mm > 0.0 && a.max_tabs > 0 {
+            n = n.min(f64::from(a.max_tabs));
+        }
+        let step = total / n;
+        if size_mm >= step {
+            return None;
+        }
+        centres.extend((0..n as usize).map(|k| (k as f64 + 0.5) * step));
+    }
+    centres.extend(manual.iter().map(|&m| project(poly, cum, m).1));
+    if !centres.is_empty() && size_mm >= total {
+        return None;
+    }
+    Some(centres)
+}
+
+/// `poly` (`total` long) split at the gaps (arc-length intervals within 0..=total), merged where they overlap: the
+/// pieces in order, each with whether it is a tab; tabs are returned only with `keep_tabs`.
+fn split_at_gaps(poly: &[Point], cum: &[f64], total: f64, mut gaps: Vec<(f64, f64)>, keep_tabs: bool) -> Vec<(Vec<Point>, bool)> {
+    gaps.sort_by(|x, y| x.0.total_cmp(&y.0));
+    let mut merged: Vec<(f64, f64)> = Vec::new();
+    for (a, b) in gaps {
+        match merged.last_mut() {
+            Some(last) if a <= last.1 => last.1 = last.1.max(b),
+            _ => merged.push((a, b)),
+        }
+    }
+    let mut out = Vec::new();
+    let mut pos = 0.0;
+    const MIN: f64 = 1e-9;
+    for (a, b) in merged {
+        if a - pos > MIN {
+            out.push((between(poly, cum, pos, a), false));
+        }
+        if keep_tabs && b - a > MIN {
+            out.push((between(poly, cum, a, b), true));
+        }
+        pos = pos.max(b);
+    }
+    if total - pos > MIN {
+        out.push((between(poly, cum, pos, total), false));
+    }
+    out
 }
 
 /// Tabs (LightBurn's Tabs / Bridges) on one closed polyline: gaps of `size_mm` centred on the automatic positions
@@ -232,27 +283,13 @@ pub fn tab_pieces(poly: Vec<Point>, closed: bool, auto: Option<AutoTabs>, manual
     if total <= 0.0 {
         return vec![(poly, false)];
     }
-    let all_tab = |poly: Vec<Point>| if keep_tabs { vec![(poly, true)] } else { Vec::new() };
-    let mut centres = Vec::new();
-    if let Some(a) = auto {
-        let mut n = if a.spacing_mm > 0.0 { (total / a.spacing_mm).floor().max(1.0) } else { f64::from(a.count.max(1)) };
-        if a.spacing_mm > 0.0 && a.max_tabs > 0 {
-            n = n.min(f64::from(a.max_tabs));
-        }
-        let step = total / n;
-        if size_mm >= step {
-            return all_tab(poly);
-        }
-        centres.extend((0..n as usize).map(|k| (k as f64 + 0.5) * step));
-    }
-    centres.extend(manual.iter().map(|&m| project(&poly, &cum, m)));
+    let Some(centres) = tab_centres(&poly, &cum, total, auto, manual, size_mm) else {
+        return if keep_tabs { vec![(poly, true)] } else { Vec::new() };
+    };
     if centres.is_empty() {
         return vec![(poly, false)];
     }
-    if size_mm >= total {
-        return all_tab(poly);
-    }
-    // Gap intervals within 0..=total (a gap across the start is split in two), merged where they overlap.
+    // A gap across the start is split in two.
     let h = size_mm / 2.0;
     let mut gaps: Vec<(f64, f64)> = Vec::new();
     for c in centres {
@@ -267,30 +304,39 @@ pub fn tab_pieces(poly: Vec<Point>, closed: bool, auto: Option<AutoTabs>, manual
             gaps.push((a, b));
         }
     }
-    gaps.sort_by(|x, y| x.0.total_cmp(&y.0));
-    let mut merged: Vec<(f64, f64)> = Vec::new();
-    for (a, b) in gaps {
-        match merged.last_mut() {
-            Some(last) if a <= last.1 => last.1 = last.1.max(b),
-            _ => merged.push((a, b)),
-        }
+    split_at_gaps(&poly, &cum, total, gaps, keep_tabs)
+}
+
+/// Tabs on `part`, what Remove Overlapping Lines left of the closed polyline `ring` (ends where it starts): the
+/// ring's tabs, placed on the whole ring as [`tab_pieces`] places them (from the ring's own start), leave their gaps
+/// where their centres fall on the part. A tab centred on a removed line is lost with it (another shape cuts that
+/// line).
+pub fn tab_pieces_of_part(part: Vec<Point>, ring: &[Point], auto: Option<AutoTabs>, manual: &[Point], size_mm: f64, keep_tabs: bool) -> Vec<(Vec<Point>, bool)> {
+    if part.len() < 2 || ring.len() < 3 || size_mm.is_nan() || size_mm <= 0.0 {
+        return vec![(part, false)];
     }
-    let mut out = Vec::new();
-    let mut pos = 0.0;
-    const MIN: f64 = 1e-9;
-    for (a, b) in merged {
-        if a - pos > MIN {
-            out.push((between(&poly, &cum, pos, a), false));
-        }
-        if keep_tabs && b - a > MIN {
-            out.push((between(&poly, &cum, a, b), true));
-        }
-        pos = pos.max(b);
+    let ring_cum = arc_lengths(ring);
+    let ring_total = *ring_cum.last().unwrap_or(&0.0);
+    let cum = arc_lengths(&part);
+    let total = *cum.last().unwrap_or(&0.0);
+    if ring_total <= 0.0 || total <= 0.0 {
+        return vec![(part, false)];
     }
-    if total - pos > MIN {
-        out.push((between(&poly, &cum, pos, total), false));
+    let Some(centres) = tab_centres(ring, &ring_cum, ring_total, auto, manual, size_mm) else {
+        return if keep_tabs { vec![(part, true)] } else { Vec::new() };
+    };
+    let h = size_mm / 2.0;
+    let gaps: Vec<(f64, f64)> = centres
+        .into_iter()
+        .filter_map(|c| {
+            let (d, s) = project(&part, &cum, point_at(ring, &ring_cum, c));
+            (d <= 1e-6).then(|| ((s - h).max(0.0), (s + h).min(total)))
+        })
+        .collect();
+    if gaps.is_empty() {
+        return vec![(part, false)];
     }
-    out
+    split_at_gaps(&part, &cum, total, gaps, keep_tabs)
 }
 
 /// For each ring, whether it lies inside another of them (bounding box within, first point inside by even-odd; of

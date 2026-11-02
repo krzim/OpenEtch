@@ -433,6 +433,42 @@ mod tests {
     }
 
     #[test]
+    fn every_tab_and_joinery_edit_undoes_and_redoes_whole() {
+        let mut s = session();
+        let pts = [[30, -5], [50, -5], [50, 5], [42, 5], [42, 0], [38, 0], [38, 5], [30, 5]];
+        let id = run(&mut s, "shape.line", json!({"points": pts, "closed": true})).unwrap()["created"][0].as_str().unwrap().to_owned();
+        // The document without its revision counter (which only ever counts up).
+        let snapshot = |s: &Session| {
+            let mut v = serde_json::to_value(s.document()).unwrap();
+            v.as_object_mut().unwrap().remove("revision");
+            v
+        };
+        let mut states = vec![snapshot(&s)];
+        for (cmd, params) in [
+            ("tabs.add", json!({"id": id, "points": [[40, -6], [51, 0]]})),
+            ("tabs.move", json!({"id": id, "index": 0, "to": [35, -6]})),
+            ("path.resize_slots", json!({"ids": [id], "old_thickness_mm": 5, "new_thickness_mm": 6})),
+            ("path.dogbone", json!({"ids": [id], "diameter_mm": 1})),
+            ("tabs.remove", json!({"ids": [id], "near": [50, 0]})),
+            ("tabs.clear", json!({"layer": s.document().objects[0].layer})),
+        ] {
+            run(&mut s, cmd, params).unwrap_or_else(|e| panic!("{cmd}: {e}"));
+            states.push(snapshot(&s));
+            assert_ne!(states[states.len() - 1], states[states.len() - 2], "{cmd} changed something");
+        }
+        // The layer's tabs were switched on by the first tabs.add and stay on through the others.
+        for k in (0..states.len() - 1).rev() {
+            s.undo().unwrap();
+            assert_eq!(snapshot(&s), states[k], "undo to state {k}");
+        }
+        for (k, state) in states.iter().enumerate().skip(1) {
+            s.redo().unwrap();
+            assert_eq!(&snapshot(&s), state, "redo to state {k}");
+        }
+        assert!(s.document().object_options.is_empty(), "tabs.clear leaves no options behind");
+    }
+
+    #[test]
     fn tabs_need_a_closed_outline_on_a_cutting_layer() {
         let mut s = session();
         let id = square(&mut s);
