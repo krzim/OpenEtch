@@ -507,6 +507,9 @@ export interface SidePanelProps {
   onOverlay: (open: boolean) => void;
   /** The panel's name (accessible name, the bar's caption). */
   label: string;
+  /** Draw the rail strip (false: the side opens only from its toolbar toggle; the tablet's left side, whose Browser
+   * button sits in the tool rail, so the canvas keeps its width). */
+  railVisible?: boolean;
   children: ReactNode;
 }
 
@@ -522,6 +525,7 @@ export function SidePanel(p: SidePanelProps) {
   const leave = useRef(0);
   const { onOverlay } = p;
   const rail = p.mode === "rail";
+  const railVisible = rail && p.railVisible !== false;
   const overlayOpen = rail && p.overlay;
   const shown = p.mode === "pinned" || overlayOpen;
   useEffect(() => {
@@ -562,6 +566,7 @@ export function SidePanel(p: SidePanelProps) {
       className={`panel panel-${p.side}`}
       data-mode={p.mode}
       data-overlay={overlayOpen ? "" : undefined}
+      data-norail={rail && !railVisible ? "" : undefined}
       aria-label={p.label}
       onPointerEnter={() => window.clearTimeout(leave.current)}
       onPointerLeave={onLeave}
@@ -602,7 +607,7 @@ export function SidePanel(p: SidePanelProps) {
       <div className="panel-body">{p.children}</div>
     </aside>
   );
-  const edge = rail ? (
+  const edge = railVisible ? (
     <DockRail side={p.side} open={overlayOpen} label={p.label} onOpen={open} />
   ) : p.mode === "pinned" ? (
     <Splitter area={p.side} label={t("shell.resize", { name: p.label })} />
@@ -611,7 +616,7 @@ export function SidePanel(p: SidePanelProps) {
   // The rail sits on the window's edge, the splitter on the canvas side.
   return p.side === "left" ? (
     <>
-      {rail && edge}
+      {railVisible && edge}
       {panel}
       {!rail && edge}
       {scrim}
@@ -621,7 +626,7 @@ export function SidePanel(p: SidePanelProps) {
       {scrim}
       {!rail && edge}
       {panel}
-      {rail && edge}
+      {railVisible && edge}
     </>
   );
 }

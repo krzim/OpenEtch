@@ -952,6 +952,10 @@ textarea {
   left: calc(var(--tool-rail-w) + var(--dock-rail-w));
 }
 
+.panel-left[data-mode="rail"][data-norail] {
+  left: var(--tool-rail-w);
+}
+
 .panel-right[data-mode="rail"] {
   right: var(--dock-rail-w);
 }

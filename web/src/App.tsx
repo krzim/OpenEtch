@@ -1748,7 +1748,16 @@ export function App() {
       {layout !== "tablet" && toolbar}
       <div className="main">
         {layout === "tablet" && <div className="tool-rail">{toolbar}</div>}
-        <SidePanel side="left" mode={leftMode} overlay={overlay === "left"} onOverlay={setLeftOverlay} label={t("win.browser")}>
+        <SidePanel
+          side="left"
+          mode={leftMode}
+          overlay={overlay === "left"}
+          onOverlay={setLeftOverlay}
+          label={t("win.browser")}
+          // Tablet: the tool rail's Browser button opens the left side, so it needs no rail of its own (the canvas keeps
+          // 900 px at 1024 wide and 700 at 820).
+          railVisible={layout !== "tablet"}
+        >
           <DockAreaHost area="left" />
           {leftContent}
         </SidePanel>
