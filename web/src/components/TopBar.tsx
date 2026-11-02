@@ -13,6 +13,8 @@ import type { MachineStatus } from "../api/types.ts";
 import { StatusChip } from "../laser/StatusChip.tsx";
 import { ProjectIndicator } from "./FileMenu.tsx";
 import { Icon } from "./ui.tsx";
+import { useFullscreen } from "../workspace/fullscreen.ts";
+import { hintFor } from "../workspace/hotkeys.ts";
 import { useLayoutMode } from "../workspace/layoutMode.ts";
 import { ShellIcon } from "../workspace/shellIcons.tsx";
 import { usePrefs, useT } from "../workspace/usePrefs.ts";
@@ -120,6 +122,7 @@ export function TopBar(p: TopBarProps) {
       )}
       <div className="topbar-actions">
         {!phone && p.extra}
+        {!phone && <FullscreenButton />}
         {!phone && (
           <>
             <button className="icon-btn" title={t("top.undoTitle")} aria-label={t("top.undo")} onClick={p.onUndo}>
@@ -139,5 +142,20 @@ export function TopBar(p: TopBarProps) {
         </button>
       </div>
     </header>
+  );
+}
+
+/** Full screen on and off (workspace/fullscreen.ts); hidden where the browser has no Fullscreen API (iPhone). */
+function FullscreenButton() {
+  const t = useT();
+  const fs = useFullscreen();
+  const hotkeys = usePrefs().hotkeys;
+  if (!fs.supported) return null;
+  const label = fs.browserOwned ? t("shell.fullscreenBrowser") : fs.active ? t("shell.exitFullscreen") : t("shell.fullscreen");
+  const hint = hintFor("view.fullscreen", hotkeys);
+  return (
+    <button className={`icon-btn fullscreen-btn${fs.active ? " active" : ""}`} title={hint ? `${label} (${hint})` : label} aria-label={label} aria-pressed={fs.active} onClick={fs.toggle}>
+      <ShellIcon name={fs.active ? "minimize" : "maximize"} />
+    </button>
   );
 }

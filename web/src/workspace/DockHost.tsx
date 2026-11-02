@@ -1,14 +1,44 @@
 // The hosts of the dockable windows (layout.ts): one per area — the left and right side panels, the bottom strip under
 // the canvas, and the floating layer — each rendering a frame per window (or per tab group, with its tab strip) and the
-// slot the window's Dock portals into. Plus the Window menu in the top bar: show or hide each window and LightBurn's
-// Reset to Default Layout.
+// slot the window's Dock portals into. Plus the Window menu in the top bar: show or hide each window, the layout
+// presets, Full screen, Focus canvas and LightBurn's Reset to Default Layout.
+//
+// The side panels (docs/ux/ui-plan-2026-11.md 1.1): `SidePanel` draws a side pinned beside the canvas with a splitter
+// on its inner edge (pointer events, touch-action none, double-click resets the width, arrow keys resize), or as a rail
+// of vertical window titles whose tap (or a hover with a mouse) opens the side as an overlay with a pin button.
 
-import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent as RKeyboardEvent, type PointerEvent as RPointerEvent, type ReactNode } from "react";
 import { ContextMenu } from "../components/ContextMenu.tsx";
 import { Icon } from "../components/ui.tsx";
-import { areaUnits, getLayout, placeOf, resetLayout, setActiveTab, setFloatRect, setVisible, updateLayout, WINDOWS, type AreaUnit, type DockArea, type FloatRect } from "./layout.ts";
+import {
+  applyPreset,
+  areaUnits,
+  clampSize,
+  DEFAULT_SIZES,
+  getLayout,
+  LAYOUT_PRESETS,
+  placeOf,
+  resetLayout,
+  setActiveTab,
+  setAreaMode,
+  setDockSize,
+  setFloatRect,
+  setVisible,
+  updateLayout,
+  WINDOWS,
+  type AreaMode,
+  type AreaUnit,
+  type DockArea,
+  type DockSizes,
+  type FloatRect,
+  type LayoutPreset,
+  type SideArea,
+} from "./layout.ts";
 import { reloadLayout, LAYOUT_KEY } from "./layout.ts";
-import { useT } from "./usePrefs.ts";
+import { useFullscreen } from "./fullscreen.ts";
+import { hintFor } from "./hotkeys.ts";
+import { ShellIcon } from "./shellIcons.tsx";
+import { usePrefs, useT } from "./usePrefs.ts";
 import { hostMounted, slotRef, useLayout, useMountedWindows } from "./windows.ts";
 import { windowMenuItems } from "./windowMenu.ts";
 import type { MsgKey } from "./i18n.ts";
@@ -85,8 +115,34 @@ function UnitFrame(p: { unit: AreaUnit }) {
 }
 
 /** The floating windows: frames over the canvas, moved by their title (or tab strip) and resized from the corner. */
+/** The window's size, re-read on resize and orientation changes (floating frames are re-clamped to it, L15). */
+export function useWindowSize(): { w: number; h: number } {
+  const read = () => ({ w: typeof window === "undefined" ? 1200 : window.innerWidth, h: typeof window === "undefined" ? 800 : window.innerHeight });
+  const [size, setSize] = useState(read);
+  useEffect(() => {
+    let frame = 0;
+    const on = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => setSize((cur) => {
+        const next = read();
+        return next.w === cur.w && next.h === cur.h ? cur : next;
+      }));
+    };
+    window.addEventListener("resize", on);
+    window.addEventListener("orientationchange", on);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("resize", on);
+      window.removeEventListener("orientationchange", on);
+    };
+  }, []);
+  return size;
+}
+
 export function FloatHost() {
   useHost();
+  // Re-render (and so re-clamp every frame) when the window is resized or rotated.
+  useWindowSize();
   const layout = useLayout();
   const mounted = useMountedWindows();
   const units = areaUnits(layout, "float", [...mounted.keys()]);
@@ -175,10 +231,13 @@ function FloatFrame(p: { unit: AreaUnit; rect: FloatRect }) {
   );
 }
 
-/** The Window menu's entries: every tool window with a check mark (click shows or hides it), and Reset to Default
- * Layout. Shared by the Window dropdown (wide layout) and the top bar's ⋯ overflow menu. */
-export function WindowMenuEntries(p: { close: () => void }) {
+/** The Window menu's entries: every tool window with a check mark (click shows or hides it), the layout presets, Full
+ * screen, Focus canvas and Reset to Default Layout. Shared by the Window dropdown (wide layout) and the top bar's ⋯
+ * overflow menu. */
+export function WindowMenuEntries(p: { close: () => void; focusCanvas?: boolean; onFocusCanvas?: () => void }) {
   const t = useT();
+  const prefs = usePrefs();
+  const fs = useFullscreen();
   const layout = useLayout();
   const mounted = useMountedWindows();
   const known = WINDOWS.map((w) => w.id);
@@ -212,6 +271,58 @@ export function WindowMenuEntries(p: { close: () => void }) {
         );
       })}
       <div className="menu-sep" role="separator" />
+      {LAYOUT_PRESETS.map((preset) => (
+        <button
+          key={preset}
+          role="menuitem"
+          className="menu-item"
+          onClick={() => {
+            p.close();
+            updateLayout((l) => applyPreset(l, preset));
+          }}
+        >
+          <span>{t("shell.layoutPreset", { name: presetName(preset, t) })}</span>
+        </button>
+      ))}
+      <div className="menu-sep" role="separator" />
+      {fs.supported && (
+        <button
+          role="menuitemcheckbox"
+          aria-checked={fs.active}
+          className="menu-item"
+          onClick={() => {
+            p.close();
+            fs.toggle();
+          }}
+        >
+          <span>
+            <span className="menu-check" aria-hidden="true">
+              {fs.active ? "✓" : ""}
+            </span>
+            {t("shell.fullscreen")}
+          </span>
+          <span className="menu-hint">{hintFor("view.fullscreen", prefs.hotkeys)}</span>
+        </button>
+      )}
+      {p.onFocusCanvas && (
+        <button
+          role="menuitemcheckbox"
+          aria-checked={!!p.focusCanvas}
+          className="menu-item"
+          onClick={() => {
+            p.close();
+            p.onFocusCanvas?.();
+          }}
+        >
+          <span>
+            <span className="menu-check" aria-hidden="true">
+              {p.focusCanvas ? "✓" : ""}
+            </span>
+            {t("shell.focusCanvas")}
+          </span>
+          <span className="menu-hint">{hintFor("view.focusCanvas", prefs.hotkeys)}</span>
+        </button>
+      )}
       <button
         role="menuitem"
         className="menu-item"
@@ -226,6 +337,10 @@ export function WindowMenuEntries(p: { close: () => void }) {
   );
 }
 
+function presetName(preset: LayoutPreset, t: ReturnType<typeof useT>): string {
+  return preset === "wide" ? t("shell.presetWide") : preset === "compact" ? t("shell.presetCompact") : t("shell.presetTouch");
+}
+
 /** Another tab changed the stored layout: adopt it (mounted once, in App). */
 export function useLayoutSync(): void {
   useEffect(() => {
@@ -236,7 +351,7 @@ export function useLayoutSync(): void {
 }
 
 /** The Window menu in the top bar (wide layout). */
-export function WindowMenu() {
+export function WindowMenu(p: { focusCanvas?: boolean; onFocusCanvas?: () => void }) {
   const t = useT();
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
@@ -259,9 +374,244 @@ export function WindowMenu() {
       </button>
       {open && (
         <div className="menu menu-right" role="menu" aria-label={t("win.menu")}>
-          <WindowMenuEntries close={() => setOpen(false)} />
+          <WindowMenuEntries close={() => setOpen(false)} focusCanvas={p.focusCanvas} onFocusCanvas={p.onFocusCanvas} />
         </div>
       )}
     </div>
+  );
+}
+
+// ---- side panels: splitter, rail, overlay -------------------------------------------------------------------------------
+
+/** Pixels per arrow-key press on a splitter. */
+const SPLITTER_STEP = 16;
+
+/**
+ * The splitter on a pinned side panel's inner edge (or above the bottom strip): drag to resize (pointer events, so it
+ * works with a finger and a pen; the width is set live on `.app` and saved on release), double-click to reset, arrow
+ * keys (Home / End) with keyboard focus.
+ */
+export function Splitter(p: { area: keyof DockSizes; label: string }) {
+  const t = useT();
+  const size = useLayout().sizes[p.area];
+  const drag = useRef<{ start: number; size: number; live: number; app: HTMLElement | null } | null>(null);
+  const vertical = p.area !== "bottom";
+  // Dragging towards the canvas grows the panel: right for the left side, left for the right side, up for the bottom.
+  const sign = p.area === "left" ? 1 : -1;
+  const cssVar = `--dock-${p.area}-size`;
+  const commit = (px: number) => updateLayout((l) => setDockSize(l, p.area, px));
+  const onDown = (e: RPointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // The pointer is already gone.
+    }
+    const cur = getLayout().sizes[p.area];
+    drag.current = { start: vertical ? e.clientX : e.clientY, size: cur, live: cur, app: e.currentTarget.closest<HTMLElement>(".app") };
+  };
+  const onMove = (e: RPointerEvent<HTMLDivElement>) => {
+    const d = drag.current;
+    if (!d) return;
+    d.live = clampSize(p.area, d.size + sign * ((vertical ? e.clientX : e.clientY) - d.start));
+    d.app?.style.setProperty(cssVar, `${d.live}px`);
+  };
+  const onUp = () => {
+    const d = drag.current;
+    if (!d) return;
+    drag.current = null;
+    if (d.live !== d.size) commit(d.live);
+  };
+  const onKey = (e: RKeyboardEvent<HTMLDivElement>) => {
+    const grow = vertical ? (p.area === "left" ? "ArrowRight" : "ArrowLeft") : "ArrowUp";
+    const shrink = vertical ? (p.area === "left" ? "ArrowLeft" : "ArrowRight") : "ArrowDown";
+    let next: number | null = null;
+    if (e.key === grow) next = size + SPLITTER_STEP;
+    else if (e.key === shrink) next = size - SPLITTER_STEP;
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = 100000;
+    if (next === null) return;
+    e.preventDefault();
+    e.stopPropagation();
+    commit(next);
+  };
+  return (
+    <div
+      role="separator"
+      tabIndex={0}
+      aria-orientation={vertical ? "vertical" : "horizontal"}
+      aria-label={p.label}
+      aria-valuenow={size}
+      title={t("shell.splitterTitle")}
+      className={`dock-splitter dock-splitter-${p.area}`}
+      onPointerDown={onDown}
+      onPointerMove={onMove}
+      onPointerUp={onUp}
+      onPointerCancel={onUp}
+      onDoubleClick={() => commit(DEFAULT_SIZES[p.area])}
+      onKeyDown={onKey}
+    />
+  );
+}
+
+/** A rail of a side's window titles, written vertically: a tap (or resting the mouse on it) opens the side. */
+function DockRail(p: { side: SideArea; open: boolean; label: string; onOpen: (id: string, by: "click" | "hover") => void }) {
+  const layout = useLayout();
+  const mounted = useMountedWindows();
+  const timer = useRef(0);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  const ids = areaUnits(layout, p.side, [...mounted.keys()]).flatMap((u) => u.members);
+  return (
+    <nav className={`dock-rail dock-rail-${p.side}`} aria-label={p.label}>
+      {ids.map((id) => (
+        <button
+          key={id}
+          type="button"
+          className="dock-rail-btn"
+          aria-expanded={p.open}
+          onClick={() => {
+            window.clearTimeout(timer.current);
+            p.onOpen(id, "click");
+          }}
+          onPointerEnter={(e) => {
+            if (e.pointerType !== "mouse" || p.open) return;
+            window.clearTimeout(timer.current);
+            timer.current = window.setTimeout(() => p.onOpen(id, "hover"), 400);
+          }}
+          onPointerLeave={() => window.clearTimeout(timer.current)}
+        >
+          <span className="dock-rail-label">{mounted.get(id) ?? id}</span>
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+export interface SidePanelProps {
+  side: SideArea;
+  /** What the side is now (layout.ts `dockPolicy`, or hidden). */
+  mode: AreaMode;
+  /** A rail's overlay is open. */
+  overlay: boolean;
+  onOverlay: (open: boolean) => void;
+  /** The panel's name (accessible name, the bar's caption). */
+  label: string;
+  children: ReactNode;
+}
+
+/**
+ * One side of the canvas: pinned (the panel, a caption bar with "collapse to a rail", and the splitter), a rail that
+ * opens the panel as an overlay (with "pin" and "close"; Esc or a tap outside closes it), or hidden. The panel stays
+ * mounted in every mode, so the windows docked in it keep their state; when it is not shown it is `inert`.
+ */
+export function SidePanel(p: SidePanelProps) {
+  const t = useT();
+  const aside = useRef<HTMLElement>(null);
+  const byHover = useRef(false);
+  const leave = useRef(0);
+  const { onOverlay } = p;
+  const rail = p.mode === "rail";
+  const overlayOpen = rail && p.overlay;
+  const shown = p.mode === "pinned" || overlayOpen;
+  useEffect(() => {
+    if (aside.current) aside.current.inert = !shown;
+  }, [shown]);
+  useEffect(() => () => window.clearTimeout(leave.current), []);
+  // Esc closes the overlay and nothing else (a dialog over it keeps its own Esc).
+  useEffect(() => {
+    if (!overlayOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || document.querySelector(".modal-backdrop")) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      onOverlay(false);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [overlayOpen, onOverlay]);
+  const open = useCallback(
+    (id: string, by: "click" | "hover") => {
+      const group = placeOf(getLayout(), id).group;
+      if (group) updateLayout((l) => setActiveTab(l, group, id));
+      byHover.current = by === "hover";
+      onOverlay(true);
+    },
+    [onOverlay],
+  );
+  const onLeave = (e: RPointerEvent<HTMLElement>) => {
+    if (!byHover.current || e.pointerType !== "mouse") return;
+    window.clearTimeout(leave.current);
+    leave.current = window.setTimeout(() => {
+      if (!aside.current?.contains(document.activeElement)) onOverlay(false);
+    }, 350);
+  };
+  const panel = (
+    <aside
+      ref={aside}
+      className={`panel panel-${p.side}`}
+      data-mode={p.mode}
+      data-overlay={overlayOpen ? "" : undefined}
+      aria-label={p.label}
+      onPointerEnter={() => window.clearTimeout(leave.current)}
+      onPointerLeave={onLeave}
+      onPointerDown={() => (byHover.current = false)}
+    >
+      {p.mode !== "hidden" && (
+        <div className="panel-bar">
+          <span className="panel-bar-title">{p.label}</span>
+          {rail ? (
+            <>
+              <button
+                className="icon-btn small"
+                title={t("shell.pinPanel")}
+                aria-label={t("shell.pinPanel")}
+                onClick={() => {
+                  updateLayout((l) => setAreaMode(l, p.side, "pinned"));
+                  onOverlay(false);
+                }}
+              >
+                <ShellIcon name="pin" size={16} />
+              </button>
+              <button className="icon-btn small" title={t("common.close")} aria-label={t("common.close")} onClick={() => onOverlay(false)}>
+                <Icon name="close" size={16} />
+              </button>
+            </>
+          ) : (
+            <button
+              className="icon-btn small"
+              title={t("shell.railPanel")}
+              aria-label={t("shell.railPanel")}
+              onClick={() => updateLayout((l) => setAreaMode(l, p.side, "rail"))}
+            >
+              <Icon name={p.side === "left" ? "panelLeft" : "panelRight"} size={16} />
+            </button>
+          )}
+        </div>
+      )}
+      <div className="panel-body">{p.children}</div>
+    </aside>
+  );
+  const edge = rail ? (
+    <DockRail side={p.side} open={overlayOpen} label={p.label} onOpen={open} />
+  ) : p.mode === "pinned" ? (
+    <Splitter area={p.side} label={t("shell.resize", { name: p.label })} />
+  ) : null;
+  const scrim = overlayOpen ? <div className="drawer-scrim" aria-hidden="true" onPointerDown={() => onOverlay(false)} /> : null;
+  // The rail sits on the window's edge, the splitter on the canvas side.
+  return p.side === "left" ? (
+    <>
+      {rail && edge}
+      {panel}
+      {!rail && edge}
+      {scrim}
+    </>
+  ) : (
+    <>
+      {scrim}
+      {!rail && edge}
+      {panel}
+      {rail && edge}
+    </>
   );
 }

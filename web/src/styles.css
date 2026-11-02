@@ -934,8 +934,11 @@ textarea {
   min-height: 0;
 }
 
+/* Side panels (workspace/DockHost.tsx SidePanel): pinned beside the canvas at the width the splitter left
+   (--dock-*-size, set on .app from the layout), a rail that opens the panel as an overlay, or hidden. Every mode keeps
+   the panel in the document (its windows keep their state). */
 .panel {
-  width: 272px;
+  width: var(--panel-w);
   flex: none;
   display: none;
   flex-direction: column;
@@ -943,17 +946,84 @@ textarea {
   min-height: 0;
 }
 
-.panel.open {
-  display: flex;
-}
-
 .panel-left {
+  --panel-w: var(--dock-left-size, 260px);
   border-right: 1px solid var(--border);
 }
 
 .panel-right {
-  width: 320px;
+  --panel-w: var(--dock-right-size, 320px);
   border-left: 1px solid var(--border);
+}
+
+.panel[data-mode="pinned"] {
+  display: flex;
+}
+
+/* A rail's overlay: over the canvas, never pushing it. */
+.panel[data-mode="rail"] {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: var(--z-drawer);
+  width: min(var(--dock-overlay-w), calc(100% - 2 * var(--dock-rail-w) - var(--tool-rail-w)));
+  box-shadow: var(--shadow-pop);
+}
+
+.panel-left[data-mode="rail"] {
+  left: calc(var(--tool-rail-w) + var(--dock-rail-w));
+}
+
+.panel-right[data-mode="rail"] {
+  right: var(--dock-rail-w);
+}
+
+.panel[data-mode="rail"][data-overlay] {
+  display: flex;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .panel[data-mode="rail"][data-overlay] {
+    animation: panel-in 0.14s ease-out;
+  }
+}
+
+@keyframes panel-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.panel-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 28px;
+  padding: 0 2px 0 10px;
+  background: var(--chrome);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.panel-bar-title {
+  flex: 1;
+  min-width: 0;
+  font-size: calc(var(--fs-xs) * var(--ui-scale, 1));
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--caption-ls);
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.panel-bar .icon-btn.small {
+  min-width: max(28px, var(--hit));
+  min-height: max(26px, var(--hit));
 }
 
 .panel-title {
@@ -971,6 +1041,7 @@ textarea {
   flex: 1;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   padding: 4px 0 16px;
 }
 
@@ -979,30 +1050,109 @@ textarea {
   color: var(--muted);
 }
 
-/* Drawers on tablets and phones. */
-.drawers .panel {
+/* The rail: the side's window titles, written vertically. */
+.dock-rail {
+  flex: none;
+  width: var(--dock-rail-w);
   display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0;
+  background: var(--chrome);
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.dock-rail-left {
+  border-right: 1px solid var(--border);
+}
+
+.dock-rail-right {
+  border-left: 1px solid var(--border);
+}
+
+.dock-rail-btn {
+  flex: none;
+  writing-mode: vertical-rl;
+  min-height: 72px;
+  width: 100%;
+  padding: 10px 0;
+  border: 0;
+  border-radius: var(--r-md);
+  background: none;
+  color: var(--text-2);
+  font-size: calc(var(--fs-xs) * var(--ui-scale, 1));
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--caption-ls);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.dock-rail-left .dock-rail-btn {
+  transform: rotate(180deg);
+}
+
+.dock-rail-btn[aria-expanded="true"],
+.dock-rail-btn:active {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+@media (hover: hover) {
+  .dock-rail-btn:hover {
+    color: var(--text);
+    background: var(--surface-hover);
+  }
+}
+
+/* The splitter on a pinned panel's inner edge (and above the bottom strip): a 5 px grab area (16 with a finger) whose
+   line lights up on hover or keyboard focus. */
+.dock-splitter {
+  flex: none;
+  position: relative;
+  z-index: 2;
+  width: 6px;
+  margin: 0 -3px;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+
+.dock-splitter::after {
+  content: "";
   position: absolute;
-  top: 0;
-  bottom: 0;
-  z-index: var(--z-drawer);
-  width: min(320px, 86vw);
-  box-shadow: 0 0 24px var(--shadow);
-  transition: transform 0.18s ease-out;
+  inset: 0 2px;
+  background: transparent;
+  transition: background 0.1s;
 }
 
-.drawers .panel-left {
-  left: 0;
-  transform: translateX(-105%);
+.dock-splitter:hover::after,
+.dock-splitter:focus-visible::after,
+.dock-splitter:active::after {
+  background: var(--accent);
 }
 
-.drawers .panel-right {
-  right: 0;
-  transform: translateX(105%);
+.dock-splitter-bottom {
+  width: auto;
+  height: 6px;
+  margin: -3px 0;
+  cursor: row-resize;
 }
 
-.drawers .panel.open {
-  transform: none;
+.dock-splitter-bottom::after {
+  inset: 2px 0;
+}
+
+:root[data-pointer="coarse"] .dock-splitter {
+  width: 16px;
+  margin: 0 -8px;
+}
+
+:root[data-pointer="coarse"] .dock-splitter-bottom {
+  width: auto;
+  height: 16px;
+  margin: -8px 0;
 }
 
 .drawer-scrim {
@@ -1010,6 +1160,23 @@ textarea {
   inset: 0;
   z-index: calc(var(--z-drawer) - 1);
   background: var(--scrim);
+}
+
+/* Tablet: the selection's Properties on request (a pill over the canvas, bottom right). */
+.properties-pill {
+  position: absolute;
+  right: 12px;
+  bottom: calc(var(--bar-palette) + 12px);
+  z-index: var(--z-canvas-ui);
+  border-radius: 999px;
+  min-height: var(--hit);
+  padding: 0 16px;
+  box-shadow: var(--shadow-pop);
+}
+
+/* Focus canvas: no docks, palette or bottom row (the top bar with STOP and the context strip stay). */
+.app[data-focus] .bottom-row {
+  display: none;
 }
 
 /* ---- browser tree ------------------------------------------------------------------------------------------ */

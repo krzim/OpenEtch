@@ -938,7 +938,9 @@ a.menu-item {
   display: flex;
   align-items: stretch;
   gap: 0;
-  max-height: 38vh;
+  /* The splitter above sets the height (layout.ts sizes.bottom); never more than half the canvas column. */
+  height: var(--dock-bottom-size, 240px);
+  max-height: 50%;
   min-height: 0;
   flex: none;
   border-top: 1px solid var(--border);

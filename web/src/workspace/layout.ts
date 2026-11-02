@@ -4,6 +4,10 @@
 // (every access in try/catch; without storage the layout lasts for the visit) and changed only through the functions
 // here, so `npm test` covers the rules. A tiny external store like prefs.ts; components read it with `useLayout()`
 // (Dock.tsx).
+//
+// It also keeps the side panels' sizes (resized with the splitters) and whether each side is pinned or a rail of window
+// titles that opens as an overlay (docs/ux/ui-plan-2026-11.md 1.1). `dockPolicy` decides what a side really is for a
+// window width: the canvas column never goes below 640 px while a side can be railed instead (left first).
 
 export type DockArea = "left" | "right" | "bottom" | "float";
 export const DOCK_AREAS: DockArea[] = ["left", "right", "bottom", "float"];
@@ -26,10 +30,32 @@ export interface WindowPlace {
   float: FloatRect | null;
 }
 
+/** The side panels (the bottom strip has a size but no rail). */
+export type SideArea = "left" | "right";
+export const SIDE_AREAS: readonly SideArea[] = ["left", "right"];
+
+/** A side panel docked beside the canvas, a rail of window titles that opens as an overlay, or hidden. */
+export type AreaMode = "pinned" | "rail" | "hidden";
+export const AREA_MODES: readonly AreaMode[] = ["pinned", "rail", "hidden"];
+
+/** Widths of the side panels and the height of the bottom strip, CSS px. */
+export interface DockSizes {
+  left: number;
+  right: number;
+  bottom: number;
+}
+
+export const DEFAULT_SIZES: DockSizes = { left: 260, right: 320, bottom: 240 };
+/** [min, max] per area (the splitters clamp to these). */
+export const SIZE_LIMITS: Record<keyof DockSizes, readonly [number, number]> = { left: [200, 420], right: [260, 480], bottom: [120, 600] };
+
 export interface Layout {
   windows: Record<string, WindowPlace>;
   /** The tab shown in each group. */
   activeTab: Record<string, string>;
+  sizes: DockSizes;
+  /** The user's choice per side; a side not listed follows the layout mode (`dockPolicy`). */
+  areaMode: Partial<Record<SideArea, AreaMode>>;
 }
 
 /** The known tool windows in their default place (any other Dock id starts on the right, after these). */
@@ -67,7 +93,14 @@ export function placeOf(l: Layout, id: string): WindowPlace {
   return l.windows[id] ?? defaultPlace(id);
 }
 
-export const DEFAULT_LAYOUT: Layout = { windows: {}, activeTab: {} };
+export const DEFAULT_LAYOUT: Layout = { windows: {}, activeTab: {}, sizes: DEFAULT_SIZES, areaMode: {} };
+
+/** A size clamped to its area's limits (anything but a finite number gives the default). */
+export function clampSize(area: keyof DockSizes, v: unknown): number {
+  const [lo, hi] = SIZE_LIMITS[area];
+  if (typeof v !== "number" || !Number.isFinite(v)) return DEFAULT_SIZES[area];
+  return Math.round(Math.min(hi, Math.max(lo, v)));
+}
 
 const finite = (v: unknown, lo: number, hi: number): number | null => (typeof v === "number" && Number.isFinite(v) && v >= lo && v <= hi ? v : null);
 const ID = /^[A-Za-z][\w.-]{0,63}$/;
@@ -97,7 +130,12 @@ export function sanitizeLayout(raw: unknown): Layout {
   const activeTab: Record<string, string> = {};
   const at = r.activeTab && typeof r.activeTab === "object" ? (r.activeTab as Record<string, unknown>) : {};
   for (const [g, id] of Object.entries(at)) if (ID.test(g) && typeof id === "string" && ID.test(id)) activeTab[g] = id;
-  return normalizeGroups({ windows, activeTab });
+  const sz = r.sizes && typeof r.sizes === "object" ? (r.sizes as Record<string, unknown>) : {};
+  const sizes: DockSizes = { left: clampSize("left", sz.left), right: clampSize("right", sz.right), bottom: clampSize("bottom", sz.bottom) };
+  const am = r.areaMode && typeof r.areaMode === "object" ? (r.areaMode as Record<string, unknown>) : {};
+  const areaMode: Partial<Record<SideArea, AreaMode>> = {};
+  for (const side of SIDE_AREAS) if (AREA_MODES.includes(am[side] as AreaMode)) areaMode[side] = am[side] as AreaMode;
+  return normalizeGroups({ windows, activeTab, sizes, areaMode });
 }
 
 /** Groups only hold windows in one area; a group with a single member is dissolved. */
@@ -113,7 +151,7 @@ function normalizeGroups(l: Layout): Layout {
   }
   const activeTab: Record<string, string> = {};
   for (const [g, id] of Object.entries(l.activeTab)) if (windows[id]?.group === g) activeTab[g] = id;
-  return { windows, activeTab };
+  return { ...l, windows, activeTab };
 }
 
 // ---- changes ------------------------------------------------------------------------------------------------------------
@@ -148,7 +186,7 @@ export function tabWith(l: Layout, id: string, target: string): Layout {
   const group = t.group ?? target;
   // Both places change before the groups are checked (a group of one would be dissolved on the way).
   const windows = { ...l.windows, [target]: { ...t, group }, [id]: { ...placeOf(l, id), area: t.area, order: t.order, group, visible: true } };
-  return normalizeGroups({ windows, activeTab: { ...l.activeTab, [group]: id } });
+  return normalizeGroups({ ...l, windows, activeTab: { ...l.activeTab, [group]: id } });
 }
 
 /** Take window `id` out of its tab group (it stays in the same area, right after the group). */
@@ -216,6 +254,98 @@ export function areaUnits(l: Layout, area: DockArea, ids: readonly string[]): Ar
     u.active = want && u.members.includes(want) ? want : u.members[0];
   }
   return units;
+}
+
+// ---- sizes, rails and presets -------------------------------------------------------------------------------------------
+
+/** Set a side panel's width or the bottom strip's height (clamped). */
+export function setDockSize(l: Layout, area: keyof DockSizes, px: number): Layout {
+  return { ...l, sizes: { ...l.sizes, [area]: clampSize(area, px) } };
+}
+
+/** Pin a side, make it a rail, hide it, or (null) let the layout mode decide again. */
+export function setAreaMode(l: Layout, side: SideArea, mode: AreaMode | null): Layout {
+  const areaMode = { ...l.areaMode };
+  if (mode === null) delete areaMode[side];
+  else areaMode[side] = mode;
+  return { ...l, areaMode };
+}
+
+/** The layout modes dockPolicy knows (layoutMode.ts `LayoutMode`, repeated so this file stays free of React). */
+export type DockLayoutMode = "wide" | "compact" | "tablet" | "phone";
+
+/** What a side is when the user has not chosen: wide pins both, compact rails the Browser (owner decision 9), a tablet
+ * rails both, and a phone has no side panels (they are sheets there). */
+export function defaultAreaMode(layout: DockLayoutMode, side: SideArea): AreaMode {
+  if (layout === "phone") return "hidden";
+  if (layout === "tablet") return "rail";
+  if (layout === "compact") return side === "left" ? "rail" : "pinned";
+  return "pinned";
+}
+
+export interface DockPolicyOptions {
+  layout?: DockLayoutMode;
+  /** The user's choices (Layout.areaMode). */
+  modes?: Partial<Record<SideArea, AreaMode>>;
+  /** Width of a rail (--dock-rail-w). */
+  railW?: number;
+  /** Width taken by other chrome in the row (the tablet's tool rail). */
+  reserved?: number;
+  /** The narrowest the canvas column may get before a side is railed (--canvas-min-w). */
+  minCanvas?: number;
+}
+
+/**
+ * What each side really is at window width `viewW`: the user's choice or the layout's default; then, while the canvas
+ * column would be narrower than `minCanvas` (640 px), pinned sides become rails, the left first, then the right. A side
+ * the user pinned explicitly goes last.
+ */
+export function dockPolicy(viewW: number, sizes: DockSizes, o: DockPolicyOptions = {}): Record<SideArea, AreaMode> {
+  const layout = o.layout ?? "wide";
+  const railW = o.railW ?? (layout === "tablet" ? 40 : 32);
+  const minCanvas = o.minCanvas ?? 640;
+  const reserved = o.reserved ?? 0;
+  if (layout === "phone") return { left: "hidden", right: "hidden" };
+  const out: Record<SideArea, AreaMode> = {
+    left: o.modes?.left ?? defaultAreaMode(layout, "left"),
+    right: o.modes?.right ?? defaultAreaMode(layout, "right"),
+  };
+  const width = (side: SideArea) => (out[side] === "pinned" ? clampSize(side, sizes[side]) : out[side] === "rail" ? railW : 0);
+  const canvas = () => viewW - reserved - width("left") - width("right");
+  const order = [...SIDE_AREAS].sort((a, b) => Number(o.modes?.[a] === "pinned") - Number(o.modes?.[b] === "pinned"));
+  for (const side of order) {
+    if (canvas() >= minCanvas) break;
+    if (out[side] === "pinned") out[side] = "rail";
+  }
+  return out;
+}
+
+/** The Window menu's layout presets. */
+export type LayoutPreset = "wide" | "compact" | "touch";
+export const LAYOUT_PRESETS: readonly LayoutPreset[] = ["wide", "compact", "touch"];
+
+/** Tab groups of the compact and touch presets; the first member is the tab shown (V12, L10). */
+export const PRESET_GROUPS: readonly (readonly string[])[] = [
+  ["cuts", "properties"],
+  ["library", "artLibrary", "varText", "docking"],
+  ["laser", "machine"],
+];
+
+/**
+ * Window > Layout: Wide (the default layout, both sides pinned), Compact (fewer frames: {Cuts/Layers, Properties},
+ * {Library, Art, Variable text, Docking} and, in the Laser workspace, {Laser, Machine} as tab groups, the Browser on a
+ * rail) or Touch (the same groups, both sides on rails). Sizes are kept.
+ */
+export function applyPreset(l: Layout, preset: LayoutPreset): Layout {
+  const base: Layout = { ...DEFAULT_LAYOUT, sizes: l.sizes };
+  if (preset === "wide") return { ...base, areaMode: { left: "pinned", right: "pinned" } };
+  let next = base;
+  for (const [first, ...rest] of PRESET_GROUPS) {
+    for (const id of rest) next = tabWith(next, id, first);
+    const group = placeOf(next, first).group;
+    if (group) next = setActiveTab(next, group, first);
+  }
+  return { ...next, areaMode: preset === "compact" ? { left: "rail", right: "pinned" } : { left: "rail", right: "rail" } };
 }
 
 // ---- the store ----------------------------------------------------------------------------------------------------------

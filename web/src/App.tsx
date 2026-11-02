@@ -1,6 +1,8 @@
-// Application shell: top bar, toolbar, Browser | Viewport | Properties, Timeline. On narrow screens (iPad portrait,
-// phones) the side panels become drawers over the viewport. All document state comes from the engine; the only
-// client state is the view: workspace, tool, selection, clipboard, open panels and dialogs, display options.
+// Application shell: top bar, toolbar, Browser | Viewport | Properties, Timeline, laid out per layout mode
+// (workspace/layoutMode.ts, docs/ux/ui-plan-2026-11.md 1.1): wide, compact (MacBook), tablet and phone. The side
+// panels are pinned beside the canvas or rails that open as overlays (workspace/layout.ts `dockPolicy`); the phone gets
+// its own shell (workspace/PhoneShell.tsx). All document state comes from the engine; the only client state is the
+// view: workspace, tool, selection, clipboard, open panels and dialogs, display options.
 //
 // Files dropped anywhere on the window (or picked with Import / Ctrl+I) are routed by api/drop.ts: SVG, DXF and bitmaps
 // are imported into the document, a LightBurn .lbrn2 opens the Open/Import dialog, a .openetch opens the project.
@@ -9,7 +11,7 @@
 // device's rectangle. File > Devices… (Alt+Shift+M, as in LightBurn) opens the Devices window, and the Laser workspace
 // has the device dropdown.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { api } from "./api/client.ts";
 import * as C from "./api/commands.ts";
 import {
@@ -69,7 +71,11 @@ import { StatusBar } from "./workspace/StatusBar.tsx";
 import { sendViewCommand } from "./workspace/viewStatus.ts";
 import { WorkspaceFileItems, useWorkspaceUi } from "./workspace/useWorkspace.tsx";
 import { Dock } from "./workspace/Dock.tsx";
-import { DockAreaHost, FloatHost, WindowMenu, WindowMenuEntries, useAreaHasWindows } from "./workspace/DockHost.tsx";
+import { DockAreaHost, FloatHost, SidePanel, Splitter, WindowMenu, WindowMenuEntries, useAreaHasWindows, useWindowSize } from "./workspace/DockHost.tsx";
+import { dockPolicy, setAreaMode, updateLayout, type AreaMode, type SideArea } from "./workspace/layout.ts";
+import { useLayout } from "./workspace/windows.ts";
+import { useFullscreen } from "./workspace/fullscreen.ts";
+import { openAppModeDialog } from "./app/AppModeDialog.tsx";
 import { useLayoutMode } from "./workspace/layoutMode.ts";
 import { ContextStripHost, useContextStripBusy } from "./workspace/contextStrip.tsx";
 import { bottomRow, windowTitle } from "./workspace/shell.ts";
@@ -138,13 +144,6 @@ function loadPrefs(): ViewPrefs {
   }
 }
 
-/** A callback ref that makes a closed drawer or overlay `inert` (no focus, no clicks, hidden from assistive tech). */
-function inertRef(inert: boolean): (el: HTMLElement | null) => void {
-  return (el) => {
-    if (el) el.inert = inert;
-  };
-}
-
 /** Typing in a field (or a dialog button) keeps its keys. */
 function typingIn(t: EventTarget | null): boolean {
   const el = t as HTMLElement | null;
@@ -170,9 +169,12 @@ export function App() {
   const [devicesOpen, setDevicesOpen] = useState(false);
   // Layout mode (workspace/layoutMode.ts): wide, compact (MacBook), tablet, phone; the pointer and the density.
   const { layout, pointer } = useLayoutMode();
-  const drawers = layout === "tablet" || layout === "phone";
-  const [leftOpen, setLeftOpen] = useState(!drawers);
-  const [rightOpen, setRightOpen] = useState(!drawers);
+  // Side panels shown (the toolbar's Browser / Properties toggles, Window > Toggle side panels); pinned or rail is the
+  // layout's business (dockPolicy below). `overlay`: a rail opened over the canvas. `focus`: Focus canvas.
+  const [leftOpen, setLeftOpen] = useState(true);
+  const [rightOpen, setRightOpen] = useState(true);
+  const [overlay, setOverlay] = useState<SideArea | null>(null);
+  const [focus, setFocus] = useState(false);
   const stripBusy = useContextStripBusy();
   const fileRef = useRef<HTMLInputElement>(null);
   const toastId = useRef(0);
@@ -212,11 +214,8 @@ export function App() {
   // Engine errors name objects and layers rather than internal ids, without the HTTP prefix.
   const report = useCallback((e: unknown) => notify(friendlyError(e instanceof Error ? e.message : String(e), docRef.current), "error"), [notify]);
 
-  // Drawers start closed when the layout becomes a tablet or phone, open when it becomes a desktop one.
-  useEffect(() => {
-    setLeftOpen(!drawers);
-    setRightOpen(!drawers);
-  }, [drawers]);
+  // A rail's overlay never outlives a change of layout.
+  useEffect(() => setOverlay(null), [layout]);
 
   useEffect(() => setSelectionRaw((s) => pruneSelection(s, doc)), [doc]);
 
@@ -328,6 +327,35 @@ export function App() {
   const [moveTogether, setMoveTogether] = useState<"x" | "y" | null>(null);
   const positioning = usePositionLaser();
   const rightHasWindows = useAreaHasWindows("right");
+  const bottomHasWindows = useAreaHasWindows("bottom");
+  const dockLayout = useLayout();
+  const view = useWindowSize();
+  const fullscreen = useFullscreen();
+  // What each side is now: pinned, a rail, or hidden (closed with its toggle, empty, Focus canvas, or a phone).
+  const policy = dockPolicy(view.w, dockLayout.sizes, { layout, modes: dockLayout.areaMode, reserved: layout === "tablet" ? 52 : 0 });
+  const sideMode = (side: SideArea): AreaMode => {
+    const has = side === "left" ? leftHasWindows : rightHasWindows;
+    const open = side === "left" ? leftOpen : rightOpen;
+    return layout === "phone" || focus || !has || !open ? "hidden" : policy[side];
+  };
+  const leftMode = sideMode("left");
+  const rightMode = sideMode("right");
+  // The toolbar's Browser / Properties buttons: a rail opens its overlay; a pinned side hides; a hidden one comes back.
+  const toggleSide = (side: SideArea) => {
+    const mode = side === "left" ? leftMode : rightMode;
+    const setOpen = side === "left" ? setLeftOpen : setRightOpen;
+    if (mode === "rail") return setOverlay((o) => (o === side ? null : side));
+    if (mode === "pinned") {
+      if (overlay === side) setOverlay(null);
+      return setOpen(false);
+    }
+    if (dockLayout.areaMode[side] === "hidden") updateLayout((l) => setAreaMode(l, side, null));
+    setFocus(false);
+    setOpen(true);
+    if (policy[side] === "rail") setOverlay(side);
+  };
+  const setLeftOverlay = useCallback((o: boolean) => setOverlay((cur) => (o ? "left" : cur === "left" ? null : cur)), []);
+  const setRightOverlay = useCallback((o: boolean) => setOverlay((cur) => (o ? "right" : cur === "right" ? null : cur)), []);
 
   // LightBurn's Arrange > Distribute (H-Spaced / H-Centered / V-Spaced / V-Centered), hidden in Beginner Mode like
   // LightBurn's. The arrange handler is defined further down; the menu reaches it through a ref.
@@ -1051,13 +1079,26 @@ export function App() {
         requestRotarySetup();
       },
       "window.sidePanels": () => {
-        const open = !(leftOpen || rightOpen);
+        const open = !(leftOpen || rightOpen) || focus;
+        setFocus(false);
         setLeftOpen(open);
         setRightOpen(open);
       },
       "window.newTab": () => (tabs.api.supported ? tabs.api.newTab() : false),
+      // Focus canvas: the docks, the palette and the bottom row go; the top bar (STOP) and the context strip stay.
+      "view.focusCanvas": () => (layout === "phone" ? false : toggleFocus()),
+      // Full screen (Alt+Enter): not while a line or pen is being drawn (Alt+Enter also finishes those).
+      "view.fullscreen": () => (!fullscreen.supported || tool === "line" || tool === "pen" ? false : fullscreen.toggle()),
+      "help.useAsApp": () => openAppModeDialog(),
+      // S: command search (P2 turns the Commands dialog into it); in node editing plain S makes a node smooth.
+      "app.commandSearch": () => (tool === "node" || tool === "text" ? false : setDialog("commands")),
     },
   };
+
+  function toggleFocus() {
+    setFocus((f) => !f);
+    setOverlay(null);
+  }
 
   // The window title follows the document and its unsaved state ("Plate • — OpenEtch").
   const titleName = file.projectName ?? file.openedName ?? doc?.name ?? null;
@@ -1155,7 +1196,7 @@ export function App() {
       }
       extra={
         <>
-          {layout === "wide" && <WindowMenu />}
+          {layout === "wide" && <WindowMenu focusCanvas={focus} onFocusCanvas={toggleFocus} />}
           <SimPinBadge machine={machine} />
           <ShutdownBadge machine={machine} />
           <TopActions
@@ -1164,7 +1205,7 @@ export function App() {
             onPreferences={() => ws.open("prefs")}
             helpExtra={libsUi.helpItems}
             overflow={layout !== "wide"}
-            windowItems={(close) => <WindowMenuEntries close={close} />}
+            windowItems={(close) => <WindowMenuEntries close={close} focusCanvas={focus} onFocusCanvas={toggleFocus} />}
           />
         </>
       }
@@ -1194,8 +1235,8 @@ export function App() {
       grouped={grouped}
       hasStock={!!doc?.stock}
       showPreview={showPreview}
-      leftOpen={leftOpen}
-      rightOpen={rightOpen}
+      leftOpen={leftMode === "pinned" || overlay === "left"}
+      rightOpen={rightMode === "pinned" || overlay === "right"}
       snap={prefs.snap}
       viewStyle={prefs.viewStyle}
       canGroup={has(C.OPT.groupCreate)}
@@ -1215,8 +1256,8 @@ export function App() {
       onRequestRun={requestRun}
       startMode={noPinMode(machine)}
       designOnly={designOnlyReason(device)}
-      onToggleLeft={() => setLeftOpen((v) => !v)}
-      onToggleRight={() => setRightOpen((v) => !v)}
+      onToggleLeft={() => toggleSide("left")}
+      onToggleRight={() => toggleSide("right")}
       extra={
         <>
           {text.toolbar}
@@ -1519,51 +1560,51 @@ export function App() {
     </>
   );
 
+  const sizeVars = {
+    "--dock-left-size": `${dockLayout.sizes.left}px`,
+    "--dock-right-size": `${dockLayout.sizes.right}px`,
+    "--dock-bottom-size": `${dockLayout.sizes.bottom}px`,
+  } as CSSProperties;
+  // Tablet: a selection's settings open on request, from a pill over the canvas (selecting never opens a drawer).
+  const propertiesPill = layout === "tablet" && workspace === "design" && rightMode === "rail" && overlay !== "right" && (selection.objects.length > 0 || selection.stock) && (
+    <button className="btn properties-pill" title={t("shell.propertiesPillTitle")} onClick={() => setOverlay("right")}>
+      <ShellIcon name="sliders" size={16} />
+      {t("shell.propertiesPill")}
+    </button>
+  );
+
   return (
-    <div className={`app ws-${workspace}${drawers ? " drawers" : ""}`}>
+    <div className={`app ws-${workspace}`} style={sizeVars} data-focus={focus ? "" : undefined}>
       {topBar}
       <ConnectionBanner />
       {tabs.bar && <div className="doc-tabs-row">{tabs.bar}</div>}
       {layout !== "tablet" && toolbar}
       <div className="main">
         {layout === "tablet" && <div className="tool-rail">{toolbar}</div>}
-        {drawers && (leftOpen || rightOpen) && (
-          <div
-            className="drawer-scrim"
-            onClick={() => {
-              setLeftOpen(false);
-              setRightOpen(false);
-            }}
-          />
-        )}
-        <aside
-          ref={inertRef(drawers && !(leftOpen && leftHasWindows))}
-          className={`panel panel-left${leftOpen && leftHasWindows ? " open" : ""}`}
-          aria-label={t("win.browser")}
-        >
-          <div className="panel-body">
-            <DockAreaHost area="left" />
-            {leftContent}
-          </div>
-        </aside>
+        <SidePanel side="left" mode={leftMode} overlay={overlay === "left"} onOverlay={setLeftOverlay} label={t("win.browser")}>
+          <DockAreaHost area="left" />
+          {leftContent}
+        </SidePanel>
 
         <section className="center">
           {contextStrip}
           {canvasStage}
+          {propertiesPill}
+          {bottomHasWindows && !focus && <Splitter area="bottom" label={t("shell.resize", { name: t("shell.bottomStrip") })} />}
           <DockAreaHost area="bottom" />
-          {palette}
+          {!focus && palette}
         </section>
 
-        <aside
-          ref={inertRef(drawers && !(rightOpen && rightHasWindows))}
-          className={`panel panel-right${rightOpen && rightHasWindows ? " open" : ""}`}
-          aria-label={workspace === "laser" ? t("win.machine") : t("win.properties")}
+        <SidePanel
+          side="right"
+          mode={rightMode}
+          overlay={overlay === "right"}
+          onOverlay={setRightOverlay}
+          label={workspace === "laser" ? t("win.machine") : t("win.properties")}
         >
-          <div className="panel-body">
-            <DockAreaHost area="right" />
-            {rightContent}
-          </div>
-        </aside>
+          <DockAreaHost area="right" />
+          {rightContent}
+        </SidePanel>
       </div>
       <div className="bottom-row" data-bottom={row}>
         {timeline}
