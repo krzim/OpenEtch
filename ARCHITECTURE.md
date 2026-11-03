@@ -1104,6 +1104,60 @@ requested (it frames the person's current document, then burns exactly what was 
   `LibEntry::to_layer` convert. `lbrn::parse_library` (flat entries) stays for the older callers. LightBurn's
   `Offset Fill` cut type maps to mode `offset_fill`.
 
+## Jigs and placement
+
+Production short list #2, #8, #9 and #15. Commands in `crates/commands/src/builtin/jigs/`, the model in
+`crates/doc/src/jig.rs`, run-time areas in `crates/plan/src/zones.rs` and `crates/engine/src/zones.rs`, the UI in
+`web/src/jigs/`. Every design and query command is in the registry, so MCP agents call the same ones as the app;
+nothing here approves or starts a run.
+
+- **Fit to stock** (`object.fit_to_stock {ids, margin_mm = 1, rotate: none|ninety|best}`, one undo step): the
+  selection is scaled (aspect kept) and centred so it fills the stock less the margin. Round stock fits the
+  outline's convex hull through its smallest enclosing circle (`geom::enclose`, Welzl), not its bounding box;
+  rectangles fit the hull's box in the stock frame, optionally turned a quarter or by the best angle (every degree,
+  every hull-edge angle, then a golden-section refinement), and rounded corners shrink it until every hull point is
+  inside. UI: Arrange menu (Fit to stock, Fit to stock... with margin and rotation), the context menu's Arrange,
+  command search, the phone's selection sheet.
+- **Jigs** (`Document.jigs`, left out while empty; file format stays version 1). A jig has a datum (field mm) and a
+  rotation; pockets (stable id `p<n>`, number = burn and serial order, centre and turn in the jig frame, rect /
+  circle / any closed path, enabled), keep-out walls and a plate outline are stored in the jig frame, so `jig.move`
+  changes two numbers. `jig.create` (a grid), `jig.from_objects` (closed outlines become pockets: circles and
+  axis-aligned rectangles are recognised; the largest outline holding the rest becomes the plate), `jig.import
+  {content, format: svg|dxf}` (DXF native only), `jig.edit` (name, material height, numbering rows / columns /
+  serpentine; ids stay), `jig.set_pockets`, `jig.add_keep_out`, `jig.remove_keep_out` (delete or switch),
+  `jig.delete`, `jig.list` (Query; per pocket its id, number, order among the enabled pockets, field centre and the
+  objects placed there: what a per-slot production record needs).
+- **Place in every pocket** (`jig.place {jig, ids, auto_increment = 1}`) is a virtual array (`array.rs`) whose
+  settings name the jig: the originals sit in the first enabled pocket (centred and turned with it), every other
+  enabled pocket gets linked clones (`P_i * P_src^-1 * transform`, tagged `openetch.jig_pocket = jig/pocket`) that
+  follow every edit. Variable text counts on per enabled pocket, so an off pocket has no copy and no serial number;
+  when the originals' pocket goes off they move to the next enabled one. Moving the jig moves the originals (and so
+  the clones). Edit Array and Duplicate Array refuse a placement; Flatten and Remove from Array work as for any
+  virtual array. Deleting a jig deletes the clones and keeps the originals.
+- **Frame one pocket**: `POST /api/machine/frame` (and MCP `frame_start`) take `jig_pockets {jig, pockets}` (the
+  pockets' outlines, light only) and `region` (a polygon); the foot switch cycle's job frame never inherits either.
+  The app frames the design in a pocket when there is one, else the pocket.
+- **Re-mark a region**: run option `region` (`POST /api/runs`, `/api/job/start`, MCP `job_request_run {selection?,
+  region?}`): the planned toolpath, not the design, is clipped to the polygon after planning
+  (`plan::zones::clip_to_region`: marks cut at the edge, dots outside dropped, travel and stats recomputed, image runs
+  clipped like lines), with Cut Selected Graphics when there is a selection; not with Start Here or a queue. It is an
+  ordinary run through `approve`. `job.remark_check {region, selection?}` (Query) lists the shapes and layers it
+  reaches and warns for layers linked to a library preset (`remark_colour`: re-marking shifts a MOPA colour). UI: the
+  Re-mark region canvas tool (rectangle or lasso; Jigs menu, context menu Laser, command search); while a region is
+  set every Start says "Start · region" (`web/src/jigs/regionStore.ts`, read by `laser/startFlow.ts`).
+- **Keep-out zones**: the enabled zones of the document's jigs and of the active device (`DevicePrefs.keep_out`,
+  `PUT /api/prefs {keep_out: [{name, points, enabled?}]}`, UI only) refuse every run that marks inside one
+  (`PlanError::KeepOut`, 422), checked on the planned toolpath in `runs::prepare_job_with`, `prepare_gcode_job` and
+  the Ruida plan, so Start, the foot switch and an agent's pending run are all refused; travel never counts. The
+  device's zones are filled in by the engine (`RunOptions.device_keep_out`, never from a request). Ruida Send and
+  Save RD check the jigs' zones only.
+- **Pre-flight** (`job.preflight {keep_out?}`, Query; `job.preflight_set {check, enabled}`, saved in
+  `Document.preflight`): `cut_before_fill` (a line layer burns before a fill or image layer it overlaps, unless Cut
+  layers last is on), `empty_layer`, `unfilled_variable` (no CSV, a row past its end, an empty cell, a serial past
+  End), `duplicate_shapes` (`path.delete_duplicates`' key) and `keep_out` (a shape reaching into a zone; blocking,
+  cannot be switched off). The app shows them above Start in the Laser dock and the phone's Job sheet and as a pill
+  beside the toolbar's Start (`web/src/jigs/Preflight.tsx`), one request per revision.
+
 ## Tabs and joinery
 
 LightBurn's Tabs / Bridges, Resize Slots and a Dogbone tool (DES-024, OTH-003). Pure geometry and plan-time
