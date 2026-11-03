@@ -172,6 +172,8 @@ export const ACTIONS: HotkeyAction[] = [
   ws("laser.printCut", "laser", "Print and Cut", ["Alt+0"]),
   ws("window.camera", "view", "Camera", []),
   ws("laser.jobLog", "laser", "Job log", []),
+  // The 3D relief preview of the Laser preview (src/relief/ReliefView.tsx).
+  ws("laser.relief3d", "laser", "3D relief preview", []),
   // Design tools (src/design/useDesignUi.tsx); LightBurn gives these no default keys.
   ws("tools.warp", "tools", "Warp selection", []),
   ws("tools.deform", "tools", "Deform selection", []),
