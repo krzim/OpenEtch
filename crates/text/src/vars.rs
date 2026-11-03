@@ -22,6 +22,18 @@ impl Moment {
         let (sign, off) = if off < 0 { ('-', -off) } else { ('+', off) };
         Moment { local: now.naive_local(), zone: format!("UTC{sign}{:02}:{:02}", off / 3600, off % 3600 / 60) }
     }
+
+    /// Midnight of a calendar day (a date typed into a template field), or `None` for a day that does not exist.
+    /// The zone (`t`) is empty.
+    pub fn on_day(year: i32, month: u32, day: u32) -> Option<Moment> {
+        let d = chrono::NaiveDate::from_ymd_opt(year, month, day)?;
+        Some(Moment { local: d.and_hms_opt(0, 0, 0)?, zone: String::new() })
+    }
+
+    /// The day as `yyyy-MM-dd`.
+    pub fn iso_day(&self) -> String {
+        format!("{:04}-{:02}-{:02}", self.local.year(), self.local.month(), self.local.day())
+    }
 }
 
 /// Split a format into literal and code runs: quoted text is literal, `''` is a quote.

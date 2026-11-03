@@ -282,6 +282,8 @@ pub struct NewInput {
     /// Optimization settings of the new document (the engine passes the saved defaults, LightBurn's "Set as
     /// Defaults"). Default: the built-in defaults.
     pub optimization: Option<doc::Optimization>,
+    /// Start from an example project (`example.list` lists them) instead of an empty document.
+    pub example: Option<String>,
 }
 
 /// `doc.new`.
@@ -292,7 +294,7 @@ impl Command for DocNew {
     const ID: &'static str = "doc.new";
     const TITLE: &'static str = "New document";
     const DESCRIPTION: &'static str = "Replace the document with an empty one: one default layer, no stock, no \
-        objects. field_mm: the given one, else the engine's active device field (else the current one); a gantry \
+        objects (with `example`: an example project from example.list instead). field_mm: the given one, else the engine's active device field (else the current one); a gantry \
         device gives workspace_mm [width, height] and its origin corner instead. Undoable.";
     const RISK: Risk = Risk::Edit;
 
@@ -334,7 +336,16 @@ impl Command for DocNew {
             }
             fresh.optimization = o;
         }
-        let summary = format!("new document \"{}\"", fresh.name);
+        if let Some(ex) = &input.example {
+            super::examples::build(ex, &mut fresh)?;
+            if let Some(n) = &input.name {
+                fresh.name = util::name(Self::ID, "name", n)?;
+            }
+        }
+        let summary = match &input.example {
+            Some(ex) => format!("new document from example {ex}"),
+            None => format!("new document \"{}\"", fresh.name),
+        };
         *doc = fresh;
         let r = json!({
             "created": [], "affected": [], "name": doc.name, "bounds": Value::Null, "field_mm": doc.field_mm,
