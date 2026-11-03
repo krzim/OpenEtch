@@ -28,6 +28,8 @@ pub const SIDECAR_FORMAT: &str = "openetch-finish";
 pub const HUE_MODELS_FILE: &str = "hue-models.json";
 /// Largest photo kept (encoded).
 pub const MAX_PHOTO_BYTES: usize = 3 * 1024 * 1024;
+/// The types a result photo may have.
+pub const PHOTO_MIMES: [&str; 3] = ["image/png", "image/jpeg", "image/webp"];
 /// Largest photo decoded to average its colour.
 const MAX_PHOTO_PIXELS: u64 = 40_000_000;
 /// Largest sidecar read.
@@ -124,10 +126,18 @@ impl Finish {
         {
             return Some(format!("focus_mm must be within -100..=100 (got {f})"));
         }
-        if let Some(p) = &self.photo
-            && p.data_base64.len() > MAX_PHOTO_BYTES / 3 * 4 + 4
-        {
-            return Some(format!("a photo may be at most {} MB", MAX_PHOTO_BYTES / (1024 * 1024)));
+        if let Some(p) = &self.photo {
+            if p.data_base64.len() > MAX_PHOTO_BYTES / 3 * 4 + 4 {
+                return Some(format!("a photo may be at most {} MB", MAX_PHOTO_BYTES / (1024 * 1024)));
+            }
+            // The photo is served with its own type (`GET .../photo`): only an image type, never one a browser would
+            // run (an imported sidecar's "text/html" photo would be a page on the engine's origin).
+            if !PHOTO_MIMES.contains(&p.mime.as_str()) {
+                return Some(format!("a photo must be image/png, image/jpeg or image/webp (got \"{}\")", p.mime));
+            }
+            if commands::finish::normal_hex(&p.average).as_deref() != Some(p.average.as_str()) {
+                return Some(format!("a photo's average must be #rrggbb in lower case (got \"{}\")", p.average));
+            }
         }
         None
     }

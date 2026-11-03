@@ -514,7 +514,13 @@ async fn photo_get(State(st): State<Arc<AppState>>, UrlPath((name, id)): UrlPath
     let f = lock(&st.libs.library).finish_of(&lib, &path)?;
     let p = f.photo.ok_or_else(|| EngineError::NotFound(format!("\"{path}\" has no photo")))?;
     let bytes = STANDARD.decode(p.data_base64.as_bytes()).map_err(|_| EngineError::Internal("the stored photo is not base64".into()))?;
-    Ok(([(header::CONTENT_TYPE, p.mime), (header::CACHE_CONTROL, "no-store".to_string())], bytes).into_response())
+    // Only an image type goes out, whatever the stored one says (`Finish::problem` checks it too).
+    let mime = finish::PHOTO_MIMES.into_iter().find(|m| *m == p.mime).unwrap_or("application/octet-stream");
+    Ok((
+        [(header::CONTENT_TYPE, mime), (header::CACHE_CONTROL, "no-store"), (header::X_CONTENT_TYPE_OPTIONS, "nosniff")],
+        bytes,
+    )
+        .into_response())
 }
 
 async fn sidecar_download(State(st): State<Arc<AppState>>, UrlPath(name): UrlPath<String>) -> Result<Response, EngineError> {
