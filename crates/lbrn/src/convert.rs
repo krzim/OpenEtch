@@ -1255,11 +1255,28 @@ pub fn from_document(d: &Document, field_mm: f64) -> Result<(LbrnProject, Vec<St
     from_document_in(d, Frame::Galvo { field_mm })
 }
 
+/// OpenEtch's production settings that a `.lbrn2` has no place for, said on export so nobody relies on them after a
+/// LightBurn round trip (a layer's pause for the operator above all: without it the next layer fires at once).
+fn production_losses(d: &Document, w: &mut Warnings) {
+    for l in &d.layers {
+        if std::iter::once(&l.settings).chain(&l.sub_layers).any(|s| s.options.operator_pause) {
+            w.push(format!("layer \"{}\": its pause for the operator (OpenEtch only) was not written", l.name));
+        }
+    }
+    if !d.jigs.is_empty() {
+        w.push(format!("{} jig(s) with their pockets and keep-out zones (OpenEtch only) were not written", d.jigs.len()));
+    }
+    if d.variables.stop_at_end || !d.variables.empty_slots.is_empty() {
+        w.push("the serial number's Stop at End and empty pockets (OpenEtch only) were not written");
+    }
+}
+
 /// [`from_document`] for any [`Frame`]. For a bed the project root's `MirrorX` / `MirrorY` are set to the frame's
 /// flags (the target device's origin corner); a galvo export writes back the root attributes the import kept.
 pub fn from_document_in(d: &Document, frame: Frame) -> Result<(LbrnProject, Vec<String>), LbrnError> {
     let frame = frame.checked()?;
     let mut w = Warnings::default();
+    production_losses(d, &mut w);
 
     // Assign indices: kept index, then palette colour, then the lowest free colour index.
     let mut taken = BTreeSet::new();
@@ -2054,5 +2071,16 @@ mod tests {
         assert_eq!(image_mime("UklGRiQAAABXRUJQVlA4"), Some("image/webp"));
         assert_eq!(image_mime(""), None);
         assert_eq!(image_mime("PHN2Zz4="), None);
+    }
+
+    #[test]
+    fn openetch_production_settings_are_said_lost_on_export() {
+        let mut d = Document::default();
+        assert!(from_document(&d, 100.0).unwrap().1.iter().all(|m| !m.contains("OpenEtch only")));
+        d.layers[0].settings.options.operator_pause = true;
+        d.variables.empty_slots = vec![1];
+        let (_, w) = from_document(&d, 100.0).unwrap();
+        assert!(w.iter().any(|m| m.contains("pause for the operator")), "{w:?}");
+        assert!(w.iter().any(|m| m.contains("empty pockets")), "{w:?}");
     }
 }
