@@ -2,18 +2,23 @@
 // stats and Fill Region hovers from the engine's document and planning context, off the page's main thread.
 // Display only: nothing here talks to the engine or the laser (runs are planned by the engine from its own document).
 //
-// Messages arrive in order (protocol.ts). The document is parsed into the wasm core lazily, when a job needs a newer
-// revision than it holds; the page cancels a stale job by terminating this worker (previewClient.ts).
+// Messages arrive in order (protocol.ts). The document arrives whole or as the engine's change sets against the copy
+// held (docSync.ts), and is parsed into the wasm core lazily, when a job needs a newer revision than it holds; the page
+// cancels a stale job by terminating this worker (previewClient.ts).
 
 import init, { Core } from "webcore-pkg";
+import { applyChanges } from "../api/docSync.ts";
+import type { GDocument } from "../api/types.ts";
 import type { FromWorker, ToWorker } from "./protocol.ts";
 
 /** The worker scope (the web tsconfig has the DOM lib, not the webworker one). */
 const scope = self as unknown as { postMessage(m: unknown, transfer: Transferable[]): void; onmessage: ((e: MessageEvent<ToWorker>) => void) | null };
 
 let core: Core | null = null;
+/** The revision parsed into `core`. */
 let docRev = -1;
-let pendingDoc: { rev: number; doc: unknown } | null = null;
+/** The page's document as of the last message (patched by change sets), parsed into `core` when a job needs it. */
+let held: { rev: number; doc: GDocument } | null = null;
 const queue: ToWorker[] = [];
 
 function post(m: FromWorker, transfer: Transferable[] = []): void {
@@ -31,15 +36,22 @@ function handle(m: ToWorker): void {
       break;
     case "doc":
       // Kept until a job needs it: a burst of revisions parses only the last one.
-      pendingDoc = { rev: m.rev, doc: m.doc };
+      held = { rev: m.rev, doc: m.doc as GDocument };
       break;
+    case "changes": {
+      // Patch the copy held; a change set that does not fit drops it, and the next job reports the revision missing
+      // (the page then restarts this worker and sends the whole document).
+      let d: GDocument | null = held ? held.doc : null;
+      for (const ch of m.changes) d = d ? applyChanges(d, ch) : null;
+      held = d && d.revision === m.rev ? { rev: m.rev, doc: d } : null;
+      break;
+    }
     case "job": {
       try {
         const t0 = performance.now();
-        if (pendingDoc && pendingDoc.rev !== docRev) {
-          core.set_document(JSON.stringify(pendingDoc.doc));
-          docRev = pendingDoc.rev;
-          pendingDoc = null;
+        if (held && held.rev !== docRev) {
+          core.set_document(JSON.stringify(held.doc));
+          docRev = held.rev;
         }
         const t1 = performance.now();
         if (docRev !== m.rev) {

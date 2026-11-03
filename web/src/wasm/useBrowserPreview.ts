@@ -12,6 +12,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api/client.ts";
+import { deltaOf } from "../api/docSync.ts";
 import { previewFromWorker, type PreviewSummary } from "../api/packedPreview.ts";
 import type { GDocument, Preview } from "../api/types.ts";
 import { Stale, fillCore, previewCore, workerSupported } from "./previewClient.ts";
@@ -81,8 +82,10 @@ export function useBrowserPreview(o: { doc: GDocument | null; wantPreview: boole
   const rev = doc?.revision ?? null;
   useEffect(() => {
     if (mode !== "worker" || !doc || rev === null) return;
-    previewCore.setDocument(rev, doc);
-    fillCore.setDocument(rev, doc);
+    // The change set this revision came with, so the workers patch their copies instead of receiving it whole.
+    const delta = deltaOf(doc);
+    previewCore.setDocument(rev, doc, delta);
+    fillCore.setDocument(rev, doc, delta);
     const key = `${rev}:${ctxVersion}`;
     let live = true;
     if (o.wantPreview) {

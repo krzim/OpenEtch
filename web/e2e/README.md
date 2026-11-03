@@ -50,20 +50,12 @@ throttled to Wi-Fi speed (`--throttle-mbps 20` is about 2.5 MB/s, with `--latenc
 numbers reflect a Pi over Wi-Fi without one. It takes well under a minute:
 
 ```sh
-npm run e2e:perf -- --url http://127.0.0.1:7931 --doc heavy.lbrn2 --label quick --throttle-mbps 20   --only move,undo,to-laser-preview,layer-speed
+npm run e2e:perf -- --url http://127.0.0.1:7931 --doc heavy.lbrn2 --label quick --throttle-mbps 20 \
+  --only move,undo,to-laser-preview,layer-speed
 ```
 
 The preview worker's jobs (src/wasm/, `window.__oeWorker`) hold an action open while they run and are listed with it.
 `--no-worker` turns the worker off (the app then downloads the engine's preview), for a before / after comparison.
-
-The quick loop while improving something: a local simulator engine, the page's network throttled to Wi-Fi speed
-(`--throttle-mbps 20` is about 2.5 MB/s, with `--latency-ms 5` by default) and only a few actions, a minute or two per
-run:
-
-```sh
-npm run e2e:perf -- --url http://127.0.0.1:7931 --doc some-heavy-file.lbrn2 --label quick --throttle-mbps 20 \
-  --only move,undo,to-laser-preview,layer-speed
-```
 
 ## Files
 

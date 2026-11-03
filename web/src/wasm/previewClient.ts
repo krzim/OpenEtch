@@ -6,6 +6,7 @@
 // Results are display only. When WebAssembly or module workers are missing, or the worker cannot start, `ok()` turns
 // false and the app uses the engine (GET /api/preview, `path.fill_region_preview`) as before.
 
+import type { DocChanges } from "../api/docSync.ts";
 import type { FromWorker, JobKind, ToWorker } from "./protocol.ts";
 
 /** A finished job. */
@@ -52,7 +53,8 @@ function switchedOff(): boolean {
 interface Activity {
   busy: number;
   last: number;
-  jobs: { kind: JobKind; rev: number; doc: number; job: number; wall: number; at: number }[];
+  /** `sent`: how the job's document reached the worker ("doc" whole, "changes", or "" when it already had it). */
+  jobs: { kind: JobKind; rev: number; doc: number; job: number; wall: number; at: number; sent: string }[];
 }
 
 function activity(): Activity | null {
@@ -62,6 +64,9 @@ function activity(): Activity | null {
   return w.__oeWorker;
 }
 
+/** Change sets kept for a worker at most; past that it gets the whole document. */
+const MAX_CHAIN = 64;
+
 export class WorkerCore {
   private worker: Worker | null = null;
   private state: State = "starting";
@@ -70,7 +75,9 @@ export class WorkerCore {
   private doc: { rev: number; doc: unknown } | null = null;
   /** The revision the current worker was sent. */
   private sentRev = -1;
-  private inflight: (Pending & { started: number }) | null = null;
+  /** Change sets since the last revision noted, contiguous (each starts where the previous one ended). */
+  private chain: DocChanges[] = [];
+  private inflight: (Pending & { started: number; sent: string }) | null = null;
   private waiting = new Map<JobKind, Pending>();
   private nextId = 1;
   private failures = 0;
@@ -100,9 +107,16 @@ export class WorkerCore {
     if (this.worker) this.send({ type: "context", json });
   }
 
-  /** The document the next jobs are for (only sent to the worker when a job needs it). */
-  setDocument(rev: number, doc: unknown): void {
+  /**
+   * The document the next jobs are for (only sent to the worker when a job needs it). `delta` is the change set it was
+   * made with from the previous document (docSync.ts `deltaOf`): while those chain up from the revision the worker
+   * holds, the worker gets them instead of the whole document.
+   */
+  setDocument(rev: number, doc: unknown, delta?: DocChanges): void {
     if (this.doc && this.doc.rev === rev && this.doc.doc === doc) return;
+    // A worker that has not run a job for many edits (the Fill Region one) gets the whole document instead.
+    if (delta && this.doc && delta.from === this.doc.rev && delta.to === rev && this.chain.length < MAX_CHAIN) this.chain.push(delta);
+    else this.chain = [];
     this.doc = { rev, doc };
   }
 
@@ -191,11 +205,15 @@ export class WorkerCore {
       this.pump();
       return;
     }
+    let sent = "";
     if (this.sentRev !== doc.rev) {
-      this.send({ type: "doc", rev: doc.rev, doc: doc.doc });
+      const m = docMessage(this.sentRev, this.chain, doc);
+      this.send(m);
+      sent = m.type;
       this.sentRev = doc.rev;
+      this.chain = [];
     }
-    this.inflight = { ...next, started: performance.now() };
+    this.inflight = { ...next, started: performance.now(), sent };
     const a = activity();
     if (a) {
       a.busy++;
@@ -228,7 +246,7 @@ export class WorkerCore {
         if (m.type === "done") {
           this.failures = 0;
           if (a) {
-            a.jobs.push({ kind: m.kind, rev: m.rev, doc: m.ms.doc, job: m.ms.job, wall: performance.now() - job.started, at: Date.now() });
+            a.jobs.push({ kind: m.kind, rev: m.rev, doc: m.ms.doc, job: m.ms.job, wall: performance.now() - job.started, at: Date.now(), sent: job.sent });
             if (a.jobs.length > 200) a.jobs.splice(0, a.jobs.length - 200);
           }
           job.resolve({ rev: m.rev, json: m.json, arrays: m.arrays, ms: m.ms });
@@ -243,6 +261,17 @@ export class WorkerCore {
       }
     }
   }
+}
+
+/**
+ * How a worker holding revision `sentRev` (-1: nothing) gets `doc`: the change sets in `chain` when they lead from
+ * `sentRev` to `doc.rev` (setDocument keeps them contiguous), else the whole document.
+ */
+export function docMessage(sentRev: number, chain: readonly DocChanges[], doc: { rev: number; doc: unknown }): ToWorker {
+  if (sentRev >= 0 && chain.length > 0 && chain[0].from === sentRev && chain[chain.length - 1].to === doc.rev) {
+    return { type: "changes", rev: doc.rev, changes: [...chain] };
+  }
+  return { type: "doc", rev: doc.rev, doc: doc.doc };
 }
 
 /** Previews and stats. */

@@ -204,7 +204,7 @@ async function measure(ctx, name, fn, { via = "ui", note, always = false } = {})
   const m1 = await metrics(page);
   const perf = await page.evaluate((b) => ({ lt: window.__perf.lt.slice(b.lt), parse: window.__perf.parse.slice(b.parse) }), before);
   const workerJobs = await page
-    .evaluate((t) => (window.__oeWorker?.jobs ?? []).filter((j) => j.at >= t).map((j) => ({ kind: j.kind, docMs: Math.round(j.doc), jobMs: Math.round(j.job), wallMs: Math.round(j.wall) })), t0)
+    .evaluate((t) => (window.__oeWorker?.jobs ?? []).filter((j) => j.at >= t).map((j) => ({ kind: j.kind, sent: j.sent, docMs: Math.round(j.doc), jobMs: Math.round(j.job), wallMs: Math.round(j.wall) })), t0)
     .catch(() => []);
   const lts = perf.lt.filter(([s]) => s >= t0 - 50);
   const requests = net

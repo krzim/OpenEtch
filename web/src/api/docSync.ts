@@ -116,7 +116,20 @@ export function syncStep(held: GDocument | null, heldEpoch: string | null, p: Sy
   if (p.changes.to <= held.revision && p.changes.from !== held.revision) return { kind: "same" };
   if (p.changes.from === held.revision && p.changes.to === held.revision) return { kind: "same" };
   const doc = applyChanges(held, p.changes);
-  return doc ? { kind: "apply", doc } : { kind: "gap" };
+  if (!doc) return { kind: "gap" };
+  deltas.set(doc, p.changes);
+  return { kind: "apply", doc };
+}
+
+/** The change set each applied document was made with (the preview worker patches its copy with it). */
+const deltas = new WeakMap<GDocument, DocChanges>();
+
+/**
+ * The change set `doc` was made with by `syncStep` (from revision `from` to `doc.revision`), or undefined for a
+ * document that arrived whole. The preview worker (src/wasm/previewClient.ts) sends these instead of the document.
+ */
+export function deltaOf(doc: GDocument): DocChanges | undefined {
+  return deltas.get(doc);
 }
 
 // --- module state: the sync point mutating requests announce, and the payload listener --------------------------
