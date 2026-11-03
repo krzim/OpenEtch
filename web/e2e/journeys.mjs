@@ -372,6 +372,13 @@ const JOURNEYS = [
       await phoneTab(j.page, "Job");
       await j.shot("long-name-job");
       j.clip = await clippedText(j.page);
+      // A tap on the cut name shows it in full (with Save as…).
+      await closeSheet(j.page);
+      await pressFind(j.page, ".project-btn");
+      await sleep(400);
+      j.note("project menu", await j.page.evaluate(() => document.querySelector(".project-pop-name")?.textContent ?? null));
+      await j.shot("long-name-tapped");
+      await escape(j.page);
     },
   },
   {
@@ -677,6 +684,57 @@ const JOURNEYS = [
       await j.shot("job-half");
     },
   },
+  {
+    id: "phone-se-action-bar",
+    device: "iphone-se",
+    async run(j) {
+      const { page } = j;
+      await j.heavy();
+      // One small square, so the bar has room above it.
+      await execute(j.ctx.url, "doc.new");
+      await execute(j.ctx.url, "shape.rect", { width_mm: 20, height_mm: 20, center: [0, -20] });
+      await sleep(1200);
+      await closeSheet(page);
+      const p = await canvasPoint(page, 10, -20);
+      await page.press(p.x, p.y);
+      await sleep(700);
+      await closeSheet(page);
+      const bar = () =>
+        page.evaluate(() => {
+          const b = document.querySelector(".touch-actions");
+          if (!b) return null;
+          const r = b.getBoundingClientRect();
+          return { buttons: b.querySelectorAll("button").length, scroll: b.scrollWidth - b.clientWidth, left: Math.round(r.left), right: Math.round(r.right), vw: innerWidth };
+        });
+      j.note("action bar", await bar());
+      await j.shot("action-bar");
+      const more = await find(page, ".touch-actions button", "More…");
+      if (more?.hit) {
+        await page.press(more.x, more.y);
+        await sleep(400);
+      }
+      j.note("overflow menu", await page.evaluate(() => [...document.querySelectorAll("[role=menu] [role=menuitem]")].map((e) => e.textContent.trim())));
+      await j.shot("action-bar-overflow");
+      await escape(page);
+    },
+  },
+  {
+    id: "macbook-multi-trace",
+    device: "macbook-air-1470",
+    async run(j) {
+      const { page } = j;
+      await j.heavy();
+      await pressFind(page, "button", "Command search");
+      await sleep(400);
+      await page.type("Multi-File Trace");
+      await sleep(400);
+      await page.key("Enter");
+      await sleep(700);
+      j.note("number field widths", await page.evaluate(() => [...document.querySelectorAll("[role=dialog] .tools-cols .field-input")].map((e) => Math.round(e.getBoundingClientRect().width))));
+      await j.shot("multi-trace");
+      await escape(page);
+    },
+  },
 ];
 
 async function grblJourney(j) {
@@ -694,7 +752,11 @@ async function grblJourney(j) {
   };
   await openDevices();
   await j.shot("devices");
-  await pressFind(page, "[role=dialog] button", "GRBL");
+  // The ways to add a device are under Add device.
+  await pressFind(page, "[role=dialog] .modal-foot button", "Add device");
+  await sleep(400);
+  await j.shot("devices-add-menu");
+  await pressFind(page, "[role=menuitem]", "New GRBL");
   await sleep(500);
   await j.shot("grbl-form");
   await pressFind(page, "[role=dialog] [role=group] button.btn-primary", null);
@@ -720,6 +782,19 @@ async function grblJourney(j) {
     await pressFind(page, ".workspaces button, nav[role=tablist] button", "Laser");
     await sleep(600);
     await j.shot("grbl-laser-workspace");
+    // The layer quick-edit and Cut settings show a gantry's own settings: no Frequency or Q-Pulse.
+    const row = await find(page, "tr.cuts-row");
+    if (row?.hit) {
+      await page.press(row.x, row.y);
+      await sleep(500);
+    }
+    j.note("grbl quick-edit fields", await page.evaluate(() => [...document.querySelectorAll(".cuts-quick-grid .field-label")].map((e) => e.textContent.trim())));
+    await j.shot("grbl-layer-quick-edit");
+    // The Design workspace has the gantry's Move and Console windows (and Window menu entries) too, as the Laser one.
+    await pressFind(page, ".workspaces button, nav[role=tablist] button", "Design");
+    await sleep(600);
+    j.note("design windows", await page.evaluate(() => [...document.querySelectorAll("section.dock")].map((e) => e.getAttribute("aria-label"))));
+    await j.shot("grbl-design-windows");
   }
   // And back to the galvo.
   await openDevices();
