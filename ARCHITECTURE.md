@@ -1093,8 +1093,8 @@ continue, start, approve or switch anything. Stop is never gated.
   maintenance due and the last ledger runs with a re-mark per slot. STOP is in the cockpit's own bar; the cockpit
   makes no stacking context, so STOP's `--z-stop` stays above its dialogs. While it is open it holds the **design
   lock** (`POST /api/production/lock {on, holder, label}`, a 45 s lease renewed every 15 s, released on close or
-  `pagehide`): every document edit, undo, redo, timeline move and document switch is refused (409, saying where the
-  cockpit is) for every client, MCP agents included, except the counter (`var.*`, so the cockpit can mark slots empty
+  `pagehide`): every document edit, undo, redo, timeline move, document switch and opening a document into the active one (a project, a job ledger entry, a re-run) is refused (409, saying where the
+  cockpit is) for every client, MCP agents included, except the counter (`var.set_serial` and `var.advance`, so the cockpit can mark slots empty
   and the engine can move the counter on). Unlock in the Production window releases another device's lock (UI only).
   `GET /api/production` is the cockpit's state (MCP `production_status`).
 - **Pause at a layer** (`CutOptions.operator_pause`, `layer.update settings.options.operator_pause`, a check box

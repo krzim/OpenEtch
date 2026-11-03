@@ -649,6 +649,8 @@ pub fn mark(st: &AppState, id: &str, verdict: Option<Verdict>, note: &str, origi
 /// Open entry `id`'s stored document as a new open document and make it the active one (nothing is planned or
 /// requested). Returns `{ok, id, document_id, revision, device_mismatch?}`.
 pub(crate) async fn open_document(st: &Arc<AppState>, id: &str, origin: Origin) -> Result<Value, EngineError> {
+    // Before a document is opened: its activation would be refused (module `production::lock`).
+    crate::production::lock::check_timeline(st)?;
     let entry = get(st, id)?;
     let (owned, st2) = (id.to_owned(), st.clone());
     let content = tokio::task::spawn_blocking(move || st2.libs.job_ledger(|l| l.document_json(&owned))).await??;
