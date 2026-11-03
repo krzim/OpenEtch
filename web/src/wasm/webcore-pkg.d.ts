@@ -13,6 +13,9 @@ declare module "webcore-pkg" {
     take_info(): Uint32Array;
     take_pass(): Uint32Array;
     take_power(): Float32Array;
+    take_levels(): Uint8Array;
+    take_row_segments(): Uint32Array;
+    take_row_span(): Float32Array;
   }
 
   export class Core {

@@ -1,11 +1,12 @@
 // The Viewport's raster layers: bitmaps and the toolpath preview are drawn on <canvas> elements sized to the canvas
 // area at device-pixel resolution, under (images) and over (toolpath) the object outlines (VectorLayer.tsx). A view change repaints the
 // visible region, once per frame, from caches that do not depend on the view: decoded ImageBitmaps per image (and per
-// dithered preview), and the toolpath's segments uploaded once to the GPU (toolpathGL.ts; without WebGL2, per-tile
-// Path2Ds on a 2D canvas). Hit-testing is geometric (selection.ts) and handles live in the interaction SVG; these
+// dithered preview), and the toolpath's segments and image rasters uploaded once to the GPU (toolpathGL.ts; without
+// WebGL2, per-tile Path2Ds and one bitmap per raster on a 2D canvas). Hit-testing is geometric (selection.ts) and handles live in the interaction SVG; these
 // canvases never take pointer events.
 
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { PreviewRaster } from "../api/packedPreview.ts";
 import type { Affine } from "../api/types.ts";
 import { mul } from "../geometry.ts";
 import {
@@ -19,10 +20,11 @@ import {
   visibleTiles,
   type Toolpath,
   type ToolpathBatch,
+  type ToolpathRaster,
   type ToolpathStyle,
   type View,
 } from "../sceneLayers.ts";
-import { ToolpathGL, type BatchStyle } from "./toolpathGL.ts";
+import { ToolpathGL, rasterShades, type BatchStyle } from "./toolpathGL.ts";
 
 export interface PaintArgs {
   view: View;
@@ -244,12 +246,70 @@ function strokeBatch(ctx: CanvasRenderingContext2D, b: ToolpathBatch, a: PaintAr
   }
 }
 
-/** The toolpath, 2D canvas version (no WebGL2): dashed travel, then marks; only the tiles on screen when zoomed in. */
+/** A raster as a bitmap in one colour (each dot's alpha its shade), per raster and colour. */
+const rasterBitmaps = new WeakMap<PreviewRaster, { color: string; canvas: HTMLCanvasElement }>();
+
+function rasterBitmap(r: PreviewRaster, color: string): HTMLCanvasElement | null {
+  const have = rasterBitmaps.get(r);
+  if (have?.color === color) return have.canvas;
+  const canvas = document.createElement("canvas");
+  canvas.width = r.cols;
+  canvas.height = r.rows;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  const img = ctx.createImageData(r.cols, r.rows);
+  const [cr, cg, cb] = rgbaOf(color, 1).map((v) => Math.round(v * 255));
+  const shades = rasterShades(r);
+  const px = img.data;
+  for (let i = 0; i < shades.length; i++) {
+    const o = 4 * i;
+    px[o] = cr;
+    px[o + 1] = cg;
+    px[o + 2] = cb;
+    px[o + 3] = shades[i];
+  }
+  ctx.putImageData(img, 0, 0);
+  rasterBitmaps.set(r, { color, canvas });
+  return canvas;
+}
+
+/** A raster on the 2D canvas: its bitmap through its grid, clipped to the rows the slider shows. */
+function paintRaster(ctx: CanvasRenderingContext2D, vm: Affine, tr: ToolpathRaster, color: string, alpha: number): void {
+  const r = tr.raster;
+  if (tr.rows === 0 && !tr.partial) return;
+  const bmp = rasterBitmap(r, color);
+  if (!bmp) return;
+  const m = mul(vm, r.grid);
+  const sm = imageSmoothing(devicePxPerImagePx(m, r.cols, r.cols));
+  ctx.save();
+  ctx.setTransform(m[0], m[1], m[2], m[3], m[4], m[5]);
+  ctx.globalAlpha = alpha;
+  ctx.imageSmoothingEnabled = sm.enabled;
+  if (sm.enabled) ctx.imageSmoothingQuality = sm.quality;
+  if (tr.rows < r.rows) {
+    const clip = new Path2D();
+    clip.rect(0, 0, r.cols, tr.rows);
+    if (tr.partial) {
+      const lo = Math.min(tr.partial.from, tr.partial.to);
+      clip.rect(lo, tr.rows, Math.abs(tr.partial.to - tr.partial.from), 1);
+    }
+    ctx.clip(clip);
+  }
+  ctx.drawImage(bmp, 0, 0);
+  ctx.restore();
+}
+
+/** The toolpath, 2D canvas version (no WebGL2): dashed travel, images, then marks; only the tiles on screen when zoomed in. */
 export function paintToolpath(ctx: CanvasRenderingContext2D, a: PaintArgs, tp: Toolpath, st: ToolpathStyle): void {
   const m = viewMatrix(a.view, a.size, a.dpr);
   ctx.setTransform(m[0], m[1], m[2], m[3], m[4], m[5]);
   const px = 1 / a.view.scale;
+  let rastersDone = false;
   for (const b of tp.batches) {
+    if (b.kind === "mark" && !rastersDone) {
+      rastersDone = true;
+      paintRasters(ctx, m, tp, st);
+    }
     const look = batchLook(b, tp.maxE, st);
     ctx.globalAlpha = look.alpha;
     ctx.strokeStyle = look.color;
@@ -258,8 +318,16 @@ export function paintToolpath(ctx: CanvasRenderingContext2D, a: PaintArgs, tp: T
     ctx.setLineDash(look.dash ? [look.dash[0] * px, look.dash[1] * px] : []);
     strokeBatch(ctx, b, a);
   }
+  if (!rastersDone) paintRasters(ctx, m, tp, st);
   ctx.setLineDash([]);
   ctx.globalAlpha = 1;
+}
+
+function paintRasters(ctx: CanvasRenderingContext2D, vm: Affine, tp: Toolpath, st: ToolpathStyle): void {
+  for (const tr of tp.rasters) {
+    const look = batchLook({ kind: "mark", layer: tr.layer, pass: tr.pass }, tp.maxE, st);
+    paintRaster(ctx, vm, tr, look.color, look.alpha);
+  }
 }
 
 /** Any CSS colour as 0..1 RGBA (hex directly, anything else through a 2D canvas). */
@@ -309,7 +377,8 @@ export const ToolpathLayer = memo(function ToolpathLayer(props: { view: View; si
   useLayoutEffect(() => gl.current?.setData(toolpath), [toolpath, fallback]);
   const looks = useMemo(() => {
     const m = new Map<string, BatchStyle>();
-    for (const b of toolpath.batches) {
+    for (const b of [...toolpath.batches, ...toolpath.rasters.map((r) => ({ key: r.key, kind: "mark" as const, layer: r.layer, pass: r.pass }))]) {
+      if (m.has(b.key)) continue;
       const l = batchLook(b, toolpath.maxE, style);
       m.set(b.key, { rgba: rgbaOf(l.color, l.alpha), widthPx: l.widthPx, dash: l.dash, caps: l.caps });
     }

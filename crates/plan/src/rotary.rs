@@ -55,7 +55,7 @@ pub(crate) fn split(plan: JobPlan, r: &Rotary, target: &Target) -> Result<JobPla
     }
     let steps_per_mm = r.steps_per_object_turn() / (std::f64::consts::PI * r.object_diameter_mm);
     let curved = r.cylinder_correction || r.taper.is_some();
-    let mut out = JobPlan { passes: Vec::new(), stats: plan.stats, warnings: plan.warnings.clone(), parts: Vec::new() };
+    let mut out = JobPlan { passes: Vec::new(), stats: plan.stats, warnings: plan.warnings.clone(), parts: Vec::new(), rasters: Vec::new() };
     for k in 0..strips {
         let c = lo + (k as f64 + 0.5) * w;
         let (band_lo, band_hi) = (c - w / 2.0, c + w / 2.0);

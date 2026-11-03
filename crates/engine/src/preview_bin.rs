@@ -2,15 +2,15 @@
 //!
 //! A large job is hundreds of thousands of segments (a 400 x 300 px image alone is 300 000), about 155 bytes each as
 //! JSON: tens of MB that a Raspberry Pi takes seconds to write and Wi-Fi seconds more to move. Here a segment is
-//! 13 bytes in the common case (its end point, its time and a flag byte), and the answer is compressed once per
-//! revision.
+//! 13 bytes in the common case (its end point, its time and a flag byte), an image's scan run 5 (its time and flag:
+//! the image is sent as a raster of its dots instead), and the answer is compressed once per revision.
 //!
-//! # Format (version 1, all numbers little-endian)
+//! # Format (version 2, all numbers little-endian)
 //!
 //! | bytes | content |
 //! |---|---|
 //! | 0..4 | magic `OEPV` |
-//! | 4..8 | u32 format version (1) |
+//! | 4..8 | u32 format version (2) |
 //! | 8..12 | u32 length `H` of the header |
 //! | 12..12+H | header, UTF-8 JSON (below) |
 //! | then | sections at the byte offsets the header gives (each 4-byte aligned from the start of the buffer) |
@@ -23,28 +23,36 @@
 //!   segment numbers are not the run's, so Start Here must not use them);
 //! - `runs`: `[{pass, layer, count}]`, consecutive segments of one pass (`pass` and `layer` as a segment's in
 //!   `GET /api/preview`, `null` when absent), in order, adding up to `count`;
+//! - `rasters`: the image passes as rasters (`plan::RasterHeader`: `pass`, `first`, `end`, `grid`, `cols`, `rows`,
+//!   `powers`, `pass_power_pct`, `levels_at`, `rows_at`; see `plan::PreviewRaster`), in this answer's segment
+//!   numbering: segments `first..end` (an image's runs and the jumps between them) are drawn by the raster and carry
+//!   no geometry here;
 //! - `sections`: `{name: [byte offset, element count]}` for
 //!   - `flags` (u8 per segment): bit 0 a mark (else a jump), bit 1 it emits, bit 2 it has its own power (next value
-//!     of `power`), bit 3 it starts where the previous segment ended (its start is not stored);
-//!   - `xy` (f32): per segment its start `x, y` unless bit 3, then its end `x, y` (field mm);
+//!     of `power`), bit 3 it starts where the previous segment ended (its start is not stored), bit 4 a raster draws
+//!     it (nothing in `xy` or `power`);
+//!   - `xy` (f32): per segment without bit 4 its start `x, y` unless bit 3, then its end `x, y` (field mm);
 //!   - `t` (f32 per segment): `t_s`;
-//!   - `power` (f32): `power_pct` of the segments with bit 2, in order.
+//!   - `power` (f32): `power_pct` of the segments with bit 2, in order;
+//!   - `levels` (u8), `row_segments` (u32, two per row) and `row_span` (f32, two per row): the rasters' arrays.
 //!
-//! The engine's own plan (runs, framing) never comes from here: this is display data.
+//! Version 1 was the same without rasters (and bit 4). The engine's own plan (runs, framing) never comes from here:
+//! this is display data.
 
 use doc::Document;
-use plan::{Preview, SegmentKind};
+use plan::{PackedRasters, Preview, PreviewRaster, SegmentKind};
 use serde_json::{Value, json};
 
 /// Format magic.
 pub const MAGIC: &[u8; 4] = b"OEPV";
 /// Format version.
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 
 const MARK: u8 = 1;
 const EMITS: u8 = 2;
 const POWER: u8 = 4;
 const CHAINED: u8 = 8;
+const RASTER: u8 = 16;
 
 /// What a request asks for.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -106,6 +114,8 @@ struct Seg<'a> {
     power: Option<f64>,
     pass: Option<usize>,
     layer: Option<&'a str>,
+    /// Drawn by a raster: no geometry is sent.
+    raster: bool,
 }
 
 impl Seg<'_> {
@@ -116,6 +126,9 @@ impl Seg<'_> {
 
 /// Whether `b` continues `a` in a straight line (same direction, `b` starting where `a` ends) with the same kind.
 fn joins(a: &Seg, b: &Seg) -> bool {
+    if a.raster || b.raster {
+        return false;
+    }
     if !(a.mark && b.mark && a.emits == b.emits && a.pass == b.pass && a.layer == b.layer && a.to == b.from) {
         return false;
     }
@@ -133,8 +146,19 @@ fn joins(a: &Seg, b: &Seg) -> bool {
 /// Encode `p` (planned from `doc` at `revision`) as described in the module docs.
 pub fn encode(doc: &Document, p: &Preview, revision: u64, opts: &BinOptions) -> Vec<u8> {
     let keep = |l: Option<&str>| opts.layers.as_ref().is_none_or(|ls| l.is_some_and(|l| ls.iter().any(|k| k == l)));
+    let rasters: Vec<&PreviewRaster> =
+        p.rasters.iter().filter(|r| keep(p.passes.get(r.pass).map(|q| q.layer_id.as_str()))).collect();
+    // With rasters: each segment's index in this answer (segments are left out and joined), to renumber them.
+    let mut renumber: Vec<u32> = Vec::with_capacity(if rasters.is_empty() { 0 } else { p.segments.len() + 1 });
     let mut segs: Vec<Seg> = Vec::with_capacity(p.segments.len());
-    for s in &p.segments {
+    let mut inside = rasters.iter().map(|r| r.first..r.end).peekable();
+    for (i, s) in p.segments.iter().enumerate() {
+        if !rasters.is_empty() {
+            renumber.push(u32::try_from(segs.len()).unwrap_or(u32::MAX));
+        }
+        while inside.peek().is_some_and(|r| r.end <= i) {
+            inside.next();
+        }
         let mark = s.kind == SegmentKind::Mark;
         if (!mark && opts.no_jumps) || !keep(s.layer.as_deref()) {
             continue;
@@ -148,6 +172,7 @@ pub fn encode(doc: &Document, p: &Preview, revision: u64, opts: &BinOptions) -> 
             power: s.power_pct,
             pass: s.pass,
             layer: s.layer.as_deref(),
+            raster: inside.peek().is_some_and(|r| r.contains(&i)),
         };
         if opts.lod_mm > 0.0
             && let Some(last) = segs.last_mut()
@@ -170,6 +195,16 @@ pub fn encode(doc: &Document, p: &Preview, revision: u64, opts: &BinOptions) -> 
         }
         segs.push(seg);
     }
+    if !rasters.is_empty() {
+        renumber.push(u32::try_from(segs.len()).unwrap_or(u32::MAX));
+    }
+    // The rasters in this answer's numbering.
+    let mut packed = PackedRasters::new(&rasters.iter().map(|r| (*r).clone()).collect::<Vec<_>>());
+    let at = |i: usize| renumber.get(i).copied().unwrap_or(u32::MAX);
+    for h in &mut packed.headers {
+        (h.first, h.end) = (at(h.first) as usize, at(h.end) as usize);
+    }
+    packed.row_segments.iter_mut().for_each(|i| *i = at(*i as usize));
 
     let n = segs.len();
     let mut flags = Vec::with_capacity(n);
@@ -187,19 +222,24 @@ pub fn encode(doc: &Document, p: &Preview, revision: u64, opts: &BinOptions) -> 
         if s.emits {
             f |= EMITS;
         }
-        if let Some(pw) = s.power {
-            f |= POWER;
-            power.push(pw as f32);
-        }
-        if prev_to == Some(s.from) {
-            f |= CHAINED;
+        if s.raster {
+            f |= RASTER;
+            prev_to = None;
         } else {
-            xy.extend([s.from[0] as f32, s.from[1] as f32]);
+            if let Some(pw) = s.power {
+                f |= POWER;
+                power.push(pw as f32);
+            }
+            if prev_to == Some(s.from) {
+                f |= CHAINED;
+            } else {
+                xy.extend([s.from[0] as f32, s.from[1] as f32]);
+            }
+            xy.extend([s.to[0] as f32, s.to[1] as f32]);
+            prev_to = Some(s.to);
         }
-        xy.extend([s.to[0] as f32, s.to[1] as f32]);
         t.push(s.t_s as f32);
         flags.push(f);
-        prev_to = Some(s.to);
         match &mut run {
             Some((pass, layer, count)) if *pass == s.pass && *layer == s.layer => *count += 1,
             _ => {
@@ -222,8 +262,10 @@ pub fn encode(doc: &Document, p: &Preview, revision: u64, opts: &BinOptions) -> 
     header["lod_mm"] = json!(opts.lod_mm);
     header["jumps"] = json!(!opts.no_jumps);
     header["runs"] = Value::Array(runs);
+    header["rasters"] = json!(packed.headers);
     // Section offsets depend on the header's length, which depends on the offsets' digits: lay out with the final
     // header length found by iterating (it settles in a step or two).
+    let words = xy.len() + t.len() + power.len() + packed.row_segments.len() + packed.row_span.len();
     let mut header_len = 0usize;
     let mut text;
     loop {
@@ -231,12 +273,18 @@ pub fn encode(doc: &Document, p: &Preview, revision: u64, opts: &BinOptions) -> 
         let xy_at = base;
         let t_at = xy_at + xy.len() * 4;
         let power_at = t_at + t.len() * 4;
-        let flags_at = power_at + power.len() * 4;
+        let rows_at = power_at + power.len() * 4;
+        let span_at = rows_at + packed.row_segments.len() * 4;
+        let flags_at = span_at + packed.row_span.len() * 4;
+        let levels_at = flags_at + flags.len();
         header["sections"] = json!({
             "xy": [xy_at, xy.len()],
             "t": [t_at, t.len()],
             "power": [power_at, power.len()],
+            "row_segments": [rows_at, packed.row_segments.len()],
+            "row_span": [span_at, packed.row_span.len()],
             "flags": [flags_at, flags.len()],
+            "levels": [levels_at, packed.levels.len()],
         });
         text = serde_json::to_vec(&header).unwrap_or_default();
         if text.len() == header_len {
@@ -245,7 +293,7 @@ pub fn encode(doc: &Document, p: &Preview, revision: u64, opts: &BinOptions) -> 
         header_len = text.len();
     }
     let base = align4(12 + header_len);
-    let mut out = Vec::with_capacity(base + (xy.len() + t.len() + power.len()) * 4 + flags.len());
+    let mut out = Vec::with_capacity(base + words * 4 + flags.len() + packed.levels.len());
     out.extend_from_slice(MAGIC);
     out.extend_from_slice(&VERSION.to_le_bytes());
     out.extend_from_slice(&(header_len as u32).to_le_bytes());
@@ -254,7 +302,14 @@ pub fn encode(doc: &Document, p: &Preview, revision: u64, opts: &BinOptions) -> 
     for v in xy.iter().chain(&t).chain(&power) {
         out.extend_from_slice(&v.to_le_bytes());
     }
+    for v in &packed.row_segments {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    for v in &packed.row_span {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
     out.extend_from_slice(&flags);
+    out.extend_from_slice(&packed.levels);
     out
 }
 
@@ -308,21 +363,36 @@ fn align4(n: usize) -> usize {
     n.div_ceil(4) * 4
 }
 
-/// Read a buffer back into segments as `GET /api/preview` lists them (tests, and the reference for clients).
+/// Read a buffer back into segments as `GET /api/preview` lists them (tests, and the reference for clients); a
+/// segment a raster draws has `"raster": true` and no `from` / `to` / `power_pct`. Also the rasters.
 #[cfg(test)]
 pub fn decode(buf: &[u8]) -> (Value, Vec<Value>) {
+    let (header, segs, _) = decode_with_rasters(buf);
+    (header, segs)
+}
+
+#[cfg(test)]
+pub fn decode_with_rasters(buf: &[u8]) -> (Value, Vec<Value>, Vec<PreviewRaster>) {
     assert_eq!(&buf[..4], MAGIC);
     assert_eq!(u32::from_le_bytes(buf[4..8].try_into().unwrap()), VERSION);
     let h = u32::from_le_bytes(buf[8..12].try_into().unwrap()) as usize;
     let header: Value = serde_json::from_slice(&buf[12..12 + h]).unwrap();
     let sec = |name: &str| (header["sections"][name][0].as_u64().unwrap() as usize, header["sections"][name][1].as_u64().unwrap() as usize);
-    let f32s = |(at, n): (usize, usize)| -> Vec<f32> {
+    let words = |(at, n): (usize, usize)| -> Vec<[u8; 4]> {
         assert_eq!(at % 4, 0);
-        (0..n).map(|i| f32::from_le_bytes(buf[at + 4 * i..at + 4 * i + 4].try_into().unwrap())).collect()
+        (0..n).map(|i| buf[at + 4 * i..at + 4 * i + 4].try_into().unwrap()).collect()
     };
+    let f32s = |s| words(s).into_iter().map(f32::from_le_bytes).collect::<Vec<f32>>();
     let (xy, t, power) = (f32s(sec("xy")), f32s(sec("t")), f32s(sec("power")));
     let (flags_at, n) = sec("flags");
     let flags = &buf[flags_at..flags_at + n];
+    let (levels_at, levels_n) = sec("levels");
+    let packed = PackedRasters {
+        headers: serde_json::from_value(header["rasters"].clone()).unwrap(),
+        levels: buf[levels_at..levels_at + levels_n].to_vec(),
+        row_segments: words(sec("row_segments")).into_iter().map(u32::from_le_bytes).collect(),
+        row_span: f32s(sec("row_span")),
+    };
     let mut runs = header["runs"].as_array().unwrap().iter().flat_map(|r| {
         std::iter::repeat_n((r["pass"].clone(), r["layer"].clone()), r["count"].as_u64().unwrap() as usize)
     });
@@ -330,6 +400,12 @@ pub fn decode(buf: &[u8]) -> (Value, Vec<Value>) {
     let mut prev = [0f32; 2];
     let mut out = Vec::with_capacity(n);
     for (i, &f) in flags.iter().enumerate() {
+        let (pass, layer) = runs.next().unwrap();
+        let kind = if f & MARK != 0 { "mark" } else { "jump" };
+        if f & RASTER != 0 {
+            out.push(json!({ "kind": kind, "emits": f & EMITS != 0, "t_s": t[i], "pass": pass, "layer": layer, "raster": true }));
+            continue;
+        }
         let from = if f & CHAINED != 0 {
             prev
         } else {
@@ -339,10 +415,8 @@ pub fn decode(buf: &[u8]) -> (Value, Vec<Value>) {
         let to = [xy[k], xy[k + 1]];
         k += 2;
         prev = to;
-        let (pass, layer) = runs.next().unwrap();
         let mut s = json!({
-            "kind": if f & MARK != 0 { "mark" } else { "jump" },
-            "from": from, "to": to, "emits": f & EMITS != 0, "t_s": t[i], "pass": pass, "layer": layer,
+            "kind": kind, "from": from, "to": to, "emits": f & EMITS != 0, "t_s": t[i], "pass": pass, "layer": layer,
         });
         if f & POWER != 0 {
             s["power_pct"] = json!(power[p]);
@@ -350,7 +424,7 @@ pub fn decode(buf: &[u8]) -> (Value, Vec<Value>) {
         }
         out.push(s);
     }
-    (header, out)
+    (header, out, packed.unpack().expect("the raster arrays hold every header"))
 }
 
 #[cfg(test)]

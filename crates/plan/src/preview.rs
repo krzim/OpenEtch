@@ -2,6 +2,7 @@
 //! would run); [`preview_plan`] draws a plan directly (cheap, for the live UI) and [`preview_document`] adds a
 //! summary per layer (`GET /api/preview`).
 
+use kurbo::{Affine, Point as KPoint};
 use lmc::units::units_to_speed;
 use lmc::{LASER_ENABLE_BIT, ListCommand, Packet, TraceKind, TraceState, decode, trace_from};
 use serde::{Deserialize, Serialize};
@@ -9,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use doc::{Cleanup, Document, FillMode, LayerId};
 
 use crate::geom::{Point, dist};
-use crate::job::{JobPlan, Stats, pass_stats};
+use crate::job::{ImageRaster, JobPlan, PassPlan, Stats, pass_stats};
 use crate::{PlanError, Target};
 
 /// What the galvo does along a segment.
@@ -61,6 +62,128 @@ pub struct Preview {
     /// What the plan left out (e.g. images), from [`JobPlan::warnings`].
     #[serde(default)]
     pub warnings: Vec<String>,
+    /// The image passes' scan runs as rasters on their dot grids, for clients that draw them as textures instead of
+    /// one segment per run (`GET /api/preview.bin`, the browser's preview). Not in the JSON: its segments hold every
+    /// run. Empty from [`simulate`].
+    #[serde(skip)]
+    pub rasters: Vec<PreviewRaster>,
+}
+
+/// One image's scan runs in one pass, as a raster: segments `first..end` of the preview (its runs and the jumps
+/// between them; the jump into the first run comes before) drawn as the dots they mark.
+///
+/// A dot is marked when a run covers its centre (a run that covers no centre, a sliver left by a mask, marks the dot
+/// under its middle), at that run's power: so the raster shows exactly the plan's runs, dot for dot, at the plan's
+/// power per dot, within the bounds of the dots the runs lie on.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct PreviewRaster {
+    /// Index into [`Preview::passes`].
+    pub pass: usize,
+    pub first: usize,
+    pub end: usize,
+    /// Dot (column c, row r) covers `c..c + 1` x `r..r + 1` under this affine (grid units to field mm, kurbo's
+    /// coefficients `[a, b, c, d, e, f]`: x = a·c + c·r + e, y = b·c + d·r + f). Cropped to the dots the runs mark.
+    pub grid: [f64; 6],
+    pub cols: usize,
+    pub rows: usize,
+    /// Per dot, rows from row 0 (burned first), `cols` per row: 0 unmarked, `k` marked at `powers[k - 1]`.
+    pub levels: Vec<u8>,
+    /// The power of each level, % (the runs' own powers: grey levels, power scale).
+    pub powers: Vec<f64>,
+    /// The pass's power, %.
+    pub pass_power_pct: f64,
+    /// Per row, in burn order: the first and one-past-the-last segment of its runs (a row without runs: an empty
+    /// range where the previous row ended). Rows burn one after the other, so both columns never decrease.
+    pub row_segments: Vec<[u32; 2]>,
+    /// Per row: the column (grid units, continuous) where its first run starts and where its last run ends, in burn
+    /// direction (a bidirectional job's every other row runs backwards); `[0, 0]` for a row without runs.
+    pub row_span: Vec<[f32; 2]>,
+}
+
+/// Most dots one [`PreviewRaster`] may have (16 M); a preview holds at most four times that in all. Images past that
+/// are left as segments.
+pub const MAX_RASTER_DOTS: usize = 1 << 24;
+const MAX_PREVIEW_RASTER_DOTS: usize = 1 << 26;
+
+/// A [`PreviewRaster`] without its arrays, as the clients' formats carry it (the browser worker's meta JSON,
+/// `GET /api/preview.bin`'s header): its arrays are in three shared ones ([`PackedRasters`]), from dot `levels_at`
+/// and row `rows_at` on.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RasterHeader {
+    pub pass: usize,
+    pub first: usize,
+    pub end: usize,
+    pub grid: [f64; 6],
+    pub cols: usize,
+    pub rows: usize,
+    pub powers: Vec<f64>,
+    pub pass_power_pct: f64,
+    pub levels_at: usize,
+    pub rows_at: usize,
+}
+
+/// A preview's rasters packed for a client: their headers and every raster's arrays one after the other.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct PackedRasters {
+    pub headers: Vec<RasterHeader>,
+    /// [`PreviewRaster::levels`], concatenated.
+    pub levels: Vec<u8>,
+    /// [`PreviewRaster::row_segments`], two per row, concatenated.
+    pub row_segments: Vec<u32>,
+    /// [`PreviewRaster::row_span`], two per row, concatenated.
+    pub row_span: Vec<f32>,
+}
+
+impl PackedRasters {
+    pub fn new(rasters: &[PreviewRaster]) -> PackedRasters {
+        let mut out = PackedRasters {
+            headers: Vec::with_capacity(rasters.len()),
+            levels: Vec::with_capacity(rasters.iter().map(|r| r.levels.len()).sum()),
+            ..PackedRasters::default()
+        };
+        for r in rasters {
+            out.headers.push(RasterHeader {
+                pass: r.pass,
+                first: r.first,
+                end: r.end,
+                grid: r.grid,
+                cols: r.cols,
+                rows: r.rows,
+                powers: r.powers.clone(),
+                pass_power_pct: r.pass_power_pct,
+                levels_at: out.levels.len(),
+                rows_at: out.row_segments.len() / 2,
+            });
+            out.levels.extend_from_slice(&r.levels);
+            out.row_segments.extend(r.row_segments.iter().flatten());
+            out.row_span.extend(r.row_span.iter().flatten());
+        }
+        out
+    }
+
+    /// The rasters back from their packed form (`None` when an array is too short for a header).
+    pub fn unpack(&self) -> Option<Vec<PreviewRaster>> {
+        self.headers
+            .iter()
+            .map(|h| {
+                let dots = h.cols.checked_mul(h.rows)?;
+                let rows = 2 * h.rows_at..2 * (h.rows_at + h.rows);
+                Some(PreviewRaster {
+                    pass: h.pass,
+                    first: h.first,
+                    end: h.end,
+                    grid: h.grid,
+                    cols: h.cols,
+                    rows: h.rows,
+                    levels: self.levels.get(h.levels_at..h.levels_at + dots)?.to_vec(),
+                    powers: h.powers.clone(),
+                    pass_power_pct: h.pass_power_pct,
+                    row_segments: self.row_segments.get(rows.clone())?.chunks(2).map(|c| [c[0], c[1]]).collect(),
+                    row_span: self.row_span.get(rows)?.chunks(2).map(|c| [c[0], c[1]]).collect(),
+                })
+            })
+            .collect()
+    }
 }
 
 /// One pass of a previewed job ([`crate::PassPlan`] without its polylines, plus its share of the stats).
@@ -136,6 +259,8 @@ pub struct LayerPreview {
 /// start, then its marks (a dot is a zero-length mark). Zero-length jumps are left out. Every segment carries the
 /// estimated time at its end ([`PreviewSegment::t_s`]), in the same model as the plan's stats.
 pub fn preview_plan(plan: &JobPlan) -> Preview {
+    let mut rasters = Vec::new();
+    let mut raster_dots = 0usize;
     let mut segments = Vec::new();
     let mut passes = Vec::with_capacity(plan.passes.len());
     let mut pos: Point = [0.0, 0.0];
@@ -176,6 +301,11 @@ pub fn preview_plan(plan: &JobPlan) -> Preview {
         };
         let tm = &pass.settings.timing;
         t_us += pass.pause_before_us;
+        // This pass's image rasters (in polyline order), the one being drawn and its runs' mark segments.
+        let images: Vec<&ImageRaster> = plan.rasters.iter().filter(|r| r.pass == index).collect();
+        let mut image = 0usize;
+        let mut image_first = 0usize;
+        let mut marks: Vec<u32> = Vec::new();
         for (i, poly) in pass.polylines.iter().enumerate() {
             let Some(&first) = poly.first() else { continue };
             let jump = dist(pos, first);
@@ -184,6 +314,17 @@ pub fn preview_plan(plan: &JobPlan) -> Preview {
             }
             if first != pos {
                 segments.push(at(SegmentKind::Jump, pos, first, false, None, t_us));
+            }
+            while images.get(image).is_some_and(|r| r.polylines.end <= i) {
+                image += 1;
+            }
+            let run_of = images.get(image).filter(|r| r.polylines.contains(&i) && poly.len() == 2);
+            if let Some(r) = run_of {
+                if i == r.polylines.start {
+                    image_first = segments.len();
+                    marks.clear();
+                }
+                marks.push(u32::try_from(segments.len()).unwrap_or(u32::MAX));
             }
             let power = Some(pass.power_of(i)).filter(|p| *p != pass.settings.power_pct);
             t_us += tm.laser_on_delay_us.max(0.0);
@@ -208,10 +349,182 @@ pub fn preview_plan(plan: &JobPlan) -> Preview {
                 last.t_s = t_us / 1e6;
             }
             pos = poly.last().copied().unwrap_or(first);
+            if let Some(r) = run_of.filter(|r| i + 1 == r.polylines.end) {
+                let room = MAX_PREVIEW_RASTER_DOTS - raster_dots;
+                if marks.len() == r.polylines.len()
+                    && let Some(raster) = preview_raster(r, pass, &marks, image_first, segments.len(), room)
+                {
+                    raster_dots += raster.levels.len();
+                    rasters.push(raster);
+                }
+            }
         }
         t_us += pass.pause_after_us;
     }
-    Preview { segments, passes, stats: plan.stats, layers: Vec::new(), warnings: plan.warnings.clone() }
+    Preview { segments, passes, stats: plan.stats, layers: Vec::new(), warnings: plan.warnings.clone(), rasters }
+}
+
+/// A run on a raster's grid: its row, the first and last dot it marks, and its start and end column (grid units).
+type RunDots = (i64, i64, i64, f64, f64);
+
+/// Where run `from`-`to` lies on the grid whose inverse is `inv` ([`PreviewRaster`]'s rule: the dots whose centres
+/// it covers, else the dot under its middle); `None` when it does not run along one row's centre line.
+fn run_dots(inv: &Affine, from: Point, to: Point) -> Option<RunDots> {
+    let a = *inv * KPoint::new(from[0], from[1]);
+    let b = *inv * KPoint::new(to[0], to[1]);
+    let y = (a.y + b.y) / 2.0 - 0.5;
+    let row = y.round();
+    let on_row = (y - row).abs() <= 1e-3 && (a.y - b.y).abs() <= 1e-3;
+    if !on_row || !a.x.is_finite() || !b.x.is_finite() {
+        return None;
+    }
+    let (lo, hi) = (a.x.min(b.x), a.x.max(b.x));
+    let (mut d0, mut d1) = ((lo - 0.5).ceil(), (hi - 0.5).floor());
+    if d1 < d0 {
+        d0 = ((lo + hi) / 2.0).floor();
+        d1 = d0;
+    }
+    #[allow(clippy::cast_possible_truncation)]
+    Some((row as i64, d0 as i64, d1 as i64, a.x, b.x))
+}
+
+/// Why raster `r` does not draw exactly `segments[r.first..r.end]` (a preview's segments), or `None` when it does:
+/// every mark of the range lies on one row of the grid inside the raster (within half a dot), in burn order (rows and their segment
+/// ranges never go back), its dots hold its power (its own, else `r.pass_power_pct`), no other dot is marked, and
+/// every other segment of the range is a jump of the same pass. For tests of the clients' rasters.
+pub fn raster_mismatch(segments: &[PreviewSegment], r: &PreviewRaster) -> Option<String> {
+    let seg = segments.get(r.first..r.end)?;
+    let grid = Affine::new(r.grid);
+    if r.levels.len() != r.cols * r.rows || r.row_segments.len() != r.rows || r.row_span.len() != r.rows {
+        return Some("array sizes do not match cols x rows".into());
+    }
+    let inv = grid.inverse();
+    let mut covered = vec![false; r.levels.len()];
+    let mut last_row = 0i64;
+    for (k, s) in seg.iter().enumerate() {
+        let i = r.first + k;
+        if s.pass != Some(r.pass) {
+            return Some(format!("segment {i} is not of pass {}", r.pass));
+        }
+        if s.kind == SegmentKind::Jump {
+            continue;
+        }
+        let Some((row, d0, d1, ax, bx)) = run_dots(&inv, s.from, s.to) else {
+            return Some(format!("segment {i} does not run along a row"));
+        };
+        let power = s.power_pct.unwrap_or(r.pass_power_pct);
+        if row < last_row || row >= r.rows as i64 || d0 < 0 || d1 >= r.cols as i64 {
+            return Some(format!("segment {i} (row {row}, dots {d0}..={d1}) is outside the raster or out of order"));
+        }
+        last_row = row;
+        // A run may end part-way into a dot it does not mark (dot width correction, a mask): at most half a dot out.
+        let tol = 0.5 + 1e-6;
+        if ax.min(bx) < -tol || ax.max(bx) > r.cols as f64 + tol {
+            return Some(format!("segment {i} reaches outside the raster's bounds"));
+        }
+        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+        let rr = row as usize;
+        let [a, b] = r.row_segments[rr];
+        if !(a as usize <= i && i < b as usize) {
+            return Some(format!("segment {i} is not in its row's range {a}..{b}"));
+        }
+        for d in d0..=d1 {
+            #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+            let at = rr * r.cols + d as usize;
+            covered[at] = true;
+            let level = r.levels[at];
+            if level == 0 || r.powers.get(usize::from(level) - 1) != Some(&power) {
+                return Some(format!("dot {d} of row {row} has level {level}, not segment {i}'s power {power}"));
+            }
+        }
+    }
+    if let Some(at) = r.levels.iter().zip(&covered).position(|(l, c)| *l != 0 && !c) {
+        return Some(format!("dot {at} is marked but no run covers it"));
+    }
+    if r.row_segments.windows(2).any(|w| w[1][0] < w[0][1] || w[1][1] < w[1][0]) {
+        return Some("row ranges go back".into());
+    }
+    None
+}
+
+/// The raster of image runs `r` of `pass`, whose runs are the marks `marks` of segments `first..end`; `None` when
+/// they do not lie on the grid's rows in burn order, would take more than `room` (or [`MAX_RASTER_DOTS`]) dots, or
+/// have more than 255 powers: those runs stay segments to the clients.
+fn preview_raster(r: &ImageRaster, pass: &PassPlan, marks: &[u32], first: usize, end: usize, room: usize) -> Option<PreviewRaster> {
+    let grid = Affine::new(r.grid);
+    let det = grid.determinant();
+    if det.is_nan() || det.abs() <= 1e-18 {
+        return None;
+    }
+    let inv = grid.inverse();
+    let mut spans: Vec<RunDots> = Vec::with_capacity(marks.len());
+    let (mut c0, mut c1, mut r0, mut r1) = (i64::MAX, i64::MIN, i64::MAX, i64::MIN);
+    for poly in &pass.polylines[r.polylines.clone()] {
+        let s = run_dots(&inv, poly[0], poly[1])?;
+        if spans.last().is_some_and(|p| p.0 > s.0) {
+            return None;
+        }
+        (c0, c1, r0, r1) = (c0.min(s.1), c1.max(s.2), r0.min(s.0), r1.max(s.0));
+        spans.push(s);
+    }
+    if spans.is_empty() {
+        return None;
+    }
+    let (cols, rows) = (usize::try_from(c1 - c0 + 1).ok()?, usize::try_from(r1 - r0 + 1).ok()?);
+    let dots = cols.checked_mul(rows)?;
+    if dots > MAX_RASTER_DOTS.min(room) {
+        return None;
+    }
+    let mut levels = vec![0u8; dots];
+    let mut powers: Vec<f64> = Vec::new();
+    let mut row_segments = vec![[u32::MAX; 2]; rows];
+    let mut row_span = vec![[0f32; 2]; rows];
+    #[allow(clippy::cast_precision_loss)]
+    let (fc0, fr0) = (c0 as f64, r0 as f64);
+    for (k, &(row, d0, d1, ax, bx)) in spans.iter().enumerate() {
+        let power = pass.power_of(r.polylines.start + k);
+        let level = match powers.iter().position(|p| p.to_bits() == power.to_bits()) {
+            Some(at) => at + 1,
+            None => {
+                powers.push(power);
+                powers.len()
+            }
+        };
+        let level = u8::try_from(level).ok()?;
+        let rr = usize::try_from(row - r0).ok()?;
+        let line = &mut levels[rr * cols..(rr + 1) * cols];
+        for d in d0..=d1 {
+            line[usize::try_from(d - c0).ok()?] = level;
+        }
+        let m = marks[k];
+        if row_segments[rr][0] == u32::MAX {
+            row_segments[rr] = [m, m + 1];
+            row_span[rr] = [(ax - fc0) as f32, (bx - fc0) as f32];
+        } else {
+            row_segments[rr][1] = m + 1;
+            row_span[rr][1] = (bx - fc0) as f32;
+        }
+    }
+    // Rows without runs: an empty range where the previous row ended (row 0 always has runs).
+    for rr in 1..rows {
+        if row_segments[rr][0] == u32::MAX {
+            let at = row_segments[rr - 1][1];
+            row_segments[rr] = [at, at];
+        }
+    }
+    Some(PreviewRaster {
+        pass: r.pass,
+        first,
+        end,
+        grid: (grid * Affine::translate((fc0, fr0))).as_coeffs(),
+        cols,
+        rows,
+        levels,
+        powers,
+        pass_power_pct: pass.settings.power_pct,
+        row_segments,
+        row_span,
+    })
 }
 
 /// Multiply every estimated time of `preview` by `factor` (the stats, each pass, layer and sub-layer, and every
@@ -327,7 +640,7 @@ pub fn start_at(plan: &JobPlan, segment: usize, target: &Target) -> Result<JobPl
                 cut = Some(if poly.len() == 1 { 0 } else { segment - n });
             }
             if let Some(k) = cut {
-                let mut out = JobPlan { passes: plan.passes[pi..].to_vec(), stats: Stats::default(), warnings: plan.warnings.clone(), parts: plan.parts.clone() };
+                let mut out = JobPlan { passes: plan.passes[pi..].to_vec(), stats: Stats::default(), warnings: plan.warnings.clone(), parts: plan.parts.clone(), rasters: Vec::new() };
                 let p = &mut out.passes[0];
                 p.polylines.drain(..li);
                 if !p.powers.is_empty() {
@@ -419,7 +732,7 @@ pub fn simulate(packets: &[Packet], target: &Target) -> Preview {
         }
     }
     stats.estimated_time_s = list_time_us(&decode(packets), target) / 1e6;
-    Preview { segments, passes: Vec::new(), stats, layers: Vec::new(), warnings: Vec::new() }
+    Preview { segments, passes: Vec::new(), stats, layers: Vec::new(), warnings: Vec::new(), rasters: Vec::new() }
 }
 
 /// Estimated run time of a decoded list in µs, with the same model as the plan's estimate: motion at the speeds the
