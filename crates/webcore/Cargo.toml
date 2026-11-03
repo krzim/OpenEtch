@@ -12,6 +12,10 @@ publish.workspace = true
 # cdylib for wasm-bindgen; rlib so the engine's parity tests and `cargo test -p webcore` run it natively.
 crate-type = ["cdylib", "rlib"]
 
+[features]
+# The design-only build's font and command entry points (src/design.rs): the whole command core and text.
+design = ["dep:commands", "dep:text"]
+
 [dependencies]
 doc = { workspace = true }
 plan = { workspace = true }
@@ -23,6 +27,8 @@ serde_json = { workspace = true }
 # Exactly the version in Cargo.lock: the wasm-bindgen CLI that generates the JS glue must match it
 # (web/scripts/wasm.mjs checks).
 wasm-bindgen = "=0.2.130"
+commands = { workspace = true, optional = true }
+text = { workspace = true, optional = true }
 
 [dev-dependencies]
 # Fill Region parity: the engine's own `path.fill_region_preview` command.

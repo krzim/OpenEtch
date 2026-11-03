@@ -13,6 +13,8 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(feature = "design")]
+pub mod design;
 pub mod fill;
 pub mod preview;
 

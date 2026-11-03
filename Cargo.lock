@@ -3288,6 +3288,7 @@ dependencies = [
  "plan",
  "serde",
  "serde_json",
+ "text",
  "wasm-bindgen",
 ]
 
