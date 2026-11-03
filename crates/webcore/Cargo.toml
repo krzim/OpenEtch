@@ -13,35 +13,43 @@ publish.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [features]
-# Project and art thumbnails as PNG inside the core (resvg). Off: the worker shell rasterises the SVG.
-png = ["appcore/png"]
+# The design-only build's backend (module `backend`, the wasm exports `init`, `handle` and `Backend`): the engine's
+# document API in the browser. Off by default, so the full app's preview worker keeps its small wasm.
+design = ["dep:appcore", "dep:commands", "dep:machine", "dep:fileio", "dep:base64", "dep:js-sys"]
+# Project thumbnails as PNG inside the core (resvg). Off: the worker shell rasterises the SVG.
+png = ["design", "appcore/png"]
+
+[[test]]
+name = "parity"
+required-features = ["design"]
 
 [dependencies]
-# The engine's document glue: the same JSON as the engine (tests/parity.rs).
-appcore = { path = "../appcore" }
-commands = { workspace = true }
 doc = { workspace = true }
 plan = { workspace = true }
 lbrn = { workspace = true }
-# Design devices (default features: no USB, no serial).
-machine = { workspace = true }
-# Legacy LightBurn templates (.lbt) for the shell's template check.
-fileio = { path = "../fileio" }
 geom = { path = "../geom" }
 kurbo = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-base64 = { workspace = true }
 # Exactly the version in Cargo.lock: the wasm-bindgen CLI that generates the JS glue must match it
 # (web/scripts/wasm.mjs checks).
 wasm-bindgen = "=0.2.130"
+# The design backend (feature `design`): the engine's document glue (the same JSON as the engine, tests/parity.rs),
+# the commands, design devices (default features: no USB, no serial), legacy LightBurn templates (.lbt).
+appcore = { path = "../appcore", optional = true }
+commands = { workspace = true, optional = true }
+machine = { workspace = true, optional = true }
+fileio = { path = "../fileio", optional = true }
+base64 = { workspace = true, optional = true }
 # The backend's reply as a plain JS object (no serde-wasm-bindgen; MIT OR Apache-2.0, already in Cargo.lock).
-js-sys = "=0.3.107"
+js-sys = { version = "=0.3.107", optional = true }
 
 [dev-dependencies]
 # Fill Region parity: the engine's own `path.fill_region_preview` command.
+commands = { workspace = true }
 # The parity test (tests/parity.rs) sends the same requests to the engine's router.
 engine = { path = "../engine" }
+appcore = { path = "../appcore" }
 machine = { workspace = true }
 tokio = { workspace = true }
 tower = { version = "0.5", features = ["util"] }

@@ -33,6 +33,7 @@ fn one() -> f64 {
     1.0
 }
 
+#[cfg(feature = "design")]
 impl From<appcore::preview::PreviewContext> for Context {
     fn from(c: appcore::preview::PreviewContext) -> Self {
         Context { target: Some(c.target), correction: c.correction, run_index: c.run_index, design_only: c.design_only }

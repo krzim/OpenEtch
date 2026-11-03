@@ -13,6 +13,7 @@
 //! shell route (`/core/...`, module `shell`) and saves the text `GET /api/document/download?format=openetch` gives.
 
 mod docs;
+mod libraries;
 mod reply;
 mod shell;
 mod stores;
@@ -96,6 +97,7 @@ pub struct Backend {
     fonts: appcore::fonts::FontPrefs,
     test_presets: Vec<TestPreset>,
     image_presets: Vec<ImagePreset>,
+    libraries: appcore::library::MemLibraries,
     preview: Option<CachedPreview>,
     events: Vec<Event>,
     writes: Vec<StoreWrite>,
@@ -118,6 +120,7 @@ impl Backend {
         let mut fonts = appcore::fonts::FontPrefs::default();
         let mut test_presets = Vec::new();
         let mut image_presets = Vec::new();
+        let mut libraries = appcore::library::MemLibraries::default();
         // The device records first (the index names them), then the rest.
         let mut records = init.stores;
         records.sort_by_key(|r| (r.store != appcore::stores::names::DEVICES, r.key == "index"));
@@ -134,12 +137,14 @@ impl Backend {
                 (appcore::stores::names::PRESETS, "image-adjust") => {
                     serde_json::from_str(&r.value).map(|p| image_presets = p).map_err(|e| e.to_string())
                 }
+                (appcore::library::STORE, key) => libraries.restore(key, &r.value),
                 _ => Err("not a store this build keeps".into()),
             };
             if let Err(e) = result {
                 notes.push(note(e));
             }
         }
+        notes.extend(libraries.restored());
         let active = devices.active().clone();
         let session = Session::new(appcore::layout::new_document_for(&active, profile_field(&active)));
         let project = ProjectState::clean_at(session.document().revision);
@@ -156,6 +161,7 @@ impl Backend {
             fonts,
             test_presets,
             image_presets,
+            libraries,
             preview: None,
             events: Vec::new(),
             writes: Vec::new(),
@@ -223,6 +229,9 @@ impl Backend {
             return Ok(a);
         }
         if let Some(a) = stores::route(self, method, segs, &q, &body)? {
+            return Ok(a);
+        }
+        if let Some(a) = libraries::route(self, method, segs, &q, &body)? {
             return Ok(a);
         }
         if let Some(a) = machine_stub(self, method, segs) {

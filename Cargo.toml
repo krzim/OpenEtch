@@ -66,3 +66,9 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = "debuginfo"
+
+# The design-only build's wasm (crates/webcore with feature `design`, the whole document API in the browser): sized
+# for the download (it is the app), not for planning speed.
+[profile.wasm-design]
+inherits = "wasm-release"
+opt-level = "z"

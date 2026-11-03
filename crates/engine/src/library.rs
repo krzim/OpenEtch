@@ -12,7 +12,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use doc::{CutSettings, Layer};
+use doc::CutSettings;
 use lbrn::{LibEntry, Library};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -22,40 +22,13 @@ use crate::finish::{self, Finish};
 use crate::prefs::write_atomic;
 
 pub const LIBRARIES_DIR: &str = "libraries";
+// The library types, entries, presets and the browse tree (shared with the browser core).
+pub use appcore::library::{
+    EntryId, EntryMeta, LoadedLibrary, MAX_LIBRARY_BYTES, MAX_LOADED, Preset, entry_from_layer, entry_id, parse_entry_id, pauses_of,
+    preset_of, tree,
+};
+use appcore::library::{no_entry, parse, refuse_new_material};
 const INDEX_FILE: &str = "index.json";
-/// Largest `.clb` accepted (the owner's is 34 KB; LightBurn's shared libraries a few hundred KB).
-pub const MAX_LIBRARY_BYTES: usize = 8 * 1024 * 1024;
-/// Most libraries loaded at once.
-pub const MAX_LOADED: usize = 32;
-
-/// One loaded library.
-#[derive(Debug, Clone)]
-pub struct LoadedLibrary {
-    pub name: String,
-    pub lib: Library,
-    /// Changed since it was loaded or saved.
-    pub dirty: bool,
-    /// The finish of each entry by LinkPath (`crate::finish`; written to the sidecar on save).
-    pub finish: BTreeMap<String, Finish>,
-}
-
-impl LoadedLibrary {
-    fn new(name: &str, lib: Library, dirty: bool) -> LoadedLibrary {
-        LoadedLibrary { name: name.to_string(), lib, dirty, finish: BTreeMap::new() }
-    }
-
-    /// Keep only the finishes of paths the library has (a sidecar left from an older library of the same name).
-    fn keep_known_finishes(&mut self) {
-        let paths = self.paths();
-        self.finish.retain(|k, _| paths.contains(k));
-    }
-
-    /// Every entry's LinkPath.
-    pub fn paths(&self) -> std::collections::BTreeSet<String> {
-        self.lib.materials.iter().flat_map(|m| m.entries.iter().map(move |e| e.link_path(m.name()))).collect()
-    }
-}
-
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct Index {
     #[serde(default)]
@@ -64,141 +37,6 @@ struct Index {
     loaded: Vec<String>,
     #[serde(default)]
     selected: Option<String>,
-}
-
-/// A preset as `layer.apply_preset` takes it.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct Preset {
-    pub settings: CutSettings,
-    pub sub_layers: Vec<CutSettings>,
-    pub global_passes: u32,
-    pub extras: BTreeMap<String, String>,
-}
-
-/// Where an entry sits: `(material index, entry index)`, written `m<i>.e<j>` in the API.
-pub type EntryId = (usize, usize);
-
-pub fn entry_id(id: EntryId) -> String {
-    format!("m{}.e{}", id.0, id.1)
-}
-
-pub fn parse_entry_id(s: &str) -> Result<EntryId, EngineError> {
-    let bad = || EngineError::BadRequest(format!("'{s}' is not a library entry id (m<material>.e<entry>)"));
-    let (m, e) = s.split_once('.').ok_or_else(bad)?;
-    let m = m.strip_prefix('m').and_then(|v| v.parse().ok()).ok_or_else(bad)?;
-    let e = e.strip_prefix('e').and_then(|v| v.parse().ok()).ok_or_else(bad)?;
-    Ok((m, e))
-}
-
-/// The preset of an entry: its settings as an OpenEtch layer's.
-pub fn preset_of(entry: &LibEntry) -> Result<Preset, EngineError> {
-    let (layer, _warnings) = entry.to_layer("layer-preset").map_err(|e| EngineError::BadRequest(e.to_string()))?;
-    let extras = layer
-        .extras
-        .into_iter()
-        .filter(|(k, _)| k.starts_with(lbrn::EXTRA_PREFIX) && k != "lbrn2.index" && k != "lbrn2.LinkPath")
-        .collect();
-    Ok(Preset { settings: layer.settings, sub_layers: layer.sub_layers, global_passes: layer.global_passes, extras })
-}
-
-/// A layer's pauses for the operator: its own, and its sub-layers' by index.
-pub fn pauses_of(settings: &CutSettings, sub_layers: &[CutSettings]) -> (bool, Vec<usize>) {
-    let subs = sub_layers.iter().enumerate().filter(|(_, s)| s.options.operator_pause).map(|(i, _)| i).collect();
-    (settings.options.operator_pause, subs)
-}
-
-impl Preset {
-    /// The preset with the pauses kept in its entry's OpenEtch data (`finish`; a `.clb` has no place for them).
-    pub fn with_pauses(mut self, finish: Option<&Finish>) -> Preset {
-        self.settings.options.operator_pause = finish.is_some_and(|f| f.operator_pause);
-        for (i, s) in self.sub_layers.iter_mut().enumerate() {
-            s.options.operator_pause = finish.is_some_and(|f| f.sub_layer_pauses.contains(&i));
-        }
-        self
-    }
-}
-
-/// An entry made from a layer's settings (LightBurn's Create new from layer / Update).
-pub fn entry_from_layer(layer: &Layer, thickness: Option<f64>, title: &str, description: &str) -> Result<LibEntry, EngineError> {
-    let (cs, _warnings) = lbrn::cut_setting_from_layer(layer).map_err(|e| EngineError::BadRequest(e.to_string()))?;
-    Ok(LibEntry::new(thickness, title, description, cs))
-}
-
-/// Metadata of an entry as the API takes it.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct EntryMeta {
-    pub material: String,
-    /// Thickness in mm; `null` or absent: No Thickness (then `title` names the folder).
-    #[serde(default)]
-    pub thickness_mm: Option<f64>,
-    #[serde(default)]
-    pub title: String,
-    pub description: String,
-}
-
-impl EntryMeta {
-    pub fn check(&self) -> Result<(), EngineError> {
-        let text = |field: &str, v: &str, required: bool| {
-            if (required && v.trim().is_empty()) || v.chars().count() > 200 || v.contains('/') || v.chars().any(char::is_control) {
-                Err(EngineError::BadRequest(format!(
-                    "{field} must be {}at most 200 characters without '/' or control characters",
-                    if required { "1 to " } else { "" }
-                )))
-            } else {
-                Ok(())
-            }
-        };
-        text("material", &self.material, true)?;
-        text("description", &self.description, true)?;
-        text("title", &self.title, self.thickness_mm.is_none())?;
-        if let Some(t) = self.thickness_mm
-            && !(t.is_finite() && t > 0.0 && t <= 1000.0)
-        {
-            return Err(EngineError::BadRequest(format!("thickness_mm must be within 0..=1000 mm (got {t})")));
-        }
-        Ok(())
-    }
-}
-
-fn entry_json(id: EntryId, material: &str, e: &LibEntry, finish: Option<&Finish>) -> Value {
-    let summary = preset_of(e).ok().map(|p| {
-        let s = &p.settings;
-        json!({
-            "mode": s.mode, "power_pct": s.power_pct, "speed_mm_s": s.speed_mm_s, "frequency_khz": s.frequency_khz,
-            "pulse_width_ns": s.pulse_width_ns, "passes": s.passes, "interval_mm": s.hatch.interval_mm,
-            "sub_layers": p.sub_layers.len(),
-        })
-    });
-    json!({
-        "id": entry_id(id), "material": material, "thickness_mm": e.thickness(), "title": e.title(),
-        "group": e.group_title(), "description": e.description(), "path": e.link_path(material), "summary": summary,
-        "finish": finish.filter(|f| !f.is_empty()).map(Finish::summary),
-    })
-}
-
-/// The browse tree of `lib`: materials, then the thickness/title groups, then the entries (each with its finish
-/// summary from `finish`, by LinkPath).
-pub fn tree(lib: &Library, finish: &BTreeMap<String, Finish>) -> Value {
-    let materials: Vec<Value> = lib
-        .materials
-        .iter()
-        .enumerate()
-        .map(|(mi, m)| {
-            let mut groups: Vec<(String, Vec<Value>)> = Vec::new();
-            for (ei, e) in m.entries.iter().enumerate() {
-                let g = e.group_title();
-                let v = entry_json((mi, ei), m.name(), e, finish.get(&e.link_path(m.name())));
-                match groups.iter_mut().find(|(k, _)| *k == g) {
-                    Some((_, list)) => list.push(v),
-                    None => groups.push((g, vec![v])),
-                }
-            }
-            let groups: Vec<Value> = groups.into_iter().map(|(g, entries)| json!({ "title": g, "entries": entries })).collect();
-            json!({ "name": m.name(), "index": mi, "groups": groups })
-        })
-        .collect();
-    json!({ "materials": materials, "entries": lib.entry_count() })
 }
 
 /// The libraries the engine has loaded. See the module docs.
@@ -254,7 +92,7 @@ impl LibraryStore {
         crate::projects::validate_name(name)?;
         let path = self.file(name).ok_or_else(|| not_loaded(name))?;
         let bytes = std::fs::read(&path).map_err(|e| EngineError::NotFound(format!("{}: {e}", path.display())))?;
-        parse(&bytes)
+        Ok(parse(&bytes)?)
     }
 
     fn read_finish(&self, name: &str) -> Result<BTreeMap<String, Finish>, EngineError> {
@@ -661,29 +499,10 @@ impl LibraryStore {
     }
 }
 
-/// A library at [`lbrn::library::MAX_MATERIALS`] takes no new material (it could not be read back once saved).
-fn refuse_new_material(lib: &Library, material: &str) -> Result<(), EngineError> {
-    if lib.materials.len() >= lbrn::library::MAX_MATERIALS && !lib.materials.iter().any(|m| m.name() == material) {
-        return Err(EngineError::Conflict(format!("the library has {} materials, the most it may hold", lib.materials.len())));
-    }
-    Ok(())
-}
-
-fn no_entry(id: EntryId) -> EngineError {
-    EngineError::NotFound(format!("no library entry {}", entry_id(id)))
-}
-
-fn parse(bytes: &[u8]) -> Result<Library, EngineError> {
-    if bytes.len() > MAX_LIBRARY_BYTES {
-        return Err(EngineError::TooLarge(format!("a library may be at most {} MB", MAX_LIBRARY_BYTES / (1024 * 1024))));
-    }
-    let text = std::str::from_utf8(bytes).map_err(|_| EngineError::BadRequest("the library is not UTF-8 text".into()))?;
-    lbrn::parse_clb(text).map_err(|e| EngineError::BadRequest(e.to_string()))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use doc::Layer;
 
     const CLB: &str = "\u{feff}<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<LightBurnLibrary>\r\n  <Material name=\"Steel\">\r\n    <Entry Thickness=\"-1.0000\" Desc=\"Engrave\" NoThickTitle=\"Finish\">\r\n      <CutSetting type=\"Scan\">\r\n        <index Value=\"0\" />\r\n        <name Value=\"\" />\r\n        <LinkPath Value=\"Steel/Finish/Engrave\" />\r\n        <minPower Value=\"7\" />\r\n        <maxPower Value=\"38\" />\r\n        <speed Value=\"1000\" />\r\n        <frequency Value=\"25000\" />\r\n        <interval Value=\"0.025\" />\r\n        <priority Value=\"0\" />\r\n      </CutSetting>\r\n    </Entry>\r\n  </Material>\r\n</LightBurnLibrary>\r\n";
 

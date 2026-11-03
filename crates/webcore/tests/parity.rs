@@ -21,6 +21,8 @@ const B6: &str = include_str!("../../../fixtures/b6-mopa-60w.toml");
 const SHAPES: &str = include_str!("../../lbrn/tests/fixtures/shapes.lbrn2");
 const SETTINGS: &str = include_str!("../../lbrn/tests/fixtures/settings.lbrn2");
 const GANTRY: &str = include_str!("../../machine/tests/fixtures/gantry.lbdev");
+/// A hand-written LightBurn material library (as the engine's library tests use).
+const CLB: &str = "\u{feff}<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<LightBurnLibrary>\r\n  <Material name=\"Steel\">\r\n    <Entry Thickness=\"-1.0000\" Desc=\"Engrave\" NoThickTitle=\"Finish\">\r\n      <CutSetting type=\"Scan\">\r\n        <index Value=\"0\" />\r\n        <name Value=\"\" />\r\n        <LinkPath Value=\"Steel/Finish/Engrave\" />\r\n        <minPower Value=\"7\" />\r\n        <maxPower Value=\"38\" />\r\n        <speed Value=\"1000\" />\r\n        <frequency Value=\"25000\" />\r\n        <interval Value=\"0.025\" />\r\n        <priority Value=\"0\" />\r\n      </CutSetting>\r\n    </Entry>\r\n  </Material>\r\n</LightBurnLibrary>\r\n";
 
 const SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="40mm" height="20mm" viewBox="0 0 40 20"><rect x="2" y="2" width="30" height="12" fill="none" stroke="#000"/><circle cx="34" cy="10" r="4"/></svg>"##;
 const DXF: &str = "0\nSECTION\n2\nENTITIES\n0\nLINE\n8\n0\n10\n0.0\n20\n0.0\n30\n0.0\n11\n25.0\n21\n10.0\n31\n0.0\n0\nCIRCLE\n8\n0\n10\n10.0\n20\n10.0\n30\n0.0\n40\n5.0\n0\nENDSEC\n0\nEOF\n";
@@ -295,6 +297,28 @@ fn script() -> Vec<Step> {
         step("GET", "/api/image-adjust/presets/export", "format=lbimg", Vec::new(), Check::Bytes),
         post("/api/image-adjust/presets/import", json!({"presets": [{"name": "Photo", "adjust": {"brightness": 20}}]})),
         get("/api/image-adjust/presets"),
+        // Material libraries: a LightBurn .clb loaded, entries made, edited, applied (linked), saved, renamed, merged.
+        step("POST", "/api/library/load", "name=steel", CLB, Check::Json),
+        get("/api/library"),
+        get("/api/library/steel"),
+        post("/api/library/steel/entries", json!({"layer": "layer-1", "material": "Brass", "title": "Mark", "description": "Fast"})),
+        post("/api/library/steel/entries/m0.e0/apply", json!({"layer": "layer-1", "link": true})),
+        put("/api/library/steel/entries/m0.e0", json!({"settings": {"power_pct": 42.0, "speed_mm_s": 900.0}})),
+        put("/api/library/steel/entries/m0.e0", json!({"meta": {"material": "Steel", "title": "Finish", "description": "Engrave deep"}})),
+        post("/api/library/steel/entries/m0.e0/duplicate", json!({})),
+        get("/api/document"),
+        post("/api/library/save", json!({"name": "steel", "as": "steel copy"})),
+        step("GET", "/api/library/steel/download", "", Vec::new(), Check::Bytes),
+        post("/api/library/select", json!({"name": "steel"})),
+        post("/api/library/rename", json!({"name": "steel copy", "new_name": "brass"})),
+        post("/api/library/merge", json!({"name": "steel", "from": "brass"})),
+        step("DELETE", "/api/library/steel/entries/m0.e1", "", Vec::new(), Check::Json),
+        post("/api/library/unload", json!({"name": "steel"})),
+        post("/api/library/unload", json!({"name": "steel", "discard": true})),
+        post("/api/library/new", json!({"name": "steel"})),
+        post("/api/library/new", json!({"name": "fresh"})),
+        get("/api/library"),
+        get("/api/prefs"),
         // Devices: a LightBurn gantry imported, made active (design-only: no toolpath), removed.
         step("POST", "/api/devices/import", "", GANTRY, Check::Json).capture("gantry", "/added/0"),
         get("/api/devices"),

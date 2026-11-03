@@ -569,6 +569,13 @@ fn device_activate(b: &mut Backend, id: &str, bytes: &[u8]) -> Routed {
     let w = b.devices.set_active(id)?;
     b.writes.extend(w);
     b.generation += 1;
+    // The device's material library, when it is loaded (the engine's `libs::select_device_library`).
+    if let Some(name) = b.device_prefs().library
+        && b.libraries.find(&name).is_some()
+        && let Ok((_, w)) = b.libraries.select(&name)
+    {
+        b.writes.extend(w);
+    }
     b.emit(appcore::Event::DeviceChanged { id: id.to_owned() });
     Ok(Answer::json(&json!({ "ok": true, "active": b.devices.active().summary(), "warnings": [] })))
 }
