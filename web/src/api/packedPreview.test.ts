@@ -129,6 +129,8 @@ test("rasters come with the worker's preview and reveal by scan line", () => {
   assert.deepEqual([mid.rows, mid.partial?.from, mid.partial?.to], [1, 3, 1.5], "half of row 1, backwards");
   assert.deepEqual(rasterReveal(r, 6), { rows: 2, partial: null });
   assert.deepEqual(rasterHead(r, 2), [1, 0.5]);
+  assert.deepEqual(rasterHead(r, 4), [3, 0.5], "row 0 done: at its end");
+  assert.deepEqual(rasterHead(r, 5), [3, 1.5], "the jump up shown: at row 1's start, where the jump ends");
   assert.deepEqual(rasterHead(r, 6), [0, 1.5], "the end of the last row");
   assert.equal(rasterHead(r, 7), null);
   assert.deepEqual(rasterPoint(r, 1, 2), [1, 2]);
@@ -154,7 +156,7 @@ test("buildToolpath skips a raster's segments and reveals it with the slider", (
   assert.ok(tp.batches.every((b) => [...b.coords].every(Number.isFinite)));
   const half = buildToolpath(p, null, { ...all, upTo: 5 });
   assert.deepEqual([half.rasters[0].rows, half.rasters[0].partial], [1, null], "row 0, on the jump to row 1");
-  assert.deepEqual(half.head, [3, 0.5], "the head is where the raster stopped");
+  assert.deepEqual(half.head, [3, 1.5], "the head is where the jump up ends");
   assert.equal(buildToolpath(p, null, { ...all, upTo: 1 }).rasters.length, 0, "not reached yet");
   assert.equal(buildToolpath(p, null, { ...all, hidden: new Set(["L1"]) }).rasters.length, 0, "hidden with its layer");
 });

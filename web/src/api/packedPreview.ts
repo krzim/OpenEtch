@@ -270,6 +270,9 @@ export function rasterHead(r: PreviewRaster, n: number): Vec2 | null {
   if (n <= r.first || n > r.end) return null;
   const v = rasterReveal(r, n);
   if (v.partial) return rasterPoint(r, v.partial.to, v.rows + 0.5);
+  // On the jump into the next row (shown, the row's first run not yet): the head is at that row's start, where the
+  // jump ends, as it is at a jump's end anywhere else.
+  if (v.rows > 0 && v.rows < r.rows && n > r.rowSegments[2 * v.rows - 1]) return rasterPoint(r, r.rowSpan[2 * v.rows], v.rows + 0.5);
   const row = Math.max(0, v.rows - 1);
   return rasterPoint(r, r.rowSpan[2 * row + 1], row + 0.5);
 }

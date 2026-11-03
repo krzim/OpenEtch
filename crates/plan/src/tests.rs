@@ -732,3 +732,61 @@ fn image_mask_doc(img: Object) -> Document {
     d.object_options.insert("obj-1".into(), doc::ObjectOptions { power_scale_pct: 50.0, ..Default::default() });
     d
 }
+
+#[test]
+fn rasters_hold_every_run_of_flipped_skewed_masked_sub_layered_and_overscanned_images() {
+    // Mirrored, flipped, turned and skewed images, two to a layer (one under a round mask), with a sub-layer of other
+    // image settings and two global passes, on a galvo and on a gantry with overscan: every run drawn by a raster.
+    let gs = GcodeSettings { work_area_mm: [400.0, 300.0], mirror_x: false, mirror_y: false, s_max: 1000.0, max_power_pct: 100.0, max_feed_mm_min: 6000.0, dynamic_power: true };
+    let ramp = |id: &str, t: Affine| image_object(id, 12.0, 8.0, png(48, 32, |x, y| ((x * 5 + y * 3) % 256) as u8), t);
+    let transforms = [
+        Affine::IDENTITY,
+        Affine::scale_non_uniform(-1.0, 1.0),
+        Affine::scale_non_uniform(1.0, -1.0),
+        Affine::rotate(2.0) * Affine::scale_non_uniform(-1.0, 1.0),
+        Affine::skew(0.3, 0.0),
+        Affine::translate((40.0, -30.0)) * Affine::rotate(-0.7) * Affine::scale_non_uniform(1.5, 0.6),
+    ];
+    for (ti, t) in transforms.iter().enumerate() {
+        for m in doc::DitherMode::ALL {
+            for (angle, bidir, dw, neg) in [(0.0, false, 0.0, false), (37.0, true, 0.15, true), (90.0, true, 0.0, false)] {
+                let mut s = CutSettings::default();
+                s.image.dither = m;
+                s.image.interval_mm = 0.2;
+                s.image.angle_deg = angle;
+                s.image.bidirectional = bidir;
+                s.image.dot_width_mm = dw;
+                s.image.negative = neg;
+                s.image.min_power_pct = 10.0;
+                let mut sub = s.clone();
+                sub.image.dither = doc::DitherMode::Threshold;
+                sub.image.angle_deg = angle + 45.0;
+                sub.power_pct = 30.0;
+                let mut d = doc_with(vec![ramp("obj-7", *t), ramp("obj-8", *t * Affine::translate((3.0, 2.0)))], s);
+                d.layers[0].sub_layers.push(sub);
+                d.layers[0].global_passes = 2;
+                d.objects.push(Object::new("obj-2".into(), "obj-2", "layer-9".into(), Geometry::Ellipse { rx_mm: 3.3, ry_mm: 2.1 }, *t));
+                d.layers.push(doc::Layer { output: false, ..doc::Layer::new("layer-9".into(), "Tool", "#000000") });
+                d.image_masks.insert("obj-7".into(), "obj-2".into());
+                for gantry in [false, true] {
+                    let mut d = d.clone();
+                    if gantry {
+                        d.layers[0].settings.options.overscan_mm = 2.0;
+                    }
+                    let tg = if gantry { gs.target() } else { target() };
+                    let what = format!("t{ti} {m:?} angle {angle} bidir {bidir} dw {dw} gantry {gantry}");
+                    let plan = plan_job(&d, &tg).unwrap_or_else(|e| panic!("{what}: {e}"));
+                    let preview = preview_plan(&plan);
+                    assert_rasters_match(&plan, &preview, &what);
+                    // One raster per image and pass that marks anything: 4 passes (main and sub-layer, twice).
+                    assert_eq!(preview.rasters.len(), plan.rasters.len(), "{what}");
+                    assert!(plan.rasters.len() >= 4, "{what}");
+                    if m == doc::DitherMode::Threshold {
+                        let dots = |k: usize| preview.rasters[k].levels.iter().filter(|l| **l != 0).count();
+                        assert!(dots(0) < dots(1) / 2, "{what}: the mask cuts the first image down");
+                    }
+                }
+            }
+        }
+    }
+}
