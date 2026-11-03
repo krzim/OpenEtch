@@ -116,6 +116,27 @@ test("FakeSocket opens on the backend's events and hands them on as JSON text", 
   assert.equal(got.length, 2);
 });
 
+test("FakeSocket hands over to the backend's own event socket when it has one", async () => {
+  const inner = { onopen: null, onmessage: null, onclose: null, onerror: null, closed: false, close() { this.closed = true; } } as unknown as { onopen: ((e: Event) => void) | null; onmessage: ((e: MessageEvent) => void) | null; onclose: ((e: CloseEvent) => void) | null; onerror: null; closed: boolean; close(): void };
+  setDesignBackend({ request: async () => new Response("{}"), subscribe: () => () => {}, openEvents: () => inner });
+  const s = new FakeSocket();
+  const got: string[] = [];
+  let closed = 0;
+  s.onmessage = (m) => void got.push(String(m.data));
+  s.onclose = () => void closed++;
+  await tick();
+  inner.onopen?.(new Event("open"));
+  inner.onmessage?.(new MessageEvent("message", { data: '{"type":"project_saved"}' }));
+  assert.deepEqual(got, ['{"type":"project_saved"}']);
+  // The backend restarted: its socket closed, so the app's does (useEngine reconnects).
+  inner.onclose?.(new Event("close") as CloseEvent);
+  assert.equal(closed, 1);
+  const t = new FakeSocket();
+  await tick();
+  t.close();
+  assert.ok(inner.closed);
+});
+
 test("transport is fetch in the normal build", async () => {
   const seen: [string, RequestInit | undefined][] = [];
   const real = globalThis.fetch;

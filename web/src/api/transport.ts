@@ -21,6 +21,11 @@ export interface DesignBackend {
    * the parsed object or its JSON text. Returns the unsubscribe function.
    */
   subscribe(listener: (event: unknown) => void): () => void;
+  /**
+   * Optional: the backend's own /api/events stream (a socket that closes when the backend restarts, so useEngine
+   * reconnects and refetches everything). When given it is used instead of a FakeSocket over `subscribe`.
+   */
+  openEvents?(): SocketLike;
 }
 
 let backend: DesignBackend | null = null;
@@ -63,21 +68,36 @@ export interface SocketLike {
  */
 export function openEventStream(url: () => string): SocketLike {
   if (!DESIGN_ONLY) return new WebSocket(url());
-  return new FakeSocket();
+  return backend?.openEvents ? backend.openEvents() : new FakeSocket();
 }
 
-/** A WebSocket look-alike over `DesignBackend.subscribe`. */
+/** A WebSocket look-alike over `DesignBackend.subscribe` (or, made before the backend was installed, a stand-in for
+ *  the backend's own `openEvents` socket). */
 export class FakeSocket implements SocketLike {
   onopen: ((ev: Event) => void) | null = null;
   onmessage: ((ev: MessageEvent) => void) | null = null;
   onclose: ((ev: CloseEvent) => void) | null = null;
   onerror: ((ev: Event) => void) | null = null;
   private unsubscribe: (() => void) | null = null;
+  private inner: SocketLike | null = null;
   private closed = false;
 
   constructor() {
     void waitForBackend().then((b) => {
       if (this.closed) return;
+      if (b.openEvents) {
+        const inner = b.openEvents();
+        this.inner = inner;
+        inner.onopen = (e) => this.onopen?.(e);
+        inner.onmessage = (e) => !this.closed && this.onmessage?.(e);
+        inner.onerror = (e) => this.onerror?.(e);
+        inner.onclose = (e) => {
+          if (this.closed) return;
+          this.closed = true;
+          this.onclose?.(e);
+        };
+        return;
+      }
       this.unsubscribe = b.subscribe((event) => {
         if (this.closed) return;
         const data = typeof event === "string" ? event : JSON.stringify(event);
@@ -92,6 +112,11 @@ export class FakeSocket implements SocketLike {
     this.closed = true;
     this.unsubscribe?.();
     this.unsubscribe = null;
+    if (this.inner) {
+      this.inner.onclose = null;
+      this.inner.close();
+      this.inner = null;
+    }
     // CloseEvent is missing outside browsers (the Node test runner): a plain Event then.
     const ev = typeof CloseEvent === "function" ? new CloseEvent("close", { wasClean: true, code: 1000 }) : (new Event("close") as CloseEvent);
     this.onclose?.(ev);
