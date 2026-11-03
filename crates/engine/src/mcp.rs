@@ -150,6 +150,19 @@ pub fn service(state: Arc<AppState>) -> StreamableHttpService<GalvoMcp, LocalSes
 #[serde(deny_unknown_fields)]
 struct NoArgs {}
 
+/// `job_request_run` arguments: all optional (the whole job by default).
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct RequestRunArgs {
+    /// Cut Selected Graphics: only these object or group ids.
+    #[serde(default)]
+    selection: Option<Vec<String>>,
+    /// Re-mark a region: only the part of the planned toolpath inside this polygon (field mm, at least 3 points);
+    /// job.remark_check lists what it touches first.
+    #[serde(default)]
+    region: Option<Vec<[f64; 2]>>,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ExecuteArgs {
@@ -331,11 +344,13 @@ impl GalvoMcp {
                 false,
             ),
             tool::<NoArgs>("frame_stop", "Stop framing", "Stop the red-pointer frame.", false),
-            tool::<NoArgs>(
+            tool::<RequestRunArgs>(
                 "job_request_run",
                 "Request a run",
                 "Plan and encode the current document and create a PENDING run. This does not fire the laser: a \
-                 person must review and approve it in the OpenEtch UI. Returns the run id, a summary and stats.",
+                 person must review and approve it in the OpenEtch UI. Optional selection (only those objects) and \
+                 region (re-mark only the toolpath inside that polygon). A job marking inside a keep-out zone (a \
+                 jig's or the device's) is refused. Returns the run id, a summary and stats.",
                 false,
             ),
             tool::<NoArgs>(
@@ -498,8 +513,9 @@ impl GalvoMcp {
                 Ok(ok_json(st.frame_stop().await?))
             }
             "job_request_run" => {
-                args::<NoArgs>(name, a)?;
-                let view = st.request_run(Self::origin()).await?;
+                let r = args::<RequestRunArgs>(name, a)?;
+                let options = crate::runs::RunOptions { selection: r.selection, region: r.region, ..Default::default() };
+                let view = st.request_run_with(Self::origin(), options).await?;
                 Ok(ok_json(json!({
                     "ok": true,
                     "run_id": view.id,

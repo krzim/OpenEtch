@@ -190,6 +190,8 @@ pub(crate) async fn pressed(st: &Arc<AppState>) {
 fn job_frame(last: Option<FrameRequest>) -> FrameRequest {
     FrameRequest {
         ids: None,
+        // The job, never the pockets of the last pocket frame.
+        jig_pockets: None,
         tool_layers_only: false,
         pointer: Pointer::Red,
         live: false,

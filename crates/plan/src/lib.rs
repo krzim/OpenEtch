@@ -27,6 +27,7 @@ mod ramp;
 mod regions;
 mod rotary;
 mod target;
+pub mod zones;
 
 pub use encode::{EncodedPart, encode, encode_parts, jump_delay_us};
 pub use gcode::{GcodeSettings, gcode_file, gcode_lines, gcode_number};
@@ -99,6 +100,12 @@ pub enum PlanError {
     /// A selection that names no object or group of the document.
     #[error("{0}")]
     Selection(String),
+    /// A mark inside a keep-out zone (a jig wall, a clamp; module `zones`).
+    #[error(
+        "the job marks inside keep-out zone \"{zone}\" (layer {layer}, at {:.2}, {:.2} mm); move the design, or the          jig, or switch the zone off",
+        .point[0], .point[1]
+    )]
+    KeepOut { zone: String, layer: LayerId, point: Point },
     #[error(transparent)]
     Lmc(#[from] LmcError),
 }

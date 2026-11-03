@@ -148,6 +148,9 @@ pub struct DevicePrefs {
     /// A GRBL gantry's saved Move positions ([`MovePosition`]), in button order.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub move_positions: Vec<MovePosition>,
+    /// Keep-out zones of the device (a fixture, a clamp, field mm): a run marking inside one is refused (`zones`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub keep_out: Vec<crate::zones::DeviceZone>,
 }
 
 impl DevicePrefs {

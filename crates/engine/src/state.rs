@@ -1311,6 +1311,9 @@ impl AppState {
         let config = self.machine.config();
         let generation = config.generation;
         let run_index = self.job.count(&self.active_device().id);
+        // The active device's keep-out zones go with every run planned on it (module `zones`).
+        let mut options = options;
+        options.device_keep_out = crate::zones::device_zones(self);
         let correction = self.job.times.correction(&self.active_device().id).factor;
         // Batch: the queued projects are read now and planned on their own (module `runs`).
         let queue = match &options.queue {

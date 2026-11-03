@@ -60,6 +60,13 @@ pub struct RunOptions {
     /// for the count. Unverified on hardware.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub table: Option<TableRepeat>,
+    /// Re-mark a region: clip the planned toolpath (not the design) to this polygon, field mm, at least 3 points
+    /// (module `zones`). Combines with selection (Cut Selected Graphics); not with from_segment or queue.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region: Option<Vec<[f64; 2]>>,
+    /// The active device's keep-out zones, filled in by the engine when it plans the run (never from a request).
+    #[serde(skip)]
+    pub device_keep_out: Vec<crate::zones::DeviceZone>,
 }
 
 /// Most projects one queued run may hold.
@@ -116,6 +123,14 @@ impl RunOptions {
             }
             if self.selection.is_some() || self.from_segment.is_some() {
                 return Err(EngineError::BadRequest("a queue runs whole projects: no selection or from_segment".into()));
+            }
+        }
+        if let Some(r) = &self.region {
+            if let Some(p) = crate::zones::polygon_problem(r) {
+                return Err(EngineError::BadRequest(format!("region {p}")));
+            }
+            if self.from_segment.is_some() || self.queue.is_some() {
+                return Err(EngineError::BadRequest("region re-marks part of the open document: not with from_segment or queue".into()));
             }
         }
         if let Some(t) = &self.table {
@@ -521,6 +536,7 @@ pub fn prepare_job_with(
     if let Some(n) = options.from_segment {
         job = plan::start_at(&job, n, target)?;
     }
+    crate::zones::apply(&mut job, doc, options.region.as_deref(), &options.device_keep_out, target)?;
     let encoded = plan::encode_parts(&job, target)?;
     let mut parts = Vec::with_capacity(encoded.len());
     let mut rotary = false;
@@ -573,6 +589,9 @@ pub fn prepare_job_with(
     if options.selection.is_some() {
         summary.push_str(" (selected graphics)");
     }
+    if options.region.is_some() {
+        summary.push_str(" (re-marking a region)");
+    }
     if let Some(n) = options.from_segment {
         summary.push_str(&format!(" (from segment {n})"));
     }
@@ -605,6 +624,7 @@ pub fn prepare_gcode_job(
     if let Some(n) = options.from_segment {
         job = plan::start_at(&job, n, target)?;
     }
+    crate::zones::apply(&mut job, doc, options.region.as_deref(), &options.device_keep_out, target)?;
     let lines = plan::gcode_lines(&job, &crate::hw::gcode_settings(grbl))?;
     let program = GcodeProgram::new(lines);
     machine::grbl::check_program(grbl, &program).map_err(|e| EngineError::BadRequest(e.to_string()))?;
@@ -624,6 +644,9 @@ pub fn prepare_gcode_job(
     }
     if options.selection.is_some() {
         summary.push_str(" (selected graphics)");
+    }
+    if options.region.is_some() {
+        summary.push_str(" (re-marking a region)");
     }
     if let Some(n) = options.from_segment {
         summary.push_str(&format!(" (from segment {n})"));

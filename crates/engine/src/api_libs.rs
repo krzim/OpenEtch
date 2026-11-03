@@ -20,7 +20,7 @@
 //! | POST | `/api/library/{name}/entries/{id}/duplicate` | Duplicate → `{id}` |
 //! | DELETE | `/api/library/{name}/entries/{id}` | Delete (layers linked to it are unlinked) |
 //! | POST | `/api/library/{name}/entries/{id}/apply` | `{layer, link?: bool}`: Assign (default) or Link |
-//! | GET / PUT | `/api/prefs` | the active device's preferences and the global ones; PUT `{require_framing?, play_sound?, checklist?, load_defaults_on_new?, console_macros?, move_positions?, debug_log?, check_for_updates?, user_tools?}` (UI only; `console_macros` `[{name, lines}]` replaces the device's macros, every line checked against the GRBL console policy; `move_positions` `[{name, x_mm, y_mm}]` replaces a GRBL device's saved Move positions, machine mm on its bed; `user_tools` `[{name, category?, kind: url, url} | {name, category?, kind: commands, steps: [{id, params}]}]` replaces the User Tools menu, refused unless every step is a document command of risk query or edit, `crate::user_tools`) |
+//! | GET / PUT | `/api/prefs` | the active device's preferences and the global ones; PUT `{require_framing?, play_sound?, checklist?, load_defaults_on_new?, console_macros?, move_positions?, keep_out?, debug_log?, check_for_updates?, user_tools?}` (UI only; `console_macros` `[{name, lines}]` replaces the device's macros, every line checked against the GRBL console policy; `move_positions` `[{name, x_mm, y_mm}]` replaces a GRBL device's saved Move positions, machine mm on its bed; `keep_out` `[{name, points: [[x, y], ...], enabled?}]` replaces the device's keep-out zones, field mm (runs marking inside one are refused, `crate::zones`); `user_tools` `[{name, category?, kind: url, url} | {name, category?, kind: commands, steps: [{id, params}]}]` replaces the User Tools menu, refused unless every step is a document command of risk query or edit, `crate::user_tools`) |
 //! | POST | `/api/layers/{id}/default` | `{all?}`: Make Default (for the layer's colour) / Make Default for All |
 //! | POST | `/api/layers/{id}/reset` | `{builtin?}`: Reset to Default (`builtin`: OpenEtch's defaults, LightBurn's Shift+Reset) |
 //! | POST / DELETE | `/api/optimization/default` | Set as Defaults / forget them |
@@ -514,6 +514,8 @@ struct PrefsBody {
     #[serde(default)]
     user_tools: Option<Vec<crate::user_tools::UserTool>>,
     #[serde(default)]
+    keep_out: Option<Vec<crate::zones::DeviceZone>>,
+    #[serde(default)]
     origin: Option<Value>,
 }
 
@@ -544,6 +546,11 @@ async fn prefs_edit(State(st): State<Arc<AppState>>, headers: HeaderMap, b: Byte
     {
         return Err(EngineError::BadRequest(p));
     }
+    if let Some(z) = &b.keep_out
+        && let Some(p) = crate::zones::device_zones_problem(z)
+    {
+        return Err(EngineError::BadRequest(p));
+    }
     let device = st.active_device().id;
     {
         let mut p = lock(&st.libs.prefs);
@@ -565,6 +572,9 @@ async fn prefs_edit(State(st): State<Arc<AppState>>, headers: HeaderMap, b: Byte
         }
         if let Some(m) = b.move_positions {
             d.move_positions = m;
+        }
+        if let Some(z) = b.keep_out {
+            d.keep_out = z;
         }
         if let Some(v) = b.debug_log {
             p.prefs.debug_log = v;
