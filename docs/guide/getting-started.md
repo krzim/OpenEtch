@@ -333,4 +333,4 @@ This walks you through one job from start to finish with the Two-tone MOPA coin 
 
 - Take the tour of [The workspace](the-workspace.md).
 - Learn to open, save and import in [Files and projects](files-and-projects.md).
-- Start drawing with [Drawing and editing](drawing-and-editing.md).
+- Start drawing with [Drawing shapes](drawing-shapes.md), after a look at where the tools are in [Drawing and editing](drawing-and-editing.md).

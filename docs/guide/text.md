@@ -1,6 +1,6 @@
 ---
 title: Text
-order: 6
+order: 11
 section: Designing
 needs: design
 summary: Add and edit text, choose fonts and keep favourites, bend text, fit it into a box or circle, put it on a path and convert it to shapes.

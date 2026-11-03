@@ -1,6 +1,6 @@
 ---
 title: Art Library
-order: 11
+order: 16
 section: Designing
 needs: design
 summary: Keep reusable artwork in libraries on the engine, add it to any project, and load or save LightBurn .lbart libraries.

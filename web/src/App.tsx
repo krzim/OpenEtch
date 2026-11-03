@@ -1496,7 +1496,7 @@ export function App() {
         {designUi.dock}
         {docking.window}
         {gantryDocks}
-        <Dock help="drawing-and-editing#with-numbers" id="properties" title={t("win.properties")}>
+        <Dock help="selecting-and-transforming#with-numbers" id="properties" title={t("win.properties")}>
         <PropertiesPanel
           doc={doc}
           selection={selection}

@@ -48,6 +48,8 @@ export const EN_LIBS = {
   "lib.editCutOf": "Edit Cut: {path}",
   "lib.editCutHint": "Only the settings shown change; other options of the preset (wobble, timings, image settings) are reset. To keep them, Assign the preset to a layer, edit it there and use Update.",
   "lib.editCutLinked": "Starts from a layer linked to this preset, so its other options are kept.",
+  "lib.subLayerPause": "Pause before sub-layer {n} (wait for Continue)",
+  "lib.editCutPauseHint": "The run stops there with the laser off and waits for Continue in the app or the foot switch (galvo jobs). OpenEtch keeps the pause beside the .clb, so LightBurn will not pause.",
   "lib.update": "Update",
   "lib.updateTitle": "Replace the preset's settings with the layer's",
   "lib.editDescription": "Edit Description",

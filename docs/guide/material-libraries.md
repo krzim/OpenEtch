@@ -107,6 +107,13 @@ Pick the preset first. The buttons under the tree, and the preset's right-click 
 
 **Edit Cut** opens **Edit Cut:** and the preset's path. It has **Mode**, **Power**, **Speed**, **Frequency**, **Q-Pulse width**, **Passes** and, for fill modes, **Interval**. Click **OK** to save. Linked layers follow.
 
+It also has the preset's pauses for the operator, as on the layer itself (see [Pause at a layer](running-a-job.md#pause-at-a-layer)):
+
+- **Pause before this layer (wait for Continue)**: a layer that takes this preset stops before it and waits for you.
+- **Pause before sub-layer 1 (wait for Continue)**, and so on: one box for each of the preset's sub-layers.
+
+A `.clb` file has no place for these pauses, so OpenEtch keeps them in its own data beside the library and saves them with **Save Library**. A preset saved from a layer that pauses keeps the pause too. LightBurn, and a `.clb` you download, do not pause.
+
 > **Warning:** Edit Cut changes only the settings shown. The preset's other options (wobble, timings, image settings) are reset. To keep them, **Assign** the preset to a layer, change it there, then click **Update**. If a layer in the document is already linked to the preset, Edit Cut starts from that layer and keeps its other options.
 
 ### Update a preset from a layer

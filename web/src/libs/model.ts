@@ -22,6 +22,10 @@ export interface EntrySummary {
   passes: number;
   interval_mm: number;
   sub_layers: number;
+  /** Pauses for the operator before the preset's layer (OpenEtch's data beside the .clb; galvo jobs). */
+  operator_pause: boolean;
+  /** The sub-layers (0-based) that pause for the operator before their pass. */
+  sub_layer_pauses: number[];
 }
 
 export interface LibEntry {
@@ -77,6 +81,8 @@ function parseSummary(v: unknown): EntrySummary | null {
     passes: isNum(s.passes) ? s.passes : 1,
     interval_mm: isNum(s.interval_mm) ? s.interval_mm : 0,
     sub_layers: isNum(s.sub_layers) ? s.sub_layers : 0,
+    operator_pause: s.operator_pause === true,
+    sub_layer_pauses: Array.isArray(s.sub_layer_pauses) ? s.sub_layer_pauses.filter((i): i is number => Number.isInteger(i) && i >= 0) : [],
   };
 }
 
@@ -246,11 +252,42 @@ export interface CutEdit {
   pulse_width_ns: number | null;
   passes: number;
   interval_mm: number;
+  /** Pause for the operator before the layer. */
+  operator_pause: boolean;
+  /** The sub-layers (0-based) that pause for the operator; Edit Cut shows one box per sub-layer. */
+  sub_layer_pauses: number[];
+  /** How many sub-layers the preset has. */
+  sub_layers: number;
 }
 
 /** The fields Edit Cut offers, from an entry's summary. */
 export function cutEditOf(s: EntrySummary): CutEdit {
-  return { mode: s.mode, power_pct: s.power_pct, speed_mm_s: s.speed_mm_s, frequency_khz: s.frequency_khz, pulse_width_ns: s.pulse_width_ns, passes: s.passes, interval_mm: s.interval_mm };
+  return {
+    mode: s.mode,
+    power_pct: s.power_pct,
+    speed_mm_s: s.speed_mm_s,
+    frequency_khz: s.frequency_khz,
+    pulse_width_ns: s.pulse_width_ns,
+    passes: s.passes,
+    interval_mm: s.interval_mm,
+    operator_pause: s.operator_pause,
+    sub_layer_pauses: s.sub_layer_pauses.filter((i) => i < s.sub_layers),
+    sub_layers: s.sub_layers,
+  };
+}
+
+/** `e` with sub-layer `i`'s pause for the operator on or off. */
+export function withSubLayerPause(e: CutEdit, i: number, on: boolean): CutEdit {
+  const rest = e.sub_layer_pauses.filter((k) => k !== i);
+  return { ...e, sub_layer_pauses: (on ? [...rest, i] : rest).sort((a, b) => a - b) };
+}
+
+/**
+ * What Edit Cut sends (PUT /api/library/{name}/entries/{id}): the complete settings (editCutSettings) and the
+ * pauses for the operator, which the engine keeps beside the .clb.
+ */
+export function editCutBody(base: Record<string, unknown> | null, e: CutEdit): { settings: Record<string, unknown>; operator_pause: boolean; sub_layer_pauses: number[] } {
+  return { settings: editCutSettings(base, e), operator_pause: e.operator_pause, sub_layer_pauses: e.sub_layer_pauses.filter((i) => i < e.sub_layers) };
 }
 
 /**

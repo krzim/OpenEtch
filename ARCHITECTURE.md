@@ -1113,7 +1113,9 @@ continue, start, approve or switch anything. Stop is never gated.
   jobs leave the pause out and say so in the run summary; a pause before the job's first pass is ignored. Tested on
   the simulator only. A material-library preset saved from a paused layer keeps the pause in the library's OpenEtch
   sidecar (`finish::Finish.operator_pause` / `sub_layer_pauses`, a `.clb` has no place for it) and gives it back when
-  applied; the `.clb` download counts it in `X-OpenEtch-Warnings` and the app says LightBurn will not pause.
+  applied; the `.clb` download counts it in `X-OpenEtch-Warnings` and the app says LightBurn will not pause. The
+  library tree's entry summary reports the pauses, and Edit Cut shows and changes them (`PUT .../entries/{id}`
+  `operator_pause` / `sub_layer_pauses`, left out: unchanged; given alone they change only the sidecar).
 - **Serial slots and the ledger.** A slot is one variable-text offset (serial-number or CSV texts and barcodes) and
   its pocket, the highest group around it whose variable texts all share that offset (`var.slots`). `var.set_serial`
   takes `empty_slots` (offsets whose pockets are empty: their objects are left out of the run and the slots after them

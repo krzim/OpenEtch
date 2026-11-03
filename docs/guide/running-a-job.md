@@ -248,6 +248,7 @@ Things to know:
 - A pause before the job's first layer is ignored, because Start already waits for you.
 - It works for galvo jobs only. Rotary jobs and gantry lasers plan the layer without the pause; the run summary says so.
 - The setting is hidden in Beginner Mode.
+- A material-library preset can carry the pause, so every layer that takes the preset pauses too. Change it with **Edit Cut** (see [Edit Cut](material-libraries.md#edit-cut)).
 - Time spent waiting is not in the time estimate.
 
 > **Note:** Pausing at a layer has been tested on the simulator, not yet on a real B6 laser.

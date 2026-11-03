@@ -16,7 +16,7 @@
 //! | GET | `/api/library/{name}` | the tree: materials → groups (thickness or title) → entries `{id, path, summary, ...}` |
 //! | GET | `/api/library/{name}/download` | the `.clb` |
 //! | POST | `/api/library/{name}/entries` | `{layer, material, thickness_mm?, title?, description}`: Create new from layer → `{id}` |
-//! | PUT | `/api/library/{name}/entries/{id}` | `{from_layer?}` (Update), `{settings?, sub_layers?}` (Edit Cut), `{meta?: {material, thickness_mm?, title?, description}}` (Edit Description); linked layers follow |
+//! | PUT | `/api/library/{name}/entries/{id}` | `{from_layer?}` (Update), `{settings?, sub_layers?, operator_pause?, sub_layer_pauses?}` (Edit Cut; the pauses for the operator are kept beside the `.clb` and stay as they were when left out), `{meta?: {material, thickness_mm?, title?, description}}` (Edit Description); linked layers follow |
 //! | POST | `/api/library/{name}/entries/{id}/duplicate` | Duplicate → `{id}` |
 //! | DELETE | `/api/library/{name}/entries/{id}` | Delete (layers linked to it are unlinked) |
 //! | POST | `/api/library/{name}/entries/{id}/apply` | `{layer, link?: bool}`: Assign (default) or Link |
@@ -394,6 +394,13 @@ struct EditBody {
     /// ... and sub-layers.
     #[serde(default)]
     sub_layers: Option<Vec<doc::CutSettings>>,
+    /// Edit Cut: whether the preset pauses for the operator before its layer (OpenEtch's own data beside the `.clb`;
+    /// left out: as it was).
+    #[serde(default)]
+    operator_pause: Option<bool>,
+    /// Edit Cut: the preset's sub-layers (by index) that pause for the operator; left out: as they were.
+    #[serde(default)]
+    sub_layer_pauses: Option<Vec<usize>>,
     /// Edit Description.
     #[serde(default)]
     meta: Option<EntryMeta>,
@@ -405,6 +412,10 @@ async fn entry_edit(
     b: Bytes,
 ) -> Result<Json<Value>, EngineError> {
     let b: EditBody = body(&b)?;
+    let pauses_given = b.operator_pause.is_some() || b.sub_layer_pauses.is_some();
+    if b.from_layer.is_some() && pauses_given {
+        return Err(EngineError::BadRequest("from_layer takes the layer's own pauses: leave out operator_pause and sub_layer_pauses".into()));
+    }
     let mut id = parse_entry_id(&id)?;
     let old_path = { let s = lock(&st.libs.library); let (m, e) = s.entry(&name, id)?; e.link_path(m) };
     let (current, with_pauses) = {
@@ -417,16 +428,17 @@ async fn entry_edit(
         let layer = doc.layer(layer_id).ok_or_else(|| EngineError::NotFound(format!("no layer with id '{layer_id}'")))?;
         Some(layer.clone())
     } else if b.settings.is_some() || b.sub_layers.is_some() {
-        let p = with_pauses;
+        let p = with_pauses.clone();
         let finish = lock(&st.libs.library).finish_of(&name, &old_path)?;
-        // Edit Cut changes the cut values, never the preset's pauses for the operator (kept beside the entry).
-        let preset = Preset {
+        // The preset's pauses for the operator (kept beside the entry) stay as they were unless Edit Cut gives them.
+        let mut preset = Preset {
             settings: b.settings.unwrap_or(p.settings),
             sub_layers: b.sub_layers.unwrap_or(p.sub_layers),
             global_passes: p.global_passes,
             extras: p.extras,
         }
         .with_pauses(Some(&finish));
+        set_pauses_of(&mut preset, b.operator_pause, b.sub_layer_pauses.as_deref())?;
         // Checked as layer.apply_preset checks a preset, on a scratch document.
         let mut scratch = commands::Session::new(doc::Document::default());
         let layer_id = scratch.document().layers[0].id.clone();
@@ -435,8 +447,14 @@ async fn entry_edit(
     } else {
         None
     };
-    if new_layer.is_none() && b.meta.is_none() {
-        return Err(EngineError::BadRequest("give from_layer, settings / sub_layers, or meta".into()));
+    if new_layer.is_none() && !pauses_given && b.meta.is_none() {
+        return Err(EngineError::BadRequest("give from_layer, settings / sub_layers, operator_pause / sub_layer_pauses, or meta".into()));
+    }
+    // Only the pauses: the entry's cut values stay byte for byte, only OpenEtch's data beside it changes.
+    if new_layer.is_none() && pauses_given {
+        let mut p = with_pauses;
+        set_pauses_of(&mut p, b.operator_pause, b.sub_layer_pauses.as_deref())?;
+        lock(&st.libs.library).set_pauses(&name, &old_path, &p.settings, &p.sub_layers)?;
     }
     if let Some(l) = new_layer {
         let e = library::entry_from_layer(&l, current.thickness(), current.title(), current.description())?;
@@ -450,6 +468,24 @@ async fn entry_edit(
     let new_path = { let s = lock(&st.libs.library); let (m, e) = s.entry(&name, id)?; e.link_path(m) };
     let synced = sync_linked(&st, &name, &old_path, Some(&new_path)).await?;
     Ok(Json(json!({ "ok": true, "id": entry_id(id), "path": new_path, "updated_layers": synced })))
+}
+
+/// Edit Cut's pauses for the operator on `preset`: its own (`operator_pause`) and its sub-layers' by index; `None`
+/// leaves them as they are.
+fn set_pauses_of(preset: &mut Preset, operator_pause: Option<bool>, sub_layer_pauses: Option<&[usize]>) -> Result<(), EngineError> {
+    if let Some(on) = operator_pause {
+        preset.settings.options.operator_pause = on;
+    }
+    if let Some(subs) = sub_layer_pauses {
+        let n = preset.sub_layers.len();
+        if let Some(i) = subs.iter().find(|&&i| i >= n) {
+            return Err(EngineError::BadRequest(format!("sub_layer_pauses: sub-layer {i} does not exist (the preset has {n} sub-layers, from 0)")));
+        }
+        for (i, s) in preset.sub_layers.iter_mut().enumerate() {
+            s.options.operator_pause = subs.contains(&i);
+        }
+    }
+    Ok(())
 }
 
 async fn entry_duplicate(State(st): State<Arc<AppState>>, UrlPath((name, id)): UrlPath<(String, String)>) -> Result<Json<Value>, EngineError> {

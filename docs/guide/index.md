@@ -31,7 +31,12 @@ New to OpenEtch? Follow [Your first job](getting-started.md#your-first-job): one
 
 **Designing**
 
-- [Drawing and editing](drawing-and-editing.md): Draw shapes and lines, select, move, rotate and scale them, edit nodes, snap to objects and guides, combine and arrange shapes, pan and zoom, and undo with the timeline.
+- [Drawing and editing](drawing-and-editing.md): Where the drawing tools are on each screen, pan and zoom, the Edit menu and curve tolerance, undo and redo with the timeline, and the pages for each kind of edit.
+- [Drawing shapes](drawing-shapes.md): Draw rectangles, ellipses, circles, lines, curves, polygons and stars, and change a shape's size and corners in Shape properties.
+- [Selecting and transforming](selecting-and-transforming.md): Select objects with clicks, boxes and keys, then move, rotate, scale, slant and mirror them on the canvas, with the keyboard or by exact numbers.
+- [Snapping and guides](snapping-and-guides.md): Snap to the points and outlines of other objects or to the grid, place guides to line things up, and measure distances and angles.
+- [Nodes and path editing](nodes-and-paths.md): Edit a path's nodes and curves, trim pieces off, combine shapes, offset outlines, round corners, tidy paths, and warp or deform a selection.
+- [Arranging and arrays](arranging-and-arrays.md): Align, distribute, centre, flip and order objects, move them to a page position or dock them together, group and lock them, and make grid and circular arrays or nest parts.
 - [Text](text.md): Add and edit text, choose fonts and keep favourites, bend text, fit it into a box or circle, put it on a path and convert it to shapes.
 - [Variable text and barcodes](variable-text-and-barcodes.md): Serial numbers, dates, CSV fields and cut-setting text, the Variable Text window, barcodes and QR codes, and the Check every row contact sheet.
 - [Images](images.md): Import photos and pictures, adjust them, choose a dither mode, trace them to vectors, mask them, and engrave depth maps with 3D Sliced.

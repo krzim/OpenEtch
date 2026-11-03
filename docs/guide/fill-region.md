@@ -1,6 +1,6 @@
 ---
 title: Fill Region
-order: 9
+order: 14
 section: Designing
 needs: design
 summary: The Fill Region tool, a paint bucket that makes a closed shape of exactly the area you click between lines.

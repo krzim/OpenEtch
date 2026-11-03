@@ -35,6 +35,9 @@ export const ES_MATERIALS = {
   "mat.separateTitle": "Separación de colores",
   "mat.sepColors": "Colores",
   "mat.sepCreate": "Crear capas",
+  "lib.subLayerPause": "Pausa antes de la subcapa {n} (esperar a Continuar)",
+  "lib.editCutPauseHint":
+    "La ejecución se detiene allí con el láser apagado y espera a Continuar en la app o al pedal (trabajos galvo). OpenEtch guarda la pausa junto al .clb, así que LightBurn no hará la pausa.",
   "lib.clbPauseLost":
     "Se descargó el .clb. {n} ajuste(s) hacen una pausa para el operador antes de su capa: un .clb no tiene sitio para eso, así que LightBurn no hará la pausa. La biblioteca propia de OpenEtch conserva la pausa.",
 };

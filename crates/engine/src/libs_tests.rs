@@ -187,6 +187,69 @@ async fn a_presets_pause_for_the_operator_is_kept_beside_the_clb() {
     assert_eq!(res.headers().get("x-openetch-warnings").and_then(|v| v.to_str().ok()), Some("0"));
 }
 
+/// Edit Cut shows a preset's pauses for the operator (its own and its sub-layers', in the tree's summary) and can
+/// change them: with the cut values, or alone (the `.clb` entry then stays as it was). Linked layers follow; a
+/// sub-layer that does not exist, or pauses given with Update's from_layer, are refused.
+#[tokio::test]
+async fn edit_cut_shows_and_changes_a_presets_pauses() {
+    let (st, dir) = state_with(MachineProfile::generic_lmc_fiber(), "libs-pause-edit").await;
+    let app = api::router(st.clone(), None);
+    ok(&app, raw_req("POST", "/api/library/load?name=steel", CLB.as_bytes().to_vec())).await;
+    exec(&app, "layer.sub_add", json!({"layer": "layer-1"})).await;
+    exec(&app, "layer.sub_add", json!({"layer": "layer-1"})).await;
+    exec(&app, "layer.sub_update", json!({"layer": "layer-1", "index": 1, "settings": {"options": {"operator_pause": true}}})).await;
+    let v = ok(&app, req("POST", "/api/library/steel/entries", Some(json!({"layer": "layer-1", "material": "Steel", "title": "Finish", "description": "Two passes"})))).await;
+    let id = v["id"].as_str().unwrap().to_owned();
+    let summary = |tree: &Value| {
+        let t = tree.get("tree").unwrap_or(tree);
+        let groups = t["materials"][0]["groups"].as_array().unwrap_or_else(|| panic!("{tree}")).clone();
+        let mut entries = groups.into_iter().flat_map(|g| g["entries"].as_array().cloned().unwrap_or_default());
+        entries.find(|e| e["id"] == id.as_str()).unwrap_or_else(|| panic!("{tree}"))["summary"].clone()
+    };
+    let s = summary(&ok(&app, req("GET", "/api/library/steel", None)).await);
+    assert_eq!((s["operator_pause"].clone(), s["sub_layer_pauses"].clone(), s["sub_layers"].clone()), (json!(false), json!([1]), json!(2)), "{s}");
+
+    let other = exec(&app, "layer.add", json!({"name": "Other"})).await["id"].as_str().unwrap().to_owned();
+    ok(&app, req("POST", &format!("/api/library/steel/entries/{id}/apply"), Some(json!({"layer": other, "link": true})))).await;
+
+    // With the cut values: the layer pauses, sub-layer 0 pauses instead of 1; the linked layer follows.
+    let mut edited = st.document().layer(&other).unwrap().settings.clone();
+    edited.power_pct = 22.0;
+    let body = json!({"settings": edited, "operator_pause": true, "sub_layer_pauses": [0]});
+    ok(&app, req("PUT", &format!("/api/library/steel/entries/{id}"), Some(body))).await;
+    let l = st.document().layer(&other).unwrap().clone();
+    assert!(l.settings.options.operator_pause && l.settings.power_pct == 22.0);
+    assert_eq!(l.sub_layers.iter().map(|s| s.options.operator_pause).collect::<Vec<_>>(), [true, false]);
+    let s = summary(&ok(&app, req("GET", "/api/library/steel", None)).await);
+    assert_eq!((s["operator_pause"].clone(), s["sub_layer_pauses"].clone()), (json!(true), json!([0])), "{s}");
+
+    // The pauses alone: the .clb is unchanged, the pauses go.
+    let clb_before = st.libs.library.lock().unwrap().text("steel").unwrap().1;
+    ok(&app, req("PUT", &format!("/api/library/steel/entries/{id}"), Some(json!({"operator_pause": false, "sub_layer_pauses": []})))).await;
+    assert_eq!(st.libs.library.lock().unwrap().text("steel").unwrap().1, clb_before);
+    let l = st.document().layer(&other).unwrap().clone();
+    assert!(!l.settings.options.operator_pause && l.sub_layers.iter().all(|s| !s.options.operator_pause));
+    assert!(l.settings.power_pct == 22.0, "the cut values stay");
+
+    // Only one of them: the other stays as it was.
+    ok(&app, req("PUT", &format!("/api/library/steel/entries/{id}"), Some(json!({"sub_layer_pauses": [1]})))).await;
+    ok(&app, req("PUT", &format!("/api/library/steel/entries/{id}"), Some(json!({"operator_pause": true})))).await;
+    let s = summary(&ok(&app, req("GET", "/api/library/steel", None)).await);
+    assert_eq!((s["operator_pause"].clone(), s["sub_layer_pauses"].clone()), (json!(true), json!([1])), "{s}");
+
+    // Refused: a sub-layer the preset does not have, and pauses with from_layer.
+    for bad in [json!({"sub_layer_pauses": [2]}), json!({"from_layer": "layer-1", "operator_pause": true})] {
+        let (code, v) = send(&app, req("PUT", &format!("/api/library/steel/entries/{id}"), Some(bad.clone()))).await;
+        assert_eq!(code, StatusCode::BAD_REQUEST, "{bad}: {v}");
+    }
+
+    // Saved in the sidecar.
+    ok(&app, req("POST", "/api/library/save", Some(json!({"name": "steel"})))).await;
+    let sidecar: Value = serde_json::from_str(&std::fs::read_to_string(dir.join(format!("libraries/steel{}", crate::finish::SIDECAR_SUFFIX))).unwrap()).unwrap();
+    let f = &sidecar["entries"]["Steel/Finish/Two passes"];
+    assert_eq!((f["operator_pause"].clone(), f["sub_layer_pauses"].clone()), (json!(true), json!([1])), "{sidecar}");
+}
+
 #[tokio::test]
 async fn layer_and_optimization_defaults() {
     let (st, _dir) = state_with(MachineProfile::generic_lmc_fiber(), "libs-b").await;
