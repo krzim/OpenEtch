@@ -51,6 +51,10 @@ pub mod diagnostics;
 pub mod joblog;
 pub mod libs;
 pub mod library;
+// MOPA materials: the finish library sidecar, palette, hue steps, bracket test, colour separation.
+pub mod finish;
+mod api_materials;
+mod mcp_materials;
 pub mod prefs;
 // LightBurn .lbprefs / prefs.ini import (typed whitelist of keys).
 pub mod lbprefs;
@@ -77,6 +81,8 @@ mod tests;
 mod job_tests;
 #[cfg(test)]
 mod libs_tests;
+#[cfg(test)]
+mod materials_tests;
 #[cfg(test)]
 mod userfiles_tests;
 #[cfg(test)]

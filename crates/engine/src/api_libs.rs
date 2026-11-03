@@ -108,12 +108,12 @@ pub(crate) fn routes() -> Router<Arc<AppState>> {
         .route("/camera/calibration", axum::routing::delete(camera_forget))
 }
 
-fn body<T: DeserializeOwned>(b: &Bytes) -> Result<T, EngineError> {
+pub(crate) fn body<T: DeserializeOwned>(b: &Bytes) -> Result<T, EngineError> {
     let b: &[u8] = if b.iter().all(u8::is_ascii_whitespace) { b"{}" } else { b };
     serde_json::from_slice(b).map_err(|e| EngineError::BadRequest(format!("bad JSON body: {e}")))
 }
 
-fn ui_only(headers: &HeaderMap, origin: Option<&Value>, what: &str) -> Result<(), EngineError> {
+pub(crate) fn ui_only(headers: &HeaderMap, origin: Option<&Value>, what: &str) -> Result<(), EngineError> {
     if has_mcp_marker(headers) {
         return Err(EngineError::Forbidden(format!("{what} only by a person in the OpenEtch UI")));
     }
@@ -123,7 +123,7 @@ fn ui_only(headers: &HeaderMap, origin: Option<&Value>, what: &str) -> Result<()
     Ok(())
 }
 
-fn origin_of(headers: &HeaderMap, v: Option<&Value>) -> Result<Origin, EngineError> {
+pub(crate) fn origin_of(headers: &HeaderMap, v: Option<&Value>) -> Result<Origin, EngineError> {
     let o = parse_origin(v)?;
     if has_mcp_marker(headers) && o == Origin::Ui {
         return Ok(Origin::Agent("mcp".into()));
@@ -131,7 +131,7 @@ fn origin_of(headers: &HeaderMap, v: Option<&Value>) -> Result<Origin, EngineErr
     Ok(o)
 }
 
-fn attachment(name: &str, content_type: &str, body: Vec<u8>) -> Response {
+pub(crate) fn attachment(name: &str, content_type: &str, body: Vec<u8>) -> Response {
     let ascii: String = name.chars().map(|c| if c.is_ascii_alphanumeric() || " .-_()".contains(c) { c } else { '_' }).collect();
     (
         [
@@ -169,7 +169,7 @@ async fn library_view(State(st): State<Arc<AppState>>) -> Json<Value> {
 async fn library_tree(State(st): State<Arc<AppState>>, UrlPath(name): UrlPath<String>) -> Result<Json<Value>, EngineError> {
     let store = lock(&st.libs.library);
     let l = store.get(&name)?;
-    let mut t = library::tree(&l.lib);
+    let mut t = library::tree(&l.lib, &l.finish);
     t["name"] = json!(l.name);
     t["dirty"] = json!(l.dirty);
     Ok(Json(t))
@@ -263,14 +263,14 @@ async fn library_download(State(st): State<Arc<AppState>>, UrlPath(name): UrlPat
 }
 
 /// The preset at `path` in library `name`.
-fn preset_for(st: &AppState, name: &str, path: &str) -> Result<Preset, EngineError> {
+pub(crate) fn preset_for(st: &AppState, name: &str, path: &str) -> Result<Preset, EngineError> {
     let store = lock(&st.libs.library);
     let l = store.get(name)?;
     let (m, e) = l.lib.find_path(path).ok_or_else(|| EngineError::NotFound(format!("library \"{name}\" has no preset \"{path}\"")))?;
     preset_of(&l.lib.materials[m].entries[e])
 }
 
-fn apply_invocation(layer: &str, preset: &Preset, link: Option<&PresetLink>) -> Invocation {
+pub(crate) fn apply_invocation(layer: &str, preset: &Preset, link: Option<&PresetLink>) -> Invocation {
     Invocation {
         id: "layer.apply_preset".into(),
         params: json!({
@@ -282,7 +282,7 @@ fn apply_invocation(layer: &str, preset: &Preset, link: Option<&PresetLink>) -> 
 
 /// Apply or unlink presets on layers as one undo step (origin `script`): `Some((link, preset))` links the layer
 /// to the preset, `None` unlinks it. Returns the layer ids changed.
-async fn apply_links(st: &Arc<AppState>, plan: Vec<(String, Option<(PresetLink, Preset)>)>) -> Result<Vec<String>, EngineError> {
+pub(crate) async fn apply_links(st: &Arc<AppState>, plan: Vec<(String, Option<(PresetLink, Preset)>)>) -> Result<Vec<String>, EngineError> {
     if plan.is_empty() {
         return Ok(Vec::new());
     }
@@ -300,7 +300,7 @@ async fn apply_links(st: &Arc<AppState>, plan: Vec<(String, Option<(PresetLink, 
 
 /// Layers linked to `(library, path)` brought up to date with the entry now at `new_path` (or unlinked when it is
 /// gone).
-async fn sync_linked(st: &Arc<AppState>, name: &str, old_path: &str, new_path: Option<&str>) -> Result<Vec<String>, EngineError> {
+pub(crate) async fn sync_linked(st: &Arc<AppState>, name: &str, old_path: &str, new_path: Option<&str>) -> Result<Vec<String>, EngineError> {
     let lib_name = lock(&st.libs.library).get(name)?.name.clone();
     let doc = st.document();
     let linked: Vec<String> = doc
@@ -454,16 +454,26 @@ async fn entry_apply(
 ) -> Result<Json<Value>, EngineError> {
     let b: ApplyBody = body(&b)?;
     let origin = origin_of(&headers, b.origin.as_ref())?;
-    let (lib_name, path, preset) = {
+    let (lib_name, path, preset, color) = {
         let s = lock(&st.libs.library);
-        let lib_name = s.get(&name)?.name.clone();
+        let l = s.get(&name)?;
+        let lib_name = l.name.clone();
         let (m, e) = s.entry(&name, parse_entry_id(&id)?)?;
-        (lib_name, e.link_path(m), preset_of(e)?)
+        let path = e.link_path(m);
+        let color = l.finish.get(&path).and_then(|f| f.color.clone());
+        (lib_name, path, preset_of(e)?, color)
     };
     let link = b.link.then_some(PresetLink { library: lib_name, path });
-    let inv = apply_invocation(&b.layer, &preset, link.as_ref());
-    let out = st.blocking(move |st| st.execute(inv, origin)).await?;
-    Ok(Json(json!({ "ok": true, "result": out.result, "revision": out.revision })))
+    let mut invs = vec![apply_invocation(&b.layer, &preset, link.as_ref())];
+    // The layer takes the preset's expected result colour (crate::finish), or loses one it no longer has.
+    let had = st.document().layer(&b.layer).and_then(|l| l.extras.get(commands::finish::RESULT_COLOR_KEY).cloned());
+    if color.is_some() || had.is_some() {
+        invs.push(Invocation { id: "layer.set_result_color".into(), params: json!({ "layer": b.layer, "color": color }) });
+    }
+    let mut outs = st.blocking(move |st| st.batch(invs, origin)).await?;
+    let revision = outs.last().map(|o| o.revision).unwrap_or_default();
+    let out = outs.remove(0);
+    Ok(Json(json!({ "ok": true, "result": out.result, "revision": revision })))
 }
 
 // ---------------------------------------------------------------------------------------------------------------
