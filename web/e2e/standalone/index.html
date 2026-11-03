@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Design-only shell check</title>
+    <style>
+      :root { color-scheme: light dark; --bg: #fff; --fg: #1d1d1f; --ok: #1a7f37; --bad: #c62828; }
+      @media (prefers-color-scheme: dark) { :root { --bg: #161618; --fg: #ececec; --ok: #5bd17a; --bad: #ff6b6b; } }
+      body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, sans-serif; }
+      h1 { font-size: 18px; margin: 0 0 8px; }
+      #status { font-weight: 600; }
+      li.ok::marker { color: var(--ok); }
+      li.bad { color: var(--bad); }
+      code { font-size: 12px; overflow-wrap: anywhere; }
+    </style>
+  </head>
+  <body>
+    <h1>Design-only worker shell</h1>
+    <p>Status: <span id="status">starting</span> · storage: <span id="storage">?</span></p>
+    <ol id="log"></ol>
+    <script type="module" src="./harness.js"></script>
+  </body>
+</html>
