@@ -22,6 +22,7 @@ import { noPinMode, stopToast } from "../api/runs.ts";
 import { runHotkeyAction } from "../components/commands.ts";
 import { JobCounter, useJobStatus } from "../components/JobControls.tsx";
 import { PendingApprovals } from "../components/LaserPanel.tsx";
+import { useToastStrip } from "../components/useToastHost.ts";
 import { Icon } from "../components/ui.tsx";
 import { StartButton } from "../laser/StartButton.tsx";
 import { onlineOf } from "../laser/laserContext.ts";
@@ -94,6 +95,7 @@ export function Cockpit(p: CockpitProps) {
   const [busy, setBusy] = useState(false);
   const report = p.report;
   useCockpitLock(report);
+  const toastStrip = useToastStrip<HTMLDivElement>();
 
   const act = useCallback(
     (fn: () => Promise<unknown>, done?: string) => {
@@ -215,6 +217,9 @@ export function Cockpit(p: CockpitProps) {
           {s && <LedgerCard s={s} act={act} />}
         </main>
       )}
+      {/* The toasts' own strip at the foot (App portals them in): the grid gives it room, so a toast never lies over
+          Reset count, a slot or Start. */}
+      <div className="cockpit-toasts" ref={toastStrip} />
       {p.children}
     </div>
   );
