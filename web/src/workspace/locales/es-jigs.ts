@@ -130,6 +130,6 @@ export const ES_JIGS: Messages = {
   "pf.check.keep_out": "Zonas prohibidas",
   "pf.check.contact_sheet": "Filas de serie / CSV",
   "pf.stopAtEnd": "{names} tendría un valor después del final ({end}): Parar al final los deja fuera de esta ejecución.",
-  "pf.rowCheck": "“{name}” en {value}: {message}. Archivo › Láser › Revisar todas las filas las muestra todas.",
-  "pf.rowPartial": "Solo se comprobaron las primeras {n} formas de serie / CSV: Archivo › Láser › Revisar todas las filas las revisa todas.",
+  "pf.rowCheck": "\"{name}\" en {value}: {message}.",
+  "pf.rowPartial": "Solo se comprobaron las primeras {n} formas de serie / CSV; Revisar todas las filas las revisa todas.",
 };

@@ -9,6 +9,7 @@ import { execute } from "../api/client.ts";
 import { onEngineEvent } from "../api/events.ts";
 import { Icon } from "../components/ui.tsx";
 import { libsApi } from "../libs/api.ts";
+import { OPEN_CONTACT_SHEET } from "../templates/useTemplateUi.tsx";
 import { useLaserLive } from "../laser/useLaserLive.ts";
 import { useT, useTD } from "../workspace/usePrefs.ts";
 import { J, parsePreflight, preflightKey, splitFindings, type DeviceZone, type PreflightResult, type PreflightWarning } from "./jigModel.ts";
@@ -171,9 +172,17 @@ export function PreflightNotes({ variant }: { variant: "toolbar" | "dock" | "she
           <li key={`w${i}`} className="pf-item">
             <Icon name="warning" size={14} />
             <span className="pf-text">{text(w)}</span>
-            <button type="button" className="link-btn pf-mute" onClick={() => mute(w.check)} title={td(`pf.check.${w.check}`, w.check)}>
-              {t("pf.mute")}
-            </button>
+            <span className="pf-actions">
+              {/* The contact sheet's findings open it, rather than naming the menu path. */}
+              {w.check === "contact_sheet" && (
+                <button type="button" className="link-btn pf-mute" onClick={() => window.dispatchEvent(new CustomEvent(OPEN_CONTACT_SHEET))} title={t("sheet.openTitle")}>
+                  {t("sheet.menu")}
+                </button>
+              )}
+              <button type="button" className="link-btn pf-mute" onClick={() => mute(w.check)} title={td(`pf.check.${w.check}`, w.check)}>
+                {t("pf.mute")}
+              </button>
+            </span>
           </li>
         ))}
       </ul>

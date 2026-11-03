@@ -86,6 +86,12 @@ export function pocketCenter(j: Jig, p: Pocket): Vec2 {
   return apply(jigTransform(j), p.center);
 }
 
+/** A pocket's outline bounds in the field (rotation included). */
+export function pocketBox(j: Jig, p: Pocket): Box {
+  const { cmds, transform } = pocketCmds(j, p);
+  return ringBox(flattenCmds(cmds, transform).flatMap((l) => l.pts));
+}
+
 /** Pockets in number order. */
 export function sortedPockets(j: Jig): Pocket[] {
   return [...j.pockets].sort((a, b) => a.number - b.number);

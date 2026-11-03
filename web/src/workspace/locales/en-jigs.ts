@@ -135,6 +135,6 @@ export const EN_JIGS = {
   "pf.check.keep_out": "Keep-out zones",
   "pf.check.contact_sheet": "Serial / CSV rows",
   "pf.stopAtEnd": "{names} would get a value past End ({end}): Stop at End leaves them out of this run.",
-  "pf.rowCheck": "“{name}” at {value}: {message}. File › Laser › Check every row shows every row.",
-  "pf.rowPartial": "Only the first {n} serial / CSV shapes were checked: File › Laser › Check every row checks them all.",
+  "pf.rowCheck": "\"{name}\" at {value}: {message}.",
+  "pf.rowPartial": "Only the first {n} serial / CSV shapes were checked; Check every row checks them all.",
 };

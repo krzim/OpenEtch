@@ -32,6 +32,7 @@ import {
   jigsOf,
   objectsInPocket,
   pocketAt,
+  pocketBox,
   pocketCenter,
   pocketCmds,
   pocketOn,
@@ -490,6 +491,18 @@ function JigLayer(p: { jigs: readonly Jig[]; zones: readonly { name: string; poi
   );
 }
 
+/** The screen point 12 px under the middle of a pocket's top edge (the label's centre; it is 20 px tall). */
+function topInside(j: Jig, pk: Jig["pockets"][number], r: RenderCtx): [number, number] {
+  const b = pocketBox(j, pk);
+  const cx = (b.x0 + b.x1) / 2;
+  const a = r.toScreen([cx, b.y0]);
+  const c = r.toScreen([cx, b.y1]);
+  const top = a[1] < c[1] ? a : c;
+  const bottom = a[1] < c[1] ? c : a;
+  // A pocket smaller than the label on screen: its middle.
+  return bottom[1] - top[1] < 32 ? [(top[0] + bottom[0]) / 2, (top[1] + bottom[1]) / 2] : [top[0], top[1] + 12];
+}
+
 /** Pocket numbers in screen space; in the pocket mode they are buttons (44 px on touch). */
 function PocketLabels(p: {
   jigs: readonly Jig[];
@@ -504,10 +517,12 @@ function PocketLabels(p: {
     <div className="jig-labels" style={{ width: w, height: h }}>
       {p.jigs.flatMap((j) =>
         j.pockets.map((pk) => {
-          const [x, y] = p.r.toScreen(pocketCenter(j, pk));
+          const active = p.mode?.jig === j.id;
+          // Choosing pockets: a button in the middle. Otherwise the number sits just inside the pocket's top edge, so
+          // it does not cover the design in the middle of the pocket.
+          const [x, y] = active ? p.r.toScreen(pocketCenter(j, pk)) : topInside(j, pk, p.r);
           if (x < -20 || y < -20 || x > w + 20 || y > h + 20) return null;
           const on = pocketOn(pk);
-          const active = p.mode?.jig === j.id;
           const label = on ? t("jig.pocket", { n: pk.number }) : t("jig.pocketOff", { n: pk.number });
           return active ? (
             <button

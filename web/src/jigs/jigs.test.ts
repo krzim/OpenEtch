@@ -12,6 +12,7 @@ import {
   objectsInPocket,
   parsePreflight,
   pocketAt,
+  pocketBox,
   pocketCenter,
   preflightKey,
   rectRegion,
@@ -52,6 +53,12 @@ test("pockets follow the jig's datum and rotation", () => {
   // The clamp at (0..1, 0..1) in the jig frame sits at x 9..10, y 0..1 after the turn.
   const xs = rings[0].ring.map((p) => p[0]);
   assert.ok(Math.min(...xs) > 8.99 && Math.max(...xs) < 10.01, String(xs));
+  // The pocket's bounds (where the canvas puts its number, at the top edge): turned with the jig too.
+  const b = pocketBox(jig, jig.pockets[1]);
+  const near = (a: number, e: number) => Math.abs(a - e) < 1e-6;
+  assert.ok(near(b.x0, 9) && near(b.x1, 11) && near(b.y0, 13) && near(b.y1, 17), JSON.stringify(b));
+  const cb = pocketBox(jig, jig.pockets[0]);
+  assert.ok(Math.abs(cb.y1 - 7) < 0.05 && Math.abs(cb.x0 - 8) < 0.05, JSON.stringify(cb));
 });
 
 test("objects in a pocket: the originals in the source pocket, tagged copies elsewhere", () => {
