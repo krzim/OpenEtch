@@ -537,12 +537,11 @@ impl Command for Fill {
     const ID: &'static str = "template.fill";
     const TITLE: &'static str = "Fill in template";
     const DESCRIPTION: &'static str = "Fill in the document's template fields (template.fields lists them) in one \
-        undoable step: `values: {field id: value}`; text: the text (required fields refuse an empty one, max_chars \
-        and multiline apply); date: \"yyyy-MM-dd\" or \"today\", written in the field's format; font: a choice's \
-        label (or a family name / {family, kind} when the field has no choices); preset: a finish's label (the target \
-        layers get its cut settings); serial: the first serial number (the range keeps its length). Design only: it \
-        never starts or approves a run. Returns the values set, render `warnings` (missing glyphs) and `overflow`: \
-        texts that now run outside their shape, the stock or the workspace (check before asking for a run).";
+        undoable step: `values: {field id: value}`. text: the text (required, max_chars and multiline apply); date: \
+        \"yyyy-MM-dd\" or \"today\"; font: a choice's label (or a family / {family, kind} without choices); preset: a \
+        finish's label (its cut settings go to the target layers); serial: the first serial number. Design only: it \
+        never starts or approves a run. Returns the values, render `warnings` and `overflow` (texts that now run \
+        outside their shape, the stock or the workspace).";
     const RISK: Risk = Risk::Edit;
 
     fn apply(doc: &mut Document, i: FillInput) -> Result<(Value, String)> {

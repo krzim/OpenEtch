@@ -117,6 +117,12 @@ workspace (a bed of workspace_mm with an origin corner) is used for designing an
 and job_request_run are refused. Making another device active changes the machine, so only a person can do it, in \
 the OpenEtch UI (Devices); you cannot activate, import or remove devices.
 
+Templates and examples: example.list lists ready-made projects and doc.new {example} opens one; template.fields lists \
+a template's fill-in fields (name, date, font, finish, first serial number) and template.fill fills them in one \
+undoable edit, reporting texts that no longer fit (design only, like every command). Before job_request_run on a \
+serial-number or CSV job, run var.contact_sheet: it renders every row and flags overflow, missing glyphs and empty \
+fields.
+
 Use list_commands for every command's input schema; execute runs one command, batch runs several as one undo step \
 (all-or-nothing). Edits you make are tagged as agent edits in the history and can be undone.
 

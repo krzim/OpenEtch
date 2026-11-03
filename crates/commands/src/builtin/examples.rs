@@ -161,7 +161,7 @@ struct Fill {
 const GOLD: Fill = Fill { power: 28.0, speed: 500.0, khz: 250.0, ns: 200.0, interval: 0.01, cross: false };
 const BLUE: Fill = Fill { power: 22.0, speed: 300.0, khz: 450.0, ns: 200.0, interval: 0.01, cross: false };
 const PURPLE: Fill = Fill { power: 24.0, speed: 350.0, khz: 400.0, ns: 200.0, interval: 0.01, cross: false };
-const BLACK: Fill = Fill { power: 35.0, speed: 250.0, khz: 600.0, ns: 200.0, interval: 0.005, cross: true };
+const BLACK: Fill = Fill { power: 35.0, speed: 250.0, khz: 600.0, ns: 200.0, interval: 0.01, cross: true };
 const FROST: Fill = Fill { power: 80.0, speed: 2500.0, khz: 40.0, ns: 200.0, interval: 0.03, cross: false };
 const MARK: Fill = Fill { power: 55.0, speed: 900.0, khz: 60.0, ns: 200.0, interval: 0.03, cross: true };
 
@@ -247,6 +247,10 @@ fn two_tone_coin(doc: &mut Document) -> Result<()> {
     let gold = finish(doc, &ring, GOLD)?;
     let blue = finish(doc, &ring, BLUE)?;
     let black = finish(doc, &ring, BLACK)?;
+    // The ring starts as exactly the Gold finish, so the form shows Gold chosen.
+    if let Some(l) = doc.layer_mut(&ring) {
+        l.settings = gold.clone();
+    }
     step::<template::SetField>(doc, json!({ "field": { "id": "name", "label": "Name", "kind": "text", "targets": [title], "max_chars": 16,
         "hint": "Fits itself into the centre of the coin." } }))?;
     step::<template::SetField>(doc, json!({ "field": { "id": "date", "label": "Date", "kind": "date", "targets": [date], "format": "dd.MM.yyyy", "value": "2026-11-03" } }))?;
@@ -271,8 +275,8 @@ fn serial_tags(doc: &mut Document) -> Result<()> {
     let x0 = -(w + gap) / 2.0;
     let y0 = -(h + gap);
     let pocket = created(&step::<shape::ShapeRect>(doc, json!({ "width_mm": w, "height_mm": h, "corner_radius_mm": 3, "center": [x0, y0], "layer": pocket_layer, "name": "Pocket" }))?)?;
-    let serial = created(&step::<text::ShapeText>(doc, json!({ "text": "SN 0dddd", "font": hershey("Hershey Sans"), "height_mm": 4,
-        "center": [x0 + 4.0, y0], "layer": text_layer, "name": "Serial", "variable": { "mode": "serial" } }))?)?;
+    let serial = created(&step::<text::ShapeText>(doc, json!({ "text": "SN 0dddd", "font": hershey("Hershey Sans"), "height_mm": 3.6,
+        "center": [x0 + 5.0, y0], "layer": text_layer, "name": "Serial", "variable": { "mode": "serial" } }))?)?;
     let qr = created(&step::<text::ShapeBarcode>(doc, json!({ "kind": "qr", "data": "SN 0dddd", "module_mm": 0.35, "variable": { "mode": "serial" },
         "center": [x0 - 9.0, y0], "layer": code_layer, "name": "QR code" }))?)?;
     step::<text::SetSerial>(doc, json!({ "start": 1, "end": 60, "current": 1, "advance_by": 6, "auto_advance": true }))?;
@@ -388,6 +392,10 @@ fn palette_coin(doc: &mut Document) -> Result<()> {
         let (x, y) = (11.0 * f64::cos(f64::to_radians(mid)), 11.0 * f64::sin(f64::to_radians(mid)));
         step::<text::ShapeText>(doc, json!({ "text": label, "font": hershey("Hershey Sans"), "height_mm": 2.6, "center": [x, y], "layer": labels, "name": label }))?;
     }
+    let gold = finish(doc, &colour, GOLD)?;
+    if let Some(l) = doc.layer_mut(&colour) {
+        l.settings = gold;
+    }
     let mut list = Vec::new();
     for (label, f, swatch) in [("Gold", GOLD, "#c08a00"), ("Blue", BLUE, "#2a5db0"), ("Purple", PURPLE, "#6a3d9a")] {
         list.push(json!({ "label": label, "settings": finish(doc, &colour, f)?, "swatch": swatch }));
@@ -481,6 +489,9 @@ mod tests {
         let spec = template::spec(&coin);
         assert_eq!(spec.fields.iter().map(|f| f.id.as_str()).collect::<Vec<_>>(), ["name", "date", "font", "ring"]);
         assert!(spec.lock_others);
+        let mut q = coin.clone();
+        let (f, _) = template::Fields::apply(&mut q, template::Empty {}).unwrap();
+        assert_eq!(f["fields"][3]["current"], "Gold", "the ring starts as the Gold finish");
         assert!(coin.stock.is_some());
         let ring = coin.objects.iter().find(|o| o.name == "Colour ring").expect("fill region made the ring");
         let rb = ring.bounds();

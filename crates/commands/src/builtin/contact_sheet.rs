@@ -322,15 +322,12 @@ impl Command for ContactSheet {
     type Input = ContactSheetInput;
     const ID: &'static str = "var.contact_sheet";
     const TITLE: &'static str = "Check every row (contact sheet)";
-    const DESCRIPTION: &'static str = "Render every serial number or CSV row the way a run would burn it and check \
-        each serial-number / CSV text and barcode: `overflow` (leaves its container: the smallest closed shape \
-        holding the text's origin, else the stock, else the workspace; auto-fit texts only the workspace), \
-        `missing_glyph`, `empty` (shows nothing, uses an empty CSV cell, or the row is past the CSV's end), `shrunk` \
-        (max width or auto-fit drew it under half its height) and `error` (cannot be drawn). Rows run from `from` \
-        (default the start value) to the end value in steps of advance_by, `count` at a time (default 60, at most \
-        500); `next` is the first value of the following page. `outlines: true` adds SVG paths (mm, y down) of each \
-        row's shapes and of the rest of the design (`base`, by layer colour) for a grid preview. Changes nothing. \
-        Use it as a check before a batch: `summary.problems` counts each kind.";
+    const DESCRIPTION: &'static str = "Render every serial number or CSV row as a run would burn it and check \
+        the serial / CSV texts and barcodes: `overflow` (leaves the smallest closed shape holding its origin, else the \
+        stock or the workspace), `missing_glyph`, `empty` (blank, an empty CSV cell, a row past the CSV), `shrunk` \
+        (under half its height) and `error`. Rows run from `from` (default the start) to the end value by \
+        advance_by, `count` at a time (60, at most 500); `next` starts the next page. `outlines: true` adds SVG paths \
+        (mm, y down) for a grid preview. `summary.problems` counts each kind. Changes nothing: run it before a batch.";
     const RISK: Risk = Risk::Query;
 
     fn apply(doc: &mut Document, i: ContactSheetInput) -> Result<(Value, String)> {
@@ -410,7 +407,8 @@ impl Command for ContactSheet {
         });
         if i.outlines {
             let mut base = Vec::new();
-            for layer in doc.layers.iter().filter(|l| l.visible && l.tool.is_none()) {
+            // Tool layers too: a jig's pocket outlines (T1) are what the texts must stay inside.
+            for layer in doc.layers.iter().filter(|l| l.visible) {
                 let mut p = BezPath::new();
                 for o in doc.objects.iter().filter(|o| o.layer == layer.id && !skip.contains(&o.id)) {
                     let fp = match &o.geometry {
@@ -423,7 +421,8 @@ impl Command for ContactSheet {
                     p.extend(fp.iter());
                 }
                 if !p.elements().is_empty() {
-                    base.push(json!({ "layer": layer.id, "color": layer.color, "fill": layer.settings.mode != doc::FillMode::Line, "d": svg_d(&p, 2) }));
+                    let tool = layer.tool.is_some();
+                    base.push(json!({ "layer": layer.id, "color": layer.color, "fill": !tool && layer.settings.mode != doc::FillMode::Line, "tool": tool, "d": svg_d(&p, 2) }));
                 }
             }
             if let Some(s) = &doc.stock {
