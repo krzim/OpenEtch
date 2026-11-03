@@ -10,13 +10,28 @@ export const DESIGN_FORBIDDEN = ["/api/machine/jog", "/api/runs", "/mcp", "lbzip
 /** Pages that need no laser but describe what the design build leaves out. */
 export const DESIGN_HIDDEN_PAGES: readonly string[] = ["ai-agents"];
 
+const FRONT = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
+
+/** Whether OpenEtch Design leaves page `slug` out (`needs: machine`, or DESIGN_HIDDEN_PAGES). */
+export function hiddenInDesign(slug: string, src: string): boolean {
+  const m = FRONT.exec(src);
+  return DESIGN_HIDDEN_PAGES.includes(slug) || (!!m && /^needs:\s*machine\s*$/m.test(m[1]));
+}
+
+/** The slugs of the pages OpenEtch Design leaves out, from [slug, markdown] pairs. */
+export function designHiddenPages(pages: readonly (readonly [string, string])[]): string[] {
+  return pages
+    .filter(([slug, src]) => hiddenInDesign(slug, src))
+    .map(([slug]) => slug)
+    .sort();
+}
+
 /** The page `slug`'s markdown as the design build bundles it. */
 export function designGuideSource(slug: string, src: string): string {
-  const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(src);
+  const m = FRONT.exec(src);
   const front = m ? m[1] : "";
   const body = m ? src.slice(m[0].length) : src;
-  const machine = /^needs:\s*machine\s*$/m.test(front) || DESIGN_HIDDEN_PAGES.includes(slug);
-  if (machine) {
+  if (hiddenInDesign(slug, src)) {
     const meta = front
       .split(/\r?\n/)
       .filter((l) => !/^needs:/.test(l))

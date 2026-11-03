@@ -92,7 +92,9 @@ export class FakeSocket implements SocketLike {
     this.closed = true;
     this.unsubscribe?.();
     this.unsubscribe = null;
-    this.onclose?.(new CloseEvent("close", { wasClean: true, code: 1000 }));
+    // CloseEvent is missing outside browsers (the Node test runner): a plain Event then.
+    const ev = typeof CloseEvent === "function" ? new CloseEvent("close", { wasClean: true, code: 1000 }) : (new Event("close") as CloseEvent);
+    this.onclose?.(ev);
   }
 }
 

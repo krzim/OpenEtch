@@ -6,6 +6,7 @@
 
 import { useT } from "../workspace/usePrefs.ts";
 import { openGuide } from "./route.ts";
+import { hiddenInBuild } from "./flags.ts";
 import "./guide-shell.css";
 
 export interface HelpLinkProps {
@@ -19,6 +20,8 @@ export interface HelpLinkProps {
 export function HelpLink(p: HelpLinkProps) {
   const t = useT();
   const label = t("guide.helpFor", { topic: p.topic });
+  // OpenEtch Design leaves some pages out (flags.ts): no "?" that would open nothing.
+  if (hiddenInBuild(p.to)) return null;
   return (
     <button
       type="button"

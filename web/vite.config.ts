@@ -9,10 +9,10 @@
 // UI drops out of the bundle), the base is relative (VITE_BASE overrides it, e.g. /OpenEtch/), there are no source
 // maps (they would publish the source) and no .br/.gz copies (Pages compresses by itself). `--mode design-engine`
 // (dist-design-engine, base /) is the same UI talking to a simulator engine that serves it, for the device harness.
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig, type Plugin, type UserConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import pkg from "./package.json";
-import { designGuideSource } from "./src/guide/designFilter.ts";
+import { designGuideSource, designHiddenPages } from "./src/guide/designFilter.ts";
 
 // `process` read through globalThis: the web tsconfig has no Node types (no @types/node dependency).
 const env = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env ?? {};
@@ -64,8 +64,20 @@ function precompress(): Plugin {
 
 /** The parts of Node's fs the design steps use. */
 interface Fs {
-  readFileSync(path: string, enc: "utf8"): string;
+  readFileSync(path: string | URL, enc: "utf8"): string;
   writeFileSync(path: string, data: string): void;
+  readdirSync(path: URL): string[];
+}
+
+/** OpenEtch Design's hidden guide pages (src/guide/flags.ts), read from docs/guide's front matter. */
+async function hiddenGuidePages(): Promise<string[]> {
+  const fs = (await import(/* @vite-ignore */ ["node", "fs"].join(":"))) as Fs;
+  const dir = new URL("../docs/guide/", import.meta.url);
+  const pages = fs
+    .readdirSync(dir)
+    .filter((f) => f.endsWith(".md") && f !== "README.md")
+    .map((f) => [f.slice(0, -3), fs.readFileSync(new URL(f, dir), "utf8")] as [string, string]);
+  return designHiddenPages(pages);
 }
 
 /**
@@ -123,8 +135,9 @@ function designMode(mode: string): { design: boolean; backend: string; outDir: s
   return { design, backend, outDir: !design ? "dist" : backend === "engine" ? "dist-design-engine" : "dist-design" };
 }
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(async ({ mode }): Promise<UserConfig> => {
   const dm = designMode(mode);
+  const hiddenGuide = dm.design ? await hiddenGuidePages() : [];
   return {
   plugins: dm.design ? [react(), designGuide(), designManifest(dm.outDir)] : [react(), precompress()],
   base: env.VITE_BASE ?? (dm.design && dm.backend !== "engine" ? "./" : "/"),
@@ -140,6 +153,7 @@ export default defineConfig(({ mode }) => {
     __OPENETCH_DESIGN_BACKEND__: JSON.stringify(dm.backend),
     __OPENETCH_REPO_URL__: JSON.stringify(env.VITE_REPO_URL ?? ""),
     __OPENETCH_FULL_APP_URL__: JSON.stringify(env.VITE_FULL_APP_URL ?? ""),
+    __OPENETCH_GUIDE_HIDDEN__: JSON.stringify(hiddenGuide),
   },
   server: {
     host: true,
