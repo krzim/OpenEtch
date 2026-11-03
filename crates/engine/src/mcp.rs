@@ -36,7 +36,7 @@ pub(crate) const GANTRY_FRAME: &str =
 pub const MCP_AGENT: &str = "mcp";
 
 /// Every tool, in listing order.
-pub const TOOL_NAMES: [&str; 22] = [
+pub const TOOL_NAMES: [&str; 27] = [
     "list_commands",
     "execute",
     "batch",
@@ -59,6 +59,12 @@ pub const TOOL_NAMES: [&str; 22] = [
     "documents_list",
     "document_activate",
     "devices_list",
+    // Production (module `production::mcp`): read-only, plus a pending re-mark request.
+    "production_status",
+    "production_events",
+    "serial_ledger",
+    "hour_meter",
+    "serial_remark_request",
 ];
 
 /// Server instructions shown to the model.
@@ -130,7 +136,17 @@ doc.load, project_open and a replacing doc.import_lbrn2 start a fresh timeline (
 Several documents can be open at once (like LightBurn's New Window): documents_list shows them and which one is \
 active; every other tool works on the active document. document_activate {id} switches the active document (each \
 has its own timeline and project); the person sees the switch in the UI, so only switch when the task needs \
-another open document, and say so.";
+another open document, and say so.
+
+Production (the foot switch cycle at the machine): production_status shows what the operator's cockpit shows (the \
+job, the serial slots and the values the next run marks, a run waiting at a layer pause, maintenance due); \
+production_events is a read-only event feed (call it again with after = last_seq and wait_s to follow it); \
+serial_ledger says which value went on which slot in which run; hour_meter shows marking hours and reminders. You may \
+prepare production with document commands: layer.update settings.options.operator_pause (the run waits before that \
+layer for the person to press Continue or the foot switch), var.set_serial stop_at_end / empty_slots, and var.slots. \
+serial_remark_request creates a PENDING re-mark of one slot. You can never continue a paused run, start, approve or \
+switch anything: a person does that at the machine. While the production cockpit is open the design is locked and \
+edits are refused (409): wait, or ask the person.";
 
 /// The MCP server handler. Cheap to clone; one per MCP session.
 #[derive(Clone)]
@@ -222,7 +238,7 @@ struct ExportArgs {
     overwrite: bool,
 }
 
-fn schema<T: JsonSchema>() -> Arc<JsonObject> {
+pub(crate) fn schema<T: JsonSchema>() -> Arc<JsonObject> {
     let mut v = serde_json::to_value(schemars::schema_for!(T)).unwrap_or_else(|_| json!({"type": "object"}));
     if let Some(obj) = v.as_object_mut() {
         obj.remove("$schema");
@@ -241,7 +257,7 @@ fn tool<T: JsonSchema>(name: &'static str, title: &str, description: &'static st
         .with_annotations(ToolAnnotations::with_title(title).read_only(read_only))
 }
 
-fn ok_json(v: Value) -> CallToolResult {
+pub(crate) fn ok_json(v: Value) -> CallToolResult {
     let text = serde_json::to_string_pretty(&v).unwrap_or_else(|_| v.to_string());
     CallToolResult::success(vec![ContentBlock::text(text)])
 }
@@ -268,7 +284,7 @@ impl GalvoMcp {
 
     /// Every tool definition, in [`TOOL_NAMES`] order.
     pub fn tools() -> Vec<Tool> {
-        vec![
+        let mut tools = vec![
             tool::<NoArgs>(
                 "list_commands",
                 "List document commands",
@@ -431,7 +447,9 @@ impl GalvoMcp {
                  are design-only workspaces. Read-only: only a person can change the active device, in the UI.",
                 true,
             ),
-        ]
+        ];
+        tools.extend(crate::production::mcp::tools());
+        tools
     }
 
     /// Run tool `name` with `arguments`. Failures come back as tool errors (`is_error`), never protocol errors.
@@ -555,7 +573,10 @@ impl GalvoMcp {
                 v["machine"] = st.lightburn.machine_json(&st.machine.profile());
                 Ok(ok_json(v))
             }
-            other => Err(EngineError::NotFound(format!("unknown tool '{other}' (tools: {})", TOOL_NAMES.join(", ")))),
+            other => match crate::production::mcp::dispatch(st, other, a).await {
+                Some(r) => r,
+                None => Err(EngineError::NotFound(format!("unknown tool '{other}' (tools: {})", TOOL_NAMES.join(", ")))),
+            },
         }
     }
 

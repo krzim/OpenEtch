@@ -52,6 +52,8 @@ pub mod joblog;
 pub mod libs;
 pub mod library;
 pub mod prefs;
+// The production cockpit, notifications, serial ledger, layer pauses, hour meter and extractor.
+pub mod production;
 // LightBurn .lbprefs / prefs.ini import (typed whitelist of keys).
 pub mod lbprefs;
 pub mod lbzip;

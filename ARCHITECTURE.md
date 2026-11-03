@@ -1002,6 +1002,79 @@ or deletes the operator PIN (restart the engine afterwards); `openetch profile f
 NAME] [--base PROFILE] --out FILE [--force]` prints the diff table and writes a profile TOML for a LightBurn device
 (base default `fixtures/b6-mopa-60w.toml`, else the generic profile; refuses to replace `--out` without `--force`).
 
+## Production
+
+The production features around the foot switch cycle (crates/engine/src/production/, web/src/production/; the
+slots are `commands::slots`). Nothing here arms a run: `approve` stays the only path to the laser and calls the
+hooks below; notifications are outbound only; agents can read everything and request a pending re-mark, never
+continue, start, approve or switch anything. Stop is never gated.
+
+- **Production cockpit** (web `production/Cockpit.tsx`, opened from the Laser ribbon's Production group, the
+  Production window, command search "Production cockpit" or `#/cockpit`, which the installable app opens directly):
+  a full-screen operator view for an iPad on a stand. A big panel says what the machine does and whether it waits
+  for the operator (a layer pause with Continue, the foot switch, the framed job and how long the frame keeps
+  running), the countdown, Start (the app's one Start, with the Job Checklist inline) and Frame, Pause / Resume, and
+  the pending runs to approve; cards show done against Stop At with the time left at the measured pace, the values
+  the next run marks per slot (a tap marks a pocket empty), Stop at End, the last burn and cycle times, the extractor,
+  maintenance due and the last ledger runs with a re-mark per slot. STOP is in the cockpit's own bar; the cockpit
+  makes no stacking context, so STOP's `--z-stop` stays above its dialogs. While it is open it holds the **design
+  lock** (`POST /api/production/lock {on, holder, label}`, a 45 s lease renewed every 15 s, released on close or
+  `pagehide`): every document edit, undo, redo, timeline move and document switch is refused (409, saying where the
+  cockpit is) for every client, MCP agents included, except the counter (`var.*`, so the cockpit can mark slots empty
+  and the engine can move the counter on). Unlock in the Production window releases another device's lock (UI only).
+  `GET /api/production` is the cockpit's state (MCP `production_status`).
+- **Pause at a layer** (`CutOptions.operator_pause`, `layer.update settings.options.operator_pause`, a check box
+  under the layer's pauses): the run stops before the first pass of that layer (or sub-layer) until Continue
+  (`POST /api/job/continue`, UI only like Resume; the cockpit, the Production window and a canvas HUD banner offer it)
+  or a foot switch press (the profile's Start Marking input, released then pressed). The job is encoded in stages
+  (`production::layer_pause::encode_stages`); `approve` runs each stage as an ordinary `run_parts` with its own arming
+  token. LMC behaviour between stages: the stage's list has ended, the MO is closed, the port is back to the idle word
+  (laser enable off), Done Marking pulses, the galvo rests where it ended and the red pointer is off; the next stage
+  starts as a job does (ResetList, laser-enable word, MO open, open-MO delay). The run still holds the machine; Stop
+  ends it there (`aborted`), Pause holds the next stage, the door is read again before it streams, a shutdown ends the
+  run at the pause, and a pause waits at most an hour. `GET /api/job` reports `waiting_at_layer` and `waiting_layer`
+  (the clock stands still, a staged job's progress follows the clock). Galvo jobs only: rotary jobs and GRBL / Ruida
+  jobs leave the pause out and say so in the run summary; a pause before the job's first pass is ignored. Tested on
+  the simulator only.
+- **Serial slots and the ledger.** A slot is one variable-text offset (serial-number or CSV texts and barcodes) and
+  its pocket, the highest group around it whose variable texts all share that offset (`var.slots`). `var.set_serial`
+  takes `empty_slots` (offsets whose pockets are empty: their objects are left out of the run and the slots after them
+  take consecutive values) and `stop_at_end` (no wrap: slots past End are not marked, the counter stops one past End
+  and runs are refused once every value is used). The run is planned from the document with those slots applied
+  (`commands::apply_slot_plan`, before `prepare_output`); after a finished run the counter moves on by what was marked
+  (unchanged when every slot marks: `var.advance`). The canvas still shows the document's own offsets; the cockpit
+  shows the values the run marks. Every run that streamed with slots appends a line to
+  `<config-dir>/serial-ledger.jsonl` (`{time_unix_s, run_id, state, device, project, document, completed, counter,
+  slots: [{number, offset, label, value, values: [{object, mode, shown}], marked, skipped}], remark_of}`);
+  `GET /api/production/ledger?limit=&run=&format=csv` (one CSV row per slot), MCP `serial_ledger`. **Re-mark**
+  (`POST /api/production/remark {run_id, time_unix_s?, slot, revision?}`, MCP `serial_remark_request`) plans a
+  PENDING run of that slot's pocket only (Cut Selected Graphics of the current design) showing the recorded value; it
+  is approved like any run and the counter does not move after it.
+- **Notifications** (`<config-dir>/notifications.json`, `0600` on Unix): up to 16 targets, `ntfy` (JSON publish
+  with the topic, optional bearer token), `webhook` (the event JSON POSTed) or `home_assistant` (fires
+  `openetch_event` on the REST API with a long-lived token), each with its events: `job_done`,
+  `waiting_for_foot_switch` (the cycle frames, or a run waits for its start input, longer than `waiting_delay_s`,
+  default 30 s), `door`, `error`, `stop_at_reached`, `layer_pause`, `maintenance_due`; every event has `operation`
+  `frame` or `mark`. Sent through the system `curl` with the request on its standard input (`--config -`: the token
+  never on a command line), http(s) only, no redirects, 10 s, one at a time from a bounded queue. `GET/PUT
+  /api/notifications` (PUT and `POST /api/notifications/test {id}` UI only: an agent must not point the feed
+  anywhere; tokens are never sent back, `token_set`), Settings > Notifications. The same events are kept in a feed of
+  200 (`GET /api/notifications/events?after=&wait_s=`, MCP `production_events`: a long poll an agent follows like a
+  subscription).
+- **Hour meter and maintenance** (`<config-dir>/hour-meter.json`, per device): every iteration that ran to the end
+  adds the board's mark time (`GetMarkTime`), else its estimate (kept apart), and a run. Reminders (`{name,
+  every_hours?, every_runs?}`, `PUT /api/production/maintenance`, `POST .../{id}/done`, UI only) are due after that
+  much marking since they were last done: a chip left of the status chip, the cockpit and one `maintenance_due`
+  notification. `GET /api/production/meter`, MCP `hour_meter`. The figures are list time, not the source's own hours.
+- **Extractor** (`<config-dir>/production.json`, per device; `GET/PUT /api/production/extractor`, `POST
+  .../switch {on}`, UI only): switched by the board's Busy output (`lmc_busy`: the job drives it; afterwards
+  `Controller::hold_outputs` keeps it on, which accepts only the profile's job lights, never the laser-enable, red or
+  focus bit), a Raspberry Pi pin (`pinctrl set <pin> op dh|dl`, Linux only, optional), Home Assistant
+  (`<domain>.turn_on/turn_off` through a Home Assistant target) or a webhook target; `auto` switches it on at every
+  approval, `run_on_s` keeps it on after the job (also after a Stop), and the gate refuses Start (409) until a board
+  input reads on (`input`, read at approval like the door) or it was switched on (`switched_on`). Unverified on
+  hardware like the IO ports.
+
 ## MCP tools
 
 `list_commands`, `execute`, `batch`, `inspect_document`, `render_preview` (PNG), `undo`, `redo`, `history_list`
@@ -1022,6 +1095,9 @@ them separately. No
 MCP tool can approve a run, press an input or touch the operator PIN (in either approval mode), and the server
 instructions say agents cannot and must not; they also tell agents that the foot switch never starts a run they
 requested (it frames the person's current document, then burns exactly what was framed).
+Production tools (see "Production"): `production_status`, `production_events {after?, wait_s?, limit?}`,
+`serial_ledger {limit?, run_id?}`, `hour_meter` (read-only) and `serial_remark_request {run_id, time_unix_s?, slot}`
+(a pending run).
 
 ## File formats
 

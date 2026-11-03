@@ -127,7 +127,9 @@ pub(crate) async fn approve(
             state.job.stop_at().unwrap_or_default()
         )));
     }
-    let (parts, epoch, run_state, options, estimate, planned_s) = {
+    // The extractor's gate (module `production::extractor`).
+    crate::production::before_run(state).await?;
+    let (parts, epoch, run_state, options, estimate, planned_s, stages) = {
         let mut store = state.runs();
         let run = store.get_mut(id).ok_or_else(|| EngineError::NotFound(format!("no run with id '{id}'")))?;
         if run.state != RunState::Pending {
@@ -168,7 +170,8 @@ pub(crate) async fn approve(
         let epoch = state.machine.stop_epoch();
         run.state = if confirm.is_some() || run.options.start_input { RunState::AwaitingConfirm } else { RunState::Approved };
         let planned_s = run.stats.estimated_time_s / run.estimate_correction;
-        (run.driver_job(), epoch, run.state, run.options.clone(), run.stats.estimated_time_s, planned_s)
+        let stages = crate::production::layer_pause::stages_of(&run.driver_job(), &run.pauses);
+        (run.driver_job(), epoch, run.state, run.options.clone(), run.stats.estimated_time_s, planned_s, stages)
     };
     // End any frame loop; `Controller::run_parts` stops a frame still on the board itself.
     state.machine.bump_frame_gen();
@@ -176,6 +179,10 @@ pub(crate) async fn approve(
     state.machine.clear_pause();
     tracing::warn!(run_id = id, approved_by = approver.label(), physical_confirm = confirm.is_some(), iterations = ?options.iterations(), "run approved");
     state.job.begin(id, &device, options.iterations(), estimate, estimate / planned_s);
+    if stages.len() > 1 {
+        state.job.set_staged();
+    }
+    crate::production::run_started(state);
     state.emit(Event::machine("run_approved", Some(id.to_owned())));
 
     let foot_switch = approver == Approver::FootSwitch;
@@ -185,7 +192,7 @@ pub(crate) async fn approve(
     tokio::spawn(progress_ticker(state.clone(), id.to_owned()));
     tokio::spawn(async move {
         let table = options.table.clone();
-        let job = Job { id: &run_id, device: &device, parts, epoch, confirm, options, foot_switch, planned_s };
+        let job = Job { id: &run_id, device: &device, parts, epoch, confirm, options, foot_switch, planned_s, stages };
         let (final_state, report, error) = execute(&st, job).await;
         // Repeat Marking: back to the table's start once the job finished (not after a stop).
         if final_state == RunState::Finished
@@ -204,14 +211,14 @@ pub(crate) async fn approve(
                 st.machine.set_error(Some(e.clone()));
             }
         }
+        let completed = st.runs().get(&run_id).map_or(0, |r| r.completed);
         st.runs().finish(&run_id, final_state, report, error.clone());
         crate::libs::after_run(&st, &run_id, &device, final_state, started, error.clone());
         let ok = final_state == RunState::Finished;
-        if ok {
-            // Serial numbers / CSV rows move on once per finished job (the job's packets were rendered at request
-            // time, so repeats of one job share its values).
-            st.advance_variables_after_run();
-        }
+        // Serial numbers / CSV rows move on once per finished job (the job's packets were rendered at request time, so
+        // repeats of one job share its values), by what it marked; the serial ledger, the cycle times and the
+        // extractor's run-on (module `production`).
+        crate::production::after_run(&st, &run_id, &device, final_state, started, completed);
         st.emit(Event::RunFinished { id: run_id.clone(), ok, state: final_state, error });
         st.emit(Event::machine("run_finished", Some(run_id)));
     });
@@ -322,6 +329,9 @@ struct Job<'a> {
     foot_switch: bool,
     /// The planner's estimate of one iteration, before the learned correction (module `marktime`), s.
     planned_s: f64,
+    /// The job in stages, each after the layer pause it waits at (`production::layer_pause`; one stage, without a
+    /// pause, for most jobs).
+    stages: Vec<(Option<crate::production::layer_pause::LayerStop>, DriverJob)>,
 }
 
 /// Wait for the physical confirmation (if configured), then run the iterations the options ask for, each after the
@@ -400,12 +410,15 @@ async fn execute(st: &Arc<AppState>, job: Job<'_>) -> Outcome {
         // Pause pressed while no run streams (between iterations, while waiting for the start input or the
         // physical confirmation): hold here, before the MO is opened, until resumed or stopped.
         hold_while_paused(st, job.epoch).await;
-        match run_once(st, id, &job.parts, job.epoch, iteration).await {
+        match run_stages(st, &job, iteration).await {
             Once::Done(report) => {
                 learn_run_time(st, &job, &report);
                 completed += 1;
+                let measured = report.mark_time_s();
                 last = Some(report);
                 let count = st.job.increment(job.device);
+                // The hour meter and Stop At reached (module `production`).
+                crate::production::iteration_done(st, job.device, measured, job.planned_s * st.job.times.correction(job.device).factor);
                 st.job.completed(completed);
                 if let Some(r) = st.runs().get_mut(id) {
                     r.completed = completed;
@@ -430,6 +443,39 @@ async fn execute(st: &Arc<AppState>, job: Job<'_>) -> Outcome {
             Once::Ended(outcome) => return outcome,
         }
     }
+}
+
+/// One iteration in its stages: the first stage, then for every layer pause a wait for the operator (Continue in the
+/// app or the foot switch; module `production::layer_pause`) and the next stage, each stage armed on its own. Between
+/// stages the board is idle with the MO closed; a stop during the wait ends the run as a stop does.
+async fn run_stages(st: &Arc<AppState>, job: &Job<'_>, iteration: u32) -> Once {
+    let mut report: Option<RunReport> = None;
+    for (k, (stop, parts)) in job.stages.iter().enumerate() {
+        if let Some(stop) = stop {
+            match crate::production::layer_pause::wait(st, job.id, job.epoch, stop).await {
+                crate::production::layer_pause::WaitEnd::Continue => {}
+                crate::production::layer_pause::WaitEnd::Stopped => {
+                    return Once::Ended((RunState::Aborted, report, Some(format!("stopped at the pause before layer \"{}\"", stop.layer))));
+                }
+                crate::production::layer_pause::WaitEnd::Ended(why) => return Once::Ended((RunState::Aborted, report, Some(why))),
+                crate::production::layer_pause::WaitEnd::Failed(e) => {
+                    return Once::Ended((RunState::Failed, report, Some(format!("layer pause: {e}"))));
+                }
+            }
+            hold_while_paused(st, job.epoch).await;
+        }
+        match run_once(st, job.id, parts, job.epoch, iteration, k == 0).await {
+            Once::Done(r) => {
+                let packets = report.as_ref().map_or(0, |p| p.packets) + r.packets;
+                report = Some(RunReport { packets, ..r });
+            }
+            Once::NotStarted if k > 0 => {
+                return Once::Ended((RunState::Aborted, report, Some(format!("stopped at the pause before layer \"{}\"", stop.as_ref().map(|s| s.layer.as_str()).unwrap_or_default()))));
+            }
+            other => return other,
+        }
+    }
+    report.map_or(Once::NotStarted, Once::Done)
 }
 
 /// Record what a finished iteration took on a real board next to the planner's estimate (module `marktime`), so the
@@ -470,7 +516,7 @@ enum Once {
 }
 
 /// One iteration: arm, claim the controller, run every part.
-async fn run_once(st: &Arc<AppState>, id: &str, parts: &DriverJob, epoch: u64, iteration: u32) -> Once {
+async fn run_once(st: &Arc<AppState>, id: &str, parts: &DriverJob, epoch: u64, iteration: u32, first_stage: bool) -> Once {
     let armed = Armed::approved_in_ui(id.to_owned());
     let (task_state, run_id, parts) = (st.clone(), id.to_owned(), parts.clone());
     let result = st
@@ -486,7 +532,10 @@ async fn run_once(st: &Arc<AppState>, id: &str, parts: &DriverJob, epoch: u64, i
                 }
                 runs.set_state(&run_id, RunState::Running);
             }
-            task_state.job.started(iteration);
+            // A later stage of a staged run (layer pauses) goes on with the same iteration's clock.
+            if first_stage {
+                task_state.job.started(iteration);
+            }
             task_state.emit(Event::machine("run_started", Some(run_id)));
             Some(m.ensure_ready(ctl).and_then(|()| ctl.run_job(&parts, armed)))
         })
