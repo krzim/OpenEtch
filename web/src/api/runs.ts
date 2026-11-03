@@ -7,6 +7,15 @@ import type { LengthUnit } from "../workspace/prefs.ts";
 import { MM_PER_IN } from "../workspace/units.ts";
 import { tr } from "../workspace/tr.ts";
 
+/**
+ * Whether an engine event changes the browser preview's planning context (GET /api/preview/context): another device,
+ * and the job counter and learned estimate correction, which move on after every run of a Repeat / Run Continuously
+ * job (machine `job_count`, so auto-rotating fills show the next run's angle mid-job) and when a run ends.
+ */
+export function changesPreviewContext(ev: { type: string; event?: unknown }): boolean {
+  return ev.type === "device_changed" || ev.type === "run_finished" || (ev.type === "machine" && ev.event === "job_count");
+}
+
 /** States of a run that has been approved but not yet ended. */
 export const ACTIVE_STATES: readonly string[] = ["approved", "awaiting_confirm", "running"];
 

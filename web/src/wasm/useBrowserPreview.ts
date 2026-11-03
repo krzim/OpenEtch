@@ -4,8 +4,8 @@
 //
 // - Laser workspace (`wantPreview`): the packed preview for the toolpath layer, timeline and stats card.
 // - Design workspace (`wantStats`): the summary only (time estimate), a moment after the last edit.
-// - `contextSeq` changes when the context does (device_changed, run_finished: the job counter and the learned
-//   estimate correction).
+// - `contextSeq` changes when the context does (device_changed; machine job_count, after every run of a repeated
+//   job, and run_finished: the job counter and the learned estimate correction).
 //
 // `mode` is "fallback" when this browser cannot run the worker or the engine has no context route: the caller then
 // uses GET /api/preview as before. Display only: runs are planned by the engine from its own document.

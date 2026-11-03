@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  changesPreviewContext,
   APPROVAL_CODE_TEXT,
   activeRuns,
   approvalErrorText,
@@ -289,4 +290,12 @@ test("no-PIN mode: no PIN notices, one-click Start, the foot switch cycle and it
   assert.equal(footSwitchToast("foot_cycle_notice", ""), null);
   assert.equal(footSwitchToast("foot_switch_approved", "run-7"), null, "the old single-run events are gone");
   assert.equal(footSwitchToast("run_approved", "run-7"), null);
+});
+
+test("the browser preview's planning context is refetched after every run of a repeated job, not only at its end", () => {
+  assert.equal(changesPreviewContext({ type: "machine", event: "job_count" }), true, "each Repeat Marking iteration");
+  assert.equal(changesPreviewContext({ type: "run_finished" }), true);
+  assert.equal(changesPreviewContext({ type: "device_changed" }), true);
+  assert.equal(changesPreviewContext({ type: "machine", event: "paused" }), false);
+  assert.equal(changesPreviewContext({ type: "history_changed" }), false);
 });

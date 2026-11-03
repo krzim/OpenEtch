@@ -8,7 +8,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, batch, eventsUrl, execute, type Invocation } from "./client.ts";
 import { publishEngineEvent, type EngineMessage } from "./events.ts";
 import { EMPTY_TIMELINE, normalizeHistory, type TimelineModel } from "./history.ts";
-import { footSwitchToast, runFinishedToast, withApprovalLock } from "./runs.ts";
+import { changesPreviewContext, footSwitchToast, runFinishedToast, withApprovalLock } from "./runs.ts";
 import type { CommandSpec, EngineEvent, GDocument, MachineStatus, Origin, Preview, ProjectInfo } from "./types.ts";
 import { mutationsInFlight, onSyncPayload, setSyncPoint, syncStep, type SyncPayload } from "./docSync.ts";
 import type { PreviewSummary } from "./packedPreview.ts";
@@ -452,6 +452,9 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
             break;
           case "machine": {
             void refreshMachine();
+            // A run of a Repeat / Run Continuously job finished (or the counter was reset): the job counter and the
+            // learned estimate correction the browser preview plans with moved on mid-job, not only at run_finished.
+            if (changesPreviewContext(ev)) setContextSeq((n) => n + 1);
             // The foot switch cycle (no-PIN mode): why a press did not burn, or why the cycle ended.
             const foot = footSwitchToast(ev.event, ev.detail);
             if (foot) notifyRef.current(foot.msg, foot.kind);
