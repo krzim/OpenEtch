@@ -36,8 +36,8 @@ render.tsx builds React elements), `pages.ts` holds the contents, previous / nex
 landscape) or as a full-screen sheet (phone, iPad portrait). The viewer and the pages are one lazy chunk
 (`GuideViewer.tsx`, ~12 KB gzip plus the pictures, which load only when shown), so start-up does not grow by them;
 the main bundle carries only the route, the frame and the strings (~3 KB gzip). Help > User guide, `F1` and command
-search open it; `?guide` in the address shows the guide alone (Open in new tab). `VITE_OPENETCH_DESIGN_ONLY=1` leaves
-out the pages with `needs: machine` (the future design-only build).
+search open it; `?guide` in the address shows the guide alone (Open in new tab). OpenEtch Design (`npm run
+build:design`, below) leaves out the pages with `needs: machine`.
 
 To add a page: write `docs/guide/<slug>.md` with its front matter (headings get GitHub's ids from their text, see
 `docs/guide/README.md`; do not add `{#...}`), run `npm run guide:index` (the contents list at the end of index.md)

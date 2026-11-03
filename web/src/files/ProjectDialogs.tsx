@@ -25,6 +25,7 @@ import { LightBurnPrefsImport, applyLightBurnPrefs } from "./LightBurnPrefsImpor
 import { planLightBurnPrefs } from "./lightburnPrefs.ts";
 import { errorText } from "../api/errorText.ts";
 import { HelpLink } from "../guide/HelpLink.tsx";
+import { DESIGN_ONLY } from "../mode.ts";
 
 type Notify = (msg: string, kind?: "info" | "error") => void;
 
@@ -258,7 +259,9 @@ export function SaveTemplateDialog(p: { initial: string; onSaved: (name: string)
 // --- preferences and bundles --------------------------------------------------------------------------------------
 
 /** Bundle parts; material test presets, image presets and art libraries travel in LightBurn bundles (.lbzip) only. */
-const PARTS = ["prefs", "devices", "libraries", "presets", "images", "art"] as const;
+const ALL_PARTS = ["prefs", "devices", "libraries", "presets", "images", "art"] as const;
+/** OpenEtch Design's bundles: preferences and material libraries (it has no LightBurn bundles, and no machine). */
+const PARTS: readonly (typeof ALL_PARTS)[number][] = DESIGN_ONLY ? ["prefs", "libraries"] : ALL_PARTS;
 const PART_LABELS = {
   prefs: "files.partPrefs",
   devices: "files.partDevices",
@@ -273,7 +276,7 @@ export function PrefsBundlesDialog(p: { onClose: () => void; notify: Notify; rep
   const backups = useLoad(() => filesApi.prefsBackups(), prefsBackupList);
   const prefsPick = useRef<HTMLInputElement>(null);
   const bundlePick = useRef<HTMLInputElement>(null);
-  const [parts, setParts] = useState<Record<(typeof PARTS)[number], boolean>>({ prefs: true, devices: true, libraries: true, presets: true, images: true, art: true });
+  const [parts, setParts] = useState<Record<(typeof ALL_PARTS)[number], boolean>>({ prefs: true, devices: true, libraries: true, presets: true, images: true, art: true });
   const [result, setResult] = useState<ReturnType<typeof bundleResult> | null>(null);
   const [confirm, setConfirm] = useState<{ what: string; go: () => void } | null>(null);
   const chosen = PARTS.filter((k) => parts[k]);
@@ -285,7 +288,7 @@ export function PrefsBundlesDialog(p: { onClose: () => void; notify: Notify; rep
         p.notify(t("files.downloaded", { name }));
       })
       .catch(p.report);
-  const partLabel = (k: (typeof PARTS)[number]) => t(PART_LABELS[k]);
+  const partLabel = (k: (typeof ALL_PARTS)[number]) => t(PART_LABELS[k]);
   return (
     <Modal
       help="settings#preferences-and-bundles"
@@ -318,7 +321,7 @@ export function PrefsBundlesDialog(p: { onClose: () => void; notify: Notify; rep
       />
       <FilePick
         ref={bundlePick}
-        accept=".oebundle,.lbzip,.zip"
+        accept={DESIGN_ONLY ? ".oebundle,.zip" : ".oebundle,.lbzip,.zip"}
         onFiles={([f]) =>
           setConfirm({
             what: t("files.confirmBundleImport", { name: f.name, parts: chosen.map(partLabel).join(", ") }),
@@ -385,14 +388,16 @@ export function PrefsBundlesDialog(p: { onClose: () => void; notify: Notify; rep
         <button className="btn" disabled={chosen.length === 0} onClick={() => dl(filesApi.exportBundle(chosen), "openetch-bundle.oebundle")}>
           {t("files.exportBundle")}
         </button>
-        <button
-          className="btn"
-          disabled={!chosen.some((k) => k !== "prefs")}
-          title={t("files.exportLbzipTitle")}
-          onClick={() => dl(filesApi.exportBundle(chosen, "lbzip"), "openetch-bundle.lbzip")}
-        >
-          {t("files.exportLbzip")}
-        </button>
+        {!DESIGN_ONLY && (
+          <button
+            className="btn"
+            disabled={!chosen.some((k) => k !== "prefs")}
+            title={t("files.exportLbzipTitle")}
+            onClick={() => dl(filesApi.exportBundle(chosen, "lbzip"), "openetch-bundle.lbzip")}
+          >
+            {t("files.exportLbzip")}
+          </button>
+        )}
         <button className="btn" disabled={chosen.length === 0} onClick={() => bundlePick.current?.click()}>
           {t("files.importBundle")}
         </button>

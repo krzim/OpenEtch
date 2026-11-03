@@ -1,0 +1,32 @@
+// English UI strings of OpenEtch Design, the browser-only build (docs/design-only/plan.md, src/mode.ts): the header
+// strip, the Preview workspace, the design device picker, Saved in this browser and the export emphasis. Spread
+// into EN (en.ts); Spanish in es-designmode.ts.
+
+export const EN_DESIGNMODE = {
+  "dm.brand": "OpenEtch Design",
+  "dm.strip": "OpenEtch Design: runs in your browser, nothing is uploaded",
+  "dm.stripShort": "Runs in your browser, nothing is uploaded",
+  "dm.stripTitle": "Your designs stay on this device: OpenEtch Design has no server and sends nothing anywhere.",
+  "dm.fullApp": "Get the full app",
+  "dm.fullAppShort": "Full app",
+  "dm.fullAppTitle": "The full OpenEtch app also drives the laser: it runs on a PC or a Raspberry Pi next to the machine.",
+  "dm.preview": "Preview",
+  "dm.previewTitle": "The job's preview and time estimate for the design device",
+  "dm.estimateFor": "Estimate for {device}: {time}",
+  "dm.estimateForTitle": "Planned in your browser for {device}. The laser itself may take a little longer or shorter.",
+  "dm.designDevice": "Design device",
+  "dm.designDeviceHint": "The field your design is laid out, previewed and timed for. Nothing is sent to a laser.",
+  "dm.devicesHint": "Built-in devices are read-only: Duplicate one to change its field. Import File reads only the device settings of a LightBurn .lbdev file or prefs.ini, here in your browser.",
+  "dm.deviceFieldOnly": "OpenEtch Design uses only the field size: the other settings matter when the full app drives the laser.",
+  "dm.importUnavailable": "{ext} files cannot be imported in OpenEtch Design yet: open them in the full app, or save them as SVG.",
+  "dm.projectsTitle": "Saved in this browser",
+  "dm.storageLocal": "Projects are kept in this browser on this device only. Clearing the browser's site data deletes them.",
+  "dm.storageSafari": "Safari deletes a site's data after 7 days without a visit, unless the site is added to the Home Screen or the Dock.",
+  "dm.storageShared": "Every project site on the same github.io account shares this storage.",
+  "dm.storageCopy": "Download a copy (.openetch) of anything you want to keep.",
+  "dm.downloadCopy": "Download a copy",
+  "dm.exportLbrn2": "Export LightBurn .lbrn2…",
+  "dm.exportLbrn2Title": "Save the design as a LightBurn project, to open and burn in LightBurn",
+  "dm.notAffiliated": "OpenEtch is not affiliated with LightBurn Software.",
+  "dm.aboutDesign": "OpenEtch Design runs in your browser: the editor, the preview and the exports, with no server and no laser control.",
+} as const;

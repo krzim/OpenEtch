@@ -5,6 +5,7 @@
 
 import { ApiError, authToken, UI_ORIGIN } from "../api/client.ts";
 import { ledgerQuery, settingsBody, type LedgerFilter, type LedgerSettings, type Verdict } from "./ledgerModel.ts";
+import { transport } from "../api/transport.ts";
 
 function headers(accept: string, json: boolean): Record<string, string> {
   const h: Record<string, string> = { Accept: accept };
@@ -17,7 +18,7 @@ function headers(accept: string, json: boolean): Record<string, string> {
 async function fetchOk(method: string, path: string, body?: unknown, accept = "application/json"): Promise<Response> {
   let res: Response;
   try {
-    res = await fetch(path, { method, headers: headers(accept, body !== undefined), body: body === undefined ? undefined : JSON.stringify(body) });
+    res = await transport(method, path, { headers: headers(accept, body !== undefined), body: body === undefined ? undefined : JSON.stringify(body) });
   } catch (e) {
     throw new ApiError(`engine unreachable: ${e instanceof Error ? e.message : String(e)}`);
   }

@@ -13,6 +13,8 @@ import type { CommandSpec, EngineEvent, GDocument, MachineStatus, Origin, Previe
 import { mutationsInFlight, onSyncPayload, setSyncPoint, syncStep, type SyncPayload } from "./docSync.ts";
 import type { PreviewSummary } from "./packedPreview.ts";
 import { useBrowserPreview } from "../wasm/useBrowserPreview.ts";
+import { openEventStream, type SocketLike } from "./transport.ts";
+import { DESIGN_ONLY } from "../mode.ts";
 
 /** WebSocket state shown by the connection indicator. */
 export type LinkState = "connecting" | "open" | "closed";
@@ -294,9 +296,13 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
     [refreshDoc],
   );
 
+  /** OpenEtch Design: the machine status (always "no machine") is fetched once, not after every edit. */
+  const machineKnown = useRef(false);
   const refreshMachine = useCoalesced(async () => {
+    if (DESIGN_ONLY && machineKnown.current) return;
     try {
       setMachine(await api.machine());
+      machineKnown.current = true;
       setHttpError(null);
     } catch (e) {
       fail(e);
@@ -406,7 +412,7 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
     [refreshDoc],
   );
   useEffect(() => {
-    let ws: WebSocket | null = null;
+    let ws: SocketLike | null = null;
     let timer: number | undefined;
     let delay = 500;
     let stopped = false;
@@ -415,7 +421,8 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
     const connect = () => {
       setLink("connecting");
       try {
-        ws = new WebSocket(eventsUrl());
+        // OpenEtch Design: the backend's events through a FakeSocket (transport.ts), never a network socket.
+        ws = openEventStream(eventsUrl);
       } catch {
         schedule();
         return;
@@ -480,6 +487,7 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
           case "device_changed":
             // The profile, field size and controller changed: everything that shows them refetches.
             setDeviceSeq((n) => n + 1);
+            machineKnown.current = false;
             setContextSeq((n) => n + 1);
             void refreshMachine();
             previewRevision.current = -1;
@@ -518,8 +526,10 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
     };
   }, [refreshDoc, refreshMachine, refreshProject, docChangedTo, fetchPreview]);
 
-  // Poll machine status slowly as a safety net (and faster while the socket is down).
+  // Poll machine status slowly as a safety net (and faster while the socket is down). OpenEtch Design has no machine:
+  // its one answer (no machine) at startup is all there is.
   useEffect(() => {
+    if (DESIGN_ONLY) return;
     const id = window.setInterval(() => void refreshMachine(), link === "open" ? 10_000 : 3_000);
     return () => window.clearInterval(id);
   }, [link, refreshMachine]);

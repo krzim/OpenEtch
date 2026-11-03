@@ -7,6 +7,8 @@
 
 import { ApiError, authToken, UI_ORIGIN } from "../api/client.ts";
 import { contentDispositionName } from "../api/project.ts";
+import { noMachine, transport } from "../api/transport.ts";
+import { DESIGN_ONLY } from "../mode.ts";
 
 function headers(accept: string, contentType?: string): Record<string, string> {
   const h: Record<string, string> = { Accept: accept };
@@ -28,8 +30,7 @@ function parse(text: string): unknown {
 export async function call<T = unknown>(method: string, path: string, body?: unknown, raw?: { body: BodyInit; type: string }): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(path, {
-      method,
+    res = await transport(method, path, {
       headers: headers("application/json", raw ? raw.type : body === undefined ? undefined : "application/json"),
       body: raw ? raw.body : body === undefined ? undefined : JSON.stringify(body),
     });
@@ -54,7 +55,7 @@ export async function call<T = unknown>(method: string, path: string, body?: unk
 export async function download(path: string): Promise<{ blob: Blob; filename: string | null; warnings: number }> {
   let res: Response;
   try {
-    res = await fetch(path, { headers: headers("*/*") });
+    res = await transport("GET", path, { headers: headers("*/*") });
   } catch (e) {
     throw new ApiError(`engine unreachable: ${e instanceof Error ? e.message : String(e)}`);
   }
@@ -116,33 +117,33 @@ export const libsApi = {
   optimizationReset: (builtin: boolean) => call("POST", "/api/optimization/reset", builtin ? { builtin, origin: UI_ORIGIN } : { origin: UI_ORIGIN }),
 
   // ---- job log, diagnostics, updates ----
-  jobLog: (limit = 200) => call("GET", `/api/job-log?limit=${Math.max(1, Math.round(limit))}`),
-  jobLogCsv: () => download("/api/job-log?format=csv"),
-  bugReport: () => download("/api/diagnostics/report"),
-  logs: () => call("GET", "/api/diagnostics/logs"),
-  updates: () => call("GET", "/api/updates"),
-  updatesCheck: () => call("POST", "/api/updates/check", {}),
+  jobLog: DESIGN_ONLY ? noMachine : (limit = 200) => call("GET", `/api/job-log?limit=${Math.max(1, Math.round(limit))}`),
+  jobLogCsv: DESIGN_ONLY ? noMachine : () => download("/api/job-log?format=csv"),
+  bugReport: DESIGN_ONLY ? noMachine : () => download("/api/diagnostics/report"),
+  logs: DESIGN_ONLY ? noMachine : () => call("GET", "/api/diagnostics/logs"),
+  updates: DESIGN_ONLY ? noMachine : () => call("GET", "/api/updates"),
+  updatesCheck: DESIGN_ONLY ? noMachine : () => call("POST", "/api/updates/check", {}),
 
   // ---- Find My Laser / Add Galvo ----
-  scan: () => call("GET", "/api/devices/scan"),
-  wizard: (body: { name?: string; markcfg_base64: string; cor_name?: string; cor_base64?: string; activate?: boolean }) =>
+  scan: DESIGN_ONLY ? noMachine : () => call("GET", "/api/devices/scan"),
+  wizard: DESIGN_ONLY ? noMachine : (body: { name?: string; markcfg_base64: string; cor_name?: string; cor_base64?: string; activate?: boolean }) =>
     call("POST", "/api/devices/wizard", { ...body, origin: UI_ORIGIN }),
 
   // ---- camera ----
-  camera: () => call("GET", "/api/camera"),
-  cameraFrame: (file: Blob) => call("POST", "/api/camera/frame", undefined, { body: file, type: file.type || "application/octet-stream" }),
-  cameraCapture: (index: number) => call("POST", "/api/camera/capture", { index }),
-  cameraFramePng: () => download("/api/camera/frame.png"),
-  cameraOverlayPng: (pxPerMm: number) => download(`/api/camera/overlay.png?px_per_mm=${pxPerMm}`),
-  cameraDetect: (cols: number, rows: number) => call("POST", "/api/camera/detect", { cols, rows }),
-  cameraLens: (width: number, height: number, views: { cols: number; rows: number; corners: [number, number][] }[]) =>
+  camera: DESIGN_ONLY ? noMachine : () => call("GET", "/api/camera"),
+  cameraFrame: DESIGN_ONLY ? noMachine : (file: Blob) => call("POST", "/api/camera/frame", undefined, { body: file, type: file.type || "application/octet-stream" }),
+  cameraCapture: DESIGN_ONLY ? noMachine : (index: number) => call("POST", "/api/camera/capture", { index }),
+  cameraFramePng: DESIGN_ONLY ? noMachine : () => download("/api/camera/frame.png"),
+  cameraOverlayPng: DESIGN_ONLY ? noMachine : (pxPerMm: number) => download(`/api/camera/overlay.png?px_per_mm=${pxPerMm}`),
+  cameraDetect: DESIGN_ONLY ? noMachine : (cols: number, rows: number) => call("POST", "/api/camera/detect", { cols, rows }),
+  cameraLens: DESIGN_ONLY ? noMachine : (width: number, height: number, views: { cols: number; rows: number; corners: [number, number][] }[]) =>
     call("POST", "/api/camera/lens", { width, height, views, origin: UI_ORIGIN }),
-  cameraAlign: (image: [number, number][], field: [number, number][]) => call("POST", "/api/camera/align", { image, field, origin: UI_ORIGIN }),
-  cameraForget: () => call("DELETE", `/api/camera/calibration?origin=${UI_ORIGIN}`),
+  cameraAlign: DESIGN_ONLY ? noMachine : (image: [number, number][], field: [number, number][]) => call("POST", "/api/camera/align", { image, field, origin: UI_ORIGIN }),
+  cameraForget: DESIGN_ONLY ? noMachine : () => call("DELETE", `/api/camera/calibration?origin=${UI_ORIGIN}`),
   /** Markers of `generate.camera_markers` found in the frame. */
-  cameraMarkers: () => call("POST", "/api/camera/markers", {}),
+  cameraMarkers: DESIGN_ONLY ? noMachine : () => call("POST", "/api/camera/markers", {}),
   /** Align from the markers found in the frame, matched by id to the document's marker objects (UI only). */
-  cameraAlignMarkers: () => call("POST", "/api/camera/align_markers", { origin: UI_ORIGIN }),
+  cameraAlignMarkers: DESIGN_ONLY ? noMachine : () => call("POST", "/api/camera/align_markers", { origin: UI_ORIGIN }),
 
   // ---- material test presets (LightBurn's Material Test Preset list; .lbmt import / export) ----
   testPresets: () => call("GET", "/api/material-test/presets"),
@@ -162,8 +163,8 @@ export const libsApi = {
   imagePresetExportLbimg: () => download("/api/image-adjust/presets/export?format=lbimg"),
 
   // ---- machine bits used by the wizards (light only) ----
-  pointer: (x: number, y: number) => call("POST", "/api/machine/pointer", { x, y }),
-  frameStop: () => call("POST", "/api/machine/frame/stop", {}),
+  pointer: DESIGN_ONLY ? noMachine : (x: number, y: number) => call("POST", "/api/machine/pointer", { x, y }),
+  frameStop: DESIGN_ONLY ? noMachine : () => call("POST", "/api/machine/frame/stop", {}),
   activeDevice: async (): Promise<{ id: string; profile: Record<string, unknown> | null } | null> => {
     const list = (await call("GET", "/api/devices")) as { active?: unknown };
     if (typeof list?.active !== "string") return null;
@@ -179,12 +180,12 @@ export const libsApi = {
   deviceEdit: (id: string, profile: Record<string, unknown>) => call("PUT", `/api/devices/${enc(id)}`, { profile, origin: UI_ORIGIN }),
   projects: () => call("GET", "/api/projects"),
   /** A pending run (nothing fires until it is approved with the PIN). */
-  requestRun: (body: Record<string, unknown>) => call("POST", "/api/runs", body),
+  requestRun: DESIGN_ONLY ? noMachine : (body: Record<string, unknown>) => call("POST", "/api/runs", body),
   /**
    * Approve with the operator PIN (null without a PIN: Start) and the ticked Job Checklist (UI only; the PIN goes
    * only into this body).
    */
-  approve: (id: string, pin: string | null, checklist: boolean[] | null) =>
+  approve: DESIGN_ONLY ? noMachine : (id: string, pin: string | null, checklist: boolean[] | null) =>
     call("POST", `/api/runs/${enc(id)}/approve`, { ...(pin === null ? {} : { pin }), ...(checklist ? { checklist } : {}) }),
 };
 

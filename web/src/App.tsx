@@ -15,6 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import { createPortal } from "react-dom";
 import { api } from "./api/client.ts";
 import * as C from "./api/commands.ts";
+import { DESIGN_ONLY } from "./mode.ts";
 import {
   importAccept,
   bytesToBase64,
@@ -261,8 +262,7 @@ export function App() {
 
   const missingCommands = useMemo(() => {
     if (!engine.commands || engine.commands.length === 0) return [];
-    const have = new Set(engine.commands.map((c) => c.id));
-    return C.REQUIRED_COMMANDS.filter((id) => !have.has(id));
+    return C.missingRequired(new Set(engine.commands.map((c) => c.id)));
   }, [engine.commands]);
 
   const machineFieldMm = typeof machine?.field_mm === "number" && machine.field_mm > 0 ? machine.field_mm : null;
@@ -1714,7 +1714,7 @@ export function App() {
 
   const overlays = (
     <>
-      <input ref={fileRef} type="file" accept={pickerAccept(importAccept(has("art.import_pdf") ? ENGINE_ACCEPT : null))} multiple hidden onChange={onPick} />
+      <input ref={fileRef} type="file" accept={pickerAccept(C.withoutExtensions(importAccept(C.hasFileImports(has, DESIGN_ONLY) ? ENGINE_ACCEPT : null), C.unavailableImports(has, DESIGN_ONLY)))} multiple hidden onChange={onPick} />
 
       {dialog === "stock" && <StockDialog doc={doc} run={run} onClose={closeDialog} />}
       {dialog === "place" && <PlaceDialog ids={selection.objects} run={run} onClose={closeDialog} />}

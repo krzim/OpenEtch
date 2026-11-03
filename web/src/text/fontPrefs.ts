@@ -6,6 +6,7 @@
 import { ApiError, UI_ORIGIN, authToken } from "../api/client.ts";
 import type { FontKind } from "../api/types.ts";
 import { FONT_KINDS, sameFont, type FontInfo } from "./textModel.ts";
+import { transport } from "../api/transport.ts";
 
 export interface FontRef {
   family: string;
@@ -103,7 +104,7 @@ function headers(json: boolean): Record<string, string> {
 async function call(method: "GET" | "PUT", body?: unknown): Promise<FontPrefs> {
   let res: Response;
   try {
-    res = await fetch("/api/fonts/prefs", { method, headers: headers(body !== undefined), body: body === undefined ? undefined : JSON.stringify(body) });
+    res = await transport(method, "/api/fonts/prefs", { headers: headers(body !== undefined), body: body === undefined ? undefined : JSON.stringify(body) });
   } catch (e) {
     throw new ApiError(`engine unreachable: ${e instanceof Error ? e.message : String(e)}`);
   }

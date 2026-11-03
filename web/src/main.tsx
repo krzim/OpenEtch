@@ -1,5 +1,7 @@
 // Entry point. Picks up `?token=` before anything talks to the engine and sets the theme before the first paint. The
 // app sits behind the Connect card (app/ConnectScreen.tsx), shown instead of it while the engine refuses the token.
+// OpenEtch Design (mode.ts) has no engine and no token: it installs its in-browser backend instead
+// (designmode/backend.ts) and marks the page `data-design-only` (styles, and the device harness's checks).
 
 // Design tokens first, so every other stylesheet (styles.css, the components' own) can use them.
 import "./tokens.css";
@@ -13,9 +15,15 @@ import { GuideStandalone } from "./guide/GuideHost.tsx";
 import { isStandalone } from "./guide/route.ts";
 import { getPrefs } from "./workspace/prefs.ts";
 import { resolveTheme } from "./workspace/theme.ts";
+import { DESIGN_ONLY } from "./mode.ts";
 import "./styles.css";
 
-initAuthToken();
+if (DESIGN_ONLY) {
+  document.documentElement.dataset.designOnly = "";
+  void import("./designmode/backend.ts").then((m) => m.installDesignBackend());
+} else {
+  initAuthToken();
+}
 
 // The theme before the first paint (styles.css has one dark block keyed on data-theme; usePrefs.ts keeps it current).
 try {
@@ -42,9 +50,13 @@ if (root && isStandalone()) {
   createRoot(root).render(
     <StrictMode>
       <CrashScreen>
-        <ConnectGate>
+        {DESIGN_ONLY ? (
           <App />
-        </ConnectGate>
+        ) : (
+          <ConnectGate>
+            <App />
+          </ConnectGate>
+        )}
       </CrashScreen>
     </StrictMode>,
   );

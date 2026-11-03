@@ -28,6 +28,48 @@ export const CMD = {
 export const REQUIRED_COMMANDS: string[] = Object.values(CMD);
 
 /**
+ * Import commands OpenEtch Design's wasm core may be built without (docs/design-only/plan.md 1.3: DXF needs
+ * getrandom's wasm backend, PDF and AI need lopdf's), by file extension. In the design build a missing one switches
+ * its import entries off (`unavailableImports`) instead of counting as a missing command.
+ */
+export const WASM_OPTIONAL_IMPORTS: Readonly<Record<string, string>> = {
+  dxf: "art.import_dxf",
+  pdf: "art.import_pdf",
+  ai: "art.import_ai",
+};
+
+/** The startup check: the required commands the backend lacks (the optional imports never count). */
+export function missingRequired(have: ReadonlySet<string>): string[] {
+  return REQUIRED_COMMANDS.filter((id) => !have.has(id));
+}
+
+/**
+ * Whether the backend has `POST /api/document/import` (PDF, AI, EPS, HPGL, G-code...). Engines are told apart by
+ * `art.import_pdf`; the design build's core may lack exactly that one, so it is asked for EPS too.
+ */
+export function hasFileImports(has: (id: string) => boolean, designOnly: boolean): boolean {
+  return has(WASM_OPTIONAL_IMPORTS.pdf) || (designOnly && has("art.import_eps"));
+}
+
+/** Extensions (no dot) of the optional imports the design build's core lacks; none in the normal build. */
+export function unavailableImports(has: (id: string) => boolean, designOnly: boolean): string[] {
+  if (!designOnly) return [];
+  return Object.entries(WASM_OPTIONAL_IMPORTS)
+    .filter(([, id]) => !has(id))
+    .map(([ext]) => ext);
+}
+
+/** `accept` (".svg,.dxf,...") without the extensions in `drop`. */
+export function withoutExtensions(accept: string, drop: readonly string[]): string {
+  if (drop.length === 0) return accept;
+  const gone = new Set(drop.map((e) => `.${e.toLowerCase()}`));
+  return accept
+    .split(",")
+    .filter((e) => !gone.has(e.trim().toLowerCase()))
+    .join(",");
+}
+
+/**
  * Commands of newer engines. The UI checks for each before using it (`has`) and hides or explains the feature when
  * the engine lacks it, so these are not part of the startup check.
  */

@@ -6,6 +6,7 @@
 import { ApiError, authToken, UI_ORIGIN, type Invocation } from "../api/client.ts";
 import type { Vec2 } from "../api/types.ts";
 import type { PageAnchor } from "./model.ts";
+import { transport } from "../api/transport.ts";
 
 export const DCMD = {
   shapeUpdate: "shape.update",
@@ -125,8 +126,7 @@ function headers(accept: string, contentType?: string): Record<string, string> {
 async function call<T = unknown>(method: string, path: string, body?: unknown, raw?: { body: BodyInit; type: string }): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(path, {
-      method,
+    res = await transport(method, path, {
       headers: headers("application/json", raw ? raw.type : body === undefined ? undefined : "application/json"),
       body: raw ? raw.body : body === undefined ? undefined : JSON.stringify(body),
     });
@@ -181,13 +181,13 @@ export const artApi = {
   },
   /** A thumbnail as an object URL (fetched with the Authorization header). */
   thumbnail: async (url: string): Promise<string> => {
-    const res = await fetch(url, { headers: headers("image/png") });
+    const res = await transport("GET", url, { headers: headers("image/png") });
     if (!res.ok) throw new ApiError(`thumbnail: ${res.status}`, res.status);
     return URL.createObjectURL(await res.blob());
   },
   /** The library file: OpenEtch's `.oeart`, or LightBurn's `.lbart`. */
   download: async (name: string, format: "oeart" | "lbart" = "oeart"): Promise<Blob> => {
-    const res = await fetch(`${lib(name)}/download${format === "lbart" ? "?format=lbart" : ""}`, { headers: headers("*/*") });
+    const res = await transport("GET", `${lib(name)}/download${format === "lbart" ? "?format=lbart" : ""}`, { headers: headers("*/*") });
     if (!res.ok) throw new ApiError(`download: ${res.status} ${await res.text()}`, res.status);
     return res.blob();
   },

@@ -16,6 +16,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Invocation } from "../api/client.ts";
 import * as C from "../api/commands.ts";
+import { DESIGN_ONLY } from "../mode.ts";
 import { bytesToBase64, createdIds } from "../api/drop.ts";
 import { IMAGE_ADJUST_CMD, imageAdjust, imageUpdate } from "../api/image.ts";
 import { commandResult, formatBytes, needsConfirm, warningList } from "../api/project.ts";
@@ -133,7 +134,7 @@ export function useFilesUi(p: {
   const live = useRef({ doc, dirty: p.file.dirty, selection: p.selection, activeLayer: p.activeLayer });
   live.current = { doc, dirty: p.file.dirty, selection: p.selection, activeLayer: p.activeLayer };
   const can = {
-    imports: has("art.import_pdf"),
+    imports: C.hasFileImports(has, DESIGN_ONLY),
     exports: has("doc.export"),
     print: has("doc.print"),
     trace: has(IMAGE_CMD.trace),
@@ -220,6 +221,7 @@ export function useFilesUi(p: {
             const format = engineFormatOf(f.name);
             try {
               if (!format) throw new Error(t("files.cannotImport", { ext: extOf(f.name) || "?" }));
+              if (C.unavailableImports(has, DESIGN_ONLY).includes(format)) throw new Error(t("dm.importUnavailable", { ext: format.toUpperCase() }));
               if (f.size > MAX_IMPORT_BYTES) throw new Error(t("files.tooLarge", { size: formatBytes(MAX_IMPORT_BYTES) }));
               if (f.size === 0) throw new Error(t("files.empty"));
               const q = importQuery({

@@ -4,6 +4,7 @@
 // The answers are parsed into plain types here (pure, so `npm test` covers the parsers).
 
 import { ApiError, authToken, UI_ORIGIN } from "../api/client.ts";
+import { transport } from "../api/transport.ts";
 
 async function call<T = unknown>(method: string, path: string, body?: unknown): Promise<T> {
   const h: Record<string, string> = { Accept: "application/json" };
@@ -12,7 +13,7 @@ async function call<T = unknown>(method: string, path: string, body?: unknown): 
   if (token) h.Authorization = `Bearer ${token}`;
   let res: Response;
   try {
-    res = await fetch(path, { method, headers: h, body: body === undefined ? undefined : JSON.stringify(body) });
+    res = await transport(method, path, { headers: h, body: body === undefined ? undefined : JSON.stringify(body) });
   } catch (e) {
     throw new ApiError(`engine unreachable: ${e instanceof Error ? e.message : String(e)}`);
   }
