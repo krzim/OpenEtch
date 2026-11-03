@@ -76,9 +76,14 @@ async function runDevice(browser, d, theme, url, out) {
     // The example opens with its walkthrough (the project notes, shown on open).
     await check("example-notes");
     await closeDialogs(page);
-    // The "Use as an app" offer on a first touch visit.
-    const offer = await find(page, ".modal-foot button, [role=dialog] button", "Close");
-    if (offer) await page.press(offer.x, offer.y);
+    // The "Use as an app" offer on a first touch visit: it waits until the notes are closed (up to 2 s more).
+    if (!desktop) {
+      for (let i = 0; i < 12; i++) {
+        await sleep(250);
+        const offer = await page.evaluate(() => [...document.querySelectorAll("[role=dialog]")].some((e) => /as an app/i.test(e.textContent)));
+        if (offer) break;
+      }
+    }
     await closeDialogs(page);
     await step("canvas-with-fill-in", async () => {});
     await step("fill-in-form", async () => {
