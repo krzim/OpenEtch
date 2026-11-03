@@ -284,11 +284,21 @@ function installSynth() {
 }
 
 // Probe whether a WebDriver touch reaches the page.
+// Probe whether a WebDriver touch reaches the page: a tap on a pad of its own over the page, which swallows the tap (the
+// app under it gets nothing) and is removed afterwards.
 function armProbe() {
   window.__oeProbe = [];
-  const f = (e) => window.__oeProbe.push(`${e.type}:${e.pointerType ?? ""}`);
-  for (const t of ["pointerdown", "pointerup", "click"]) addEventListener(t, f, { capture: true, once: true });
-  return true;
+  const pad = document.createElement("div");
+  pad.id = "oe-probe-pad";
+  pad.style.cssText = "position:fixed;left:40%;top:45%;width:60px;height:60px;z-index:2147483647;background:transparent;touch-action:none";
+  const f = (e) => {
+    window.__oeProbe.push(`${e.type}:${e.pointerType ?? ""}`);
+    e.stopPropagation();
+  };
+  for (const t of ["pointerdown", "pointerup", "click"]) pad.addEventListener(t, f);
+  document.body.appendChild(pad);
+  const r = pad.getBoundingClientRect();
+  return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
 }
 
 /** Errors and console errors, collected in the page (WebDriver has no console). */
@@ -572,19 +582,18 @@ export class SafariPage {
 
 /** Does a WebDriver touch reach the page? (It does not while the Mac's screen is locked.) */
 async function probeInput(page) {
-  await page.evaluate(armProbe);
-  const p = await page.evaluate(() => {
-    const e = document.querySelector(".statusbar, .phone-tabs, .topbar") ?? document.body;
-    const r = e.getBoundingClientRect();
-    return { x: r.left + Math.min(r.width / 2, 30), y: r.top + r.height / 2 };
-  });
+  const p = await page.evaluate(armProbe);
   try {
     await page.touchActions([[[p.x, p.y]]]);
   } catch (e) {
+    await page.evaluate(() => document.getElementById("oe-probe-pad")?.remove());
     return { ok: false, detail: String(e.message ?? e) };
   }
   await sleep(600);
-  const got = await page.evaluate(() => window.__oeProbe ?? []);
+  const got = await page.evaluate(() => {
+    document.getElementById("oe-probe-pad")?.remove();
+    return window.__oeProbe ?? [];
+  });
   return { ok: got.includes("pointerdown:touch"), detail: got.join(", ") || "no events" };
 }
 
@@ -1005,14 +1014,6 @@ async function runDevice(a, key, dir) {
     const layout = await page.evaluate(() => document.documentElement.dataset.layout);
     page.device.kind = layout === "phone" ? "phone" : layout === "tablet" ? "tablet" : "desktop";
     notes.layout = layout;
-    if (!desktop) {
-      if (a.input === "auto") {
-        notes.nativeTouch = await probeInput(page);
-        page.input = notes.nativeTouch.ok ? "native" : "synthetic";
-      } else page.input = a.input;
-      if (page.input === "synthetic") await page.evaluate(installSynth);
-    }
-    notes.input = page.input;
     const check = async (name, extra = {}) => {
       const shot = join(dir, `${String(results.length).padStart(2, "0")}-${name}.png`);
       await page.settle(250);
@@ -1026,6 +1027,21 @@ async function runDevice(a, key, dir) {
     const close = await find(page, ".modal-foot button, [role=dialog] button", "Close");
     if (close?.hit) {
       await page.press(close.x, close.y);
+      await sleep(500);
+    }
+    // After the offer: the probe's tap would land on the offer's backdrop and close it before its screenshot.
+    if (!desktop) {
+      if (a.input === "auto") {
+        notes.nativeTouch = await probeInput(page);
+        page.input = notes.nativeTouch.ok ? "native" : "synthetic";
+      } else page.input = a.input;
+      if (page.input === "synthetic") await page.evaluate(installSynth);
+    }
+    notes.input = page.input;
+    if (notes.nativeTouch && !notes.nativeTouch.ok && close?.hit && (await page.evaluate(() => !!document.querySelector("[role=dialog]")))) {
+      // The Close tap was a native one that did not arrive: close the offer again.
+      const c2 = await find(page, ".modal-foot button, [role=dialog] button", "Close");
+      if (c2?.hit) await page.press(c2.x, c2.y);
       await sleep(500);
     }
     const ctx = { url };

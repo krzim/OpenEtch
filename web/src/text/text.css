@@ -408,17 +408,6 @@
   padding: 0;
 }
 
-/* Touch: the text options bar's fields, alignment segments and B / I / AA / W toggles are 44 px targets. */
-:root[data-density="touch"] .tx-num input,
-:root[data-density="touch"] .tx-font.compact .tx-font-btn {
-  min-height: 44px;
-}
-:root[data-density="touch"] .tx-bar .tx-seg button,
-:root[data-density="touch"] .tx-toggle {
-  min-width: 44px;
-  min-height: 44px;
-}
-
 @media (max-width: 600px) {
   .tx-font.compact {
     width: 140px;
