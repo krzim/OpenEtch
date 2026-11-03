@@ -20,6 +20,31 @@ Without `--doc` a generated SVG of a few hundred shapes is loaded. Keep private 
 the repository: the default output folder is under `target/`, which git ignores. Set `E2E_BROWSER` to use another
 Chromium-based browser.
 
+## Performance profile
+
+`perf.mjs` (`npm run e2e:perf -- --url ... --doc heavy.lbrn2`) walks the everyday actions on a heavy document on a
+MacBook (1470 x 832 @2) and an iPhone 15 profile: the first load, select, move, Fill Region hover and fill, undo, redo,
+a QR code, a text, an SVG and a PNG import, a timeline rollback four steps back and forward again, Design to Laser (the
+preview), a layer setting and an undo in the Laser workspace, framing start and stop, back to Design. For each action it
+records the wall time until the UI settles (no request of the action in flight and nothing for `--quiet` ms), every
+request (method, path, bytes on the wire, server time, transfer time), main-thread long tasks, `JSON.parse` time of
+payloads over 50 KB and the renderer's task / script / layout time. Before the walk it times the engine's big GETs
+directly and how far gzip and brotli would shrink them. Actions the phone layout reaches differently are sent as the
+same engine request from inside the page (`via: "api"` in the report), so the app's reaction is still what is measured.
+
+```sh
+# An engine with the SIMULATOR (the walk replaces the document, edits it and starts framing). On a Pi: a separate
+# engine on a spare port with its own --config-dir and --projects-dir, never the one that drives the laser.
+openetch --config-dir <tmp>/cfg --projects-dir <tmp>/projects --listen 0.0.0.0:7881 --no-token --approval click --web-dir <dist>
+
+cd web
+npm run e2e:perf -- --url http://<pi-ip>:7881 --doc some-heavy-file.lbrn2 --label pi-wifi \
+  [--devices macbook-air-1470,iphone15-portrait] [--only load,undo,to-laser-preview] [--quiet 1500] [--timeout 240000]
+```
+
+Results: `target/perf/<label>/perf.json` and `perf.md` (git ignores `target/`). With `--only` the page still loads and
+the workspaces still switch, but only the named actions are timed.
+
 ## Files
 
 - `devices.mjs`: the device matrix (CSS viewport, DPR, touch, user agent, safe-area insets, themes, keyboard height).
