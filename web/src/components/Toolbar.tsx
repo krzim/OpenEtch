@@ -337,6 +337,11 @@ export function Toolbar(p: ToolbarProps) {
               <StartButton variant="toolbar" />
               <ToolButton icon="frameStop" label={t("tb.stopFrame")} onClick={p.onFrameStop} title={t("tb.stopFrameTitle")} />
             </RibbonGroup>
+            {/* Production (src/production/): the operator's cockpit and the serial ledger. */}
+            <RibbonGroup id="production" label={t("prod.title")} icon="gauge" priority={50}>
+              <ToolButton icon="gauge" label={t("prod.cockpit")} onClick={() => runHotkeyAction("production.cockpit")} title={t("prod.cockpitTitle")} />
+              <ToolButton icon="ledger" label={t("prod.ledger")} onClick={() => runHotkeyAction("production.ledger")} />
+            </RibbonGroup>
           </>
         )}
         {endCaps}

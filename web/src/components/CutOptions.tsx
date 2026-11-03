@@ -236,6 +236,9 @@ export function CutOptionsSection(p: {
         <legend>{t("cut.pauses")}</legend>
         <NumberField label={t("cut.pauseBefore")} unit="ms" value={r.pause_before_ms} min={0} max={600000} digits={1} onCommit={num((pause_before_ms) => opt({ pause_before_ms }))} />
         <NumberField label={t("cut.pauseAfter")} unit="ms" value={r.pause_after_ms} min={0} max={600000} digits={1} onCommit={num((pause_after_ms) => opt({ pause_after_ms }))} />
+        {/* Pause at a layer for the operator (production; galvo jobs): Continue in the app or the foot switch. */}
+        {!p.gantry && <CheckField label={t("prod.operatorPause")} checked={r.operator_pause} onChange={(operator_pause) => opt({ operator_pause })} />}
+        {!p.gantry && r.operator_pause && <p className="hint">{t("prod.operatorPauseHint")}</p>}
       </fieldset>
 
       <fieldset className="job-fieldset">

@@ -50,6 +50,7 @@ import { useFilesUi } from "./files/useFilesUi.tsx";
 import { ShutdownBadge, SimPinBadge } from "./libs/JobSafety.tsx";
 import { LaserExtras } from "./libs/LaserExtras.tsx";
 import { useLibsUi } from "./libs/useLibsUi.tsx";
+import { useProductionUi } from "./production/useProductionUi.tsx";
 import { useToolsUi } from "./tools/useToolsUi.tsx";
 import { useFillRegionTool } from "./fill/useFillRegionTool.tsx";
 import { useDesignUi } from "./design/useDesignUi.tsx";
@@ -311,6 +312,8 @@ export function App() {
     refreshMachine: () => void engine.refreshMachine(),
     onStartPointTool: () => setTool("select"),
   });
+  // The production cockpit (#/cockpit), serial ledger, layer pause HUD, maintenance chip (src/production/).
+  const prodUi = useProductionUi({ notify, report, revision: doc?.revision ?? null });
   // Tabs, dogbone, Resize Slots, Multi-File Trace and the Web Tools (User Tools) menu (src/tools/).
   const toolsUi = useToolsUi({
     doc,
@@ -1142,6 +1145,7 @@ export function App() {
       ...text.handlers,
       ...filesUi.handlers,
       ...libsUi.handlers,
+      ...prodUi.handlers,
       ...designUi.handlers,
       ...edit.handlers,
       ...fillTool.handlers,
@@ -1333,6 +1337,7 @@ export function App() {
       onUndo={() => void undo()}
       onRedo={() => void redo()}
       onStop={stop}
+      statusExtra={prodUi.chip(layout === "phone")}
       link={engine.link}
       httpError={engine.httpError}
       machine={machine}
@@ -1520,6 +1525,7 @@ export function App() {
             }}
           />
           {libsUi.dock}
+          {prodUi.dock}
           {gantryDocks}
           <Dock id="machine" title={t("win.machine")}>
           <MachineCard machine={machine} httpError={engine.httpError}>
@@ -1633,6 +1639,8 @@ export function App() {
       )}
       {/* Always mounted: it shows itself on touch, or everywhere with the selection bar set to Always. */}
       <TouchHud tool={tool} selectionCount={selection.objects.length} onAction={touchAction} />
+      {/* A run waiting at a layer for the operator: Continue over the canvas (src/production/). */}
+      {prodUi.hud}
       {/* One layout for everything that floats over the canvas (hud/CanvasHud.tsx). */}
       <CanvasHud />
     </div>
@@ -1681,6 +1689,7 @@ export function App() {
       {edit.dialogs}
       {filesUi.dialogs}
       {libsUi.dialogs}
+      {prodUi.dialogs}
       {toolsUi.dialogs}
       {designUi.dialogs}
       {text.dialogs}
@@ -1709,6 +1718,9 @@ export function App() {
       {about && <AboutDialog machine={machine} onClose={() => setAbout(false)} />}
     </>
   );
+
+  // The production cockpit is a mode of the app: nothing else is shown (its own STOP; the app's toasts and dialogs).
+  if (prodUi.cockpitOpen) return prodUi.renderCockpit(overlays);
 
   if (layout === "phone") {
     const themeName = { light: t("theme.light"), dark: t("theme.dark"), system: t("theme.system") }[themePref];

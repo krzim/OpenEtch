@@ -45,6 +45,8 @@ export interface TopBarProps {
   docExtra?: ReactNode;
   /** Phone: the ≡ button (opens the More sheet). */
   onMenu?: () => void;
+  /** Left of the status chip: urgent production state (maintenance due; src/production/). */
+  statusExtra?: ReactNode;
 }
 
 export function TopBar(p: TopBarProps) {
@@ -137,6 +139,7 @@ export function TopBar(p: TopBarProps) {
         {conn}
       </div>
       <div className="topbar-stop">
+        {p.statusExtra}
         <StatusChip compact={phone} />
         <button className="btn btn-stop" onClick={p.onStop} title={t("top.stopTitle")}>
           <Icon name="stop" /> {t("top.stop")}

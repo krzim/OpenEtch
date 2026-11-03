@@ -95,6 +95,11 @@ document switches, with the browser's copy compared to `GET /api/document` after
   Job tab with its sheet closed and a selection (the reference overlap case), the on-screen keyboard (the viewport
   shrinks by the keyboard height while a field has focus, and the bottom safe-area band goes: the keyboard covers the
   home indicator).
+- `production.mjs` (`node e2e/production.mjs --url ... [--devices ...]`): the production screens on the iPad (both
+  orientations), the iPhone and a MacBook: the cockpit idle, waiting at a layer pause and after Continue, the foot
+  switch cycle framing, the Laser workspace's Production window, the maintenance chip and the serial ledger, and the
+  design lock refusing an edit. It needs a simulator engine with `--approval click` and a foot switch (it presses
+  Start, the simulated pedal and STOP and replaces the document); output under `target/ux-evidence/production/`.
 - `journeys.mjs` (`npm run e2e:journeys -- --url ... [--doc ...] [--only rotate,grbl]`): longer sequences on one
   device each, with a screenshot and a check per step, under `target/ux-evidence/journeys/`: a phone turned mid-task,
   sheets over an active tool, a long-press inside a pinch, select all and a marquee, text with the keyboard up, every
