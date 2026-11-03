@@ -81,6 +81,7 @@ fn colour_choices(doc: &mut Document, layer: &str, finishes: &[ExampleFinish], b
         let first = finish(doc, layer, builtin[0].1)?;
         if let Some(l) = doc.layer_mut(layer) {
             l.settings = first;
+            l.extras.insert(super::finish::RESULT_COLOR_KEY.into(), builtin[0].2.to_string());
         }
         return Ok(list);
     }
@@ -547,6 +548,8 @@ mod tests {
         let mut q = coin.clone();
         let (f, _) = template::Fields::apply(&mut q, template::Empty {}).unwrap();
         assert_eq!(f["fields"][3]["current"], "Gold", "the ring starts as the Gold finish");
+        let ring_l = coin.layers.iter().find(|l| l.name == "Colour ring").unwrap();
+        assert_eq!(ring_l.extras.get(super::super::finish::RESULT_COLOR_KEY).map(String::as_str), Some("#c08a00"), "and shows gold in Result colours");
         assert!(coin.stock.is_some());
         let ring = coin.objects.iter().find(|o| o.name == "Colour ring").expect("fill region made the ring");
         let rb = ring.bounds();
@@ -557,6 +560,11 @@ mod tests {
             .execute(crate::Invocation { id: "template.fill".into(), params: json!({ "values": { "name": "Grace Hopper", "ring": "Blue", "font": "Script" } }) }, crate::Origin::Agent("t".into()))
             .unwrap();
         assert_eq!(r.result["overflow"], json!([]), "{}", r.result);
+        // Result colours show the chosen finish, not the one the example started on.
+        let ring_layer = |s: &crate::Session| s.document().layers.iter().find(|l| l.name == "Colour ring").unwrap().extras.get(super::super::finish::RESULT_COLOR_KEY).cloned();
+        assert_eq!(ring_layer(&s).as_deref(), Some("#2a5db0"));
+        s.execute(crate::Invocation { id: "template.fill".into(), params: json!({ "values": { "ring": "Gold" } }) }, crate::Origin::Ui).unwrap();
+        assert_eq!(ring_layer(&s).as_deref(), Some("#c08a00"));
 
         let tags = open("serial-tags");
         assert_eq!(tags.objects.iter().filter(|o| matches!(o.geometry, Geometry::Text(_))).count(), 6);

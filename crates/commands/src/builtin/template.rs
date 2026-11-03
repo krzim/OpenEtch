@@ -625,6 +625,11 @@ impl Command for Fill {
                             // The finish replaces any library link (LightBurn's Assign).
                             layer.link = None;
                             layer.extras.remove(super::preset::LINK_PATH_KEY);
+                            // Result colours (module `finish`) show the chosen finish's swatch, never the last one's.
+                            match c.swatch.as_deref().and_then(super::finish::normal_hex) {
+                                Some(hex) => layer.extras.insert(super::finish::RESULT_COLOR_KEY.into(), hex),
+                                None => layer.extras.remove(super::finish::RESULT_COLOR_KEY),
+                            };
                         }
                         // Cut-setting variable texts on those layers show the new values.
                         super::text::refresh_variables(cmd, doc, super::text::now().as_ref())?;
