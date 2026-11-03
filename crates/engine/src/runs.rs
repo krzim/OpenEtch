@@ -462,6 +462,8 @@ pub struct PreparedJob {
     pub estimate_correction: f64,
     /// Where the run waits for the operator before a layer (`production::layer_pause`); empty for most jobs.
     pub pauses: Vec<crate::production::layer_pause::LayerStop>,
+    /// Each layer's share of the job, for the job ledger (module `ledger`); empty where the plan does not say.
+    pub layer_times: Vec<plan::LayerTime>,
 }
 
 impl PreparedJob {
@@ -472,6 +474,7 @@ impl PreparedJob {
             let before = about(self.stats.estimated_time_s);
             self.stats.estimated_time_s *= factor;
             self.estimate_correction *= factor;
+            self.layer_times.iter_mut().for_each(|l| l.estimated_time_s *= factor);
             self.summary = self.summary.replacen(&before, &about(self.stats.estimated_time_s), 1);
         }
         self
@@ -614,7 +617,8 @@ pub fn prepare_job_with(
     if let Some(n) = options.from_segment {
         summary.push_str(&format!(" (from segment {n})"));
     }
-    Ok(PreparedJob { parts, gcode: None, ruida: None, stats, summary, generation: 0, options: options.clone(), estimate_correction: 1.0, pauses })
+    let layer_times = plan::layer_times(&job);
+    Ok(PreparedJob { parts, gcode: None, ruida: None, stats, summary, generation: 0, options: options.clone(), estimate_correction: 1.0, layer_times, pauses })
 }
 
 /// Plan `doc` for a GRBL gantry: the same planning as [`prepare_job_with`] on the bed's target, then G-code
@@ -683,6 +687,7 @@ pub fn prepare_gcode_job(
         options: options.clone(),
         estimate_correction: 1.0,
         pauses: Vec::new(),
+        layer_times: plan::layer_times(&job),
     })
 }
 
@@ -731,7 +736,8 @@ pub fn prepare_queue(
         Some(n) if n > 1 => summary.push_str(&format!(", {n} times")),
         _ => {}
     }
-    Ok(PreparedJob { parts, gcode: None, ruida: None, stats, summary, generation: 0, options: options.clone(), estimate_correction: 1.0, pauses })
+    let layer_times = Vec::new();
+    Ok(PreparedJob { parts, gcode: None, ruida: None, stats, summary, generation: 0, options: options.clone(), estimate_correction: 1.0, layer_times, pauses })
 }
 
 #[cfg(test)]
@@ -750,6 +756,7 @@ mod tests {
             options: RunOptions::default(),
             estimate_correction: 1.0,
             pauses: Vec::new(),
+            layer_times: Vec::new(),
         }
     }
 

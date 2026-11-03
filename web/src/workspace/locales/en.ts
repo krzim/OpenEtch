@@ -7,6 +7,7 @@ import { EN_FILES } from "./en-files.ts";
 import { EN_FILL } from "./en-fill.ts";
 import { EN_JIGS } from "./en-jigs.ts";
 import { EN_GANTRY } from "./en-gantry.ts";
+import { EN_HISTORY } from "./en-history.ts";
 import { EN_JOB } from "./en-job.ts";
 import { EN_LASER } from "./en-laser.ts";
 import { EN_PRODUCTION } from "./en-production.ts";
@@ -62,6 +63,8 @@ export const EN = {
   ...EN_LASER,
   // The production cockpit, notifications, serial ledger, layer pauses, maintenance, extractor (src/production/).
   ...EN_PRODUCTION,
+  // The job ledger (Job log window) and the 3D relief preview (src/ledger/, src/relief/).
+  ...EN_HISTORY,
   "common.cancel": "Cancel",
   "common.close": "Close",
   "common.loading": "Loading…",

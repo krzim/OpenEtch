@@ -1,0 +1,132 @@
+/* The 3D relief preview (relief/ReliefView.tsx). Theme colours from styles.css, sizes from tokens.css. The view takes
+   what height the dialog leaves; on the phone the dialog is a full-screen sheet. */
+
+.rel-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-height: 0;
+}
+.rel-stage {
+  position: relative;
+  height: min(58vh, 560px);
+  min-height: 220px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  background: var(--canvas);
+}
+[data-layout="phone"] .rel-stage {
+  height: max(240px, calc(100dvh - var(--bar-top) - var(--safe-top) - var(--safe-bottom) - 300px));
+}
+.rel-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  cursor: grab;
+  outline: none;
+}
+.rel-canvas:active {
+  cursor: grabbing;
+}
+.rel-canvas:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+.rel-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--sp-4);
+  text-align: center;
+  color: var(--muted);
+  pointer-events: none;
+}
+.rel-overlay.rel-error {
+  color: var(--danger);
+}
+.rel-views {
+  position: absolute;
+  top: var(--sp-2);
+  right: var(--sp-2);
+  display: flex;
+  gap: var(--sp-1);
+}
+.rel-views .btn {
+  background: var(--overlay-bg);
+}
+.rel-legend {
+  position: absolute;
+  left: var(--sp-2);
+  bottom: var(--sp-2);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: 2px var(--sp-2);
+  border-radius: var(--r-md);
+  background: var(--overlay-bg);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+.rel-ramp {
+  display: inline-block;
+  width: 72px;
+  height: 8px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #ccd1d9, #db7829);
+}
+.rel-ramp.flat {
+  background: #ccd1d9;
+}
+.rel-player {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.rel-player input[type="range"] {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.rel-clock {
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.rel-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-4);
+  align-items: center;
+}
+.rel-controls .lx-inline {
+  flex: 0 1 auto;
+}
+.rel-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1) var(--sp-3);
+  margin: 0;
+  font-size: var(--fs-sm);
+}
+.rel-layer {
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted);
+}
+.rel-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 4px;
+  border-radius: 2px;
+  border: 1px solid var(--swatch-border);
+}
+[data-pointer="coarse"] .rel-views .btn,
+[data-pointer="coarse"] .rel-player .icon-btn,
+[data-pointer="coarse"] .rel-controls select {
+  min-height: 44px;
+  min-width: 44px;
+}

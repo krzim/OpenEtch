@@ -472,6 +472,8 @@ impl GalvoMcp {
         ];
         tools.extend(crate::production::mcp::tools());
         tools.extend(crate::mcp_materials::tools());
+        // The job ledger's tools (module `ledger_mcp`).
+        tools.extend(crate::ledger_mcp::tools());
         tools
     }
 
@@ -597,6 +599,8 @@ impl GalvoMcp {
                 v["machine"] = st.lightburn.machine_json(&st.machine.profile());
                 Ok(ok_json(v))
             }
+            // The job ledger's tools (module `ledger_mcp`).
+            ledger if crate::ledger_mcp::TOOL_NAMES.contains(&ledger) => crate::ledger_mcp::dispatch(st, ledger, a).await,
             // Material tools (module `mcp_materials`), then production tools (module `production::mcp`).
             other if crate::mcp_materials::NAMES.contains(&other) => match crate::mcp_materials::dispatch(st, other, a, Self::origin()).await {
                 Some(r) => r,
@@ -605,9 +609,10 @@ impl GalvoMcp {
             other => match crate::production::mcp::dispatch(st, other, a).await {
                 Some(r) => r,
                 None => Err(EngineError::NotFound(format!(
-                    "unknown tool '{other}' (tools: {}, {})",
+                    "unknown tool '{other}' (tools: {}, {}, {})",
                     TOOL_NAMES.join(", "),
-                    crate::mcp_materials::NAMES.join(", ")
+                    crate::mcp_materials::NAMES.join(", "),
+                    crate::ledger_mcp::TOOL_NAMES.join(", ")
                 ))),
             },
         }
@@ -646,7 +651,9 @@ impl ServerHandler for GalvoMcp {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("OpenEtch", env!("CARGO_PKG_VERSION")))
-            .with_instructions(format!("{INSTRUCTIONS}{}", crate::mcp_materials::INSTRUCTIONS))
+            .with_instructions(format!("{INSTRUCTIONS}{}
+
+{}", crate::mcp_materials::INSTRUCTIONS, crate::ledger_mcp::INSTRUCTIONS))
     }
 
     async fn list_tools(
@@ -698,7 +705,12 @@ mod tests {
     fn tool_list_is_complete() {
 
         let names: Vec<String> = GalvoMcp::tools().iter().map(|t| t.name.to_string()).collect();
-        let all: Vec<String> = TOOL_NAMES.iter().chain(crate::mcp_materials::NAMES.iter()).map(|n| n.to_string()).collect();
+        let all: Vec<String> = TOOL_NAMES
+            .iter()
+            .chain(crate::mcp_materials::NAMES.iter())
+            .chain(&crate::ledger_mcp::TOOL_NAMES)
+            .map(|n| n.to_string())
+            .collect();
         assert_eq!(names, all);
         for t in GalvoMcp::tools() {
             assert_eq!(t.input_schema.get("type"), Some(&json!("object")), "{}", t.name);

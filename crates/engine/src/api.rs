@@ -81,6 +81,7 @@ pub fn router(state: Arc<AppState>, web_dir: Option<&Path>) -> Router {
         .merge(crate::ruida_dsp::routes())
         .merge(crate::api_libs::routes())
         .merge(crate::api_materials::routes())
+        .merge(crate::api_ledger::routes())
         .merge(crate::userfiles::routes())
         .merge(crate::documents::routes())
         .merge(crate::artlib::routes())

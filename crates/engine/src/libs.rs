@@ -96,6 +96,11 @@ impl Libs {
         self.job_log.read().unwrap_or_else(PoisonError::into_inner).append(e);
     }
 
+    /// Use the job ledger's store (module `ledger`).
+    pub fn job_ledger<T>(&self, f: impl FnOnce(&crate::ledger::Ledger) -> T) -> T {
+        f(&self.job_log.read().unwrap_or_else(PoisonError::into_inner).ledger)
+    }
+
     /// Record a frame of document revision `revision` on machine generation `generation` (and the request, for the
     /// framing switch).
     pub fn framed(&self, generation: u64, revision: u64, req: &FrameRequest) {
@@ -251,7 +256,7 @@ pub(crate) fn after_run(st: &Arc<AppState>, run_id: &str, device: &str, state: R
         commands::Origin::Agent(name) => format!("agent:{name}"),
     };
     let state_name = serde_json::to_value(state).ok().and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_default();
-    st.libs.append_job_log(&JobLogEntry {
+    crate::ledger::record(st, JobLogEntry {
         time_unix_s: now_unix(),
         run_id: run_id.to_string(),
         state: state_name,
@@ -262,6 +267,7 @@ pub(crate) fn after_run(st: &Arc<AppState>, run_id: &str, device: &str, state: R
         duration_s: (started.elapsed().as_secs_f64() * 10.0).round() / 10.0,
         completed,
         error,
+        ..JobLogEntry::default()
     });
     if state == RunState::Finished && lock(&st.libs.prefs).device(device).play_sound {
         st.emit(Event::machine("job_finished_sound", Some(run_id.to_string())));

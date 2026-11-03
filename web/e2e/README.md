@@ -117,6 +117,12 @@ contact sheet and New from example on an iPhone, an iPad and a MacBook (screensh
   turned with the keyboard up, undo past the import and redo, ruler guides and the corner's Clear guides. The layout
   check passing is not the verdict: look at the screenshots.
 
+- `history.mjs` (`node e2e/history.mjs --url ... [--doc ...] [--devices ...]`): runs a few jobs on the simulator
+  (the owner's file if given, a variable-text tag and a generated 3D Sliced coin), marks them OK / scrap, then on a
+  phone, an iPad and a MacBook opens the 3D relief preview (whole job, half way, low view), the Job log window (list,
+  a run, search, Storage) and Re-run as burned (it checks that a pending run appeared and nothing started), with a
+  screenshot and the layout check per step, under `target/ux-evidence/history-*/`.
+
 ## Emulation limits
 
 - Safe areas: headless Chromium reports `env(safe-area-inset-*)` as 0. The app reads them only through the `--safe-*`

@@ -51,6 +51,11 @@ pub mod markers;
 mod camera_capture;
 pub mod diagnostics;
 pub mod joblog;
+// The job ledger (settings snapshots, thumbnails, verdicts, Re-run) and its HTTP and MCP surfaces.
+pub mod ledger;
+mod ledger_thumb;
+mod api_ledger;
+pub mod ledger_mcp;
 pub mod libs;
 pub mod library;
 // MOPA materials: the finish library sidecar, palette, hue steps, bracket test, colour separation.

@@ -19,6 +19,8 @@ mod geom;
 mod hatch;
 mod image;
 mod job;
+// Per-layer times of a plan, for the job ledger.
+mod layer_times;
 // Offset Fill, kerf offset and start points (crates/geom offsets).
 pub mod offsets;
 mod order;
@@ -44,6 +46,7 @@ pub use preview::{
 };
 pub use regions::{DISPLAY_TOLERANCE_MM, FillRegions, LayerFill, fill_regions};
 pub use target::Target;
+pub use layer_times::{LayerTime, layer_times};
 
 use doc::{LayerId, ObjectId};
 use lmc::LmcError;

@@ -1175,6 +1175,12 @@ const ICONS: Record<string, ReactNode> = {
   unlock: <path d="M6 11h12v9H6z M8.5 11V8a3.5 3.5 0 0 1 6.8-1.2" />,
   // L [link]
   link: <path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1 M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" />,
+  // L [check]
+  check: <path d="M20 6 9 17l-5-5" />,
+  // L [rotate-ccw] (Re-run as burned)
+  rotateCcw: <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8 M3 3v5h5" />,
+  // L [mountain] (3D relief preview)
+  mountain: <path d="m8 3 4 8 5-5 5 15H2L8 3z" />,
   // W [warning] (Lucide triangle-alert)
   warning: <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3 M12 9v4 M12 17h.01" />,
   // Production (src/production/): L [gauge], [bell], [wrench], [fan], [list-ordered], [skip-forward]

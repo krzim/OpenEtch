@@ -208,6 +208,7 @@ pub fn prepare_ruida_job(
         options: options.clone(),
         estimate_correction: 1.0,
         pauses: Vec::new(),
+        layer_times: plan::layer_times(&job),
     })
 }
 
@@ -433,6 +434,7 @@ async fn files_run(
         options: RunOptions::default(),
         estimate_correction: 1.0,
         pauses: Vec::new(),
+        layer_times: Vec::new(),
     };
     let view = {
         let mut store = st.runs();

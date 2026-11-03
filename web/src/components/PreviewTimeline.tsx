@@ -16,6 +16,7 @@ import { startCtxOf, startFlow, startState } from "../laser/startFlow.ts";
 import { useLaserLive } from "../laser/useLaserLive.ts";
 import { Icon } from "./ui.tsx";
 import { HudItem } from "../hud/CanvasHud.tsx";
+import { ReliefButton } from "../relief/ReliefView.tsx";
 import type { PreviewOptions } from "./Viewport.tsx";
 import "./job.css";
 
@@ -174,6 +175,7 @@ export function PreviewTimeline(p: {
         <button className="icon-btn small" disabled={busy} title={t("pvt.saveImage")} aria-label={t("pvt.saveImage")} onClick={saveImage}>
           <Icon name="image" size={16} />
         </button>
+        <ReliefButton />
       </div>
     </HudItem>
   );

@@ -10,6 +10,7 @@ import type { Messages } from "../i18n.ts";
 import { ES_APP } from "./es-app.ts";
 import { ES_DESIGN } from "./es-design.ts";
 import { ES_JIGS } from "./es-jigs.ts";
+import { ES_HISTORY } from "./es-history.ts";
 import { ES_LASER } from "./es-laser.ts";
 import { ES_PRODUCTION } from "./es-production.ts";
 import { ES_MATERIALS } from "./es-materials.ts";
@@ -35,6 +36,8 @@ export const ES: Messages = {
   // MOPA materials (es-materials.ts).
   ...ES_MATERIALS,
   ...ES_TEMPLATES,
+  // The job ledger and the 3D relief preview (es-history.ts).
+  ...ES_HISTORY,
   "common.cancel": "Cancelar",
   "common.close": "Cerrar",
   "common.loading": "Cargando…",

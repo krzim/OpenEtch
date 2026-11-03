@@ -61,6 +61,7 @@ import { MachineCard, PreviewStatsCard, RunsCard } from "./components/LaserPanel
 import { frameWithOptions } from "./components/FramingOptions.tsx";
 import { togglePause } from "./components/JobControls.tsx";
 import { PreviewTimeline } from "./components/PreviewTimeline.tsx";
+import { ReliefHost, openRelief } from "./relief/ReliefView.tsx";
 import { LightBurnDevices, useLightBurn } from "./components/LightBurn.tsx";
 import { LayerSection, PropertiesPanel } from "./components/PropertiesPanel.tsx";
 import { Timeline } from "./components/Timeline.tsx";
@@ -1143,6 +1144,11 @@ export function App() {
         switchWorkspace("laser");
         setShowPreview(true);
       },
+      "laser.relief3d": () => {
+        if (workspace !== "laser") switchWorkspace("laser");
+        setShowPreview(true);
+        openRelief();
+      },
       "view.zoomIn": () => sendViewCommand("zoomIn"),
       "view.zoomOut": () => sendViewCommand("zoomOut"),
       "view.zoomPage": () => sendViewCommand("fit"),
@@ -1709,6 +1715,7 @@ export function App() {
       {edit.dialogs}
       {filesUi.dialogs}
       {libsUi.dialogs}
+      <ReliefHost preview={engine.preview} doc={doc} active={previewOn} />
       {prodUi.dialogs}
       {materialsUi.dialogs}
       {materialsUi.hud}

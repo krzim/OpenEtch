@@ -1,7 +1,7 @@
 /* The Dialog primitive (components/Dialog.tsx), on top of styles.css's .modal-backdrop / .modal. Owner: P2.
    Sizes sm 360 / md 480 / lg 720 / xl 960 / full; a full-screen sheet at 600 px and below and in the phone layout.
-   It stays under --z-stop, so STOP in the top bar is never covered. The explicit sizes carry .modal so styles.css's
-   later `.modal { width: 420px }` does not win over them (sm, lg, xl and full all came out 420 px wide). */
+   It stays under --z-stop, so STOP in the top bar is never covered. The size rules name .modal too: styles.css (loaded
+   later) sets .modal's width, and a size class of the same weight lost to it (every size was 420 px). */
 
 .oe-dialog-backdrop {
   z-index: var(--z-modal, 100);
@@ -17,7 +17,7 @@
   width: min(360px, 100%);
 }
 
-.oe-dialog-md {
+.modal.oe-dialog-md {
   width: min(480px, 100%);
 }
 
@@ -85,7 +85,7 @@
   }
   .oe-dialog,
   .modal.oe-dialog,
-  .oe-dialog.modal-wide {
+  .modal.oe-dialog.modal-wide {
     width: 100%;
     height: 100%;
     max-height: none;

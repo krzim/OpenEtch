@@ -19,7 +19,8 @@ import { CameraWindow, useCameraSupported } from "./Camera.tsx";
 import { FindLaserWizard } from "./FindLaser.tsx";
 import { BugReportDialog, UpdatesDialog } from "./HelpExtras.tsx";
 import { onJobFinishedSound } from "./JobSafety.tsx";
-import { BatchDialog, JobLogDialog, PrintCutDialog, RepeatTableDialog } from "./LaserExtras.tsx";
+import { BatchDialog, PrintCutDialog, RepeatTableDialog } from "./LaserExtras.tsx";
+import { JobLedgerDialog } from "../ledger/JobLedgerDialog.tsx";
 import { LibraryDock } from "./MaterialLibrary.tsx";
 import { clearStartPoint, nearestStartNode, setStartPoint, startMarks } from "./model.ts";
 import { setLibsToast, cameraOverlay, closeLibsWindow, openLibsWindow, startPointTool, useDevicePrefs, useLibsWindow, editPrefs, type LibsWindow } from "./store.ts";
@@ -362,7 +363,7 @@ export function useLibsUi(p: LibsUiProps) {
       dialogs = <FindLaserWizard notify={p.notify} report={p.report} onClose={close} onAdded={p.refreshMachine} />;
       break;
     case "jobLog":
-      dialogs = <JobLogDialog report={p.report} onClose={close} />;
+      dialogs = <JobLedgerDialog notify={p.notify} report={p.report} onClose={close} onRequested={p.refreshMachine} />;
       break;
     case "batch":
       dialogs = <BatchDialog notify={p.notify} report={p.report} onClose={close} onRequested={p.refreshMachine} />;

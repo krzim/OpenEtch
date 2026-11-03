@@ -1318,7 +1318,17 @@ impl AppState {
         // Production slots: empty pockets and Stop at End (module `production`); a batch queue plans its own projects.
         let slots = if options.queue.is_none() { crate::production::slot_plan_for_run(&doc)? } else { None };
         let doc_name = doc.name.clone();
-        let doc = crate::production::output_document(&doc, slots.as_ref());
+        let doc = Arc::new(crate::production::output_document(&doc, slots.as_ref()));
+        // Shared with the job ledger (module `ledger`), which keeps what this run burns: with empty pockets already
+        // left out and the slots at their values, so its empty-slot list (keyed by the old offsets) goes.
+        let ledger_doc = match &slots {
+            Some(p) if p.skips() => {
+                let mut d = (*doc).clone();
+                d.variables.empty_slots.clear();
+                Arc::new(d)
+            }
+            _ => doc.clone(),
+        };
         let config = self.machine.config();
         let generation = config.generation;
         let run_index = self.job.count(&self.active_device().id);
@@ -1352,6 +1362,7 @@ impl AppState {
         .await??
         .with_correction(correction);
         prepared.generation = generation;
+        let layer_times = std::mem::take(&mut prepared.layer_times);
         let view = {
             let mut store = self.runs();
             // Under the runs lock the shutdown cancels pending runs under: none is added after that.
@@ -1363,6 +1374,7 @@ impl AppState {
             run.document_id = document_id;
             run.view(revision)
         };
+        crate::ledger::remember(self, &view, ledger_doc, layer_times);
         crate::production::record_request(self, &view.id, slots, &doc_name);
         tracing::info!(run_id = %view.id, ?origin, "run requested; waiting for approval in the UI");
         self.emit(Event::RunPending { run_id: view.id.clone(), origin, summary: view.summary.clone() });

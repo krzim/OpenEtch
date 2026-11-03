@@ -299,6 +299,7 @@ async fn diagnostics_updates_scan_and_wizard() {
         duration_s: 1.0,
         completed: 1,
         error: None,
+        ..Default::default()
     });
     let (s, bytes) = raw(&app, req("GET", "/api/diagnostics/report", None)).await;
     assert_eq!(s, StatusCode::OK);
