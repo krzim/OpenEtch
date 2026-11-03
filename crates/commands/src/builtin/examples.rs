@@ -6,10 +6,15 @@
 //! Each example sets the project notes (shown on open) to the walkthrough the user guide follows, and most are
 //! templates with fill-in fields. Cut settings are illustrative starting points for a MOPA fiber laser on stainless
 //! steel, not tested values: the notes say to run a material test and save your own presets.
+//!
+//! The finish library's result colours feed the colour examples: `doc.new {example, finishes}` (the engine passes the
+//! selected material library's entries that have a result colour, module `api_materials`) makes those finishes the
+//! choices of the coin's ring colour and the palette coin's colour sector, the first one chosen, its colour the
+//! layer's. Without finishes the illustrative built-in ones are used.
 
 use doc::{CutSettings, Document, FillMode};
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::util::invalid;
@@ -28,7 +33,72 @@ pub struct Example {
     pub tags: &'static [&'static str],
     /// The walkthrough (the project notes and the user guide), one step per entry.
     pub steps: &'static [&'static str],
-    build: fn(&mut Document) -> Result<()>,
+    build: fn(&mut Document, &[ExampleFinish]) -> Result<()>,
+}
+
+/// Most library finishes an example offers as choices.
+pub const MAX_FINISHES: usize = 8;
+
+/// A finish from the material library for the colour examples (`doc.new {example, finishes}`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExampleFinish {
+    /// The preset's name ("Gold 304").
+    pub label: String,
+    /// Its result colour, #rrggbb.
+    pub color: String,
+    /// Its complete cut settings (only fills are used: the colour shapes are filled areas).
+    pub settings: CutSettings,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sub_layers: Vec<CutSettings>,
+}
+
+/// The library finishes usable on a filled colour area (fills with a #rrggbb colour and valid settings), at most
+/// [`MAX_FINISHES`].
+fn fill_finishes(finishes: &[ExampleFinish]) -> Vec<&ExampleFinish> {
+    finishes
+        .iter()
+        .filter(|f| matches!(f.settings.mode, FillMode::Fill | FillMode::FillThenLine | FillMode::OffsetFill) && valid_hex(&f.color))
+        // A preset the editor would refuse is left out rather than refusing the whole example.
+        .filter(|f| super::layer::validate_settings("doc.new", &f.settings).is_ok() && f.sub_layers.iter().all(|s| super::layer::validate_settings("doc.new", s).is_ok()))
+        .take(MAX_FINISHES)
+        .collect()
+}
+
+fn valid_hex(c: &str) -> bool {
+    c.len() == 7 && c.starts_with('#') && c[1..].chars().all(|ch| ch.is_ascii_hexdigit())
+}
+
+/// The choices of a colour field on `layer`: the library's finishes when there are any (the first one put on the
+/// layer, with its colour), else the built-in `(label, fill, swatch)` ones (the first put on the layer).
+fn colour_choices(doc: &mut Document, layer: &str, finishes: &[ExampleFinish], builtin: &[(&str, Fill, &str)]) -> Result<Vec<Value>> {
+    let lib = fill_finishes(finishes);
+    let mut list = Vec::new();
+    if lib.is_empty() {
+        for (label, f, swatch) in builtin {
+            list.push(json!({ "label": label, "settings": finish(doc, layer, *f)?, "swatch": swatch }));
+        }
+        let first = finish(doc, layer, builtin[0].1)?;
+        if let Some(l) = doc.layer_mut(layer) {
+            l.settings = first;
+        }
+        return Ok(list);
+    }
+    for f in &lib {
+        let mut c = json!({ "label": f.label, "settings": f.settings, "swatch": f.color });
+        if !f.sub_layers.is_empty() {
+            c["sub_layers"] = json!(f.sub_layers);
+        }
+        list.push(c);
+    }
+    if let Some(l) = doc.layer_mut(layer) {
+        l.settings = lib[0].settings.clone();
+        l.sub_layers = lib[0].sub_layers.clone();
+        l.color = lib[0].color.clone();
+        // The Result colours view draws the layer in the finish's expected colour (module `finish`).
+        l.extras.insert(super::finish::RESULT_COLOR_KEY.into(), lib[0].color.clone());
+    }
+    Ok(list)
 }
 
 /// The examples, in the order the picker shows them.
@@ -228,7 +298,7 @@ fn arc(r: f64, a0: f64, a1: f64, start: bool) -> String {
     s
 }
 
-fn two_tone_coin(doc: &mut Document) -> Result<()> {
+fn two_tone_coin(doc: &mut Document, finishes: &[ExampleFinish]) -> Result<()> {
     step::<stock::StockDefine>(doc, json!({ "name": "40 mm coin", "shape": { "kind": "circle", "diameter_mm": 40 }, "thickness_mm": 1.5, "material": "stainless steel" }))?;
     let ring = layer_with(doc, true, "Colour ring", "#c08a00", fill(GOLD))?;
     let name = layer_with(doc, false, "Name", "#0000ff", line(60.0, 800.0, 40.0))?;
@@ -244,13 +314,8 @@ fn two_tone_coin(doc: &mut Document) -> Result<()> {
         "fit": { "shape": "box", "width_mm": 24, "height_mm": 9, "mode": "contain" } }))?)?;
     let date = created(&step::<text::ShapeText>(doc, json!({ "text": "03.11.2026", "font": hershey("Hershey Sans"), "height_mm": 2.8,
         "center": [0, -9], "layer": name, "name": "Date" }))?)?;
-    let gold = finish(doc, &ring, GOLD)?;
-    let blue = finish(doc, &ring, BLUE)?;
-    let black = finish(doc, &ring, BLACK)?;
-    // The ring starts as exactly the Gold finish, so the form shows Gold chosen.
-    if let Some(l) = doc.layer_mut(&ring) {
-        l.settings = gold.clone();
-    }
+    // The ring starts as exactly the first finish (Gold, or the library's first), so the form shows it chosen.
+    let ring_choices = colour_choices(doc, &ring, finishes, &[("Gold", GOLD, "#c08a00"), ("Blue", BLUE, "#2a5db0"), ("Black", BLACK, "#222222")])?;
     step::<template::SetField>(doc, json!({ "field": { "id": "name", "label": "Name", "kind": "text", "targets": [title], "max_chars": 16,
         "hint": "Fits itself into the centre of the coin." } }))?;
     step::<template::SetField>(doc, json!({ "field": { "id": "date", "label": "Date", "kind": "date", "targets": [date], "format": "dd.MM.yyyy", "value": "2026-11-03" } }))?;
@@ -258,15 +323,12 @@ fn two_tone_coin(doc: &mut Document) -> Result<()> {
         { "label": "Plain", "font": hershey("Hershey Sans Medium") },
         { "label": "Script", "font": hershey("Hershey Script Medium") },
         { "label": "Serif", "font": hershey("Hershey Serif Bold") }] } }))?;
-    step::<template::SetField>(doc, json!({ "field": { "id": "ring", "label": "Ring colour", "kind": "preset", "targets": [ring], "choices": [
-        { "label": "Gold", "settings": gold, "swatch": "#c08a00" },
-        { "label": "Blue", "settings": blue, "swatch": "#2a5db0" },
-        { "label": "Black", "settings": black, "swatch": "#222222" }] } }))?;
+    step::<template::SetField>(doc, json!({ "field": { "id": "ring", "label": "Ring colour", "kind": "preset", "targets": [ring], "choices": ring_choices } }))?;
     step::<template::SetLock>(doc, json!({ "lock_others": true }))?;
     Ok(())
 }
 
-fn serial_tags(doc: &mut Document) -> Result<()> {
+fn serial_tags(doc: &mut Document, _finishes: &[ExampleFinish]) -> Result<()> {
     let text_layer = layer_with(doc, true, "Serial", "#0000ff", line(55.0, 900.0, 40.0))?;
     let code_layer = layer_with(doc, false, "QR code", "#ff0000", fill(Fill { cross: false, ..MARK }))?;
     let pocket_layer = created(&step::<layer::LayerTool>(doc, json!({ "tool": "T1" }))?)?;
@@ -286,7 +348,7 @@ fn serial_tags(doc: &mut Document) -> Result<()> {
     Ok(())
 }
 
-fn medallion(doc: &mut Document) -> Result<()> {
+fn medallion(doc: &mut Document, _finishes: &[ExampleFinish]) -> Result<()> {
     step::<stock::StockDefine>(doc, json!({ "name": "50 mm medallion", "shape": { "kind": "circle", "diameter_mm": 50 }, "thickness_mm": 2, "material": "brass" }))?;
     let text_layer = layer_with(doc, true, "Text", "#0000ff", line(55.0, 800.0, 40.0))?;
     let star_layer = layer_with(doc, false, "Star", "#ff0000", fill(MARK))?;
@@ -350,7 +412,7 @@ pub fn test_picture(w: u32, h: u32) -> fileio::image::GrayImage {
     })
 }
 
-fn dither_sample(doc: &mut Document) -> Result<()> {
+fn dither_sample(doc: &mut Document, _finishes: &[ExampleFinish]) -> Result<()> {
     use base64::Engine;
     let img = fileio::image::DynamicImage::ImageLuma8(test_picture(360, 240));
     let png = fileio::bitmap::png(&img, Some(300.0)).map_err(|e| CommandError::Failed(format!("example: {e}")))?;
@@ -371,7 +433,7 @@ fn dither_sample(doc: &mut Document) -> Result<()> {
     Ok(())
 }
 
-fn palette_coin(doc: &mut Document) -> Result<()> {
+fn palette_coin(doc: &mut Document, finishes: &[ExampleFinish]) -> Result<()> {
     step::<stock::StockDefine>(doc, json!({ "name": "40 mm coin", "shape": { "kind": "circle", "diameter_mm": 40 }, "thickness_mm": 1.5, "material": "stainless steel" }))?;
     let frost = layer_with(doc, true, "Frost", "#7f7f7f", fill(FROST))?;
     let black = layer_with(doc, false, "Black", "#000000", fill(BLACK))?;
@@ -392,25 +454,18 @@ fn palette_coin(doc: &mut Document) -> Result<()> {
         let (x, y) = (11.0 * f64::cos(f64::to_radians(mid)), 11.0 * f64::sin(f64::to_radians(mid)));
         step::<text::ShapeText>(doc, json!({ "text": label, "font": hershey("Hershey Sans"), "height_mm": 2.6, "center": [x, y], "layer": labels, "name": label }))?;
     }
-    let gold = finish(doc, &colour, GOLD)?;
-    if let Some(l) = doc.layer_mut(&colour) {
-        l.settings = gold;
-    }
-    let mut list = Vec::new();
-    for (label, f, swatch) in [("Gold", GOLD, "#c08a00"), ("Blue", BLUE, "#2a5db0"), ("Purple", PURPLE, "#6a3d9a")] {
-        list.push(json!({ "label": label, "settings": finish(doc, &colour, f)?, "swatch": swatch }));
-    }
+    let list = colour_choices(doc, &colour, finishes, &[("Gold", GOLD, "#c08a00"), ("Blue", BLUE, "#2a5db0"), ("Purple", PURPLE, "#6a3d9a")])?;
     step::<template::SetField>(doc, json!({ "field": { "id": "colour", "label": "Colour sector", "kind": "preset", "targets": [colour], "choices": list } }))?;
     Ok(())
 }
 
 /// Build example `id` into `doc` (a fresh document from `doc.new`): its name, objects, notes and fields.
-pub fn build(id: &str, doc: &mut Document) -> Result<()> {
+pub fn build(id: &str, doc: &mut Document, finishes: &[ExampleFinish]) -> Result<()> {
     let ex = EXAMPLES.iter().find(|e| e.id == id).ok_or_else(|| {
         let ids: Vec<&str> = EXAMPLES.iter().map(|e| e.id).collect();
         invalid("doc.new", format!("no example '{id}'; examples: {}", ids.join(", ")))
     })?;
-    (ex.build)(doc)?;
+    (ex.build)(doc, finishes)?;
     notes(doc, ex)?;
     doc.name = ex.title.to_string();
     Ok(())
@@ -537,6 +592,38 @@ mod tests {
         let (list, _) = ExampleList::apply(&mut d, ExampleListInput {}).unwrap();
         assert_eq!(list.as_array().unwrap().len(), EXAMPLES.len());
         assert!(!list[0]["steps"][0].as_str().unwrap().contains("  "));
+    }
+
+    #[test]
+    fn library_finishes_become_the_colour_choices() {
+        let fill = |power: f64| {
+            let mut c = CutSettings { mode: FillMode::Fill, power_pct: power, ..CutSettings::default() };
+            c.hatch.interval_mm = 0.01;
+            c
+        };
+        let finishes = json!([
+            { "label": "Teal 304", "color": "#118899", "settings": fill(21.0) },
+            { "label": "Outline", "color": "#000000", "settings": CutSettings { mode: FillMode::Line, ..CutSettings::default() } },
+            { "label": "Rose 304", "color": "#cc6677", "settings": fill(23.0) },
+            { "label": "Bad", "color": "#123456", "settings": fill(140.0) },
+        ]);
+        for (id, field, layer) in [("two-tone-coin", "ring", "Colour ring"), ("palette-coin", "colour", "Colour")] {
+            let mut s = crate::Session::new(Document { field_mm: Some(110.0), ..Document::default() });
+            s.execute(crate::Invocation { id: "doc.new".into(), params: json!({ "example": id, "finishes": finishes }) }, crate::Origin::Ui).unwrap();
+            let d = s.document().clone();
+            let spec = template::spec(&d);
+            let f = spec.fields.iter().find(|f| f.id == field).unwrap();
+            let labels: Vec<&str> = f.choices.iter().map(|c| c.label.as_str()).collect();
+            assert_eq!(labels, ["Teal 304", "Rose 304"], "{id}: fills with valid settings only");
+            assert_eq!(f.choices[0].swatch.as_deref(), Some("#118899"));
+            let l = d.layers.iter().find(|l| l.name == layer).unwrap();
+            assert_eq!((l.color.as_str(), l.settings.power_pct), ("#118899", 21.0), "{id}: starts on the first finish");
+            assert_eq!(l.extras[super::super::finish::RESULT_COLOR_KEY], "#118899");
+        }
+        // Without finishes, the built-in ones.
+        let d = open("palette-coin");
+        let f = template::spec(&d).fields.into_iter().find(|f| f.id == "colour").unwrap();
+        assert_eq!(f.choices.iter().map(|c| c.label.as_str()).collect::<Vec<_>>(), ["Gold", "Blue", "Purple"]);
     }
 
     #[test]

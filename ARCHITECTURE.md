@@ -1358,9 +1358,36 @@ nothing here approves or starts a run.
 - **Pre-flight** (`job.preflight {keep_out?}`, Query; `job.preflight_set {check, enabled}`, saved in
   `Document.preflight`): `cut_before_fill` (a line layer burns before a fill or image layer it overlaps, unless Cut
   layers last is on), `empty_layer`, `unfilled_variable` (no CSV, a row past its end, an empty cell, a serial past
-  End), `duplicate_shapes` (`path.delete_duplicates`' key) and `keep_out` (a shape reaching into a zone; blocking,
+  End), `contact_sheet` (the next row's serial / CSV texts; see the links below), `duplicate_shapes`
+  (`path.delete_duplicates`' key) and `keep_out` (a shape reaching into a zone; blocking,
   cannot be switched off). The app shows them above Start in the Laser dock and the phone's Job sheet and as a pill
   beside the toolbar's Start (`web/src/jigs/Preflight.tsx`), one request per revision.
+
+### Links between the production, jig, materials, text and ledger features
+
+- **Pockets are slots.** `doc::jig::object_pockets` gives the jig pocket of every object that sits in one: a
+  `jig.place` clone (its `openetch.jig_pocket` tag), a placement's originals (its source pocket), else a design laid
+  out by hand whose bounds fit inside one enabled pocket (0.5 mm slack) with its centre inside the outline (a
+  LightBurn file on a jig); a shape spanning several pockets, like the plate, sits in none. A production slot
+  (`commands::slots`) whose variable texts all sit in one pocket, alone among the slots, takes every object of that
+  pocket (placement clones are not grouped) and carries it as `Slot.pocket {jig, jig_name, pocket, number}`; its
+  label falls back to "<jig> P<n>". So marking a slot empty leaves out that pocket's whole design, a re-mark marks
+  it again, and the cockpit's slot chips show "P<n>", the number on the physical jig.
+- **Ledgers.** The serial ledger keeps `pocket` per slot (CSV columns `jig,pocket_id,pocket` at the end); the job
+  ledger keeps `pocket` per variable value and `jigs [{id, name, pockets_on, pockets}]` per run, and its search
+  matches "<jig> P<n>". The job ledger stores the document as planned (the slot plan applied, its empty-slot list
+  cleared since the offsets it named are rewritten), so Re-run as burned plans the same values again.
+- **Pre-flight sees the run.** `job.preflight` checks variable text on the document the run plans (the slot plan
+  applied), says once which slots Stop at End leaves out (`unfilled_variable` kind `stop_at_end`, instead of a wrap
+  warning), and adds `contact_sheet`: the contact sheet's checks (`overflow`, `missing_glyph`, `shrunk`, `error`;
+  empty CSV cells stay `unfilled_variable`'s) of the row the next run burns, for at most 200 shapes.
+- **Finishes in the examples.** `doc.new {example, finishes}`: the engine fills `finishes` from the selected material
+  library's entries that have a result colour (`api_materials::fill_example_finishes`), so the two-tone coin's ring
+  and the palette coin's colour sector offer the person's own fill finishes (valid settings, at most 8), start on the
+  first one and take its colour as the layer colour and result colour. `finishes: []` keeps the built-in ones.
+  Colour separation already matches the library's result colours (see "MOPA materials").
+- **Notifications** fire for a layer pause (`production::layer_pause`) and a due maintenance reminder
+  (`production::meter`), like every other production event.
 
 ## Tabs and joinery
 

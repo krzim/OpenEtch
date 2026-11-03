@@ -284,6 +284,10 @@ pub struct NewInput {
     pub optimization: Option<doc::Optimization>,
     /// Start from an example project (`example.list` lists them) instead of an empty document.
     pub example: Option<String>,
+    /// With `example`: finishes from the material library (fills with a result colour; the OpenEtch engine passes
+    /// the selected library's) to offer as the colour examples' choices instead of the built-in ones.
+    #[serde(default)]
+    pub finishes: Vec<super::examples::ExampleFinish>,
 }
 
 /// `doc.new`.
@@ -337,7 +341,7 @@ impl Command for DocNew {
             fresh.optimization = o;
         }
         if let Some(ex) = &input.example {
-            super::examples::build(ex, &mut fresh)?;
+            super::examples::build(ex, &mut fresh, &input.finishes)?;
             if let Some(n) = &input.name {
                 fresh.name = util::name(Self::ID, "name", n)?;
             }

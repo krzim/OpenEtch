@@ -758,6 +758,8 @@ impl AppState {
         }
         // Saved layer / optimization defaults of the active device (module `libs`).
         crate::libs::fill_defaults(self, &mut invs);
+        // The finish library's result colours as the colour examples' choices (module `api_materials`).
+        crate::api_materials::fill_example_finishes(self, &mut invs);
         let profile_field = self.machine.profile().field_mm;
         // Filled in before the session lock: the LightBurn lookup may read prefs.ini.
         let mut field_sources: Vec<(usize, String, Option<String>)> = Vec::new();

@@ -97,6 +97,8 @@ mod libs_tests;
 #[cfg(test)]
 mod materials_tests;
 #[cfg(test)]
+mod links_tests;
+#[cfg(test)]
 mod userfiles_tests;
 #[cfg(test)]
 mod app_tests;

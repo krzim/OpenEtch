@@ -444,6 +444,31 @@ pub(crate) async fn color_separate(st: &Arc<AppState>, a: SeparateArgs, origin: 
     Ok(r)
 }
 
+/// `doc.new {example}` without `finishes`: the selected library's entries with a result colour become the colour
+/// examples' choices (`commands` module `examples`), so an example coin starts on the person's own finishes.
+pub(crate) fn fill_example_finishes(st: &AppState, invs: &mut [Invocation]) {
+    if !invs.iter().any(|i| i.id == "doc.new" && i.params.get("example").is_some_and(|e| !e.is_null()) && i.params.get("finishes").is_none()) {
+        return;
+    }
+    let Some(lib) = lock(&st.libs.library).selected.clone() else { return };
+    let Ok(swatches) = swatches_of(st, &lib, false) else { return };
+    let finishes: Vec<Value> = swatches
+        .into_iter()
+        .map(|s| json!({ "label": s["name"], "color": s["color"], "settings": s["settings"], "sub_layers": s["sub_layers"] }))
+        .collect();
+    if finishes.is_empty() {
+        return;
+    }
+    for inv in invs.iter_mut().filter(|i| i.id == "doc.new") {
+        if let Some(p) = inv.params.as_object_mut()
+            && p.get("example").is_some_and(|e| !e.is_null())
+            && !p.contains_key("finishes")
+        {
+            p.insert("finishes".into(), json!(finishes));
+        }
+    }
+}
+
 /// The swatches of library `lib` for `image.color_separate`: its entries with a result colour.
 fn swatches_of(st: &AppState, lib: &str, link: bool) -> Result<Vec<Value>, EngineError> {
     let s = lock(&st.libs.library);
