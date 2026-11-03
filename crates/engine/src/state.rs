@@ -1305,7 +1305,7 @@ impl AppState {
             && shown != revision
         {
             return Err(EngineError::Conflict(format!(
-                "the document changed since the run was requested (revision {shown} -> {revision}); nothing was                  requested: check the job and request it again"
+                "the document changed since the run was requested (revision {shown} -> {revision}); nothing was requested: check the job and request it again"
             )));
         }
         let config = self.machine.config();

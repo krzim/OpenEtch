@@ -223,7 +223,7 @@ impl<L: RuidaLink> RuidaController<L> {
         let _ = self.command(&Command::EndOfFile);
         let _ = self.command(&Command::StopProcess);
         RuidaDriverError::PartialFile(
-            "the controller was still storing an earlier upload that never finished (it did not answer a status read);              that upload was ended now, so a partial file may be on the controller's list: delete it in the File List,              never start it"
+            "the controller was still storing an earlier upload that never finished (it did not answer a status read); that upload was ended now, so a partial file may be on the controller's list: delete it in the File List, never start it"
                 .into(),
         )
         .into()
