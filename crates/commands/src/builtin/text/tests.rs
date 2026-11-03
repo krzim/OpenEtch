@@ -416,3 +416,46 @@ fn barcode_kind_list_names_every_kind() {
     }
     assert_eq!(listed.len(), text::barcode::Kind::ALL.len());
 }
+
+#[test]
+fn text_fits_a_box_or_a_circle() {
+    let mut s = session();
+    let r = exec(&mut s, "shape.text", json!({ "text": "Ada", "font": hershey(), "height_mm": 5, "center": [10, 0],
+        "fit": { "shape": "box", "width_mm": 40, "height_mm": 10 } }));
+    let id = r["created"][0].as_str().unwrap().to_string();
+    let size = |r: &Value| [r["bounds"]["size"][0].as_f64().unwrap(), r["bounds"]["size"][1].as_f64().unwrap()];
+    let [w, h] = size(&r);
+    assert!((w - 40.0).abs() < 1e-6 || (h - 10.0).abs() < 1e-6, "touches the box: {r}");
+    assert!(w <= 40.0 + 1e-6 && h <= 10.0 + 1e-6);
+    assert!((r["bounds"]["center"][0].as_f64().unwrap() - 10.0).abs() < 1e-6, "middle alignment centres it");
+    // Stretch fills the box; a longer text shrinks into it.
+    let r = exec(&mut s, "text.update", json!({ "id": id, "fit": { "shape": "box", "mode": "stretch" } }));
+    let [w, h] = size(&r);
+    assert!((w - 40.0).abs() < 1e-6 && (h - 10.0).abs() < 1e-6, "{r}");
+    let r = exec(&mut s, "text.update", json!({ "id": id, "text": "A much longer name", "fit": { "shape": "box", "mode": "contain" } }));
+    assert!((size(&r)[0] - 40.0).abs() < 1e-6);
+    // A circle (coin face): every point within the radius.
+    exec(&mut s, "text.update", json!({ "id": id, "fit": { "shape": "circle", "width_mm": 30 } }));
+    let t = text_of(&s, &id);
+    let o = s.document().object(&id).unwrap();
+    let c = o.transform * kurbo::Point::ORIGIN;
+    let mut far: f64 = 0.0;
+    kurbo::flatten((o.transform * t.outline.clone()).elements().iter().copied(), 0.01, |el| {
+        if let kurbo::PathEl::LineTo(p) | kurbo::PathEl::MoveTo(p) = el {
+            far = far.max((p - c).hypot());
+        }
+    });
+    assert!(far <= 15.0 + 1e-6 && far > 14.9, "{far}");
+    assert_eq!(t.fit.unwrap().mode, doc::FitMode::Contain);
+    // Bad values, stretch on a circle, then off again.
+    assert!(fails(&mut s, "text.update", json!({ "id": id, "fit": { "shape": "circle", "mode": "stretch" } })).contains("stretch"));
+    assert!(fails(&mut s, "text.update", json!({ "id": id, "fit": { "shape": "box", "width_mm": 0, "height_mm": 5 } })).contains("width_mm"));
+    let mut fresh = session();
+    assert!(fails(&mut fresh, "shape.text", json!({ "text": "x", "font": hershey(), "fit": { "shape": "box", "width_mm": 5 } })).contains("height_mm"));
+    exec(&mut s, "text.update", json!({ "id": id, "fit": { "shape": "none" } }));
+    assert!(text_of(&s, &id).fit.is_none());
+    // Not on a path.
+    let p = exec(&mut s, "shape.ellipse", json!({ "rx_mm": 20, "ry_mm": 20 }))["created"][0].as_str().unwrap().to_string();
+    exec(&mut s, "text.update", json!({ "id": id, "fit": { "shape": "circle", "width_mm": 30 } }));
+    assert!(fails(&mut s, "text.apply_path", json!({ "id": id, "path": p })).contains("path"));
+}

@@ -7,7 +7,7 @@
 //!   format is not read: it is undocumented and no sample was available.
 //! - Layout ([`render_text`]): lines, height, HSpace/VSpace, Align X/Y, bold/italic faces, upper case, max width and
 //!   squeeze, bend (distorted or rigid glyphs), text on a path, welding (see the `layout` module for the rules and
-//!   how they were matched to LightBurn's saved outlines).
+//!   how they were matched to LightBurn's saved outlines), then auto-fit into a box or a circle ([`fit`]).
 //! - Variable text ([`vars`]): serial numbers, date/time, CSV merge and cut-setting codes, as LightBurn formats them.
 //! - Barcodes ([`barcode`]).
 //!
@@ -15,6 +15,8 @@
 
 pub mod barcode;
 pub mod codes;
+// Text auto-fit into a box or a circle (doc::TextFit).
+pub mod fit;
 pub mod hershey;
 pub mod jsf;
 mod layout;
@@ -39,6 +41,8 @@ pub struct Rendered {
     pub shown: String,
     /// What could not be honoured (missing glyphs, faces), for the caller to report.
     pub warnings: Vec<String>,
+    /// The scale `[x, y]` the text's auto-fit applied (`[1, 1]` without one).
+    pub fit_scale: [f64; 2],
 }
 
 /// Lay `t` out showing `shown` (its text, or the evaluated variable text) with its font. `path` is the outline to
@@ -59,10 +63,11 @@ pub fn render_with(t: &Text, shown: &str, path: Option<&BezPath>, r: &Resolved) 
     }
     let laid = layout::lay_out(t, &lines, r);
     let outline = layout::finish(t, &laid, path)?;
+    let (outline, fit_scale) = fit::apply(t, outline);
     if !geom::is_finite(&outline) {
         return Err("the text's outline is not finite (check its height and bend)".into());
     }
-    Ok(Rendered { outline, shown: shown.to_string(), warnings: laid.warnings })
+    Ok(Rendered { outline, shown: shown.to_string(), warnings: laid.warnings, fit_scale })
 }
 
 /// What a text object shows: its text, or for variable text the evaluated format (`moment` for date/time; `laser`

@@ -97,6 +97,63 @@ pub struct TextPath {
     pub offset_mm: f64,
 }
 
+/// The area of [`Text::fit`] (OpenEtch's text auto-fit, like xTool's Auto Fit).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FitShape {
+    /// A `width_mm` x `height_mm` box placed by the text's alignment: Align X left puts the box's left edge on the
+    /// text's origin, middle its centre, right its right edge; Align Y top / middle / bottom likewise.
+    #[default]
+    Box,
+    /// A circle of diameter `width_mm` centred on the text's origin (a coin's face).
+    Circle,
+}
+
+/// How [`Text::fit`] scales the text into its area.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FitMode {
+    /// Scale up or down, keeping the proportions, until the text touches the area (Auto Fit).
+    #[default]
+    Contain,
+    /// Scale width and height separately so the text fills the box exactly (boxes only).
+    Stretch,
+    /// Like contain, but never larger than the text's own size: only text that does not fit shrinks.
+    Shrink,
+}
+
+/// Text auto-fit: after layout (and bend), the text's ink is scaled into a box or a circle and placed in it by the
+/// text's alignment. Not for text on a path.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct TextFit {
+    #[serde(default)]
+    pub shape: FitShape,
+    /// Box width, or the circle's diameter, in mm.
+    pub width_mm: f64,
+    /// Box height in mm (not used by a circle).
+    #[serde(default)]
+    pub height_mm: f64,
+    #[serde(default)]
+    pub mode: FitMode,
+}
+
+impl TextFit {
+    /// Why this fit cannot be used, if so.
+    pub fn problem(&self) -> Option<String> {
+        let ok = |v: f64| v.is_finite() && v > 0.0 && v <= 10_000.0;
+        if !ok(self.width_mm) {
+            return Some(format!("text fit width_mm must be within 0..=10000 and above 0 (got {})", self.width_mm));
+        }
+        match self.shape {
+            FitShape::Box if !ok(self.height_mm) => {
+                Some(format!("text fit height_mm must be within 0..=10000 and above 0 (got {})", self.height_mm))
+            }
+            FitShape::Circle if self.mode == FitMode::Stretch => Some("text fit: stretch needs a box".into()),
+            _ => None,
+        }
+    }
+}
+
 /// A live text object. Lengths in mm in the object's own frame (its transform places it). See the `text` crate for
 /// how it is laid out.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -148,6 +205,9 @@ pub struct Text {
     /// Drop lines that evaluate to nothing (LightBurn's Ignore Empty Vars, e.g. a blank CSV cell).
     #[serde(default)]
     pub ignore_empty_vars: bool,
+    /// Auto-fit into a box or a circle ([`TextFit`]); `None` keeps the text's own size.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fit: Option<TextFit>,
     /// Variable text (serial numbers, date/time, CSV merge, cut settings); `None` is LightBurn's Normal mode.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub variable: Option<VarText>,
@@ -181,6 +241,7 @@ impl Text {
             max_width_mm: 0.0,
             squeeze: false,
             ignore_empty_vars: false,
+            fit: None,
             variable: None,
             outline: BezPath::new(),
             shown: None,
@@ -215,6 +276,12 @@ impl Text {
         }
         if self.max_width_mm < 0.0 {
             return Some("text max_width_mm must not be negative".into());
+        }
+        if let Some(f) = &self.fit {
+            if self.path.is_some() {
+                return Some("text fit does not apply to text on a path (detach it first)".into());
+            }
+            return f.problem();
         }
         None
     }
