@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { detectPlatform, installGuide, shouldOfferAppMode } from "./appMode.ts";
+import { detectPlatform, installGuide, openWhenClear, shouldOfferAppMode } from "./appMode.ts";
 
 const UA = {
   macSafari: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/19.1 Safari/605.1.15",
@@ -96,4 +96,22 @@ test("offered once, by itself, only on a touch device in a browser tab", () => {
   assert.equal(shouldOfferAppMode(true, "browser", true), false);
   assert.equal(shouldOfferAppMode(false, "browser", false), false);
   assert.equal(shouldOfferAppMode(true, "standalone", false), false);
+});
+
+test("the offer waits for the dialog in front (an example's notes) and gives up after its tries", () => {
+  const ticks: (() => void)[] = [];
+  let busy = true;
+  let opened = 0;
+  openWhenClear(() => busy, () => opened++, (f) => ticks.push(f), 3);
+  assert.equal(opened, 0);
+  ticks.shift()!();
+  busy = false;
+  ticks.shift()!();
+  assert.equal(opened, 1);
+  // Never clear: it stops trying.
+  const later: (() => void)[] = [];
+  openWhenClear(() => true, () => opened++, (f) => later.push(f), 2);
+  later.shift()!();
+  assert.equal(later.length, 0);
+  assert.equal(opened, 1);
 });

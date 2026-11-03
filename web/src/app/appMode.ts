@@ -85,3 +85,15 @@ export function syncThemeColor(): void {
   if (!color) return;
   for (const meta of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')) meta.content = color;
 }
+
+/**
+ * Open the offer once no other modal is up (a file's notes, a sheet, a first-run dialog), so it never stacks over one
+ * the person is reading: checked every `schedule` tick, given up after `tries` (Help still offers it).
+ */
+export function openWhenClear(busy: () => boolean, open: () => void, schedule: (f: () => void) => void, tries = 150): void {
+  if (!busy()) {
+    open();
+    return;
+  }
+  if (tries > 1) schedule(() => openWhenClear(busy, open, schedule, tries - 1));
+}

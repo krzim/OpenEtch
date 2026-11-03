@@ -12,7 +12,7 @@ import { displayModeNow, isAppWindow, useDisplayMode, useFullscreen } from "../w
 import { hintFor } from "../workspace/hotkeys.ts";
 import { getPrefs } from "../workspace/prefs.ts";
 import { useT } from "../workspace/usePrefs.ts";
-import { APP_MODE_OFFERED_KEY, installGuide, shouldOfferAppMode } from "./appMode.ts";
+import { APP_MODE_OFFERED_KEY, installGuide, openWhenClear, shouldOfferAppMode } from "./appMode.ts";
 import "./app.css";
 
 /** Chromium's install prompt, kept from `beforeinstallprompt` (only on a secure origin). */
@@ -97,8 +97,9 @@ export function offerAppModeOnce(): void {
   } catch {
     return;
   }
-  window.setTimeout(openAppModeDialog, 1500);
+  window.setTimeout(() => openWhenClear(() => !!document.querySelector('[aria-modal="true"]'), openAppModeDialog, (f) => window.setTimeout(f, 2000)), 1500);
 }
+
 
 function AppModeHost() {
   const isOpen = useSyncExternalStore(subscribe, () => open);
