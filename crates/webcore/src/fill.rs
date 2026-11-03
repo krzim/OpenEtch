@@ -130,7 +130,7 @@ fn miss_code(m: Miss) -> &'static str {
 /// The engine command's result for `params` on `doc`, or its error text ([`UNSUPPORTED`] for options only the engine
 /// takes).
 pub fn preview(doc: &Document, cache: &mut Cache, params: &Value) -> Result<Value, String> {
-    let i: Input = serde_json::from_value(params.clone()).map_err(|e| invalid(e))?;
+    let i: Input = serde_json::from_value(params.clone()).map_err(invalid)?;
     if i.boundary_ids.is_some() || i.boundary_layers.is_some() || i.open_paths.is_some() {
         return Err(UNSUPPORTED.into());
     }
