@@ -579,3 +579,54 @@ fn grbl_leads_and_path_pauses_skip_an_images_scan_runs() {
     let plain = plan_job(&doc_with(vec![img, rect("obj-1", 10.0, 10.0, (20.0, 0.0))], cut), &s.target()).unwrap();
     assert!(plain.passes[0].gantry.is_default());
 }
+
+#[test]
+fn a_grbl_plan_counts_its_leads_overcut_pauses_and_overscan() {
+    // The G-code cuts leads and overcuts and dwells at path pauses; the plan's stats and preview (the time estimate,
+    // the toolpath and Start Here) must see them as well, and the G-code of the planned (baked) job is the G-code of
+    // the same passes baked at output time.
+    let s = GcodeSettings {
+        work_area_mm: [400.0, 300.0],
+        mirror_x: false,
+        mirror_y: false,
+        s_max: 1000.0,
+        max_power_pct: 100.0,
+        max_feed_mm_min: 6000.0,
+        dynamic_power: true,
+    };
+    let lead = Some(doc::Lead { style: doc::LeadStyle::Line, length_mm: 2.0, angle_deg: 90.0 });
+    let mut cut = doc::CutSettings { speed_mm_s: 20.0, ..doc::CutSettings::default() };
+    let plain = plan_job(&doc_with(vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0))], cut.clone()), &s.target()).unwrap();
+    cut.options = doc::CutOptions { lead_in: lead, lead_out: lead, overcut_mm: 3.0, start_pause_ms: 500.0, end_pause_ms: 250.0, ..doc::CutOptions::default() };
+    let plan = plan_job(&doc_with(vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0))], cut), &s.target()).unwrap();
+    assert!((plain.stats.mark_length_mm - 40.0).abs() < 1e-9);
+    assert!((plan.stats.mark_length_mm - (40.0 + 2.0 + 3.0 + 2.0)).abs() < 1e-9, "{}", plan.stats.mark_length_mm);
+    // 7 mm more at 20 mm/s and 0.75 s of pauses; the jump is to the lead's start, 2 mm farther or nearer.
+    let more = plan.stats.estimated_time_s - plain.stats.estimated_time_s;
+    assert!((more - (7.0 / 20.0 + 0.75)).abs() < 0.02, "{more}");
+    let preview = preview_plan(&plan);
+    let last = preview.segments.last().unwrap();
+    assert!((last.t_s - plan.stats.estimated_time_s).abs() < 1e-9, "the timeline ends at the estimate");
+    // Lead-in, the 4 sides, the 3 mm overcut along the first side, the lead-out.
+    assert_eq!(preview.segments.iter().filter(|g| g.kind == SegmentKind::Mark).count(), 1 + 4 + 1 + 1, "{:?}", preview.segments);
+    // The same G-code as the unbaked passes baked by the output.
+    let mut unbaked = plan.clone();
+    unbaked.passes[0].polylines = plain.passes[0].polylines.clone();
+    unbaked.passes[0].gantry.baked = false;
+    assert_eq!(gcode_lines(&plan, &s).unwrap(), gcode_lines(&unbaked, &s).unwrap());
+    // Overscan: run-in and run-out of every scan line at the fill's feed.
+    let mut f = fill(1.0, false);
+    f.speed_mm_s = 20.0;
+    let fills = |overscan: f64| {
+        let mut f = f.clone();
+        f.options.overscan_mm = overscan;
+        plan_job(&doc_with(vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0))], f), &s.target()).unwrap()
+    };
+    let (a, b) = (fills(0.0), fills(5.0));
+    let lines = b.passes[0].polylines.len() as f64;
+    let d = b.stats.estimated_time_s - a.stats.estimated_time_s;
+    assert!((d - lines * 10.0 / 20.0).abs() < 1e-6, "{d} for {lines} scan lines");
+    // A galvo plan is untouched: no baking, no extra time.
+    let galvo = plan_job(&doc_with(vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0))], doc::CutSettings { options: doc::CutOptions { lead_in: lead, start_pause_ms: 500.0, ..doc::CutOptions::default() }, ..doc::CutSettings::default() }), &crate::target::tests::target()).unwrap();
+    assert!(!galvo.passes[0].gantry.baked && (galvo.stats.mark_length_mm - 40.0).abs() < 1e-9);
+}

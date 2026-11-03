@@ -136,6 +136,12 @@ pub struct GantryPass {
     /// pauses are for the vector paths after them, never for raster runs. Set only when a lead or pause is.
     #[serde(default, skip_serializing_if = "is_zero_usize")]
     pub image_runs: usize,
+    /// A plan for a gantry target (`crate::gcode::bake_gantry`): the lead-ins, lead-outs and overcuts are already in
+    /// `polylines`, so the G-code output cuts them as planned and the stats, the preview and Start Here see them; the
+    /// stats and preview also time the path pauses and the overscan run-in and run-out. The lead and overcut
+    /// settings stay set (a Ruida job refuses them).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub baked: bool,
 }
 
 impl GantryPass {
@@ -536,6 +542,19 @@ pub(crate) fn plan_job_within(doc: &Document, target: &Target, max_segments: usi
                     layer.id
                 )));
             }
+            let leads = cut.mode == FillMode::Line && (o.lead_in.is_some() || o.lead_out.is_some());
+            if target.gantry
+                && o.wobble.is_some()
+                && matches!(cut.mode, FillMode::Line | FillMode::FillThenLine)
+                && (leads || o.overcut_mm > 0.0)
+            {
+                // Wobble turns every outline into a run of small circles: a lead would leave along the first circle
+                // instead of the outline, and an overcut would retrace circles, not the outline's start.
+                return Err(PlanError::Target(format!(
+                    "layer {}: wobble cannot be combined with a lead-in, lead-out or overcut (they would follow the wobble's                      circles, not the outline): turn one of them off",
+                    layer.id
+                )));
+            }
             plan.passes.push(PassPlan {
                 layer_id: layer.id.clone(),
                 sub_layer,
@@ -564,6 +583,7 @@ pub(crate) fn plan_job_within(doc: &Document, target: &Target, max_segments: usi
                     start_pause_us: if cut.mode == FillMode::Line { cut.options.start_pause_ms * 1000.0 } else { 0.0 },
                     end_pause_us: if cut.mode == FillMode::Line { cut.options.end_pause_ms * 1000.0 } else { 0.0 },
                     image_runs: if path_extras { image_runs } else { 0 },
+                    baked: false,
                 },
             });
         }
@@ -588,6 +608,9 @@ pub(crate) fn plan_job_within(doc: &Document, target: &Target, max_segments: usi
         }
     } else if plan.passes.iter().any(|p| p.z_mm.is_some()) {
         z_parts(&mut plan);
+    }
+    if target.gantry {
+        crate::gcode::bake_gantry(&mut plan);
     }
     plan.stats = plan_stats(&plan, target);
     Ok(plan)
@@ -1230,6 +1253,7 @@ pub(crate) fn pass_stats(pass: &PassPlan, mut pos: Point) -> (Stats, f64, Point)
         time_us += corners * (t.polygon_delay_us.max(0.0) / 10.0).trunc() * 10.0;
         pos = last;
     }
+    time_us += crate::gcode::extra_us(pass);
     s.estimated_time_s = time_us / 1e6;
     (s, time_us, pos)
 }

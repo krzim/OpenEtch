@@ -191,6 +191,9 @@ pub fn preview_plan(plan: &JobPlan) -> Preview {
                 t_us += pass.dot_time_us.unwrap_or(0.0);
                 segments.push(at(SegmentKind::Mark, first, first, true, power, t_us));
             }
+            // A gantry's start pause and overscan run-in come before the first mark, the rest after the last.
+            let (before, after) = crate::gcode::extra_us_of(pass, i);
+            t_us += before;
             let polygon = (tm.polygon_delay_us.max(0.0) / 10.0).trunc() * 10.0;
             for (k, w) in poly.windows(2).enumerate() {
                 if k > 0 {
@@ -199,6 +202,7 @@ pub fn preview_plan(plan: &JobPlan) -> Preview {
                 t_us += pass.settings.mark_us(dist(w[0], w[1]));
                 segments.push(at(SegmentKind::Mark, w[0], w[1], true, power, t_us));
             }
+            t_us += after;
             t_us += tm.laser_off_delay_us.max(0.0) + tm.end_delay_us.max(0.0);
             if let Some(last) = segments.last_mut().filter(|s| s.kind == SegmentKind::Mark) {
                 last.t_s = t_us / 1e6;
@@ -332,7 +336,7 @@ pub fn start_at(plan: &JobPlan, segment: usize, target: &Target) -> Result<JobPl
                 p.polylines[0].drain(..k);
                 p.pause_before_us = 0.0;
                 p.gantry.image_runs = p.gantry.image_runs.saturating_sub(li);
-                if k > 0 && (p.gantry.lead_in.is_some() || p.gantry.lead_out.is_some()) {
+                if k > 0 && !p.gantry.baked && (p.gantry.lead_in.is_some() || p.gantry.lead_out.is_some()) {
                     // A GRBL lead at a path resumed part-way would be measured from the resume point, and for a
                     // closed outline (now open) on the wrong side, into the part: that polyline is cut on its own,
                     // without leads.

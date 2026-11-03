@@ -299,3 +299,61 @@ async fn parity_of_a_local_lightburn_file() {
         println!("moved: {} segments equal", assert_parity(&app, "moved").await);
     }
 }
+
+async fn post(app: &Router, uri: &str, body: Value) -> (StatusCode, Value) {
+    let r = Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header("host", "localhost:7878")
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    let res = app.clone().oneshot(r).await.unwrap();
+    let status = res.status();
+    (status, serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap_or(Value::Null))
+}
+
+/// A GRBL gantry: the lead-ins, lead-outs, overcut, path pauses and fill overscan are in the browser's preview and
+/// estimate exactly as in the engine's (the planner bakes the leads and overcut into the paths for a gantry).
+#[tokio::test]
+async fn a_grbl_preview_with_leads_overcut_pauses_and_overscan_matches() {
+    let mut d = Document::default();
+    let lead = doc::Lead { style: doc::LeadStyle::Arc, length_mm: 3.0, angle_deg: 60.0 };
+    let line = CutSettings {
+        speed_mm_s: 20.0,
+        options: CutOptions { lead_in: Some(lead), lead_out: Some(lead), overcut_mm: 2.0, start_pause_ms: 300.0, end_pause_ms: 100.0, ..CutOptions::default() },
+        ..CutSettings::default()
+    };
+    d.layers[0].settings = line;
+    let mut scan = fill(0.5);
+    scan.speed_mm_s = 40.0;
+    scan.options.overscan_mm = 2.5;
+    d.layers.push(layer("layer-2", "Fill", "#ff0000", scan));
+    d.objects = vec![
+        rect("obj-1", "layer-1", 30.0, 20.0, (-50.0, 0.0)),
+        rect("obj-2", "layer-1", 10.0, 6.0, (-50.0, 0.0)),
+        obj("obj-3", "layer-1", Geometry::Ellipse { rx_mm: 8.0, ry_mm: 5.0 }, (0.0, 40.0)),
+        rect("obj-4", "layer-2", 25.0, 15.0, (40.0, -20.0)),
+    ];
+    let st = state(d).await;
+    let app = api::router(st.clone(), None);
+    let profile = json!({"port": "COM9", "work_area_mm": [400.0, 300.0], "origin": "bottom_left", "max_feed_mm_min": 6000.0});
+    let (s, v) = post(&app, "/api/devices/grbl", json!({"display_name": "Diode", "profile": profile})).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let id = v["device"]["id"].as_str().unwrap().to_owned();
+    let (s, v) = post(&app, &format!("/api/devices/{id}/activate"), json!({})).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let n = assert_parity(&app, "grbl leads").await;
+    assert!(n > 50, "{n} segments");
+    // The engine's estimate includes the extras: without them the same document is quicker and shorter.
+    let (_, with) = get(&app, "/api/preview").await;
+    let with: Value = serde_json::from_str(&with).unwrap();
+    exec(&app, "layer.update", json!({"id": "layer-1", "settings": {"options": {"lead_in": null, "lead_out": null, "overcut_mm": 0, "start_pause_ms": 0, "end_pause_ms": 0}}})).await;
+    exec(&app, "layer.update", json!({"id": "layer-2", "settings": {"options": {"overscan_mm": 0}}})).await;
+    let (_, without) = get(&app, "/api/preview").await;
+    let without: Value = serde_json::from_str(&without).unwrap();
+    let (a, b) = (&with["stats"], &without["stats"]);
+    assert!(a["mark_length_mm"].as_f64().unwrap() > b["mark_length_mm"].as_f64().unwrap() + 3.0 * 6.0, "{a} {b}");
+    assert!(a["estimated_time_s"].as_f64().unwrap() > b["estimated_time_s"].as_f64().unwrap() + 3.0 * 0.4, "{a} {b}");
+    assert_parity(&app, "grbl plain").await;
+}

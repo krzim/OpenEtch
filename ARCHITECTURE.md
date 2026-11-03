@@ -1412,12 +1412,15 @@ Origin), the public WAZER `.lbdev`, xTool/Creality `.lbdev` posts and the owner'
   pauses are for vector paths only (an image's scan runs on the same Line layer get none, `GantryPass.image_runs`);
   combined with tabs (automatic or placed by hand, while the layer's Tabs / Bridges switch is on; tab settings kept
   with the switch off do not count) or perforation they are refused (a lead at every piece would cut across the
-  bridges); Start Here
-  part-way along a path cuts the rest of that path without its leads (from the resume point a lead would land on the
-  wrong side). The web UI offers the
+  bridges), and so are leads and an overcut on a layer with wobble (they would follow the wobble's circles, not the
+  outline). For a gantry target the planner puts the leads and overcuts into the paths themselves
+  (`plan::gcode::bake_gantry`, `GantryPass.baked`), so the preview draws them, Start Here numbers them and resumes on
+  them (part-way along a path: the rest of it with its lead-out, never a new lead from the resume point), and the
+  stats and the browser preview (webcore, same planner) count them, the path pauses (each `G4`, at most 60 s) and the
+  overscan run-in and run-out (at the cut's feed, not shortened at the bed's edge) in the time estimate. The web UI offers the
   Move window (with saved positions and Show Last Position) and the Console window and File > Save G-code only while
-  a GRBL gantry is active. Not yet for GRBL: the ramp on Threshold images, Cut Through pauses (laser on), leads and
-  overcut in the preview, Repeat Marking tables, queues, the
+  a GRBL gantry is active. Not yet for GRBL: the ramp on Threshold images, Cut Through pauses (laser on), Repeat
+  Marking tables, queues, the
   start input, dot mode, rotary/Z jobs. LightBurn GRBL devices stay design-only gantries.
 - **Ruida gantries** (kind `ruida`, made in OpenEtch with `POST /api/devices/ruida` or the Devices window's New Ruida;
   unverified on hardware): controllable through the Ruida driver (Safety model, "Ruida gantries"). The device holds a

@@ -556,26 +556,52 @@ fn grbl_leads_and_path_pauses_refuse_tabs_and_perforation() {
 }
 
 #[test]
-fn start_here_part_way_along_a_path_drops_that_paths_grbl_leads() {
-    // Resuming in the middle of a closed outline: the rest of it is an open path, and a lead measured from there
-    // would land on the wrong side (into the part). It is cut on its own without leads; later paths keep theirs.
+fn grbl_wobble_refuses_leads_and_overcut() {
+    // Wobble makes each outline a run of small circles: a lead or an overcut would follow a circle, not the outline.
+    let gantry = Target { gantry: true, ..target() };
+    let lead = Some(doc::Lead { style: doc::LeadStyle::Line, length_mm: 2.0, angle_deg: 90.0 });
+    let wobble = || Some(doc::Wobble { step_mm: 0.5, size_mm: 0.4 });
+    let objects = || vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0))];
+    for o in [
+        CutOptions { wobble: wobble(), lead_in: lead, ..CutOptions::default() },
+        CutOptions { wobble: wobble(), lead_out: lead, ..CutOptions::default() },
+        CutOptions { wobble: wobble(), overcut_mm: 2.0, ..CutOptions::default() },
+    ] {
+        let d = doc_with(objects(), with_options(CutSettings::default(), o.clone()));
+        assert!(matches!(plan_job(&d, &gantry), Err(PlanError::Target(m)) if m.contains("wobble")), "{o:?}");
+        // A galvo ignores the GRBL-only leads and overcut and wobbles as before.
+        plan_job(&d, &target()).unwrap();
+    }
+    // Wobble with path pauses only is fine (one pause per wobbled outline), and so is a fill layer with a stray wobble.
+    let d = doc_with(objects(), with_options(CutSettings::default(), CutOptions { wobble: wobble(), start_pause_ms: 5.0, ..CutOptions::default() }));
+    plan_job(&d, &gantry).unwrap();
+    let d = doc_with(objects(), with_options(fill(1.0), CutOptions { wobble: wobble(), overcut_mm: 2.0, ..CutOptions::default() }));
+    plan_job(&d, &gantry).unwrap();
+}
+
+#[test]
+fn start_here_part_way_along_a_grbl_path_resumes_on_the_planned_leads() {
+    // A gantry plan has its leads in its paths (`GantryPass::baked`), so the preview numbers them and Start Here
+    // resumes on the very path the head would have cut: part-way along an outline, the rest of it with its lead-out,
+    // and no new lead measured from the resume point (that one would land on the wrong side, into the part).
     let gantry = Target { gantry: true, ..target() };
     let lead = Some(doc::Lead { style: doc::LeadStyle::Line, length_mm: 2.0, angle_deg: 90.0 });
     let o = CutOptions { lead_in: lead, lead_out: lead, ..CutOptions::default() };
     let d = doc_with(vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0)), rect("obj-2", 10.0, 10.0, (30.0, 0.0))], with_options(CutSettings::default(), o));
     let plan = plan_job(&d, &gantry).unwrap();
+    assert!(plan.passes[0].gantry.baked);
+    assert_eq!(plan.passes[0].polylines.iter().map(Vec::len).collect::<Vec<_>>(), [7, 7], "lead-in, 4 sides, lead-out");
+    assert!((plan.stats.mark_length_mm - 88.0).abs() < 1e-9, "{}", plan.stats.mark_length_mm);
+    // Segment 3: the second side of the first outline (0 the jump, 1 the lead-in).
     let mid = start_at(&plan, 3, &gantry).unwrap();
-    assert_eq!(mid.passes.len(), 2, "{:?}", mid.passes);
-    assert_eq!((mid.passes[0].gantry.lead_in, mid.passes[0].gantry.lead_out), (None, None));
-    assert_eq!(mid.passes[0].polylines.len(), 1);
-    assert_eq!((mid.passes[1].gantry.lead_in, mid.passes[1].polylines.len()), (lead, 1));
-    assert!((mid.stats.mark_length_mm - 60.0).abs() < 1e-9, "{}", mid.stats.mark_length_mm);
-    // From a path's start (a jump), nothing is split.
-    let from_second = start_at(&plan, 5, &gantry).unwrap();
-    assert_eq!((from_second.passes.len(), from_second.passes[0].gantry.lead_in), (1, lead));
-    // The last path resumed part-way: its pass is replaced, keeping the pass's pause after.
-    let last = start_at(&plan, 8, &gantry).unwrap();
-    assert_eq!((last.passes.len(), last.passes[0].gantry.lead_in), (1, None));
+    assert_eq!((mid.passes.len(), mid.passes[0].polylines.len()), (1, 2));
+    let rest = &mid.passes[0].polylines[0];
+    assert_eq!((rest[0], *rest.last().unwrap()), ([5.0, -5.0], [-7.0, -5.0]), "on the outline, to its lead-out: {rest:?}");
+    assert!((mid.stats.mark_length_mm - 76.0).abs() < 1e-9, "{}", mid.stats.mark_length_mm);
+    // From the second path's jump: that path whole, lead-in first.
+    let from_second = start_at(&plan, 7, &gantry).unwrap();
+    assert_eq!(from_second.passes[0].polylines.len(), 1);
+    assert_eq!(from_second.passes[0].polylines[0][0], [25.0, -7.0]);
 }
 
 #[test]

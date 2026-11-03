@@ -130,6 +130,16 @@ pub fn gcode_number(v: f64) -> String {
 
 /// The program lines (no comments, no line endings): what a GRBL run streams. See the module docs.
 pub fn gcode_lines(job: &JobPlan, s: &GcodeSettings) -> Result<Vec<String>> {
+    // A plan made for a gantry target is baked already; one made some other way is baked here, the same way.
+    let baked;
+    let job = if job.passes.iter().any(|p| !p.gantry.baked && needs_bake(&p.gantry)) {
+        let mut j = job.clone();
+        bake_gantry(&mut j);
+        baked = j;
+        &baked
+    } else {
+        job
+    };
     if !(s.s_max.is_finite() && s.s_max > 0.0) {
         return Err(PlanError::Target(format!("s_max must be positive (got {})", s.s_max)));
     }
@@ -183,7 +193,6 @@ pub fn gcode_lines(job: &JobPlan, s: &GcodeSettings) -> Result<Vec<String>> {
             }
         }
         let want = mode_of(pass);
-        let hole = if g.lead_in.is_some() || g.lead_out.is_some() { holes(&pass.polylines) } else { Vec::new() };
         pause(&mut out, pass.pause_before_us, &mut spindle);
         for (i, poly) in pass.polylines.iter().enumerate() {
             if poly.len() < 2 {
@@ -213,31 +222,8 @@ pub fn gcode_lines(job: &JobPlan, s: &GcodeSettings) -> Result<Vec<String>> {
                 }
                 (if into { poly[0] } else { pre }, m)
             } else {
-                let mut path: Vec<Point> = poly.to_vec();
-                if g.overcut_mm > 0.0 {
-                    path.extend(overcut(poly, g.overcut_mm));
-                }
-                let outside = outward(poly, hole.get(i).copied().unwrap_or(false));
-                let mut approach = poly[0];
-                let mut m: Vec<(Point, f64)> = Vec::with_capacity(path.len() + 16);
-                if let Some(lead) = g.lead_in.filter(|_| vector)
-                    && let Some(t) = direction(path[0], &path[1..])
-                {
-                    let pts = lead_in(path[0], t, outside(t), &lead);
-                    approach = pts[0];
-                    m.extend(pts[1..].iter().map(|p| (*p, sv)));
-                }
-                m.extend(path[1..].iter().map(|p| (*p, sv)));
-                if let Some(lead) = g.lead_out.filter(|_| vector)
-                    && let Some(&end) = path.last()
-                    && let Some(t) = direction(end, path[..path.len() - 1].iter().rev()).map(|t| [-t[0], -t[1]])
-                {
-                    // A lead-out is a lead-in into the reversed path, run backwards.
-                    let mut pts = lead_in(end, [-t[0], -t[1]], outside(t), &lead);
-                    pts.reverse();
-                    m.extend(pts[1..].iter().map(|p| (*p, sv)));
-                }
-                (approach, m)
+                // Leads and overcut are in the polyline already (`bake_gantry`).
+                (poly[0], poly[1..].iter().map(|p| (*p, sv)).collect())
             };
             let start = s.to_machine(approach)?;
             if pos.is_none_or(|p| (p.0 - start.0).abs() > 1e-6 || (p.1 - start.1).abs() > 1e-6) {
@@ -285,6 +271,86 @@ pub fn gcode_lines(job: &JobPlan, s: &GcodeSettings) -> Result<Vec<String>> {
         out.push("M9".into());
     }
     Ok(out)
+}
+
+fn needs_bake(g: &crate::GantryPass) -> bool {
+    g.lead_in.is_some() || g.lead_out.is_some() || g.overcut_mm > 0.0 || g.overscan_mm > 0.0 || g.start_pause_us > 0.0 || g.end_pause_us > 0.0
+}
+
+/// Put every pass's lead-ins, lead-outs and overcuts into its polylines (a lead is cut at the polyline's power, so it
+/// is part of it), as the G-code output cuts them, and mark the pass `baked` (see [`crate::GantryPass::baked`]). The
+/// planner does this for a gantry target, so the preview, the stats and Start Here see what the head will do. A
+/// scan line that is overscanned (a two-point polyline of a pass with overscan) gets neither, as in the output;
+/// leads are for vector paths only, never an image's scan runs.
+pub(crate) fn bake_gantry(job: &mut JobPlan) {
+    for pass in &mut job.passes {
+        let g = pass.gantry;
+        if g.baked || !needs_bake(&g) {
+            continue;
+        }
+        pass.gantry.baked = true;
+        if g.lead_in.is_none() && g.lead_out.is_none() && g.overcut_mm <= 0.0 {
+            continue;
+        }
+        let hole = if g.lead_in.is_some() || g.lead_out.is_some() { holes(&pass.polylines) } else { Vec::new() };
+        for (i, poly) in pass.polylines.iter_mut().enumerate() {
+            if poly.len() < 2 || (g.overscan_mm > 0.0 && poly.len() == 2) {
+                continue;
+            }
+            let vector = i >= g.image_runs;
+            let mut path: Vec<Point> = poly.clone();
+            if g.overcut_mm > 0.0 && g.overcut_mm.is_finite() {
+                path.extend(overcut(poly, g.overcut_mm));
+            }
+            let outside = outward(poly, hole.get(i).copied().unwrap_or(false));
+            let mut out: Vec<Point> = Vec::with_capacity(path.len() + 16);
+            match g.lead_in.filter(|_| vector).and_then(|lead| direction(path[0], &path[1..]).map(|t| (lead, t))) {
+                Some((lead, t)) => out.extend(lead_in(path[0], t, outside(t), &lead)),
+                None => out.push(path[0]),
+            }
+            out.extend_from_slice(&path[1..]);
+            if let Some(lead) = g.lead_out.filter(|_| vector)
+                && let Some(&end) = path.last()
+                && let Some(t) = direction(end, path[..path.len() - 1].iter().rev()).map(|t| [-t[0], -t[1]])
+            {
+                // A lead-out is a lead-in into the reversed path, run backwards.
+                let mut pts = lead_in(end, [-t[0], -t[1]], outside(t), &lead);
+                pts.reverse();
+                out.extend_from_slice(&pts[1..]);
+            }
+            *poly = out;
+        }
+    }
+}
+
+/// The time a baked gantry pass spends beyond its marks, µs: the start and end pauses of its vector paths (as `G4`,
+/// at most 60 s each) and the overscan run-in and run-out of its scan lines, at the cut's feed (as if the bed never
+/// shortened them). Zero for any other pass.
+pub(crate) fn extra_us(pass: &PassPlan) -> f64 {
+    if !pass.gantry.baked {
+        return 0.0;
+    }
+    (0..pass.polylines.len()).map(|i| {
+        let (a, b) = extra_us_of(pass, i);
+        a + b
+    }).sum()
+}
+
+/// [`extra_us`] of polyline `i`, split into what comes before its marks and what comes after.
+pub(crate) fn extra_us_of(pass: &PassPlan, i: usize) -> (f64, f64) {
+    let g = &pass.gantry;
+    let Some(poly) = pass.polylines.get(i).filter(|p| g.baked && p.len() >= 2) else { return (0.0, 0.0) };
+    if g.overscan_mm > 0.0 && poly.len() == 2 {
+        let into = i > 0 && chained(&pass.polylines[i - 1], poly);
+        let onto = pass.polylines.get(i + 1).is_some_and(|n| chained(poly, n));
+        let run = pass.settings.mark_us(g.overscan_mm);
+        return (if into { 0.0 } else { run }, if onto { 0.0 } else { run });
+    }
+    if i < g.image_runs {
+        return (0.0, 0.0);
+    }
+    let dwell = |us: f64| if us > 0.0 { us.min(60e6) } else { 0.0 };
+    (dwell(g.start_pause_us), dwell(g.end_pause_us))
 }
 
 fn same(a: Point, b: Point) -> bool {
