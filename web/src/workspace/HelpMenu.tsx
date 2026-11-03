@@ -233,7 +233,7 @@ function AboutDialogBody(p: { machine: MachineStatus | null; onClose: () => void
   const origin = typeof location === "undefined" ? "" : location.origin;
   return (
     <WsModal
-      help="ai-agents#mcp-address"
+      help="ai-agents#find-the-mcp-address"
       title={t("help.aboutTitle")}
       onClose={p.onClose}
       footer={

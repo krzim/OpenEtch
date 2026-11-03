@@ -45,6 +45,7 @@ import {
   maskPair,
   needsOptions,
   notesOf,
+  notesWait,
   openedRevision,
   resultGroup,
   editModelInvocation,
@@ -59,6 +60,8 @@ import {
   type Notes,
   type TemplateEntry,
 } from "./fileFormats.ts";
+import { appModeDialogOpen } from "../app/AppModeDialog.tsx";
+import { GUIDE_EVENT } from "../guide/route.ts";
 import { filesApi, saveBlob } from "./filesApi.ts";
 import { filesState, rememberTemplate, useFilesStore } from "./filesStore.ts";
 import { FilePick } from "./FilesUiParts.tsx";
@@ -115,6 +118,8 @@ export function useFilesUi(p: {
   selectIds: (ids: string[]) => void;
   activeLayer: string | null;
   design: boolean;
+  /** The layout mode (workspace/layoutMode.ts): whether the guide is a full sheet, which notes wait for. */
+  layout: string;
   notify: Notify;
   report: (e: unknown) => void;
 }): FilesUi {
@@ -149,6 +154,9 @@ export function useFilesUi(p: {
   // timeline whose one step loads it; the notes show once per opened revision, and once for what this page finds.
   const opened = openedRevision(engine.timeline);
   const shownFor = useRef<string | null>(null);
+  const layoutRef = useRef(p.layout);
+  layoutRef.current = p.layout;
+  const [notesWaiting, setNotesWaiting] = useState(false);
   useEffect(() => {
     if (!doc) return;
     // Keyed by revision, so the page's first document and the open that produced it count once.
@@ -156,8 +164,30 @@ export function useFilesUi(p: {
     const key = shownFor.current === null ? (cur ?? String(doc.revision)) : (cur ?? shownFor.current);
     const prev = shownFor.current;
     shownFor.current = key;
-    if (showNotesOnLoad(prev, key, notesRef.current)) setModal((m) => m ?? { kind: "notes" });
+    if (!showNotesOnLoad(prev, key, notesRef.current)) return;
+    if (notesWait(location.hash, layoutRef.current, window.innerWidth)) setNotesWaiting(true);
+    else setModal((m) => m ?? { kind: "notes" });
   }, [doc, opened]);
+  // Not over the production cockpit or the guide as a full sheet (fileFormats.ts notesWait): the notes wait until
+  // the workspace is back, then show if the document still has them. Opening and closing those routes does not
+  // always fire an event (pushState / replaceState), so a slow poll backs the events up.
+  useEffect(() => {
+    if (!notesWaiting) return;
+    const check = () => {
+      // Nor on top of the "Use as an app" offer, which may come up as the cockpit closes (it waits for the notes too).
+      if (notesWait(location.hash, layoutRef.current, window.innerWidth) || appModeDialogOpen()) return;
+      setNotesWaiting(false);
+      const n = notesRef.current;
+      if (n.show_on_load && n.text.trim()) setModal((m) => m ?? { kind: "notes" });
+    };
+    const events = ["hashchange", "popstate", "resize", GUIDE_EVENT];
+    for (const e of events) window.addEventListener(e, check);
+    const poll = window.setInterval(check, 1000);
+    return () => {
+      for (const e of events) window.removeEventListener(e, check);
+      window.clearInterval(poll);
+    };
+  }, [notesWaiting]);
 
   /** Run `action` now, or after confirming that unsaved changes are replaced. */
   const guard = useCallback(
@@ -547,7 +577,7 @@ export function useFilesUi(p: {
       )}
       {m?.kind === "confirm" && (
         <Modal
-          help="files-and-projects#new-document"
+          help="files-and-projects#start-a-new-document"
           title={t("files.unsavedTitle")}
           onClose={close}
           footer={

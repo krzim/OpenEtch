@@ -10,14 +10,14 @@ summary: Preferences for display, units, snapping and input, layer and optimisat
 
 OpenEtch has two kinds of settings. This page explains both, and how to move them between computers.
 
-## Where settings live {#where-settings-live}
+## Where settings live
 
 - **Browser settings** are kept in the browser you use: theme, language, sizes, units, grid, snapping, nudge steps, layout and hotkeys. Each browser and device has its own. An iPhone or iPad Home Screen app has its own storage too.
 - **Engine settings** are kept by the engine and shared by every browser: layer defaults, optimisation defaults, the Job Checklist and other job settings, project locations, autosave, notifications, maintenance and the extractor. Many of them are per device.
 
 Changing a browser setting never changes your designs or the engine. The engine, files and AI agents always use millimetres.
 
-## Preferences {#preferences}
+## Preferences
 
 To open Preferences:
 
@@ -29,7 +29,7 @@ Changes apply at once. Click **Close** when you are done.
 
 ![The Preferences dialog with its sections](img/preferences-dialog.webp)
 
-### Appearance {#appearance}
+### Appearance
 
 | Setting | What it does |
 |---|---|
@@ -40,7 +40,7 @@ Changes apply at once. Click **Close** when you are done.
 | **Handle and node size** | 75 % to 300 %. Larger handles help on touch screens. |
 | **Full-window crosshair cursor on the canvas** | Draws a crosshair across the whole canvas. |
 
-### Layout and input {#layout-and-input}
+### Layout and input
 
 | Setting | What it does |
 |---|---|
@@ -53,38 +53,38 @@ Changes apply at once. Click **Close** when you are done.
 
 A line under these settings shows the layout, pointer and density in use now.
 
-### Units {#units}
+### Units
 
 - **Units:** **Millimetres** or **Inches**.
 - **Speed:** **mm/s**, **mm/min** or **in/s**.
 
 These change display and entry only. You can also click the units in the status bar to switch between mm and inches.
 
-### Grid {#grid}
+### Grid
 
 - **Show the grid** turns the visual grid on or off.
 - **Visual grid spacing** sets the spacing in mm. Leave it empty (**auto**) to pick a spacing from the zoom.
 
 The snap grid is set in the toolbar, not here.
 
-### Snapping {#snapping}
+### Snapping
 
 - **Snap distance** is how close, in screen pixels, the pointer must come to snap (1 to 40, default 8).
 - Tick what to snap to: **Vertices and endpoints**, **Intersections**, **Centres**, **Quadrants**, **Midpoints**, **Nearest point on outline** and **Alignment guides**.
 
 Hold `Ctrl` while dragging to turn snapping off, or `Alt` to snap to guides only.
 
-### Editing {#editing}
+### Editing
 
 - **Arrow key move**, **Shift + arrow**, **Ctrl + arrow** and **Ctrl+Shift + arrow** set how far the arrow keys nudge a selection. **Default moves (5, 20, 1, 0.1 mm)** puts them back.
 - **Invert mouse wheel zoom** reverses the wheel.
-- **Edit hotkeys…** opens the hotkey editor (see [Keyboard shortcuts](keyboard-shortcuts.md#edit-hotkeys)).
+- **Edit hotkeys…** opens the hotkey editor (see [Keyboard shortcuts](keyboard-shortcuts.md#change-a-shortcut)).
 
-### Beginner Mode {#beginner-mode}
+### Beginner Mode
 
 **Beginner Mode** (in the **Editing** section) hides advanced options, as LightBurn's does: Distribute and Mirror Across Line, Optimization Settings, Rotary Setup and Cut Selected Graphics (which is then ignored), the advanced cut settings and tabs, and Set Start Point. A **Beginner Mode** badge shows while it is on. Turn it off here to get the options back.
 
-### Project locations {#project-locations}
+### Project locations
 
 Project locations are extra folders on the engine's computer, such as a network drive or a synced cloud folder. They appear as top folders in Save and Open.
 
@@ -96,19 +96,19 @@ To add one:
 
 To take a location off the list, click **Remove** next to it, then **Save locations**. The folder itself is not touched. A location marked **not reachable** cannot be reached now. One marked **from the command line** was set when the engine started (`--projects-mount`) and cannot be changed here.
 
-### Notifications, maintenance and extractor {#production-settings}
+### Notifications, maintenance and extractor
 
 The last sections of Preferences set up **Notifications**, **Maintenance** reminders and the **Extractor**. See [Notifications](notifications.md), [Maintenance](maintenance.md) and [Extractor](extractor.md).
 
-### Reset preferences {#reset-preferences}
+### Reset preferences
 
 **Reset preferences** (at the bottom of the dialog) puts this browser's preferences back to the defaults. Your hotkeys and window layout are kept; reset hotkeys in **Edit hotkeys**, and the layout with **Window > Reset to default layout**.
 
-## Theme switch {#theme}
+## Theme switch
 
 To change the theme quickly, click the theme button in the top bar. On smaller screens it is the **Theme: … (click to switch)** row in the **More** (⋯) menu; on a phone, under **More > Settings**. Each click goes Light, Dark, Match system.
 
-## Layer defaults {#layer-defaults}
+## Layer defaults
 
 Layer defaults are saved cut settings for a layer colour on the active device, like LightBurn's Make Default. New layers of that colour start with them.
 
@@ -129,7 +129,7 @@ A layer linked to a Material Library preset shows **Linked**. Its settings follo
 
 > **Warning:** A saved default is used on every new layer of that colour. Check the energy density of the settings before you save them: J/mm² = power W ÷ (speed mm/s × line interval mm). On stainless with a 60 W MOPA, roughly 2 to 15 J/mm² marks without melting. Treat these as starting points to test.
 
-## Optimisation defaults {#optimisation-defaults}
+## Optimisation defaults
 
 The **Optimization settings** dialog sets the burn order of a document (see [Running a job](running-a-job.md)). Its defaults can be saved per device, so new documents start with them.
 
@@ -144,7 +144,7 @@ The **Set as Defaults** menu at the bottom has:
 
 The **Defaults** button in the dialog only puts the fields back to OpenEtch's defaults; it saves nothing.
 
-## Import LightBurn preferences {#import-lightburn-preferences}
+## Import LightBurn preferences
 
 You can bring some of your LightBurn preferences into OpenEtch: display, snapping, import, framing and dialog settings, LightBurn's autosave interval and the optimisation defaults.
 
@@ -160,20 +160,20 @@ Only the settings OpenEtch has are read. Device lists, accounts, licence data an
 
 To import LightBurn devices, use the Devices window instead (see [Devices and calibration](devices-and-calibration.md#import-from-lightburn)).
 
-## Preferences and bundles {#preferences-and-bundles}
+## Preferences and bundles
 
 To open it, choose **File > LightBurn > Preferences and bundles…** On a phone, tap **More**, open **File**, tap **All file commands** and choose **LightBurn > Preferences and bundles…**
 
 ![The Preferences and bundles dialog with engine preferences, automatic backups and user bundles](img/preferences-and-bundles.webp)
 
-### Export and import engine preferences {#engine-preferences}
+### Export and import engine preferences
 
 Engine preferences are the layer and optimisation defaults, the Job Checklist and the other engine settings, plus autosave. Theme, units and hotkeys stay in the browser and are not included.
 
 - **Export preferences** downloads them as an `.oeprefs` file.
 - **Import preferences…** replaces the engine's preferences with a file you pick. It asks first (**Continue**), and backs up the current ones.
 
-### Automatic backups {#prefs-backups}
+### Automatic backups
 
 The engine backs up its preferences when it starts (if they changed since the last backup) and before every import or restore. Up to 50 backups are kept.
 
@@ -183,7 +183,7 @@ To restore one:
 2. Click the backup you want, by its date.
 3. Click **Continue**. The current preferences are backed up first, so you can go back.
 
-### User bundles {#bundles}
+### User bundles
 
 A bundle moves your settings, devices and material libraries to another computer.
 
@@ -193,6 +193,6 @@ A bundle moves your settings, devices and material libraries to another computer
 
 Imported devices are added as new devices and keep the receiving machine's safety limits. Import also reads LightBurn bundles (`.lbzip`): their settings (only the ones OpenEtch has), devices, material libraries, material test presets, image presets and art libraries, but not hotkeys. A summary shows what was imported and what was skipped.
 
-## Import options {#import-options}
+## Import options
 
 **File > Settings > Import options…** sets how imported files are placed. See [Files and projects](files-and-projects.md).

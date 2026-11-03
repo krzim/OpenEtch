@@ -319,7 +319,7 @@ export function useJigsUi(p: JigsUiProps) {
           {pocketMode && (
             <HudItem id="jig-pockets-bar" slot="tc" rank={24} minW={240}>
               <div className="vp-overlay lx-sp-bar jig-bar" role="status">
-                <span>{pocketMode.frame ? t("jig.barFrame") : t("jig.bar")}</span> <HelpLink to="jigs#pocket-mode" topic={t("jig.pockets")} />
+                <span>{pocketMode.frame ? t("jig.barFrame") : t("jig.bar")}</span> <HelpLink to="jigs#switch-pockets-on-or-off" topic={t("jig.pockets")} />
                 <span className="segmented jig-seg-small">
                   <button type="button" className={pocketMode.frame ? "" : "active"} aria-pressed={!pocketMode.frame} onClick={() => setPocketMode({ ...pocketMode, frame: false })}>
                     {t("jig.modeToggle")}
@@ -340,7 +340,7 @@ export function useJigsUi(p: JigsUiProps) {
           {(regionMode || region) && (
             <HudItem id="remark-bar" slot="tc" rank={23} minW={260}>
               <div className="vp-overlay lx-sp-bar jig-bar rm-bar" role="status">
-                <HelpLink to="remark-region#remark-bar" topic={t("rm.menu")} />
+                <HelpLink to="remark-region#check-what-the-region-touches" topic={t("rm.menu")} />
                 {regionMode ? (
                   <>
                     <span>{regionMode === "rect" ? t("rm.barDraw") : t("rm.barLasso")}</span>

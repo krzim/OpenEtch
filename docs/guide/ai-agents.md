@@ -12,7 +12,7 @@ OpenEtch has an MCP server, so an AI agent (an AI assistant that can use tools) 
 
 An agent can design, preview, frame with the red pointer and prepare a run. **It can never approve or start a burn.** A person always does that, in the app or with the foot switch.
 
-## What an agent can and cannot do {#what-agents-can-do}
+## What an agent can and cannot do
 
 An agent **can**:
 
@@ -37,7 +37,7 @@ An agent **cannot**:
 - frame a gantry laser (that moves its head);
 - edit the design while the production cockpit is open.
 
-## Find the MCP address {#mcp-address}
+## Find the MCP address
 
 The address is shown in **Help > About OpenEtch**, next to **MCP server**. It is the address you opened the app at, followed by `/mcp`, for example `http://127.0.0.1:7878/mcp`.
 
@@ -45,15 +45,15 @@ The address is shown in **Help > About OpenEtch**, next to **MCP server**. It is
 - In smaller windows, on MacBooks and on tablets, it is in the **More** (⋯) menu at the right of the top bar.
 - On a phone, tap **More**, open **Help** and tap **About OpenEtch**.
 
-## Connect an agent {#connect-an-agent}
+## Connect an agent
 
 OpenEtch's MCP server uses the Streamable HTTP transport. Add it to your agent as an HTTP MCP server with the address above. Each agent has its own way to add servers; look for "add an MCP server" or "connectors" in its settings.
 
-### On the same computer {#same-computer}
+### On the same computer
 
 When the agent runs on the engine's computer and the engine listens on `127.0.0.1` (the default), no token is needed. Give the agent the address, for example `http://127.0.0.1:7878/mcp`.
 
-### From another computer {#from-another-computer}
+### From another computer
 
 When the engine listens on the network (for example on a Raspberry Pi), every client needs the access token.
 
@@ -65,7 +65,7 @@ The agent must send the token as a header; the browser's login cookie does not w
 
 An engine started with `--no-token` needs no token, even on the network. Then anyone who can reach the port can use the MCP endpoint to edit, frame and request runs. Burns still need a person.
 
-## The tools an agent gets {#agent-tools}
+## The tools an agent gets
 
 | Area | Tools |
 |---|---|
@@ -84,7 +84,7 @@ An engine started with `--no-token` needs no token, even on the network. Then an
 
 To see the same command list yourself, use **Help > Developer: engine commands (JSON)…**
 
-## Burns always need a person {#burns-need-a-person}
+## Burns always need a person
 
 When an agent calls `job_request_run`, OpenEtch plans the job and creates a pending run. Nothing is sent to the laser.
 
@@ -101,14 +101,14 @@ The foot switch on its own never starts a run an agent requested. On an engine s
 
 If the document changes after the run was requested, approval is refused ("Document changed - request a new run."), so you only burn what you checked. STOP and the hardware E-stop always work; `Ctrl+.` stops while a run is under way.
 
-## Seeing what the agent did {#agent-history}
+## Seeing what the agent did
 
 - Agent edits appear in the timeline with their author, like your own steps. Undo or roll back any of them.
 - Pending runs from an agent carry the agent's badge.
 - When the agent switches the active document, you see it switch in the app.
 - Use Preview and frame the job before you approve it.
 
-## Good prompts {#good-prompts}
+## Good prompts
 
 Tell the agent what you are making, on what, and what to leave to you. Some examples:
 
@@ -128,7 +128,7 @@ Tips:
 
 > **Warning:** Check any settings an agent suggests before you burn, including every box of a bracket test grid. Work out the energy density yourself: J/mm² = power W ÷ (speed mm/s × line interval mm). On stainless with a 60 W MOPA, roughly 2 to 15 J/mm² marks without melting; more can melt or warp thin stock. Wear eye protection rated for your laser's wavelength, run the fume extraction and never leave a job unattended.
 
-## Keep it safe {#agent-safety}
+## Keep it safe
 
 The MCP tools cannot fire the laser. That protection does not cover a program that runs on the engine's own computer with your user rights, such as an agent with a shell or one that controls a browser. Such a program could act like the app.
 
@@ -136,9 +136,9 @@ The MCP tools cannot fire the laser. That protection does not cover a program th
 - On an engine without a PIN, any program on the engine's computer can press Start the way the app does. Prefer the PIN mode there.
 - The hardware E-stop and key switch are the real safety system.
 
-## Troubleshooting agents {#agent-troubleshooting}
+## Troubleshooting agents
 
-- **The agent cannot connect:** check the address in **Help > About OpenEtch**, the token header, and that the engine is reachable from the agent's computer (see [Troubleshooting](troubleshooting.md#cannot-connect)).
+- **The agent cannot connect:** check the address in **Help > About OpenEtch**, the token header, and that the engine is reachable from the agent's computer (see [Troubleshooting](troubleshooting.md#cannot-connect-to-the-engine)).
 - **401 or "unauthorised":** the token is missing or old. Run `openetch token` again; after `openetch token --rotate` and an engine restart, every client needs the new one.
 - **Edits refused while production runs:** the production cockpit locks the design. Close it or wait.
 - **A burn did not start:** that is by design. Approve the pending run in the Laser window.

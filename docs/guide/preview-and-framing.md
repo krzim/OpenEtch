@@ -10,7 +10,7 @@ summary: Check the toolpath and the time estimate in the Laser workspace, play t
 
 Before you burn, check two things: that the toolpath is what you expect (the preview), and that it lands in the right place on the work (framing). The preview works without a laser. Framing needs a galvo laser connected.
 
-## Open the preview {#preview}
+## Open the preview
 
 The preview shows the toolpath the laser will follow, planned for the active device.
 
@@ -27,11 +27,11 @@ In the preview:
 
 - Marks are drawn solid, in their layer's colour.
 - Travel moves (laser off) are drawn dashed, when **Show travel** is on.
-- Objects outside the laser's field are drawn red. See [Objects outside the field](preflight-and-keep-out.md#out-of-field).
+- Objects outside the laser's field are drawn red. See [Objects outside the field](preflight-and-keep-out.md#objects-outside-the-field).
 
 > **Note:** The preview is a simulation of the planned toolpath. Check the real result on scrap.
 
-## The Toolpath card {#toolpath-card}
+## The Toolpath card
 
 The **Toolpath** card gives the numbers behind the preview.
 
@@ -61,7 +61,7 @@ Display options at the bottom:
 
 If the job cannot be planned, the card says **No preview:** and the reason, for example objects that fall outside the field or a power above the machine's limit. Fix that first; Start will be refused too.
 
-## Play and scrub the job {#preview-timeline}
+## Play and scrub the job
 
 The preview's time slider sits at the bottom centre of the canvas. Use it to see the order the laser will mark in.
 
@@ -79,7 +79,7 @@ The preview's time slider sits at the bottom centre of the canvas. Use it to see
 
 On a small phone the slider gives way to warnings and messages when the **Job** sheet is half open, and comes back when there is room.
 
-### Start from a point {#start-here}
+### Start from a point
 
 If a job stopped part way, you can burn the rest without starting again.
 
@@ -89,7 +89,7 @@ If a job stopped part way, you can burn the rest without starting again.
 
 **Start here** always runs the whole job from that point: it ignores **Cut selected graphics** and any re-mark region. If the design changed since the preview, nothing starts: wait for the new preview and try again.
 
-## Time estimates {#time-estimates}
+## Time estimates
 
 OpenEtch shows the estimated job time in several places:
 
@@ -110,7 +110,7 @@ The estimate comes from the planner's model of the machine. After real runs, Ope
 
 Time spent waiting at a layer pause is not part of the estimate. When the estimate runs out while the job is still marking, the **Laser** window shows **Finishing…** rather than 0 seconds left.
 
-## Frame the job {#framing}
+## Frame the job
 
 Framing traces the job's outline on the work with the red pointer, so you can see where it will burn. Framing only moves the pointer: it can never fire the laser.
 
@@ -127,7 +127,7 @@ A continuous frame stops by itself after about 2 minutes. You cannot start a job
 
 ![The framing options popover under the Frame button](img/framing-options-popover.webp)
 
-## Framing options {#framing-options}
+## Framing options
 
 Click the small arrow next to **Frame** in the **Laser** window to open **Framing options**. The options stay set in this browser, and a frame that is running follows any change.
 
@@ -147,7 +147,7 @@ Click the small arrow next to **Frame** in the **Laser** window to open **Framin
 | **Blanking** | **Device default**, **On**, **Off** | Turns the pointer off while it travels between shapes. |
 | **Live framing** | On / off | The frame follows every edit. On by default. |
 
-### Live framing {#live-framing}
+### Live framing
 
 With **Live framing** on, the frame redraws whenever the design changes, so you can line the design up with the work while you watch the pointer.
 
@@ -161,7 +161,7 @@ While framing, these keys move the framed shapes (the selection, or every shape 
 
 Each key press is an ordinary edit, so you can undo it. The keys do nothing while you are typing in a field.
 
-### Frame shortcuts {#frame-shortcuts}
+### Frame shortcuts
 
 The arrow next to **Frame** in the ribbon's **Job** group (**Frame options**) offers **Frame (Laser window options)**, **Frame the selection**, **Frame the bounding box** and **Frame the outline (contour)**.
 
@@ -173,7 +173,7 @@ The arrow next to **Frame** in the ribbon's **Job** group (**Frame options**) of
 
 With shapes selected, these frame only the selection; with nothing selected, they frame the whole job.
 
-## The red-light pointer {#red-dot}
+## The red-light pointer
 
 Apart from framing, you can use the red pointer to find a point on the bed.
 
@@ -187,7 +187,7 @@ None of these fire the laser: the red dot is light only.
 
 If your machine has an external framing switch, set it as the **Start Framing input** on the device's **Ports and laser** settings page. Pressing it frames the job while the laser is idle.
 
-## Common mistakes {#common-mistakes}
+## Common mistakes
 
 - **Framing the selection by accident.** If only part of the job is framed, check **Selection only** in **Framing options**, or deselect everything.
 - **Expecting a hidden layer to stay off.** Hiding a layer in the **Toolpath** card does not stop it burning.

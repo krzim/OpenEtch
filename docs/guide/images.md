@@ -10,7 +10,7 @@ summary: Import photos and pictures, adjust them, choose a dither mode, trace th
 
 An image engraves dot by dot. How it looks on metal depends on the image itself, its adjustments, and the image settings of the layer it is on.
 
-## Import an image {#import-an-image}
+## Import an image
 
 To bring in a picture, do one of these:
 
@@ -23,7 +23,7 @@ On the phone, use **More > File > Import…**
 
 OpenEtch reads PNG, JPEG, GIF, BMP, WebP, TIFF and TGA. The image is sized from its own resolution (or 254 DPI, 0.1 mm per pixel, when it has none), and shrunk to fit 80 % of the field if it is larger.
 
-## How an image engraves {#how-images-engrave}
+## How an image engraves
 
 Three things decide the result:
 
@@ -33,7 +33,7 @@ Three things decide the result:
 
 Adjustments are applied first, then the dither turns the grey levels into dots.
 
-## Image settings on a layer {#image-settings-on-a-layer}
+## Image settings on a layer
 
 Open the layer's cut settings (double-click the layer in **Cuts / Layers**, or select the layer and look in Properties). A layer that holds images has an **Image** section:
 
@@ -50,7 +50,7 @@ Open the layer's cut settings (double-click the layer in **Cuts / Layers**, or s
 | **Cells**, **Halftone angle** | Halftone only: cells per inch and the screen angle |
 | **Min power** | Grayscale only: the power for white |
 
-### Dither modes {#dither-modes}
+### Dither modes
 
 | Mode | Best for |
 |---|---|
@@ -64,17 +64,17 @@ Open the layer's cut settings (double-click the layer in **Cuts / Layers**, or s
 | **Halftone** | Round dots on a screen of the given cells per inch and angle |
 | **Sketch** | Keeps edges and drops flat areas |
 | **Grayscale** | Varies the power per pixel between **Min power** and the layer's power |
-| **3D Sliced** | A depth map, one grey-level slice per pass (see [3D Sliced](#models-and-3d-sliced)) |
+| **3D Sliced** | A depth map, one grey-level slice per pass (see [3D Sliced](#3d-models-and-3d-sliced)) |
 
 The Image and dither sample example engraves one test picture twice, with Stucki and with Halftone, so you can compare them on your material (see [Templates](templates.md#example-projects)).
 
 ![The Image section of a layer's cut settings in the Image and dither sample example](img/layer-image-settings.webp)
 
-### See the dither on the canvas {#dithered-view}
+### See the dither on the canvas
 
 Under the layer's Image settings, switch **Images on the canvas** between **Original** and **Dithered** to see the images as they will engrave. The Laser panel has the same switch as **Dithered images**. The dithered view is a preview at the layer's interval; it does not show the scan angle or dot width. The engine plans the real job.
 
-## Adjust image {#adjust-image}
+## Adjust image
 
 To adjust an image:
 
@@ -93,7 +93,7 @@ To adjust an image:
 
 The dialog works on the images of one layer. Tick **Apply to all n images** to adjust every image on the layer the same way.
 
-### Adjust image presets {#adjust-image-presets}
+### Adjust image presets
 
 To reuse adjustments:
 
@@ -106,7 +106,7 @@ The engine keeps presets, so every browser sees the same ones.
 
 ![The Adjust image dialog with its two previews](img/adjust-image-dialog.webp)
 
-## Masks {#masks}
+## Masks
 
 A mask engraves only the part of an image inside a shape, like a picture in a frame.
 
@@ -126,7 +126,7 @@ With a masked image selected, the right-click menu also has:
 
 On a touch screen, long-press for the menu.
 
-## Trace image {#trace-image}
+## Trace image
 
 Tracing turns a picture into vector outlines you can cut, fill or edit.
 
@@ -150,7 +150,7 @@ Tracing turns a picture into vector outlines you can cut, fill or edit.
 
 ![The Trace image dialog with its preview](img/trace-image-dialog.webp)
 
-### Multi-File Trace {#multi-file-trace}
+### Multi-File Trace
 
 To trace many pictures with the same settings, choose **Tools > Multi-File Trace…**:
 
@@ -159,7 +159,7 @@ To trace many pictures with the same settings, choose **Tools > Multi-File Trace
 3. Under **Result**, pick **Download the SVGs (one .zip)** or **Add the traced vectors to the document**. Tick **Delete the images after tracing** if you want.
 4. Click **Trace**.
 
-## Convert to bitmap {#convert-to-bitmap}
+## Convert to bitmap
 
 Converting renders vector shapes into one image, for example to engrave them with a dither.
 
@@ -173,7 +173,7 @@ Converting renders vector shapes into one image, for example to engrave them wit
 
 The rest of the image is white and never fires. A bitmap over 100 megapixels is refused; lower the DPI.
 
-## Replace, refresh and export {#replace-and-export}
+## Replace, refresh and export
 
 Right-click an image for:
 
@@ -185,13 +185,13 @@ Right-click an image for:
 
 The last two are also under **File > Export**.
 
-## 3D models and 3D Sliced {#models-and-3d-sliced}
+## 3D models and 3D Sliced
 
 3D Sliced engraves a depth map in layers, deepest first, for galvo deep engraving. Black is the deepest.
 
 > **Warning:** The depth reached on the reference laser has not been checked on hardware. Treat every number here as a starting point for tests on scrap. Deep engraving runs many passes, so check the energy density of each pass and watch the job the whole time.
 
-### Import a 3D model {#import-a-3d-model}
+### Import a 3D model
 
 To engrave a 3D model, import it (STL, OBJ, OFF, PLY, 3MF or AMF). The **Import 3D model** dialog renders it as a depth map seen from above, with the top white and the floor black:
 
@@ -209,7 +209,7 @@ To engrave a 3D model, import it (STL, OBJ, OFF, PLY, 3MF or AMF). The **Import 
 
 To change these later, right-click the depth map and choose **Edit 3D model…**, then click **Render again**. The depth map is rendered again in place from the model kept in the project.
 
-### Set up 3D Sliced {#set-up-3d-sliced}
+### Set up 3D Sliced
 
 1. Put the depth map on its own layer.
 2. In the layer's Image settings, set **Dither** to **3D Sliced**.
@@ -218,7 +218,7 @@ To change these later, right-click the depth map and choose **Edit 3D model…**
 
 To see the expected relief before you burn, use the [3D relief preview](relief-preview.md).
 
-## Check the energy before you burn {#image-energy-check}
+## Check the energy before you burn
 
 Even a light-looking dither can melt thin stock if the settings are too strong. Before you test a new image setting, work out the energy density of a fully black area:
 

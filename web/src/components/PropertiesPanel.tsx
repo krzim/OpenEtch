@@ -626,7 +626,7 @@ function CutSettingsForm({ settings: s, machine, onPatch }: { settings: CutSetti
       {fields.pulseWidth && !pwKnown && pw !== null && <p className="warn-text">{t("pp.pwPick", { pw })}</p>}
       <NumberField label={t("pp.passes")} value={s.passes} min={1} max={1000} digits={0} stepper onCommit={num((v) => ({ passes: Math.round(v) }))} />
 
-      <h4 className={hatching ? "" : "muted"}>{hatching ? t("pp.hatch") : t("pp.hatchFillOnly")} <HelpLink to="layers-and-settings#hatch" topic={t("pp.hatch")} /></h4>
+      <h4 className={hatching ? "" : "muted"}>{hatching ? t("pp.hatch") : t("pp.hatchFillOnly")} <HelpLink to="layers-and-settings#hatch-settings" topic={t("pp.hatch")} /></h4>
       <NumberField label={t("pp.interval")} unit="mm" value={s.hatch.interval_mm} min={0.001} digits={4} onCommit={num((interval_mm) => ({ hatch: { interval_mm } }))} />
       {s.mode === "offset_fill" && <p className="hint">{t("pp.offsetHint")}</p>}
       <NumberField label={t("pp.angle")} unit="°" value={s.hatch.angle_deg} digits={2} onCommit={num((angle_deg) => ({ hatch: { angle_deg } }))} />

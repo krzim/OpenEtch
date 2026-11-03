@@ -18,7 +18,7 @@ The ledger records runs that started marking, whether they finished, were stoppe
 
 > **Note:** The serial ledger has no notes or OK/scrap verdicts. To mark a run OK or scrap and add a note, use the [job ledger](job-ledger.md).
 
-## Open the serial ledger {#open-the-serial-ledger}
+## Open the serial ledger
 
 On a desktop:
 
@@ -29,9 +29,9 @@ You can also press **Serial ledger** in the **Production** window, or type "Seri
 
 On a phone, tap the **Job** tab, then **Serial ledger** in the **Production** part of the sheet.
 
-The [production cockpit](production-cockpit.md#ledger-card) shows the last three runs in its **Serial ledger** card.
+The [production cockpit](production-cockpit.md#the-serial-ledger-card) shows the last three runs in its **Serial ledger** card.
 
-## The Serial ledger window {#serial-ledger-window}
+## The Serial ledger window
 
 The window lists one row per slot, newest run first. If no run has marked serial numbers yet, it says "No run has marked a serial number or CSV row yet."
 
@@ -57,7 +57,7 @@ The controls at the bottom are:
 - **Save as CSV**: saves the listed runs as `OpenEtchSerialLedger.csv`;
 - **Close**.
 
-## Save the ledger as CSV {#ledger-csv}
+## Save the ledger as CSV
 
 **Save as CSV** saves one row per slot, ready for a spreadsheet. The columns are:
 
@@ -65,7 +65,7 @@ The controls at the bottom are:
 
 The time is in Unix seconds. Text that would start like a spreadsheet formula (with `=`, `+`, `-` or `@`, or a tab) gets an apostrophe in front, so the spreadsheet does not run it.
 
-## How the counter moves on {#counter-after-run}
+## How the counter moves on
 
 After a run, the serial counter moves on as follows (when **Auto-advance** is on in Variable Text):
 
@@ -77,9 +77,9 @@ After a run, the serial counter moves on as follows (when **Auto-advance** is on
 
 > **Warning:** After a stopped run, check the parts before you run again. The next run reuses the same values, so a part that was partly marked needs a re-mark or goes in the scrap.
 
-## Stop at End {#stop-at-end}
+## Stop at End
 
-**Stop at End** stops a numbered batch at Variable Text's End value, so no number is marked twice. You switch it on with the **Stop at End (60)** tick box in the [cockpit's Next card](production-cockpit.md#next-card). The number in brackets is End. You can change it while the cockpit is open.
+**Stop at End** stops a numbered batch at Variable Text's End value, so no number is marked twice. You switch it on with the **Stop at End (60)** tick box in the [cockpit's Next card](production-cockpit.md#the-next-card). The number in brackets is End. You can change it while the cockpit is open.
 
 With **Stop at End** on:
 
@@ -91,7 +91,7 @@ With **Stop at End** off, the number wraps back to Start after End. The pre-flig
 
 To set Start, End and Advance by, see [Variable text and barcodes](variable-text-and-barcodes.md).
 
-## Re-mark a slot {#re-mark-a-slot}
+## Re-mark a slot
 
 Use a re-mark when one pocket came out wrong: a faint mark, a part that moved, or a pocket that was loaded wrongly. A re-mark creates a new run that marks only that slot's pocket, with the value it had in the ledger. The run waits for your approval like any other.
 
@@ -121,6 +121,6 @@ A re-mark follows these rules:
 
 To mark again only an area of the design rather than a whole pocket, see [Re-mark a region](remark-region.md).
 
-## What AI agents can do {#ai-agents}
+## What AI agents can do
 
 AI agents connected through MCP can read the serial ledger (`serial_ledger`). They can also request a re-mark (`serial_remark_request`). That only creates a run that waits for approval. A person must approve it in the app. Agents can never approve or start a burn. See [AI agents](ai-agents.md).

@@ -8,11 +8,11 @@ summary: Fixes for common problems: cannot connect, access token, no laser, refu
 
 # Troubleshooting
 
-Start with the problem that matches what you see. If nothing here helps, send a bug report (see [Report a bug](#report-a-bug)).
+Start with the problem that matches what you see. If nothing here helps, send a bug report (see [Report a bug](#bug-reports-and-logs)).
 
 > **Warning:** If the laser does something you did not expect, press the hardware E-stop. Do not rely on the app to stop it.
 
-## Cannot connect to the engine {#cannot-connect}
+## Cannot connect to the engine
 
 You see a banner such as "Cannot reach the laser engine – retrying…" or "Lost connection to the laser engine – reconnecting…", and the status chip says **Offline**. While this shows, STOP may not reach the laser; use the hardware E-stop.
 
@@ -26,7 +26,7 @@ Check, in this order:
 
 The app reconnects by itself when the engine is back. Reload the page if it does not.
 
-## The app asks for an access token {#access-token}
+## The app asks for an access token
 
 You see **Connect to OpenEtch**: "This OpenEtch engine needs its access token before this device can use it."
 
@@ -42,13 +42,13 @@ Things to know:
 - A Home Screen app on an iPhone or iPad keeps its own storage, so it asks for the token once.
 - **STOP** works on the Connect card even without the token.
 
-## No laser connected {#no-laser}
+## No laser connected
 
-- **"Ready (simulator)", "Idle (simulator)" or Link "Connected (Simulator)":** the engine runs the simulator. It drives a real laser only when started with `--usb`. See [The simulator](devices-and-calibration.md#simulator).
+- **"Ready (simulator)", "Idle (simulator)" or Link "Connected (Simulator)":** the engine runs the simulator. It drives a real laser only when started with `--usb`. See [The simulator](devices-and-calibration.md#the-simulator).
 - **"No laser connected" or Link "Not connected":** check the USB cable and the laser's power. Close EzCad: only one program can use the board.
-- **Frame and Start are off and a note says OpenEtch can't drive this device:** the active device is design only. Make a device active that OpenEtch can drive, such as a JCZ galvo (see [Devices and calibration](devices-and-calibration.md#switch-device)).
+- **Frame and Start are off and a note says OpenEtch can't drive this device:** the active device is design only. Make a device active that OpenEtch can drive, such as a JCZ galvo (see [Devices and calibration](devices-and-calibration.md#switch-the-active-device)).
 
-## Start or approval refused {#start-refused}
+## Start or approval refused
 
 The Laser window says why. Common reasons:
 
@@ -66,7 +66,7 @@ The Laser window says why. Common reasons:
 
 See [Running a job](running-a-job.md) and [Safety](safety.md).
 
-## The preview is slow {#preview-slow}
+## The preview is slow
 
 The preview draws every line of the job. Large images at a fine line interval make a lot of lines.
 
@@ -77,7 +77,7 @@ The preview draws every line of the job. Large images at a fine line interval ma
 - On a Raspberry Pi, the engine does the heavy work; one job at a time keeps it quick.
 - On a phone, close other tabs and apps.
 
-## Missing fonts after a LightBurn import {#missing-fonts}
+## Missing fonts after a LightBurn import
 
 Text shows **Missing font**: the font is not available on the engine's computer. The fonts that count are the ones on the computer the engine runs on, not on your phone or laptop.
 
@@ -88,19 +88,19 @@ The text keeps its saved outline and still burns. You cannot change the text unt
 
 On a Raspberry Pi, copy the font files (`.ttf`, `.otf`, `.ttc`, `.shx` or `.jsf`) to the Pi and install them there. The engine also reads the font folders named in the `OPENETCH_FONT_DIRS` environment variable when it starts (separate folders with `;` on Windows, `:` elsewhere).
 
-## Field size or position is wrong {#field-size-wrong}
+## Field size or position is wrong
 
 Symptoms: the design marks too big or too small, the frame does not match the stock, or a LightBurn design lands shifted.
 
 LightBurn files do not store the field size. When you open one, OpenEtch picks the size from the device the file names, else your active device. A wrong size shifts everything by half the difference.
 
 1. **Opening a LightBurn file:** in the **Open or import LightBurn project** dialog (**File > LightBurn > Import LightBurn…**), check **Field size**. Click **Edit** and type the Field Size from LightBurn's Device Settings when the file was made. Or import that LightBurn device first (see [Import from LightBurn](devices-and-calibration.md#import-from-lightburn)).
-2. **Every design is the wrong size:** check **Field width** in the device settings (see [Field size](devices-and-calibration.md#field-size)), then [calibrate the lens](devices-and-calibration.md#lens-calibration).
-3. **Only framing is off, the burn is right:** adjust the **Red dot** offsets (see [Red dot alignment](devices-and-calibration.md#red-dot)).
+2. **Every design is the wrong size:** check **Field width** in the device settings (see [Field size](devices-and-calibration.md#field-size)), then [calibrate the lens](devices-and-calibration.md#calibrate-the-galvo-lens).
+3. **Only framing is off, the burn is right:** adjust the **Red dot** offsets (see [Red dot alignment](devices-and-calibration.md#red-dot-alignment)).
 4. **Objects show red:** they are outside the galvo field and cannot be marked. Move them in.
 5. **Exporting to LightBurn:** the export dialog says which device the file is laid out for. Make the right device active before you export.
 
-## Report a bug and read the logs {#report-a-bug}
+## Bug reports and logs
 
 Open **Help > Report a bug…** (In smaller windows and on tablets, **Help** is in the **More** (⋯) menu; on a phone, tap **More > Help**.)
 
@@ -116,7 +116,7 @@ The engine keeps its recent log lines in memory, so they are lost when it restar
 
 ![The Report a bug dialog with the debug log switch](img/bug-report.webp)
 
-## Check for updates {#updates}
+## Check for updates
 
 1. Open **Help > Check for updates…**
 2. Tick **Check for updates (asks GitHub's releases; opt-in)**. It is off until you turn it on, and **Check now** stays off until then.
@@ -126,10 +126,10 @@ The result says whether a newer OpenEtch is available, with a **Release notes �
 
 **Help > About OpenEtch** shows the **Web UI** and **Engine** versions. After an update, reload the app so the web UI matches the engine.
 
-## Reset things {#reset}
+## Reset things
 
 - **Browser preferences:** **Reset preferences** in [Preferences](settings.md#reset-preferences).
-- **Hotkeys:** **Reset all to LightBurn defaults** in [Edit hotkeys](keyboard-shortcuts.md#edit-hotkeys).
+- **Hotkeys:** **Reset all to LightBurn defaults** in [Edit hotkeys](keyboard-shortcuts.md#change-a-shortcut).
 - **Window layout:** **Window > Reset to default layout**.
-- **Engine preferences:** restore an [automatic backup](settings.md#prefs-backups).
+- **Engine preferences:** restore an [automatic backup](settings.md#automatic-backups).
 - **Device settings:** **Revert** in the device settings before you save, or duplicate the built-in device again.

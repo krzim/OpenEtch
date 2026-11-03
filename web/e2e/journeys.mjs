@@ -741,6 +741,13 @@ async function grblJourney(j) {
   const { page, d } = j;
   await j.heavy();
   const phone = d.kind === "phone";
+  // The galvo to come back to: the device active before the journey (on a fresh simulator engine the built-in
+  // profile), never a LightBurn device that only exists where LightBurn is installed.
+  const before = await api(j.ctx.url, "/api/devices");
+  const devs = Array.isArray(before?.devices) ? before.devices : [];
+  const galvo = devs.find((x) => x.id === before.active && x.kind !== "gantry") ?? devs.find((x) => /galvo/.test(x.kind ?? ""));
+  if (!galvo) throw new Error(`no galvo device to switch back to: ${JSON.stringify(devs.map((x) => x.id))}`);
+  j.note("galvo before", galvo.id);
   const openDevices = async () => {
     await escape(page);
     if (phone) {
@@ -798,7 +805,7 @@ async function grblJourney(j) {
   }
   // And back to the galvo.
   await openDevices();
-  await pressFind(page, "[role=dialog] tr, [role=dialog] [role=row]", "JCZFiber");
+  await pressFind(page, "[role=dialog] tr, [role=dialog] [role=row]", galvo.display_name ?? galvo.name);
   await sleep(400);
   await pressFind(page, "[role=dialog] button", "Make active");
   await sleep(700);
@@ -806,7 +813,9 @@ async function grblJourney(j) {
   const ok2 = await find(page, ".dev-confirm button.btn-primary");
   if (ok2?.hit) await page.press(ok2.x, ok2.y);
   await sleep(2000);
-  j.note("active after switching back", (await api(j.ctx.url, "/api/devices")).active);
+  const after = (await api(j.ctx.url, "/api/devices")).active;
+  j.note("active after switching back", after);
+  if (after !== galvo.id) throw new Error(`switching back made ${after} active, not ${galvo.id}`);
   await escape(page);
   if (phone) await closeSheet(page);
   await j.shot("galvo-again");

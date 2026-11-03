@@ -18,7 +18,7 @@ Notifications are outbound only. Nothing that comes back can start a burn.
 
 > **Warning:** Notifications tell you when the laser needs you. They are not a reason to leave a running job unattended.
 
-## Open the notification settings {#notification-settings}
+## Open the notification settings
 
 Notifications are in Preferences:
 
@@ -29,7 +29,7 @@ The engine keeps the targets, so every browser and every laser device uses the s
 
 ![The Notifications section of Preferences with one ntfy target, its events ticked, and the Waiting for you after field](img/notifications-settings.webp)
 
-## Events {#events}
+## Events
 
 Each target picks which events it gets. A new target gets them all.
 
@@ -45,7 +45,7 @@ Each target picks which events it gets. A new target gets them all.
 
 Each event also says whether it happened while framing or while marking (or neither, as for a maintenance reminder).
 
-## Add a target {#add-a-target}
+## Add a target
 
 To add a target:
 
@@ -76,7 +76,7 @@ Under the targets, **Waiting for you after** sets how many seconds the job waits
 
 **Revert** appears while you have unsaved changes and throws them away. You can have up to 16 targets.
 
-## ntfy {#ntfy}
+## ntfy
 
 ntfy sends push notifications to the ntfy phone app.
 
@@ -95,7 +95,7 @@ Waiting, door, error, Stop At and layer pause events are sent with high priority
 
 > **Note:** On the public ntfy.sh server, anyone who knows a topic name can read its messages. Choose a topic nobody would guess, or use an access token.
 
-## Webhook {#webhook}
+## Webhook
 
 A webhook sends each event as JSON in an HTTP POST to the address you give. Use it with automation tools or your own scripts.
 
@@ -133,7 +133,7 @@ The body looks like this:
 | `count` and `stop_at` | The device's count and Stop at when the event happened. |
 | `seq` | A number that goes up by one per event, from 1 when the engine starts. |
 
-## Home Assistant {#home-assistant}
+## Home Assistant
 
 OpenEtch fires each event in Home Assistant as an event of type `openetch_event`. Its data has the same fields as the webhook body.
 
@@ -157,7 +157,7 @@ trigger:
 
 A Home Assistant target can also switch your fume extractor. See [Extractor](extractor.md#home-assistant).
 
-## How sending works {#how-sending-works}
+## How sending works
 
 A few things are good to know about how the engine sends:
 
@@ -167,11 +167,11 @@ A few things are good to know about how the engine sends:
 - Tokens are stored by the engine and never shown again. The token field then reads "Stored (type to replace)". Type a new token to replace it.
 - Nothing a target sends back is acted on.
 
-## What AI agents can do {#ai-agents}
+## What AI agents can do
 
 AI agents connected through MCP can read the same events (`production_events`) and wait for the next one. They cannot add or change targets, so they cannot send your events anywhere. See [AI agents](ai-agents.md).
 
-## Common problems {#common-problems}
+## Common problems
 
 | Message or problem | What to do |
 |---|---|

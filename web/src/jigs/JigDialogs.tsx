@@ -144,7 +144,7 @@ export function NewJigDialog(p: { doc: GDocument | null; run: Run; notify: Notif
   };
   return (
     <Dialog
-      help="jigs#new-jig"
+      help="jigs#make-a-jig-as-a-grid"
       title={t("jig.newTitle")}
       size="md"
       onClose={p.onClose}
@@ -296,7 +296,7 @@ export function JigsDialog(p: JigsDialogProps) {
   return (
     <>
       <Dialog
-        help="jigs#jigs-window"
+        help="jigs#the-jigs-window"
         title={t("jig.title")}
         size="lg"
         onClose={p.onClose}
@@ -405,7 +405,7 @@ export function JigsDialog(p: JigsDialogProps) {
               </div>
             </section>
             <section className="jig-section">
-              <h4>{t("jig.placements", { n: placed.length })} <HelpLink to="jigs#place-design" topic={t("jig.placements", { n: placed.length })} /></h4>
+              <h4>{t("jig.placements", { n: placed.length })} <HelpLink to="jigs#place-a-design-in-every-pocket" topic={t("jig.placements", { n: placed.length })} /></h4>
               <button
                 className="btn"
                 disabled={p.selection.length === 0}

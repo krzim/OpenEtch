@@ -11,8 +11,8 @@ const page = (title: string, order: number, section: string, needs = "design", b
 
 const g = buildGuide({
   "../../../docs/guide/index.md": page("Start", 0, "Getting started"),
-  "../../../docs/guide/frame.md": page("Frame a job", 10, "Running jobs", "machine", "## Frame {#frame}\n\nThe red pointer traces the outline.\n"),
-  "../../../docs/guide/fit.md": page("Fit to a coin", 20, "Designing", "design", "## Centre it {#centre}\n\nUse **Centre on stock** to centre the design.\n\n### Size {#size}\n\nSet the width.\n"),
+  "../../../docs/guide/frame.md": page("Frame a job", 10, "Running jobs", "machine", "## Frame\n\nThe red pointer traces the outline.\n"),
+  "../../../docs/guide/fit.md": page("Fit to a coin", 20, "Designing", "design", "## Centre it\n\nUse **Centre on stock** to centre the design.\n\n### Size\n\nSet the width.\n"),
   "../../../docs/guide/text.md": page("Text", 10, "Designing"),
   "../../../docs/guide/README.md": "# Not a page",
 });
@@ -55,27 +55,27 @@ test("search: titles, headings and text; every word must match; headings rank hi
     s.map((x) => [x.anchor, x.heading]),
     [
       [null, "Fit to a coin"],
-      ["centre", "Centre it"],
+      ["centre-it", "Centre it"],
       ["size", "Size"],
     ],
   );
   const hits = searchGuide(g, "centre", false);
-  assert.equal(hits[0].anchor, "centre");
+  assert.equal(hits[0].anchor, "centre-it");
   assert.match(hits[0].snippet, /Centre on stock/);
   assert.equal(searchGuide(g, "centre pointer", false).length, 0);
   assert.equal(searchGuide(g, "red pointer", false)[0].slug, "frame");
   assert.equal(searchGuide(g, "red pointer", true).length, 0, "the design-only build does not find machine pages");
   assert.deepEqual(searchGuide(g, "  ", false), []);
   // Accents and case do not matter.
-  assert.equal(searchGuide(g, "CÉNTRE", false)[0].anchor, "centre");
+  assert.equal(searchGuide(g, "CÉNTRE", false)[0].anchor, "centre-it");
 });
 
 test("the start page's contents list", () => {
   const md = contentsMarkdown(g);
-  assert.match(md, /^## Contents \{#contents\}\n\n\*\*Designing\*\*\n\n- \[Text\]\(text\.md\): About text\.\n- \[Fit to a coin\]\(fit\.md\)/);
+  assert.match(md, /^## Contents\n\n\*\*Designing\*\*\n\n- \[Text\]\(text\.md\): About text\.\n- \[Fit to a coin\]\(fit\.md\)/);
   assert.match(md, /\[Frame a job\]\(frame\.md\): About frame a job\. \(Needs a laser\)/);
   assert.ok(!md.includes("(index.md)"));
-  const idx = "# Start\n\nHello.\n\n## Contents {#contents}\n\nold\n";
+  const idx = "# Start\n\nHello.\n\n## Contents\n\nold\n";
   assert.equal(withContents(idx, g), `# Start\n\nHello.\n\n${md}`);
   assert.equal(withContents("# Start\n", g), `# Start\n\n${md}`);
 });
@@ -117,7 +117,7 @@ test("shot steps: one action each, private paths and file commands refused", () 
     { menu: ["File", "Laser", "Devices"] },
     { type: "Grace Hopper", into: { css: "#tpl-name" } },
     { key: "Ctrl+Shift+Z" },
-    { hash: "#/guide/the-workspace#ribbon" },
+    { hash: "#/guide/the-workspace#the-ribbon" },
     { wait: ".guide-md" },
     { wait: 500 },
     { select: "all" },

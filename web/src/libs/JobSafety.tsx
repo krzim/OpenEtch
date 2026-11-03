@@ -123,7 +123,7 @@ export function ApprovalChecks({ state, disabled, showDoor = true, noPin = false
       {door && <p className="lx-gate">{t("safe.doorOn", { input: inputText(door) })}</p>}
       {list.enabled && (
         <fieldset className="lx-checklist" disabled={disabled}>
-          <legend>{t("safe.checklist")} <HelpLink to="running-a-job#job-checklist" topic={t("safe.checklist")} /></legend>
+          <legend>{t("safe.checklist")} <HelpLink to="running-a-job#job-checklist-and-require-framing" topic={t("safe.checklist")} /></legend>
           {list.items.map((item, i) => (
             <label key={i} className="lx-check-item">
               <input
@@ -207,7 +207,7 @@ export function DeviceJobSettings({ active, report, notify }: { active: boolean;
   };
   return (
     <div className="dev-page lx-jobprefs">
-      <h4>{t("safe.framingTitle")} <HelpLink to="devices-and-calibration#device-job-settings" topic={t("safe.framingTitle")} /></h4>
+      <h4>{t("safe.framingTitle")} <HelpLink to="devices-and-calibration#job" topic={t("safe.framingTitle")} /></h4>
       <CheckField label={t("safe.requireFraming")} checked={prefs.require_framing} onChange={(v) => edit({ require_framing: v })} />
       <p className="hint">{t("safe.requireFramingHint")}</p>
 

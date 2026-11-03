@@ -1,6 +1,6 @@
 // Every "?" help button and every literal openGuide("...") call in the app points at a page of docs/guide and one of
-// its {#anchor} headings: a renamed anchor or a deleted page fails here, not in front of a user. HelpLink's `to` must
-// be a string literal so this test can read it.
+// its headings, by the id GitHub gives that heading ("## Cut settings" -> "cut-settings"): a reworded heading or a
+// deleted page fails here, not in front of a user. HelpLink's `to` must be a string literal so this test can read it.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -48,6 +48,9 @@ export function helpTargets(): [string, string | null][] {
   return out;
 }
 
+/** The longest heading id a "?" may link to. */
+const MAX_HELP_ID = 34;
+
 test("every HelpLink and openGuide target exists in docs/guide", () => {
   const targets = helpTargets();
   assert.ok(targets.length >= 1, "at least the demo HelpLink is found (the scan works)");
@@ -55,6 +58,13 @@ test("every HelpLink and openGuide target exists in docs/guide", () => {
     assert.ok(to !== null, `${file}: <HelpLink to="page#anchor"> must be a string literal`);
     const r = resolveTarget(guide, to);
     assert.ok(r.ok, `${file}: HelpLink to="${to}": ${r.ok ? "" : r.why}`);
+    const anchor = to.split("#")[1] ?? "";
+    // A "?" depends on the heading's wording: keep such headings short, so the id is short and a small rewording is
+    // not tempting. And not a repeated heading's numbered id ("options-1"): another "Options" above it renumbers it.
+    assert.ok(anchor.length <= MAX_HELP_ID, `${file}: "${to}": the heading's id is longer than ${MAX_HELP_ID} characters: shorten the heading`);
+    const page = guide.bySlug.get(to.split("#")[0])!;
+    const base = /^(.*)-\d+$/.exec(anchor)?.[1];
+    assert.ok(!base || !page.headings.some((h) => h.id === base), `${file}: "${to}" is a repeated heading's numbered id: give the heading its own words`);
   }
 });
 
@@ -63,6 +73,9 @@ test("resolveTarget names what is missing", () => {
   assert.deepEqual(resolveTarget(guide, "index"), { ok: true });
   assert.equal(resolveTarget(guide, "no-such-page").ok, false);
   const r = resolveTarget(guide, "index#no-such-anchor");
-  assert.ok(!r.ok && /no heading \{#no-such-anchor\}/.test(r.why));
+  assert.ok(!r.ok && /no heading with the id "no-such-anchor"/.test(r.why));
+  // Ids are GitHub's, made from the heading's text: the old {#custom} ids are gone.
+  assert.ok(resolveTarget(guide, "layers-and-settings#the-cuts--layers-window").ok);
+  assert.equal(resolveTarget(guide, "layers-and-settings#cuts-layers-window").ok, false);
   assert.equal(resolveTarget(guide, "Bad Target").ok, false);
 });

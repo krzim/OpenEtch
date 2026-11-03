@@ -718,10 +718,25 @@ function stepsFor(d) {
   }, ["tablet", "desktop"]);
   add("keyboard-input", async ({ page, ctx }) => {
     // A focused numeric field with the on-screen keyboard up (the visual viewport shrinks by the keyboard height).
+    // The step makes its own selection: in a full run the steps before it (zoom-out, the guide) leave the view far
+    // out, nothing selected, a sheet open, or Fit field hidden (a press there would land on what covers it).
+    await escape(page);
+    if (d.kind === "phone") {
+      await phoneTab(page, "Canvas");
+      if (await sheetOpen(page)) await pressFind(page, ".sheet-close");
+    }
+    const made = await execute(ctx.url, "shape.rect", { width_mm: 40, height_mm: 30, center: [0, 0], name: "Keyboard target" });
+    if (made && typeof made === "object" && made.error) throw new Error(`shape.rect: ${JSON.stringify(made.error)}`);
+    await sleep(800);
     const f = await find(page, "button", "Fit field");
-    if (f) await page.press(f.x, f.y);
-    await sleep(300);
+    if (f?.hit) await page.press(f.x, f.y);
+    await sleep(400);
+    // Its left edge (an outline is what selects).
+    const edge = await canvasPoint(page, -20, 0);
+    await page.press(edge.x, edge.y);
+    await sleep(500);
     if (!(await selectionCount(page))) ctx.sel = await selectSomething(page);
+    if (!(await selectionCount(page))) throw new Error("nothing got selected for the keyboard step");
     if (d.kind === "phone") {
       await phoneTab(page, "Canvas");
       if (!(await sheetOpen(page))) await phoneTab(page, "Canvas");

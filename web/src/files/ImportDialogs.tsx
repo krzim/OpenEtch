@@ -127,7 +127,7 @@ export function ImportFilesDialog(p: {
   const keeps = formats.some(takesKeepPosition);
   return (
     <Modal
-      help="files-and-projects#import-3d-models-and-gerber"
+      help="files-and-projects#3d-models-and-gerber-files"
       title={groups.has("model") ? t("files.import3dTitle") : groups.has("gerber") ? t("files.importGerberTitle") : t("files.importTitle")}
       onClose={p.onClose}
       onSubmit={submit}

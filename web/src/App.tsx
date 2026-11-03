@@ -301,7 +301,7 @@ export function App() {
   const saveFile = file.save;
   const activeLayer = selection.layer ?? doc?.layers[0]?.id ?? null;
   // Export, Print, further import formats, templates, notes, backups, pages and image tools (src/files/).
-  const filesUi = useFilesUi({ engine, file, selection: selection.objects, selectIds, activeLayer, design: workspace === "design", notify, report });
+  const filesUi = useFilesUi({ engine, file, selection: selection.objects, selectIds, activeLayer, design: workspace === "design", layout, notify, report });
   openOtherRef.current = filesUi.openOther;
   // Templates with fill-in fields, example projects and the contact sheet (src/templates/).
   const tpl = useTemplateUi({ engine, file, selection: selection.objects, design: workspace === "design", notify, report });
@@ -1427,7 +1427,7 @@ export function App() {
   );
 
   const leftContent = (
-    <Dock help="the-workspace#browser-panel" id="browser" title={t("win.browser")}>
+    <Dock help="the-workspace#the-browser-panel" id="browser" title={t("win.browser")}>
     <BrowserPanel
       doc={doc}
       selection={selection}
@@ -1496,7 +1496,7 @@ export function App() {
         {designUi.dock}
         {docking.window}
         {gantryDocks}
-        <Dock help="drawing-and-editing#numeric-fields" id="properties" title={t("win.properties")}>
+        <Dock help="drawing-and-editing#with-numbers" id="properties" title={t("win.properties")}>
         <PropertiesPanel
           doc={doc}
           selection={selection}

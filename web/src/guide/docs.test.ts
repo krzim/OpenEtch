@@ -1,5 +1,5 @@
 // The user guide's pages (docs/guide/*.md) and screenshots (docs/guide/shots.json, docs/guide/img/): front matter,
-// anchors on every ## and ### heading, links to pages and anchors that exist, pictures that are listed and taken,
+// GitHub heading ids (no {#custom-id}), links to pages and to headings that exist, pictures that are listed and taken,
 // shots that some page uses, no raw HTML, and index.md's contents up to date. Reads the files with fs.
 
 import { test } from "node:test";
@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { DEVICES } from "../../e2e/devices.mjs";
 import { shotsProblems } from "../../e2e/guideSteps.mjs";
 import { sizesJson } from "../../e2e/webpSize.mjs";
-import { collectRefs, imageName, linkTarget, type Block, type Inline } from "./markdown.ts";
+import { collectRefs, headingText, imageName, inlineText, linkTarget, slugify, type Block, type Inline } from "./markdown.ts";
 import { anchorsOf, buildGuide, withContents } from "./pages.ts";
 
 const repo = fileURLToPath(new URL("../../../", import.meta.url));
@@ -35,21 +35,37 @@ test("the guide has a start page and every page's front matter is complete", () 
   for (const p of guide.pages) assert.deepEqual(p.problems, [], `${p.slug}.md`);
 });
 
-test("every page has one # heading (its title) and an anchor on every ## and ### heading", () => {
+test("every page has one # heading (its title) first", () => {
   for (const p of guide.pages) {
     const h1 = p.headings.filter((h) => h.level === 1);
     assert.equal(h1.length, 1, `${p.slug}.md: exactly one # heading`);
     assert.equal(p.blocks[0]?.t, "heading", `${p.slug}.md: the # heading comes first`);
     assert.equal(h1[0].text, p.title, `${p.slug}.md: the # heading is the title`);
-    const seen = new Set<string>();
+  }
+});
+
+test("headings have GitHub's ids: no {#custom-id}, plain ASCII ids, the same numbering as GitHub", () => {
+  for (const [f, src] of Object.entries(files)) {
+    // GitHub shows `{#id}` as text and does not use it as the id, so a link to it would not jump there.
+    const m = /^ {0,3}#{1,6}[ \t].*\{#[^}]*\}[ \t]*$/m.exec(prose(src));
+    assert.equal(m, null, `${f}: "${m?.[0]}": drop the {#...}; a heading's id is its text the GitHub way`);
+  }
+  for (const p of guide.pages) {
+    const bases = new Set<string>();
     for (const b of p.blocks) {
-      if (b.t !== "heading" || b.level === 1) continue;
-      if (b.level <= 3) assert.ok(b.explicit, `${p.slug}.md: "${b.id}" needs an anchor: ## Heading {#kebab-case-id}`);
-      if (b.explicit) assert.match(b.id, /^[a-z0-9]+(-[a-z0-9]+)*$/, `${p.slug}.md: anchor {#${b.id}} is not kebab-case`);
-      assert.ok(!seen.has(b.id), `${p.slug}.md: anchor {#${b.id}} is used twice`);
-      seen.add(b.id);
+      if (b.t !== "heading") continue;
+      const at = `${p.slug}.md: "${"#".repeat(b.level)} ${inlineText(b.c)}" (id "${b.id}")`;
+      // ASCII words and hyphens: a link to it needs no escaping, in an address or on GitHub.
+      assert.match(b.id, /^[a-z0-9_]+(-+[a-z0-9_]+)*$/, `${at}: use plain letters and digits in the heading`);
+      bases.add(slugify(headingText(b.c)));
     }
-    // An implicit slug ("plain-heading") could clash with an explicit one: keep them apart.
+    // GitHub's own renderer and github-slugger number repeated headings alike ("x", "x-1", "x-2") unless a heading's
+    // text itself reads like a numbered one ("X 1" next to two "X"): keep such headings apart so the ids are GitHub's
+    // whichever way it counts.
+    for (const b of bases) {
+      const n = /^(.*)-\d+$/.exec(b);
+      assert.ok(!n || !bases.has(n[1]), `${p.slug}.md: a heading with the id "${b}" beside "${n?.[1]}" headings: reword it`);
+    }
     assert.equal(anchorsOf(p).size, p.headings.length, `${p.slug}.md: heading ids are unique`);
   }
 });
@@ -70,8 +86,8 @@ test("links go to pages and anchors that exist, or to http(s) / mailto", () => {
       if (to.kind === "page") {
         const q = guide.bySlug.get(to.slug);
         assert.ok(q, `${at}: no docs/guide/${to.slug}.md`);
-        if (to.anchor) assert.ok(anchorsOf(q).has(to.anchor), `${at}: no {#${to.anchor}} in ${to.slug}.md`);
-      } else if (to.kind === "anchor") assert.ok(anchorsOf(p).has(to.anchor), `${at}: no {#${to.anchor}} on this page`);
+        if (to.anchor) assert.ok(anchorsOf(q).has(to.anchor), `${at}: no heading in ${to.slug}.md has the id "${to.anchor}"`);
+      } else if (to.kind === "anchor") assert.ok(anchorsOf(p).has(to.anchor), `${at}: no heading on this page has the id "${to.anchor}"`);
     }
   }
 });

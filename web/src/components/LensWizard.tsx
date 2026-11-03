@@ -123,7 +123,7 @@ export function LensWizard(p: {
   ];
   return (
     <Modal
-      help="devices-and-calibration#lens-calibration"
+      help="devices-and-calibration#calibrate-the-galvo-lens"
       title={t("lens.title")}
       wide
       onClose={p.onClose}

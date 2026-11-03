@@ -10,7 +10,7 @@ summary: Run the engine on a Raspberry Pi or a PC, open the app on a PC, Mac, iP
 
 This page takes you from nothing to an open design. You run the engine once, then open the app in a browser on any device that can reach it.
 
-## What you need {#what-you-need}
+## What you need
 
 - A computer to run the engine: a Raspberry Pi 4 or 5 on the laser, or a PC or Mac. The engine is the only program that talks to the laser.
 - A browser on each device you want to use: Chrome, Edge, Safari or Firefox on a PC or Mac, Safari on an iPad or iPhone, Chrome on Android.
@@ -21,7 +21,7 @@ This page takes you from nothing to an open design. You run the engine once, the
 
 In this guide, `openetch` means the engine program. After a build it is `target/release/openetch` (`target\release\openetch.exe` on Windows). You can also run any engine command through Cargo, for example `cargo run --release -p engine -- token`.
 
-## Run the engine on a PC or Mac {#run-on-a-pc}
+## Run the engine on a PC or Mac
 
 To build and run the engine from a copy of the OpenEtch repository:
 
@@ -57,7 +57,7 @@ cargo run --release -p engine --features usb -- --usb
 
 > **Warning:** With `--usb` the engine drives the real laser. Read [Laser safety](safety.md) before you frame or burn anything.
 
-### Other devices on your network {#pc-other-devices}
+### Other devices on your network
 
 To use the app from an iPad or phone while the engine runs on your PC, make the engine listen on your network:
 
@@ -65,9 +65,9 @@ To use the app from an iPad or phone while the engine runs on your PC, make the 
 cargo run --release -p engine -- --listen 0.0.0.0:7878
 ```
 
-Off this computer the engine then asks every device for its access token. When it starts, it prints a pairing link that carries the token. See [The access token](#access-token).
+Off this computer the engine then asks every device for its access token. When it starts, it prints a pairing link that carries the token. See [The access token](#the-access-token).
 
-## Run the engine on a Raspberry Pi {#run-on-a-raspberry-pi}
+## Run the engine on a Raspberry Pi
 
 On a Pi the engine sits on the laser and runs as a service, so it starts with the Pi. Every other device opens the app over your network.
 
@@ -117,7 +117,7 @@ To set up the Pi:
 
    Use the same `--config-dir` as the service, as a user who can read it.
 
-### Stopping and restarting the engine {#stop-and-restart}
+### Stopping and restarting the engine
 
 A stop or restart never cuts a burn short on its own. When the engine is asked to stop, it refuses new work and waits for a running job to finish, up to `--shutdown-grace-secs` (default 3600 seconds). A second stop signal, or the limit running out, aborts the job as **STOP** would.
 
@@ -125,7 +125,7 @@ A stop or restart never cuts a burn short on its own. When the engine is asked t
 - To restart only while no job runs, use `tools/pi/safe-restart.sh`. It refuses while a burn runs. It restarts the `openetch` service unless you name another with `--service`. When the engine listens on your network, give it the token in the `OPENETCH_TOKEN` environment variable.
 - While it shuts down, the app shows an **ENGINE SHUTTING DOWN** badge in the top bar, or **ENGINE ABORTING JOB** when it aborts a job. **STOP** keeps working until the engine exits.
 
-## Engine options you will use {#engine-options}
+## Engine options you will use
 
 Run `openetch --help` for the full list.
 
@@ -137,7 +137,7 @@ Run `openetch --help` for the full list.
 | `--require-token` | Ask for the token on this computer too. For an HTTPS proxy on the same computer. |
 | `--allow-host <name>` | Accept another host name, for example `openetch.local`. Repeat it for more names. |
 | `--config-dir <path>` | Where the engine keeps its settings, devices, material libraries, operator PIN and access token. |
-| `--projects-dir <path>` | Where your projects are saved. See [Files and projects](files-and-projects.md#projects-folder). |
+| `--projects-dir <path>` | Where your projects are saved. See [Files and projects](files-and-projects.md#where-your-files-are-kept). |
 | `--projects-mount <label>=<path>` | Show another folder as a top folder in Save and Open. |
 | `--approval pin` or `--approval click` | How burns are approved: with the operator PIN typed in the app (default), or with no PIN, by **Start** in the app in a browser or the foot switch only. Never by an AI agent. |
 | `--confirm-input <bit>` | After approval, also wait up to 30 seconds for a press on this machine input before the run starts. |
@@ -165,31 +165,31 @@ Default folders, when you do not set them:
 
 On Linux, `XDG_CONFIG_HOME` and `XDG_DATA_HOME` change these when they are set.
 
-## Open the app {#open-the-app}
+## Open the app
 
 Open the engine's address in a browser. On the engine's own computer that is `http://localhost:7878`. On another device use the engine computer's network address and port, `http://<engine address>:7878`.
 
 To use a name such as `http://openetch.local:7878`, start the engine with `--allow-host openetch.local`. The engine refuses host names it does not know, to protect you from other websites. Plain IP addresses always work.
 
-The app picks its layout from the screen size and whether you use a mouse or a finger. You can change it in **Preferences**. See [The workspace](the-workspace.md#layouts).
+The app picks its layout from the screen size and whether you use a mouse or a finger. You can change it in **Preferences**. See [The workspace](the-workspace.md#layouts-at-a-glance).
 
-### On a PC {#open-on-a-pc}
+### On a PC
 
 Use Chrome, Edge or Firefox. A large window gets the wide layout with every panel beside the canvas. Press `F11` for the browser's full screen, or `Alt+Enter` for the app's own.
 
-### On a MacBook {#open-on-a-mac}
+### On a MacBook
 
 Use Safari, Chrome or Edge. A MacBook window usually gets the compact layout: icon-only tools and a single bottom row, so the canvas keeps its room. Two-finger scrolling pans the canvas and pinching zooms.
 
-### On an iPad {#open-on-an-ipad}
+### On an iPad
 
-Use Safari. The iPad gets the tablet layout: tools in a rail down the left, panels that slide in from the sides, and a touch modifier bar for the keys a finger lacks. See [The workspace](the-workspace.md#tablet-layout).
+Use Safari. The iPad gets the tablet layout: tools in a rail down the left, panels that slide in from the sides, and a touch modifier bar for the keys a finger lacks. See [The workspace](the-workspace.md#the-ipad-and-tablet-layout).
 
-### On a phone {#open-on-a-phone}
+### On a phone
 
-Use Safari on an iPhone or Chrome on Android. The phone gets its own layout: a full-screen canvas, four tabs at the bottom (**Canvas**, **Layers**, **Job**, **More**) and sheets that rise from the bottom. **STOP** stays at the top right at all times. See [The workspace](the-workspace.md#phone-layout).
+Use Safari on an iPhone or Chrome on Android. The phone gets its own layout: a full-screen canvas, four tabs at the bottom (**Canvas**, **Layers**, **Job**, **More**) and sheets that rise from the bottom. **STOP** stays at the top right at all times. See [The workspace](the-workspace.md#the-phone-layout).
 
-## The access token {#access-token}
+## The access token
 
 When the engine listens on your network, every device needs its access token once. The token stops other people on the network from using your laser.
 
@@ -209,7 +209,7 @@ If the engine refuses a token, the card says **The engine refused that token. Ch
 
 > **Tip:** **STOP** always works, even without the token. The **Connect to OpenEtch** card has its own **STOP** button.
 
-### Making a new token {#rotate-token}
+### Making a new token
 
 If a token may have leaked, make a new one:
 
@@ -217,7 +217,7 @@ If a token may have leaked, make a new one:
 2. Restart the engine.
 3. Pair every device again.
 
-### Running without a token {#no-token}
+### Running without a token
 
 On a network you trust completely, you can start the engine with `--no-token`. Anyone who can reach the port can then use the app and the MCP endpoint without a token. They can edit designs, frame with the red pointer and request runs.
 
@@ -225,13 +225,13 @@ A burn still needs a person at the app or the machine: the operator PIN typed in
 
 > **Warning:** Do not use `--no-token` on a shared, guest or public network.
 
-### HTTPS {#https}
+### HTTPS
 
 The app works over plain `http`. A few browser features need a secure (`https`) address: installing as an app in Chrome, Edge and Android, the browser camera, keeping the screen awake during a burn, and `Esc` staying with the app in full screen. On the engine's own computer, `localhost` counts as secure.
 
 The engine has no HTTPS of its own. You can put an HTTPS proxy in front of it on the Pi. The repository's notes in `docs/https-on-the-pi.md` describe two ways (Tailscale or Caddy).
 
-## Install OpenEtch as an app {#install-as-an-app}
+## Install OpenEtch as an app
 
 You can run OpenEtch in its own window, without the browser's tabs and address bar.
 
@@ -257,7 +257,7 @@ The **Use OpenEtch as an app** dialog shows the steps for the browser you are us
 
 Where the platform supports app shortcuts, the installed app has a **Production cockpit** shortcut (shown as **Cockpit** where space is short) that opens the [Production cockpit](production-cockpit.md) directly.
 
-## Start a design {#start-a-design}
+## Start a design
 
 An empty design shows the **Start a design** card in the middle of the canvas. It offers:
 
@@ -269,7 +269,7 @@ An empty design shows the **Start a design** card in the middle of the canvas. I
 
 You can also drop a file anywhere on the canvas. The last line of the card shows the laser and its state, for example **Laser: ComMarker B6 MOPA 60W (EzCad) · Idle (simulator)**.
 
-## Open an example project {#open-an-example}
+## Open an example project
 
 OpenEtch comes with five example projects. Each one shows a few features and has a step-by-step walkthrough in its notes.
 
@@ -294,7 +294,7 @@ The example opens as a new, unsaved document laid out for your active laser. The
 
 > **Warning:** The settings in the examples are starting points, not tested values for your laser or material. Before you burn one, check its energy density (see below) and run a material test on a spare piece. See [Test grids](test-grids.md).
 
-## Before you burn anything {#before-you-burn}
+## Before you burn anything
 
 OpenEtch is safe to explore on the simulator. Before your first real burn:
 
@@ -304,7 +304,7 @@ OpenEtch is safe to explore on the simulator. Before your first real burn:
 
 > **Warning:** With `--approval click` there is no PIN. Any program on the engine's computer can then start a burn the way the app does. If an AI agent can run programs or control the browser on that computer while nobody watches the laser, use the PIN instead.
 
-### Energy density, simply {#energy-density}
+### Energy density, simply
 
 Energy density tells you how much laser energy lands on each square millimetre. It decides whether a setting marks, colours or melts.
 
@@ -316,20 +316,20 @@ For power, use the laser's rated power times the power percentage. For example, 
 
 On stainless steel with a 60 W MOPA, roughly 2 to 15 J/mm² marks without melting. Higher values can melt or warp thin stock. Slower speed, a finer interval or more power all raise the energy. Treat these numbers as a guide and test on scrap first.
 
-## Your first job {#your-first-job}
+## Your first job
 
 This walks you through one job from start to finish with the Two-tone MOPA coin example. Try it on the simulator first: nothing fires there.
 
-1. Choose **File > New from example…** and open the **Two-tone MOPA coin**. See [Open an example project](#open-an-example).
+1. Choose **File > New from example…** and open the **Two-tone MOPA coin**. See [Open an example project](#open-an-example-project).
 2. Open the **Cuts / Layers** window (on a phone, the **Layers** tab) and look at each layer's power, speed and line interval. See [Layers and cut settings](layers-and-settings.md).
-3. Work out the energy density of each fill layer, as in [Energy density, simply](#energy-density). The coin's **Colour ring** layer in Gold comes to about 3.4 J/mm² (28 % of 60 W at 500 mm/s and a 0.01 mm interval). If you change a setting, work it out again.
+3. Work out the energy density of each fill layer, as in [Energy density, simply](#energy-density-simply). The coin's **Colour ring** layer in Gold comes to about 3.4 J/mm² (28 % of 60 W at 500 mm/s and a 0.01 mm interval). If you change a setting, work it out again.
 4. Switch to the **Laser** workspace and check the preview. See [Preview and framing](preview-and-framing.md).
-5. Put a blank coin of the right size under the lens, then click **Frame** and check that the red pointer traces the coin's outline. See [Frame the job](preview-and-framing.md#framing).
+5. Put a blank coin of the right size under the lens, then click **Frame** and check that the red pointer traces the coin's outline. See [Frame the job](preview-and-framing.md#frame-the-job).
 6. Put on eye protection rated for your laser's wavelength and switch on fume extraction. See [Laser safety](safety.md).
 7. Click **Start** (or **Request run** and approve it with your PIN). See [Running a job](running-a-job.md).
 8. Stay at the machine until the job ends. **STOP** stops it at any time.
 
-## Next steps {#next-steps}
+## Next steps
 
 - Take the tour of [The workspace](the-workspace.md).
 - Learn to open, save and import in [Files and projects](files-and-projects.md).

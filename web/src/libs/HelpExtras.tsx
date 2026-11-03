@@ -30,7 +30,7 @@ export function BugReportDialog(p: { report: (e: unknown) => void; notify: (m: s
   useEffect(() => void load(), []);
   return (
     <WsModal
-      help="troubleshooting#report-a-bug"
+      help="troubleshooting#bug-reports-and-logs"
       title={t("dbg.title")}
       wide
       onClose={p.onClose}
@@ -91,7 +91,7 @@ export function UpdatesDialog(p: { report: (e: unknown) => void; onClose: () => 
   };
   return (
     <WsModal
-      help="troubleshooting#updates"
+      help="troubleshooting#check-for-updates"
       title={t("upd.title")}
       onClose={p.onClose}
       footer={

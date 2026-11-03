@@ -12,7 +12,7 @@ A device is OpenEtch's record of one laser: its field size, galvo settings, timi
 
 > **Warning:** Calibration means marking real test patterns. Wear eye protection rated for your laser's wavelength, run the fume extraction, and never leave a job unattended.
 
-## What a device is {#what-a-device-is}
+## What a device is
 
 OpenEtch keeps a list of devices, like LightBurn's Devices window. One of them is the **active device**. The active device decides:
 
@@ -24,12 +24,12 @@ These kinds of device can be in the list:
 
 - **The built-in device.** The engine's own machine profile. It is always there, it is read-only, and it cannot be removed. To change its settings, duplicate it and edit the copy.
 - **JCZ galvo devices** (EzCad2 / LMC boards). OpenEtch can drive these.
-- **GRBL and Ruida gantries you add by hand** (see [Add a GRBL or Ruida gantry](#gantry-devices)). OpenEtch can drive these too, but this is unverified on hardware.
+- **GRBL and Ruida gantries you add by hand** (see [Add a GRBL or Ruida gantry](#add-a-grbl-or-ruida-gantry)). OpenEtch can drive these too, but this is unverified on hardware.
 - **Design-only devices.** Everything else, such as gantry lasers or other galvo boards imported from LightBurn. Their workspace is used for designing and for LightBurn files, but OpenEtch cannot run jobs on them. They are tagged **design only** in the list.
 
 Importing a LightBurn gantry never makes OpenEtch drive it. A gantry only runs jobs when you add it yourself with **New GRBL…** or **New Ruida…**
 
-## Open the Devices window {#devices-window}
+## Open the Devices window
 
 On a computer or tablet:
 
@@ -41,7 +41,7 @@ On a phone, device editing is a desktop feature, so it is not in the phone's men
 
 ![The Devices window with the device list, the selected device's settings and the footer buttons](img/devices-window.webp)
 
-### The device list {#device-list}
+### The device list
 
 The list shows every device with its **Name**, **Controller**, **Size**, **Origin** and **Source**. The active device has a star (*). When you have more than one kind (for example galvos and gantries), the list is grouped by kind.
 
@@ -62,7 +62,7 @@ The footer has:
 
 On a phone, **Duplicate**, **Edit…** and **Remove** are in the footer's **More** menu.
 
-## Add a device {#add-a-device}
+## Add a device
 
 Click **Add device** in the Devices window. The menu has:
 
@@ -74,7 +74,7 @@ Click **Add device** in the Devices window. The menu has:
 
 The first time the engine starts, it imports LightBurn's devices from the computer it runs on (if LightBurn is installed there). It makes LightBurn's default device active when OpenEtch can drive it (a JCZ galvo); otherwise the built-in device is active.
 
-### Import from LightBurn {#import-from-lightburn}
+### Import from LightBurn
 
 OpenEtch reads only device settings from LightBurn: names, sizes, origin and galvo settings. Nothing is written back to LightBurn.
 
@@ -94,7 +94,7 @@ To import a LightBurn file from another computer:
 
 Only the typed device fields leave your browser; the rest of `prefs.ini` is cut away before the file is sent. A device you imported before (same name, controller, connection and size) is updated rather than added twice.
 
-### Import an EzCad markcfg file {#import-ezcad}
+### Import an EzCad markcfg file
 
 EzCad keeps the laser's own settings in a file called `markcfg7`, in the laser's EzCad folder (in the `plug` folder on most machines, `PARAM` on some).
 
@@ -104,9 +104,9 @@ EzCad keeps the laser's own settings in a file called `markcfg7`, in the laser's
 
 The import reads the field size, the galvo axis settings (which galvo is X, and the reverse directions), the correction file name, the frame (red light) speed, the speed and frequency range and the start-marking input. Some of these meanings are unverified on hardware, so check them.
 
-The import stores only the correction file's name. To load the `.cor` file itself, use the device's **Lens** page (see [Lens correction file](#cor-file)), or use the Find My Laser wizard below, which takes both files.
+The import stores only the correction file's name. To load the `.cor` file itself, use the device's **Lens** page (see [Lens correction file](#lens-correction-file-cor)), or use the Find My Laser wizard below, which takes both files.
 
-### Find My Laser / Add galvo {#find-my-laser}
+### The Find My Laser wizard
 
 This wizard adds a galvo from its EzCad files in three steps. To open it, choose **File > Laser > Find My Laser / Add galvo…** On a phone, tap **More**, open **File**, tap **All file commands** and choose **Laser > Find My Laser / Add galvo…**
 
@@ -116,14 +116,14 @@ This wizard adds a galvo from its EzCad files in three steps. To open it, choose
 
 Limits come from the markcfg and can only be lowered later. The wizard is unverified on hardware.
 
-### Add a GRBL or Ruida gantry {#gantry-devices}
+### Add a GRBL or Ruida gantry
 
 - **New GRBL…** adds a GRBL 1.1 gantry on a serial port. Fill in **Name**, **Serial port**, **Baud**, **Width (mm)**, **Height (mm)**, **Origin**, **Max S ($30)** and **Max feed (mm/min)**, and tick **Homing switches ($22)** and **Dynamic power (M4)** as your machine needs. Click **Add**.
 - **New Ruida…** adds a Ruida DSP gantry on the network. Fill in **Name**, **Controller IP address**, **Width (mm)**, **Height (mm)**, **Origin**, **Max power (%)** and **Max speed (mm/s)**, and tick **RDC634XG controller** if it is one. Click **Add**.
 
 The message "Added …. Make it active to connect." confirms it. Then make the device active. Both are unverified on hardware.
 
-### From the command line {#devices-command-line}
+### From the command line
 
 On the engine's computer you can also manage devices in a terminal:
 
@@ -131,7 +131,7 @@ On the engine's computer you can also manage devices in a terminal:
 - `openetch devices import <file>` imports the devices of a `.lbdev` file or `prefs.ini` (`--add <name>` picks one). Restart the engine to see them.
 - Starting the engine with `--device <id or name>` uses that device for this run instead of the active one.
 
-## Switch the active device {#switch-device}
+## Switch the active device
 
 Switching devices changes the machine: the engine swaps the profile and sets the laser up again.
 
@@ -150,13 +150,13 @@ Things to know:
 
 An AI agent can list devices but cannot switch, import, edit or remove them.
 
-## Duplicate, remove and export {#duplicate-remove-export}
+## Duplicate, remove and export
 
 - **Duplicate** makes a copy you can edit. Use it on the built-in device before you change anything.
 - **Remove** asks you to confirm. You cannot remove the built-in device or the active device (make another device active first). A device imported from LightBurn or a `.lbdev` file can be imported again; one added by hand is deleted for good. Removing a device also removes its saved preferences (such as layer defaults and the Job Checklist), its camera calibration and its recorded run times.
 - **Export .lbdev** (in the device settings footer) saves the device as a LightBurn `.lbdev` file.
 
-## Device settings {#device-settings}
+## Device settings
 
 To open a device's settings, select it in the Devices window and click **Edit…** The dialog is called **Device settings:** followed by the device name. The settings are those of a galvo; for a design-only device a note says "OpenEtch cannot drive this device; its settings are kept for LightBurn."
 
@@ -176,7 +176,7 @@ The built-in device is read-only. Its dialog says so and shows **Duplicate to ed
 
 ![The Device settings dialog on the Galvo and basic page](img/device-settings-galvo.webp)
 
-### Galvo and basic {#galvo-and-basic}
+### Galvo and basic
 
 | Group | Fields |
 |---|---|
@@ -188,7 +188,7 @@ The built-in device is read-only. Its dialog says so and shows **Duplicate to ed
 | **Jump setting defaults** | **Jump speed**, **Min jump delay**, **Max jump delay**, **Jump distance limit**, **Jump speed limit**. |
 | **Delay defaults** | **Laser On TC**, **Laser Off TC**, **End TC**, **Polygon TC**, **Delay limit**. |
 
-### Ports and laser {#ports-and-laser}
+### Ports and laser
 
 This page holds the laser source and the board's inputs and outputs.
 
@@ -224,7 +224,7 @@ The start marking input is what the foot switch uses. It starts the foot switch 
 
 ![The Ports and laser page with the laser source and IO port fields](img/device-settings-ports.webp)
 
-### Z axis / rotary {#z-axis-rotary}
+### Z axis / rotary
 
 Use this page if a motor is wired to the board's extension axis.
 
@@ -240,7 +240,7 @@ Moves of the extension axis never fire the laser. This is unverified on hardware
 
 With a Z lift, the Laser window's **Red dot and Z** section shows **Z position** and **Move Z**. With a table, the Laser window's **Repeat table…** runs Repeat Marking (see [Running a job](running-a-job.md)).
 
-### Job {#device-job-settings}
+### Job
 
 These settings belong to the active device. Make the device active to change them.
 
@@ -251,21 +251,21 @@ These settings belong to the active device. Make the device active to change the
 
 The [Safety](safety.md) page explains the approval checks in full.
 
-### Lens {#lens-tab}
+### Lens
 
-The **Lens** page has the lens correction file, the lens calibration wizard and a read-only view of the **Current corrections**. See [Lens correction file](#cor-file) and [Calibrate the galvo lens](#lens-calibration).
+The **Lens** page has the lens correction file, the lens calibration wizard and a read-only view of the **Current corrections**. See [Lens correction file](#lens-correction-file-cor) and [Calibrate the galvo lens](#calibrate-the-galvo-lens).
 
-### Controller {#controller-info}
+### Controller
 
 For the active device, this page reads the board: **Connected**, **Profile**, **Laser source**, **Laser / fiber type**, **Serial**, **Serial words**, **Version words** and **Extension axis**. Click **Read again** to refresh. The serial and version words are shown as the board answers; their meaning is not decoded. For any other device the page says "Make this the active device to read its controller."
 
-### Hard limits {#hard-limits}
+### Hard limits
 
 **Power limit**, **Max speed**, **Jump speed limit**, **Delay limit** and the frequency range (**Min frequency** and **Max frequency**) are hard limits. Every job and frame is held to them.
 
 You can only tighten them: lower the power limit, the speeds, the delay limit and the maximum frequency, or raise the minimum frequency. The dialog refuses to loosen a limit past its current value, and the engine refuses any value beyond the device's base profile. Hover over the field to see the limit.
 
-## Field size {#field-size}
+## Field size
 
 The field is the square (or rectangle) the galvo can reach through the lens. It sets the canvas size and the scale of every mark. If it is wrong, every design marks too big or too small.
 
@@ -278,9 +278,9 @@ To set it:
 
 **Offset X**, **Offset Y** and **Angle** in the **Field** group move and turn the whole marked field. Use them if your marks are shifted or rotated against the machine.
 
-LightBurn files do not store the field size. See [Troubleshooting](troubleshooting.md#field-size-wrong) if an imported LightBurn design lands in the wrong place.
+LightBurn files do not store the field size. See [Troubleshooting](troubleshooting.md#field-size-or-position-is-wrong) if an imported LightBurn design lands in the wrong place.
 
-## Lens correction file (.cor) {#cor-file}
+## Lens correction file (.cor)
 
 A `.cor` file is an EzCad lens correction table from the laser's maker. It corrects the distortion of the lens across the field.
 
@@ -292,7 +292,7 @@ To load one:
 
 **Correction file** shows the file in use, or **None (uncorrected)**. **Clear** removes it. You cannot load a file into the built-in device; duplicate it first.
 
-## Calibrate the galvo lens {#lens-calibration}
+## Calibrate the galvo lens
 
 The **Calibrate galvo lens** wizard marks a test square, asks you to measure it, and works out new field scale, bulge, trapezoid and skew values. Repeat it to refine. The correction model is OpenEtch's own (LightBurn publishes none).
 
@@ -311,7 +311,7 @@ To calibrate:
 7. Click **Solve**. A table compares the **Current** and **New** values.
 8. Click **Apply to device** to store them. Mark the pattern again to check.
 
-## Red dot alignment {#red-dot}
+## Red dot alignment
 
 The red pointer sits off the beam axis, so the framed outline may not match the burn. The **Red dot** fields correct framing only; they never move the burn.
 
@@ -325,9 +325,9 @@ To align it:
 
 **Rest pos X** and **Rest pos Y** are where the dot parks when framing stops.
 
-## Rotary setup {#rotary-setup}
+## Rotary setup
 
-Rotary support is unverified on hardware. It needs an active device whose extension axis is set to **Rotary** (see [Z axis / rotary](#z-axis-rotary)). Without one, the dialog warns that rotary runs are refused.
+Rotary support is unverified on hardware. It needs an active device whose extension axis is set to **Rotary** (see [Z axis / rotary](#z-axis--rotary)). Without one, the dialog warns that rotary runs are refused.
 
 To open it, click **Rotary…** in the Laser window, or press `Ctrl+Shift+R`. The button is hidden in Beginner Mode.
 
@@ -348,7 +348,7 @@ The work's axis lies along field X; the design's Y wraps around it. The settings
 
 **Test rotate** turns the rotary to the second strip and back. It is motion only; the laser stays off. Keep hands clear of the rotary. **Defaults** resets the values. Click **OK** to save.
 
-## The simulator {#simulator}
+## The simulator
 
 The engine runs a simulated laser unless it was started with `--usb` (and built with USB support). The simulator never touches hardware.
 
@@ -366,7 +366,7 @@ To run a separate simulator for practice, start the engine without `--usb` and g
 
 An engine started with `--sim-pin` shows **SIMULATOR TEST PIN**: approvals use a test PIN and only ever drive the simulator. The engine refuses `--sim-pin` together with `--usb`.
 
-## On a phone or tablet {#phone-and-tablet}
+## On a phone or tablet
 
 - **Tablet:** the Devices window, device settings and the lens wizard work as on a computer.
 - **Phone:** the **Job** tab shows the device dropdown, so you can switch devices. To add, edit or calibrate a device, tap **More > Desktop features > Devices, device settings and the lens wizard…** The forms are long; a computer or tablet is easier.

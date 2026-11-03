@@ -10,7 +10,7 @@ summary: Every keyboard shortcut in OpenEtch, how to open the list, how to chang
 
 OpenEtch uses LightBurn's default keys where it can. You can change most of them.
 
-## Stop a job from the keyboard {#stop-keys}
+## Stop a job from the keyboard
 
 - `Ctrl+Pause` (or `Ctrl+Cancel`) is STOP: it ends any job or frame and cancels pending runs.
 - `Ctrl+.` (`Cmd+.` on a Mac) is STOP while a run is under way. At other times it rotates the selection 15°, as in LightBurn.
@@ -19,7 +19,7 @@ OpenEtch uses LightBurn's default keys where it can. You can change most of them
 
 The STOP button and the hardware E-stop always work. Do not rely on a keyboard to stop a laser.
 
-## Open the list {#shortcuts-list}
+## Open the list
 
 - Press `?` (`Shift+?`). (`F1` opens this user guide instead.)
 - Or choose **Help > Keyboard shortcuts**. In smaller windows, on MacBooks and tablets, **Help** is in the **More** (⋯) menu at the top right. On a phone, tap **More > Help > Keyboard shortcuts**.
@@ -28,7 +28,7 @@ Type in **Search actions or keys** to find an action or a key. Actions are group
 
 ![The Keyboard shortcuts list with its search box and groups](img/keyboard-shortcuts.webp)
 
-## Change a shortcut {#edit-hotkeys}
+## Change a shortcut
 
 1. Open the list and click **Edit…** Or choose **File > Settings > Edit hotkeys…**, or click **Edit hotkeys…** in Preferences. The title changes to **Edit hotkeys**.
 2. Next to an action, click **+**. It reads **Press a key… (Esc cancels)**.
@@ -44,7 +44,7 @@ Things to know:
 - **Reset all to LightBurn defaults** puts every key back.
 - Hotkeys are saved in this browser only.
 
-## Keys browsers keep {#reserved-keys}
+## Keys browsers keep
 
 Browsers keep some keys for themselves, so a web page never sees them: `Ctrl+W`, `Ctrl+T`, `Ctrl+Tab`, `Ctrl+Shift+Tab`, `Ctrl+Shift+N`, `Ctrl+Shift+T`, `Ctrl+Shift+W`, `Alt+F4`, `F11` and `F12`. You cannot assign them.
 
@@ -54,7 +54,7 @@ This means LightBurn's Weld (`Ctrl+W`) and Text (`Ctrl+T`) keys do not work in a
 
 Single letters (such as `R` or `P`) act only while the canvas has focus, so they never fire while you type in a field.
 
-## On a Mac and iPad {#mac-and-ipad}
+## On a Mac and iPad
 
 - `Ctrl` in this page and in the list means `Cmd` (⌘) on a Mac or iPad. Both Cmd and Ctrl work.
 - `Alt` means `Option` (⌥).
@@ -62,7 +62,7 @@ Single letters (such as `R` or `P`) act only while the canvas has focus, so they
 - On an iPad, the shortcuts work with a hardware keyboard.
 - A phone has no keyboard shortcuts. The touch modifier bar gives you Shift-, Ctrl- and Alt-style options while you draw or drag.
 
-## File {#file-keys}
+## File
 
 | Action | Keys |
 |---|---|
@@ -78,7 +78,7 @@ Single letters (such as `R` or `P`) act only while the canvas has focus, so they
 | Print (keep colours) | `Ctrl+Shift+P` |
 | New document tab | none |
 
-## Edit {#edit-keys}
+## Edit
 
 | Action | Keys |
 |---|---|
@@ -97,7 +97,7 @@ Single letters (such as `R` or `P`) act only while the canvas has focus, so they
 | Select tool, then clear selection (fixed) | `Esc` |
 | Select open shapes | none |
 
-## Tools {#tools-keys}
+## Tools
 
 | Action | Keys |
 |---|---|
@@ -134,7 +134,7 @@ Single letters (such as `R` or `P`) act only while the canvas has focus, so they
 
 With two or more shapes selected, `R`, `T`, `C` and `E` align instead (see Arrange).
 
-## Arrange {#arrange-keys}
+## Arrange
 
 | Action | Keys |
 |---|---|
@@ -169,7 +169,7 @@ With two or more shapes selected, `R`, `T`, `C` and `E` align instead (see Arran
 
 The nudge distances are set in [Preferences](settings.md#editing).
 
-## View {#view-keys}
+## View
 
 | Action | Keys |
 |---|---|
@@ -192,7 +192,7 @@ The nudge distances are set in [Preferences](settings.md#editing).
 
 Hold `Space` and drag, or drag with the middle mouse button, to pan the canvas.
 
-## Laser {#laser-keys}
+## Laser
 
 | Action | Keys |
 |---|---|
@@ -219,7 +219,7 @@ Hold `Space` and drag, or drag with the middle mouse button, to pan the canvas.
 
 > **Warning:** `Alt+S` does what the Start button does. With the operator PIN it creates a pending run that waits for approval. On an engine without a PIN, it starts the burn at once, as LightBurn's Start does (if the Job Checklist is on and not ticked, it opens the checklist instead). Close the enclosure and put on eye protection before you press it.
 
-## Help {#help-keys}
+## Help
 
 | Action | Keys |
 |---|---|
@@ -228,7 +228,7 @@ Hold `Space` and drag, or drag with the middle mouse button, to pan the canvas.
 | User guide | `F1` |
 | Keyboard shortcuts | `Shift+?` |
 
-## Keys inside tools {#tool-keys}
+## Keys inside tools
 
 These keys work only while a tool is active. They are not in the list and cannot be changed.
 

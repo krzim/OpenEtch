@@ -12,7 +12,7 @@ Text in OpenEtch stays live: you can change the words, the font and the size at 
 
 For serial numbers, dates and CSV fields, see [Variable text and barcodes](variable-text-and-barcodes.md).
 
-## Add text {#add-text}
+## Add text
 
 1. Click **Text** in the **Create** group, or press `T`.
 2. Click on the canvas where the text goes.
@@ -25,7 +25,7 @@ An empty text box adds nothing. The new text goes on the current layer.
 
 On the phone, the **Text** tool is in the tool strip (the **Canvas** tab). Tap to place the text, then type with the on-screen keyboard.
 
-## The Text options bar {#text-options-bar}
+## The Text options bar
 
 While the Text tool is on, the **Text options** bar shows under the ribbon (on the phone, over the canvas). It sets the look of **New text**, or of the **Selected text** when a text is selected:
 
@@ -38,7 +38,7 @@ The bar remembers your choices for the next text in this browser.
 
 ![The Text options bar for new text, with the font, height, spacing, alignment and style buttons](img/text-options-bar.webp)
 
-## Edit text {#edit-text}
+## Edit text
 
 To change the words of a text on the canvas, do one of these:
 
@@ -51,7 +51,7 @@ Emptying a text on the canvas and finishing deletes it.
 
 You can also type in the **Text** box in Properties. It saves when you click away or press `Ctrl+Enter`; `Esc` puts the old text back. An empty box there is not saved.
 
-## Text properties {#text-properties}
+## Text properties
 
 Select one text and its **Text** section shows in the Properties window (on a tablet, tap **Properties** over the canvas to open it). It holds everything about the text:
 
@@ -78,7 +78,7 @@ Each change is one undo step.
 
 ![The Text section in Properties for the name on the Two-tone MOPA coin](img/text-properties.webp)
 
-## Fonts {#fonts}
+## Fonts
 
 The engine draws the text, so the fonts are the ones on the engine's computer (the Raspberry Pi on the laser, or your PC), not the ones on your phone or iPad. The font picker lists them in groups:
 
@@ -102,7 +102,7 @@ If you installed a font on the engine's computer while OpenEtch was open, click 
 
 > **Tip:** Hershey, SHX and JSF fonts are made of strokes. They are never filled or welded, so put them on a **Line** layer. They mark fast and are good for small text and serial numbers.
 
-### Font favourites and hidden fonts {#font-favourites}
+### Font favourites and hidden fonts
 
 To keep the fonts you use near the top:
 
@@ -112,19 +112,19 @@ To keep the fonts you use near the top:
 
 The engine keeps the favourites and hidden fonts, so your PC, iPad and phone share one list.
 
-### A missing font {#missing-font}
+### A missing font
 
 If a text uses a font the engine's computer does not have, a **Missing font** badge shows on the canvas and in Properties. The text keeps its saved outline and still burns, but you cannot change it until you install the font and click **Refresh**, or pick another font.
 
 ![The font picker with a favourite starred](img/font-picker.webp)
 
-## Spell check {#spell-check}
+## Spell check
 
 OpenEtch has no spell checker of its own. The text box on the canvas and the **Text** box in Properties use your browser's spell check for plain text, so misspelt words are underlined as in any web form. It is off for variable-text formats, because codes like `0dddd` are not words.
 
 Check names and dates carefully before you burn: a spelling mistake on metal is permanent.
 
-## Bend text {#bend}
+## Bend text
 
 Bend curves the text into an arc, without a path.
 
@@ -137,11 +137,11 @@ Tick **Distort** to warp the letters along the bend; off keeps each letter rigid
 
 Bend is not available for text on a path.
 
-## Max width and squeeze {#max-width}
+## Max width and squeeze
 
 To stop a line getting too wide, set **Max width** in mm. Wider lines are scaled down to fit, keeping their proportions. Tick **Squeeze** to narrow them only sideways, keeping their height. Set Max width to 0 to turn it off.
 
-## Fit text into a box or circle {#auto-fit}
+## Fit text into a box or circle
 
 Auto-fit makes text grow or shrink to fill a space, so any name fills the same area. This is how the name on a coin stays the right size.
 
@@ -159,7 +159,7 @@ If the document has a stock, **Fit to stock** centres the text on the stock and 
 
 Text on a path follows its path, so it cannot be fitted. Detach it first.
 
-## Text on a path {#text-on-a-path}
+## Text on a path
 
 Text can follow any vector shape: an arc, a circle, a wave.
 
@@ -182,7 +182,7 @@ Text can only follow a vector shape, not an image or another text.
 
 ![Text on the top and bottom arcs of the Text-on-a-circle medallion example](img/text-on-path.webp)
 
-## Convert text to paths {#convert-to-paths}
+## Convert text to paths
 
 Converting turns the text into plain shapes. You can then edit its nodes, weld it with other shapes or send the file to someone without the font.
 
@@ -190,11 +190,11 @@ To convert, select the text and click **Convert to path** in Properties, or pres
 
 > **Warning:** A converted text is no longer text. You cannot change its words, font or variable data afterwards, except with Undo. If you may need it again, keep a copy of the live text on a layer with output off. A hidden layer is not enough: it still burns while its output is on.
 
-## Text on the phone {#text-on-phone}
+## Text on the phone
 
 On the phone you can add text and set its font, height, spacing, alignment and styles in the Text options bar. The phone layout has no Properties window, so bend, max width, auto-fit, text on a path and variable text are set on a computer or tablet. To change the words of a ready-made design on the phone, use a template's **Fill in** form (see [Templates](templates.md#fill-in-a-template)).
 
-## Before you burn {#before-you-burn}
+## Before you burn
 
 - Put filled fonts on a **Fill** layer and single-line fonts on a **Line** layer. See [Layers and settings](layers-and-settings.md).
 - Small text on a fill layer needs a fine line interval. Work out the energy density before testing a new setting: J/mm² = power in W ÷ (speed in mm/s × line interval in mm). On stainless with a 60 W MOPA, roughly 2 to 15 J/mm² marks without melting. See [Test grids](test-grids.md).

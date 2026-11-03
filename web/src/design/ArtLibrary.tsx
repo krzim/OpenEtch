@@ -194,7 +194,7 @@ export function ArtLibraryDock(p: {
   ];
 
   return (
-    <Dock help="art-library#the-art-library-window" id={ART_DOCK_ID} title={t("art.title")} defaultCollapsed>
+    <Dock help="art-library#open-the-art-library" id={ART_DOCK_ID} title={t("art.title")} defaultCollapsed>
       <div className="dz-art">
         <div className="dz-art-row">
           <select aria-label={t("art.library")} value={current ?? ""} onChange={(e) => setSelected(e.target.value || null)} disabled={!libs?.length}>

@@ -10,7 +10,7 @@ summary: The warnings OpenEtch shows next to Start, how to fix or mute them, obj
 
 Before every job, OpenEtch looks for common mistakes and lists them next to **Start**. Keep-out zones go further: a job that would mark inside one is refused.
 
-## Pre-flight warnings {#pre-flight-warnings}
+## Pre-flight warnings
 
 The warnings are checked again whenever the design changes. Where they show:
 
@@ -30,7 +30,7 @@ The list starts with **1 pre-flight warning** or **N pre-flight warnings**. Warn
 | Duplicate shapes | 3 shapes are exact copies on the same layer and would burn twice (…). | Delete the copies. See [Duplicate shapes](#duplicate-shapes). |
 | Keep-out zones | “…” on layer “…” reaches into keep-out zone “…”. | Move the design or the jig, or switch the zone off. This one refuses the job. |
 
-### Switch a check off for this project {#mute-a-check}
+### Switch a check off for this project
 
 If a warning is expected for this design, click **Don’t warn in this project** next to it. That check is no longer made for this project; the choice is saved with the project.
 
@@ -38,15 +38,15 @@ To bring them back, click **Warn again about switched-off checks (N)** under the
 
 The keep-out check cannot be switched off here, because the engine refuses such a job anyway. Switch the zone off instead.
 
-### Duplicate shapes {#duplicate-shapes}
+### Duplicate shapes
 
 Two identical shapes on the same output layer burn the same place twice. On a MOPA colour or a fine engraving that doubles the energy and spoils the result.
 
 Copies usually come from pasting twice, **Duplicate** (`Ctrl+D` copies in place) or importing a file that already has them.
 
-To remove them, in the Design workspace open **Modify** in the ribbon and choose **Delete duplicates**, or press `Alt+D`. (The warning itself calls it Edit › Delete duplicates.) It keeps one of each and tells you how many it deleted. With shapes selected, it only looks in the selection.
+To remove them, in the Design workspace open **Modify** in the ribbon and choose **Delete duplicates**, or press `Alt+D`. It keeps one of each and tells you how many it deleted. With shapes selected, it only looks in the selection.
 
-## Objects outside the field {#out-of-field}
+## Objects outside the field
 
 A galvo laser can only reach a square field. Any object that touches or crosses its edge cannot be burned.
 
@@ -59,7 +59,7 @@ You can tell when this happens:
 
 To fix it, move or scale the object inside the field. **Centre on field** (`P`) in the Design workspace is a quick way. OpenEtch never clips or shrinks a design for you.
 
-## Keep-out zones {#keep-out-zones}
+## Keep-out zones
 
 A keep-out zone is an area the laser must never mark: a jig wall, a clamp, a locating pin. If any mark of a job falls inside an enabled zone, the job is refused when it is planned, whoever asked for it: **Start**, the foot switch, or a run an agent prepared. Travel moves (laser off) do not count.
 
@@ -74,7 +74,7 @@ Both kinds are drawn hatched on the canvas.
 
 > **Note:** A keep-out zone only stops OpenEtch from planning marks there. It does not stop someone moving the part or the jig. Frame the job to check.
 
-### Jig keep-out zones {#jig-keep-out-zones}
+### Jig keep-out zones
 
 To add a keep-out zone to a jig:
 
@@ -90,7 +90,7 @@ For how to make a jig, see [Jigs](jigs.md).
 
 ![The Keep-out zones section of the Jigs window](img/jigs-keep-out.webp)
 
-### Device keep-out zones {#device-keep-out-zones}
+### Device keep-out zones
 
 Use a device zone for something fixed on the machine, such as a clamp that never moves. It applies to every job on the active device, in every project.
 
@@ -104,7 +104,7 @@ The shape you drew stays in the design. Delete it, or move it to a tool layer, o
 
 Device zones can only be changed in the app. AI agents cannot add, change or remove them.
 
-### When a job is refused {#keep-out-refused}
+### When a job is refused
 
 A refused job says which zone it marks inside, the layer and the position, for example: the job marks inside keep-out zone "Wall 1" (layer …, at 12.50, -3.20 mm); move the design, or the jig, or switch the zone off.
 

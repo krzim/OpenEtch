@@ -214,7 +214,7 @@ export function TextSection(p: TextPropsCommon & { o: TextObject }) {
       </div>
       {isStroke && <p className="hint">{t("text.strokeHint")}</p>}
 
-      <h4>{t("text.bend")} <HelpLink to="text#bend" topic={t("text.bend")} /></h4>
+      <h4>{t("text.bend")} <HelpLink to="text#bend-text" topic={t("text.bend")} /></h4>
       <div className="field">
         <span className="field-label">{t("text.bendAngle")}</span>
         <BendSlider value={g.bend_deg} label={t("text.bendAngle")} disabled={!!g.path} onCommit={(bend_deg) => void up({ bend_deg })} />
@@ -224,7 +224,7 @@ export function TextSection(p: TextPropsCommon & { o: TextObject }) {
         <CheckField label={t("text.distort")} checked={g.distort} onChange={(distort) => void up({ distort })} />
       </div>
 
-      <h4>{t("text.maxWidthHead")} <HelpLink to="text#max-width" topic={t("text.maxWidthHead")} /></h4>
+      <h4>{t("text.maxWidthHead")} <HelpLink to="text#max-width-and-squeeze" topic={t("text.maxWidthHead")} /></h4>
       <div className="field-grid">
         <NumberField label={t("text.maxWidth")} unit="mm" value={g.max_width_mm} min={0} digits={3} placeholder={t("text.none")} onCommit={(v) => v !== null && void up({ max_width_mm: v })} />
         <CheckField label={t("text.squeeze")} checked={g.squeeze} onChange={(squeeze) => void up({ squeeze })} />
@@ -302,7 +302,7 @@ export function BarcodeSection(p: Pick<TextPropsCommon, "run" | "report"> & { id
   if (!o || !params) return null;
   return (
     <section className="prop-section tx-section" aria-label={t("barcode.title")}>
-      <h3>{t("barcode.title")} <HelpLink to="variable-text-and-barcodes#barcodes" topic={t("barcode.title")} /></h3>
+      <h3>{t("barcode.title")} <HelpLink to="variable-text-and-barcodes#barcodes-and-qr-codes" topic={t("barcode.title")} /></h3>
       <BarcodeForm live value={params} onChange={(v) => void p.run(barcodeRedraw(o.id, v)).catch(p.report)} />
     </section>
   );

@@ -107,7 +107,7 @@ function NotificationsSection({ report }: { report: Report }) {
   return (
     <section className="prefs-section prod-section prod-notify">
       <h4>
-        <Icon name="bell" size={16} /> {t("prod.notifications")} <HelpLink to="notifications#notification-settings" topic={t("prod.notifications")} />
+        <Icon name="bell" size={16} /> {t("prod.notifications")} <HelpLink to="notifications#open-the-notification-settings" topic={t("prod.notifications")} />
       </h4>
       <p className="hint">{t("prod.notificationsHint")}</p>
       {views === null && <p className="muted">{t("common.loading")}</p>}
@@ -284,7 +284,7 @@ function MaintenanceSection({ report }: { report: Report }) {
   return (
     <section className="prefs-section prod-section prod-maint">
       <h4>
-        <Icon name="wrench" size={16} /> {t("prod.maintenance")} <HelpLink to="maintenance#maintenance-settings" topic={t("prod.maintenance")} />
+        <Icon name="wrench" size={16} /> {t("prod.maintenance")} <HelpLink to="maintenance#set-up-reminders" topic={t("prod.maintenance")} />
       </h4>
       {m && (
         <p className="hint">
@@ -384,7 +384,7 @@ function ExtractorSection({ report }: { report: Report }) {
   return (
     <section className="prefs-section prod-section prod-extractor">
       <h4>
-        <Icon name="fan" size={16} /> {t("prod.extractor")} <HelpLink to="extractor#extractor-settings" topic={t("prod.extractor")} />
+        <Icon name="fan" size={16} /> {t("prod.extractor")} <HelpLink to="extractor#open-the-extractor-settings" topic={t("prod.extractor")} />
       </h4>
       <p className="hint">{t("prod.extractorHint")}</p>
       <label className="prod-wide">

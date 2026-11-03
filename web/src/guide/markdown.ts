@@ -1,6 +1,7 @@
 // The user guide's markdown (docs/guide/*.md, docs/guide/README.md has the page format): a small, dependency-free
 // parser to a plain tree that guide/render.tsx turns into React elements (never HTML strings, so nothing in a page can
-// inject markup). It covers what the guide uses: front matter, headings with explicit `{#anchor}` ids, paragraphs,
+// inject markup). It covers what the guide uses: front matter, headings (ids made from their text exactly as GitHub
+// makes them, so `page.md#id` links jump both here and on GitHub), paragraphs,
 // bold / italic / strikethrough, inline code, fenced code, ordered / unordered / nested lists, links, images, GitHub
 // pipe tables, block quotes (callouts when they start with **Note:**, **Tip:** or **Warning:**) and rules. Raw HTML is
 // not markup here: it stays text. Pure; tested in markdown.test.ts.
@@ -19,7 +20,7 @@ export type Align = "left" | "center" | "right" | null;
 export type CalloutKind = "note" | "tip" | "warning";
 
 export type Block =
-  | { t: "heading"; level: number; id: string; c: Inline[]; explicit: boolean }
+  | { t: "heading"; level: number; id: string; c: Inline[] }
   | { t: "para"; c: Inline[] }
   | { t: "code"; lang: string; v: string }
   | { t: "list"; ordered: boolean; start: number; items: Block[][]; tight: boolean }
@@ -56,14 +57,45 @@ export function splitFrontMatter(src: string): { meta: FrontMatter; body: string
 
 // --- slugs -------------------------------------------------------------------------------------------------------
 
-/** GitHub-style heading slug (for headings without an explicit `{#id}`). */
+/** A heading's id as GitHub makes it (its TableOfContentsFilter, and github-slugger, which matches it): the heading's
+ *  rendered text (code spans, emphasis and link text count; an image's alt text does not, as it is not text on the
+ *  page), lower-cased (Unicode-aware, so "É" -> "é"), every character that is not a letter, mark, number, connector
+ *  (`_`), hyphen or space removed, then each space a hyphen. Nothing is trimmed or collapsed: "A & B" -> "a--b".
+ *  Non-ASCII letters stay (GitHub keeps them; the link's href may carry them raw or percent-encoded). */
 export function slugify(s: string): string {
   return s
     .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s_-]/gu, "")
-    .trim()
-    .replace(/\s/g, "-");
+    .replace(/[^\p{L}\p{M}\p{N}\p{Pc} -]/gu, "")
+    .replace(/ /g, "-");
 }
+
+/** The text GitHub slugs for a heading: like inlineText, without image alt text. */
+export function headingText(c: readonly Inline[]): string {
+  let s = "";
+  for (const n of c) {
+    if (n.t === "text" || n.t === "code") s += n.v;
+    else if (n.t === "br") s += " ";
+    else if (n.t !== "img") s += headingText(n.c);
+  }
+  return s;
+}
+
+/** A unique heading id on a page, as github-slugger numbers duplicates: the first "x" is "x", then "x-1", "x-2"; a
+ *  candidate already taken (a heading that reads "x-1") moves on to the next number. `used` holds the page's ids. */
+export function uniqueSlug(base: string, used: Map<string, number>): string {
+  let id = base;
+  while (used.has(id)) {
+    const n = (used.get(base) ?? 0) + 1;
+    used.set(base, n);
+    id = `${base}-${n}`;
+  }
+  used.set(id, 0);
+  return id;
+}
+
+/** The characters of a heading id, for a RegExp with the `u` flag (`%` too: an anchor in a link may be
+ *  percent-encoded). */
+export const ANCHOR_CHARS = String.raw`[\p{L}\p{M}\p{N}\p{Pc}%-]+`;
 
 /** The plain text of inline content (alt text for images, no markup). */
 export function inlineText(c: readonly Inline[]): string {
@@ -314,7 +346,6 @@ const HR = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
 const QUOTE = /^ {0,3}> ?(.*)$/;
 const ITEM = /^( *)([-*+]|\d{1,9}[.)])( +|$)(.*)$/;
 const TABLE_SEP = /^ *\|? *:?-+:? *(\| *:?-+:? *)*\|? *$/;
-const ANCHOR = /[ \t]+\{#([A-Za-z][\w-]*)\}$/;
 
 /** Split a pipe-table row into cells (escaped `\|` stays in the cell; pipes in code spans count, as on GitHub). */
 export function tableCells(line: string): string[] {
@@ -357,7 +388,7 @@ function calloutOf(c: Block[]): CalloutKind | null {
   return m ? (m[1].toLowerCase() as CalloutKind) : null;
 }
 
-/** Parse markdown blocks. `used` collects the heading ids so far (duplicates get -1, -2 as on GitHub). */
+/** Parse markdown blocks. `used` collects the heading ids so far (duplicates get -1, -2 as on GitHub; see uniqueSlug). */
 export function parseBlocks(src: string, used: Map<string, number> = new Map()): Block[] {
   const lines = src.replace(/\r\n?/g, "\n").replace(/\t/g, "    ").split("\n");
   const out: Block[] = [];
@@ -380,19 +411,11 @@ export function parseBlocks(src: string, used: Map<string, number> = new Map()):
     }
     const h = HEADING.exec(line);
     if (h) {
-      let text = (h[2] ?? "").replace(/[ \t]+#+$/, "").replace(/^#+$/, "");
-      const a = ANCHOR.exec(text);
-      let id: string;
-      if (a) {
-        id = a[1];
-        text = text.slice(0, a.index);
-      } else {
-        const base = slugify(inlineText(parseInline(text)));
-        const n = used.get(base) ?? 0;
-        id = n ? `${base}-${n}` : base;
-      }
-      used.set(id, (used.get(id) ?? 0) + 1);
-      out.push({ t: "heading", level: h[1].length, id, c: parseInline(text.trim()), explicit: !!a });
+      // `{#custom-id}` is not markdown on GitHub (it shows as text), so it is not here either.
+      const text = (h[2] ?? "").replace(/[ \t]+#+$/, "").replace(/^#+$/, "");
+      const c = parseInline(text.trim());
+      const id = uniqueSlug(slugify(headingText(c)), used);
+      out.push({ t: "heading", level: h[1].length, id, c });
       i++;
       continue;
     }
@@ -512,14 +535,26 @@ export type LinkTarget =
   | { kind: "external"; href: string }
   | { kind: "invalid" };
 
+const PAGE_LINK = new RegExp(String.raw`^(?:\./)?([a-z0-9][a-z0-9-]*)\.md(?:#(${ANCHOR_CHARS}))?$`, "u");
+const ANCHOR_LINK = new RegExp(`^#(${ANCHOR_CHARS})$`, "u");
+
+/** A link's `#anchor` with percent-escapes decoded (GitHub accepts `#caf%C3%A9` and `#café` alike). */
+function decodeAnchor(a: string): string {
+  try {
+    return decodeURIComponent(a);
+  } catch {
+    return a;
+  }
+}
+
 /** Classify a link destination: another guide page (`slug.md#anchor`), an anchor on this page, or an external http(s)
  *  / mailto link. Anything else (javascript:, data:, paths out of docs/guide) is invalid and is shown as text. */
 export function linkTarget(href: string): LinkTarget {
   const h = href.trim();
-  let m = /^(?:\.\/)?([a-z0-9][a-z0-9-]*)\.md(?:#([A-Za-z][\w-]*))?$/.exec(h);
-  if (m) return { kind: "page", slug: m[1], anchor: m[2] ?? null };
-  m = /^#([A-Za-z][\w-]*)$/.exec(h);
-  if (m) return { kind: "anchor", anchor: m[1] };
+  let m = PAGE_LINK.exec(h);
+  if (m) return { kind: "page", slug: m[1], anchor: m[2] === undefined ? null : decodeAnchor(m[2]) };
+  m = ANCHOR_LINK.exec(h);
+  if (m) return { kind: "anchor", anchor: decodeAnchor(m[1]) };
   if (/^(https?:\/\/[^\s/$.?#][^\s]*|mailto:[^\s@]+@[^\s@]+)$/i.test(h)) return { kind: "external", href: h };
   return { kind: "invalid" };
 }

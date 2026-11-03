@@ -32,7 +32,7 @@ export function HueModelDialog(p: { notify: (m: string) => void; report: (e: unk
   );
   return (
     <WsModal
-      help="mopa-colour#hue-step-model"
+      help="mopa-colour#the-hue-step-model"
       title={t("mat.modelTitle")}
       onClose={p.onClose}
       onSubmit={() => void put(m)}

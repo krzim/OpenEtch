@@ -292,7 +292,7 @@ fn duplicates(doc: &Document, out: &mut Vec<Finding>) {
         let more = if dup.len() > 3 { format!(" and {} more", dup.len() - 3) } else { String::new() };
         out.push(Finding {
             check: "duplicate_shapes",
-            text: format!("{} shape(s) are exact copies of another on the same layer and would burn twice: {}{more}. Edit > Delete duplicates removes them.", dup.len(), names.join(", ")),
+            text: format!("{} shape(s) are exact copies of another on the same layer and would burn twice: {}{more}. Modify > Delete duplicates (Alt+D) removes them.", dup.len(), names.join(", ")),
             params: json!({ "count": dup.len(), "names": names.join(", "), "more": dup.len().saturating_sub(3) }),
             layers: vec![],
             objects: dup,

@@ -12,7 +12,7 @@ This page covers the drawing and editing tools of the **Design** workspace. Ever
 
 > **Note:** On a Mac, press `Cmd` where this guide says `Ctrl`, and `Option` where it says `Alt`. On a Mac, `Ctrl`+click is the right-click. Menus on a Mac show the keys as symbols (⌘ ⌥ ⇧).
 
-## Where the tools are {#where-the-tools-are}
+## Where the tools are
 
 The tools sit in different places on each kind of screen.
 
@@ -39,13 +39,13 @@ To see a short menu of what you can do with the selection, right-click it. On a 
 
 > **Tip:** To put the creation tools in a vertical rail on a computer, as LightBurn does, right-click empty space in the ribbon and tick **Creation tools on a vertical rail (LightBurn style)**.
 
-### Tools that are not on the phone {#phone-desktop-features}
+### Tools that are not on the phone
 
 The phone's tool strip and menus leave out **Pen**, **Polygon**, **Edit nodes**, **Trim**, **Weld** and **Add Tabs**, because they are made for a bigger screen and a mouse or a pen. You can still start them from **More > Desktop features**. Docking and editing the Art Library work only on a computer or tablet.
 
 ![The Design ribbon on a computer, with the Create, Modify, Arrange, Insert and Inspect groups](img/design-ribbon.webp)
 
-## Pan and zoom {#pan-and-zoom}
+## Pan and zoom
 
 - To zoom, turn the mouse wheel, or press `Ctrl+=` and `Ctrl+-`. `Ctrl+0` zooms to the whole field.
 - To pan, drag with the middle mouse button, or hold `Space` and drag.
@@ -54,7 +54,7 @@ The phone's tool strip and menus leave out **Pen**, **Polygon**, **Edit nodes**,
 
 On a Mac trackpad, two-finger scrolling pans and a pinch zooms. To change this, use **Trackpad: scroll pans, pinch zooms** in Preferences.
 
-## Draw shapes {#draw-shapes}
+## Draw shapes
 
 New shapes go on the current layer. To choose the layer first, click it in **Cuts / Layers**.
 
@@ -80,11 +80,11 @@ These keys change a drag while you hold them:
 | `Alt` | Snap to guides only |
 | `Esc` | Cancel the drag |
 
-On a touch screen, the modifier bar at the bottom left of the canvas has **Square** and **From centre** buttons for the same thing (see [The modifier bar](the-workspace.md#touch-modifier-bar)).
+On a touch screen, the modifier bar at the bottom left of the canvas has **Square** and **From centre** buttons for the same thing (see [The modifier bar](the-workspace.md#the-modifier-bar)).
 
-> **Note:** With two or more objects selected, `R`, `E`, `C`, `T`, `L` and `B` align the selection instead of choosing a tool. See [Align](#align-and-arrange). Single-letter keys work only while the canvas has the focus.
+> **Note:** With two or more objects selected, `R`, `E`, `C`, `T`, `L` and `B` align the selection instead of choosing a tool. See [Align](#align-distribute-and-arrange). Single-letter keys work only while the canvas has the focus.
 
-### Shape properties {#shape-properties}
+### Shape properties
 
 A rectangle, ellipse, polygon or star you drew stays editable as that shape. Select one shape on its own and the **Shape properties** section shows in the Properties window:
 
@@ -99,7 +99,7 @@ The shape keeps its centre, rotation and layer. To edit its nodes one by one, co
 
 The corner radius can be at most half the shorter side. A polygon has 3 to 1000 sides.
 
-## Draw lines and curves {#draw-lines-and-curves}
+## Draw lines and curves
 
 To draw a line or a polyline:
 
@@ -118,7 +118,7 @@ To draw smooth curves, use **Pen** instead. Click for a corner point, or press a
 
 On the phone, tap the points, then tap **Finish** or tap the first point to close. The Pen is under **More > Desktop features** on the phone.
 
-## Draw polygons and stars {#draw-polygons-and-stars}
+## Draw polygons and stars
 
 To draw a polygon or a star:
 
@@ -128,7 +128,7 @@ To draw a polygon or a star:
 
 A tap without a drag places a 20 mm shape.
 
-## Select objects {#select-objects}
+## Select objects
 
 Selection follows LightBurn's rules.
 
@@ -153,9 +153,9 @@ To select by kind, open **Edit > Select** and choose **Select open shapes**, **S
 
 On a touch screen, one finger on empty canvas draws the selection box. To make one finger pan instead, change **One finger on empty canvas** to **Pan** in Preferences.
 
-## Move, rotate and scale {#move-rotate-and-scale}
+## Move, rotate and scale
 
-### On the canvas {#on-the-canvas}
+### On the canvas
 
 - To move, drag a selected object. Hold `Shift` to keep to horizontal, vertical or 45°; a guide line shows the direction.
 - To scale, drag a corner handle (keeps the proportions) or an edge handle (one direction). Hold `Shift` to free the proportions, or `Ctrl` to scale about the centre. Dragging past the opposite side mirrors the selection.
@@ -166,7 +166,7 @@ On a touch screen, tap a selected object again to switch its handles between sca
 
 A lone circle stays round when you scale it while **Keep round** is on in Properties.
 
-### With the keyboard {#with-the-keyboard}
+### With the keyboard
 
 | Keys | Moves or turns the selection |
 |---|---|
@@ -184,7 +184,7 @@ You can change the arrow-key distances in Preferences, under **Editing**. **Defa
 
 > **Warning:** `Ctrl+.` is also a STOP key. While a job is running, it stops the job instead of turning the selection.
 
-### With numbers {#numeric-fields}
+### With numbers
 
 On a computer, the row under the ribbon shows the selection's **X**, **Y**, **W** and **H** and its rotation (**Rot**, or **Rot by** for several objects). Type a value and press `Enter`.
 
@@ -200,7 +200,7 @@ If part of the selection is outside the galvo field, Properties says so: the las
 
 ![The phone's Selection sheet with the position fields and quick buttons](img/phone-selection-sheet.webp)
 
-### Transform {#transform}
+### Transform
 
 To scale, slant or mirror by exact amounts, open **Arrange > Transform…**:
 
@@ -217,7 +217,7 @@ The same picks are in the **Arrange** menu:
 
 Beginner Mode hides the mirror commands.
 
-## Edit nodes {#edit-nodes}
+## Edit nodes
 
 Node editing changes the points and curves of a path.
 
@@ -253,7 +253,7 @@ On the phone, **Edit nodes** is under **More > Desktop features** (select the sh
 
 ![Edit nodes on the top arc of the Text-on-a-circle medallion example](img/edit-nodes-bar.webp)
 
-## Trim {#trim}
+## Trim
 
 Trim removes a piece of a shape up to the nearest crossings, like scissors.
 
@@ -263,11 +263,11 @@ Trim removes a piece of a shape up to the nearest crossings, like scissors.
 
 On a touch screen, the piece lights up while you press and is cut when you lift your finger.
 
-## Measure {#measure}
+## Measure
 
 To measure, click **Measure** (`Alt+M`) in the **Inspect** group, then click two points or drag between them. The bar shows the distance, ΔX, ΔY and the angle. The points snap to objects; `Shift` keeps to 15° steps.
 
-## Snapping {#snapping}
+## Snapping
 
 Snapping helps you land exactly on other objects. It works on the real shapes, as in Fusion 360.
 
@@ -290,7 +290,7 @@ In Preferences, under **Snapping**, you can set the **Snap distance** (in screen
 
 Preferences is the gear button in the top bar, or **File > Settings > Preferences…** In the compact and tablet layouts the gear folds into the **More** (⋯) menu in the top bar. On the phone it is **More > Settings > Preferences**.
 
-## Guides {#guides}
+## Guides
 
 Guides are straight lines you place to line things up. Shapes snap to them.
 
@@ -307,11 +307,11 @@ To remove a guide, drag it back onto a ruler, or double-click it and click **Del
 
 Guides are saved with the project. They never burn.
 
-## Align, distribute and arrange {#align-and-arrange}
+## Align, distribute and arrange
 
 The **Arrange** menu holds the commands that line objects up and order them. On the phone, it is in the tool strip.
 
-### Align {#align}
+### Align
 
 Aligning moves the other objects to the last object you selected, which stays put. To make another selected object the reference, `Ctrl`+click it twice.
 
@@ -329,7 +329,7 @@ Select two or more objects, then use **Arrange > Align** or the keys:
 
 With two or more objects selected, a row of align buttons also shows in the **Arrange** group.
 
-### Distribute {#distribute}
+### Distribute
 
 Distributing spaces three or more objects evenly. **Arrange > Distribute** has:
 
@@ -338,14 +338,14 @@ Distributing spaces three or more objects evenly. **Arrange > Distribute** has:
 
 Beginner Mode hides Distribute.
 
-### Centre, flip and order {#centre-flip-and-order}
+### Centre, flip and order
 
 - **Centre on stock** and **Centre on field** (`P`) move the selection to the middle.
 - **Flip horizontal** (`Ctrl+Shift+H`) and **Flip vertical** (`Ctrl+Shift+V`) mirror the selection in place.
 - **Bring to front** (`Ctrl+PgUp`), **Bring forward** (`PgUp`), **Send backward** (`PgDn`) and **Send to back** (`Ctrl+PgDn`) change the draw order.
 - **Make same width**, **Make same height** and **Make same size** match the other objects to the last one selected.
 
-### Move to a page position {#move-to-a-page-position}
+### Move to a page position
 
 To move the selection to a corner, an edge or the centre:
 
@@ -357,23 +357,23 @@ To move the selection to a corner, an edge or the centre:
 
 The selection keeps its size and rotation.
 
-### Move together {#move-together}
+### Move together
 
 To line objects up one after another with a fixed gap, choose **Arrange > Move horizontally together…** (`Alt+Shift+H`) or **Move vertically together…** (`Alt+Shift+V`). Set the **Direction** and the **Spacing** between their boxes, then click **Move**. The first object stays; a negative spacing overlaps them. A group moves as one object.
 
-### Docking {#docking}
+### Docking
 
 The **Docking** window (in the **Window** menu) slides the selection until it touches another shape or the workspace edge. Click **Dock left**, **Dock up**, **Dock down** or **Dock right**. **Padding** is the gap kept in the direction of travel. **Move as group** and **Lock inner objects** control what moves together. Docking is not on the phone.
 
 ![The Arrange menu open, with Align and Distribute](img/arrange-menu.webp)
 
-## Group and lock {#group-and-lock}
+## Group and lock
 
 - To group, select two or more objects and press `Ctrl+G` (**Arrange > Group**). A group selects and moves as one.
 - To ungroup, select the group and press `Ctrl+U` (**Arrange > Ungroup**).
 - To lock objects so they cannot be moved, edited or deleted, choose **Arrange > Lock**. **Arrange > Unlock** frees them.
 
-## Combine shapes {#booleans-and-weld}
+## Combine shapes
 
 The **Modify** menu combines closed shapes. For the commands marked "last selected", the order you select in matters.
 
@@ -388,7 +388,7 @@ The **Modify** menu combines closed shapes. For the commands marked "last select
 
 > **Note:** Browsers keep `Ctrl+W` (close tab) for themselves, so use the menu for Weld in a browser tab. On the phone, Weld is under **More > Desktop features**.
 
-## Offset shapes {#offset-shapes}
+## Offset shapes
 
 Offsetting draws a new outline a set distance from a shape.
 
@@ -401,7 +401,7 @@ Offsetting draws a new outline a set distance from a shape.
 
 The results are new shapes on each original's layer. Open paths are offset on both sides.
 
-## Fillet corners {#fillet-corners}
+## Fillet corners
 
 To round or sharpen corners, choose **Modify > Fillet corners…** and pick an **Action**:
 
@@ -411,7 +411,7 @@ To round or sharpen corners, choose **Modify > Fillet corners…** and pick an *
 
 If you selected nodes in **Edit nodes** first, only those corners are rounded.
 
-## Path tools {#path-tools}
+## Path tools
 
 The rest of the **Modify** menu tidies paths:
 
@@ -423,7 +423,7 @@ The rest of the **Modify** menu tidies paths:
 - **Optimize shapes…** (`Alt+Shift+O`) cleans up traced or imported art: **Fit shapes to lines** (with a **Line tolerance**), **Fit shapes to arcs** (with an **Arc tolerance**) and **Smooth source shapes** (with **Smoothing**). They run in the order smooth, arcs, lines.
 - **Reverse direction** reverses the direction a path is marked in.
 
-## The Edit menu {#edit-menu}
+## The Edit menu
 
 The **Edit** menu in the **Modify** group holds:
 
@@ -434,11 +434,11 @@ The **Edit** menu in the **Modify** group holds:
 - **Use the system clipboard**: when on, copy and paste go through your computer's clipboard, so you can paste art or an image (up to 50 MB) from another program.
 - **Curve tolerance…**
 
-### Curve tolerance {#curve-tolerance}
+### Curve tolerance
 
 Curve tolerance sets how finely a job turns curves into straight marks: the largest distance between a curve and the straight pieces that replace it. Coarser marks faster with fewer points; finer follows curves more closely. Enter 0.001 to 1 mm, then click **Save**. It is saved with the project. Leave it empty to use the device's setting (0.01 mm unless the device says otherwise).
 
-## The Tools menu {#tools-menu}
+## The Tools menu
 
 The **Tools** menu in the **Modify** group holds:
 
@@ -451,7 +451,7 @@ The **Tools** menu in the **Modify** group holds:
 
 The **Web Tools** menu beside it holds your own tools: web pages and saved command sequences (**Manage User Tools…**).
 
-### Warp and deform {#warp-and-deform}
+### Warp and deform
 
 1. Select vector shapes (not images).
 2. Choose **Tools > Warp selection** (four corner handles, **Perspective**) or **Tools > Deform selection** (a grid of handles, **Envelope**).
@@ -460,9 +460,9 @@ The **Web Tools** menu beside it holds your own tools: web pages and saved comma
 
 For a perspective warp, the four corners must form a convex shape.
 
-## Arrays and nesting {#arrays-and-nesting}
+## Arrays and nesting
 
-### Grid array {#grid-array}
+### Grid array
 
 A grid array makes rows and columns of copies.
 
@@ -477,16 +477,16 @@ More options:
 - **Reverse X** builds the columns to the left; **Reverse Y** builds the rows towards you.
 - **Alternate rows and columns**: **Row shift** (or **Half width**) and **Column shift** (or **Half height**) make brick or honeycomb layouts. **Mirror columns** and **Mirror rows** flip every other one **Left-right** or **Top-bottom**.
 - **Random orientation** turns each copy by a random angle. The same **Seed** gives the same angles; **New seed** picks others. The preview does not show the random angles.
-- **Auto-increment variable text** raises each copy's serial or CSV Offset by this much (see [Variable text](variable-text-and-barcodes.md#counting-copies)).
+- **Auto-increment variable text** raises each copy's serial or CSV Offset by this much (see [Variable text](variable-text-and-barcodes.md#copies-that-count-on)).
 - **Group results** and **Select results** decide what happens to the copies afterwards.
 
 The dialog warns when cells would fall outside the galvo field. An array has at most 10,000 cells, the original included. The preview draws the first 400.
 
-### Virtual arrays {#virtual-arrays}
+### Virtual arrays
 
 Tick **Create virtual array** to make linked clones: edit an original and every clone changes. Right-click a virtual array for **Edit array…**, **Duplicate array**, **Flatten array** (makes the clones ordinary objects), **Add to array** and **Remove from array**.
 
-### Circular array, copy along a path and nesting {#circular-array}
+### Circular array, copy along a path and nesting
 
 - **Arrange > Circular array…**: **Count** (the original included, 2 to 10,000), **Sweep** (360° spaces them evenly round the circle; a negative angle goes clockwise), **Rotate copies** (off keeps each copy upright, like clock numerals) and the centre (**Centre X**, **Centre Y**, **Pick centre…**, **Field centre**, **Stock centre**).
 - **Arrange > Copy along path… (path selected last)**: select the objects, then the path last. Spread them by **Count** or **Spacing**, and tick **Rotate to the path** to turn them along it.
@@ -494,7 +494,7 @@ Tick **Create virtual array** to make linked clones: edit an original and every 
 
 ![The Grid array dialog with its live preview](img/grid-array-dialog.webp)
 
-## Undo, redo and the timeline {#undo-redo-and-the-timeline}
+## Undo, redo and the timeline
 
 - **Undo**: `Ctrl+Z`, or the **Undo** button in the top bar.
 - **Redo**: `Ctrl+Shift+Z` or `Ctrl+Y`, or the **Redo** button.
@@ -502,7 +502,7 @@ Tick **Create virtual array** to make linked clones: edit an original and every 
 
 A step you undo is kept until your next edit, which discards it. Until then, Redo brings it back.
 
-### The timeline {#timeline}
+### The timeline
 
 The **Timeline** along the bottom shows one chip per step, oldest on the left, like Fusion 360's design timeline. Each chip says what the step did ("Rectangle", "Move", Text "Hello") and who did it: **You**, an AI agent by name, or **Script**. A step made by an agent flashes briefly when it arrives.
 
@@ -520,15 +520,15 @@ In the compact and tablet layouts the timeline shares the bottom row with the st
 
 ![The left end of the timeline: New document, Rectangle, Ellipse and a grey Move step after the marker](img/timeline.webp)
 
-## Touch controls {#touch-controls}
+## Touch controls
 
 On a tablet or phone, one finger works like the left mouse button, two fingers pan and zoom, and a long-press is the right-click. The modifier bar gives you `Shift` and the other keys a finger lacks, and the selection action bar puts Copy, Duplicate, Rotate 90° and more next to the selection. See [Touch controls](the-workspace.md#touch-controls) in The workspace.
 
-## Keyboard shortcuts {#keyboard-shortcuts}
+## Keyboard shortcuts
 
 OpenEtch uses LightBurn's default keys. To see them all, press `?` (`Shift+?`). `F1` opens this guide. To change a key, choose **File > Settings > Edit hotkeys…** Your keys are saved in this browser.
 
-## Common mistakes {#common-mistakes}
+## Common mistakes
 
 - **A key chose a tool instead of aligning, or the reverse.** With one object selected, `R`, `E`, `C` and `T` pick tools; with two or more they align.
 - **A letter key did nothing.** Single-letter keys work only while the canvas has the focus. Click the canvas first.

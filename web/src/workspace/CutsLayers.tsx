@@ -280,7 +280,7 @@ export function CutsLayers(p: CutsLayersProps) {
 
   return (
     <Dock
-      help="layers-and-settings#cuts-layers-window"
+      help="layers-and-settings#the-cuts--layers-window"
       id="cuts"
       title={t("layers.title")}
       actions={

@@ -37,7 +37,7 @@ export function FitSection(p: { o: TextObject; doc: GDocument; run: Run; report:
   const height = f?.shape === "box" ? f.height_mm : start.h;
   return (
     <>
-      <h4>{t("text.fitHead")} <HelpLink to="text#auto-fit" topic={t("text.fitHead")} /></h4>
+      <h4>{t("text.fitHead")} <HelpLink to="text#fit-text-into-a-box-or-circle" topic={t("text.fitHead")} /></h4>
       {onPath ? (
         <p className="hint">{t("text.fitOnPath")}</p>
       ) : (

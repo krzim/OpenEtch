@@ -286,7 +286,7 @@ function Detail(p: { e: LedgerEntry; busy: boolean; onMark: (v: Verdict | null, 
 
       {e.layers.length > 0 ? (
         <section className="led-section">
-          <h4>{t("led.layers")} <HelpLink to="job-ledger#settings-snapshot" topic={t("led.layers")} /></h4>
+          <h4>{t("led.layers")} <HelpLink to="job-ledger#settings-as-burned" topic={t("led.layers")} /></h4>
           <div className="led-table-wrap">
             <table className="lx-table led-layers">
               <thead>
@@ -548,7 +548,7 @@ export function JobLedgerDialog(p: { notify: Notify; report: (e: unknown) => voi
   const detailShown = single && showDetail && sel;
   return (
       <WsModal
-        help="job-ledger#job-log-window"
+        help="job-ledger#open-the-job-log"
         title={t("jlog.title")}
         size="xl"
         wide

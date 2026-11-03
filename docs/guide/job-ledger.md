@@ -12,7 +12,7 @@ OpenEtch keeps a record of every run that ends: when it ran, what it burned, wit
 
 Use it to answer questions like "what settings did I use on that coin last month?" and to burn the same job again exactly.
 
-## Open the Job log {#job-log-window}
+## Open the Job log
 
 - **Computer and tablet:** click **Job log…** in the **Laser** window, or choose **File > Laser > Job log…**
 - **Phone:** tap **Job** and scroll down to **Job log…**
@@ -23,7 +23,7 @@ On a wide screen the list of runs is on the left and the selected run on the rig
 
 ![The Job log window with the list of runs and one run's details](img/job-log-window.webp)
 
-## Find a run {#find-a-run}
+## Find a run
 
 Each row shows a small picture of what burned, the project name, a verdict if you gave one, the date and time, the result (**Finished**, **Failed**, **Aborted** or **Cancelled**), how long it took, and up to four of its layers.
 
@@ -40,7 +40,7 @@ To take the list into a spreadsheet, click **Save as CSV**.
 
 A run that was never approved does not appear. A run that was approved but stopped before it fired (for example while it waited for the foot pedal) shows as **Cancelled**.
 
-## Run details {#run-details}
+## Run details
 
 Select a run to see:
 
@@ -52,7 +52,7 @@ Select a run to see:
 - **Options**: for example **repeat 5 times**, **waited for the foot pedal**, **3 selected objects** or **started at segment 120**.
 - The error, if it failed.
 
-## Settings as burned {#settings-snapshot}
+## Settings as burned
 
 Each run keeps a snapshot of what it burned with, even if you have changed the design since.
 
@@ -62,7 +62,7 @@ Each run keeps a snapshot of what it burned with, even if you have changed the d
 
 Runs logged before OpenEtch kept layer settings say **This run was logged before the job log kept layer settings.**
 
-## Mark a part OK or scrap {#verdict}
+## Mark a part OK or scrap
 
 Under **How the part came out**:
 
@@ -72,7 +72,7 @@ Under **How the part came out**:
 
 The run then shows **Noted** by whom and when. Verdicts and notes are searchable, so you can find every scrapped part, or every note that says "blue".
 
-## Re-run as burned {#re-run-as-burned}
+## Re-run as burned
 
 **Re-run as burned** opens the job exactly as it burned, with the same settings and the same serial number or CSV row, in a new tab, and prepares a run of it.
 
@@ -87,11 +87,11 @@ Nothing starts until you do. Every check that **Start** has still applies.
 
 If the job burned on a different device from the one now active, OpenEtch opens it but prepares no run, and says why. Check the device before you run it.
 
-### Open as burned {#open-as-burned}
+### Open as burned
 
 **Open as burned** opens the stored job in a new tab without preparing a run, so you can look at it or change it first.
 
-### When Re-run is not available {#rerun-unavailable}
+### When Re-run is not available
 
 The buttons are greyed out, with the reason underneath, when:
 
@@ -100,7 +100,7 @@ The buttons are greyed out, with the reason underneath, when:
 - the run was logged before the job ledger kept documents, or
 - the run was a batch of projects: run the batch again from its projects.
 
-## Storage {#storage}
+## Storage
 
 Click **Storage…** at the bottom of the window to open **Job log storage** and choose how much the job log keeps. The settings of every run are always kept; these settings only limit the stored documents and pictures.
 
@@ -113,6 +113,6 @@ Click **Storage…** at the bottom of the window to open **Job log storage** and
 
 The window shows how much is kept now. Lowering a limit deletes the oldest kept documents or pictures when you click **Save**. Only a person in the app can change these settings.
 
-## What agents can do with the ledger {#agents}
+## What agents can do with the ledger
 
-An AI agent connected over MCP can search the job log, read a run, mark a run OK or scrap with a note (recorded as an agent's note, and only meant for when you have told it how the part came out), and open a stored job. It can then prepare a run, but never approve or start it. See [What AI agents can and cannot do](safety.md#ai-agents).
+An AI agent connected over MCP can search the job log, read a run, mark a run OK or scrap with a note (recorded as an agent's note, and only meant for when you have told it how the part came out), and open a stored job. It can then prepare a run, but never approve or start it. See [What AI agents can and cannot do](safety.md#what-ai-agents-can-and-cannot-do).

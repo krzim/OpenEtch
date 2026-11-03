@@ -76,7 +76,7 @@ export function HotkeysDialog(p: { onClose: () => void; edit?: boolean }) {
 
   return (
     <WsModal
-      help="keyboard-shortcuts#shortcuts-list"
+      help="keyboard-shortcuts#open-the-list"
       title={edit ? t("hotkeys.editTitle") : t("hotkeys.title")}
       wide
       onClose={p.onClose}

@@ -18,7 +18,7 @@ Each laser device has its own extractor settings. If you remove a device, its ex
 
 > **Warning:** Always extract the fumes when you mark. The Start check is a convenience, not a safety interlock: it checks once, when the run is approved, and does not watch the extractor during the job. Never leave a running job unattended.
 
-## Open the extractor settings {#extractor-settings}
+## Open the extractor settings
 
 The extractor settings are in Preferences:
 
@@ -34,19 +34,19 @@ To set up the extractor:
 1. Choose how it is switched in **Switched by** (see below). **On for every job** and **Keep on after the job** appear once you choose an option other than **Not switched**.
 2. Tick **On for every job** if OpenEtch should switch it on when a run is approved.
 3. Type a run-on time in **Keep on after the job** (0 to 3600 seconds; 0 to start with).
-4. Choose a check in **Before Start** (see [Refuse Start until it runs](#start-gating)).
+4. Choose a check in **Before Start** (see [Refuse Start until it runs](#refuse-start-until-it-runs)).
 5. Press **Save**. OpenEtch says "Saved."
 6. Press **Switch on**, check the extractor runs, then press **Switch off**.
 
-## How it is switched {#switched-by}
+## How it is switched
 
 Choose one option in **Switched by**.
 
-### Not switched {#not-switched}
+### Not switched
 
 **Not switched** is the default. OpenEtch does not switch anything. You can still use the **Before Start** check with a board input.
 
-### The board's Busy output {#busy-output}
+### The board's Busy output
 
 **The board's Busy output (output n)** uses the laser board's Busy output. Wire the extractor's relay to it. Set the output first in the device settings, under **IO ports (LightBurn)** (**Busy output**). See [Devices and calibration](devices-and-calibration.md). Without one, OpenEtch says "This device has no Busy output: set one in the device's IO ports first."
 
@@ -56,7 +56,7 @@ Framing, STOP or a new job during the run-on can switch the output off early, be
 
 > **Note:** Switching through the Busy output has not been checked on real hardware yet.
 
-### Raspberry Pi GPIO pin {#gpio}
+### Raspberry Pi GPIO pin
 
 **Raspberry Pi GPIO pin** switches a pin of the Raspberry Pi the engine runs on. Set **GPIO pin** (0 to 53; 17 to start with). Tick **Active low** if your relay switches on when the pin is low.
 
@@ -66,7 +66,7 @@ This needs Raspberry Pi OS, and the engine's user must be allowed to switch pins
 
 > **Note:** Switching through a GPIO pin has not been checked on a Raspberry Pi yet.
 
-### Home Assistant {#home-assistant}
+### Home Assistant
 
 **Home Assistant** switches an entity in Home Assistant, such as a smart plug.
 
@@ -78,7 +78,7 @@ OpenEtch calls the entity's own turn-on and turn-off services, with the target's
 
 > **Tip:** The extractor uses the target's address and token only. If you do not want job notifications from that target, untick its events.
 
-### Webhook {#webhook}
+### Webhook
 
 **Webhook** sends a POST to a webhook target.
 
@@ -87,7 +87,7 @@ OpenEtch calls the entity's own turn-on and turn-off services, with the target's
 
 The body is `{"event": "extractor", "state": "on"}` or `"off"`, with the device and `"source": "openetch"`.
 
-## On for every job and run-on {#run-on}
+## On for every job and run-on
 
 With **On for every job** ticked, OpenEtch switches the extractor on when a run is approved.
 
@@ -99,7 +99,7 @@ A few details:
 - Switching it on or off by hand during the run-on cancels the timer.
 - If a new job is running when the run-on ends, the extractor stays on.
 
-## Refuse Start until it runs {#start-gating}
+## Refuse Start until it runs
 
 **Before Start** decides what Start needs from the extractor. The check runs when a run is approved: Start, an approval under **Waiting for approval**, and every foot switch burn.
 
@@ -118,16 +118,16 @@ The board input check works for galvo devices only.
 
 > **Tip:** With **Refuse unless it was switched on**, also tick **On for every job**. OpenEtch then switches the extractor on at approval and refuses Start only if switching fails. Without it, the extractor goes off after each run-on and the next Start is refused until you switch it on again.
 
-## Switch it by hand {#switch-by-hand}
+## Switch it by hand
 
 You can switch the extractor by hand in two places:
 
-- The cockpit's [Times card](production-cockpit.md#times-card) shows **Extractor on** or **Extractor off**, "(running on)" during the run-on, and a **Switch on** or **Switch off** button.
+- The cockpit's [Times card](production-cockpit.md#the-times-card) shows **Extractor on** or **Extractor off**, "(running on)" during the run-on, and a **Switch on** or **Switch off** button.
 - **Preferences > Extractor** has **Switch on** or **Switch off** next to **Save**, once the settings are saved and there are no unsaved changes.
 
 The **Production** window shows whether the extractor is on or off. If switching fails, the reason shows in red, for example "the extractor could not be switched on:" followed by the cause.
 
-## Example: a smart plug through Home Assistant {#example-setup}
+## Example: a smart plug through Home Assistant
 
 To switch an extractor plugged into a Home Assistant smart plug:
 
@@ -140,11 +140,11 @@ To switch an extractor plugged into a Home Assistant smart plug:
 7. Press **Switch on** and check the extractor runs. Press **Switch off**.
 8. Run a short job on scrap and check the extractor comes on, then goes off about a minute after the job.
 
-## What AI agents can do {#ai-agents}
+## What AI agents can do
 
 AI agents connected through MCP can read whether the extractor is on (in `production_status`). They cannot switch it or change its settings. See [AI agents](ai-agents.md).
 
-## Common problems {#common-problems}
+## Common problems
 
 | Message | What to do |
 |---|---|

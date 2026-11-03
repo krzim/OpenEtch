@@ -14,15 +14,15 @@ You design the part once. OpenEtch puts it in the first pocket and places linked
 
 You make jigs in the **Design** workspace. Framing a pocket needs a laser connected.
 
-## The Jigs menu {#jigs-menu}
+## The Jigs menu
 
 On a desktop, the **Jigs** dropdown is in the **Arrange** group of the **Design** workspace's ribbon. On a phone, it is in the tool strip of the **Canvas** tab. The items are also in command search.
 
 | Item | What it does |
 |---|---|
-| **New jig…** | Makes a grid of pockets. See [Make a jig as a grid](#new-jig). |
-| **Import jig (DXF or SVG)…** | Reads a drawing of your jig. See [From a DXF or SVG file](#import-jig). |
-| **Make jig from selection** | Turns closed shapes you drew into pockets. See [From shapes you drew](#jig-from-selection). |
+| **New jig…** | Makes a grid of pockets. See [Make a jig as a grid](#make-a-jig-as-a-grid). |
+| **Import jig (DXF or SVG)…** | Reads a drawing of your jig. See [From a DXF or SVG file](#from-a-dxf-or-svg-file). |
+| **Make jig from selection** | Turns closed shapes you drew into pockets. See [From shapes you drew](#from-shapes-you-drew). |
 | **Place selection in every pocket** | Puts the selected design in every pocket that is on. With several jigs, pick the jig from the submenu (**Place selection in “Coins”**). |
 | **Switch pockets on or off** | Lets you tap pockets on the canvas. While it is active, the item reads **Done**. |
 | **Re-mark a region…** | Marks part of the job again. See [Re-mark a region](remark-region.md). |
@@ -38,7 +38,7 @@ On the canvas, every jig shows:
 
 A project can hold up to 32 jigs.
 
-## Make a jig as a grid {#new-jig}
+## Make a jig as a grid
 
 To make a jig with pockets in rows and columns:
 
@@ -59,7 +59,7 @@ OpenEtch says, for example, "Jig “Coins” added (6 pockets)".
 | **Pitch X** and **Pitch Y** | The distance from the centre of one pocket to the centre of the next, across and down (32 mm to start with). |
 | **Centre X** and **Centre Y** | Where the centre of the grid goes. This is the jig's datum. It starts at the centre of the stock. |
 | **Material height** | The height of the blanks' top surface. Optional. OpenEtch keeps it with the jig as a note for the operator; it does not set the focus. |
-| **Numbering** | The order of the pocket numbers. See [Pocket numbering](#numbering). |
+| **Numbering** | The order of the pocket numbers. See [Pocket numbering](#pocket-numbering). |
 
 If something is wrong, the dialog says so and **Create** is greyed out:
 
@@ -69,11 +69,11 @@ If something is wrong, the dialog says so and **Create** is greyed out:
 
 ![The New jig dialog with 2 rows and 3 columns of round 40 mm pockets at a 45 mm pitch](img/jigs-new-jig.webp)
 
-## Make a jig from a drawing {#jig-from-drawing}
+## Make a jig from a drawing
 
 Use a drawing when the pockets are not in a simple grid.
 
-### From shapes you drew {#jig-from-selection}
+### From shapes you drew
 
 To make a jig from shapes:
 
@@ -86,7 +86,7 @@ Each closed outline becomes a pocket. With three or more outlines, the largest o
 
 The shapes you selected become part of the jig, so they leave the design. Undo brings them back. If the selection has no closed shapes, OpenEtch says "Select closed shapes for the pockets."
 
-### From a DXF or SVG file {#import-jig}
+### From a DXF or SVG file
 
 To use a drawing of your jig, for example from the CAD file it was cut from:
 
@@ -97,7 +97,7 @@ OpenEtch finds the pockets and the plate outline in the same way as for shapes y
 
 If the file cannot be read, OpenEtch says "Could not read the jig drawing:" with the reason.
 
-## Pocket numbering {#numbering}
+## Pocket numbering
 
 The pocket numbers set the order in which the pockets burn and the order in which they get serial numbers. Pick the order that matches how you load and sort the parts.
 
@@ -111,7 +111,7 @@ The "far" row is the one at the top of the canvas.
 
 You choose the numbering when you make the jig. To change it later, pick a new order in **Numbering** in the Jigs window (the list shows "…" until you pick one). Designs that are already placed follow the new order, so their serial numbers count on in the new order.
 
-## Place a design in every pocket {#place-design}
+## Place a design in every pocket
 
 To put a design in every pocket:
 
@@ -129,13 +129,13 @@ The copies follow the original:
 - When you move the jig, the designs move with it.
 - A design that is already in an array or a placement cannot be placed again.
 
-### Serial numbers in each pocket {#serials-per-pocket}
+### Serial numbers in each pocket
 
 If the design has serial-number or CSV text (see [Variable text and barcodes](variable-text-and-barcodes.md)), each pocket counts on by one in pocket order. Pocket 1 gets SN 0001, pocket 2 gets SN 0002, and so on. Pockets that are off get no number.
 
 For the next run to start after the last pocket, Variable Text's **Advance by** must equal the number of pockets that are on. When it does not, the Jigs window reminds you, for example: "Serial numbers count on per pocket that is on: set Variable Text's Advance by to 6 so the next run starts after the last pocket." Press **Set Advance by to 6** to fix it.
 
-## The Jigs window {#jigs-window}
+## The Jigs window
 
 To open the Jigs window, choose **Jigs > Jigs…** On a phone, it opens as a full-screen sheet.
 
@@ -150,12 +150,12 @@ The window then has these sections:
 | **5 of 6 pockets on** | **All on**, **Frame the pockets that are on** and **Switch pockets on or off**. Below them, one button per pocket: press a number to switch that pocket on or off. The frame icon beside each number frames that pocket. |
 | **Designs placed: 1** | **Place selection in every pocket**, and the Advance by reminder when it applies. |
 | The jig's settings | **Name**, **Material height**, **Numbering**, **Datum X**, **Datum Y**, **Rotation** and **Move jig**. |
-| **Keep-out zones** | The jig's own keep-out zones. See [Keep-out zones in a jig](#jig-keep-out). |
+| **Keep-out zones** | The jig's own keep-out zones. See [Keep-out zones in a jig](#keep-out-zones-in-a-jig). |
 | **Keep-out zones of this device** | Zones kept with the laser device, not the project. |
 
 At the bottom are **Delete jig** and **Close**.
 
-### Move or turn a jig {#move-jig}
+### Move or turn a jig
 
 The datum is a point on the real jig, such as a corner pin. **Datum X** and **Datum Y** say where that point sits in the laser's field.
 
@@ -169,7 +169,7 @@ The pockets and the placed designs move together. OpenEtch says "Jig moved".
 
 > **Tip:** To line the jig up with the real one, frame the pockets (see [Frame pockets](#frame-pockets)) and adjust the datum until the red pointer traces the real pockets.
 
-### Delete a jig {#delete-jig}
+### Delete a jig
 
 To delete a jig:
 
@@ -177,13 +177,13 @@ To delete a jig:
 2. Read the question "Delete jig “Coins”? The designs stay in pocket 1; their copies in the other pockets go."
 3. Press **Delete jig** again to confirm. OpenEtch says "Jig deleted".
 
-## Empty pockets {#empty-pockets}
+## Empty pockets
 
 There are two ways to leave a pocket out. Both keep the serial numbers in sequence, so no number is wasted.
 
 | | Switch a pocket off | Mark a slot Empty |
 |---|---|---|
-| Where | The Jigs window, or the pockets on the canvas, in the Design workspace | The **Next** card of the [production cockpit](production-cockpit.md#next-card) |
+| Where | The Jigs window, or the pockets on the canvas, in the Design workspace | The **Next** card of the [production cockpit](production-cockpit.md#the-next-card) |
 | What it changes | The design: the pocket has no copy of the design and no serial number | The run: the pocket is left out and the next pockets take its value |
 | While the cockpit is open | Refused (it is a design edit) | Allowed |
 | Good for | A pocket that is damaged, or one you do not use for this job | A gap in today's load |
@@ -192,7 +192,7 @@ At least one pocket must stay on.
 
 When you switch the first pocket off, the original design moves to the new first pocket that is on. The copies follow.
 
-### Switch pockets on or off on the canvas {#pocket-mode}
+### Switch pockets on or off
 
 To switch pockets by tapping them:
 
@@ -207,7 +207,7 @@ On a phone, the open sheet closes so you can see the whole canvas.
 
 ![The canvas in pocket mode on an iPad, with pocket 5 switched off and the bar with On / off, Frame, All on and Done](img/jigs-pocket-mode.webp)
 
-## Frame pockets {#frame-pockets}
+## Frame pockets
 
 Framing traces outlines with the red pointer. There is no laser emission. You need a laser connected.
 
@@ -217,7 +217,7 @@ Framing traces outlines with the red pointer. There is no laser emission. You ne
 
 The frame keeps going until you stop it: press **Stop frame**, **STOP** or `Esc`.
 
-## Keep-out zones in a jig {#jig-keep-out}
+## Keep-out zones in a jig
 
 A keep-out zone is an area the laser must never mark, such as a wall, a clamp or a pin. A job that would mark inside a zone that is on is refused.
 
@@ -235,7 +235,7 @@ A jig, and a device, can each have up to 64 keep-out zones.
 
 See [Pre-flight and keep-out zones](preflight-and-keep-out.md) for how zones are checked.
 
-## Fit a design to the stock {#fit-to-stock}
+## Fit a design to the stock
 
 The **Arrange** menu has two more items that help with blanks:
 
@@ -244,17 +244,17 @@ The **Arrange** menu has two more items that help with blanks:
 
 On a phone, **Fit to stock** is in the selection sheet. Without stock, OpenEtch says "Define the stock first (Create > Stock)."
 
-## Jigs in production {#jigs-in-production}
+## Jigs in production
 
 Jig pockets carry through to production:
 
-- The cockpit's **Next** card shows pocket numbers such as "P3" for slots that sit in a jig pocket. See [Production cockpit](production-cockpit.md#next-card).
+- The cockpit's **Next** card shows pocket numbers such as "P3" for slots that sit in a jig pocket. See [Production cockpit](production-cockpit.md#the-next-card).
 - The [serial ledger](serial-ledger.md) records which pocket got which value.
 - A [re-mark](serial-ledger.md#re-mark-a-slot) marks one pocket again.
 
 AI agents can make, edit and place jigs with the same commands the Jigs menu uses. They can never start a burn. See [AI agents](ai-agents.md).
 
-## Common mistakes {#common-mistakes}
+## Common mistakes
 
 | Mistake | What happens | What to do |
 |---|---|---|

@@ -14,7 +14,7 @@ Jobs burn layer by layer, from the top of the list down. So the layer list is al
 
 > **Note:** The numbers on this page are examples. Settings depend on your source, lens, focus and material. Treat any value as a starting point to test, not a guarantee. See [Test grids](test-grids.md) before you try a new setting.
 
-## The Cuts / Layers window {#cuts-layers-window}
+## The Cuts / Layers window
 
 **Cuts / Layers** lists the layers of the open document, one row per layer.
 
@@ -44,7 +44,7 @@ When the window is narrow (a small dock or the phone's sheet), it drops the leas
 
 ![The Layers tab on a phone with the palette-coin layers, the Colour layer selected and its quick-edit fields](img/cuts-layers-phone.webp)
 
-## Put shapes on a layer {#layer-colour-palette}
+## Put shapes on a layer
 
 To move shapes to a layer:
 
@@ -59,7 +59,7 @@ You can also change a shape's layer in **Shape Properties** with the **Layer** l
 
 > **Tip:** If you click a colour with nothing selected, OpenEtch says "Select shapes first, then click a colour to put them on that layer."
 
-## Select and reorder layers {#layer-order}
+## Select and reorder layers
 
 - **Click** a row to select the layer. Its settings appear in the quick-edit fields under the list and in **Shape Properties**. In the Laser workspace they also show in the **Machine and runs** window.
 - **Shift+click** a row to select every shape on the layer. On a touch screen, use **Select all shapes on this layer** in the row's **⋯** menu, or turn on **Add** in the modifier bar first (it counts as Shift).
@@ -74,7 +74,7 @@ To change the burn order, do one of these:
 
 A layer higher in the list burns earlier. **Optimization settings** can reorder shapes inside a layer, but layers burn in the Cuts / Layers order. The one exception is **Sort cuts last (line layers after fills and images)** in Optimization settings, which moves line layers after fills and images.
 
-## The layer menu {#layer-menu}
+## The layer menu
 
 Right-click a row (two-finger click on a MacBook trackpad) to open its menu. On a touch screen, long-press the row or tap its **⋯** button.
 
@@ -85,7 +85,7 @@ Right-click a row (two-finger click on a MacBook trackpad) to open its menu. On 
 | **Flash layer** | Blinks the layer's shapes on the canvas so you can find them. Shift+right-click on the row does the same. |
 | **Show only this layer**, **Show all layers**, **Hide all layers** | Changes what the canvas draws. |
 | **Output only this layer**, **Enable output for all layers**, **Disable output for all layers**, **Invert output** | Changes what burns. |
-| **Copy layer settings**, **Paste layer settings** | See [Copy and paste settings](#copy-paste-settings). After a copy, the paste item reads **Paste settings of** and the copied layer's name. |
+| **Copy layer settings**, **Paste layer settings** | See [Copy and paste settings](#copy-and-paste-settings). After a copy, the paste item reads **Paste settings of** and the copied layer's name. |
 | **Move layer up**, **Move layer down** | Changes the burn order. |
 | **Make tool layer T1**, **Make tool layer T2**, **Make an ordinary layer** | See [Tool layers](#tool-layers). |
 | **Make Default**, **Make Default for All**, **Reset to Default**, **Reset to OpenEtch defaults** | See [Layer defaults](#layer-defaults). |
@@ -93,7 +93,7 @@ Right-click a row (two-finger click on a MacBook trackpad) to open its menu. On 
 | **Unlink** | Only on a linked layer: stops following its preset. |
 | **Delete layer** | See [Delete a layer](#delete-a-layer). |
 
-## Output and Show {#output-and-show}
+## Output and Show
 
 Each row has two switches:
 
@@ -104,7 +104,7 @@ Click the **Out** header for **Enable output for all layers**, **Disable output 
 
 > **Warning:** A hidden layer still burns while its output is on. To keep a layer out of a job, turn **Out** off, not **Show**.
 
-## Quick edits {#quick-edit}
+## Quick edits
 
 Under the list, the selected layer has a row of quick-edit fields: **Speed**, **Power**, **Passes**, **Frequency**, **Q-Pulse** and, for fill modes, **Interval**. Each change is one undo step.
 
@@ -118,7 +118,7 @@ If the layer has sub-layers, tabs appear above the fields: **Main** and one tab 
 
 A layer linked to a library preset shows its values greyed out. You cannot edit them here until you unlink it (see [Linked layers](material-libraries.md#linked-layers)).
 
-## Cut settings {#cut-settings}
+## Cut settings
 
 The full settings of a layer open in a window called **Cut settings:** followed by the layer name. To open it:
 
@@ -141,7 +141,7 @@ Under the **Cut settings** heading is a row of tabs: **Main** and one per sub-la
 
 Below the form come **More settings** (see [More settings](#more-settings)), the image settings when the layer holds images (see [Images](images.md)), and **Delete layer…**
 
-### Mode: line or fill {#fill-vs-line}
+### Mode: line or fill
 
 **Mode** decides what the laser does with the layer's shapes:
 
@@ -156,17 +156,17 @@ Open shapes cannot be filled. A Fill layer only hatches closed shapes.
 
 Images on a layer use the layer's image settings. See [Images](images.md).
 
-### Power, speed and frequency {#power-speed-frequency}
+### Power, speed and frequency
 
 - **Power** (%): the share of the source's rated power. On a 60 W source, 50 % is roughly 30 W.
 - **Speed** (mm/s): how fast the beam moves while it marks. Faster means less energy on each spot.
 - **Frequency** (kHz): how many pulses the source fires per second. The allowed range comes from the active device. If the device reports none, OpenEtch allows 1 to 4000 kHz.
 
-For a fill, power, speed and interval together set how much energy reaches each square millimetre. Work this out before you test a new setting. See [Check the energy density first](test-grids.md#energy-density).
+For a fill, power, speed and interval together set how much energy reaches each square millimetre. Work this out before you test a new setting. See [Check the energy density first](test-grids.md#check-the-energy-density-first).
 
 The setting fields are always in mm/s. The **Speed** choice in **Preferences** changes how speeds are shown in the **Spd/Pwr** column and in summaries; the engine always stores mm/s.
 
-### Pulse width on a MOPA source {#pulse-width}
+### Pulse width on a MOPA source
 
 A MOPA source can change the length of each pulse. **Pulse width** sets it, in nanoseconds.
 
@@ -178,13 +178,13 @@ Short pulses usually give finer, lighter marks. Long pulses carry more energy pe
 
 The field is hidden when the active device says its source has no adjustable pulse width. A gantry laser (GRBL or Ruida) shows neither frequency nor pulse width.
 
-### Passes {#passes}
+### Passes
 
 **Passes** is how many times the open tab's settings run over the shapes, from 1 to 1000. Each pass adds more energy, so two passes is roughly double the energy of one.
 
 **Global passes** (under **More settings** on the **Main** tab) repeats the whole layer, main settings and sub-layers together, in order.
 
-### Hatch: interval, angle and cross hatch {#hatch}
+### Hatch settings
 
 The **Hatch** settings apply to fill modes only. For a Line layer the heading reads **Hatch (fill modes only)**.
 
@@ -198,7 +198,7 @@ With **Offset Fill**, only the interval applies. The window says so: the angle, 
 
 > **Tip:** Halving the interval doubles the energy density. If a fill suddenly melts, check the interval before you change power.
 
-## Sub-layers {#sub-layers}
+## Sub-layers
 
 A sub-layer is one more pass over the same shapes with its own settings. LightBurn calls these sub-layers too. Use them to, for example, fill and then clean, or mark a colour in two steps.
 
@@ -216,13 +216,13 @@ Other buttons:
 
 Sub-layers burn left to right after the main settings. A layer can have up to 64 sub-layers. In Cuts / Layers a layer with sub-layers reads **Multi**; click its arrow (**Show passes**) to see one row per pass.
 
-### Cleanup pass {#cleanup-pass}
+### Cleanup pass
 
 **Cleanup pass** adds a sub-layer that clears debris after the main passes. It starts as one fast, low-power pass with the hatch turned 45°: a quarter of the power, twice the speed, and twice the frequency (capped at the source's highest). Its tab shows a **Cleanup** badge.
 
 To make an existing sub-layer a cleanup pass, tick **Cleanup pass** on its tab, then set **Clean after** to the number of main passes between cleanups. The cleanup runs after every that-many main passes and once more after the last one, before the other sub-layers.
 
-## More settings {#more-settings}
+## More settings
 
 Under the main form, **More settings** holds the rest of the galvo options. It opens by itself when one of them is in use, and a number shows how many are.
 
@@ -251,14 +251,14 @@ When several line options are on, they are applied in this order: tabs, perforat
 
 > **Note:** **Beginner Mode** in **Preferences** hides **More settings**, as LightBurn's Beginner Mode does.
 
-## Shape cut settings {#shape-cut-settings}
+## Shape cut settings
 
 With shapes selected, **Shape Properties** has a **Shape cut settings** section:
 
 - **Power scale** (%): marks these shapes at that share of their layer's power.
 - **Cut priority**: orders cuts when Optimization orders by priority (0 first).
 
-## Copy and paste settings {#copy-paste-settings}
+## Copy and paste settings
 
 To copy one layer's settings to another:
 
@@ -267,7 +267,7 @@ To copy one layer's settings to another:
 
 Sub-layers are copied too.
 
-## Layer defaults {#layer-defaults}
+## Layer defaults
 
 OpenEtch can remember settings per layer colour. Defaults belong to the active laser device: each device keeps its own. The **Defaults** menu sits above a layer's cut settings, and most of its items are also in the layer menu.
 
@@ -281,13 +281,13 @@ OpenEtch can remember settings per layer colour. Defaults belong to the active l
 
 A new layer you add (with **+** or the palette) takes the saved default for its colour.
 
-## Tool layers {#tool-layers}
+## Tool layers
 
 A tool layer (**T1** or **T2**) never burns, but it is framed with the job. Use it for guides, jig outlines, alignment marks and print-and-cut targets. Its **Out** switch is greyed out.
 
 To make one, pick **Make tool layer T1** or **Make tool layer T2** in the layer menu, or put shapes on **T1** or **T2** in the palette. **Make an ordinary layer** turns it back. Each tool name can belong to one layer only.
 
-## Delete a layer {#delete-a-layer}
+## Delete a layer
 
 From Cuts / Layers:
 
@@ -299,7 +299,7 @@ The Cut settings window also has **Delete layer…** at the bottom. It moves the
 
 You cannot delete the last layer. Undo brings a deleted layer back.
 
-## Preview colours {#preview-colours}
+## Preview colours
 
 In the Laser workspace preview, each layer's toolpath is drawn in its layer colour. Sub-layers are drawn in colours shifted from the layer colour, so you can tell passes apart.
 
@@ -311,15 +311,15 @@ The **Toolpath** card in the **Machine and runs** window (Laser workspace; on a 
 
 For MOPA colour work, **Result colours** draws each layer in the colour it should come out instead of its layer colour. See [Result colours](mopa-colour.md#result-colours). For more on the preview, see [Preview and framing](preview-and-framing.md).
 
-## LightBurn settings OpenEtch does not run {#unsupported-settings}
+## LightBurn settings OpenEtch does not run
 
 A layer imported from LightBurn may hold settings OpenEtch will not execute. Its row then shows a **!** badge. Rest the mouse on the badge to see the list. OpenEtch keeps those values so they go back into a LightBurn export, but it does not burn them.
 
-## Common mistakes {#common-mistakes}
+## Common mistakes
 
 - **Hiding a layer to stop it burning.** Turn **Out** off instead.
 - **Shapes on the wrong layer.** Shift+click the layer row to see which shapes it holds, or use **Flash layer**.
 - **Open shapes on a Fill layer.** They are not filled. Close the shape, or use Line mode.
 - **Wrong order.** Jobs burn top to bottom. Put fills before outlines if the outline must stay crisp.
 - **Editing a linked layer.** Its fields are greyed out. Unlink it, or change the preset in the Material Library.
-- **Very small intervals with high power and slow speed.** These can melt or warp thin stock. Work out the energy density first (see [Test grids](test-grids.md#energy-density)).
+- **Very small intervals with high power and slow speed.** These can melt or warp thin stock. Work out the energy density first (see [Test grids](test-grids.md#check-the-energy-density-first)).

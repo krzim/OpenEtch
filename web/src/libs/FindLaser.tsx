@@ -55,7 +55,7 @@ export function FindLaserWizard(p: { notify: (m: string, k?: "info" | "error") =
   };
   return (
     <WsModal
-      help="devices-and-calibration#find-my-laser"
+      help="devices-and-calibration#the-find-my-laser-wizard"
       title={t("fml.title")}
       wide
       onClose={p.onClose}

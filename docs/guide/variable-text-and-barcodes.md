@@ -12,7 +12,7 @@ Variable text changes from one run to the next: a serial number that counts up, 
 
 > **Note:** Variable text is set in the Properties window, so use a computer or tablet. The phone layout has no Properties window.
 
-## Text modes {#text-modes}
+## Text modes
 
 Every text has a **Text mode**. To set it:
 
@@ -33,7 +33,7 @@ A **Variable** badge shows next to the Text heading. The **Shows** line tells yo
 
 **Ignore empty vars** leaves out lines whose variable text comes out empty.
 
-## Serial numbers {#serial-numbers}
+## Serial numbers
 
 | Code | Meaning |
 |---|---|
@@ -48,7 +48,7 @@ Use one run of `d`, `h` or `H`. A number longer than the run shows its last digi
 
 The number shown is the Variable Text window's **Current** plus this text's **Offset**.
 
-## Dates and times {#dates-and-times}
+## Dates and times
 
 | Code | Meaning |
 |---|---|
@@ -67,7 +67,7 @@ Example: `yyyy-MM-dd HH:mm`.
 
 The date is worked out when a run is requested. The canvas shows the time of the last edit; click **Refresh** in the text's Properties to update it.
 
-## CSV fields {#csv-fields}
+## CSV fields
 
 | Code | Meaning |
 |---|---|
@@ -88,7 +88,7 @@ The row is **Current** plus the text's **Offset**. Row 0 is the first line of th
 
 **Clear** removes the CSV file from the document.
 
-## Cut setting text {#cut-setting-text}
+## Cut setting text
 
 Cut Setting mode writes a layer's settings into the design, which is handy for labelling a test piece.
 
@@ -109,7 +109,7 @@ Cut Setting mode writes a layer's settings into the design, which is handy for l
 
 Example: `'P'p 'S'S`. The values come from the text's own layer unless `C##` names another.
 
-## The Variable Text window {#variable-text-window}
+## The Variable Text window
 
 The **Variable Text** window holds the document's counter. It shows in the Properties window while the document uses variable text. To open it otherwise, click **Variable Text window** in the Properties of a serial-number or CSV text, right-click the canvas and choose **Variable Text window**, or search for it (`S`).
 
@@ -125,13 +125,13 @@ A stopped run does not advance. **Previous** and **Next** move Current by Advanc
 
 > **Tip:** For a jig with six pockets, set **Advance by** to 6, so the next load starts after the last tag. The Jigs window can set this for you: see [Jigs](jigs.md).
 
-### Test a value {#test-a-value}
+### Test a value
 
 To see what every variable text and barcode would show for a value, type it in **Value** under **Test** and click **Test**. Leave Value empty to test Current. Test changes nothing.
 
 ![The Variable Text window for the Serial-numbered tags example](img/variable-text-window.webp)
 
-## Copies that count on {#counting-copies}
+## Copies that count on
 
 To make a sheet of tags that each show the next number:
 
@@ -144,7 +144,7 @@ Each copy's Offset is one more than the one before, so six tags show six numbers
 
 The Serial-numbered tags example is set up this way (see [Templates](templates.md#example-projects)).
 
-## Barcodes and QR codes {#barcodes}
+## Barcodes and QR codes
 
 To add a barcode:
 
@@ -155,12 +155,12 @@ To add a barcode:
 
 To change a barcode, double-click it, or right-click it and choose **Edit bar code**, then click **Apply**. Its settings also show in Properties under **Barcode**; each change redraws it in place.
 
-### Barcode types {#barcode-types}
+### Barcode types
 
 - **2D codes**: QR Code, Data Matrix, Aztec, PDF417, and others the engine offers, such as QR Micro, PDF417 Compact, Grid Matrix, Chinese Sensible Code, AprilTag and ArUco tags (for a tag, the data is its id).
 - **1D bar codes**: Code 128, Code 39, Code 93, Codabar, EAN-8, EAN-13, UPC-A, UPC-E, ITF, Telepen, and others such as 2 of 5, ISBN, VIN and Plessey.
 
-### Barcode options {#barcode-options}
+### Barcode options
 
 | Option | What it does |
 |---|---|
@@ -177,7 +177,7 @@ To change a barcode, double-click it, or right-click it and choose **Edit bar co
 
 The dark modules become one outline, so put the code on a **Fill** layer. Use **Invert** on materials that mark light, so the marked area is the background.
 
-### Variable barcodes {#variable-barcodes}
+### Variable barcodes
 
 Set the barcode's **Text mode** to **Serial Number**, **Date / Time** or **Merge CSV**, and use the same codes in **Data** as for text. A QR code and a text with the same format and Offset show the same number.
 
@@ -185,7 +185,7 @@ Set the barcode's **Text mode** to **Serial Number**, **Date / Time** or **Merge
 
 ![The Create bar code dialog](img/barcode-dialog.webp)
 
-## Check every row {#check-every-row}
+## Check every row
 
 The contact sheet draws every serial number or CSV row as a run would burn it, and flags the ones that go wrong. Use it before a batch.
 
@@ -212,10 +212,10 @@ On a phone the contact sheet fills the screen.
 
 ![Check every row for the Serial-numbered tags example on an iPad](img/contact-sheet.webp)
 
-## Warnings before you start {#variable-preflight}
+## Warnings before you start
 
 When you start a job, the pre-flight check warns about variable text that would burn wrong: a CSV text with no CSV file loaded, a row past the last row, an empty cell, or a serial number past End that wraps back to Start. See [Pre-flight and keep-out](preflight-and-keep-out.md).
 
-## AI agents {#variable-text-agents}
+## AI agents
 
 An AI agent connected over MCP can set up variable text, change the counter and run the same row check. It can never approve or start a burn: a person does that at the machine. See [AI agents](ai-agents.md).

@@ -14,7 +14,7 @@ Each preset sits in a tree: **material**, then **thickness** (or a title when it
 
 A preset does not prove a setting is right for your machine. Always test a preset you got from someone else on scrap first (see [Test grids](test-grids.md)).
 
-## The Material Library window {#material-library-window}
+## The Material Library window
 
 Where to find it:
 
@@ -36,7 +36,7 @@ The window has, from top to bottom:
 
 If the engine has no material libraries, the window says "This engine has no material libraries."
 
-## Load a LightBurn library {#load-a-library}
+## Load a LightBurn library
 
 1. Click **Load…**
 2. Pick a `.clb` file.
@@ -47,23 +47,23 @@ On an iPhone or iPad the file picker shows every file. OpenEtch checks the type 
 
 OpenEtch keeps its copy in the engine's libraries folder, so it is there next time. The engine also remembers which libraries are loaded and which one is selected, for every browser that connects to it.
 
-## Start a new library {#new-library}
+## Start a new library
 
 1. Open **Manage Library** and pick **Create New Library…**
 2. Type a **Library name** and click **Create**.
 
-The library starts empty. Add presets with **Create new from layer** (see [Save a layer as a preset](#create-a-preset)).
+The library starts empty. Add presets with **Create new from layer** (see [Save a layer as a preset](#save-a-layer-as-a-preset)).
 
-## Find a preset {#browse-presets}
+## Find a preset
 
 - Click a material or a group to fold it open or closed.
 - Type in **Search presets** to filter by material, thickness, title or description.
 - Rest the mouse on a preset to see its settings. A coloured chip or a small photo shows its result colour, if it has one.
 - A link mark with a number shows how many layers in the open document follow that preset.
 
-**Palette** shows the presets that have a result colour as swatches, grouped by surface. See [The palette view](mopa-colour.md#palette-view).
+**Palette** shows the presets that have a result colour as swatches, grouped by surface. See [The palette view](mopa-colour.md#the-palette-view).
 
-## Apply a preset to a layer {#apply-a-preset}
+## Apply a preset to a layer
 
 1. Select the layer in **Cuts / Layers**. The **Layer** list in the Material Library follows it. You can also pick a layer straight from that list.
 2. Click a preset in the tree.
@@ -78,7 +78,7 @@ Double-clicking a preset assigns it.
 
 If the preset has a result colour, the layer takes that too (see [Result colours](mopa-colour.md#result-colours)).
 
-### Linked layers {#linked-layers}
+### Linked layers
 
 A linked layer shows a link mark in **Cuts / Layers**, in the **Layer** list (🔗) and above its cut settings, where **Linked** is followed by the preset's path.
 
@@ -86,7 +86,7 @@ A linked layer shows a link mark in **Cuts / Layers**, in the **Layer** list (�
 - To change all linked layers at once, change the preset with **Edit Cut** or **Update**. A message says how many linked layers were updated.
 - **Assign** on a linked layer copies the new preset and also removes the old link.
 
-## Save a layer as a preset {#create-a-preset}
+## Save a layer as a preset
 
 1. Set up a layer's cut settings (including any sub-layers).
 2. Make sure it is the layer shown in the **Layer** list.
@@ -97,29 +97,29 @@ A linked layer shows a link mark in **Cuts / Layers**, in the **Layer** list (�
    - **Description**, for example "Gold".
 5. Click **OK**.
 
-The preset is kept in the engine's memory until you save the library (see [Save your changes](#save-library)).
+The preset is kept in the engine's memory until you save the library (see [Save your changes](#save-your-changes)).
 
-## Change a preset {#edit-a-preset}
+## Change a preset
 
 Pick the preset first. The buttons under the tree, and the preset's right-click or long-press menu, offer these actions.
 
-### Edit Cut {#edit-cut}
+### Edit Cut
 
 **Edit Cut** opens **Edit Cut:** and the preset's path. It has **Mode**, **Power**, **Speed**, **Frequency**, **Q-Pulse width**, **Passes** and, for fill modes, **Interval**. Click **OK** to save. Linked layers follow.
 
 > **Warning:** Edit Cut changes only the settings shown. The preset's other options (wobble, timings, image settings) are reset. To keep them, **Assign** the preset to a layer, change it there, then click **Update**. If a layer in the document is already linked to the preset, Edit Cut starts from that layer and keeps its other options.
 
-### Update a preset from a layer {#update-preset}
+### Update a preset from a layer
 
 **Update** replaces the preset's settings with those of the layer in the **Layer** list, sub-layers and all. Linked layers follow.
 
-### Other actions {#other-preset-actions}
+### Other actions
 
 - **Edit Description** renames the preset (material, thickness or title, description). Linked layers follow the new name.
 - **Duplicate** makes a copy of the preset.
 - **Delete** removes the preset after you confirm. Linked layers keep their settings and are unlinked. **Save Library** makes the deletion permanent.
 
-## Save your changes {#save-library}
+## Save your changes
 
 Every edit to a library stays in the engine's memory until you save it. A dot (●) before the library name, and "unsaved changes", show it is not saved yet.
 
@@ -127,7 +127,7 @@ To save, open **Manage Library** and pick **Save Library**.
 
 > **Note:** An AI agent connected through MCP can read the libraries, edit a preset's finish notes and colour, apply hue steps to a preset, and write a bracket test box back to a preset. It cannot create, rename or delete presets, load or save a library, or change the hue step model. Its edits stay unsaved until you save the library yourself.
 
-## The Manage Library menu {#manage-library}
+## The Manage Library menu
 
 | Item | What it does |
 |---|---|
@@ -141,7 +141,7 @@ To save, open **Manage Library** and pick **Save Library**.
 | **Download finish data** | Downloads the photos, colours and notes of the presets (see below). |
 | **Import finish data…** | Reads finish data back in. |
 
-## Finish data {#finish-data}
+## Finish data
 
 OpenEtch can keep, for each preset, a photo of the result, the colour it comes out, the surface it was made for, the lens, focus, supplier, lot, date and notes. LightBurn's `.clb` has no place for these, so OpenEtch keeps them in a separate file next to the library (`<library name>.oefinish.json`). Your `.clb` stays LightBurn's own file.
 
@@ -149,11 +149,11 @@ The finish data is saved with **Save Library**. **Download finish data** and **I
 
 See [MOPA colour](mopa-colour.md) for how to record and use finishes.
 
-## Switch libraries {#switch-library}
+## Switch libraries
 
 Pick another library in the library list. As in LightBurn, a linked layer whose preset (same material, thickness or title, and description) also exists in the new library takes the new library's settings. A message says how many linked layers changed.
 
-## Common mistakes {#common-mistakes}
+## Common mistakes
 
 - **Forgetting to save.** Edits are lost when the engine restarts if you never pick **Save Library**.
 - **Editing a linked layer.** Unlink it first, or edit the preset.

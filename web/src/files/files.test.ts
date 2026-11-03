@@ -40,6 +40,7 @@ import {
   pushRecent,
   resultGroup,
   showNotesOnLoad,
+  notesWait,
   slice3dState,
   templateList,
   templateNameOf,
@@ -242,6 +243,15 @@ test("notes: read from the document, shown when a file opens with show on load",
   assert.equal(showNotesOnLoad("a#1", "a#1", n), false);
   assert.equal(showNotesOnLoad("a#1", "b#5", { ...n, show_on_load: false }), false);
   assert.equal(showNotesOnLoad("a#1", "b#5", { text: "  ", show_on_load: true }), false);
+  // Not over the production cockpit or the guide as a full sheet: there they wait for the workspace.
+  assert.equal(notesWait("#/cockpit", "tablet", 1180), true);
+  assert.equal(notesWait("#/cockpit?pin=1", "wide", 1920), true);
+  assert.equal(notesWait("#/guide/jigs", "phone", 390), true);
+  assert.equal(notesWait("#/guide", "tablet", 820), true);
+  // The guide beside the canvas leaves the workspace in view: the notes show at once, as on any other address.
+  assert.equal(notesWait("#/guide/jigs", "wide", 1920), false);
+  assert.equal(notesWait("", "phone", 390), false);
+  assert.equal(notesWait("#/cockpitx", "wide", 1920), false);
   // Opening starts a fresh timeline with one loading step.
   const step = (commands: string, revision: number) => ({ commands, revision });
   assert.equal(openedRevision({ steps: [step("doc.load", 13)] }), 13);

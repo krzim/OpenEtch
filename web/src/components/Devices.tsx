@@ -183,7 +183,7 @@ export function DeviceBar(p: {
         </p>
       )}
       {pending && (
-        <Modal help="devices-and-calibration#switch-device" title={t("dv.switchDevice")} onClose={() => setPending(null)}>
+        <Modal help="devices-and-calibration#switch-the-active-device" title={t("dv.switchDevice")} onClose={() => setPending(null)}>
           <SwitchConfirm
             next={pending}
             current={active}
@@ -461,7 +461,7 @@ export function DevicesWindow(p: {
 
   return (
     <Modal
-      help="devices-and-calibration#devices-window"
+      help="devices-and-calibration#open-the-devices-window"
       title={t("dv.devices")}
       wide
       // While the device settings are open, Escape closes only them (every Modal listens on the window).

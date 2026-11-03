@@ -14,7 +14,7 @@ Use it to colour one part of a drawing: the ring between two circles on a coin, 
 
 The Two-tone MOPA coin example's coloured ring was made this way (see [Templates](templates.md#example-projects)).
 
-## Fill an area {#fill-an-area}
+## Fill an area
 
 1. Click **Fill Region** in the **Modify** group. On the phone it is in the tool strip.
 2. In the bar, choose the **Layer** for the new shape.
@@ -24,14 +24,14 @@ The Two-tone MOPA coin example's coloured ring was made this way (see [Templates
 
 The lines are every vector shape on a visible layer, output on or off: shapes, paths and text (by its outline). Where lines cross, they split the areas. Images are not lines.
 
-## Fill several areas at once {#fill-several-areas}
+## Fill several areas at once
 
 1. `Shift`+click each area to collect it. The bar shows **Collected: n**. `Shift`+click a collected area again to drop it.
 2. Click one more area, press `Enter`, or click **Add (n)**.
 
 All the collected areas are filled in one step, so one Undo removes them all. **Clear** forgets the collection; `Esc` clears it too, or leaves the tool when there is none.
 
-## Options {#fill-region-options}
+## Fill region options
 
 | Option | What it does |
 |---|---|
@@ -41,14 +41,14 @@ All the collected areas are filled in one step, so one Undo removes them all. **
 
 ![Fill Region highlighting the ring between the two rims of the Two-tone MOPA coin](img/fill-region-bar.webp)
 
-## On a touch screen {#fill-region-on-touch}
+## On a touch screen
 
 1. Tap inside an area. It lights up.
 2. Tap it again, or tap **Add**, to fill it.
 
 A tap in another area shows that one instead. The modifier bar has no buttons for Fill Region, so on a touch screen you fill one area at a time. With a keyboard attached, hold `Shift` and tap to collect areas, as on a computer.
 
-## When it does not fill {#fill-region-messages}
+## When it does not fill
 
 When a click or a tap does not find an area, the bar under the canvas says why. With several areas collected, the message starts with the point's number, for example **Point 2: That is on a line: click inside an area**.
 
@@ -57,14 +57,14 @@ When a click or a tap does not find an area, the bar under the canvas says why. 
 
 A failed fill changes nothing.
 
-## Tips {#fill-region-tips}
+## Tips
 
 - To leave some shapes out of the boundary, hide their layer first. Fill Region uses only lines on visible layers.
 - Curves become straight pieces within 0.01 mm, which is far finer than the laser's spot.
 - The new shape is an ordinary closed path. You can move it, offset it or edit its nodes.
 - To fill the new shape with hatch lines when it burns, put it on a layer in **Fill** mode. On a **Line** layer it only burns its outline.
 
-## Before you burn {#fill-region-energy}
+## Before you burn
 
 A filled area takes much more energy than an outline. Before you test a new fill setting, work out the energy density:
 

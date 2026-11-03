@@ -232,7 +232,7 @@ function CounterCard({ s, job, report }: { s: ProductionStatus; job: ReturnType<
   const c = counterText(s.cycle);
   return (
     <section className="cockpit-card cockpit-counter">
-      <h3>{t("prod.done")} <HelpLink to="production-cockpit#counter-and-stop-at" topic={t("prod.done")} /></h3>
+      <h3>{t("prod.done")} <HelpLink to="production-cockpit#the-done-card" topic={t("prod.done")} /></h3>
       <div className="cc-count" aria-live="polite">
         {c.text}
       </div>
@@ -264,7 +264,7 @@ function SlotsCard({ s, report }: { s: ProductionStatus; report: (e: unknown) =>
       .catch(report);
   return (
     <section className="cockpit-card cockpit-next">
-      <h3>{t("prod.next")} <HelpLink to="production-cockpit#next-card" topic={t("prod.next")} /></h3>
+      <h3>{t("prod.next")} <HelpLink to="production-cockpit#the-next-card" topic={t("prod.next")} /></h3>
       {plan.slots.length === 0 ? (
         <p className="hint">{t("prod.noSlots")}</p>
       ) : (
@@ -322,7 +322,7 @@ function StatsCard({ s, act, busy }: { s: ProductionStatus; act: (fn: () => Prom
   const m = s.maintenance;
   return (
     <section className="cockpit-card cockpit-stats">
-      <h3>{t("prod.times")} <HelpLink to="production-cockpit#times-card" topic={t("prod.times")} /></h3>
+      <h3>{t("prod.times")} <HelpLink to="production-cockpit#the-times-card" topic={t("prod.times")} /></h3>
       <dl className="cs-times">
         <dt>{t("prod.lastBurn")}</dt>
         <dd>{shortDuration(s.cycle.last_burn_s)}</dd>

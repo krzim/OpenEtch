@@ -14,14 +14,14 @@ This guide shows you how to use the app on a PC, a MacBook, an iPad and a phone.
 
 New to OpenEtch? Follow [Your first job](getting-started.md#your-first-job): one job from opening an example to the finished burn, step by step.
 
-## Find a topic {#find-a-topic}
+## Find a topic
 
 - **Contents** lists every page, grouped by section.
 - Type in **Search the guide** to search page titles, headings and text.
 - A small **?** button next to a panel, a dialog or a tool bar opens the guide at the part that explains it.
 - Pages marked **Needs a laser** only matter when a laser is connected.
 
-## Contents {#contents}
+## Contents
 
 **Getting started**
 
@@ -75,7 +75,7 @@ New to OpenEtch? Follow [Your first job](getting-started.md#your-first-job): one
 - [Keyboard shortcuts](keyboard-shortcuts.md): Every keyboard shortcut in OpenEtch, how to open the list, how to change a key, and which keys browsers keep for themselves.
 - [Troubleshooting](troubleshooting.md): Fixes for common problems: cannot connect, access token, no laser, refused starts, slow preview, missing fonts after a LightBurn import, wrong field size, bug reports, logs and updates.
 
-## Open the guide {#open-the-guide}
+## Open the guide
 
 To open the guide from the app:
 
@@ -94,7 +94,7 @@ When you open the guide with a **?** inside a dialog, the dialog stays open: bes
 
 ![The user guide open beside the canvas on a MacBook, with the Two-tone MOPA coin example on the canvas](img/guide-beside-canvas.webp)
 
-## How OpenEtch fits together {#how-it-fits-together}
+## How OpenEtch fits together
 
 OpenEtch has two parts.
 
@@ -107,7 +107,7 @@ AI agents can connect to the engine too, through its MCP endpoint. An agent can 
 
 > **Note:** Many features have so far only run on the engine's simulator, not on a real laser. Settings in this guide are starting points to test on your own material, never guaranteed results.
 
-## How this guide is organised {#how-the-guide-is-organised}
+## How this guide is organised
 
 The pages are in six sections, in the order you are likely to need them:
 
@@ -122,7 +122,7 @@ Every page is listed by section under [Contents](#contents) near the top of this
 
 Some pages only matter when a laser is connected. A copy of OpenEtch made for design only can leave those pages out.
 
-### How the pages are written {#conventions}
+### How the pages are written
 
 - Buttons, menus and messages are written in **bold**, exactly as the app shows them.
 - A menu path such as **File > Save as…** means: open the **File** menu, then choose **Save as…**

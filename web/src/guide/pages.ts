@@ -2,7 +2,7 @@
 // previous / next, the sections a "?" button can link to, and search over titles, headings and text. Pure (the
 // markdown comes in as strings: guide/content.ts bundles it, the tests read it with fs); tested in pages.test.ts.
 
-import { blocksText, inlineText, parseDoc, type Block } from "./markdown.ts";
+import { ANCHOR_CHARS, blocksText, inlineText, parseDoc, type Block } from "./markdown.ts";
 
 /** The guide's sections, in reading order (front matter `section:`). */
 export const SECTIONS = ["Getting started", "Designing", "Layers and materials", "Running jobs", "Production", "Setup and reference"] as const;
@@ -107,13 +107,16 @@ export function anchorsOf(p: GuidePage): Set<string> {
   return new Set(p.headings.map((h) => h.id));
 }
 
-/** Whether `target` ("slug" or "slug#anchor") names a page and, if given, one of its headings. */
+const TARGET = new RegExp(String.raw`^([a-z0-9][a-z0-9-]*)(?:#(${ANCHOR_CHARS}))?$`, "u");
+
+/** Whether `target` ("slug" or "slug#anchor") names a page and, if given, one of its headings (by the id GitHub gives
+ *  the heading: markdown.ts slugify, "## Cut settings" -> "cut-settings"). */
 export function resolveTarget(g: Guide, target: string): { ok: true } | { ok: false; why: string } {
-  const m = /^([a-z0-9][a-z0-9-]*)(?:#([A-Za-z][\w-]*))?$/.exec(target);
+  const m = TARGET.exec(target);
   if (!m) return { ok: false, why: `"${target}" is not "page" or "page#anchor"` };
   const p = g.bySlug.get(m[1]);
   if (!p) return { ok: false, why: `no page docs/guide/${m[1]}.md` };
-  if (m[2] && !anchorsOf(p).has(m[2])) return { ok: false, why: `no heading {#${m[2]}} in docs/guide/${m[1]}.md` };
+  if (m[2] && !anchorsOf(p).has(m[2])) return { ok: false, why: `no heading with the id "${m[2]}" in docs/guide/${m[1]}.md (a heading's id is its text the GitHub way)` };
   return { ok: true };
 }
 
@@ -241,7 +244,7 @@ export function searchGuide(g: Guide, query: string, designOnly: boolean, limit 
 // --- the start page's contents (GitHub readers have no viewer) --------------------------------------------------------
 
 /** The heading that starts the generated contents of index.md (everything after it is rewritten). */
-export const CONTENTS_HEADING = "## Contents {#contents}";
+export const CONTENTS_HEADING = "## Contents";
 
 /** The contents list of index.md: every other page by section, with its summary. */
 export function contentsMarkdown(g: Guide): string {

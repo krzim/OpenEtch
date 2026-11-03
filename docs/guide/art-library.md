@@ -12,7 +12,7 @@ The Art Library keeps artwork you use again and again: logos, borders, icons, a 
 
 The Art Library is a window on a computer or tablet. It is not on the phone.
 
-## Open the Art Library {#the-art-library-window}
+## Open the Art Library
 
 Do one of these:
 
@@ -24,7 +24,7 @@ The window shows the current **Library** at the top, with a search box and the i
 
 ![The Art Library window with a library of items](img/art-library-window.webp)
 
-## Make or load a library {#libraries}
+## Make or load a library
 
 - **New**: creates a new, empty library. Give it a name.
 - **Load**: loads a library file, either OpenEtch's .oeart or LightBurn's .lbart.
@@ -37,7 +37,7 @@ The window shows the current **Library** at the top, with a search box and the i
 
 A library name cannot contain `\ / : * ? " < > |`, or start or end with a dot.
 
-## Add items {#add-items}
+## Add items
 
 To add shapes from your design:
 
@@ -49,7 +49,7 @@ The item keeps the artwork only, not the cut settings.
 
 To add a file as an item, click **Import…** and pick it. The library takes SVG, DXF, PDF, AI, images, LightBurn .lbrn2 files and more.
 
-## Add art to your project {#insert-art}
+## Add art to your project
 
 - Drag an item onto the canvas. It lands centred where you drop it.
 - Or double-click it, or right-click it and choose **Add to project**. It lands at the centre of the field.
@@ -60,7 +60,7 @@ The art's shapes go onto the layer with the same colour. If there is none, OpenE
 
 On a tablet, tap an item to select it, then tap its **Insert** button. Items cannot be dragged on a touch screen.
 
-## Manage items {#manage-items}
+## Manage items
 
 Right-click an item (long-press on a tablet, or tap its ⋯ button) for:
 
@@ -71,7 +71,7 @@ Right-click an item (long-press on a tablet, or tap its ⋯ button) for:
 
 Type in **Search items** to find an item by name.
 
-## LightBurn art libraries {#lightburn-art-libraries}
+## LightBurn art libraries
 
 OpenEtch can load a LightBurn .lbart library with **Load**, import one into the current library with **Import…**, and save a library as .lbart with **Download .lbart**. If the engine cannot read .lbart files, it says so; update the engine.
 

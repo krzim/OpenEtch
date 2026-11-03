@@ -115,7 +115,7 @@ object with exactly one action key:
 | `{ "menu": ["File", "Laser", "Devices"] }` | Open a menu path (desktop ribbon / top bar) |
 | `{ "type": "text", "into"?: target }` | Type into the focused field, or into `into` (its text is selected first) |
 | `{ "key": "Ctrl+Shift+Z" }` | A key with modifiers (`Ctrl`, `Alt`, `Shift`, `Meta`/`Cmd`); `Escape`, `Enter`, `Delete`, arrows, `F1`... |
-| `{ "hash": "#/guide/the-workspace#ribbon" }` | Go to a hash route (the guide, `#/cockpit`) |
+| `{ "hash": "#/guide/the-workspace#the-ribbon" }` | Go to a hash route (the guide, `#/cockpit`) |
 | `{ "wait": ".selector" }` / `{ "wait": 500 }` | Wait for a visible element (up to 10 s), or a number of ms |
 | `{ "select": "all" }`, `"none"` or `["Name", "obj-3"]` | Select shapes (several need a keyboard: desktop only) |
 | `{ "workspace": "design" }` / `"laser"` | Switch workspace (on a phone: the Canvas / Job tab) |

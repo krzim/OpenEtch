@@ -12,7 +12,7 @@ A camera looking at the work area lets you see the stock under your design and p
 
 Camera support is unverified on hardware. Treat the result as a placement aid and always frame before you burn.
 
-## Before you start {#before-you-start}
+## Before you start
 
 You need one of:
 
@@ -24,7 +24,7 @@ A browser can use its own camera only when the app is opened over HTTPS or at `l
 
 Calibration is kept per device. Keep the camera fixed once it is aligned; if it moves, align it again.
 
-## Open the Camera window {#camera-window}
+## Open the Camera window
 
 - **Design workspace:** in the ribbon, open **Laser Tools** and choose **Camera**.
 - **Laser workspace:** in the Laser window, open **Laser Tools** and choose **Camera**.
@@ -36,7 +36,7 @@ The window has four pages: **Capture**, **Lens**, **Alignment** and **Overlay**.
 
 ![The Camera window on the Alignment page](img/camera-window.webp)
 
-## Capture a frame {#capture}
+## Capture a frame
 
 On the **Capture** page, use one of:
 
@@ -46,7 +46,7 @@ On the **Capture** page, use one of:
 
 "Camera frame updated." confirms the new frame.
 
-## Calibrate the camera lens {#camera-lens}
+## Calibrate the camera lens
 
 Lens calibration removes the curve a camera lens puts into straight lines. Do it once per camera, before aligning.
 
@@ -59,13 +59,13 @@ Lens calibration removes the curve a camera lens puts into straight lines. Do it
 
 The Lens state then reads "calibrated", with the remaining error in pixels. Smaller is better.
 
-## Align the camera to the field {#camera-alignment}
+## Align the camera to the field
 
 Alignment tells OpenEtch where each camera pixel is in the galvo field. You burn a few marks at known places, capture them, and match them up.
 
 > **Warning:** Alignment marks are real burns. Wear eye protection rated for your laser's wavelength, run the fume extraction and stay with the job. Work out the energy density of the layer first: J/mm² = power W ÷ (speed mm/s × line interval mm). On stainless with a 60 W MOPA, roughly 2 to 15 J/mm² marks without melting; more can melt or warp thin stock. Use settings you have tested on scrap.
 
-### With camera markers {#camera-markers}
+### With camera markers
 
 Camera markers are square codes that the engine can find in the frame by itself.
 
@@ -78,7 +78,7 @@ Camera markers are square codes that the engine can find in the frame by itself.
 
 Calibrating the lens first gives the best result.
 
-### By clicking marks {#camera-manual-alignment}
+### By clicking marks
 
 1. Select the layer the marks should go on. **Add alignment marks** stays off until a layer is selected.
 2. On the **Alignment** page, click **Add alignment marks**. Four crosses are added at known positions, a third of the field width from the centre in X and Y.
@@ -89,7 +89,7 @@ Calibrating the lens first gives the best result.
 
 **Clear points** starts the clicking again. The Alignment state then shows the remaining error in mm and the number of points.
 
-## Show the camera image on the canvas {#camera-overlay}
+## Show the camera image on the canvas
 
 1. On the **Overlay** page, tick **Show camera image on the canvas**.
 2. Set the **Opacity**.
@@ -97,11 +97,11 @@ Calibrating the lens first gives the best result.
 
 The overlay needs an alignment. Without one, the page says "Align the camera first."
 
-## Forget calibration {#forget-calibration}
+## Forget calibration
 
 **Forget calibration** (on the **Alignment** page) removes the lens calibration and the alignment for this device. Use it after you move or change the camera.
 
-## Limits {#camera-limits}
+## Limits
 
 - Unverified on hardware.
 - The overlay is a still frame, not live video. Capture again after you move the stock.

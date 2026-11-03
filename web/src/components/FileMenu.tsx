@@ -1084,7 +1084,7 @@ function ImportDialog(p: { file: FileActions; initialFiles: File[]; initialMode:
   const edit = () => setField(fmt((shared ?? defaults[0]).fieldMm, 3));
   return (
     <Modal
-      help="files-and-projects#import-lightburn"
+      help="files-and-projects#open-a-lightburn-file"
       title={t("fm.lbTitle")}
       onClose={p.onClose}
       footer={
@@ -1221,7 +1221,7 @@ function ExportDialog({ file, onClose }: { file: FileActions; onClose: () => voi
   };
   return (
     <Modal
-      help="files-and-projects#export-lightburn"
+      help="files-and-projects#save-as-a-lightburn-file"
       title={t("fm.exportTitle")}
       onClose={onClose}
       footer={

@@ -117,7 +117,7 @@ export const ES_JIGS: Messages = {
   "pf.restore": "Volver a avisar de las comprobaciones desactivadas ({n})",
   "pf.cutBeforeFill": "La capa «{cut}» (líneas) se marca antes que la capa «{fill}» (relleno) donde se solapan: si las líneas cortan, la pieza puede moverse antes de rellenarse.",
   "pf.emptyLayer": "La capa «{layer}» tiene salida activada pero está vacía.",
-  "pf.duplicates": "{count} formas son copias exactas en la misma capa y se marcarían dos veces ({names}). Edición › Eliminar duplicados las quita.",
+  "pf.duplicates": "{count} formas son copias exactas en la misma capa y se marcarían dos veces ({names}). Modificar > Delete duplicates (Alt+D) las quita.",
   "pf.keepOut": "«{name}» en la capa «{layer}» entra en la zona prohibida «{zone}».",
   "pf.noCsv": "{names} usa columnas CSV pero no hay ningún archivo CSV cargado: se marcaría vacío.",
   "pf.csvPastEnd": "{names} leería la fila CSV {row}, después de la última ({last}): se marcaría vacío.",

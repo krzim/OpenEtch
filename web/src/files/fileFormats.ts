@@ -7,6 +7,8 @@
 
 import { geometryCmds, toPathData } from "../geometry.ts";
 import type { CutSettings, DocObject, GDocument, Layer } from "../api/types.ts";
+import { guideMode, parseGuideHash } from "../guide/route.ts";
+import { isCockpitHash } from "../production/model.ts";
 
 /** Largest file `POST /api/document/import` takes (the engine's MAX_IMPORT_BYTES). */
 export const MAX_IMPORT_BYTES = 100 * 1024 * 1024;
@@ -585,6 +587,16 @@ export function notesOf(doc: GDocument | null | undefined): Notes {
  */
 export function showNotesOnLoad(prevKey: string | null | undefined, key: string, notes: Notes): boolean {
   return prevKey !== key && notes.show_on_load && notes.text.trim().length > 0;
+}
+
+/**
+ * Whether notes due to show on load wait instead: while the production cockpit is up (`#/cockpit`: an example opened
+ * on another computer must not cover the operator's screen) or the guide fills the screen (`#/guide...` as a sheet).
+ * They show once the workspace is back; Window > Notes opens them any time.
+ */
+export function notesWait(hash: string, layout: string, viewW: number): boolean {
+  if (isCockpitHash(hash)) return true;
+  return parseGuideHash(hash) !== null && guideMode(layout, viewW) === "sheet";
 }
 
 /**

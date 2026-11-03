@@ -79,7 +79,7 @@ export function DogboneDialog(p: Common & { ids: string[] }) {
   };
   return (
     <Modal
-      help="drawing-and-editing#tools-menu"
+      help="drawing-and-editing#the-tools-menu"
       title={t("dog.title")}
       onClose={p.onClose}
       onSubmit={() => void ok()}
@@ -129,7 +129,7 @@ export function ResizeSlotsDialog(p: Common & { ids: string[] }) {
   };
   return (
     <Modal
-      help="drawing-and-editing#tools-menu"
+      help="drawing-and-editing#the-tools-menu"
       title={t("slots.title")}
       onClose={p.onClose}
       onSubmit={() => void apply(true)}
@@ -339,7 +339,7 @@ export function UserToolsDialog(p: { tools: UserTool[]; save: (tools: UserTool[]
   const setD = (patch: Partial<Draft>) => setEditing((e) => (e ? { ...e, draft: { ...e.draft, ...patch } } : e));
   return (
     <Modal
-      help="drawing-and-editing#tools-menu"
+      help="drawing-and-editing#the-tools-menu"
       title={t("ut.title")}
       onClose={p.onClose}
       wide

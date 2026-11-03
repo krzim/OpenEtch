@@ -377,7 +377,7 @@ export function PrefsBundlesDialog(p: { onClose: () => void; notify: Notify; rep
           ))}
         </div>
       </details>
-      <div className="section-label">{t("files.bundles")} <HelpLink to="settings#bundles" topic={t("files.bundles")} /></div>
+      <div className="section-label">{t("files.bundles")} <HelpLink to="settings#user-bundles" topic={t("files.bundles")} /></div>
       {PARTS.map((k) => (
         <CheckField key={k} label={partLabel(k)} checked={parts[k]} onChange={(v) => setParts((x) => ({ ...x, [k]: v }))} />
       ))}

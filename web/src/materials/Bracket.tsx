@@ -83,7 +83,7 @@ export function BracketDialog(p: { library: string; entryId: string; notify: Not
   );
   return (
     <WsModal
-      help="test-grids#bracket-test"
+      help="test-grids#bracket-test-of-a-preset"
       title={t("mat.bracketTitle", { path: entry.path })}
       onClose={p.onClose}
       onSubmit={() => void create()}

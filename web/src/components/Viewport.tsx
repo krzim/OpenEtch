@@ -1615,7 +1615,7 @@ export function Viewport(props: ViewportProps) {
           <HudItem id="vp-warn" slot="tr" rank={60} minW={160} maxW={360}>
             <div className="vp-overlay vp-warn" role="status">
               {offFieldText(t, outsideCount, galvo)}
-              <HelpLink to="preflight-and-keep-out#out-of-field" topic={t("guide.topic.offField")} />
+              <HelpLink to="preflight-and-keep-out#objects-outside-the-field" topic={t("guide.topic.offField")} />
             </div>
           </HudItem>
         ))}

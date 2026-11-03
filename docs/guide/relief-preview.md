@@ -14,7 +14,7 @@ It is display only. It reads the preview the Laser workspace already has, and ne
 
 > **Note:** Depths are estimates from the passes and powers, not a measurement. Use them to compare areas and check the order, not for exact depth.
 
-## Open the 3D relief preview {#open-relief}
+## Open the 3D relief preview
 
 1. Switch to the **Laser** workspace. On a phone, tap the **Job** tab.
 2. Make sure **Preview** is on (it is by default).
@@ -24,7 +24,7 @@ You can also search for "3D relief preview" in command search. It switches to th
 
 Leaving the Laser preview closes the 3D view.
 
-## The 3D relief preview window {#relief-window}
+## The 3D relief preview window
 
 ![The 3D relief preview of the palette-coin example, seen from the Low view](img/relief-preview-window.webp)
 
@@ -32,7 +32,7 @@ The window shows the job as a surface, with deeper areas lower. While it works i
 
 On a phone the window fills the screen and uses a coarser grid, so it stays quick.
 
-### Turn, pan and zoom {#relief-controls}
+### Turn, pan and zoom
 
 | Action | Mouse | Touch | Keys (click the view first) |
 |---|---|---|---|
@@ -47,13 +47,13 @@ The **Views** buttons jump to a set angle:
 - **Tilted**: from the operator's side, tilted.
 - **Low**: low across the surface. This shows depth best.
 
-### Play the job {#relief-timeline}
+### Play the job
 
 Under the view, a play button and a time slider run through the job's estimated time. Drag the slider to see the relief as it is at that moment, or press play to watch it build. The clock shows the time so far and the whole job's time.
 
 The line "Deepest so far … (whole job …)" gives the deepest point at the slider's position and at the end. Next to it, each layer shown is listed with its kind and number of passes.
 
-### Options {#relief-options}
+### Options
 
 | Option | What it does |
 |---|---|
@@ -64,7 +64,7 @@ The line "Deepest so far … (whole job …)" gives the deepest point at the sli
 
 > **Tip:** Set **Depth per pass** from a real test: burn a few passes on scrap, measure the depth, and divide by the passes.
 
-## What counts as relief {#relief-layers}
+## What counts as relief
 
 With **Relief layers only** ticked, the view shows:
 
@@ -75,7 +75,7 @@ With **Relief layers only** ticked, the view shows:
 
 Other fills and outlines add one pass depth to every spot their lines cross. If the job has no relief layers, the view shows every marking pass and says "This job has no 3D Sliced, grayscale depth-map or Z-step layer: every marking pass is shown."
 
-## Limits {#relief-limits}
+## Limits
 
 - Real removal depends on the material, the lens, focus and the source. The view does not know these.
 - The surface is a grid. Very fine detail is smoothed out, more so on a phone.

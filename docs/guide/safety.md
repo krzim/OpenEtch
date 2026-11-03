@@ -12,7 +12,7 @@ A fibre laser can blind you and start a fire in a fraction of a second. OpenEtch
 
 > **Warning:** OpenEtch is new software. Many features have only run on the simulator so far. Treat every setting and every number in this guide as a starting point to test on scrap, not as a guarantee.
 
-## Before every job {#before-every-job}
+## Before every job
 
 Go through this list each time, even for a repeat job:
 
@@ -20,14 +20,14 @@ Go through this list each time, even for a repeat job:
 2. Close the enclosure or fit the guards your machine has.
 3. Switch on the fume extractor.
 4. Check focus and material height.
-5. Check the energy density of every layer you have changed (see [Work out the energy density first](#energy-density)).
+5. Check the energy density of every layer you have changed (see [Work out the energy density first](#work-out-the-energy-density-first)).
 6. Preview the job and frame it with the red pointer (see [Preview and framing](preview-and-framing.md)).
 7. Know where the STOP button and your machine's hardware emergency stop are.
 8. Stay with the machine until the job has finished.
 
-You can make OpenEtch ask you to tick a list like this before every burn with the Job Checklist (see [Job Checklist and Require framing](running-a-job.md#job-checklist)).
+You can make OpenEtch ask you to tick a list like this before every burn with the Job Checklist (see [Job Checklist and Require framing](running-a-job.md#job-checklist-and-require-framing)).
 
-## Eye protection {#eye-protection}
+## Eye protection
 
 The marking beam of a fibre laser is infrared (around 1064 nm). You cannot see it, and a reflection from shiny metal can damage your eyes before you blink.
 
@@ -35,7 +35,7 @@ The marking beam of a fibre laser is infrared (around 1064 nm). You cannot see i
 - Everyone in the room needs eyewear while the laser can fire.
 - The red pointer used for framing is a separate, low-power visible light. Seeing it does not mean the marking beam is safe to look at.
 
-## Fume extraction {#fume-extraction}
+## Fume extraction
 
 Marking metal, plastic, coatings and anodising makes fumes and fine dust that are harmful to breathe. Some plastics give off corrosive or toxic gases.
 
@@ -43,7 +43,7 @@ Marking metal, plastic, coatings and anodising makes fumes and fine dust that ar
 - Never mark PVC or other materials that contain chlorine.
 - OpenEtch can switch the extractor for you, keep it on after a job and refuse to start until it is running. See [Extractor](extractor.md).
 
-## Never leave a job unattended {#never-unattended}
+## Never leave a job unattended
 
 Stay with the machine for the whole job. A fire, or a part that shifts, needs a person there to press STOP.
 
@@ -51,10 +51,10 @@ This matters most for long and repeating work:
 
 - **Repeat** and **Run continuously** keep marking with no further approval (see [Run options](running-a-job.md#run-options)).
 - A job that pauses at a layer for you waits up to an hour (see [Pause at a layer](running-a-job.md#pause-at-a-layer)).
-- The foot switch loop starts framing again after every burn (see [The foot switch](running-a-job.md#foot-switch)).
+- The foot switch loop starts framing again after every burn (see [The foot switch](running-a-job.md#the-foot-switch-frame-then-burn)).
 - Notifications to your phone (see [Notifications](notifications.md)) tell you a job has finished or is waiting. They are not a reason to walk away while it burns.
 
-## Work out the energy density first {#energy-density}
+## Work out the energy density first
 
 Before you burn a new setting or a test grid, work out how much energy each setting puts into the surface. This is the energy density, in joules per square millimetre (J/mm²). Too much melts or warps the work, and much too much can start a fire.
 
@@ -85,11 +85,11 @@ Things that change the result:
 
 For a test grid, check the corner with the highest power, the lowest speed and the smallest interval before you burn anything. See [Test grids](test-grids.md).
 
-> **Tip:** The **Shade by energy** option in the **Toolpath** card draws the passes that put in more energy darker. It only compares passes with each other; it does not show J/mm². See [The Toolpath card](preview-and-framing.md#toolpath-card).
+> **Tip:** The **Shade by energy** option in the **Toolpath** card draws the passes that put in more energy darker. It only compares passes with each other; it does not show J/mm². See [The Toolpath card](preview-and-framing.md#the-toolpath-card).
 
 ![The right end of the top bar with the status chip showing Framing, its Stop frame button, and the red STOP button](img/stop-button-topbar.webp)
 
-## The STOP button {#stop}
+## The STOP button
 
 **STOP** ends any job or frame at once, ends the foot switch loop, and cancels every run that is waiting for approval. It is always allowed: nothing in OpenEtch, not even a pause at a layer or the production cockpit's lock, can hold it up.
 
@@ -111,30 +111,30 @@ After a stop, a message says what happened: **Stop sent.**, followed by how many
 
 > **Warning:** STOP is a software stop. It needs the engine to be reachable. Your machine's hardware emergency stop or key switch is the real guarantee. Make sure you can reach it at all times.
 
-### When the connection is lost {#lost-connection}
+### When the connection is lost
 
 If the app loses touch with the OpenEtch engine, a banner appears at the top: **Lost connection to the laser engine – reconnecting…** with **STOP may not reach the laser; use the hardware E-stop.** If the app has not reached the engine at all since it opened, the banner says **Cannot reach the laser engine – retrying…** instead.
 
 While you see this banner, assume STOP in the app will not work. Use the hardware emergency stop if anything is wrong.
 
-## Safety checks before a burn {#approval-gates}
+## Safety checks before a burn
 
 Every burn has to be approved by a person in the OpenEtch app (or with the foot switch). OpenEtch checks these things each time, whichever way the burn was started:
 
 | Check | What it does | Where to set it |
 |---|---|---|
-| Approval | A person approves with the operator PIN, or presses **Start** in the app or the foot switch. See [How a burn is approved](running-a-job.md#approval-modes). | When the engine is started |
+| Approval | A person approves with the operator PIN, or presses **Start** in the app or the foot switch. See [How a burn is approved](running-a-job.md#how-a-burn-is-approved). | When the engine is started |
 | **Job Checklist** | Every item must be ticked before the burn. | Device settings, **Job** page |
 | **Require framing before start** | The job must have been framed on this device since its last edit. | Device settings, **Job** page |
 | **Door Protect input** | No run is approved while the enclosure is open, and a running job aborts if it opens. The door is read again before each part of a job that pauses at a layer. | Device settings, **Ports and laser** page |
 | **Stop marking input** | An external button that aborts a running job. | Device settings, **Ports and laser** page |
 | Extractor check | Start can be refused until the extractor runs. | Preferences, see [Extractor](extractor.md) |
 | Keep-out zones | A job that would mark inside a keep-out zone is refused. | See [Keep-out zones](preflight-and-keep-out.md#keep-out-zones) |
-| **Stop at** | No run is approved once the job counter reaches it. | The **Laser** window, see [Job counter](running-a-job.md#job-counter) |
+| **Stop at** | No run is approved once the job counter reaches it. | The **Laser** window, see [Job counter](running-a-job.md#job-counter-and-stop-at) |
 
 To open the device settings on a computer or tablet: **File > Laser > Devices…**, select the device, then **Edit…** The **Job** page can only be changed for the active device. On a phone, open **More > Desktop features** and tap **Devices, device settings and the lens wizard…** See [Devices and calibration](devices-and-calibration.md).
 
-## What AI agents can and cannot do {#ai-agents}
+## What AI agents can and cannot do
 
 OpenEtch has an MCP server so AI agents can help you design. An agent connected over MCP can **never** approve or start a burn. The engine checks this itself: the approval and Start endpoints refuse any request from an MCP client, the MCP server has no way to arm the laser, and agents never see or handle the operator PIN.
 
@@ -150,9 +150,9 @@ A run an agent prepares shows under **Waiting for approval** in the **Laser** wi
 
 > **Warning:** Because a jig's keep-out zones are part of the design, an agent can add, switch off or remove them. Zones saved with the device can only be changed in the app. Check the hatched zones on the canvas before you approve a run an agent prepared.
 
-> **Note:** These limits are for MCP. If you let an agent control a web browser or your desktop, it could press buttons in the app like a person. A program on the engine's computer that is not using MCP could also imitate the app's Start request when the engine runs without a PIN. If that matters to you, run the engine with the operator PIN (see [How a burn is approved](running-a-job.md#approval-modes)) and never tell an agent the PIN. See [AI agents](ai-agents.md).
+> **Note:** These limits are for MCP. If you let an agent control a web browser or your desktop, it could press buttons in the app like a person. A program on the engine's computer that is not using MCP could also imitate the app's Start request when the engine runs without a PIN. If that matters to you, run the engine with the operator PIN (see [How a burn is approved](running-a-job.md#how-a-burn-is-approved)) and never tell an agent the PIN. See [AI agents](ai-agents.md).
 
-## Simulator and status badges {#simulator}
+## Simulator and status badges
 
 - **Ready (simulator)** in the **Laser** window, or **Idle (simulator)** on the status chip, means the engine drives a simulated laser. Nothing fires.
 - **SIMULATOR TEST PIN** means the engine was started with a test PIN for the simulator. It is refused on a real laser.

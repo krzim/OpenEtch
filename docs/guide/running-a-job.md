@@ -10,7 +10,7 @@ summary: Start or approve a burn, use the foot switch to frame then burn, pause,
 
 This page covers everything from pressing **Start** to the job finishing. Read [Laser safety](safety.md) first, and check the job with [Preview and framing](preview-and-framing.md).
 
-## How a burn is approved {#approval-modes}
+## How a burn is approved
 
 Every burn needs a person to approve it. The engine is started in one of two approval modes. The **Approval** row in the **Machine** card (in the **Machine and runs** window) shows which one yours uses.
 
@@ -21,11 +21,11 @@ Every burn needs a person to approve it. The engine is started in one of two app
 
 The mode is chosen when the engine starts (`--approval pin` or `--approval click`), not in the app. Every other check (the Job Checklist, Require framing, the door input, Stop at, keep-out zones) works the same in both modes.
 
-The engine can also be started with a physical confirmation input (`--confirm-input`). Then every approved run also waits for a press of that input; see [Request and approve a run](#approve-pin).
+The engine can also be started with a physical confirmation input (`--confirm-input`). Then every approved run also waits for a press of that input; see [Operator PIN approval](#operator-pin-approval).
 
-> **Note:** An AI agent connected over MCP can prepare a run, but can never approve or start one. See [What AI agents can and cannot do](safety.md#ai-agents).
+> **Note:** An AI agent connected over MCP can prepare a run, but can never approve or start one. See [What AI agents can and cannot do](safety.md#what-ai-agents-can-and-cannot-do).
 
-## The Laser window {#laser-window}
+## The Laser window
 
 The **Laser** window holds the job controls. Where it is:
 
@@ -38,9 +38,9 @@ The **Laser** window holds the job controls. Where it is:
 From top to bottom, the window has:
 
 - The device list and the laser's state, for example **Ready** or **Ready (simulator)**, with the number of runs waiting (**N pending**).
-- **Steps to burn**, in Beginner Mode (see [Steps to burn](#steps-to-burn)).
+- **Steps to burn**, in Beginner Mode (see [Steps to burn](#steps-to-burn-beginner-mode)).
 - The job progress, with **Pause**, **Resume** and **End after this run**.
-- **Frame** and **Stop frame** (see [Frame the job](preview-and-framing.md#framing)).
+- **Frame** and **Stop frame** (see [Frame the job](preview-and-framing.md#frame-the-job)).
 - Without a PIN, the Job Checklist, if it is on.
 - Pre-flight warnings, then **Start** (or **Request run**) and **STOP**.
 - Runs waiting for approval (**Waiting for approval**).
@@ -54,7 +54,7 @@ On a phone, **Frame** comes right after the laser's state, and **Start** is pinn
 
 ![The phone Job sheet at its lowest height, with Start pinned under the header and the preview player over the canvas](img/phone-job-sheet.webp)
 
-## Start a job (no PIN) {#start}
+## Start a job (no PIN)
 
 Use this when the **Approval** row says **Start in the app**.
 
@@ -73,12 +73,12 @@ The button's label tells you what will burn and, for the whole job, roughly how 
 |---|---|
 | **Start · all · ~2:14** | The whole job, about 2 minutes 14 seconds |
 | **Start · selection (3)** | Only the 3 selected objects (**Cut selected graphics** is on) |
-| **Start · from 120** | From segment 120 (see [Start from a point](preview-and-framing.md#start-here)) |
+| **Start · from 120** | From segment 120 (see [Start from a point](preview-and-framing.md#start-from-a-point)) |
 | **Start · region** | Only the re-mark region (see [Re-mark a region](remark-region.md)) |
 
 You can also press `Alt+S`. From the Design workspace this opens the **Laser** window first, then starts. If the Job Checklist is on and not ticked, it opens the checklist instead of starting.
 
-### When Start is greyed out {#start-disabled}
+### When Start is greyed out
 
 The reason shows under the button:
 
@@ -88,13 +88,13 @@ The reason shows under the button:
 | **Waiting for the laser's status…** | Wait a moment. |
 | **No laser connected.** | Connect the laser, or check the device. |
 | **A job is running. Wait for it, or press STOP.** | Wait, or stop the job. |
-| **Target reached (12 / 12): reset the count or raise Stop At to go on.** | Reset the count, or raise **Stop at** (see [Job counter and Stop at](#job-counter)). |
+| **Target reached (12 / 12): reset the count or raise Stop At to go on.** | Reset the count, or raise **Stop at** (see [Job counter and Stop at](#job-counter-and-stop-at)). |
 | **Framing: stop the frame first (Stop frame or Esc).** | Stop the frame. |
 | **Nothing to burn: the document is empty.** | Add something to burn. |
 | **Tick every item of the Job Checklist first.** | Tick the checklist above **Start**. |
 | **The engine is shutting down: nothing new starts until it is back.** | Wait for the engine to restart. |
 
-### When Start is refused {#start-refused}
+### When Start is refused
 
 If the engine refuses a Start, **Start refused:** and the reason show above the button until you click **Dismiss** or press **Start** again. Common reasons:
 
@@ -108,7 +108,7 @@ If the engine refuses a Start, **Start refused:** and the reason show above the 
 
 A keep-out zone or an object outside the field also refuses the job, with a message that says which.
 
-## Request and approve a run (operator PIN) {#approve-pin}
+## Operator PIN approval
 
 Use this when the **Approval** row says **Operator PIN**.
 
@@ -138,7 +138,7 @@ If the engine was started with a physical confirmation input, the run then shows
 
 The **Pending runs** card in the **Machine and runs** window says how approval works on this engine. With nothing waiting, it says where runs wait: in the **Laser** window. While runs are waiting, it points you there, where you approve them.
 
-## Job Checklist and Require framing {#job-checklist}
+## Job Checklist and Require framing
 
 Two optional checks make sure nobody burns in a hurry. Both are set per device: on a computer or tablet, open **File > Laser > Devices…**, select the device, click **Edit…** and go to the **Job** page. You can only change them for the active device.
 
@@ -151,7 +151,7 @@ The **Job** page also has **Play sound when a job finishes** and **Mute in this 
 
 > **Note:** A foot cannot tick a checklist. With the Job Checklist on, every foot switch burn is refused; use **Start** in the app. The foot switch still frames, and the **Laser** window says so: **Foot switch (input N): press to frame the job. It cannot burn while the Job Checklist is on: tick the list and use Start.**
 
-## The foot switch: frame, then burn {#foot-switch}
+## The foot switch: frame, then burn
 
 Without a PIN, a foot switch wired to the device's **Start marking input** (on the **Ports and laser** settings page) gives you a hands-free loop: press to frame, press again to burn.
 
@@ -175,7 +175,7 @@ Safety rules the engine follows:
 
 For production work with a jig, see [Production cockpit](production-cockpit.md) and [Jigs](jigs.md).
 
-## Run options {#run-options}
+## Run options
 
 The run options under **Start** set how the next run goes. They are kept in this browser.
 
@@ -191,7 +191,7 @@ The line **Next run:** under the options sums them up, for example **Next run: 5
 
 > **Warning:** **Repeat** and **Run continuously** keep firing with no further approval. Stay at the machine.
 
-## Watch a running job {#job-progress}
+## Watch a running job
 
 While a job runs, the top of the **Laser** window shows:
 
@@ -200,7 +200,7 @@ While a job runs, the top of the **Laser** window shows:
 - A progress bar and percentage.
 - Time elapsed and time left (or **Finishing…**), and the packets sent to the board.
 
-### The status chip {#status-chip}
+### The status chip
 
 The status chip sits just left of **STOP** in the top bar in every layout. It shows the laser's state, for example **Idle**, **Framing**, **Running 42% · 3:12**, **Paused 42%**, **Waiting for the foot switch** or **Waiting at a layer**, and how many runs wait for approval. It has a one-tap button for the action you most likely need: **Stop frame**, **Pause** or **Resume**.
 
@@ -208,21 +208,21 @@ Tap the chip to open the **Laser** window (on a phone, the **Job** sheet). On a 
 
 When a job ends, a message says how: **Job finished.**, **Job stopped before the end.**, **Job cancelled before it started.** or **Job failed.** A sound can play too: turn on **Play sound when a job finishes** on the device's **Job** settings page.
 
-## Pause, resume and stop {#pause-resume-stop}
+## Pause, resume and stop
 
 - **Pause** holds the job where it is. It is always allowed. Find it in the **Laser** window, on the status chip, or press `Pause`.
 - **Resume** continues a paused job. It is in the same places, and `Pause` toggles it. Only a person in the app can resume; an agent cannot.
-- **STOP** ends the job at once and cancels any runs waiting. A stopped job cannot be resumed. See [The STOP button](safety.md#stop).
+- **STOP** ends the job at once and cancels any runs waiting. A stopped job cannot be resumed. See [The STOP button](safety.md#the-stop-button).
 
 > **Note:** Pause and resume have been tested on the simulator. Check how your own machine behaves on scrap before you rely on pausing in the middle of a job.
 
-## End after this run {#end-after-this-run}
+## End after this run
 
 For a job that repeats or runs continuously, **End after this run** shows next to **Pause**. Click it and the job stops when the current run finishes, instead of starting another. The button then reads **Ending after this run**.
 
 ![The Waiting for you bar with Continue over the canvas, and the status chip reading Waiting at a layer](img/layer-pause-hud.webp)
 
-## Pause at a layer for the operator {#pause-at-a-layer}
+## Pause at a layer
 
 A job can stop before a layer and wait for you, for example to clean the part between a colour fill and a frost pass, flip it or change the jig.
 
@@ -252,7 +252,7 @@ Things to know:
 
 > **Note:** Pausing at a layer has been tested on the simulator, not yet on a real B6 laser.
 
-## Job counter and Stop at {#job-counter}
+## Job counter and Stop at
 
 The job counter, near the bottom of the **Laser** window, counts the runs this device has finished.
 
@@ -264,11 +264,11 @@ When the count reaches **Stop at**, you see **Count N has reached Stop At: reset
 
 Fill layers set to **Auto-rotate per job** turn their hatch angle by the job count, so the count also changes the next job's hatch.
 
-## Steps to burn (Beginner Mode) {#steps-to-burn}
+## Steps to burn (Beginner Mode)
 
 In Beginner Mode (turn it on in Preferences), the **Laser** window shows **Steps to burn**: **Preview**, **Frame** and **Start**, with a hint for the next step, for example **Enclosure closed and eyewear on? Then Start.** A frame counts for the design as it was framed; after an edit, frame again.
 
-## Machine and runs {#machine-and-runs}
+## Machine and runs
 
 On a computer or tablet, the **Machine and runs** window of the Laser workspace shows:
 
@@ -276,11 +276,11 @@ On a computer or tablet, the **Machine and runs** window of the Laser workspace 
 - **Active run**: the run that holds the machine.
 - **Pending runs**: how approval works on this engine, and a pointer to the **Laser** window while runs are waiting.
 - **Recent runs**: the last runs that ended, with any error. A cancelled run says **(stopped before it fired)**.
-- **Toolpath**: see [The Toolpath card](preview-and-framing.md#toolpath-card).
+- **Toolpath**: see [The Toolpath card](preview-and-framing.md#the-toolpath-card).
 
 On a phone these are further down the **Job** sheet. For the full history, see [Job ledger](job-ledger.md).
 
-## Common problems {#common-problems}
+## Common problems
 
 - **Start refused because the job was not framed.** **Require framing before start** is on. Frame the job (after your last edit) and press **Start** again.
 - **Document changed - request a new run.** Someone edited the design after the run was requested. Request a new run.

@@ -20,7 +20,7 @@ export function StepBar(p: StepInput) {
           : t("lz.stepStartHint");
   return (
     <div className="step-bar" role="group" aria-label={t("lz.steps")}>
-      <HelpLink to="running-a-job#steps-to-burn" topic={t("lz.steps")} />
+      <HelpLink to="running-a-job#steps-to-burn-beginner-mode" topic={t("lz.steps")} />
       <ol className="step-bar-list">
         {STEPS.map((id, i) => {
           const cur = s.current === id;

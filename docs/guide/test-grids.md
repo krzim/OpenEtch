@@ -19,7 +19,7 @@ Each test is added as ordinary shapes and layers, in one group, in one undo step
 
 > **Warning:** Wear eye protection rated for your laser's wavelength and run fume extraction. Never leave a test running unattended. Use scrap, not a finished part. Work out the energy density of the strongest box before you burn (below).
 
-## Check the energy density first {#energy-density}
+## Check the energy density first
 
 Energy density is how much energy each square millimetre of a fill receives. Too little and nothing marks. Too much and thin metal melts, warps or discolours around the mark.
 
@@ -46,7 +46,7 @@ On stainless steel with a 60 W MOPA, roughly 2 to 15 J/mm² marks without meltin
 
 > **Tip:** Check the strongest corner of the grid: the highest power with the lowest speed, lowest interval and most passes. If that box is in range, the rest are lower.
 
-## Material Test {#material-test}
+## Material Test
 
 A material test varies two settings across a grid. Each box gets its own layer, in a safe burn order. Labels mark the values beside the grid, in a single-line font on their own layer.
 
@@ -76,7 +76,7 @@ For MOPA colour, a frequency × Q-Pulse width grid at a fixed power and speed is
 
 **Create and request run** adds the test and asks for a run of only the test. Nothing fires yet: the message says "Approve it in the Laser window, under Waiting for approval." The waiting run shows in the Laser window under Start. A person approves it there, with the operator PIN when one is set (see [Running a job](running-a-job.md)). The button is greyed out when the active device cannot run jobs.
 
-### Material Test presets {#material-test-presets}
+### Material Test presets
 
 The **Preset** section at the top keeps whole test set-ups by name. Presets are kept by the engine, so every browser sees them.
 
@@ -86,7 +86,7 @@ The **Preset** section at the top keeps whole test set-ups by name. Presets are 
 - **Import .lbmt…** adds the presets from LightBurn's `material_test_presets.lbmt`. Names already taken get " (2)".
 - **Export .lbmt** downloads every preset in LightBurn's format. Spacing, label height and title are not in that file.
 
-## Interval Test {#interval-test}
+## Interval Test
 
 An interval test fills a row of swatches at different line intervals, each on its own layer.
 
@@ -101,7 +101,7 @@ Open it with **Laser Tools > Interval Test**.
 
 LightBurn suggests 0.08 to 0.16 mm for a first test; those are the defaults, with 5 swatches of 10 mm at 30 % and 1000 mm/s.
 
-## Focus Test {#focus-test}
+## Focus Test
 
 A focus test marks short lines, each at a different Z height, to find the sharpest focus.
 
@@ -114,7 +114,7 @@ Open it with **Laser Tools > Focus Test**.
 
 > **Note:** The focus test needs a Z lift on the board's extension axis. Without one, every line is marked at the current height and the Z offsets are ignored; the window says so, and OpenEtch warns again when you create the test. Then set the height by hand and mark each line on its own.
 
-## Bracket test of a preset {#bracket-test}
+## Bracket test of a preset
 
 A bracket test makes a small grid around one library preset. Use it to re-check a preset on a new lot of material, or after a lens change. Every box is the whole preset (sub-layers too) with only two values changed.
 
@@ -134,7 +134,7 @@ Example on a 60 W source: a preset at 28 %, 500 mm/s and 0.01 mm is about 3.4 J/
 
 ![The Bracket test window for a Gold preset](img/bracket-test-dialog.webp)
 
-### Pick the best box {#pick-the-best-box}
+### Pick the best box
 
 While the open document holds a bracket test, a bar at the top centre of the canvas (Design workspace) names the test and asks you to pick the best box after burning.
 
@@ -149,16 +149,16 @@ The close button (**Hide the bracket test bar**) hides the bar.
 
 ![The bracket test bar with the boxes grid open](img/bracket-test-bar.webp)
 
-### Refine the hue steps {#refine-hue-steps}
+### Refine the hue steps
 
 A bracket test can also teach OpenEtch how far one hue moves a setting on your machine. This works for power, speed or frequency.
 
 1. After **Use this box**, select another box in the same row or column as the best one.
 2. Look at it next to the best box. Where the bar says "Compared with the best box this one came out", click **1 hue warmer** or **1 hue cooler**.
 
-The [hue step model](mopa-colour.md#hue-step-model) for that setting is updated, and a message shows the new step. If the box is not in the same row or column, the bar asks you to pick one that is. If the pair runs against the model (for example a box with more power that came out warmer), OpenEtch refuses it.
+The [hue step model](mopa-colour.md#the-hue-step-model) for that setting is updated, and a message shows the new step. If the box is not in the same row or column, the bar asks you to pick one that is. If the pair runs against the model (for example a box with more power that came out warmer), OpenEtch refuses it.
 
-## Burn a test {#burn-a-test}
+## Burn a test
 
 A test burns like any job:
 
@@ -169,16 +169,16 @@ A test burns like any job:
 
 See [Preview and framing](preview-and-framing.md) and [Running a job](running-a-job.md). An AI agent can create a test grid, frame it with the red pointer and ask for a run, but it cannot approve or start the burn: a person does that in the app.
 
-## Read the results {#read-results}
+## Read the results
 
 - Let the metal cool before you judge colour. Colours shift while it is hot.
 - Look at the boxes under the same light, from the same angle. MOPA colours change with the viewing angle.
 - Look for the box that marks fully and evenly, without a raised, glossy or melted edge.
 - If the best box is at the edge of the grid, make a new grid centred on it.
-- Save the winner as a preset (see [Save a layer as a preset](material-libraries.md#create-a-preset)). Each box is its own layer, so you can use **Create new from layer** straight from its layer.
+- Save the winner as a preset (see [Save a layer as a preset](material-libraries.md#save-a-layer-as-a-preset)). Each box is its own layer, so you can use **Create new from layer** straight from its layer.
 - Write down the material, lot, lens and focus with the preset's **Finish…**
 
-## Common mistakes {#common-mistakes}
+## Common mistakes
 
 - **Skipping the energy check.** A fine interval at slow speed can put tens of J/mm² into the metal.
 - **Testing on the final part.** Use scrap of the same material and finish.

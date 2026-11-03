@@ -12,11 +12,11 @@ A MOPA fibre laser can colour stainless steel and titanium. The heat grows a thi
 
 Colour depends on many things: power, speed, interval, frequency, pulse width, focus, the surface finish and even the batch of steel. A setting that gives gold on one lot can give brown on the next. OpenEtch helps you record what works, preview it, and adjust it in small steps. It does not know your colours for you.
 
-> **Warning:** Wear eye protection rated for your laser's wavelength (about 1064 nm for a fibre laser) and run fume extraction. Never leave a job running unattended. Colour settings often use fine intervals and slow speeds, which put a lot of energy into the metal: work out the energy density before every new setting (see [Check the energy density first](test-grids.md#energy-density)).
+> **Warning:** Wear eye protection rated for your laser's wavelength (about 1064 nm for a fibre laser) and run fume extraction. Never leave a job running unattended. Colour settings often use fine intervals and slow speeds, which put a lot of energy into the metal: work out the energy density before every new setting (see [Check the energy density first](test-grids.md#check-the-energy-density-first)).
 
 > **Note:** These tools have mostly been tried on the simulator. Settings and hue step numbers are starting points to test, not guarantees.
 
-## The Materials menu {#materials-menu}
+## The Materials menu
 
 The **Materials** menu collects the MOPA tools. It is in the **Design** workspace.
 
@@ -26,14 +26,14 @@ The **Materials** menu collects the MOPA tools. It is in the **Design** workspac
 
 | Item | What it does |
 |---|---|
-| **Bracket test of a preset…** | A small test grid around the preset picked in the Material Library (see [Bracket test](test-grids.md#bracket-test)). |
+| **Bracket test of a preset…** | A small test grid around the preset picked in the Material Library (see [Bracket test](test-grids.md#bracket-test-of-a-preset)). |
 | **Colour separation…** | Splits the selected image into colour layers (see [Colour separation](#colour-separation)). Greyed out unless one image is selected. |
 | **Result colours** | Draws layers in the colours they should come out (see [Result colours](#result-colours)). A tick shows it is on. |
-| **Hue step model…** | How far one hue moves a setting (see [The hue step model](#hue-step-model)). |
+| **Hue step model…** | How far one hue moves a setting (see [The hue step model](#the-hue-step-model)). |
 
 You can also find each of these in command search.
 
-## Record a finish {#finish-dialog}
+## Record a finish
 
 A finish is what a preset gives on the material: a photo, the colour, the surface and your notes.
 
@@ -58,7 +58,7 @@ If you change the preset's settings after the photo was taken, the window and th
 
 > **Tip:** Photograph the result in even daylight or under the same lamp each time. Phone cameras adjust colour on their own, so a photo's average is only a guide. Correct the **Result colour** by eye if it looks wrong.
 
-## The palette view {#palette-view}
+## The palette view
 
 In the Material Library, click **Palette** (next to **List**) to see every preset that has a result colour as a swatch.
 
@@ -71,7 +71,7 @@ If no preset has a colour yet, the view says "No preset has a result colour yet.
 
 ![The Palette view of a small library, grouped by surface](img/material-palette-view.webp)
 
-## Result colours {#result-colours}
+## Result colours
 
 Layer colours are for telling layers apart. **Result colours** draws each layer in the colour it should come out instead, so you can check a coloured design before you burn it.
 
@@ -92,7 +92,7 @@ Layers with neither keep their layer colour.
 
 > **Note:** Result colours is a guide drawn from recorded colours. The real colour depends on the metal, its surface and the lot.
 
-## Hue steps: one hue warmer or cooler {#hue-steps}
+## Hue steps
 
 When a preset comes out a little off (for example blue instead of purple), the hue controls change it by small, known steps.
 
@@ -113,9 +113,9 @@ A warning appears when the pulse width is under 20 ns, or when a big jump uses f
 
 Applying changes the preset (unsaved until Save Library), and linked layers follow. The photo is then marked out of date.
 
-Before you burn a nudged setting, work out its energy density again (see [Check the energy density first](test-grids.md#energy-density)).
+Before you burn a nudged setting, work out its energy density again (see [Check the energy density first](test-grids.md#check-the-energy-density-first)).
 
-## Adapt to a surface {#finish-compensation}
+## Adapt to a surface
 
 A polished or mirror surface reflects more, so it usually needs a little more power for the same colour.
 
@@ -128,7 +128,7 @@ The change is worked out from the surface the preset records under **Made for su
 
 > **Tip:** Duplicate the preset first if you want to keep both versions, one per surface.
 
-## The hue step model {#hue-step-model}
+## The hue step model
 
 The hue step model says how far one hue moves each setting. Open it with **Materials > Hue step model…**, or the **Hue step model…** link under the hue controls. The window is called **Hue step model of this device**: each laser device has its own model, and only a person can change it in the app.
 
@@ -148,9 +148,9 @@ The starting values come from xTool's published guide for a 60 W MOPA source on 
 
 The line under the fields says where the numbers come from: "xTool's published model (unverified on this machine)" or "refined by a bracket test". **Reset to xTool's model** puts the starting values back at once. **OK** saves your changes.
 
-To refine the model from a real burn, see [Refine the hue steps](test-grids.md#refine-hue-steps).
+To refine the model from a real burn, see [Refine the hue steps](test-grids.md#refine-the-hue-steps).
 
-## Colour separation {#colour-separation}
+## Colour separation
 
 Colour separation turns an image (a logo, for example) into a few solid colour areas, each on its own fill layer. Each layer can take the library preset whose result colour is nearest.
 
@@ -181,9 +181,9 @@ After **Create layers**, a message says how many layers were made and how many w
 
 > **Warning:** A layer with no matched preset gets ordinary fill settings, not a tested colour setting. Assign a preset to it, or set and test its settings, before you burn.
 
-Only presets that have a result colour can be matched. Record finishes first (see [Record a finish](#finish-dialog)). Large images take longer, because the separation runs on the engine; on a phone, keep the image small.
+Only presets that have a result colour can be matched. Record finishes first (see [Record a finish](#record-a-finish)). Large images take longer, because the separation runs on the engine; on a phone, keep the image small.
 
-## The palette-coin example {#palette-coin-example}
+## The palette-coin example
 
 The example "Frost, black and colour palette coin" shows three finishes side by side on a 40 mm stainless coin.
 
@@ -208,17 +208,17 @@ The built-in settings are illustrative, not tested. Here is roughly what they pu
 
 The Black sector is above the rough 2 to 15 J/mm² range for stainless, because of its cross hatch. The Frost sector is below it, which is intended for a light frost. Try the coin on scrap, not a finished part. Then run a [material test](test-grids.md#material-test) on your own stock and save what works as presets.
 
-## Share finish data {#share-finish-data}
+## Share finish data
 
 Photos, colours and notes are kept beside the library, not inside the `.clb`. To move them to another OpenEtch, use **Manage Library > Download finish data** and **Import finish data…** See [Finish data](material-libraries.md#finish-data).
 
-## AI agents and colour {#ai-agents}
+## AI agents and colour
 
 An AI agent connected through MCP can list presets and their finishes, edit finish notes and colours (not photos), compute or apply hue steps on a preset or a layer, make a bracket test, write back the box you tell it is best, and run colour separation. It cannot change the hue step model, cannot save the library, and can never approve or start a burn. A run it asks for waits until a person approves it in the app. See [AI agents](ai-agents.md).
 
-## Common mistakes {#common-mistakes}
+## Common mistakes
 
-- **Expecting a colour to carry over to a new lot of steel.** Re-check with a [bracket test](test-grids.md#bracket-test).
+- **Expecting a colour to carry over to a new lot of steel.** Re-check with a [bracket test](test-grids.md#bracket-test-of-a-preset).
 - **Nudging many hues at once.** Big jumps are less reliable. Move one or two hues, burn, then look.
 - **Forgetting the surface.** A preset made on brushed steel will come out differently on a mirror finish. Record the surface and use **Adapt to surface**.
 - **Old photos.** After you change a preset, burn it again and retake the photo, or the palette shows the old colour.

@@ -12,7 +12,7 @@ A template is a design that someone else fills in: the name on a coin, a date, t
 
 OpenEtch also comes with example projects. Each one shows a few features, ready to study or to start from.
 
-## Example projects {#example-projects}
+## Example projects
 
 To open an example:
 
@@ -24,7 +24,7 @@ The example opens as a new, unsaved document laid out for the active device, wit
 
 | Example | What it shows | Read more |
 |---|---|---|
-| **Two-tone MOPA coin** | A 40 mm coin with a coloured ring made with Fill Region, a name that fits itself into the centre, and a date. A template: fill in the name, date, font and ring colour | [Fill Region](fill-region.md), [Auto-fit](text.md#auto-fit), [MOPA colour](mopa-colour.md) |
+| **Two-tone MOPA coin** | A 40 mm coin with a coloured ring made with Fill Region, a name that fits itself into the centre, and a date. A template: fill in the name, date, font and ring colour | [Fill Region](fill-region.md), [Auto-fit](text.md#fit-text-into-a-box-or-circle), [MOPA colour](mopa-colour.md) |
 | **Serial-numbered tags for a jig** | Six tags in a 2 x 3 jig: each pocket's outline on tool layer T1, a serial number and a QR code that count up per tag and per run | [Variable text](variable-text-and-barcodes.md), [Jigs](jigs.md) |
 | **Text-on-a-circle medallion** | A 50 mm medallion with text along the top and bottom of a circle, both reading upright, and a star | [Text on a path](text.md#text-on-a-path) |
 | **Image and dither sample** | A generated test picture engraved twice, with Stucki and with Halftone, to compare image modes | [Images](images.md#dither-modes) |
@@ -35,7 +35,7 @@ The colour choices in the two coin examples come from your selected Material Lib
 
 ![The New from example dialog](img/examples-dialog.webp)
 
-### The examples' settings are starting points {#example-settings}
+### The examples' settings are starting points
 
 The example settings are illustrations, not tested values. Run a material test on your own stock before you burn them, and keep what works as library presets. See [Test grids](test-grids.md).
 
@@ -60,7 +60,7 @@ Line layers (the names, rims and labels) mark along a line, so this formula does
 
 > **Warning:** Wear eye protection rated for your laser's wavelength, run the fume extraction, and never leave a job unattended.
 
-## Fill in a template {#fill-in-a-template}
+## Fill in a template
 
 When a document has fill-in fields, a **Fill in** button shows at the top right of the canvas. Opening a template or project with fields shows the form straight away.
 
@@ -81,7 +81,7 @@ All the values go in as one undo step. If a text no longer fits its shape, the f
 
 ![The Fill in form for the Two-tone MOPA coin on a phone](img/fill-in-dialog-phone.webp)
 
-## Make a template {#template-fields}
+## Make a template
 
 To turn a design into a template:
 
@@ -108,7 +108,7 @@ A template can have up to 32 fields, and a font or finish field up to 64 choices
 
 ![The Template fields dialog for the Two-tone MOPA coin](img/template-fields-dialog.webp)
 
-## Save and open templates {#save-and-open-templates}
+## Save and open templates
 
 - To save the design as a template, choose **File > Project > Save as template…** and give it a **Template name**. A template with the same name is replaced.
 - To use a template, choose **File > Project > Open template…** and pick it. After you have opened a template, it is also listed under **Recent templates** in **File > Project** (the list belongs to this browser). It opens as a new untitled document; the template itself is never overwritten.
@@ -116,6 +116,6 @@ A template can have up to 32 fields, and a font or finish field up to 64 choices
 
 The engine keeps the templates. The fields are saved with the project and with the template.
 
-## AI agents {#template-agents}
+## AI agents
 
 An AI agent connected over MCP can list a template's fields and fill them in, as a design edit. It can never approve or start a burn: a person does that at the machine. See [AI agents](ai-agents.md).

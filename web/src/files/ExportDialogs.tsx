@@ -71,7 +71,7 @@ export function ExportDialog(p: Common) {
   };
   return (
     <Modal
-      help="files-and-projects#export-svg-dxf-ai-pdf"
+      help="files-and-projects#export-svg-dxf-ai-or-pdf"
       title={t("files.exportTitle")}
       onClose={p.onClose}
       onSubmit={go}

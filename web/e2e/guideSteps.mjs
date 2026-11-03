@@ -85,7 +85,7 @@ export function stepProblem(step) {
     case "key":
       return typeof v === "string" && parseKey(v) ? null : `key: "${v}" is not a key such as "Escape" or "Ctrl+Z"`;
     case "hash":
-      return typeof v === "string" && /^#\//.test(v) ? null : 'hash: a route such as "#/guide/the-workspace#ribbon"';
+      return typeof v === "string" && /^#\//.test(v) ? null : 'hash: a route such as "#/guide/the-workspace#the-ribbon"';
     case "wait":
       if (typeof v === "number") return v >= 0 && v <= 10000 ? null : "wait: at most 10000 ms";
       return typeof v === "string" && v.trim() ? null : "wait: a CSS selector or a number of ms";

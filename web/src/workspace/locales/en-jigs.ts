@@ -122,7 +122,7 @@ export const EN_JIGS = {
   "pf.restore": "Warn again about switched-off checks ({n})",
   "pf.cutBeforeFill": "Layer “{cut}” (lines) burns before layer “{fill}” (fill) where they overlap: if the lines cut through, the part can move before it is filled.",
   "pf.emptyLayer": "Layer “{layer}” is set to output but has nothing on it.",
-  "pf.duplicates": "{count} shapes are exact copies on the same layer and would burn twice ({names}). Edit › Delete duplicates removes them.",
+  "pf.duplicates": "{count} shapes are exact copies on the same layer and would burn twice ({names}). Modify > Delete duplicates (Alt+D) removes them.",
   "pf.keepOut": "“{name}” on layer “{layer}” reaches into keep-out zone “{zone}”.",
   "pf.noCsv": "{names} merges CSV columns but no CSV file is loaded: it would burn empty.",
   "pf.csvPastEnd": "{names} would read CSV row {row}, past the last row ({last}): it would burn empty.",

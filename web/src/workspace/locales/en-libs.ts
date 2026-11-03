@@ -310,7 +310,7 @@ export const EN_LIBS = {
   // ---- Repeat Marking ----
   "tbl.title": "Repeat Marking with the external axis",
   "tbl.button": "Repeat table…",
-  "tbl.noTable": "The active device has no linear or rotary table: set the extension axis to Linear table or Rotary table in Device Settings > Z axis / rotary.",
+  "tbl.noTable": "The active device has no linear or rotary table: set the extension axis to Linear table or Rotary table in Device settings > Z axis / rotary.",
   "tbl.linear": "After each run the linear table moves by the step, waits, and marks again.",
   "tbl.rotary": "After each run the rotating table turns by the step, waits, and marks again.",
   "tbl.repeat": "Runs",

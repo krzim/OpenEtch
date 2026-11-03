@@ -188,7 +188,7 @@ export function PendingApprovals(props: { machine: MachineStatus | null; docRevi
   return (
     <div className="pending-approvals" role="group" aria-label={t("lz.pendingTitle")}>
       <div className="pending-approvals-h">
-        {t("lz.pendingTitle")} <SimPinBadge machine={props.machine} /> <HelpLink to="running-a-job#approve-pin" topic={t("lz.pendingTitle")} />
+        {t("lz.pendingTitle")} <SimPinBadge machine={props.machine} /> <HelpLink to="running-a-job#operator-pin-approval" topic={t("lz.pendingTitle")} />
       </div>
       {notice && (
         <p className="run-hint" role="status">
@@ -485,7 +485,7 @@ export function PreviewStatsCard(p: {
   };
   return (
     <section className="card">
-      <h3>{t("lp.toolpath")} <HelpLink to="preview-and-framing#toolpath-card" topic={t("lp.toolpath")} /></h3>
+      <h3>{t("lp.toolpath")} <HelpLink to="preview-and-framing#the-toolpath-card" topic={t("lp.toolpath")} /></h3>
       {p.error ? (
         <p className="run-error" role="alert">
           No preview: {p.error}

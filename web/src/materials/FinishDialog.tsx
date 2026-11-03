@@ -130,7 +130,7 @@ export function HueControls(p: { library: string; entry: LibEntry; notify: Notif
       </div>
       {!p.compact && (
         <div className="mt-hue-row">
-          <span className="mt-hue-label">{t("mat.adapt")}</span> <HelpLink to="mopa-colour#finish-compensation" topic={t("mat.adapt")} />
+          <span className="mt-hue-label">{t("mat.adapt")}</span> <HelpLink to="mopa-colour#adapt-to-a-surface" topic={t("mat.adapt")} />
           <select className="mini-select" value={surface} aria-label={t("mat.adapt")} onChange={(e) => setSurface(e.target.value as Surface)}>
             {SURFACES.map((s) => (
               <option key={s} value={s}>
@@ -285,7 +285,7 @@ export function FinishDialog(p: { library: string; entryId: string; photo?: bool
 
   return (
     <WsModal
-      help="mopa-colour#finish-dialog"
+      help="mopa-colour#record-a-finish"
       title={t("mat.finishTitle", { path: entry.path })}
       onClose={p.onClose}
       onSubmit={() => void save()}

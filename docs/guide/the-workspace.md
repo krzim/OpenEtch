@@ -14,7 +14,7 @@ Everything you see comes from the engine. Every connected browser shows the same
 
 ![The wide desktop layout in the Design workspace with the Two-tone MOPA coin example open](img/workspace-desktop-design.webp)
 
-## Layouts at a glance {#layouts}
+## Layouts at a glance
 
 The app picks one of four layouts from the window size and from whether you use a mouse or a finger.
 
@@ -25,13 +25,13 @@ The app picks one of four layouts from the window size and from whether you use 
 | **Tablet** | Narrower than 1100 pixels, or any touch screen such as an iPad | Tools in a rail down the left, both side panels as rails that slide over the canvas. |
 | **Phone** | Narrower than 600 pixels, or a touch screen whose short side is under 500 pixels | Its own layout with bottom tabs and sheets. |
 
-To choose a layout yourself, open **Preferences** and set **Layout and input > Layout**. See [Layout and input preferences](#layout-preferences).
+To choose a layout yourself, open **Preferences** and set **Layout and input > Layout**. See [Layout and input preferences](#layout-and-input-preferences).
 
-## The top bar {#top-bar}
+## The top bar
 
 The top bar runs across the top of the window. From left to right on the desktop:
 
-- **File**: the File menu. See [Files and projects](files-and-projects.md#file-menu).
+- **File**: the File menu. See [Files and projects](files-and-projects.md#the-file-menu).
 - **OpenEtch** and the document's name. A dot after the name means unsaved changes. Click the name to see it in full, with **Save as…** to give it a new name.
 - **+**: open another document in a new tab (shown here while only one document is open). See [Document tabs](#document-tabs).
 - **Beginner Mode**: a badge shown while Beginner Mode hides advanced options. Turn it off in **Preferences > Editing**.
@@ -42,7 +42,7 @@ The top bar runs across the top of the window. From left to right on the desktop
 
 On a tablet the connection indicator shows only its dot. On a phone the top bar holds only **Menu** (opens the **More** sheet), the document name, the status dot and **STOP**.
 
-### Connection status {#connection-status}
+### Connection status
 
 The connection indicator shows whether the app can reach the engine and what it drives, for example **Live · Simulator**:
 
@@ -62,7 +62,7 @@ If the connection drops, a banner reads **Lost connection to the laser engine �
 
 The status chip left of **STOP** shows the laser's state: **Idle**, **Idle (simulator)**, **Framing**, **Running 42% · 3:12**, **Paused 42%**, **Waiting for the foot switch**, **Offline** and so on. Click it to open the Laser window. On a phone it is a coloured dot that opens the **Job** sheet.
 
-### STOP {#stop-button}
+### STOP
 
 **STOP** is always at the top right, in every layout, and stays in view over dialogs and sheets. It aborts any run or frame and cancels pending runs.
 
@@ -72,7 +72,7 @@ The status chip left of **STOP** shows the laser's state: **Idle**, **Idle (simu
 
 > **Warning:** **STOP** is a software stop. If the app has lost its connection, it may not reach the laser. Know where your laser's hardware emergency stop is before you start a job.
 
-## Workspaces: Design and Laser {#workspaces}
+## Workspaces: Design and Laser
 
 The app has two workspaces, like Fusion 360. Switch with **Design** and **Laser** in the top bar.
 
@@ -83,7 +83,7 @@ On a tablet the switcher shows a pencil (Design) and a lightning bolt (Laser). O
 
 ![The Laser workspace with the toolpath preview of the Text-on-a-circle medallion example](img/workspace-laser.webp)
 
-## The ribbon {#ribbon}
+## The ribbon
 
 The ribbon is the toolbar under the top bar. Its tools are in named groups, as in Fusion 360.
 
@@ -116,7 +116,7 @@ In the compact layout the ribbon shows icons only; hover a tool for its name. On
 
 See [Drawing and editing](drawing-and-editing.md) for the tools themselves, and [Preview and framing](preview-and-framing.md) for the Laser tools.
 
-## The context strip {#context-strip}
+## The context strip
 
 The strip just above the canvas changes with what you are doing:
 
@@ -126,7 +126,7 @@ The strip just above the canvas changes with what you are doing:
 
 On a phone there is no strip. A tool's options appear at the top left of the canvas instead.
 
-## Side panels and docks {#docks}
+## Side panels and docks
 
 The side panels hold the tool windows (docks):
 
@@ -144,9 +144,9 @@ Each window has a title row:
 
 A floating window can be dragged by its title and resized by its corner. Your window layout is saved in this browser.
 
-On a phone there are no side panels. Their windows appear in the sheets instead. See [The phone layout](#phone-layout).
+On a phone there are no side panels. Their windows appear in the sheets instead. See [The phone layout](#the-phone-layout).
 
-### The Window menu {#window-menu}
+### The Window menu
 
 The **Window** menu lists every tool window with a tick when it is shown. Click one to show or hide it. A window marked **other workspace** belongs to Design or Laser and shows only there.
 
@@ -159,7 +159,7 @@ The menu also has:
 
 In the wide layout **Window** is in the top bar. In the compact and tablet layouts it is at the top of the **More** (⋯) menu.
 
-### The Browser panel {#browser-panel}
+### The Browser panel
 
 The **Browser** lists the document as a tree, as in Fusion 360: the stock, the layers in cut order, and the objects on each layer with their groups.
 
@@ -172,7 +172,7 @@ The **Browser** lists the document as a tree, as in Fusion 360: the stock, the l
 
 On a phone the Browser is under **More > Browser**.
 
-## The timeline and history {#timeline}
+## The timeline and history
 
 The timeline runs along the bottom of the window, like Fusion 360's design timeline. It has one chip for each change to the design, oldest on the left, and a marker after the last step that is applied.
 
@@ -198,7 +198,7 @@ In the compact and tablet layouts, the timeline and the status bar share one row
 
 On a phone the timeline is a list under **More > History**. A two-finger tap on the canvas undoes and a three-finger tap redoes.
 
-## Document tabs {#document-tabs}
+## Document tabs
 
 You can have up to 16 documents open at once, each in its own tab, like LightBurn's New Window. Edits, previews, framing and runs always go to the active tab.
 
@@ -213,7 +213,7 @@ Each tab has its own timeline. Only the active tab is autosaved. A switch made b
 
 Document tabs are not shown on a phone. The phone works on the active document.
 
-## Command search {#command-search}
+## Command search
 
 Command search finds any command, tool or setting by name, like Fusion 360's `S` key.
 
@@ -229,7 +229,7 @@ Command search never offers **Request run** or **Start**. A burn starts only fro
 
 ![Command search with results for export](img/command-search.webp)
 
-## The status bar {#status-bar}
+## The status bar
 
 The status bar along the bottom shows, from left to right:
 
@@ -241,7 +241,7 @@ The status bar along the bottom shows, from left to right:
 - The zoom as a percentage (100 % is real size). Click it to fit the field in the window.
 - The units, such as **mm · mm/s**. Click to switch between millimetres and inches.
 
-## The canvas {#canvas}
+## The canvas
 
 The canvas shows your laser's field (a square for a galvo), the stock and your design.
 
@@ -255,7 +255,7 @@ The canvas shows your laser's field (a square for a galvo), the stock and your d
 
 You can drop files from your computer onto the canvas to import them. See [Files and projects](files-and-projects.md#import-files).
 
-## The iPad and tablet layout {#tablet-layout}
+## The iPad and tablet layout
 
 On an iPad, or any window narrower than 1100 pixels, the app uses the tablet layout.
 
@@ -270,7 +270,7 @@ On an iPad, or any window narrower than 1100 pixels, the app uses the tablet lay
 
 With a finger on a coarse pointer, the position fields in Properties get a **Nudge** pad with **Normal**, **Large**, **Small** and **Tiny** steps.
 
-## The phone layout {#phone-layout}
+## The phone layout
 
 On a phone the canvas fills the screen. Everything else is in four tabs at the bottom and in sheets that rise over the canvas.
 
@@ -278,7 +278,7 @@ On a phone the canvas fills the screen. Everything else is in four tabs at the b
 
 The top bar has **Menu**, the document name, the status dot and **STOP**. Over the canvas, at the bottom right, are **Undo**, **Redo** and **Tools** (the pencil, which opens the Canvas sheet).
 
-### Bottom tabs {#bottom-tabs}
+### Bottom tabs
 
 | Tab | What it opens |
 |---|---|
@@ -291,7 +291,7 @@ Tap the active tab again to close or reopen its sheet.
 
 Selecting a shape on the canvas opens the **Selection** sheet at its lowest height, and pans the canvas so the shape stays in view. Clearing the selection closes it again.
 
-### Sheets {#bottom-sheets}
+### Sheets
 
 A sheet has three heights: low (about a third of the screen), half and full. The **Canvas** sheet opens low, **Layers** and **Job** at half, and **More** full.
 
@@ -301,7 +301,7 @@ A sheet has three heights: low (about a third of the screen), half and full. The
 
 While the on-screen keyboard is up, the tab bar hides to leave room for the field you are typing in.
 
-### The More sheet {#more-sheet}
+### The More sheet
 
 The **More** sheet has these sections:
 
@@ -315,7 +315,7 @@ The **More** sheet has these sections:
 
 ![The phone's More sheet with the File section open](img/phone-more-sheet.webp)
 
-### Desktop features on the phone {#desktop-features}
+### Desktop features on the phone
 
 Some features are made for a bigger screen and a mouse or pen, so they are left out of the phone's tool strip, menus and command search. **More > Desktop features** lists them and opens the ones a phone can still run:
 
@@ -325,7 +325,7 @@ Some features are made for a bigger screen and a mouse or pen, so they are left 
 
 Only on a computer or tablet: **Docking**, editing the Art library, and the GRBL console.
 
-## Touch controls {#touch-controls}
+## Touch controls
 
 On a touch screen, one finger acts as the left mouse button and two fingers move the view (pan, and pinch to zoom). A second finger cancels a drag. A long-press is the right-click. While a pen touches the screen, other touches (a resting palm) are ignored; for a second after the pen lifts, a touch only moves the view.
 
@@ -333,7 +333,7 @@ Tap a selected shape again to switch its handles between scaling and rotating.
 
 To make one finger on empty canvas pan instead of drawing a selection box, set **Preferences > Layout and input > One finger on empty canvas** to **Pan**.
 
-### The modifier bar {#touch-modifier-bar}
+### The modifier bar
 
 The modifier bar, at the bottom left of the canvas, gives you the keys a finger lacks. It shows on touch screens, and with **Density** set to **Touch**. Its buttons change with the tool:
 
@@ -349,7 +349,7 @@ The modifier bar, at the bottom left of the canvas, gives you the keys a finger 
 
 Tap a button to use it for the next gesture only. Double-tap it to keep it on until you tap it again. A lit button is on.
 
-### The selection action bar {#selection-action-bar}
+### The selection action bar
 
 With shapes selected and the Select tool active, a bar of buttons floats above the selection: **Copy**, **Paste**, **Duplicate**, **Delete**, **Group** (two or more shapes) or **Ungroup** (a group), **Rotate 90°**, **Flip horizontal**, **Flip vertical** and **More…** Buttons that do not fit go under the last ⋯, with **All actions…** for the full menu.
 
@@ -357,13 +357,13 @@ The bar shows on touch screens by default. To show it with a mouse too, or never
 
 ![The modifier bar and the selection action bar on an iPad](img/touch-modifier-bar.webp)
 
-## Full screen and Focus canvas {#full-screen}
+## Full screen and Focus canvas
 
 - **Full screen** (`Alt+Enter`, or the full-screen button in the top bar) gives the app the whole screen. `F11` is the browser's own full screen; press `F11` again to leave it.
 - If `Esc` takes you out of full screen, a tip explains how to get back. In an app window this does not happen.
 - **Focus canvas** (`Ctrl+Alt+F`, or **Window > Focus canvas**) hides the docks, palette and bottom row but keeps the top bar.
 
-## Themes {#themes}
+## Themes
 
 OpenEtch has a light and a dark theme. **Match system** (the default) follows your device's setting.
 
@@ -373,13 +373,13 @@ To change the theme:
 - On a phone, tap **More**, open **Settings** and tap the theme row.
 - Or choose it in **Preferences > Appearance > Theme**.
 
-## Language {#language}
+## Language
 
 To change the language, open **Preferences** and choose **Appearance > Language**. The choices are **English** and **Español (traducción automática)**, a machine translation. Text that is not translated yet shows in English.
 
 **Appearance** also has **Text size**, **Icon and toolbar size** and **Handle and node size**, to make the app easier to read or to hit with a finger.
 
-## Layout and input preferences {#layout-preferences}
+## Layout and input preferences
 
 Open **Preferences** (the gear in the top bar, the **More** (⋯) menu, or **More > Settings > Preferences** on a phone). The **Layout and input** section has:
 
@@ -394,7 +394,7 @@ Open **Preferences** (the gear in the top bar, the **More** (⋯) menu, or **Mor
 
 The line under them, such as **Now: compact layout, fine pointer, compact density.**, shows what the app is using now. These preferences are kept in this browser. See [Settings](settings.md) for every other preference.
 
-## The Help menu {#help-menu}
+## The Help menu
 
 The **Help** menu (in the **More** (⋯) menu in the compact and tablet layouts, and under **More > Help** on a phone) has:
 
@@ -402,5 +402,5 @@ The **Help** menu (in the **More** (⋯) menu in the compact and tablet layouts,
 - **Keyboard shortcuts** (`Shift+?`). See [Keyboard shortcuts](keyboard-shortcuts.md).
 - Links to the **OpenEtch README**, **Architecture (engine API, MCP)**, **Web UI README**, **LightBurn documentation** and **Report a problem**.
 - **Developer: engine commands (JSON)…**, **Enable debug log**, **Report a bug…** and **Check for updates…**
-- **Use as an app…** (not shown inside an app window). See [Getting started](getting-started.md#install-as-an-app).
+- **Use as an app…** (not shown inside an app window). See [Getting started](getting-started.md#install-openetch-as-an-app).
 - **About OpenEtch**: the versions of the app and the engine, and the engine's MCP address for AI agents.

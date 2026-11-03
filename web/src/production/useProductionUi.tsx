@@ -72,7 +72,7 @@ function MaintenanceDialog(p: { report: (e: unknown) => void; onClose: () => voi
   const m = s?.maintenance;
   return (
     <WsModal
-      help="maintenance#maintenance-window"
+      help="maintenance#the-maintenance-window"
       title={t("prod.maintenance")}
       size="sm"
       onClose={p.onClose}

@@ -14,9 +14,11 @@ export const GUIDE_EVENT = "openetch:guide";
  * was open already at that page, so Esc closes it straight away. */
 export const GUIDE_FOCUS_EVENT = "openetch:guide-focus";
 const SLUG = "[a-z0-9][a-z0-9-]*";
-const ANCHOR = "[A-Za-z][\\w-]*";
-const HASH_RE = new RegExp(`^#/guide(?:/(${SLUG})?)?(?:#(${ANCHOR}))?$`);
-const TARGET_RE = new RegExp(`^(${SLUG})?(?:#(${ANCHOR}))?$`);
+// A heading's id, as GitHub makes it from the heading's text (guide/markdown.ts slugify): letters of any script,
+// digits, "_" and "-". Kept here rather than imported, so the main bundle does not take in the markdown parser.
+const ANCHOR = String.raw`[\p{L}\p{M}\p{N}\p{Pc}-]+`;
+const HASH_RE = new RegExp(`^#/guide(?:/(${SLUG})?)?(?:#(${ANCHOR}))?$`, "u");
+const TARGET_RE = new RegExp(`^(${SLUG})?(?:#(${ANCHOR}))?$`, "u");
 
 /** The route in a location hash, or null when the hash is not a guide route. */
 export function parseGuideHash(hash: string): GuideRoute | null {

@@ -42,7 +42,7 @@ export function ProductionDock(p: { onCockpit: () => void; onLedger: () => void;
   if (unsupported) return null;
   const c = s ? counterText(s.cycle) : null;
   return (
-    <Dock help="production-cockpit#production-window" id="production" title={t("prod.title")}>
+    <Dock help="production-cockpit#the-production-window" id="production" title={t("prod.title")}>
       <div className="prod-dock">
         <div className="prod-row">
           <button className="btn btn-primary" onClick={p.onCockpit} title={t("prod.cockpitTitle")}>

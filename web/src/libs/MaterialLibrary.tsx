@@ -184,14 +184,14 @@ export function LibraryDock(p: { doc: GDocument | null; activeLayer: string | nu
 
   if (lib.supported === false) {
     return (
-      <Dock help="material-libraries#material-library-window" id="library" title={t("lib.title")} defaultCollapsed>
+      <Dock help="material-libraries#the-material-library-window" id="library" title={t("lib.title")} defaultCollapsed>
         <p className="hint">{t("lib.unsupported")}</p>
       </Dock>
     );
   }
 
   return (
-    <Dock help="material-libraries#material-library-window" id="library" title={t("lib.title")} defaultCollapsed>
+    <Dock help="material-libraries#the-material-library-window" id="library" title={t("lib.title")} defaultCollapsed>
       <div className="lx-lib-head">
         <label className="lx-inline">
           <span className="sr-only">{t("lib.select")}</span>
@@ -608,7 +608,7 @@ function EntryMetaDialog(p: { entry: LibEntry | null; layer: Layer | null; mater
   const submit = () => ok && p.onOk({ ...m, material: m.material.trim(), title: m.title.trim(), description: m.description.trim() });
   return (
     <WsModal
-      help="material-libraries#create-a-preset"
+      help="material-libraries#save-a-layer-as-a-preset"
       title={p.entry ? t("lib.editDescription") : t("lib.createFrom", { layer: p.layer?.name ?? "" })}
       onClose={p.onClose}
       onSubmit={submit}

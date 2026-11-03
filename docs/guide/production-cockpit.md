@@ -14,7 +14,7 @@ In large type, the cockpit shows what the machine is doing, how many pieces are 
 
 > **Warning:** The cockpit makes repeat work quicker. It does not make it safe to walk away. Wear eye protection rated for your laser's wavelength (about 1064 nm for a fibre laser), run fume extraction and never leave a running job unattended. **STOP** in the app is a software stop, so know where the laser's hardware E-stop is.
 
-## Before you start a batch {#before-a-batch}
+## Before you start a batch
 
 Check the job on scrap before you mark the first real part.
 
@@ -22,11 +22,11 @@ Check the job on scrap before you mark the first real part.
 2. Work out the energy density of every fill layer. The formula is: J/mm² = power (W) ÷ (speed (mm/s) × line interval (mm)). If a layer shows power as a percentage, multiply it by the laser's rated power first (50 % of 60 W is 30 W).
 3. Check the result. For example, 30 W at 1000 mm/s with a 0.005 mm line interval gives 30 ÷ (1000 × 0.005) = 6 J/mm². On stainless steel with a 60 W MOPA, roughly 2 to 15 J/mm² marks without melting. Much higher can melt or warp thin stock.
 4. Frame the job on the jig and check that it lines up.
-5. Set **Stop at** to the number of pieces you want (see [Done: the count and Stop at](#counter-and-stop-at)).
+5. Set **Stop at** to the number of pieces you want (see [The Done card](#the-done-card)).
 
 > **Note:** The energy figures are starting points to test, not guarantees. Many production features have so far only run on the simulator. Watch the first pieces closely.
 
-## Open the cockpit {#open-the-cockpit}
+## Open the cockpit
 
 To open the cockpit on a desktop or laptop:
 
@@ -35,7 +35,7 @@ To open the cockpit on a desktop or laptop:
 
 You can also open it in these ways:
 
-- Click **Production cockpit** at the top of the **Production** window (see [The Production window](#production-window)).
+- Click **Production cockpit** at the top of the **Production** window (see [The Production window](#the-production-window)).
 - Open command search and type "Production cockpit".
 - Add `#/cockpit` to the end of the app's address in the browser.
 - If you installed OpenEtch as an app, use its **Production cockpit** shortcut (shown as **Cockpit** where space is short) where your system shows app shortcuts.
@@ -48,7 +48,7 @@ To leave the cockpit, press **Exit** at the top left, or use the browser's Back.
 
 If the engine is too old for the production features, the cockpit says "This engine has no production features yet." and the Production window is not shown.
 
-## What the cockpit shows {#cockpit-layout}
+## What the cockpit shows
 
 ![The production cockpit on an iPad in landscape: the status panel on the left, the Done, Next, Times and Serial ledger cards on the right, STOP at the top right](img/cockpit-ipad.webp)
 
@@ -65,7 +65,7 @@ On a wide screen, the status panel is on the left and the cards are on the right
 
 On a screen narrower than 900 pixels (a tablet held upright, or a phone), everything is in one column with the status panel first. On a screen narrower than 600 pixels, **Exit** and **Design locked** show as icons only.
 
-### The status panel {#status-panel}
+### The status panel
 
 The large panel says what the machine is doing, most urgent first. When the laser needs you, it shows a **Waiting for you** badge.
 
@@ -96,7 +96,7 @@ Under the buttons, **Waiting for approval** lists runs that wait for a person: a
 - On an engine without a PIN, press **Start** on its row.
 - On an engine with a PIN, press **Approve…**, type the **Operator PIN**, then press **Confirm and fire**.
 
-### Done: the count and Stop at {#counter-and-stop-at}
+### The Done card
 
 The **Done** card shows how many pieces this device has completed. With **Stop at** set, it shows the count against the target (for example "23 / 50"), a progress bar and the time left, such as "27 to go · done in about 12:30".
 
@@ -116,7 +116,7 @@ To run exactly 50 pieces:
 
 At 50 the status panel shows **Target reached: 50 / 50**, and the card says "Count 50 has reached Stop At: reset the count or raise Stop At to run again." Every further Start is refused, the foot switch's too. A **Stop At reached** [notification](notifications.md#events) goes out if you set one up.
 
-### Next: the values the next run marks {#next-card}
+### The Next card
 
 The **Next** card is for designs with serial-number or CSV text (see [Variable text and barcodes](variable-text-and-barcodes.md)). Without such text, it says "No serial-number or CSV text in this design."
 
@@ -148,7 +148,7 @@ You can change all of these while the design is locked. The [serial ledger](seri
 
 ![The Next card with slot 2 marked Empty, the next slots taking its value, and Stop at End (60) ticked](img/cockpit-next-empty.webp)
 
-### Times {#times-card}
+### The Times card
 
 The **Times** card shows:
 
@@ -161,15 +161,15 @@ The **Times** card shows:
 
 When an extractor is set up, the card also shows **Extractor on** or **Extractor off**, with "(running on)" during its run-on time and a **Switch on** or **Switch off** button. See [Extractor](extractor.md).
 
-When maintenance is due, the card shows one line per item, for example "Due: Clean the lens", with a **Done** button. See [Hour meter and maintenance](maintenance.md#mark-done).
+When maintenance is due, the card shows one line per item, for example "Due: Clean the lens", with a **Done** button. See [Hour meter and maintenance](maintenance.md#mark-a-reminder-done).
 
-### The Serial ledger card {#ledger-card}
+### The Serial ledger card
 
 The **Serial ledger** card shows the last three runs that marked serial numbers or CSV rows. Each run shows its time and its result (finished, aborted or failed), or "re-mark of slot 3".
 
 Each marked slot is a button, for example "3: SN 0009". To mark that pocket again with the same value, tap the button. OpenEtch says "Re-mark requested: approve it to burn". See [Re-mark a slot](serial-ledger.md#re-mark-a-slot). Slots that were left out are greyed out.
 
-## The design lock {#design-lock}
+## The design lock
 
 While the cockpit is open, it locks the design. Every edit is refused: from this browser's other tabs, from other devices, from scripts and from AI agents. Undo, redo, moving in the timeline and switching document tabs are refused too.
 
@@ -195,7 +195,7 @@ To unlock from another device:
 
 > **Tip:** Switching jig pockets on or off is a design edit, so it is refused while the cockpit is open. To skip a pocket for a run, mark its slot **Empty** in the Next card instead.
 
-## Run a batch with the foot switch {#foot-switch-cycle}
+## Run a batch with the foot switch
 
 The foot switch cycle lets you work with both hands on the parts: one press frames the job on the jig, the next press burns it.
 
@@ -207,7 +207,7 @@ You need all of these:
 
 To run a batch with the foot switch:
 
-1. Open the job and check it on scrap (see [Before you start a batch](#before-a-batch)).
+1. Open the job and check it on scrap (see [Before you start a batch](#before-you-start-a-batch)).
 2. Open the cockpit. The status panel says "Press the foot switch to frame the job, again to burn it; or press Start."
 3. Load the jig, then press the foot switch. The red pointer frames the whole job and the panel shows **Ready: press the foot switch**.
 4. Check that the frame lines up with the parts.
@@ -225,7 +225,7 @@ The cycle follows these rules:
 
 If the job waits for the foot switch for longer than **Waiting for you after** in [Notifications](notifications.md#add-a-target), a **Waiting for the foot switch** notification goes out.
 
-## Engines with an operator PIN {#pin-mode}
+## Engines with an operator PIN
 
 On an engine with an operator PIN, the cockpit shows "This engine approves runs with the operator PIN: request the run, then approve it below."
 
@@ -237,7 +237,7 @@ To run a job:
 
 The foot switch cycle is off on these engines. A run can still wait for the foot pedal if you choose the run option **Wait for foot pedal (Start Marking input)**. The panel then shows **Waiting for you**. See [Running a job](running-a-job.md).
 
-## Continue at a layer pause {#layer-pause}
+## Continue at a layer pause
 
 A layer can stop the run before it starts, with the laser off, so you can clean, flip or change the part. You switch this on with **Pause before this layer (wait for Continue)** in the layer's cut options. See [Layers and settings](layers-and-settings.md).
 
@@ -257,7 +257,7 @@ A few limits apply:
 - A run waits at most one hour at a pause. After that, the run ends as stopped.
 - STOP still works at a pause and ends the run.
 
-## The Production window {#production-window}
+## The Production window
 
 The **Production** window is part of the **Laser** workspace. On a desktop, open it from the **Window** menu if it is hidden. On a phone, it is in the **Job** tab's sheet.
 
@@ -273,7 +273,7 @@ It shows:
 - maintenance that is due;
 - whether the extractor is on or off.
 
-## Use a tablet or phone at the machine {#tablet-and-phone}
+## Use a tablet or phone at the machine
 
 A tablet on a stand next to the laser makes a good operator screen. To set one up:
 
@@ -289,7 +289,7 @@ On a phone, the cockpit is one column: the status panel first, then the cards. S
 
 ![The production cockpit on a phone: one column with STOP at the top right](img/cockpit-phone.webp)
 
-## What AI agents can do {#ai-agents}
+## What AI agents can do
 
 AI agents connected through MCP can:
 
@@ -301,7 +301,7 @@ AI agents connected through MCP can:
 
 Agents can never approve or start a burn. They cannot press Continue, switch the extractor, unlock the cockpit, or change notification, maintenance or extractor settings. While the cockpit is open, their design edits are refused like everyone else's; only Variable Text commands (the counter, empty slots, Stop at End) still work. See [AI agents](ai-agents.md).
 
-## Common problems {#common-problems}
+## Common problems
 
 | Problem | What to do |
 |---|---|

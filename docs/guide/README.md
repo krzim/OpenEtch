@@ -27,8 +27,9 @@ summary: Centre a design on round stock and size it to the coin.
 Then the body:
 
 - One `# Title`, then `##` for each task or section and `###` below that.
-- Every `##` and `###` heading ends with a stable anchor: `## Cut settings {#cut-settings}` (kebab-case, unique on the page). The app's **?** buttons link to these, so give every panel, dialog and tool its own heading. Do not rename an anchor once it exists; rename the heading text instead.
-- Links to other pages: `[text](other-page.md#anchor)`. Websites: `https://...` (they open in a new tab). Nothing else (no `../` paths, no other schemes).
+- A heading's anchor is the one GitHub gives it, made from its text: lower case, punctuation removed (except `-` and `_`), each space a hyphen. `## Cut settings` is `#cut-settings`, `## The Cuts / Layers window` is `#the-cuts--layers-window` (the `/` goes, both spaces stay). Code spans, bold and link text count as text. A heading that repeats one above it on the page gets `-1`, `-2`. Do not write `{#custom-id}` after a heading: GitHub shows it as text.
+- The app's **?** buttons link to headings by these anchors, so give every panel, dialog and tool its own short heading (`## Hatch settings`, not `## Hatch: interval, angle and cross hatch`). Rewording a heading changes its anchor: `npm test` names every link and **?** button that no longer resolves, so fix them in the same change.
+- Links to other pages: `[text](other-page.md#anchor)`, or `[text](#anchor)` on the same page. Websites: `https://...` (they open in a new tab). Nothing else (no `../` paths, no other schemes).
 - Pictures: `![Alt text that says what the picture shows](img/<shot-name>.webp)`. The shot must be listed in `shots.json` (below). About one picture per major section, where it really helps: a panel, a dialog, a phone layout.
 - Callouts: a block quote that starts with `**Note:**`, `**Tip:**` or `**Warning:**`.
 - Keys: in code spans, `Ctrl+Z`. No raw HTML anywhere (no `<kbd>`, no comments).
@@ -48,4 +49,4 @@ Laser safety where it matters: eye protection rated for the wavelength, fume ext
 
 ## Checks
 
-`npm test` (in web/) fails when a page has bad front matter, a heading without an anchor, a link to a missing page or anchor, a picture that is not in `shots.json` or not taken yet, a shot no page uses, raw HTML, or a contents list in index.md that is out of date (`npm run guide:index` rewrites it).
+`npm test` (in web/) fails when a page has bad front matter, a heading with a `{#custom-id}`, a link or a **?** button to a missing page or heading, a picture that is not in `shots.json` or not taken yet, a shot no page uses, raw HTML, or a contents list in index.md that is out of date (`npm run guide:index` rewrites it).

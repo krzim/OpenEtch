@@ -54,7 +54,7 @@ export function VarTextWindow(p: {
   const row = csv && v.current >= 0 && v.current < csv.rows.length ? csv.rows[v.current] : null;
   return (
     <Dock
-      help="variable-text-and-barcodes#variable-text-window"
+      help="variable-text-and-barcodes#the-variable-text-window"
       id="varText"
       title={t("var.title")}
       actions={

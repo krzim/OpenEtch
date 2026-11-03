@@ -12,7 +12,7 @@ This page covers everything in the **File** menu: new, open and save, autosave a
 
 Your projects are kept by the engine, on the engine's computer, not on the device you are using. So you can save on the PC and open the same project on the iPad. Files you import come from your device. Files you export download to your device.
 
-## Where your files are kept {#projects-folder}
+## Where your files are kept
 
 The engine keeps projects in its projects folder:
 
@@ -32,7 +32,7 @@ Inside it:
 
 The engine only writes inside its projects folder and any project locations you add. To put a file anywhere else, download it with **File > Export > Download .openetch** or another export.
 
-## The File menu {#file-menu}
+## The File menu
 
 On the desktop, **File** is at the left of the top bar. On a phone, tap **More**: the **File** section has **New**, **Open…**, **Save**, **Save as…** and **Import…**, and **All file commands** opens the full menu.
 
@@ -41,7 +41,7 @@ On the desktop, **File** is at the left of the top bar. On a phone, tap **More**
 | Entry | What it does | Key |
 |---|---|---|
 | **New** | Start a new, empty document. | `Ctrl+N` |
-| **New from example…** | Open an example project. See [Getting started](getting-started.md#open-an-example). | |
+| **New from example…** | Open an example project. See [Getting started](getting-started.md#open-an-example-project). | |
 | **Open…** | Open a project saved on the engine, or a file from this device. | `Ctrl+O` |
 | **Open Recent** | The eight most recently changed projects. | |
 | **Save** | Save the project under its name. | `Ctrl+S` |
@@ -58,7 +58,7 @@ Entries that need something first are greyed out until it is there: **Export ima
 
 > **Note:** Browsers keep `Ctrl+N` for a new browser window, so use **File > New** instead of the key.
 
-## Start a new document {#new-document}
+## Start a new document
 
 To start a new design, choose **File > New**.
 
@@ -66,7 +66,7 @@ If your design has unsaved changes, the **Unsaved changes** dialog asks first. C
 
 A new document is laid out for your active laser: a galvo's square field, or a gantry's bed. It is not a project yet. **Save** asks for a name the first time.
 
-## Open a project {#open-a-project}
+## Open a project
 
 To open a saved project:
 
@@ -80,7 +80,7 @@ If your design has unsaved changes, you are asked first. Choose **Discard and op
 
 ![The Open dialog with the project folders and project thumbnails](img/open-dialog.webp)
 
-### Open a file from this device {#open-from-device}
+### Open a file from this device
 
 To open a file that is on your PC, Mac, iPad or phone:
 
@@ -90,12 +90,12 @@ To open a file that is on your PC, Mac, iPad or phone:
 What happens depends on the file:
 
 - A `.openetch` project opens and replaces your design. It is not saved on the engine until you choose **Save**.
-- A LightBurn `.lbrn2` file opens the LightBurn dialog with **Open (replace)** chosen. See [Import or open a LightBurn file](#import-lightburn).
+- A LightBurn `.lbrn2` file opens the LightBurn dialog with **Open (replace)** chosen. See [Open a LightBurn file](#open-a-lightburn-file).
 - A vector, image or 3D model file opens as a new, unsaved project named after the file, as LightBurn's Open does.
 
 You can also drop a single `.openetch` file on the canvas to open it.
 
-## Save a project {#save-a-project}
+## Save a project
 
 To save your design as a project:
 
@@ -120,7 +120,7 @@ Project names:
 
 The document name in the top bar shows a dot while there are unsaved changes. Hover it for **All changes saved** or **Unsaved changes**.
 
-### Project folders {#project-folders}
+### Project folders
 
 You can keep projects in folders, up to four deep, such as `Clients/Acme/badge`.
 
@@ -128,7 +128,7 @@ To make a folder, open **Save as** or **Open**, pick the folder to put it in, an
 
 You can also type a name with `/` in **Save as**. It makes the folders for you.
 
-### Project locations {#project-locations}
+### Project locations
 
 A project location is another folder on the engine's computer, such as a network drive or a synced cloud folder. It shows as a top folder in **Save as** and **Open**. You can add up to 16.
 
@@ -141,7 +141,7 @@ To add one:
 
 Locations given with the engine's `--projects-mount` option show as **from the command line** and cannot be removed here. A location the engine cannot reach shows **not reachable**.
 
-## Autosave and backups {#autosave-and-backups}
+## Autosave and backups
 
 The engine protects your work in two ways:
 
@@ -170,7 +170,7 @@ The same dialog has the **Autosave settings**:
 
 Click **Save settings** to apply them. They are kept by the engine, so they apply to every device.
 
-## Import files {#import-files}
+## Import files
 
 Importing adds a file's shapes to your current design. To import:
 
@@ -209,7 +209,7 @@ Some files are refused, with the reason:
 
 > **Tip:** On an iPad or iPhone the file picker may show every file. If you pick the wrong kind, the app says so, for example **… is not a file this can open**.
 
-### Import options {#import-options}
+### Import options
 
 To change how imports are placed, choose **File > Settings > Import options…** These are LightBurn's Import/Export settings, kept in this browser.
 
@@ -221,7 +221,7 @@ To change how imports are placed, choose **File > Settings > Import options…**
 | **Import hidden layers (AI / PDF)** | off | Also import layers that are hidden in the file. |
 | **Allow importing to tool layers (T1 / T2)** | off | Let an import land on a tool layer. Off: an import never goes on one. |
 
-### 3D models and Gerber files {#import-3d-models-and-gerber}
+### 3D models and Gerber files
 
 A 3D model or a Gerber or drill file opens an options dialog before it is imported.
 
@@ -235,11 +235,11 @@ With one file, the dialog also offers **Open as new project** instead of **Impor
 
 > **Note:** Depth engraving with 3D Sliced has not yet been checked on the B6. Test on scrap first.
 
-## LightBurn projects {#lightburn-projects}
+## LightBurn projects
 
 OpenEtch reads and writes LightBurn `.lbrn2` projects, so you can move work between the two.
 
-### Import or open a LightBurn file {#import-lightburn}
+### Open a LightBurn file
 
 To bring in a LightBurn project:
 
@@ -251,7 +251,7 @@ To bring in a LightBurn project:
 
 ![The Open or import LightBurn project dialog with the field size](img/lightburn-import-dialog.webp)
 
-#### The field size {#lightburn-field-size}
+#### The field size
 
 LightBurn files do not store the field size they were made for. On a galvo, LightBurn measures from the corner of its field, so OpenEtch needs that size to put each shape in the right place. A wrong size shifts everything by half the difference.
 
@@ -266,7 +266,7 @@ If the file was made for a LightBurn device you do not have, the dialog says so.
 
 > **Tip:** Use the **Field Size** from LightBurn's **Device Settings** on the computer that made the file.
 
-### What carries over and what does not {#lightburn-what-carries-over}
+### What carries over and what does not
 
 These come across from LightBurn:
 
@@ -290,9 +290,9 @@ The **Cuts / Layers** window lists, for each imported layer, **LightBurn setting
 
 Everything OpenEtch does not use is kept, so the file can go back to LightBurn. A file you import and export unchanged is meant to come out the same, byte for byte.
 
-> **Warning:** A job from a LightBurn file can mark differently from LightBurn if it used a setting in the list above. Check the energy density of each layer before the first burn. See [Getting started](getting-started.md#energy-density).
+> **Warning:** A job from a LightBurn file can mark differently from LightBurn if it used a setting in the list above. Check the energy density of each layer before the first burn. See [Getting started](getting-started.md#energy-density-simply).
 
-### Save as a LightBurn file {#export-lightburn}
+### Save as a LightBurn file
 
 To save your design for LightBurn:
 
@@ -308,9 +308,9 @@ The export writes the stock outline on tool layer T1 (T2 when T1 is in use). Wit
 
 For a gantry device, the export uses the device's bed and origin corner. To export for another device, make it active in **File > Laser > Devices…**
 
-## Export {#export}
+## Export
 
-### Export SVG, DXF, AI or PDF {#export-svg-dxf-ai-pdf}
+### Export SVG, DXF, AI or PDF
 
 To export your design for other software:
 
@@ -338,7 +338,7 @@ Each format:
 - **AI**: a PDF-compatible file that Adobe Illustrator 9 and later read.
 - **PDF**: one page, paths in the layer colours, images included.
 
-### Print {#print}
+### Print
 
 To print your design, for example as a paper template:
 
@@ -352,7 +352,7 @@ Hidden layers and layers with output off are left out.
 
 > **Tip:** To check a printed template is true to size, measure a known shape on the paper. Some printers scale pages to fit.
 
-### Export images {#export-images}
+### Export images
 
 With an image selected:
 
@@ -361,11 +361,11 @@ With an image selected:
 
 Both are also in the image's right-click menu. See [Images](images.md).
 
-### Download the project file {#download-openetch}
+### Download the project file
 
 To keep a copy of a project on your own device, choose **File > Export > Download .openetch**. It downloads the current design as a `.openetch` file, which you can open again with **Open… > Upload from this device**.
 
-### G-code and RD files {#gcode-and-rd}
+### G-code and RD files
 
 These appear in **File > Export** only for gantry lasers:
 
@@ -374,7 +374,7 @@ These appear in **File > Export** only for gantry lasers:
 
 They write the job exactly as a run would send it, but send nothing to the machine.
 
-## Templates on the engine {#templates-on-the-engine}
+## Templates on the engine
 
 A template is a design you start new jobs from. Opening one gives you a new, untitled copy, so the template itself is never overwritten.
 
@@ -385,7 +385,7 @@ A template is a design you start new jobs from. Opening one gives you a new, unt
 
 Templates are kept in the `templates` folder of the projects folder. For template fields and **Fill in template…**, see [Templates](templates.md).
 
-## Project notes {#project-notes}
+## Project notes
 
 Notes are free text saved with the project: the material, the jig, the settings that worked.
 
@@ -395,7 +395,7 @@ Tick **Show notes when the file opens** to show them every time the project is o
 
 Notes are kept in LightBurn exports and read from LightBurn files.
 
-## Pages {#pages}
+## Pages
 
 A project can have several pages, like LightBurn's Pages window. Each page has its own shapes. Layers and cut settings are shared by all pages. Jobs, previews and framing use the active page.
 
@@ -410,7 +410,7 @@ To move shapes to another page, select them, right-click and choose **Move selec
 
 The Pages window is not in the phone layout. A LightBurn export carries only the active page.
 
-## Preferences and bundles {#preferences-and-bundles}
+## Preferences and bundles
 
 Use bundles to move your settings, devices and material libraries to another computer, or to back them up.
 
@@ -418,7 +418,7 @@ To open them, choose **File > LightBurn > Preferences and bundles…**
 
 ![The Preferences and bundles dialog](img/prefs-bundles-dialog.webp)
 
-### Engine preferences {#engine-preferences}
+### Engine preferences
 
 - **Export preferences** downloads the engine's preferences as an `.oeprefs` file: layer and optimisation defaults, the Job Checklist, other engine settings and autosave.
 - **Import preferences…** replaces them from such a file. The current ones are backed up first.
@@ -426,7 +426,7 @@ To open them, choose **File > LightBurn > Preferences and bundles…**
 
 Theme, units and hotkeys are kept in your browser, not in these files.
 
-### User bundles {#user-bundles}
+### User bundles
 
 Tick the parts you want: **Preferences**, **Devices**, **Material libraries**, and for LightBurn bundles **Material test presets (LightBurn bundles)**, **Image presets (LightBurn bundles)** and **Art libraries (LightBurn bundles)**.
 
@@ -440,7 +440,7 @@ When you import a bundle:
 - A material library whose name exists with other content loads as "name (bundle)", so nothing is overwritten.
 - From a LightBurn bundle, only the settings OpenEtch has are used. Hotkeys are not imported.
 
-### Import LightBurn preferences {#import-lightburn-preferences}
+### Import LightBurn preferences
 
 To bring your LightBurn settings across:
 
@@ -451,7 +451,7 @@ To bring your LightBurn settings across:
 
 Only the settings OpenEtch has are read. Device lists, accounts, licence data and recent files are skipped and not kept. The engine's current preferences are backed up first.
 
-## Common problems {#common-problems}
+## Common problems
 
 - **A LightBurn file lands in the wrong place.** The field size was wrong. Import it again and set the **Field Size** from LightBurn's **Device Settings**.
 - **Save asks for a name.** The design is not a project yet, for example after you opened a file from your device or an example. Save it once with a name; after that **Save** saves straight over it.

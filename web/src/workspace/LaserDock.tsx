@@ -151,7 +151,7 @@ export function LaserDock(p: LaserDockProps) {
     </div>
   );
   return (
-    <Dock help="running-a-job#laser-window" id="laser" title={t("laser.title")}>
+    <Dock help="running-a-job#the-laser-window" id="laser" title={t("laser.title")}>
       {tablet && (
         <ContextStripPortal>
           <div className="laser-strip" role="toolbar" aria-label={t("laser.title")}>

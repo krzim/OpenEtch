@@ -13,18 +13,40 @@ test("front matter: key: value lines, quotes stripped, body after the fence", ()
   assert.equal(splitFrontMatter("---\r\ntitle: X\r\n---\r\nBody").meta.title, "X");
 });
 
-test("headings: explicit {#anchor} ids, GitHub slugs otherwise, duplicates numbered", () => {
-  const b = parseBlocks("# Title\n\n## Cut settings {#cut-settings}\n\n## Plain heading\n\n## Plain heading\n");
+test("headings: GitHub's ids, made from the text; duplicates numbered", () => {
+  const ids = (src: string) => parseBlocks(src).flatMap((x) => (x.t === "heading" ? [x.id] : []));
+  const b = parseBlocks("# Title\n\n## Cut settings\n\n## Plain heading\n\n## Plain heading\n");
   assert.deepEqual(
-    b.map((x) => (x.t === "heading" ? [x.level, x.id, inlineText(x.c), x.explicit] : null)),
+    b.map((x) => (x.t === "heading" ? [x.level, x.id, inlineText(x.c)] : null)),
     [
-      [1, "title", "Title", false],
-      [2, "cut-settings", "Cut settings", true],
-      [2, "plain-heading", "Plain heading", false],
-      [2, "plain-heading-1", "Plain heading", false],
+      [1, "title", "Title"],
+      [2, "cut-settings", "Cut settings"],
+      [2, "plain-heading", "Plain heading"],
+      [2, "plain-heading-1", "Plain heading"],
     ],
   );
+  // Lower case; punctuation other than "-" and "_" removed; each space a hyphen, nothing collapsed or trimmed.
   assert.equal(slugify("Layers & materials: 2-tone!"), "layers--materials-2-tone");
+  assert.equal(slugify("The Cuts / Layers window"), "the-cuts--layers-window");
+  assert.equal(slugify("3D models (STL, OBJ) and snake_case"), "3d-models-stl-obj-and-snake_case");
+  assert.equal(slugify("C++ & C#? Yes."), "c--c-yes");
+  // Letters of any script stay, lower-cased; symbols such as emoji go (their spaces stay).
+  assert.equal(slugify("Café Über GRÖSSE"), "café-über-grösse");
+  assert.equal(slugify("Done 🎉 now"), "done--now");
+  // What counts is the rendered text: code spans, emphasis and link text, escapes resolved; not an image's alt text.
+  assert.deepEqual(ids("## The `Ctrl+Z` key and *undo* in [the menu](x.md)\n## \\*Starred\\* \\#1\n## Logo ![A logo](img/a.webp) here\n"), [
+    "the-ctrlz-key-and-undo-in-the-menu",
+    "starred-1",
+    "logo--here",
+  ]);
+  // `{#custom-id}` is not markdown on GitHub: it stays in the text (and so in the id).
+  const custom = parseBlocks("## Cut settings {#cut}\n")[0];
+  assert.ok(custom.t === "heading" && custom.id === "cut-settings-cut" && inlineText(custom.c) === "Cut settings {#cut}");
+  // Duplicates as github-slugger numbers them: a heading that reads like a numbered one moves on to the next number.
+  assert.deepEqual(ids("# A\n## A\n## A 1\n### A\n"), ["a", "a-1", "a-1-1", "a-2"]);
+  // Closing #s are not text; a heading in a block quote ("hello-1", not listed: ids() reads the top level) counts
+  // towards the numbering, as on GitHub.
+  assert.deepEqual(ids("## Hello ##\n\n> ## Hello\n\n## Hello\n"), ["hello", "hello-2"]);
 });
 
 test("inline: bold, italic, code, strikethrough, escapes, nesting", () => {
@@ -73,6 +95,10 @@ test("link targets: pages, anchors, http(s) and mailto only", () => {
   assert.deepEqual(linkTarget("layers.md#cut-settings"), { kind: "page", slug: "layers", anchor: "cut-settings" });
   assert.deepEqual(linkTarget("./index.md"), { kind: "page", slug: "index", anchor: null });
   assert.deepEqual(linkTarget("#top"), { kind: "anchor", anchor: "top" });
+  // GitHub ids may start with a digit, hold "_", "--" or letters of any script (raw or percent-encoded).
+  assert.deepEqual(linkTarget("files.md#3d-models--gerber_files"), { kind: "page", slug: "files", anchor: "3d-models--gerber_files" });
+  assert.deepEqual(linkTarget("#café"), { kind: "anchor", anchor: "café" });
+  assert.deepEqual(linkTarget("#caf%C3%A9"), { kind: "anchor", anchor: "café" });
   assert.deepEqual(linkTarget("https://example.com/a?b=c"), { kind: "external", href: "https://example.com/a?b=c" });
   assert.deepEqual(linkTarget("mailto:someone@example.com"), { kind: "external", href: "mailto:someone@example.com" });
   for (const bad of ["javascript:alert(1)", "JavaScript:alert(1)", "data:text/html,x", "../../README.md", "//evil.example", "file:///c:/x", "vbscript:x", "https://"])

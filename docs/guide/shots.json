@@ -1099,13 +1099,13 @@
         "wait": 1500
       },
       {
-        "scroll": "section.card:has([data-help-target='preview-and-framing#toolpath-card'])"
+        "scroll": "section.card:has([data-help-target='preview-and-framing#the-toolpath-card'])"
       },
       {
         "wait": 400
       }
     ],
-    "crop": "section.card:has([data-help-target='preview-and-framing#toolpath-card'])"
+    "crop": "section.card:has([data-help-target='preview-and-framing#the-toolpath-card'])"
   },
   {
     "name": "preview-timeline",
@@ -1877,7 +1877,7 @@
       },
       {
         "click": {
-          "css": ".cockpit-card:has([data-help-target='production-cockpit#next-card']) button",
+          "css": ".cockpit-card:has([data-help-target='production-cockpit#the-next-card']) button",
           "text": "Serial [0,1]"
         }
       },
@@ -1891,7 +1891,7 @@
         "wait": 600
       }
     ],
-    "crop": ".cockpit-card:has([data-help-target='production-cockpit#next-card'])"
+    "crop": ".cockpit-card:has([data-help-target='production-cockpit#the-next-card'])"
   },
   {
     "name": "production-window",

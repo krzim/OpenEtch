@@ -8,6 +8,7 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { Dialog } from "../components/Dialog.tsx";
+import { isCockpitHash } from "../production/model.ts";
 import { displayModeNow, isAppWindow, useDisplayMode, useFullscreen } from "../workspace/fullscreen.ts";
 import { hintFor } from "../workspace/hotkeys.ts";
 import { getPrefs } from "../workspace/prefs.ts";
@@ -97,7 +98,9 @@ export function offerAppModeOnce(): void {
   } catch {
     return;
   }
-  window.setTimeout(() => openWhenClear(() => !!document.querySelector('[aria-modal="true"]'), openAppModeDialog, (f) => window.setTimeout(f, 2000)), 1500);
+  // Not over another dialog, nor over the production cockpit (an operator's full screen, often a tablet's first visit).
+  const busy = () => !!document.querySelector('[aria-modal="true"]') || isCockpitHash(location.hash);
+  window.setTimeout(() => openWhenClear(busy, openAppModeDialog, (f) => window.setTimeout(f, 2000)), 1500);
 }
 
 
@@ -133,7 +136,7 @@ function AppModeDialog({ onClose }: { onClose: () => void }) {
   };
   return (
     <Dialog
-      help="getting-started#install-as-an-app"
+      help="getting-started#install-openetch-as-an-app"
       title={t("app.mode.title")}
       onClose={onClose}
       size="md"
