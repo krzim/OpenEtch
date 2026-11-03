@@ -108,6 +108,25 @@ impl IntoResponse for EngineError {
     }
 }
 
+impl From<appcore::AppError> for EngineError {
+    /// The shared glue's refusals are the engine's, one to one (same message, same status).
+    fn from(e: appcore::AppError) -> Self {
+        use appcore::AppError as A;
+        match e {
+            A::Command(e) => EngineError::Command(e),
+            A::Plan(e) => EngineError::Plan(e),
+            A::BadRequest(m) => EngineError::BadRequest(m),
+            A::NotFound(m) => EngineError::NotFound(m),
+            A::Conflict(m) => EngineError::Conflict(m),
+            A::Forbidden(m) => EngineError::Forbidden(m),
+            A::NotControllable(m) => EngineError::NotControllable(m),
+            A::TooLarge(m) => EngineError::TooLarge(m),
+            A::Unsupported(m) => EngineError::Unsupported(m),
+            A::Internal(m) => EngineError::Internal(m),
+        }
+    }
+}
+
 impl From<tokio::task::JoinError> for EngineError {
     fn from(e: tokio::task::JoinError) -> Self {
         EngineError::Internal(format!("background task failed: {e}"))

@@ -381,19 +381,7 @@ fn ui_only(headers: &HeaderMap, origin: Option<&Value>, what: &str) -> Result<()
 
 /// `Content-Disposition` for `<stem>.<ext>` (ASCII `filename` plus UTF-8 `filename*`).
 fn disposition(kind: &str, stem: &str, ext: &str) -> String {
-    let stem: String = stem.chars().filter(|c| !c.is_control() && !matches!(c, '/' | '\\')).collect();
-    let stem = if stem.trim().is_empty() { "Untitled".to_string() } else { stem.trim().to_string() };
-    let file = format!("{stem}.{ext}");
-    let ascii: String = file.chars().map(|c| if c.is_ascii_alphanumeric() || " -_.()".contains(c) { c } else { '_' }).collect();
-    let mut enc = String::new();
-    for b in file.bytes() {
-        if b.is_ascii_alphanumeric() || b"!#$&+-.^_`|~".contains(&b) {
-            enc.push(char::from(b));
-        } else {
-            enc.push_str(&format!("%{b:02X}"));
-        }
-    }
-    format!("{kind}; filename=\"{ascii}\"; filename*=UTF-8''{enc}")
+    appcore::http::disposition(kind, stem, ext)
 }
 
 fn file_response(kind: &str, stem: &str, ext: &str, mime: &str, body: Vec<u8>, warnings: usize) -> Response {
@@ -437,34 +425,9 @@ fn stem(st: &AppState) -> String {
     p["name"].as_str().or(p["display_name"].as_str()).map(str::to_owned).unwrap_or_else(|| st.document().name)
 }
 
-/// A query value as JSON: numbers, booleans, `a,b` lists for `ids` / `paper`, else text.
+/// A query value as JSON (`appcore::upload::qvalue`).
 fn qvalue(key: &str, v: &str) -> Result<Value, EngineError> {
-    if matches!(key, "ids") {
-        return Ok(json!(v.split(',').map(str::trim).filter(|s| !s.is_empty()).collect::<Vec<_>>()));
-    }
-    if matches!(key, "paper" | "rotation_deg") {
-        let n: Result<Vec<f64>, _> = v.split(',').map(|s| s.trim().parse::<f64>()).collect();
-        return match n {
-            Ok(n) if n.iter().all(|x| x.is_finite()) => Ok(json!(n)),
-            _ => Err(EngineError::BadRequest(format!("{key} must be numbers separated by commas"))),
-        };
-    }
-    if v == "true" || v == "false" {
-        return Ok(json!(v == "true"));
-    }
-    if let Ok(n) = v.parse::<f64>()
-        && !matches!(key, "name" | "layer" | "kind" | "format" | "colors" | "area" | "mime" | "render")
-    {
-        if !n.is_finite() {
-            return Err(EngineError::BadRequest(format!("{key} '{v}' is not a finite number")));
-        }
-        // Whole numbers stay integers, so integer options (a PDF `page`, a `dpi`) read; float options take them too.
-        if let Ok(i) = v.trim().parse::<i64>() {
-            return Ok(json!(i));
-        }
-        return Ok(json!(n));
-    }
-    Ok(json!(v))
+    Ok(appcore::upload::qvalue(key, v)?)
 }
 
 /// Run a query command and turn a failure into `EngineError`.
@@ -473,11 +436,7 @@ fn query_cmd(st: &AppState, id: &str, params: Value) -> Result<Value, EngineErro
 }
 
 fn decoded_content(r: &Value) -> Result<Vec<u8>, EngineError> {
-    if let Some(t) = r["content"].as_str() {
-        return Ok(t.as_bytes().to_vec());
-    }
-    let b = r["content_base64"].as_str().unwrap_or_default();
-    STANDARD.decode(b).map_err(|e| EngineError::Internal(e.to_string()))
+    Ok(appcore::upload::decoded_content(r)?)
 }
 
 async fn export(State(st): State<Arc<AppState>>, q: Q) -> Result<Response, EngineError> {
@@ -570,99 +529,9 @@ async fn image_processed(State(st): State<Arc<AppState>>, UrlPath(id): UrlPath<S
     .await
 }
 
-/// The import command and its parameters for a format (the file in `content` or `data_base64`).
+/// The import command and its parameters for a format (`appcore::upload::import_invocation`).
 pub(crate) fn import_invocation(format: &str, bytes: Vec<u8>, q: &HashMap<String, String>) -> Result<Invocation, EngineError> {
-    let text = |bytes: Vec<u8>| -> Result<String, EngineError> {
-        let mut t = String::from_utf8(bytes).map_err(|_| EngineError::BadRequest(format!("a {format} file must be UTF-8 text")))?;
-        if t.starts_with('\u{feff}') {
-            t.drain(..3);
-        }
-        Ok(t)
-    };
-    let mut params = serde_json::Map::new();
-    let id = match format {
-        "svg" => {
-            params.insert("svg".into(), json!(text(bytes)?));
-            "art.import_svg"
-        }
-        "dxf" => {
-            params.insert("content".into(), json!(text(bytes)?));
-            "art.import_dxf"
-        }
-        "hpgl" | "plt" => {
-            params.insert("content".into(), json!(text(bytes)?));
-            "art.import_hpgl"
-        }
-        "gcode" | "nc" | "gc" | "ngc" | "tap" => {
-            params.insert("content".into(), json!(text(bytes)?));
-            "art.import_gcode"
-        }
-        "rd" => {
-            params.insert("data_base64".into(), json!(STANDARD.encode(&bytes)));
-            "art.import_rd"
-        }
-        "gerber" | "drill" => {
-            params.insert("content".into(), json!(text(bytes)?));
-            if format == "drill" {
-                params.insert("kind".into(), json!("excellon"));
-            }
-            "art.import_gerber"
-        }
-        "lbrn" | "lbrn2" | "lbt" => {
-            params.insert("content".into(), json!(text(bytes)?));
-            "doc.import_lbrn2"
-        }
-        "image" | "tiff" | "tga" => {
-            let mime = match q.get("mime") {
-                Some(m) => m.clone(),
-                None => crate::state::sniff_image(&bytes)
-                    .map(str::to_owned)
-                    .or_else(|| (format == "tga").then(|| "image/x-tga".to_string()))
-                    .ok_or_else(|| EngineError::BadRequest("not an image the engine recognises; pass mime=".into()))?,
-            };
-            params.insert("mime".into(), json!(mime));
-            params.insert("data_base64".into(), json!(STANDARD.encode(&bytes)));
-            "art.import_image"
-        }
-        "pdf" | "ai" | "eps" | "ezd" | "model" => {
-            params.insert("data_base64".into(), json!(STANDARD.encode(&bytes)));
-            match format {
-                "pdf" => "art.import_pdf",
-                "ai" => "art.import_ai",
-                "eps" => "art.import_eps",
-                "ezd" => "art.import_ezd",
-                _ => "art.import_model",
-            }
-        }
-        other => {
-            return Err(EngineError::BadRequest(format!(
-                "unknown format '{other}' (svg, dxf, image, tiff, tga, pdf, ai, eps, ezd, hpgl, plt, gcode, nc, gerber, drill, model, lbrn, rd)"
-            )));
-        }
-    };
-    for (k, v) in q {
-        match k.as_str() {
-            "format" | "mode" | "mime" => {}
-            "name" if id == "doc.import_lbrn2" => {
-                params.insert("name".into(), json!(v));
-            }
-            // Art imports name their group (or object) after the file, without its extension.
-            "name" => {
-                let stem = v.rsplit_once('.').map_or(v.as_str(), |(s, _)| s);
-                params.insert("name".into(), json!(stem));
-            }
-            "model_format" => {
-                params.insert("format".into(), json!(v));
-            }
-            "rd_origin" => {
-                params.insert("origin".into(), json!(v));
-            }
-            _ => {
-                params.insert(k.clone(), qvalue(k, v)?);
-            }
-        }
-    }
-    Ok(Invocation { id: id.into(), params: Value::Object(params) })
+    Ok(appcore::upload::import_invocation(format, bytes, q)?)
 }
 
 async fn import(State(st): State<Arc<AppState>>, q: Q, body: Result<Bytes, BytesRejection>) -> Result<Response, EngineError> {
@@ -732,39 +601,11 @@ async fn import(State(st): State<Arc<AppState>>, q: Q, body: Result<Bytes, Bytes
     }
 }
 
-/// The import's target layer under LightBurn's "Allow Importing to Tool Layers" (`tool_layers`): with it, `layer`
-/// may be `T1` / `T2` (the tool layer, added in the same step when the document has none; returned as the commands
-/// to run first); without it, those names are refused and an import without `layer` goes to the first ordinary
-/// layer. A layer given by id is used as given.
+/// The import's target layer under LightBurn's "Allow Importing to Tool Layers" (`appcore::upload::import_layer`; a
+/// replacing import starts from an empty document).
 fn import_layer(st: &AppState, q: &mut HashMap<String, String>, tool_layers: bool, replace: bool) -> Result<Vec<Invocation>, EngineError> {
-    // A replacing import starts from an empty document (one ordinary layer).
     let doc = if replace { doc::Document::default() } else { st.document() };
-    let off = || EngineError::BadRequest("importing to tool layers is off: pass tool_layers=true (LightBurn's \"Allow Importing to Tool Layers\")".into());
-    match q.get("layer").cloned() {
-        Some(l) if doc.layer(&l).is_none() && (l.eq_ignore_ascii_case("t1") || l.eq_ignore_ascii_case("t2")) => {
-            if !tool_layers {
-                return Err(off());
-            }
-            let t = if l.eq_ignore_ascii_case("t1") { doc::ToolLayer::T1 } else { doc::ToolLayer::T2 };
-            q.insert("layer".into(), t.name().into());
-            if doc.layers.iter().any(|x| x.tool == Some(t)) {
-                Ok(Vec::new())
-            } else {
-                Ok(vec![Invocation { id: "layer.tool".into(), params: json!({ "tool": t.name() }) }])
-            }
-        }
-        // An existing layer named by id is the caller's choice (the web UI applies the preference itself).
-        Some(_) => Ok(Vec::new()),
-        None => {
-            if !tool_layers && doc.layers.first().is_some_and(|x| x.tool.is_some()) {
-                let plain = doc.layers.iter().find(|x| x.tool.is_none()).ok_or_else(|| {
-                    EngineError::BadRequest("the document has only tool layers: add a layer, or pass tool_layers=true".into())
-                })?;
-                q.insert("layer".into(), plain.id.clone());
-            }
-            Ok(Vec::new())
-        }
-    }
+    Ok(appcore::upload::import_layer(&doc, q, tool_layers)?)
 }
 
 async fn thumbnail(State(st): State<Arc<AppState>>, UrlPath(name): UrlPath<String>, q: Q) -> Result<Response, EngineError> {

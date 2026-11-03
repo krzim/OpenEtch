@@ -25,6 +25,8 @@ serial = ["machine/serial"]
 camera = ["dep:nokhwa"]
 
 [dependencies]
+# The document glue shared with the browser core (crates/webcore), with the PNG preview.
+appcore = { path = "../appcore", features = ["png"] }
 doc = { workspace = true }
 commands = { workspace = true }
 # Variable text values for the job ledger (the `system` feature comes with `commands`).

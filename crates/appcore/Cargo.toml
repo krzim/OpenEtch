@@ -1,0 +1,28 @@
+[package]
+name = "appcore"
+description = "The engine's document glue shared with the in-browser core (crates/webcore): open documents, project state, batches with the risk gate, uploads and imports, preview assembly, typed in-memory stores, events. No tokio, axum or std::fs."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+# Preview SVG to PNG (resvg). The engine has it; webcore leaves it out when it costs too much wasm.
+png = ["dep:resvg"]
+
+[dependencies]
+doc = { workspace = true }
+commands = { workspace = true }
+plan = { workspace = true }
+# Devices and machine profiles (default features: no USB, no serial).
+machine = { workspace = true }
+lbrn = { workspace = true }
+kurbo = { workspace = true }
+serde = { workspace = true }
+# raw_value: document change sets (module `docsync`) splice pre-serialised objects.
+serde_json = { workspace = true, features = ["raw_value"] }
+thiserror = { workspace = true }
+base64 = { workspace = true }
+resvg = { workspace = true, optional = true }

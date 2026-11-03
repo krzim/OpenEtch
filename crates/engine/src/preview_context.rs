@@ -11,25 +11,11 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::State;
-use plan::Target;
-use serde::{Deserialize, Serialize};
 
 use crate::AppState;
 
 /// The body of `GET /api/preview/context` (webcore's `preview::Context`).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PreviewContext {
-    /// The active device's planning target (field, limits, timing, lens correction).
-    pub target: Target,
-    /// Multiply every estimated time by this (1 until the device has enough finished runs).
-    pub correction: f64,
-    /// The next run's index on the active device.
-    pub run_index: u64,
-    /// Why the active device cannot be planned for, or `None`.
-    pub design_only: Option<String>,
-    /// The machine configuration's generation: it changes with the device.
-    pub generation: u64,
-}
+pub use appcore::preview::PreviewContext;
 
 impl AppState {
     /// The context [`AppState::preview`] plans with, as of now.

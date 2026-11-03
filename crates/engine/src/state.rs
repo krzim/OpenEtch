@@ -22,11 +22,10 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use commands::{CommandSpec, HistoryStep, HistoryView, Invocation, Origin, Outcome, Risk, Session};
+use appcore::batch::content_params;
+use commands::{CommandSpec, HistoryStep, HistoryView, Invocation, Origin, Outcome, Session};
 use doc::Document;
-use doc::file::try_to_openetch_json;
 use plan::{FillRegions, PlanError, Preview};
-use base64::Engine as _;
 use serde_json::{Value, json};
 use tokio::sync::broadcast;
 
@@ -145,156 +144,7 @@ pub struct AppState {
     pub production: crate::production::Production,
 }
 
-/// How an invocation changes which project the document belongs to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Replaces {
-    /// It edits the current document (or does not edit).
-    No,
-    /// `doc.new`: a new, empty document that counts as clean.
-    Clean,
-    /// `doc.load` (an uploaded `.openetch`, unless it is a project being opened) or a replacing LightBurn import:
-    /// a new document no project holds, so its content is unsaved.
-    Unsaved,
-}
-
-fn replaces(inv: &Invocation) -> Replaces {
-    match inv.id.as_str() {
-        "doc.new" => return Replaces::Clean,
-        "doc.load" => return Replaces::Unsaved,
-        _ => {}
-    }
-    // `mode` defaults to replace; an invalid mode fails the command, so it never matters here.
-    let mode = inv.params.get("mode").and_then(Value::as_str);
-    if inv.id == "doc.import_lbrn2" && matches!(mode, None | Some("replace")) {
-        return Replaces::Unsaved;
-    }
-    Replaces::No
-}
-
-/// `{"content": content}` without copying the content (`json!` would clone it).
-fn content_params(content: String) -> Value {
-    let mut params = serde_json::Map::new();
-    params.insert("content".into(), Value::String(content));
-    Value::Object(params)
-}
-
-/// Commands that convert with (or start at) a field size and get one filled in when the caller gives none (see
-/// [`AppState::batch_opening`]).
-const NEEDS_FIELD: [&str; 3] = ["doc.new", "doc.import_lbrn2", "doc.export_lbrn2"];
-
-/// File formats of the download and upload routes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FileFormat {
-    /// The native `.openetch` JSON project.
-    OpenEtch,
-    /// A LightBurn `.lbrn2` project.
-    Lbrn2,
-}
-
-impl FileFormat {
-    pub fn parse(s: &str) -> Result<Self, EngineError> {
-        match s {
-            "openetch" => Ok(FileFormat::OpenEtch),
-            "lbrn2" => Ok(FileFormat::Lbrn2),
-            other => Err(EngineError::BadRequest(format!("unknown format '{other}' (expected openetch or lbrn2)"))),
-        }
-    }
-
-    pub fn extension(self) -> &'static str {
-        match self {
-            FileFormat::OpenEtch => PROJECT_EXT,
-            FileFormat::Lbrn2 => LBRN2_EXT,
-        }
-    }
-}
-
-/// Formats `POST /api/document/upload` accepts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UploadFormat {
-    /// A native `.openetch` project: replaces the document (`doc.load`).
-    OpenEtch,
-    /// A LightBurn `.lbrn2` project: `doc.import_lbrn2`, replace or merge.
-    Lbrn2,
-    /// SVG art, added to the document (`art.import_svg`).
-    Svg,
-    /// DXF drawing, added to the document (`art.import_dxf`: one object per entity, in one group).
-    Dxf,
-    /// A bitmap (PNG, JPEG, ...), added to the document (`art.import_image`).
-    Image,
-}
-
-impl UploadFormat {
-    pub fn parse(s: &str) -> Result<Self, EngineError> {
-        match s {
-            "openetch" => Ok(UploadFormat::OpenEtch),
-            "lbrn2" => Ok(UploadFormat::Lbrn2),
-            "svg" => Ok(UploadFormat::Svg),
-            "dxf" => Ok(UploadFormat::Dxf),
-            "image" => Ok(UploadFormat::Image),
-            other => Err(EngineError::BadRequest(format!(
-                "unknown format '{other}' (expected openetch, lbrn2, svg, dxf or image)"
-            ))),
-        }
-    }
-
-    fn name(self) -> &'static str {
-        match self {
-            UploadFormat::OpenEtch => "openetch",
-            UploadFormat::Lbrn2 => "lbrn2",
-            UploadFormat::Svg => "svg",
-            UploadFormat::Dxf => "dxf",
-            UploadFormat::Image => "image",
-        }
-    }
-}
-
-/// The query parameters of an upload, checked against its format by [`AppState::upload`].
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct UploadOptions {
-    /// `mode`: `Some(true)` merge, `Some(false)` replace, `None` not given.
-    pub merge: Option<bool>,
-    /// LightBurn only: the field the file was laid out for.
-    pub field_mm: Option<f64>,
-    /// SVG, DXF and images: the layer to put the art on (default the first layer).
-    pub layer: Option<String>,
-    /// SVG, DXF and images: the new object's name.
-    pub name: Option<String>,
-    /// SVG, DXF and images: scale to this width in mm.
-    pub width_mm: Option<f64>,
-    /// Images only: the media type (default: sniffed from the file's first bytes).
-    pub mime: Option<String>,
-}
-
-/// The media type of a bitmap from its first bytes, for the formats browsers and LightBurn commonly use.
-pub fn sniff_image(bytes: &[u8]) -> Option<&'static str> {
-    let starts = |sig: &[u8]| bytes.starts_with(sig);
-    if starts(b"\x89PNG\r\n\x1a\n") {
-        Some("image/png")
-    } else if starts(&[0xff, 0xd8, 0xff]) {
-        Some("image/jpeg")
-    } else if starts(b"GIF87a") || starts(b"GIF89a") {
-        Some("image/gif")
-    } else if starts(b"BM") {
-        Some("image/bmp")
-    } else if bytes.len() >= 12 && starts(b"RIFF") && &bytes[8..12] == b"WEBP" {
-        Some("image/webp")
-    } else if starts(b"II*\0") || starts(b"MM\0*") {
-        Some("image/tiff")
-    } else {
-        None
-    }
-}
-
-/// UTF-8 text of an uploaded file without a byte-order mark (LightBurn and some editors write one). Moves the
-/// bytes, never copies them.
-fn upload_text(bytes: Vec<u8>, what: &str) -> Result<String, EngineError> {
-    let mut text = String::from_utf8(bytes)
-        .map_err(|_| EngineError::BadRequest(format!("the file is not UTF-8 text (expected {what})")))?;
-    if text.starts_with('\u{feff}') {
-        text.drain(..'\u{feff}'.len_utf8());
-    }
-    Ok(text)
-}
+pub use appcore::upload::{FileFormat, UploadFormat, UploadOptions, sniff_image};
 
 /// The document as a file to download.
 #[derive(Debug, Clone)]
@@ -324,23 +174,7 @@ pub(crate) fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 /// Parse a request's `origin`: `"ui"`, `"script"`, `"agent"` / `"agent:<name>"`, or the serde form of
 /// [`Origin`] (`{"kind": "agent", "name": "..."}`). Missing means [`Origin::Ui`].
 pub fn parse_origin(v: Option<&Value>) -> Result<Origin, EngineError> {
-    match v {
-        None | Some(Value::Null) => Ok(Origin::Ui),
-        Some(Value::String(s)) => match s.as_str() {
-            "ui" => Ok(Origin::Ui),
-            "script" => Ok(Origin::Script),
-            "agent" => Ok(Origin::Agent("agent".into())),
-            other => match other.strip_prefix("agent:") {
-                Some(name) if !name.is_empty() => Ok(Origin::Agent(name.to_owned())),
-                _ => Err(EngineError::BadRequest(format!(
-                    "unknown origin '{other}' (expected \"ui\", \"script\" or \"agent:<name>\")"
-                ))),
-            },
-        },
-        Some(obj) => {
-            serde_json::from_value(obj.clone()).map_err(|e| EngineError::BadRequest(format!("bad origin: {e}")))
-        }
-    }
+    Ok(appcore::http::parse_origin(v)?)
 }
 
 impl AppState {
@@ -653,16 +487,7 @@ impl AppState {
         };
         let document = changes.is_none().then(|| s.document().clone());
         let history = s.history_view();
-        let project = {
-            let p = lock(&self.project);
-            json!({
-                "name": p.name,
-                "display_name": p.display_name,
-                "saved_revision": p.saved_revision,
-                "revision": revision,
-                "dirty": p.dirty(revision),
-            })
-        };
+        let project = lock(&self.project).status(revision);
         drop(s);
         crate::docsync::SyncPayload { epoch: self.epoch.clone(), document_id, revision, changes, document, history, project }
     }
@@ -689,11 +514,10 @@ impl AppState {
     }
 
     /// Announce a document change (when the revision moved) and the timeline (always) of open document `document_id`.
-    pub(crate) fn announce(&self, before: u64, after: u64, origin: Origin, (marker, steps): (usize, usize), document_id: String) {
-        if after != before {
-            self.emit(Event::DocumentChanged { revision: after, origin, document_id: document_id.clone() });
+    pub(crate) fn announce(&self, before: u64, after: u64, origin: Origin, hist: (usize, usize), document_id: String) {
+        for ev in appcore::event::announce(before, after, origin, hist, document_id) {
+            self.emit(ev);
         }
-        self.emit(Event::HistoryChanged { marker, steps, revision: after, document_id });
     }
 
     /// The active document's id (`default` for the first one; see `GET /api/documents`).
@@ -753,115 +577,42 @@ impl AppState {
         opened: Option<String>,
         display: Option<String>,
     ) -> Result<Vec<Outcome>, EngineError> {
-        if invs.is_empty() {
-            return Err(EngineError::BadRequest("batch has no commands".into()));
-        }
+        appcore::batch::check_not_empty(&invs)?;
         // Saved layer / optimization defaults of the active device (module `libs`).
         crate::libs::fill_defaults(self, &mut invs);
         // The finish library's result colours as the colour examples' choices (module `api_materials`).
         crate::api_materials::fill_example_finishes(self, &mut invs);
         let profile_field = self.machine.profile().field_mm;
         // Filled in before the session lock: the LightBurn lookup may read prefs.ini.
-        let mut field_sources: Vec<(usize, String, Option<String>)> = Vec::new();
+        let mut field_sources = Vec::new();
         if invs.iter().any(|i| matches!(i.id.as_str(), "doc.new" | "doc.import_lbrn2")) {
             let active = self.active_device();
-            for (i, inv) in invs.iter_mut().enumerate() {
-                match inv.id.as_str() {
-                    "doc.new" if lacks_field(inv) && lacks(inv, "workspace_mm") => {
-                        let field = if active.controllable { profile_field } else { active.field_mm() };
-                        fill_layout(inv, &new_layout(&active, field));
-                    }
-                    "doc.import_lbrn2" if lacks_field(inv) && lacks(inv, "workspace_mm") => {
-                        let content = inv.params.get("content").and_then(Value::as_str).unwrap_or_default();
-                        let named = commands::lbrn2_device_name(content);
-                        let device = named.as_deref().and_then(|n| self.devices().find(n).cloned());
-                        if let Some(d) = device {
-                            fill_layout(inv, &lightburn_layout(&d));
-                            field_sources.push((i, format!("file device {}", d.display_name), Some(d.id)));
-                        } else if let Some((f, source)) = self.lightburn.field_for_file_device(content) {
-                            fill_field_mm(inv, f);
-                            field_sources.push((i, source, None));
-                        } else {
-                            fill_layout(inv, &lightburn_layout(&active));
-                            field_sources.push((i, format!("active device {}", active.display_name), Some(active.id.clone())));
-                        }
-                    }
-                    _ => {}
-                }
-            }
+            let find_device = |n: &str| self.devices().find(n).cloned();
+            let lightburn_field = |content: &str| self.lightburn.field_for_file_device(content);
+            let ctx = appcore::batch::FieldContext { active: &active, profile_field, find_device: &find_device, lightburn_field: &lightburn_field };
+            field_sources = appcore::batch::fill_fields(&mut invs, &ctx);
         }
-        let display = display.or_else(|| {
-            invs.iter()
-                .rev()
-                .find(|i| i.id == "doc.import_lbrn2" && replaces(i) == Replaces::Unsaved)
-                .and_then(|i| i.params.get("name").and_then(Value::as_str).and_then(projects::display_name))
-        });
-        let (mut outcomes, before, after, hist, doc_id) = {
+        let display = appcore::batch::batch_display(&invs, display);
+        let (mut ran, doc_id) = {
             let mut s = lock(&self.session);
-            let mut last_edit = Replaces::No;
-            for inv in &invs {
-                if let Some(spec) = s.registry().spec(&inv.id) {
-                    if !matches!(spec.risk, Risk::Query | Risk::Edit) {
-                        return Err(EngineError::Forbidden(format!(
-                            "'{}' is a machine action; use the machine endpoints/tools instead",
-                            inv.id
-                        )));
-                    }
-                    if spec.risk == Risk::Edit {
-                        // The production cockpit's design lock (module `production::lock`).
-                        crate::production::lock::check_edit(self, &inv.id)?;
-                        last_edit = replaces(inv);
-                    }
-                }
-            }
-            if s.document().field_mm.is_none() {
-                for (i, inv) in invs.iter_mut().enumerate() {
-                    if lacks(inv, "workspace_mm") {
-                        if inv.id == "doc.import_lbrn2" && lacks_field(inv) {
-                            field_sources.push((i, "machine".into(), None));
-                        }
-                        fill_field_mm(inv, profile_field);
-                    }
-                }
-            }
-            let replaced = invs.iter().any(|i| replaces(i) != Replaces::No);
-            let before = s.document().revision;
-            let outcomes = s.batch(invs, origin.clone())?;
-            let after = s.document().revision;
-            if after != before {
-                let mut p = lock(&self.project);
-                if let Some(name) = opened {
-                    *p = ProjectState::saved(name, after);
-                } else if replaced {
-                    // Clean only after doc.new / doc.load with nothing edited after it in the same batch.
-                    let clean = last_edit == Replaces::Clean;
-                    *p = ProjectState {
-                        name: None,
-                        saved_revision: None,
-                        clean_revision: clean.then_some(after),
-                        display_name: if clean { None } else { display },
-                    };
-                }
+            // The production cockpit's design lock (module `production::lock`).
+            let last_edit = appcore::batch::gate(&s, &invs, |id| crate::production::lock::check_edit(self, id))?;
+            let ran = appcore::batch::run(&mut s, invs, origin.clone(), profile_field, &mut field_sources)?;
+            if ran.after != ran.before {
+                appcore::batch::settle_project(&mut lock(&self.project), &ran, opened, display, last_edit);
             }
             if s.document().field_mm.is_none() {
                 // Cannot happen once the engine starts with a field size (doc.new and doc.load keep it, imports set
                 // it, and undo only returns to documents that had one), so it is only reported.
-                tracing::warn!(revision = after, "the document has no field_mm");
+                tracing::warn!(revision = ran.after, "the document has no field_mm");
             }
-            (outcomes, before, after, (s.marker(), s.history().len()), self.active_document_id())
+            (ran, self.active_document_id())
         };
-        for (i, source, device) in field_sources {
-            if let Some(Value::Object(r)) = outcomes.get_mut(i).map(|o| &mut o.result) {
-                r.insert("field_source".into(), Value::String(source));
-                if let Some(id) = device {
-                    r.insert("device".into(), Value::String(id));
-                }
-            }
+        appcore::batch::annotate(&mut ran.outcomes, field_sources);
+        if ran.after != ran.before {
+            self.announce(ran.before, ran.after, origin, ran.hist, doc_id);
         }
-        if after != before {
-            self.announce(before, after, origin, hist, doc_id);
-        }
-        Ok(outcomes)
+        Ok(ran.outcomes)
     }
 
     /// `GET /api/project`: `{name, display_name, saved_revision, revision, dirty}`; `display_name` is the opened
@@ -869,14 +620,7 @@ impl AppState {
     pub fn project_status(&self) -> Value {
         let s = lock(&self.session);
         let revision = s.document().revision;
-        let p = lock(&self.project);
-        json!({
-            "name": p.name,
-            "display_name": p.display_name,
-            "saved_revision": p.saved_revision,
-            "revision": revision,
-            "dirty": p.dirty(revision),
-        })
+        lock(&self.project).status(revision)
     }
 
     /// The current project name, if any.
@@ -994,10 +738,7 @@ impl AppState {
                 (content, warnings, lock(&self.session).document().name.clone())
             }
         };
-        let stem = {
-            let p = lock(&self.project);
-            p.name.clone().or_else(|| p.display_name.clone()).unwrap_or(name)
-        };
+        let stem = lock(&self.project).stem(&name);
         Ok(DownloadFile { stem, format, content, warnings })
     }
 
@@ -1014,98 +755,7 @@ impl AppState {
         bytes: Vec<u8>,
         origin: Origin,
     ) -> Result<Outcome, EngineError> {
-        let refuse = |what: &str, only: &str| {
-            Err(EngineError::BadRequest(format!("{what} is only for {only} uploads, not {}", format.name())))
-        };
-        let art = matches!(format, UploadFormat::Svg | UploadFormat::Dxf | UploadFormat::Image);
-        let display = match format {
-            UploadFormat::OpenEtch | UploadFormat::Lbrn2 => opts.name.as_deref().and_then(projects::display_name),
-            _ => None,
-        };
-        if !art {
-            if opts.layer.is_some() {
-                return refuse("layer", "svg, dxf and image");
-            }
-            if opts.width_mm.is_some() {
-                return refuse("width_mm", "svg, dxf and image");
-            }
-        }
-        if format != UploadFormat::Image && opts.mime.is_some() {
-            return refuse("mime", "image");
-        }
-        if format != UploadFormat::Lbrn2 && opts.field_mm.is_some() {
-            return refuse("field_mm", "LightBurn");
-        }
-        let inv = match format {
-            UploadFormat::OpenEtch => {
-                if opts.merge == Some(true) {
-                    return Err(EngineError::BadRequest(
-                        "mode=merge is only for LightBurn imports; an .openetch project replaces the document".into(),
-                    ));
-                }
-                let text = upload_text(bytes, ".openetch JSON or .lbrn2 XML")?;
-                Invocation { id: "doc.load".into(), params: content_params(text) }
-            }
-            UploadFormat::Lbrn2 => {
-                let mut params = content_params(upload_text(bytes, ".openetch JSON or .lbrn2 XML")?);
-                params["mode"] = json!(if opts.merge == Some(true) { "merge" } else { "replace" });
-                if let Some(f) = opts.field_mm {
-                    params["field_mm"] = json!(f);
-                }
-                if let Some(n) = &opts.name {
-                    params["name"] = json!(n);
-                }
-                Invocation { id: "doc.import_lbrn2".into(), params }
-            }
-            UploadFormat::Svg | UploadFormat::Dxf | UploadFormat::Image => {
-                if opts.merge == Some(false) {
-                    return Err(EngineError::BadRequest(format!(
-                        "{} uploads add to the document; use mode=merge or leave mode out",
-                        format.name()
-                    )));
-                }
-                let mut params = serde_json::Map::new();
-                let id = match format {
-                    UploadFormat::Svg => {
-                        params.insert("svg".into(), Value::String(upload_text(bytes, "SVG")?));
-                        "art.import_svg"
-                    }
-                    UploadFormat::Dxf => {
-                        params.insert("content".into(), Value::String(upload_text(bytes, "DXF")?));
-                        "art.import_dxf"
-                    }
-                    _ => {
-                        let mime = match opts.mime {
-                            Some(m) => m,
-                            None => sniff_image(&bytes)
-                                .ok_or_else(|| {
-                                    EngineError::BadRequest(
-                                        "not an image the engine recognises (PNG, JPEG, GIF, BMP, WebP or TIFF); pass \
-                                         mime=image/... if it is one"
-                                            .into(),
-                                    )
-                                })?
-                                .to_owned(),
-                        };
-                        let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
-                        drop(bytes);
-                        params.insert("data_base64".into(), Value::String(data));
-                        params.insert("mime".into(), Value::String(mime));
-                        "art.import_image"
-                    }
-                };
-                if let Some(l) = opts.layer {
-                    params.insert("layer".into(), Value::String(l));
-                }
-                if let Some(n) = opts.name {
-                    params.insert("name".into(), Value::String(n));
-                }
-                if let Some(w) = opts.width_mm {
-                    params.insert("width_mm".into(), json!(w));
-                }
-                Invocation { id: id.into(), params: Value::Object(params) }
-            }
-        };
+        let (inv, display) = appcore::upload::upload_invocation(format, opts, bytes)?;
         self.batch_opening(vec![inv], origin, None, display).map(|mut v| v.remove(0))
     }
 
@@ -1167,26 +817,8 @@ impl AppState {
         let correction = f64::from_bits(key.correction);
         let shared = self.previews.clone();
         Ok(tokio::task::spawn_blocking(move || {
-            // As a run plans it: the pockets of empty and past-End slots left out (module `doc::slots`; webcore's
-            // browser preview does the same).
-            let trimmed = match doc::slots::without_skipped_slots(&doc) {
-                std::borrow::Cow::Owned(d) => Some(d),
-                std::borrow::Cow::Borrowed(_) => None,
-            };
-            let doc = trimmed.unwrap_or(doc);
-            let preview = match design_only {
-                // Still a result, so the SVG preview renders the document.
-                Some(reason) => Err(PlanError::Target(reason)),
-                None => match plan::plan_job_with(&doc, &target, &plan::JobOptions { preview: true, run_index, ..Default::default() }) {
-                    Ok(job) => {
-                        let mut p = plan::preview_document(&doc, &job);
-                        plan::scale_times(&mut p, correction);
-                        Ok(p)
-                    }
-                    Err(PlanError::Empty) => Ok(Preview::default()),
-                    Err(e) => Err(e),
-                },
-            };
+            // As a run plans it (appcore::preview; webcore's browser preview does the same).
+            let (doc, preview) = appcore::preview::plan_preview(doc, &target, run_index, correction, design_only);
             let cached = Arc::new(CachedPreview { key, result: Arc::new((doc, preview)), bins: Mutex::default() });
             shared.computed.fetch_add(1, Ordering::SeqCst);
             // Published before the slot is released, so the next queued request finds it.
@@ -1247,10 +879,7 @@ impl AppState {
         let cached = self.preview_cached().await?;
         let (doc, preview) = &*cached.result;
         let p = preview.as_ref().map_err(|e| EngineError::Plan(e.clone()))?;
-        let mut v = crate::preview_bin::summary(doc, p, None);
-        v["revision"] = json!(cached.key.revision);
-        v["segments"] = json!(p.segments.len());
-        Ok(v)
+        Ok(appcore::preview::stats_json(doc, p, cached.key.revision))
     }
 
     /// The even-odd fill regions of every fill layer of the current document (display only).
@@ -1579,30 +1208,11 @@ impl AppState {
     }
 }
 
-/// An empty document laid out for `device`: a galvo's field (`machine_field` when it drives the machine; a
-/// non-square field as its `workspace_mm` with the centre origin), a gantry's bed with its origin corner (the
-/// smaller side as `field_mm`).
-pub fn new_document_for(device: &machine::Device, machine_field: f64) -> Document {
-    let mut d = Document::default();
-    if device.kind.is_galvo() {
-        let [w, h] = galvo_field(device, machine_field);
-        d.field_mm = Some(w);
-        if (w - h).abs() > 1e-9 {
-            d.workspace_mm = Some([w, h]);
-            d.extras.insert(commands::ORIGIN_KEY.into(), "center".into());
-        }
-    } else {
-        d.field_mm = Some(device.field_mm());
-        d.workspace_mm = Some(device.workspace_mm);
-        d.extras.insert(commands::ORIGIN_KEY.into(), device.origin.name().into());
-    }
-    d
-}
+pub use appcore::layout::new_document_for;
 
-/// The document as `.openetch` JSON, refusing one that would not load again (never written as `null`s). The
-/// session refuses to commit such a document, so this is a backstop.
+/// The document as `.openetch` JSON, refusing one that would not load again (`appcore::upload::saveable`).
 fn saveable(doc: &Document) -> Result<String, EngineError> {
-    try_to_openetch_json(doc).map_err(|e| EngineError::Internal(e.to_string()))
+    Ok(appcore::upload::saveable(doc)?)
 }
 
 /// Refuse (409) writing `<name>.<ext>` when that would replace an existing file other than the current project's,
@@ -1621,154 +1231,9 @@ fn refuse_clobber(dir: &ProjectDir, name: &str, ext: &str, current: Option<&str>
     }
 }
 
-/// Whether an invocation's params have no (or a null) `field_mm`.
-fn lacks_field(inv: &Invocation) -> bool {
-    lacks(inv, "field_mm")
-}
-
-/// Whether an invocation's params have no (or a null) `key`.
-fn lacks(inv: &Invocation, key: &str) -> bool {
-    inv.params.get(key).is_none_or(Value::is_null)
-}
-
-/// A galvo device's field `[width, height]`: `machine_field` (the machine profile's width) when it drives the
-/// machine, else the device's workspace width, with the device's height (LightBurn's separate field Height; the
-/// width again for a square field).
-pub(crate) fn galvo_field(device: &machine::Device, machine_field: f64) -> [f64; 2] {
-    let [w, h] = device.workspace_mm;
-    let width = if device.controllable { machine_field } else { w };
-    // A square device keeps a square field even when the machine's width differs from the record's.
-    if (w - h).abs() < 1e-9 { [width, width] } else { [width, h] }
-}
-
-/// `doc.new` parameters for `device`: a galvo's `field_mm` (`field`) or, for a non-square field, its
-/// `workspace_mm` with the centre origin; a gantry's bed and origin corner.
-fn new_layout(device: &machine::Device, field: f64) -> Value {
-    if device.kind.is_galvo() {
-        let [w, h] = galvo_field(device, field);
-        if (w - h).abs() > 1e-9 {
-            json!({ "workspace_mm": [w, h], "origin": "center" })
-        } else {
-            json!({ "field_mm": w })
-        }
-    } else {
-        json!({ "workspace_mm": device.workspace_mm, "origin": device.origin.name() })
-    }
-}
-
-/// `doc.import_lbrn2` parameters for a file laid out on `device`: a galvo's field as LightBurn knows it (its
-/// `Width`, e.g. 153.8 for the B6, whose profile keeps EzCad's 153.75), a gantry's bed and origin corner.
-fn lightburn_layout(device: &machine::Device) -> Value {
-    if let Some(field) = device.lightburn_field_mm() {
-        let h = device.workspace_mm[1];
-        // A non-square galvo field (LightBurn's Height more than its 0.1 mm display step from the Width).
-        if (h - device.workspace_mm[0]).abs() > 0.05 {
-            json!({ "workspace_mm": [field, h], "origin": "center" })
-        } else {
-            json!({ "field_mm": field })
-        }
-    } else {
-        json!({ "workspace_mm": device.workspace_mm, "origin": device.origin.name() })
-    }
-}
-
-/// Add every key of `layout` the invocation does not set.
-fn fill_layout(inv: &mut Invocation, layout: &Value) {
-    if inv.params.is_null() {
-        inv.params = json!({});
-    }
-    if let (Some(obj), Some(l)) = (inv.params.as_object_mut(), layout.as_object()) {
-        for (k, v) in l {
-            if obj.get(k).is_none_or(Value::is_null) {
-                obj.insert(k.clone(), v.clone());
-            }
-        }
-    }
-}
-
-/// Give a `doc.new` / `doc.import_lbrn2` / `doc.export_lbrn2` invocation `field_mm` when it has none.
-fn fill_field_mm(inv: &mut Invocation, field_mm: f64) {
-    if !NEEDS_FIELD.contains(&inv.id.as_str()) {
-        return;
-    }
-    if inv.params.is_null() {
-        inv.params = json!({});
-    }
-    if let Some(obj) = inv.params.as_object_mut()
-        && obj.get("field_mm").is_none_or(Value::is_null)
-    {
-        obj.insert("field_mm".into(), json!(field_mm));
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// A galvo with a separate field Height lays new documents (and LightBurn imports) out on its whole field, so the
-    /// canvas can draw it; a square galvo keeps the plain field_mm.
-    #[test]
-    fn non_square_galvo_fields_lay_documents_out_on_their_workspace() {
-        let profile = machine::MachineProfile { field_height_mm: Some(120.0), ..machine::MachineProfile::generic_jcz_galvo() };
-        let w = profile.field_mm;
-        let device = machine::Device::builtin(profile);
-        let d = new_document_for(&device, w);
-        assert_eq!((d.field_mm, d.workspace(), d.extras.get(commands::ORIGIN_KEY).map(String::as_str)), (Some(w), Some([w, 120.0]), Some("center")));
-        assert_eq!(new_layout(&device, w), json!({"workspace_mm": [w, 120.0], "origin": "center"}));
-        assert_eq!(lightburn_layout(&device), json!({"workspace_mm": [w, 120.0], "origin": "center"}));
-        // doc.new with that layout makes the same document.
-        let mut s = commands::Session::new(Document::default());
-        s.execute(Invocation { id: "doc.new".into(), params: new_layout(&device, w) }, commands::Origin::Ui).unwrap();
-        assert_eq!((s.document().field_mm, s.document().workspace()), (Some(w), Some([w, 120.0])));
-
-        let square = machine::Device::builtin(machine::MachineProfile::generic_jcz_galvo());
-        let d = new_document_for(&square, 150.0);
-        assert_eq!((d.field_mm, d.workspace_mm, d.extras.get(commands::ORIGIN_KEY)), (Some(150.0), None, None));
-        assert_eq!(new_layout(&square, 150.0), json!({"field_mm": 150.0}));
-    }
-
-    #[test]
-    fn field_is_filled_only_when_missing() {
-        let mut inv = Invocation { id: "doc.export_lbrn2".into(), params: Value::Null };
-        fill_field_mm(&mut inv, 150.0);
-        assert_eq!(inv.params, json!({"field_mm": 150.0}));
-        let mut inv = Invocation { id: "doc.import_lbrn2".into(), params: json!({"content": "x", "field_mm": 110}) };
-        fill_field_mm(&mut inv, 150.0);
-        assert_eq!(inv.params["field_mm"], json!(110));
-        let mut inv = Invocation { id: "doc.import_lbrn2".into(), params: json!({"content": "x", "field_mm": null}) };
-        fill_field_mm(&mut inv, 150.0);
-        assert_eq!(inv.params["field_mm"], json!(150.0));
-        let mut inv = Invocation { id: "shape.rect".into(), params: json!({}) };
-        fill_field_mm(&mut inv, 150.0);
-        assert_eq!(inv.params, json!({}));
-        let mut inv = Invocation { id: "doc.new".into(), params: json!({"name": "x"}) };
-        fill_field_mm(&mut inv, 153.75);
-        assert_eq!(inv.params, json!({"name": "x", "field_mm": 153.75}));
-        assert_eq!(FileFormat::parse("lbrn2").unwrap().extension(), "lbrn2");
-        assert!(FileFormat::parse("svg").is_err(), "downloads are openetch or lbrn2");
-        assert_eq!(UploadFormat::parse("svg").unwrap(), UploadFormat::Svg);
-        assert!(UploadFormat::parse("pdf").is_err());
-    }
-
-    #[test]
-    fn images_are_sniffed() {
-        assert_eq!(sniff_image(b"\x89PNG\r\n\x1a\n\0\0"), Some("image/png"));
-        assert_eq!(sniff_image(&[0xff, 0xd8, 0xff, 0xe0]), Some("image/jpeg"));
-        assert_eq!(sniff_image(b"GIF89a.."), Some("image/gif"));
-        assert_eq!(sniff_image(b"RIFF\0\0\0\0WEBPVP8 "), Some("image/webp"));
-        assert_eq!(sniff_image(b"II*\0...."), Some("image/tiff"));
-        assert_eq!(sniff_image(b"<svg/>"), None);
-        assert_eq!(sniff_image(b""), None);
-    }
-
-    #[test]
-    fn origins_parse() {
-        assert_eq!(parse_origin(None).unwrap(), Origin::Ui);
-        assert_eq!(parse_origin(Some(&json!("ui"))).unwrap(), Origin::Ui);
-        assert_eq!(parse_origin(Some(&json!("agent:claude"))).unwrap(), Origin::Agent("claude".into()));
-        assert_eq!(parse_origin(Some(&json!({"kind": "script"}))).unwrap(), Origin::Script);
-        assert!(parse_origin(Some(&json!("root"))).is_err());
-    }
 
     #[test]
     fn saving_refuses_a_document_that_would_not_load_again() {

@@ -39,86 +39,14 @@ use crate::projects::{self, ProjectState};
 use crate::state::{lock, parse_origin};
 use crate::{AppState, EngineError, Event};
 
-/// The id of the document the engine starts with.
-pub const DEFAULT_DOCUMENT: &str = "default";
-/// Most documents open at once.
-pub const MAX_DOCUMENTS: usize = 16;
-
-/// An open document that is not the active one.
-pub(crate) struct OpenDoc {
-    pub id: String,
-    pub session: Session,
-    pub project: ProjectState,
-}
-
-/// The open documents (see the module docs).
-pub(crate) struct DocSet {
-    /// The active document's id.
-    pub active: String,
-    /// Every open document's id, in the order they were opened.
-    pub order: Vec<String>,
-    /// The documents other than the active one.
-    pub others: Vec<OpenDoc>,
-    /// The number the next new document's id gets (`doc-N`).
-    next: u64,
-    /// The highest revision any document had when it stopped being active.
-    max_revision: u64,
-}
-
-impl Default for DocSet {
-    fn default() -> Self {
-        DocSet { active: DEFAULT_DOCUMENT.into(), order: vec![DEFAULT_DOCUMENT.into()], others: Vec::new(), next: 2, max_revision: 0 }
-    }
-}
-
-impl DocSet {
-    fn new_id(&mut self) -> String {
-        loop {
-            let id = format!("doc-{}", self.next);
-            self.next += 1;
-            if !self.order.contains(&id) {
-                return id;
-            }
-        }
-    }
-}
-
-/// One row of `GET /api/documents`.
-fn row(id: &str, session: &Session, project: &ProjectState, active: bool) -> Value {
-    let doc = session.document();
-    let name = project.name.clone().or_else(|| project.display_name.clone()).unwrap_or_else(|| doc.name.clone());
-    json!({
-        "id": id,
-        "name": name,
-        "project": project.name,
-        "display_name": project.display_name,
-        "document_name": doc.name,
-        "revision": doc.revision,
-        "dirty": project.dirty(doc.revision),
-        "objects": doc.objects.len(),
-        "layers": doc.layers.len(),
-        "active": active,
-    })
-}
+pub use appcore::docset::{DEFAULT_DOCUMENT, DocSet, MAX_DOCUMENTS, OpenDoc, unsupported_settings};
 
 impl AppState {
     /// `GET /api/documents`.
     pub fn documents_view(&self) -> Value {
         let s = lock(&self.session);
         let p = lock(&self.project);
-        let d = lock(&self.documents);
-        let rows: Vec<Value> = d
-            .order
-            .iter()
-            .filter_map(|id| {
-                if *id == d.active {
-                    Some(row(id, &s, &p, true))
-                } else {
-                    d.others.iter().find(|o| o.id == *id).map(|o| row(id, &o.session, &o.project, false))
-                }
-            })
-            .collect();
-        json!({ "active": d.active, "documents": rows })
+        lock(&self.documents).view(&s, &p)
     }
 
     /// The active document's revision and id, read together (what a pending run is checked against).
@@ -132,48 +60,21 @@ impl AppState {
     pub(crate) fn set_project_of(&self, id: &str, state: ProjectState) {
         let _s = lock(&self.session);
         let mut p = lock(&self.project);
-        let mut d = lock(&self.documents);
-        if d.active == id {
-            *p = state;
-        } else if let Some(o) = d.others.iter_mut().find(|o| o.id == id) {
-            o.project = state;
-        }
+        lock(&self.documents).set_project_of(&mut p, id, state);
     }
 
     /// Make open document `id` the active one (see the module docs). Returns `{ok, active, revision}`.
     pub fn activate_document(&self, id: &str, origin: Origin) -> Result<Value, EngineError> {
         crate::production::lock::check_timeline(self)?;
-        let (revision, hist) = {
+        let a = {
             let mut s = lock(&self.session);
             let mut p = lock(&self.project);
-            let mut d = lock(&self.documents);
-            if d.active == id {
-                return Ok(json!({ "ok": true, "active": id, "revision": s.document().revision, "changed": false }));
-            }
-            let pos = d
-                .others
-                .iter()
-                .position(|o| o.id == id)
-                .ok_or_else(|| EngineError::NotFound(format!("no open document with id '{id}'")))?;
-            let mut incoming = d.others.remove(pos);
-            d.max_revision = d.max_revision.max(s.document().revision);
-            let old = incoming.session.document().revision;
-            let new = d.max_revision + 1;
-            incoming.session.raise_revision(new);
-            d.max_revision = new;
-            // The content did not change: a clean or saved state stays clean at the raised revision.
-            if incoming.project.clean_revision == Some(old) {
-                incoming.project.clean_revision = Some(new);
-            }
-            if incoming.project.saved_revision == Some(old) {
-                incoming.project.saved_revision = Some(new);
-            }
-            std::mem::swap(&mut *s, &mut incoming.session);
-            std::mem::swap(&mut *p, &mut incoming.project);
-            let previous = std::mem::replace(&mut d.active, id.to_owned());
-            d.others.push(OpenDoc { id: previous, session: incoming.session, project: incoming.project });
-            (new, (s.marker(), s.history().len()))
+            lock(&self.documents).activate(&mut s, &mut p, id)?
         };
+        if !a.changed {
+            return Ok(json!({ "ok": true, "active": id, "revision": a.revision, "changed": false }));
+        }
+        let (revision, hist) = (a.revision, a.hist);
         tracing::info!(document = id, revision, "document activated");
         self.emit(Event::DocumentsChanged { active: id.to_owned() });
         self.announce(revision.wrapping_sub(1), revision, origin, hist, id.to_owned());
@@ -187,16 +88,7 @@ impl AppState {
         let doc = crate::state::new_document_for(&device, field);
         let session = Session::new(doc);
         let project = ProjectState::clean_at(session.document().revision);
-        let id = {
-            let mut d = lock(&self.documents);
-            if d.order.len() >= MAX_DOCUMENTS {
-                return Err(EngineError::Conflict(format!("{MAX_DOCUMENTS} documents are open; close one first")));
-            }
-            let id = d.new_id();
-            d.order.push(id.clone());
-            d.others.push(OpenDoc { id: id.clone(), session, project });
-            id
-        };
+        let id = lock(&self.documents).add(session, project)?;
         self.emit(Event::DocumentsChanged { active: self.active_document_id() });
         Ok(id)
     }
@@ -205,14 +97,7 @@ impl AppState {
     fn document_with_project(&self, name: &str) -> Option<String> {
         let _s = lock(&self.session);
         let p = lock(&self.project);
-        let d = lock(&self.documents);
-        if p.name.as_deref().is_some_and(|n| projects::same_name_ignoring_case(n, name)) {
-            return Some(d.active.clone());
-        }
-        d.others
-            .iter()
-            .find(|o| o.project.name.as_deref().is_some_and(|n| projects::same_name_ignoring_case(n, name)))
-            .map(|o| o.id.clone())
+        lock(&self.documents).with_project(&p, name)
     }
 
     /// `POST /api/documents`: a new document, optionally holding project `project`, activated unless `activate` is
@@ -292,50 +177,15 @@ impl AppState {
         {
             let s = lock(&self.session);
             let p = lock(&self.project);
-            let d = lock(&self.documents);
-            if !d.order.iter().any(|o| o == id) {
-                return Err(EngineError::NotFound(format!("no open document with id '{id}'")));
-            }
-            if d.order.len() == 1 {
-                return Err(EngineError::Conflict("the last open document cannot be closed".into()));
-            }
-            let dirty = if d.active == id {
-                p.dirty(s.document().revision)
-            } else {
-                d.others.iter().find(|o| o.id == id).is_some_and(|o| o.project.dirty(o.session.document().revision))
-            };
-            if dirty && !discard {
-                return Err(EngineError::Conflict(format!(
-                    "document '{id}' has unsaved changes; save it or close it with discard: true"
-                )));
-            }
+            lock(&self.documents).check_close(&s, &p, id, discard)?;
         }
         if active == id {
-            let next = {
-                let d = lock(&self.documents);
-                let pos = d.order.iter().position(|o| o == id).unwrap_or(0);
-                let before = pos.checked_sub(1).and_then(|i| d.order.get(i));
-                before.or_else(|| d.order.get(pos + 1)).cloned()
-            };
-            let next = next.ok_or_else(|| EngineError::Internal("no other document to activate".into()))?;
+            let next = lock(&self.documents).successor(id)?;
             self.activate_document(&next, Origin::Ui)?;
         }
         let active = {
             let _s = lock(&self.session);
-            let mut d = lock(&self.documents);
-            if d.active == id {
-                // Activated again by someone else in between: keep it open.
-                return Err(EngineError::Conflict(format!("document '{id}' became active again; close it again")));
-            }
-            // Checked again: an edit may have landed between the first check and the switch above.
-            if !discard && d.others.iter().find(|o| o.id == id).is_some_and(|o| o.project.dirty(o.session.document().revision)) {
-                return Err(EngineError::Conflict(format!(
-                    "document '{id}' has unsaved changes; save it or close it with discard: true"
-                )));
-            }
-            d.others.retain(|o| o.id != id);
-            d.order.retain(|o| o != id);
-            d.active.clone()
+            lock(&self.documents).remove(id, discard)?
         };
         tracing::info!(document = id, "document closed");
         self.emit(Event::DocumentsChanged { active: active.clone() });
@@ -350,21 +200,6 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/documents/{id}/activate", post(activate))
         .route("/documents/{id}/close", post(close))
         .route("/layers/unsupported", get(unsupported))
-}
-
-/// Per layer of the active document, the LightBurn settings it keeps that the job will not execute (LAY-034,
-/// `lbrn::unexecuted_settings`): `{layers: [{layer_id, name, unsupported: [{tag, setting, value, sub_layer?, active,
-/// note}]}]}`, only layers that have some.
-pub fn unsupported_settings(doc: &doc::Document) -> Value {
-    let layers: Vec<Value> = doc
-        .layers
-        .iter()
-        .filter_map(|l| {
-            let u = lbrn::unexecuted_settings(l);
-            (!u.is_empty()).then(|| json!({ "layer_id": l.id, "name": l.name, "unsupported": u }))
-        })
-        .collect();
-    json!({ "layers": layers })
 }
 
 async fn unsupported(State(st): State<Arc<AppState>>) -> axum::Json<Value> {

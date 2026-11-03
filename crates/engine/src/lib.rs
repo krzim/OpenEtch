@@ -24,7 +24,8 @@ pub mod cli;
 pub mod devices;
 pub mod error;
 pub mod events;
-pub mod docsync;
+// Document change sets (moved to crates/appcore, shared with the browser core).
+pub use appcore::docsync;
 pub mod preview_bin;
 pub mod frame;
 pub mod hw;
