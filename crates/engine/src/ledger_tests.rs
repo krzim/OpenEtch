@@ -115,7 +115,7 @@ async fn a_burn_keeps_settings_values_thumbnail_and_document_and_rerun_only_requ
     assert_eq!(e["layers"][0]["name"], "Blue");
     assert_eq!((e["layers"][0]["settings"]["power_pct"].clone(), e["layers"][0]["settings"]["pulse_width_ns"].clone()), (json!(40.0), json!(200.0)));
     assert!(e["layers"][0]["estimated_time_s"].as_f64().unwrap() > 0.0, "{e}");
-    assert_eq!(e["layers"][0]["objects"], 2);
+    assert_eq!((e["layers"][0]["objects"].clone(), e["layers"][0]["images"].clone()), (json!(2), json!(0)));
     assert_eq!(e["variables"]["current"], 41);
     assert_eq!(e["variables"]["texts"][0]["value"], "041", "{e}");
     assert_eq!(e["variables"]["texts"][0]["name"], "Serial");

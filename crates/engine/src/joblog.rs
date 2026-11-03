@@ -72,6 +72,9 @@ pub struct LayerSnapshot {
     pub output: bool,
     /// Objects on it in the job.
     pub objects: usize,
+    /// Of those, images (engraved with the image settings, `settings.image`).
+    #[serde(default)]
+    pub images: usize,
     /// `doc::CutSettings` of its main settings.
     pub settings: serde_json::Value,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

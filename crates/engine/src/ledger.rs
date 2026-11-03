@@ -344,9 +344,11 @@ fn origin_name(o: &Origin) -> String {
 
 /// Every layer with objects in `doc` (the page being burned), with its settings and its share of the plan.
 pub fn layer_snapshots(doc: &Document, times: &[plan::LayerTime]) -> Vec<LayerSnapshot> {
-    let mut counts: HashMap<&str, usize> = HashMap::new();
+    let mut counts: HashMap<&str, (usize, usize)> = HashMap::new();
     for o in &doc.objects {
-        *counts.entry(o.layer.as_str()).or_default() += 1;
+        let c = counts.entry(o.layer.as_str()).or_default();
+        c.0 += 1;
+        c.1 += usize::from(matches!(o.geometry, Geometry::Image { .. }));
     }
     doc.layers
         .iter()
@@ -358,7 +360,8 @@ pub fn layer_snapshots(doc: &Document, times: &[plan::LayerTime]) -> Vec<LayerSn
                 name: l.name.clone(),
                 color: l.color.clone(),
                 output: l.emits(),
-                objects: counts[l.id.as_str()],
+                objects: counts[l.id.as_str()].0,
+                images: counts[l.id.as_str()].1,
                 settings: serde_json::to_value(&l.settings).unwrap_or(Value::Null),
                 sub_layers: l.sub_layers.iter().map(|s| serde_json::to_value(s).unwrap_or(Value::Null)).collect(),
                 preset: l.link.as_ref().map(|k| format!("{}/{}", k.library, k.path)),
