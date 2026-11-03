@@ -45,6 +45,37 @@ export function fitGroups(groups: readonly GroupFit[], available: number): Set<s
   return out;
 }
 
+export interface RailFit {
+  id: string;
+  /** Height on the rail (px): a pinned group's tools inline, another group's button. */
+  height: number;
+  priority: number;
+  pinned?: boolean;
+}
+
+/**
+ * The tablet rail's groups that move into its More flyout so the rest fits in `available` px (the rail never hides a
+ * tool below the window: an iPad in landscape has room for about 14 of its 44 px buttons). As the canvas HUD keeps
+ * the required controls and lets the optional ones give way, the lowest-priority groups go first (`collapseOrder`,
+ * pinned never), and the More button itself (`moreHeight`, with its gap) is counted once anything moves. When even
+ * that does not fit, every movable group is in More and the rail scrolls as a last resort.
+ */
+export function railOverflow(groups: readonly RailFit[], available: number, moreHeight: number): Set<string> {
+  let total = groups.reduce((s, g) => s + g.height, 0);
+  const out = new Set<string>();
+  if (total <= available) return out;
+  total += moreHeight;
+  const byId = new Map(groups.map((g) => [g.id, g]));
+  for (const id of collapseOrder(groups.map((g) => ({ id: g.id, width: 0, collapsedWidth: 0, priority: g.priority, pinned: g.pinned })))) {
+    const g = byId.get(id);
+    if (!g) continue;
+    out.add(id);
+    total -= g.height;
+    if (total <= available) break;
+  }
+  return out;
+}
+
 /** Same sets (to skip a re-render when the fit did not change). */
 export function sameSet(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
   if (a.size !== b.size) return false;

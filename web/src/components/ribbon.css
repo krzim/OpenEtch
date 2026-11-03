@@ -204,6 +204,37 @@
   flex: 1;
 }
 
+/* The rail's More (Ribbon.tsx useRailOverflow): the groups that do not fit the window's height, right after the last
+   group on the rail and above the spacer and the panel toggles at its foot. */
+.ribbon-vertical > .ribbon-more {
+  order: 1;
+  display: flex;
+  flex-direction: column;
+}
+.ribbon-vertical > .tool-spacer,
+.ribbon-vertical > .toolbar-end {
+  order: 2;
+}
+.ribbon-more-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ribbon-more-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ribbon-more-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
 /* Frame ▾ on the tablet rail: the caret under the button. Side by side the two were 88 px wide under Density = Touch,
    in a 57 px rail: the job group slid half out of the window, Start with it. */
 .ribbon-vertical .rb-split {
