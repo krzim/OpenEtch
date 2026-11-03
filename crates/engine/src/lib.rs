@@ -119,3 +119,6 @@ mod user_tools_tests;
 mod webcore_parity_tests;
 #[cfg(test)]
 mod text_templates_tests;
+// Safety review of the merged features (re-mark keep-out, finish photo types).
+#[cfg(test)]
+mod review_safety_tests;

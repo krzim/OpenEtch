@@ -75,7 +75,12 @@ pub async fn request(
         .find(|s| s.offset == recorded.offset)
         .map(|s| s.values.iter().map(|v| v.shown.clone()).collect())
         .unwrap_or_default();
-    let options = RunOptions { selection: Some(current.objects.clone()), ..RunOptions::default() };
+    // The device's keep-out zones go with a re-mark as with every run planned on the device (module `zones`).
+    let options = RunOptions {
+        selection: Some(current.objects.clone()),
+        device_keep_out: crate::zones::device_zones(st),
+        ..RunOptions::default()
+    };
     let config = st.machine.config();
     let generation = config.generation;
     let run_index = st.job.count(&st.active_device().id);

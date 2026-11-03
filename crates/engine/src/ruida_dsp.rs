@@ -153,7 +153,7 @@ fn plan_program(
     if let Some(n) = options.from_segment {
         job = plan::start_at(&job, n, target)?;
     }
-    // Keep-out zones: the jigs' always, a run's region and the device's zones (filled in for runs only).
+    // Keep-out zones: the jigs' always, a run's region and the device's zones (filled in for runs and files stored on the controller).
     crate::zones::apply(&mut job, &doc, options.region.as_deref(), &options.device_keep_out, target)?;
     let rd = rd_job_from_plan(&doc, &job, profile)?;
     let program = RuidaProgram::from_job(&rd, name).map_err(|e| EngineError::BadRequest(e.to_string()))?;
@@ -366,8 +366,11 @@ async fn files_send(State(st): State<Arc<AppState>>, headers: HeaderMap, b: Byte
     let doc = st.document();
     let run_index = st.job.count(&st.active_device().id);
     let name = b.name.clone();
+    // A file stored on the controller runs from its panel later: the device's keep-out zones apply as for a run.
+    let device_keep_out = crate::zones::device_zones(&st);
     let (program, _) = tokio::task::spawn_blocking(move || {
-        plan_program(&doc, &config.target, &profile, &RunOptions { selection: b.ids.filter(|v| !v.is_empty()), ..RunOptions::default() }, run_index, Some(&name))
+        let options = RunOptions { selection: b.ids.filter(|v| !v.is_empty()), device_keep_out, ..RunOptions::default() };
+        plan_program(&doc, &config.target, &profile, &options, run_index, Some(&name))
     })
     .await??;
     let result = with_ruida(&st, move |r| r.upload_file(&program)).await;
