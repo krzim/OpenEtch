@@ -9,6 +9,7 @@
     "build": "node scripts/wasm.mjs && tsc --noEmit && vite build",
     "wasm": "node scripts/wasm.mjs",
     "wasm:dev": "node scripts/wasm.mjs --dev",
+    "wasm:design": "node scripts/wasm.mjs --design",
     "wasm:tools": "node scripts/wasm.mjs --tools",
     "typecheck": "tsc --noEmit",
     "test": "node --test \"src/**/*.test.ts\"",
