@@ -17,15 +17,22 @@
 
 pub mod batch;
 pub mod docset;
+pub mod devices;
 pub mod docsync;
 pub mod error;
 pub mod event;
+pub mod fonts;
 pub mod http;
 pub mod layout;
+pub mod prefs;
+pub mod presets;
 pub mod preview;
 pub mod project;
 pub mod render;
+pub mod stores;
 pub mod upload;
+pub mod user_tools;
+pub mod zones;
 
 pub use error::{AppError, AppResult};
 pub use event::Event;

@@ -63,38 +63,8 @@ pub const TEMPLATES_DIR: &str = "templates";
 pub const PREFS_BACKUP_DIR: &str = "prefs-backups";
 pub const MAX_PREFS_BACKUPS: usize = 50;
 
-/// Autosave and backup settings (`<config-dir>/files.json`).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct FileSettings {
-    /// Minutes between autosaves of a changed document (LightBurn's Auto-save interval; 0 turns it off).
-    pub autosave_minutes: u32,
-    /// Autosaves kept per project (oldest removed first).
-    pub autosave_keep: u32,
-    /// Backups of a project's previous file kept on every save (0 = none).
-    pub backups_keep: u32,
-}
-
-impl Default for FileSettings {
-    fn default() -> Self {
-        FileSettings { autosave_minutes: 5, autosave_keep: 10, backups_keep: 5 }
-    }
-}
-
-impl FileSettings {
-    fn problem(&self) -> Option<String> {
-        if self.autosave_minutes > 24 * 60 {
-            return Some("autosave_minutes must be 0..=1440".into());
-        }
-        if !(1..=50).contains(&self.autosave_keep) {
-            return Some("autosave_keep must be 1..=50".into());
-        }
-        if self.backups_keep > 50 {
-            return Some("backups_keep must be 0..=50".into());
-        }
-        None
-    }
-}
+/// Autosave and backup settings (`<config-dir>/files.json`; shared with the browser core).
+pub use appcore::stores::FileSettings;
 
 /// State of this module, kept in [`AppState::files`].
 #[derive(Debug, Default)]

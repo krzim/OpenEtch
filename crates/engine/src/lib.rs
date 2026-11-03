@@ -72,7 +72,8 @@ pub mod lbzip;
 pub mod updates;
 pub mod userfiles;
 // The User Tools menu (OTH-019).
-pub mod user_tools;
+// (moved to crates/appcore, shared with the browser core)
+pub use appcore::user_tools;
 // Several open documents (File > New Window) and the Art Library.
 pub mod artlib;
 pub mod documents;
