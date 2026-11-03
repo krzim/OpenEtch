@@ -1196,3 +1196,8 @@ a.menu-item {
   flex: 1 0 auto;
   padding-inline: 10px;
 }
+
+/* Safari before 18.2 has no scrollbar-width (styles.css, end). */
+.numeric-bar::-webkit-scrollbar {
+  display: none;
+}

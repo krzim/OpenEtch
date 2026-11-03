@@ -69,16 +69,18 @@ export function Segmented<V extends string>(p: { label: string; value: V; option
   );
 }
 
+// U+FE0E (text presentation) after the two arrows that are also emoji: Safari drew "↕" as Apple's blue emoji tile
+// (its system font has no such glyph, so the fallback was the emoji font) beside the plain arrows.
 export function alignOptions(t: ReturnType<typeof useT>): { h: [TextAlignH, string, string][]; v: [TextAlignV, string, string][] } {
   return {
     h: [
       ["left", "⇤", t("text.align.left")],
-      ["middle", "↔", t("text.align.middle")],
+      ["middle", "\u2194\uFE0E", t("text.align.middle")],
       ["right", "⇥", t("text.align.right")],
     ],
     v: [
       ["top", "⤒", t("text.align.top")],
-      ["middle", "↕", t("text.align.middle")],
+      ["middle", "\u2195\uFE0E", t("text.align.middle")],
       ["bottom", "⤓", t("text.align.bottom")],
     ],
   };

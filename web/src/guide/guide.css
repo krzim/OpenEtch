@@ -75,6 +75,7 @@
 /* 16 px on touch: iOS Safari zooms the page into smaller fields. */
 :root[data-density="touch"] .guide-search input {
   font-size: 16px;
+  min-height: 44px;
 }
 
 .guide-scroll {
