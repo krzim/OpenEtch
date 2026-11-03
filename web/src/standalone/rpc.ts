@@ -15,7 +15,7 @@
 // again) and a notice says "The editor restarted; recovered autosave from hh:mm". After three crashes within a
 // minute the page stops restarting and every request fails with 503.
 
-import type { BootKind, FromWorker, Notice, Recovered, ToWorker } from "./contract.ts";
+import type { BootKind, FromWorker, Notice, PreviewKind, PreviewResult, Recovered, ToWorker } from "./contract.ts";
 
 /** The Worker's part used here (a fake in tests). */
 export interface WorkerLike {
@@ -151,6 +151,9 @@ export class StandaloneClient {
   private state: State = "starting";
   private nextId = 1;
   private readonly pending = new Map<number, Pending>();
+  /** Preview jobs sent to the current worker (a restart drops them: the preview client asks again). */
+  private readonly previews = new Map<number, { resolve: (r: PreviewResult & { ms: number }) => void; reject: (e: Error) => void }>();
+  private readonly readyWaiters: ((ok: boolean) => void)[] = [];
   private readonly sockets = new Set<FakeSocket>();
   private readonly noticeListeners = new Set<(n: Notice) => void>();
   private restarts: number[] = [];
@@ -216,6 +219,26 @@ export class StandaloneClient {
     });
     if (msg.method === "POST" && p === "/api/projects/save" && res.ok) this.askPersist();
     return res;
+  }
+
+  /** Resolves true when the worker is ready, false when it could not start. */
+  whenReady(): Promise<boolean> {
+    if (this.state === "ready") return Promise.resolve(true);
+    if (this.state === "failed") return Promise.resolve(false);
+    return new Promise((r) => this.readyWaiters.push(r));
+  }
+
+  /**
+   * A preview job on the backend's own document (web/src/wasm/previewClient.ts in the design build): run in order
+   * with the requests, so it is of the document every earlier request left.
+   */
+  preview(job: PreviewKind, params?: unknown): Promise<PreviewResult & { ms: number }> {
+    if (this.state !== "ready" || !this.worker) return Promise.reject(new Error("the editor is not ready"));
+    const id = this.nextId++;
+    return new Promise((resolve, reject) => {
+      this.previews.set(id, { resolve, reject });
+      this.worker?.postMessage({ kind: "preview", id, job, params });
+    });
   }
 
   /** A FakeSocket that opens once the worker is ready. */
@@ -288,6 +311,7 @@ export class StandaloneClient {
         this.lastRecovered = m.recovered;
         for (const id of this.pending.keys()) this.send(id);
         for (const s of this.sockets) s.open();
+        for (const r of this.readyWaiters.splice(0)) r(true);
         if (wasRestart) {
           this.notify(
             m.recovered
@@ -326,6 +350,14 @@ export class StandaloneClient {
       case "crashed":
         this.restart();
         break;
+      case "preview": {
+        const p = this.previews.get(m.id);
+        if (!p) return;
+        this.previews.delete(m.id);
+        if (m.result) p.resolve({ ...m.result, ms: m.ms });
+        else p.reject(new Error(m.error ?? "the preview failed"));
+        break;
+      }
     }
   }
 
@@ -357,6 +389,7 @@ export class StandaloneClient {
     this.worker = null;
     for (const s of [...this.sockets]) s.drop();
     for (const p of this.pending.values()) p.sent = false;
+    this.dropPreviews("the editor restarted");
     if (this.restarts.length > MAX_RESTARTS) {
       this.fail("The editor stopped several times in a row. Download a copy of your work if you can, then reload the page.");
       return;
@@ -365,9 +398,16 @@ export class StandaloneClient {
     this.spawn("restart");
   }
 
+  private dropPreviews(why: string): void {
+    for (const p of this.previews.values()) p.reject(new Error(why));
+    this.previews.clear();
+  }
+
   private fail(error: string): void {
     this.state = "failed";
     this.failure = error;
+    this.dropPreviews(error);
+    for (const r of this.readyWaiters.splice(0)) r(false);
     this.worker?.terminate();
     this.worker = null;
     for (const [id, p] of this.pending) {

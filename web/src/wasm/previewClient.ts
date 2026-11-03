@@ -9,6 +9,7 @@
 import type { DocChanges } from "../api/docSync.ts";
 import type { WorkerArrays } from "../api/packedPreview.ts";
 import type { FromWorker, JobKind, ToWorker } from "./protocol.ts";
+import { spawnPreviewWorker } from "./spawnPreviewWorker.ts";
 
 /** A finished job. */
 export interface JobResult {
@@ -167,7 +168,7 @@ export class WorkerCore {
     if (this.worker || this.state === "failed" || !workerSupported()) return;
     let w: Worker;
     try {
-      w = new Worker(new URL("./previewWorker.ts", import.meta.url), { type: "module", name: `openetch-${this.name}` });
+      w = spawnPreviewWorker(this.name);
     } catch {
       this.fail();
       return;

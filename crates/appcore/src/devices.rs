@@ -303,6 +303,15 @@ impl DesignDevices {
         Ok(())
     }
 
+    /// Drop an imported device whose record was deleted (built-in ones stay).
+    pub fn forget(&mut self, id: &str) {
+        if self.builtins.iter().any(|b| b.id == id) {
+            return;
+        }
+        self.devices.retain(|d| d.id != id);
+        self.order.retain(|o| o != id);
+    }
+
     pub fn bases(&self) -> &Bases {
         &self.bases
     }

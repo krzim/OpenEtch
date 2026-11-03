@@ -143,7 +143,21 @@ export default defineConfig(async ({ mode }): Promise<UserConfig> => {
   base: env.VITE_BASE ?? (dm.design && dm.backend !== "engine" ? "./" : "/"),
   // The browser's WebAssembly core (crates/webcore), built into src/wasm/pkg by scripts/wasm.mjs (`npm run wasm`),
   // which `npm run build` and `npm run dev` run first. Its wasm file is an asset with a content hash.
-  resolve: { alias: { "webcore-pkg": "/src/wasm/pkg/webcore.js" } },
+  // OpenEtch Design (not the design-engine harness build) has ONE worker and ONE wasm: the backend worker
+  // (src/standalone/worker.ts) with the design core (`npm run wasm:design`, src/standalone/pkg), which also plans the
+  // preview: the preview client's worker is a port onto it (src/standalone/previewPort.ts). The normal build never
+  // includes the design backend (designmode/noBackend.ts), so neither worker nor glue of it is emitted there.
+  resolve: {
+    alias: dm.design && dm.backend !== "engine"
+      ? [
+          { find: "webcore-pkg", replacement: "/src/standalone/pkg/webcore.js" },
+          { find: /^\.\/spawnPreviewWorker\.ts$/, replacement: "/src/standalone/previewPort.ts" },
+        ]
+      : [
+          { find: "webcore-pkg", replacement: "/src/wasm/pkg/webcore.js" },
+          ...(dm.design ? [] : [{ find: /^\.\/designmode\/backend\.ts$/, replacement: "/src/designmode/noBackend.ts" }]),
+        ],
+  },
   // The preview worker (src/wasm/previewWorker.ts) is an ES module: it imports the wasm-bindgen glue.
   worker: { format: "es" },
   // The web UI's version for Help > About (src/workspace/env.d.ts).

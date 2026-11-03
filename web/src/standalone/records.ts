@@ -76,7 +76,10 @@ export interface FontMeta {
 export interface ThumbRecord {
   /** The project's modified_ms the picture was made from. */
   modified_ms: number;
+  /** The picture (PNG, or SVG when the core is built without resvg). */
   png: Uint8Array;
+  /** Its media type; absent: image/png. */
+  type?: string;
 }
 
 /** Autosave and backup settings (crates/engine/src/userfiles.rs `FileSettings`). */

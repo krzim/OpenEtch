@@ -56,9 +56,35 @@ export interface CoreReply {
  * Every route the shell answers itself (routes.ts `SHELL_PATHS`) is never sent to webcore.
  */
 export interface WebcoreBackend {
-  handle(method: string, path: string, query: string, body: Uint8Array): CoreReply;
+  /** `since`: the page's `X-OpenEtch-Since` (a JSON answer to a POST then carries the document's changes, `sync`). */
+  handle(method: string, path: string, query: string, body: Uint8Array, since?: string): CoreReply;
+  /**
+   * The display preview of the active document (`full`: packed segments and rasters; `stats`: the summary only;
+   * `fill`: a Fill Region hover), so the design build needs no second worker or wasm (web/src/wasm/previewClient.ts
+   * sends its jobs here). Absent in the mock.
+   */
+  preview?(kind: PreviewKind, params?: unknown): PreviewResult;
   /** Free the wasm memory (wasm-bindgen's `free`). */
   free?(): void;
+}
+
+/** What the preview client asks for (web/src/wasm/protocol.ts `JobKind`). */
+export type PreviewKind = "full" | "stats" | "fill";
+
+/** A preview job's answer: the revision it is of, its JSON, and (full) the packed arrays. */
+export interface PreviewResult {
+  rev: number;
+  json: string;
+  arrays?: {
+    xy: Float32Array;
+    t: Float32Array;
+    info: Uint32Array;
+    pass: Uint32Array;
+    power: Float32Array;
+    levels: Uint8Array;
+    rowSegments: Uint32Array;
+    rowSpan: Float32Array;
+  };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -73,7 +99,9 @@ export type ToWorker =
   | { kind: "init"; sessionId: string; boot: BootKind; tzOffsetMin: number }
   | { kind: "request"; id: number; method: string; path: string; query: string; headers: [string, string][]; body: Uint8Array }
   /** The page is being hidden or unloaded: write the recovery copy now if the document changed. */
-  | { kind: "flush" };
+  | { kind: "flush" }
+  /** A preview job on the backend's own document (in order with the requests). */
+  | { kind: "preview"; id: number; job: PreviewKind; params?: unknown };
 
 /** What the worker restored on boot. */
 export interface Recovered {
@@ -93,7 +121,9 @@ export type FromWorker =
   /** One engine event (JSON text), for the page's event stream. */
   | { kind: "event"; data: string }
   /** webcore panicked: the instance is poisoned; the page restarts the worker. */
-  | { kind: "crashed"; error: string };
+  | { kind: "crashed"; error: string }
+  /** A preview job's answer (`error` when it failed); arrays are transferred. */
+  | { kind: "preview"; id: number; result?: PreviewResult; error?: string; ms: number };
 
 /** Something the page should tell the person (a toast). `key` is a message key in workspace/locales. */
 export interface Notice {

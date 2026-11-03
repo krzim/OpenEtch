@@ -204,7 +204,8 @@ export function libsToast(msg: string, kind?: "info" | "error"): void {
 
 onEngineEvent((ev) => {
   if (ev.type === "machine" && ev.event === "prefs") void refreshPrefs();
-  if (ev.type === "device_changed" || ev.type === "devices_changed") {
+  // OpenEtch Design: another tab of this browser changed stored preferences, devices or libraries.
+  if (ev.type === "device_changed" || ev.type === "devices_changed" || ev.type === "stores_changed") {
     void refreshPrefs();
     void refreshActiveDevice();
     void refreshLibrary();

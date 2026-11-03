@@ -81,8 +81,21 @@ export function workerHost(deps: HostDeps): (m: ToWorker) => void {
       void backend.flush();
       return;
     }
+    if (m.kind === "preview") {
+      const t0 = performance.now();
+      const id = m.id;
+      void backend.preview(m.job, m.params).then(
+        (result) => {
+          const transfer = result.arrays ? Object.values(result.arrays).map((a) => a.buffer as ArrayBuffer) : [];
+          deps.post({ kind: "preview", id, result, ms: performance.now() - t0 }, transfer);
+        },
+        (e: unknown) => deps.post({ kind: "preview", id, error: e instanceof Error ? e.message : String(e), ms: performance.now() - t0 }),
+      );
+      return;
+    }
     const { id, method, path, query, body } = m;
-    void backend.request({ method, path, query, body }).then((r) => {
+    const since = m.headers.find(([k]) => k.toLowerCase() === "x-openetch-since")?.[1];
+    void backend.request({ method, path, query, body, since }).then((r) => {
       const b = ownBytes(r.body);
       deps.post({ kind: "reply", id, status: r.status, headers: r.headers, body: b }, [b.buffer as ArrayBuffer]);
     });

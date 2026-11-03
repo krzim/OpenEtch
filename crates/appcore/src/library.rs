@@ -97,6 +97,24 @@ impl Preset {
     }
 }
 
+/// Edit Cut's pauses for the operator on `preset`: its own (`operator_pause`) and its sub-layers' by index; `None`
+/// leaves them as they are. A sub-layer the preset does not have is refused.
+pub fn set_pauses_of(preset: &mut Preset, operator_pause: Option<bool>, sub_layer_pauses: Option<&[usize]>) -> Result<(), AppError> {
+    if let Some(on) = operator_pause {
+        preset.settings.options.operator_pause = on;
+    }
+    if let Some(subs) = sub_layer_pauses {
+        let n = preset.sub_layers.len();
+        if let Some(i) = subs.iter().find(|&&i| i >= n) {
+            return Err(AppError::BadRequest(format!("sub_layer_pauses: sub-layer {i} does not exist (the preset has {n} sub-layers, from 0)")));
+        }
+        for (i, s) in preset.sub_layers.iter_mut().enumerate() {
+            s.options.operator_pause = subs.contains(&i);
+        }
+    }
+    Ok(())
+}
+
 /// An entry made from a layer's settings (LightBurn's Create new from layer / Update).
 pub fn entry_from_layer(layer: &Layer, thickness: Option<f64>, title: &str, description: &str) -> Result<LibEntry, AppError> {
     let (cs, _warnings) = lbrn::cut_setting_from_layer(layer).map_err(|e| AppError::BadRequest(e.to_string()))?;
@@ -237,7 +255,17 @@ impl MemLibraries {
     pub fn restore(&mut self, key: &str, value: &str) -> Result<(), String> {
         if key == "index" {
             let i: MemIndex = serde_json::from_str(value).map_err(|e| e.to_string())?;
-            self.loaded = i.loaded.into_iter().map(|n| LoadedLibrary::new(&n, Library::new(), false)).collect();
+            // Libraries already loaded stay as they are (a running backend's unsaved edits); the others are read
+            // by `restored` / `refresh`.
+            let mut old = std::mem::take(&mut self.loaded);
+            self.loaded = i
+                .loaded
+                .into_iter()
+                .map(|n| match old.iter().position(|l| l.name == n) {
+                    Some(p) => old.swap_remove(p),
+                    None => LoadedLibrary::new(&n, Library::new(), false),
+                })
+                .collect();
             self.selected = i.selected;
             return Ok(());
         }
@@ -264,6 +292,54 @@ impl MemLibraries {
                 }
                 Some((Err(e), _)) => notes.push(format!("library \"{n}\": {e}")),
                 None => notes.push(format!("library \"{n}\" is not in the store")),
+            }
+        }
+        self.selected = self.selected.take().filter(|s| self.find(s).is_some());
+        notes
+    }
+
+    /// Drop a deleted record (`<name>`, `<name>.finish`; the index stays as it is).
+    pub fn forget(&mut self, key: &str) {
+        if key == "index" {
+            return;
+        }
+        match key.strip_suffix(".finish") {
+            Some(name) => {
+                if let Some(e) = self.saved.get_mut(name) {
+                    e.1.clear();
+                }
+            }
+            None => {
+                self.saved.remove(key);
+            }
+        }
+    }
+
+    /// After records changed while running (another tab saved, loaded or unloaded a library): libraries with unsaved
+    /// edits stay as they are, the others are read again from their saved text; the index decides which are loaded.
+    /// Returns problems.
+    pub fn refresh(&mut self) -> Vec<String> {
+        let mut notes = Vec::new();
+        let names: Vec<String> = self.loaded.iter().map(|l| l.name.clone()).collect();
+        let mut old: Vec<LoadedLibrary> = std::mem::take(&mut self.loaded);
+        for n in names {
+            let Some(i) = old.iter().position(|l| l.name == n) else { continue };
+            let current = old.swap_remove(i);
+            if current.dirty {
+                self.loaded.push(current);
+                continue;
+            }
+            match self.saved.get(&n).map(|(t, f)| (parse(t.as_bytes()), f.clone())) {
+                Some((Ok(lib), finish)) => {
+                    let mut l = LoadedLibrary::new(&n, lib, false);
+                    l.finish = finish;
+                    self.loaded.push(l);
+                }
+                Some((Err(e), _)) => {
+                    notes.push(format!("library \"{n}\": {e}"));
+                    self.loaded.push(current);
+                }
+                None => self.loaded.push(current),
             }
         }
         self.selected = self.selected.take().filter(|s| self.find(s).is_some());

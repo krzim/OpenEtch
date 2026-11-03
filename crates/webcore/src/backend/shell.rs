@@ -4,19 +4,23 @@
 //! | Method | Path | Body | Answer |
 //! |---|---|---|---|
 //! | POST | `/core/open?kind=project&name=N[&origin=]` | the `.openetch` text | as `POST /api/projects/open`: `{ok, name, result, revision}`; the document then belongs to project `N`, saved at that revision |
+//! | POST | `/core/open?kind=project&name=N&new_document=1` | the `.openetch` text | as `POST /api/documents {project: N}`: **201** `{ok, id, active, existing, revision, result?}`; a document already holding `N` is activated instead (`existing: true`) |
 //! | POST | `/core/open?kind=template&format=openetch\|lbt` | the template | as `POST /api/templates/open`: `{ok, result, revision}`, a new untitled document |
 //! | POST | `/core/open?kind=backup&project=P` | an autosave or backup | as `POST /api/backups/restore`: `{ok, result, revision}`, unsaved, downloads named `P` |
+//! | POST | `/core/open?kind=recovery&project=P` or `&display=D` | a tab's recovery copy | `{ok, result, revision}`: the document with its unsaved changes, still project `P`'s (Save goes there) or named `D` |
 //! | POST | `/core/saved?name=N&revision=R&document=D` | – | after the shell stored the text `GET /api/document/download?format=openetch` gave (its `X-OpenEtch-Revision` and `X-OpenEtch-Document`): document `D` is project `N` saved at `R`; emits `project_saved`; `{ok, name, revision}` |
 //! | POST | `/core/thumbnail.svg?width=` | an `.openetch` | the project drawn as SVG (as `GET /api/projects/{name}/thumbnail.png`, before rasterising) |
 //! | POST | `/core/thumbnail.png?width=32..=1024` | an `.openetch` | the PNG, when the core is built with resvg (feature `png`); else 404 |
 //! | POST | `/core/template/check?format=openetch\|lbt` | a template | `{ok}` when it would open (as `POST /api/templates/upload` checks a `.lbt`) |
+//! | PUT | `/core/store?store=S&key=K` | the record's text | another tab changed a record of a store this backend keeps: taken as at start (204) |
+//! | DELETE | `/core/store?store=S&key=K` | – | another tab deleted the record (204) |
 
 use std::collections::HashMap;
 
 use appcore::AppError;
 use appcore::http::{check_query, parse_origin};
 use appcore::project::ProjectState;
-use commands::Invocation;
+use commands::{Invocation, Origin};
 use serde_json::json;
 
 use super::Backend;
@@ -36,6 +40,14 @@ pub fn route(b: &mut Backend, method: &str, segs: &[&str], q: HashMap<String, St
             let (svg, width) = thumbnail_svg(b, &q, &body)?;
             let png = appcore::render::svg_to_png(&svg, width)?;
             Ok(Answer::bytes("image/png", png).header("cache-control", "no-cache"))
+        }
+        ("PUT" | "DELETE", ["store"]) => {
+            check_query(&q, &["store", "key"])?;
+            let need = |k: &str| q.get(k).cloned().ok_or_else(|| AppError::BadRequest(format!("{k} is required")));
+            let (store, key) = (need("store")?, need("key")?);
+            let value = if method == "PUT" { Some(text_of(body, "store record")?) } else { None };
+            b.reload_record(&store, &key, value.as_deref())?;
+            Ok(Answer::empty(204))
         }
         ("POST", ["template", "check"]) => {
             check_query(&q, &["format"])?;
@@ -61,7 +73,7 @@ fn text_of(body: Vec<u8>, what: &str) -> Result<String, AppError> {
 }
 
 fn open(b: &mut Backend, q: &HashMap<String, String>, body: Vec<u8>) -> Routed {
-    check_query(q, &["kind", "name", "format", "project", "origin"])?;
+    check_query(q, &["kind", "name", "format", "project", "display", "origin", "new_document"])?;
     let origin = parse_origin(q.get("origin").map(|o| json!(o)).as_ref())?;
     let kind = q.get("kind").map(String::as_str).ok_or_else(|| AppError::BadRequest("kind is required (project, template or backup)".into()))?;
     let text = text_of(body, ".openetch JSON")?;
@@ -69,6 +81,30 @@ fn open(b: &mut Backend, q: &HashMap<String, String>, body: Vec<u8>) -> Routed {
         "project" => {
             let name = q.get("name").cloned().ok_or_else(|| AppError::BadRequest("name is required".into()))?;
             appcore::project::validate_project_name(&name)?;
+            let new_document = matches!(q.get("new_document").map(String::as_str), Some("1" | "true"));
+            if new_document {
+                // As the engine's `POST /api/documents {project}`: an open document holding it is activated instead.
+                if let Some(id) = b.docs.with_project(&b.project, &name) {
+                    let a = super::docs::activate_document(b, &id, origin)?;
+                    return Ok(Answer::with_status(201, &json!({ "ok": true, "id": id, "active": id, "existing": true, "revision": a["revision"] })));
+                }
+                let id = super::docs::new_document(b)?;
+                super::docs::activate_document(b, &id, origin.clone())?;
+                let inv = Invocation { id: "doc.load".into(), params: appcore::batch::content_params(text) };
+                let o = match b.batch_opening(vec![inv], origin, Some(name.clone()), None) {
+                    Ok(mut o) => o.remove(0),
+                    Err(e) => {
+                        // Not left behind empty: the document goes again (as the engine closes it).
+                        if let Ok(next) = b.docs.successor(&id) {
+                            let _ = super::docs::activate_document(b, &next, Origin::Ui);
+                            let _ = b.docs.remove(&id, true);
+                        }
+                        return Err(e);
+                    }
+                };
+                let result = json!({ "ok": true, "name": name, "result": o.result, "revision": o.revision });
+                return Ok(Answer::with_status(201, &json!({ "ok": true, "id": id, "active": id, "existing": false, "revision": o.revision, "result": result })));
+            }
             let inv = Invocation { id: "doc.load".into(), params: appcore::batch::content_params(text) };
             let o = b.batch_opening(vec![inv], origin, Some(name.clone()), None)?.remove(0);
             Ok(Answer::json(&json!({ "ok": true, "name": name, "result": o.result, "revision": o.revision })))
@@ -89,7 +125,23 @@ fn open(b: &mut Backend, q: &HashMap<String, String>, body: Vec<u8>) -> Routed {
             let o = b.batch_opening(vec![inv], origin, None, project)?.remove(0);
             Ok(Answer::json(&json!({ "ok": true, "result": o.result, "revision": o.revision })))
         }
-        other => Err(AppError::BadRequest(format!("unknown kind '{other}' (project, template or backup)"))),
+        "recovery" => {
+            let project = q.get("project").cloned();
+            if let Some(p) = &project {
+                appcore::project::validate_project_name(p)?;
+            }
+            let inv = Invocation { id: "doc.load".into(), params: appcore::batch::content_params(text) };
+            let o = b.batch_opening(vec![inv], origin, None, project.clone().or_else(|| q.get("display").cloned()))?.remove(0);
+            // Unsaved changes: it belongs to the project still (Save goes there), but no file holds this revision.
+            b.project = ProjectState {
+                name: project.clone(),
+                saved_revision: None,
+                clean_revision: None,
+                display_name: if project.is_some() { None } else { q.get("display").cloned() },
+            };
+            Ok(Answer::json(&json!({ "ok": true, "result": o.result, "revision": o.revision })))
+        }
+        other => Err(AppError::BadRequest(format!("unknown kind '{other}' (project, template, backup or recovery)"))),
     }
 }
 

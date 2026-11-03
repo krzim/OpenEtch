@@ -56,6 +56,11 @@ impl Answer {
         Answer { status: 200, headers: vec![("content-type".into(), content_type.into())], body }
     }
 
+    /// `status` with no body (204).
+    pub fn empty(status: u16) -> Answer {
+        Answer { status, headers: Vec::new(), body: Vec::new() }
+    }
+
     /// Add a header.
     pub fn header(mut self, name: &str, value: impl Into<String>) -> Answer {
         self.headers.push((name.into(), value.into()));

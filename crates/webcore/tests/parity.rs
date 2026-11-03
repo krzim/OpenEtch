@@ -305,6 +305,12 @@ fn script() -> Vec<Step> {
         post("/api/library/steel/entries/m0.e0/apply", json!({"layer": "layer-1", "link": true})),
         put("/api/library/steel/entries/m0.e0", json!({"settings": {"power_pct": 42.0, "speed_mm_s": 900.0}})),
         put("/api/library/steel/entries/m0.e0", json!({"meta": {"material": "Steel", "title": "Finish", "description": "Engrave deep"}})),
+        // Edit Cut's pauses for the operator: with the cut values, alone, and refused.
+        put("/api/library/steel/entries/m0.e0", json!({"settings": {"power_pct": 40.0, "speed_mm_s": 900.0}, "operator_pause": true})),
+        put("/api/library/steel/entries/m0.e0", json!({"operator_pause": false, "sub_layer_pauses": []})),
+        put("/api/library/steel/entries/m0.e0", json!({"sub_layer_pauses": [3]})),
+        put("/api/library/steel/entries/m0.e0", json!({"from_layer": "layer-1", "operator_pause": true})),
+        get("/api/library/steel"),
         post("/api/library/steel/entries/m0.e0/duplicate", json!({})),
         get("/api/document"),
         post("/api/library/save", json!({"name": "steel", "as": "steel copy"})),
@@ -497,4 +503,53 @@ fn shell_routes_open_and_save_projects() {
     assert_eq!((j.status, j.json()["code"].as_str()), (404, Some("design_only")));
     let runs = b.handle("POST", "/api/runs", "", Vec::new(), None);
     assert_eq!(runs.status, 404);
+}
+
+/// The shell's other routes: a project in a new document tab (or the tab already holding it), a recovery copy that
+/// stays the project's with its unsaved changes, and records another tab changed.
+#[test]
+fn shell_routes_new_documents_recovery_and_records() {
+    let mut b = core();
+    b.handle("POST", "/api/execute", "", json!({"id": "shape.rect", "params": {"width_mm": 4, "height_mm": 4}}).to_string().into_bytes(), None);
+    let d = b.handle("GET", "/api/document/download", "format=openetch", Vec::new(), None).body;
+    let n = b.handle("POST", "/core/open", "kind=project&name=Badge&new_document=1", d.clone(), None);
+    assert_eq!(n.status, 201, "{}", String::from_utf8_lossy(&n.body));
+    let id = n.json()["id"].as_str().unwrap().to_owned();
+    assert_eq!(n.json()["existing"], false);
+    let docs = b.handle("GET", "/api/documents", "", Vec::new(), None).json();
+    assert_eq!((docs["documents"].as_array().unwrap().len(), docs["active"].as_str()), (2, Some(id.as_str())), "{docs}");
+    let again = b.handle("POST", "/core/open", "kind=project&name=badge&new_document=1", d.clone(), None).json();
+    assert_eq!((again["existing"].as_bool(), again["id"].as_str()), (Some(true), Some(id.as_str())), "{again}");
+
+    let r = b.handle("POST", "/core/open", "kind=recovery&project=Badge", d.clone(), None);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    let p = b.handle("GET", "/api/project", "", Vec::new(), None).json();
+    assert_eq!((p["name"].as_str(), p["dirty"].as_bool()), (Some("Badge"), Some(true)), "{p}");
+    b.handle("POST", "/core/open", "kind=recovery&display=Coaster.lbrn2", d, None);
+    let p = b.handle("GET", "/api/project", "", Vec::new(), None).json();
+    assert_eq!((p["name"].as_str(), p["dirty"].as_bool()), (None, Some(true)), "{p}");
+
+    // Another tab's records: preferences, then a device that is made active, then deleted.
+    let mut other = core();
+    let prefs = other.handle("PUT", "/api/prefs", "", json!({"require_framing": true}).to_string().into_bytes(), None).writes;
+    let v = prefs.iter().find(|w| w.store == "prefs").and_then(|w| w.value.clone()).unwrap();
+    let put = b.handle("PUT", "/core/store", "store=prefs&key=preferences", v.into_bytes(), None);
+    assert_eq!(put.status, 204, "{}", String::from_utf8_lossy(&put.body));
+    assert_eq!(b.handle("GET", "/api/prefs", "", Vec::new(), None).json(), other.handle("GET", "/api/prefs", "", Vec::new(), None).json());
+    let added = other.handle("POST", "/api/devices/import", "", GANTRY.as_bytes().to_vec(), None);
+    let dev = added.json()["added"][0].as_str().unwrap().to_owned();
+    let mut writes = added.writes;
+    writes.extend(other.handle("POST", &format!("/api/devices/{dev}/activate"), "", b"{}".to_vec(), None).writes);
+    for w in &writes {
+        let q = format!("store={}&key={}", w.store, w.key);
+        let r = b.handle("PUT", "/core/store", &q, w.value.clone().unwrap().into_bytes(), None);
+        assert_eq!(r.status, 204, "{q}: {}", String::from_utf8_lossy(&r.body));
+    }
+    assert_eq!(b.handle("GET", "/api/devices", "", Vec::new(), None).json()["active"], dev.as_str());
+    let del = b.handle("DELETE", "/core/store", &format!("store=devices&key={dev}"), Vec::new(), None);
+    assert_eq!(del.status, 204);
+    let list = b.handle("GET", "/api/devices", "", Vec::new(), None).json();
+    assert!(!list.to_string().contains(&format!("\"id\":\"{dev}\"")), "{list}");
+    let bad = b.handle("PUT", "/core/store", "store=nope&key=x", b"{}".to_vec(), None);
+    assert_eq!(bad.status, 400);
 }

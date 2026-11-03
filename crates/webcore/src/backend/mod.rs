@@ -113,62 +113,108 @@ impl Backend {
 
     /// [`Backend::new`] with other built-in design profiles (the first is the built-in device; tests).
     pub fn with_profiles(init: Init, profiles: Vec<MachineProfile>) -> Backend {
-        let mut devices = DesignDevices::new(profiles);
-        let mut notes = Vec::new();
-        let mut prefs = Preferences::default();
-        let mut files = FileSettings::default();
-        let mut fonts = appcore::fonts::FontPrefs::default();
-        let mut test_presets = Vec::new();
-        let mut image_presets = Vec::new();
-        let mut libraries = appcore::library::MemLibraries::default();
-        // The device records first (the index names them), then the rest.
-        let mut records = init.stores;
-        records.sort_by_key(|r| (r.store != appcore::stores::names::DEVICES, r.key == "index"));
-        for r in &records {
-            let note = |e: String| format!("{}/{}: {e}; skipped", r.store, r.key);
-            let result: Result<(), String> = match (r.store.as_str(), r.key.as_str()) {
-                (appcore::stores::names::DEVICES, key) => devices.restore(key, &r.value),
-                (appcore::stores::names::PREFS, "preferences") => serde_json::from_str(&r.value).map(|p| prefs = p).map_err(|e| e.to_string()),
-                (appcore::stores::names::FILES, "settings") => serde_json::from_str(&r.value).map(|f| files = f).map_err(|e| e.to_string()),
-                (appcore::stores::names::FONTS, "prefs") => serde_json::from_str(&r.value).map(|f| fonts = f).map_err(|e| e.to_string()),
-                (appcore::stores::names::PRESETS, "material-test") => {
-                    serde_json::from_str(&r.value).map(|p| test_presets = p).map_err(|e| e.to_string())
-                }
-                (appcore::stores::names::PRESETS, "image-adjust") => {
-                    serde_json::from_str(&r.value).map(|p| image_presets = p).map_err(|e| e.to_string())
-                }
-                (appcore::library::STORE, key) => libraries.restore(key, &r.value),
-                _ => Err("not a store this build keeps".into()),
-            };
-            if let Err(e) = result {
-                notes.push(note(e));
-            }
-        }
-        notes.extend(libraries.restored());
-        let active = devices.active().clone();
-        let session = Session::new(appcore::layout::new_document_for(&active, profile_field(&active)));
-        let project = ProjectState::clean_at(session.document().revision);
+        let devices = DesignDevices::new(profiles);
+        let first = devices.active().clone();
+        let session = Session::new(appcore::layout::new_document_for(&first, profile_field(&first)));
         let mut b = Backend {
+            project: ProjectState::clean_at(session.document().revision),
             session,
-            project,
             docs: DocSet::default(),
             doc_log: DocLog::default(),
             epoch: init.epoch.unwrap_or_else(|| "design".into()).into(),
             devices,
             generation: 0,
-            prefs,
-            files,
-            fonts,
-            test_presets,
-            image_presets,
-            libraries,
+            prefs: Preferences::default(),
+            files: FileSettings::default(),
+            fonts: appcore::fonts::FontPrefs::default(),
+            test_presets: Vec::new(),
+            image_presets: Vec::new(),
+            libraries: appcore::library::MemLibraries::default(),
             preview: None,
             events: Vec::new(),
             writes: Vec::new(),
-            notes,
+            notes: Vec::new(),
         };
+        // The device records first (the index names them), then the rest.
+        let mut records = init.stores;
+        records.sort_by_key(|r| (r.store != appcore::stores::names::DEVICES, r.key == "index"));
+        for r in &records {
+            if let Err(e) = b.restore_record(&r.store, &r.key, Some(&r.value)) {
+                b.notes.push(format!("{}/{}: {e}; skipped", r.store, r.key));
+            }
+        }
+        let lib_notes = b.libraries.restored();
+        b.notes.extend(lib_notes);
+        // The first document is laid out for the device the records made active.
+        let active = b.devices.active().clone();
+        if active.id != first.id {
+            b.session = Session::new(appcore::layout::new_document_for(&active, profile_field(&active)));
+            b.project = ProjectState::clean_at(b.session.document().revision);
+        }
         b.apply_startup_defaults();
         b
+    }
+
+    /// Take one stored record (`None`: the record was deleted). At start, and while running when another tab of the
+    /// browser changed a store (`PUT|DELETE /core/store`).
+    fn restore_record(&mut self, store: &str, key: &str, value: Option<&str>) -> Result<(), String> {
+        use appcore::stores::names;
+        let parse = |v: &str| -> Result<Value, String> { serde_json::from_str(v).map_err(|e| e.to_string()) };
+        match (store, key, value) {
+            (names::DEVICES, key, Some(v)) => self.devices.restore(key, v),
+            (names::DEVICES, key, None) => {
+                self.devices.forget(key);
+                Ok(())
+            }
+            (names::PREFS, "preferences", v) => {
+                self.prefs = v.map(|v| serde_json::from_str(v).map_err(|e| e.to_string())).transpose()?.unwrap_or_default();
+                Ok(())
+            }
+            (names::FILES, "settings", v) => {
+                self.files = v.map(|v| serde_json::from_str(v).map_err(|e| e.to_string())).transpose()?.unwrap_or_default();
+                Ok(())
+            }
+            (names::FONTS, "prefs", v) => {
+                self.fonts = v.map(|v| serde_json::from_str(v).map_err(|e| e.to_string())).transpose()?.unwrap_or_default();
+                Ok(())
+            }
+            (names::PRESETS, "material-test", v) => {
+                self.test_presets = match v {
+                    Some(v) => serde_json::from_value(parse(v)?).map_err(|e| e.to_string())?,
+                    None => Vec::new(),
+                };
+                Ok(())
+            }
+            (names::PRESETS, "image-adjust", v) => {
+                self.image_presets = match v {
+                    Some(v) => serde_json::from_value(parse(v)?).map_err(|e| e.to_string())?,
+                    None => Vec::new(),
+                };
+                Ok(())
+            }
+            (appcore::library::STORE, key, Some(v)) => self.libraries.restore(key, v),
+            (appcore::library::STORE, key, None) => {
+                self.libraries.forget(key);
+                Ok(())
+            }
+            _ => Err("not a store this build keeps".into()),
+        }
+    }
+
+    /// A record another tab changed: taken as at start; loaded libraries without unsaved edits are read again, and
+    /// the preview is planned again for a changed device.
+    pub fn reload_record(&mut self, store: &str, key: &str, value: Option<&str>) -> Result<(), AppError> {
+        let before = self.devices.active().id.clone();
+        self.restore_record(store, key, value).map_err(|e| AppError::BadRequest(format!("{store}/{key}: {e}")))?;
+        if store == appcore::library::STORE {
+            self.notes.extend(self.libraries.refresh());
+        }
+        if store == appcore::stores::names::DEVICES {
+            self.generation += 1;
+            let id = self.devices.active().id.clone();
+            self.emit(if id == before { Event::DevicesChanged } else { Event::DeviceChanged { id } });
+        }
+        Ok(())
     }
 
     /// With "load default layer settings on New / restart" (or saved optimization defaults), the first document

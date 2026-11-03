@@ -49,6 +49,8 @@ fn parse_init(init: &str) -> Result<backend::Init, JsError> {
 #[wasm_bindgen]
 pub struct Backend {
     inner: backend::Backend,
+    /// Fill Region's prepared boundaries (as [`Core`]'s), for hovers on the active document.
+    fill: crate::fill::Cache,
 }
 
 #[wasm_bindgen]
@@ -56,7 +58,7 @@ impl Backend {
     /// `init`: `{stores: [{store, key, value}], epoch?}` as JSON (`""` for a first start).
     #[wasm_bindgen(constructor)]
     pub fn new(init: &str) -> Result<Backend, JsError> {
-        Ok(Backend { inner: backend::Backend::new(parse_init(init)?) })
+        Ok(Backend { inner: backend::Backend::new(parse_init(init)?), fill: crate::fill::Cache::default() })
     }
 
     /// Answer one request (see [`handle`]).
@@ -83,6 +85,16 @@ impl Backend {
             Err(e) => preview::error_meta(&e),
         }
         .to_string()
+    }
+
+    /// Fill Region's hover answer on the active document (as [`Core::fill_region_preview`]), as JSON.
+    pub fn fill_region_preview(&mut self, params: &str) -> Result<String, JsError> {
+        let params: serde_json::Value = serde_json::from_str(params).map_err(|e| JsError::new(&format!("params: {e}")))?;
+        Ok(match crate::fill::preview(self.inner.document(), &mut self.fill, &params) {
+            Ok(v) => v,
+            Err(e) => preview::error_meta(&e),
+        }
+        .to_string())
     }
 
     /// The active document's revision (what [`Backend::preview`] is of).

@@ -7,7 +7,7 @@
 // `onCrash` tells the worker, whose page then starts a fresh worker that restores the recovery copy (rpc.ts).
 
 import { Autosaver, RecoveryKeeper, type Timers } from "./autosave.ts";
-import type { BootKind, CoreReply, CoreWrite, Recovered, WebcoreBackend } from "./contract.ts";
+import type { BootKind, CoreReply, CoreWrite, PreviewKind, PreviewResult, Recovered, WebcoreBackend } from "./contract.ts";
 import { normaliseReply } from "./core.ts";
 import { loadFont, loadFonts } from "./fonts.ts";
 import { StorageFullError, type KeyValueStore } from "./idb.ts";
@@ -128,7 +128,7 @@ export class ShellBackend {
       try {
         const own = await shellRoute(this.ctx, req);
         if (own) return own;
-        const r = await this.callCore(req.method, req.path, req.query, req.body);
+        const r = await this.callCore(req.method, req.path, req.query, req.body, req.since);
         return { status: r.status, headers: r.headers, body: r.body };
       } catch (e) {
         if (e instanceof Crashed) return crashedReply(500, "editor_crashed");
@@ -152,11 +152,28 @@ export class ShellBackend {
     });
   }
 
-  private async callCore(method: string, path: string, query: string, body: Uint8Array): Promise<CoreReply> {
+  /** A preview job (contract.ts `WebcoreBackend.preview`), in order with the requests. */
+  preview(kind: PreviewKind, params?: unknown): Promise<PreviewResult> {
+    return this.enqueue(async () => {
+      if (this.crashed) throw new Error("the editor is restarting");
+      const run = this.core.preview;
+      if (!run) throw new Error("this core plans no preview");
+      try {
+        return run.call(this.core, kind, params);
+      } catch (e) {
+        // A trap poisons the instance as a request's would.
+        this.crashed = e instanceof Error ? e.message : String(e);
+        this.opts.onCrash(this.crashed);
+        throw e;
+      }
+    });
+  }
+
+  private async callCore(method: string, path: string, query: string, body: Uint8Array, since?: string): Promise<CoreReply> {
     if (this.crashed) throw new Crashed(this.crashed);
     let r: CoreReply;
     try {
-      r = normaliseReply(this.core.handle(method, path, query, body));
+      r = normaliseReply(this.core.handle(method, path, query, body, since));
     } catch (e) {
       this.crashed = e instanceof Error ? e.message : String(e);
       this.opts.onCrash(this.crashed);

@@ -269,7 +269,7 @@ async function thumbnail(ctx: ShellContext, req: ShellRequest): Promise<ShellRep
   const row = await resolveProject(ctx, name);
   const key = `${row.name}|${width}`;
   const cached = await ctx.store.get<ThumbRecord>(S.thumbs, key);
-  if (cached && cached.modified_ms === row.modified_ms) return binary(cached.png, "image/png", [["cache-control", "no-cache"]]);
+  if (cached && cached.modified_ms === row.modified_ms) return binary(cached.png, cached.type ?? "image/png", [["cache-control", "no-cache"]]);
   const data = await ctx.store.get<Uint8Array>(S.projectData, row.name);
   if (!data) throw notFound(`no project named "${row.name}"`);
   const r = await ctx.core("POST", "/api/_shell/thumbnail", `width=${width}`, data);
@@ -278,8 +278,10 @@ async function thumbnail(ctx: ShellContext, req: ShellRequest): Promise<ShellRep
     throw new HttpError(e.status, `project "${row.name}": ${e.message}`, e.code);
   }
   // A cache only: a full storage must not fail the picture.
-  await ctx.store.batch([{ store: S.thumbs, key, value: { modified_ms: row.modified_ms, png: r.body } }]).catch(() => undefined);
-  return binary(r.body, "image/png", [["cache-control", "no-cache"]]);
+  // PNG when the core has resvg (feature png), else the SVG it would rasterise (an <img> shows either).
+  const type = r.headers.find(([k]) => k.toLowerCase() === "content-type")?.[1] ?? "image/png";
+  await ctx.store.batch([{ store: S.thumbs, key, value: { modified_ms: row.modified_ms, png: r.body, type } }]).catch(() => undefined);
+  return binary(r.body, type, [["cache-control", "no-cache"]]);
 }
 
 // --- Autosaves and backups ------------------------------------------------------------------------------------------

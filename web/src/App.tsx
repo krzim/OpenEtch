@@ -16,6 +16,7 @@ import { createPortal } from "react-dom";
 import { api } from "./api/client.ts";
 import * as C from "./api/commands.ts";
 import { DESIGN_ONLY } from "./mode.ts";
+import { onDesignNotice } from "./api/transport.ts";
 import { DesignStrip } from "./designmode/DesignStrip.tsx";
 import { DesignPreviewDock } from "./designmode/DesignPreviewDock.tsx";
 import {
@@ -124,6 +125,7 @@ import { GrblMove } from "./components/GrblMove.tsx";
 import { RuidaFiles } from "./components/RuidaFiles.tsx";
 import { isRuidaMachine, rdFileName } from "./api/ruida.ts";
 import { usePrefs, useT } from "./workspace/usePrefs.ts";
+import type { MsgKey } from "./workspace/i18n.ts";
 import { alignMoves, distributeMoves, nudgeDelta, nudgeKeyId, queueNudge, rotateKeyDeg, roundMm, type AlignX, type AlignY } from "./editing.ts";
 import { boxCenter, objectBounds, unionBoxes, type Box } from "./geometry.ts";
 import {
@@ -370,6 +372,12 @@ export function App() {
   // Workspace layer (workspace/): theme, preferences, the rebindable key map (installed before EditTools' keys).
   const ws = useWorkspaceUi();
   const t = useT();
+  // OpenEtch Design: the in-browser editor's notices (restarted after an error, a reload brought the design back,
+  // storage only lasts for this tab), as toasts.
+  useEffect(
+    () => onDesignNotice((n) => notify(t(n.key as MsgKey, n.vars), n.level === "error" ? "error" : "info")),
+    [notify, t],
+  );
   // Document tabs (several open documents, LightBurn's New Window), the Docking tool, Flash layer, dockable windows.
   const tabs = useDocTabs({
     dirty: file.dirty,

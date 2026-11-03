@@ -36,4 +36,7 @@ export const ES_DESIGNMODE: Messages = {
   "dm.exportLbrn2Title": "Guardar el diseño como proyecto de LightBurn, para abrirlo y grabarlo en LightBurn",
   "dm.notAffiliated": "OpenEtch no está afiliado a LightBurn Software.",
   "dm.aboutDesign": "OpenEtch Design funciona en su navegador: el editor, la vista previa y las exportaciones, sin servidor y sin control del láser.",
+  "dm.changedElsewhereTitle": "Guardado en otra pestaña",
+  "dm.changedElsewhere": "\"{name}\" se guardó en otra pestaña o ventana después de abrirlo aquí. Si guarda ahora, esa versión se sustituye por esta.",
+  "dm.replaceIt": "Sustituirlo",
 };

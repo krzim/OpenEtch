@@ -299,7 +299,7 @@ fn image_processed(b: &mut Backend, id: &str, q: &HashMap<String, String>) -> Ro
     Ok(Answer::file("attachment", &name, "png", "image/png", body, 0))
 }
 
-fn activate_document(b: &mut Backend, id: &str, origin: Origin) -> Result<Value, AppError> {
+pub(super) fn activate_document(b: &mut Backend, id: &str, origin: Origin) -> Result<Value, AppError> {
     let a = b.docs.activate(&mut b.session, &mut b.project, id)?;
     if !a.changed {
         return Ok(json!({ "ok": true, "active": id, "revision": a.revision, "changed": false }));
@@ -310,7 +310,7 @@ fn activate_document(b: &mut Backend, id: &str, origin: Origin) -> Result<Value,
 }
 
 /// A new, empty document laid out for the active device (New Window); not activated.
-fn new_document(b: &mut Backend) -> Result<String, AppError> {
+pub(super) fn new_document(b: &mut Backend) -> Result<String, AppError> {
     let device = b.devices.active().clone();
     let doc = appcore::layout::new_document_for(&device, b.profile_field());
     let session = commands::Session::new(doc);

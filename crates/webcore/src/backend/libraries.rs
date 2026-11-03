@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 use appcore::AppError;
-use appcore::library::{EntryMeta, Preset, entry_from_layer, entry_id, parse_entry_id};
+use appcore::library::{EntryMeta, Preset, entry_from_layer, entry_id, parse_entry_id, set_pauses_of};
 use commands::{Invocation, Origin};
 use doc::PresetLink;
 use serde::Deserialize;
@@ -259,12 +259,23 @@ struct EditBody {
     settings: Option<doc::CutSettings>,
     #[serde(default)]
     sub_layers: Option<Vec<doc::CutSettings>>,
+    /// Edit Cut: whether the preset pauses for the operator before its layer (kept beside the `.clb`; left out: as
+    /// it was).
+    #[serde(default)]
+    operator_pause: Option<bool>,
+    /// Edit Cut: the preset's sub-layers (by index) that pause for the operator; left out: as they were.
+    #[serde(default)]
+    sub_layer_pauses: Option<Vec<usize>>,
     #[serde(default)]
     meta: Option<EntryMeta>,
 }
 
 fn entry_edit(b: &mut Backend, name: &str, id: &str, body: &[u8]) -> Routed {
     let e: EditBody = json_body(body)?;
+    let pauses_given = e.operator_pause.is_some() || e.sub_layer_pauses.is_some();
+    if e.from_layer.is_some() && pauses_given {
+        return Err(AppError::BadRequest("from_layer takes the layer's own pauses: leave out operator_pause and sub_layer_pauses".into()));
+    }
     let mut id = parse_entry_id(id)?;
     let old_path = {
         let (m, en) = b.libraries.entry(name, id)?;
@@ -275,16 +286,17 @@ fn entry_edit(b: &mut Backend, name: &str, id: &str, body: &[u8]) -> Routed {
     let new_layer = if let Some(layer_id) = &e.from_layer {
         Some(b.session.document().layer(layer_id).cloned().ok_or_else(|| AppError::NotFound(format!("no layer with id '{layer_id}'")))?)
     } else if e.settings.is_some() || e.sub_layers.is_some() {
-        let p = with_pauses;
+        let p = with_pauses.clone();
         let finish = b.libraries.finish_of(name, &old_path)?;
-        // Edit Cut changes the cut values, never the preset's pauses for the operator (kept beside the entry).
-        let preset = Preset {
+        // The preset's pauses for the operator (kept beside the entry) stay as they were unless Edit Cut gives them.
+        let mut preset = Preset {
             settings: e.settings.unwrap_or(p.settings),
             sub_layers: e.sub_layers.unwrap_or(p.sub_layers),
             global_passes: p.global_passes,
             extras: p.extras,
         }
         .with_pauses(Some(&finish));
+        set_pauses_of(&mut preset, e.operator_pause, e.sub_layer_pauses.as_deref())?;
         // Checked as layer.apply_preset checks a preset, on a scratch document.
         let mut scratch = commands::Session::new(doc::Document::default());
         let layer_id = scratch.document().layers[0].id.clone();
@@ -293,8 +305,14 @@ fn entry_edit(b: &mut Backend, name: &str, id: &str, body: &[u8]) -> Routed {
     } else {
         None
     };
-    if new_layer.is_none() && e.meta.is_none() {
-        return Err(AppError::BadRequest("give from_layer, settings / sub_layers, or meta".into()));
+    if new_layer.is_none() && !pauses_given && e.meta.is_none() {
+        return Err(AppError::BadRequest("give from_layer, settings / sub_layers, operator_pause / sub_layer_pauses, or meta".into()));
+    }
+    // Only the pauses: the entry's cut values stay byte for byte, only OpenEtch's data beside it changes.
+    if new_layer.is_none() && pauses_given {
+        let mut p = with_pauses;
+        set_pauses_of(&mut p, e.operator_pause, e.sub_layer_pauses.as_deref())?;
+        b.libraries.set_pauses(name, &old_path, &p.settings, &p.sub_layers)?;
     }
     if let Some(l) = new_layer {
         let entry = entry_from_layer(&l, current.thickness(), current.title(), current.description())?;

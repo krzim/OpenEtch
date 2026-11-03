@@ -9,6 +9,8 @@ export interface ShellRequest {
   /** The raw query without `?`. */
   query: string;
   body: Uint8Array;
+  /** The `X-OpenEtch-Since` header, passed on to webcore. */
+  since?: string;
 }
 
 /** An answer to the page. */

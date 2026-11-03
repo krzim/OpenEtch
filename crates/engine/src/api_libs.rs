@@ -470,22 +470,9 @@ async fn entry_edit(
     Ok(Json(json!({ "ok": true, "id": entry_id(id), "path": new_path, "updated_layers": synced })))
 }
 
-/// Edit Cut's pauses for the operator on `preset`: its own (`operator_pause`) and its sub-layers' by index; `None`
-/// leaves them as they are.
+/// Edit Cut's pauses for the operator on `preset` (shared with the browser core).
 fn set_pauses_of(preset: &mut Preset, operator_pause: Option<bool>, sub_layer_pauses: Option<&[usize]>) -> Result<(), EngineError> {
-    if let Some(on) = operator_pause {
-        preset.settings.options.operator_pause = on;
-    }
-    if let Some(subs) = sub_layer_pauses {
-        let n = preset.sub_layers.len();
-        if let Some(i) = subs.iter().find(|&&i| i >= n) {
-            return Err(EngineError::BadRequest(format!("sub_layer_pauses: sub-layer {i} does not exist (the preset has {n} sub-layers, from 0)")));
-        }
-        for (i, s) in preset.sub_layers.iter_mut().enumerate() {
-            s.options.operator_pause = subs.contains(&i);
-        }
-    }
-    Ok(())
+    Ok(appcore::library::set_pauses_of(preset, operator_pause, sub_layer_pauses)?)
 }
 
 async fn entry_duplicate(State(st): State<Arc<AppState>>, UrlPath((name, id)): UrlPath<(String, String)>) -> Result<Json<Value>, EngineError> {

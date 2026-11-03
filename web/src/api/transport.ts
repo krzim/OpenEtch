@@ -26,6 +26,18 @@ export interface DesignBackend {
    * reconnects and refetches everything). When given it is used instead of a FakeSocket over `subscribe`.
    */
   openEvents?(): SocketLike;
+  /**
+   * Optional: things the backend tells the person (the editor restarted, storage is memory only, ...). `key` is a
+   * message in workspace/locales; the page shows them as toasts. Returns the unsubscribe function.
+   */
+  notices?(listener: (n: DesignNotice) => void): () => void;
+}
+
+/** A notice from the design backend (standalone/contract.ts `Notice`). */
+export interface DesignNotice {
+  key: string;
+  vars: Record<string, string>;
+  level: "info" | "warning" | "error";
 }
 
 let backend: DesignBackend | null = null;
@@ -44,6 +56,20 @@ export function setDesignBackend(b: DesignBackend): void {
   resolveBackend?.(b);
   resolveBackend = null;
   backendReady = Promise.resolve(b);
+}
+
+/** The design backend's notices (none in the normal build). Returns the unsubscribe function. */
+export function onDesignNotice(listener: (n: DesignNotice) => void): () => void {
+  if (!DESIGN_ONLY) return () => {};
+  let off: (() => void) | null = null;
+  let gone = false;
+  void waitForBackend().then((b) => {
+    if (!gone && b.notices) off = b.notices(listener);
+  });
+  return () => {
+    gone = true;
+    off?.();
+  };
 }
 
 /** Send one request: `fetch` in the normal build, the design backend in OpenEtch Design. */

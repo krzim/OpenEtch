@@ -17,7 +17,7 @@
 import { useHudFixed } from "../hud/CanvasHud.tsx";
 import { Fragment, isValidElement, useCallback, useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { api, execute } from "../api/client.ts";
+import { api, ApiError, execute } from "../api/client.ts";
 import { createdIds } from "../api/drop.ts";
 import {
   fieldSourceText,
@@ -334,6 +334,21 @@ export function useFileActions(p: {
         return "saved";
       } catch (e) {
         if (overwrite === false && isSaveConflict(e)) return "exists";
+        // OpenEtch Design: another tab saved this project since this one opened it. Ask before replacing it.
+        if (DESIGN_ONLY && overwrite !== true && e instanceof ApiError && e.code === "changed_elsewhere") {
+          setModal({
+            kind: "confirm",
+            title: t("dm.changedElsewhereTitle"),
+            message: t("dm.changedElsewhere", { name }),
+            confirmLabel: t("dm.replaceIt"),
+            action: () => {
+              setModal(null);
+              void saveAs(name, true);
+            },
+            back: null,
+          });
+          return "failed";
+        }
         report(e);
         return "failed";
       } finally {
