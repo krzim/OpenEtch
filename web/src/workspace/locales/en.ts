@@ -20,6 +20,7 @@ import { EN_RUIDA } from "./en-ruida.ts";
 import { EN_SHELL } from "./en-shell.ts";
 import { EN_TEXT } from "./en-text.ts";
 import { EN_TEMPLATES } from "./en-templates.ts";
+import { EN_STANDALONE } from "./en-standalone.ts";
 import { EN_TOOLS } from "./en-tools.ts";
 import { EN_TOUCH } from "./en-touch.ts";
 import { EN_UI } from "./en-ui.ts";
@@ -32,6 +33,8 @@ export const EN = {
   ...EN_GUIDE,
   // Font favourites and samples, text auto-fit, the contact sheet, templates and examples (src/templates/).
   ...EN_TEMPLATES,
+  // The design-only build: notices of the in-browser editor and its storage (src/standalone/).
+  ...EN_STANDALONE,
   // Laser window job controls, framing, preview timeline, device settings, calibration, rotary, cut options.
   ...EN_JOB,
   // Files, project and image tools (src/files/).
