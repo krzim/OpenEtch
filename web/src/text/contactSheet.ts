@@ -10,7 +10,11 @@ export const FLAG_KINDS: FlagKind[] = ["overflow", "missing_glyph", "empty", "sh
 
 export interface Flag {
   kind: FlagKind;
+  /** The engine's English text (the fallback). */
   message: string;
+  /** What it is (`outside_object`, `missing_glyph`, ...) and its values, worded by `problemText` (text/flagText.ts). */
+  code?: string;
+  params?: Record<string, unknown>;
 }
 
 export interface SheetText {
@@ -67,7 +71,12 @@ export function parseSheet(r: unknown): Sheet {
       ? v.flatMap((f) => {
           if (!f || typeof f !== "object") return [];
           const x = f as Record<string, unknown>;
-          return typeof x.kind === "string" ? [{ kind: x.kind as FlagKind, message: str(x.message) }] : [];
+          if (typeof x.kind !== "string") return [];
+          const params = x.params && typeof x.params === "object" && !Array.isArray(x.params) ? (x.params as Record<string, unknown>) : undefined;
+          const flag: Flag = { kind: x.kind as FlagKind, message: str(x.message) };
+          if (typeof x.code === "string") flag.code = x.code;
+          if (params) flag.params = params;
+          return [flag];
         })
       : [];
   const rows: SheetRow[] = Array.isArray(o.rows)

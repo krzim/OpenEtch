@@ -952,7 +952,9 @@ undocumented and not read.
   smallest closed shape holding its origin, else the stock, else the workspace; auto-fit texts only the workspace),
   `missing_glyph`, `empty` (blank, an empty CSV cell it uses, a row past the CSV), `shrunk` (under half its set height)
   and `error`; `outlines` adds SVG paths (mm, y down) and the rest of the design by layer for the grid
-  (`web/src/text/ContactSheet.tsx`, File > Laser > Check every row…, the Variable Text window). Agents run it as a
+  (`web/src/text/ContactSheet.tsx`, File > Laser > Check every row…, the Variable Text window). Each flag is `{kind, code,
+  params, message}`: the app words it from `code` and `params` in its language (`web/src/text/flagText.ts`, also for
+  the `contact_sheet` pre-flight finding's `params.problems`), `message` is English. Agents run it as a
   check before asking for a run.
 
 **Templates with fill-in fields** (`crates/commands/src/builtin/template.rs`, competitor-gaps item 5, on UX-049's

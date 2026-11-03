@@ -105,6 +105,8 @@ fn preflight_runs_the_contact_sheet_on_the_next_row_and_knows_the_slots() {
     assert_eq!(w["params"]["value"], 5);
     assert_eq!(w["objects"], json!([t]));
     assert!(w["text"].as_str().unwrap().contains("\"SN\" at 5"), "{w}");
+    // Each problem as a code with its values, for the app to word in its language.
+    assert_eq!(w["params"]["problems"][0], json!({ "kind": "overflow", "code": "outside_object", "params": { "name": "Tag" } }), "{w}");
     assert!(r["checks"].as_array().unwrap().contains(&json!("contact_sheet")));
     // Switched off for the project like the other warnings.
     exec(&mut s, "job.preflight_set", json!({ "check": "contact_sheet", "enabled": false }));
