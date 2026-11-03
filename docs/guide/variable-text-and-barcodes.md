@@ -1,6 +1,6 @@
 ---
 title: Variable text and barcodes
-order: 7
+order: 12
 section: Designing
 needs: design
 summary: Serial numbers, dates, CSV fields and cut-setting text, the Variable Text window, barcodes and QR codes, and the Check every row contact sheet.
@@ -140,7 +140,7 @@ To make a sheet of tags that each show the next number:
 3. Set **Auto-increment variable text** to 1.
 4. Click **Create**.
 
-Each copy's Offset is one more than the one before, so six tags show six numbers. Set **Advance by** to the number of tags. See [Grid array](drawing-and-editing.md#grid-array).
+Each copy's Offset is one more than the one before, so six tags show six numbers. Set **Advance by** to the number of tags. See [Grid array](arranging-and-arrays.md#grid-array).
 
 The Serial-numbered tags example is set up this way (see [Templates](templates.md#example-projects)).
 

@@ -1,6 +1,6 @@
 ---
 title: Images
-order: 8
+order: 13
 section: Designing
 needs: design
 summary: Import photos and pictures, adjust them, choose a dither mode, trace them to vectors, mask them, and engrave depth maps with 3D Sliced.
@@ -146,7 +146,7 @@ Tracing turns a picture into vector outlines you can cut, fill or edit.
 
 **Fade image** and **Show points** help you judge the preview. The line under it shows how many paths and nodes the trace makes. The result is one path object.
 
-> **Tip:** After tracing, **Modify > Optimize shapes…** can smooth jagged outlines and rebuild arcs. See [Path tools](drawing-and-editing.md#path-tools).
+> **Tip:** After tracing, **Modify > Optimize shapes…** can smooth jagged outlines and rebuild arcs. See [Path tools](nodes-and-paths.md#path-tools).
 
 ![The Trace image dialog with its preview](img/trace-image-dialog.webp)
 

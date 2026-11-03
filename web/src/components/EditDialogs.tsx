@@ -175,7 +175,7 @@ function OffsetDialog({ p }: { p: Props }) {
     void submit(G.offset(p.ids, { distance_mm: v, direction, join, keep_original: !del, combine }));
   };
   return (
-    <Frame help="drawing-and-editing#offset-shapes" title={t("rest.offsetTitle", { what: plural(p.ids.length, "shape") })} p={p} busy={busy} error={error} ok={t("rest.offset")} onOk={ok}>
+    <Frame help="nodes-and-paths#offset-shapes" title={t("rest.offsetTitle", { what: plural(p.ids.length, "shape") })} p={p} busy={busy} error={error} ok={t("rest.offset")} onOk={ok}>
       <Num label={t("ed.distance")} unit="mm" value={d} onChange={setD} />
       <Select label={t("ed.direction")} value={direction} onChange={setDirection} options={[["outward", "Outward"], ["inward", "Inward"], ["both", "Both"]]} />
       <Select label={t("ed.corners")} value={join} onChange={setJoin} options={[["round", "Rounded"], ["miter", "Sharp"], ["bevel", "Bevelled"]]} />
@@ -206,7 +206,7 @@ function FilletDialog({ p, nodeId, corners }: { p: Props; nodeId: string | null;
     void submit(which === "nodes" && nodeId ? G.fillet([nodeId], v, corners) : G.fillet(p.ids, v));
   };
   return (
-    <Frame help="drawing-and-editing#fillet-corners" title={t("ed.filletCorners")} p={p} busy={busy} error={error} ok={action === "round" ? t("ed.filletOk") : action === "sharpAll" ? t("ed.unfilletOk") : t("ed.unfilletPickOk")} onOk={ok}>
+    <Frame help="nodes-and-paths#fillet-corners" title={t("ed.filletCorners")} p={p} busy={busy} error={error} ok={action === "round" ? t("ed.filletOk") : action === "sharpAll" ? t("ed.unfilletOk") : t("ed.unfilletPickOk")} onOk={ok}>
       {canSharp && (
         <Select
           label={t("ed.filletAction")}
@@ -261,7 +261,7 @@ function TransformDialog({ p }: { p: Props }) {
   };
   return (
     <Modal
-      help="drawing-and-editing#transform"
+      help="selecting-and-transforming#transform"
       title={t("rest.transformTitle", { what: plural(p.ids.length, "shape") })}
       onClose={p.onClose}
       footer={
@@ -339,7 +339,7 @@ function CircularDialog({ p, init }: { p: Props; init: CircularValues | null }) 
   };
   const sel = unionBoxes(p.doc.objects.filter((o) => p.ids.includes(o.id) || (o.group && p.ids.includes(o.group))).map(objectBounds));
   return (
-    <Frame help="drawing-and-editing#arrays-and-nesting" title={t("ed.circularArray")} p={p} busy={busy} error={error} ok="Create" onOk={ok}>
+    <Frame help="arranging-and-arrays#circular-array" title={t("ed.circularArray")} p={p} busy={busy} error={error} ok="Create" onOk={ok}>
       <Num label={t("ed.count")} value={v.count} onChange={(count) => set({ count })} title={t("ed.itemsInTheFinishedArrayThe")} />
       <Num label={t("ed.sweep")} unit="°" value={v.angle} onChange={(angle) => set({ angle })} title={t("ed.360EvenlyRoundTheCircleLess")} />
       <Check label={t("ed.rotateCopies")} checked={v.rotate} onChange={(rotate) => set({ rotate })} title={t("ed.offKeepsEachCopyUprightLike")} />
@@ -392,7 +392,7 @@ function AlongDialog({ p }: { p: Props }) {
     void submit(G.alongPath(ids, path, { spacing_mm: s, rotate_to_path: rotate }));
   };
   return (
-    <Frame help="drawing-and-editing#arrays-and-nesting" title={t("ed.copyAlongPath")} p={p} busy={busy} error={error} ok="Create" onOk={ok}>
+    <Frame help="arranging-and-arrays#copy-along-a-path" title={t("ed.copyAlongPath")} p={p} busy={busy} error={error} ok="Create" onOk={ok}>
       <p className="hint">
         {t("rest.copiesAlong", { what: plural(p.ids.length - 1, "shape") })} <b>{pathObj?.name ?? path}</b> {t("rest.selectedLast")}
       </p>
@@ -461,7 +461,7 @@ function NestDialog({ p }: { p: Props }) {
     }
   };
   return (
-    <Frame help="drawing-and-editing#arrays-and-nesting" title={t("rest.nestTitle", { what: plural(region === "object" ? p.ids.length - 1 : p.ids.length, "part") })} p={p} busy={busy} error={error} ok={t("rest.nest")} onOk={() => void ok()}>
+    <Frame help="arranging-and-arrays#quick-nest" title={t("rest.nestTitle", { what: plural(region === "object" ? p.ids.length - 1 : p.ids.length, "part") })} p={p} busy={busy} error={error} ok={t("rest.nest")} onOk={() => void ok()}>
       <Select
         label={t("ed.method")}
         value={mode}
@@ -539,7 +539,7 @@ function OptimizeDialog({ p }: { p: Props }) {
     void submit(G.optimize(p.ids, vals));
   };
   return (
-    <Frame help="drawing-and-editing#path-tools" title={t("rest.optimizeTitle", { what: plural(p.ids.length, "shape") })} p={p} busy={busy} error={error} ok={t("rest.optimize")} onOk={ok}>
+    <Frame help="nodes-and-paths#path-tools" title={t("rest.optimizeTitle", { what: plural(p.ids.length, "shape") })} p={p} busy={busy} error={error} ok={t("rest.optimize")} onOk={ok}>
       <Check label={t("ed.fitShapesToLines")} checked={lines} onChange={setLines} title={t("ed.removeRedundantNodesAndZeroLength")} />
       {lines && <Num label={t("ed.lineTolerance")} unit="mm" value={tol} onChange={setTol} title={t("ed.howFarTheResultMayStray")} />}
       <Check label={t("ed.fitShapesToArcs")} checked={arcs} onChange={setArcs} title={t("ed.runsOf4OrMoreShort")} />

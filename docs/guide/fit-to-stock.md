@@ -1,6 +1,6 @@
 ---
 title: Fit to stock
-order: 10
+order: 15
 section: Designing
 needs: design
 summary: Define the stock, then scale and centre a design to fill a coin, tag or plate with Fit to stock, Place on stock and Centre on stock.

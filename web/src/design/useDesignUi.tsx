@@ -968,7 +968,7 @@ function SessionBar(p: {
   const bad = s.mode === "perspective" ? perspectiveProblem(s.handles) : null;
   return (
     <div className="vp-overlay et-bar" role="toolbar" aria-label={s.mode === "grid" ? t("dz.deform") : t("dz.warp")}>
-      <b>{s.mode === "grid" ? t("dz.deform") : t("dz.warp")}</b> <HelpLink to="drawing-and-editing#warp-and-deform" topic={s.mode === "grid" ? t("dz.deform") : t("dz.warp")} />
+      <b>{s.mode === "grid" ? t("dz.deform") : t("dz.warp")}</b> <HelpLink to="nodes-and-paths#warp-and-deform" topic={s.mode === "grid" ? t("dz.deform") : t("dz.warp")} />
       {s.mode !== "grid" && (
         <label className="et-opt">
           <select value={s.mode} onChange={(e) => p.onMode(e.target.value as WarpKind)} aria-label={t("dz.warpKind")}>

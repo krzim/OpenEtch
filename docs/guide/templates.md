@@ -1,6 +1,6 @@
 ---
 title: Templates and examples
-order: 12
+order: 17
 section: Designing
 needs: design
 summary: Fill in templates on any device, make your own templates with fill-in fields and locks, and learn from the built-in example projects.

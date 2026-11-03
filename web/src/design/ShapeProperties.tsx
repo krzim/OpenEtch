@@ -42,7 +42,7 @@ export function ShapeProperties(p: {
   const n = (v: number | null, f: (x: number) => void) => v !== null && f(v);
   return (
     <section className="prop-section dz-shape-props">
-      <h3>{t("dz.shapeProps")} <HelpLink to="drawing-and-editing#shape-properties" topic={t("dz.shapeProps")} /></h3>
+      <h3>{t("dz.shapeProps")} <HelpLink to="drawing-shapes#shape-properties" topic={t("dz.shapeProps")} /></h3>
       {sp.kind === "rect" && (
         <>
           <div className="field-grid">
