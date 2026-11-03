@@ -20,6 +20,7 @@ import { ES_TOUCH } from "./es-touch.ts";
 import { ES_TEMPLATES } from "./es-templates.ts";
 import { ES_STANDALONE } from "./es-standalone.ts";
 import { ES_GUIDE } from "./es-guide.ts";
+import { ES_DESIGNMODE } from "./es-designmode.ts";
 
 export const ES_MACHINE_TRANSLATED = true;
 
@@ -43,6 +44,8 @@ export const ES: Messages = {
   ...ES_HISTORY,
   // The user guide viewer (es-guide.ts).
   ...ES_GUIDE,
+  // OpenEtch Design (es-designmode.ts).
+  ...ES_DESIGNMODE,
   "common.cancel": "Cancelar",
   "common.close": "Cerrar",
   "common.loading": "Cargando…",

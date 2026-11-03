@@ -348,6 +348,20 @@
   text-decoration: line-through;
 }
 
+/* Touch: each folder (and its twisty) is a 44 px target. */
+:root[data-density="touch"] .folder-row {
+  min-height: 44px;
+}
+
+:root[data-density="touch"] .folder-name {
+  min-height: 44px;
+}
+
+:root[data-density="touch"] .folder-twisty {
+  width: 44px;
+  min-height: 44px;
+}
+
 .folder-new {
   display: flex;
   gap: 6px;

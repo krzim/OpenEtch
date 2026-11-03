@@ -13,6 +13,7 @@ import { LedgerDialog } from "./LedgerDialog.tsx";
 import { COCKPIT_HASH, isCockpitHash, reminderLeft } from "./model.ts";
 import { LayerPauseHud, MaintenanceChip, ProductionDock } from "./ProductionDock.tsx";
 import { refreshProduction, useProduction } from "./store.ts";
+import { DESIGN_ONLY } from "../mode.ts";
 
 type Notify = (m: string, kind?: "info" | "error") => void;
 
@@ -20,7 +21,24 @@ function hashNow(): string {
   return typeof location === "undefined" ? "" : location.hash;
 }
 
-export function useProductionUi(p: { notify: Notify; report: (e: unknown) => void; revision: number | null }) {
+/** OpenEtch Design has no production: no cockpit, ledger, maintenance or layer pauses. */
+const NO_PRODUCTION = {
+  cockpitOpen: false,
+  renderCockpit: (overlays: ReactNode) => overlays,
+  handlers: {} as Record<string, () => boolean | void>,
+  dialogs: null as ReactNode,
+  dock: null as ReactNode,
+  hud: null as ReactNode,
+  chip: (_compact: boolean): ReactNode => null,
+};
+
+export function useProductionUi(p: { notify: Notify; report: (e: unknown) => void; revision: number | null }): typeof NO_PRODUCTION {
+  // A build-time constant: the hooks below run in the same order on every render of either build.
+  if (DESIGN_ONLY) return NO_PRODUCTION;
+  return useFullProductionUi(p);
+}
+
+function useFullProductionUi(p: { notify: Notify; report: (e: unknown) => void; revision: number | null }): typeof NO_PRODUCTION {
   const [cockpit, setCockpit] = useState(() => isCockpitHash(hashNow()));
   const [win, setWin] = useState<"ledger" | "maintenance" | null>(null);
   useEffect(() => {

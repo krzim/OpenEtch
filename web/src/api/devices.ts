@@ -15,6 +15,7 @@ import { DEVICE_SETTINGS_KEYS, type LightBurnDevice, type ProfileDiff } from "./
 import { ACTIVE_STATES } from "./runs.ts";
 import type { MachineStatus, Vec2 } from "./types.ts";
 import { tr } from "../workspace/tr.ts";
+import { DESIGN_ONLY } from "../mode.ts";
 
 /**
  * What kind of controller a device is. OpenEtch drives `jcz_galvo`, `grbl` (a GRBL 1.1 gantry made in OpenEtch) and
@@ -463,7 +464,8 @@ export function sourceLabel(source: DeviceSource | string): string {
 
 /** Why OpenEtch cannot run jobs on `device`, or null when it can. */
 export function designOnlyReason(device: DeviceSummary | null): string | null {
-  if (!device || device.controllable) return null;
+  // OpenEtch Design drives no device at all, so none is singled out (the app says so once, mode.ts).
+  if (DESIGN_ONLY || !device || device.controllable) return null;
   const what = device.kind === "gantry" ? "a gantry laser" : device.kind === "galvo_other" ? "this galvo controller" : "this controller";
   return tr("apid.openetchCanTDriveV1V2", { v1: what, v2: device.name });
 }

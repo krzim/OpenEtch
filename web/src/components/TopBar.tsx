@@ -6,6 +6,9 @@
 // menu and toast (`--z-stop`, docs/ux/ui-plan-2026-11.md 1.1). What shrinks on a small window is the brand, the project
 // name and the document tabs; the workspace switcher keeps its width (two 44 px icon segments on tablets and phones).
 // On a phone the bar is: menu, document name, status dot, STOP.
+//
+// OpenEtch Design (mode.ts) has no engine link and no laser: no connection indicator, status chip or STOP, and the
+// second workspace is Preview (the job's preview and time estimate for the design device).
 
 import type { ReactNode } from "react";
 import type { LinkState } from "../api/useEngine.ts";
@@ -16,6 +19,7 @@ import { ProjectIndicator } from "./FileMenu.tsx";
 import { Icon } from "./ui.tsx";
 import { useLayoutMode } from "../workspace/layoutMode.ts";
 import { usePrefs, useT } from "../workspace/usePrefs.ts";
+import { DESIGN_ONLY } from "../mode.ts";
 
 export type Workspace = "design" | "laser";
 
@@ -103,20 +107,20 @@ export function TopBar(p: TopBarProps) {
       {!phone && (
         <nav className="workspaces" role="tablist" aria-label={t("top.workspace")}>
           {(["design", "laser"] as const).map((w) => {
-            const label = w === "design" ? t("top.design") : t("top.laser");
+            const label = w === "design" ? t("top.design") : DESIGN_ONLY ? t("dm.preview") : t("top.laser");
             return (
               <button
                 key={w}
                 role="tab"
                 aria-selected={p.workspace === w}
                 aria-label={iconTabs ? label : undefined}
-                title={iconTabs ? label : undefined}
+                title={iconTabs ? label : DESIGN_ONLY && w === "laser" ? t("dm.previewTitle") : undefined}
                 className={p.workspace === w ? "active" : ""}
                 onClick={() => p.onWorkspace(w)}
               >
-                {iconTabs && <Icon name={w === "design" ? "pencil" : "zap"} />}
+                {iconTabs && <Icon name={w === "design" ? "pencil" : DESIGN_ONLY ? "eye" : "zap"} />}
                 <span className="ws-label">{label}</span>
-                {w === "laser" && p.pendingRuns > 0 && <span className="pill">{p.pendingRuns}</span>}
+                {!DESIGN_ONLY && w === "laser" && p.pendingRuns > 0 && <span className="pill">{p.pendingRuns}</span>}
               </button>
             );
           })}
@@ -136,15 +140,18 @@ export function TopBar(p: TopBarProps) {
             </button>
           </>
         )}
-        {conn}
+        {/* OpenEtch Design: only when its in-browser backend has a problem. */}
+        {(!DESIGN_ONLY || !engineOk || p.missingCommands.length > 0) && conn}
       </div>
-      <div className="topbar-stop">
-        {p.statusExtra}
-        <StatusChip compact={phone} />
-        <button className="btn btn-stop" onClick={p.onStop} title={t("top.stopTitle")}>
-          <Icon name="stop" /> {t("top.stop")}
-        </button>
-      </div>
+      {!DESIGN_ONLY && (
+        <div className="topbar-stop">
+          {p.statusExtra}
+          <StatusChip compact={phone} />
+          <button className="btn btn-stop" onClick={p.onStop} title={t("top.stopTitle")}>
+            <Icon name="stop" /> {t("top.stop")}
+          </button>
+        </div>
+      )}
     </header>
   );
 }

@@ -6,6 +6,8 @@
 import { ApiError, authToken, UI_ORIGIN } from "../api/client.ts";
 import { contentDispositionName } from "../api/project.ts";
 import { okError } from "../api/runs.ts";
+import { transport } from "../api/transport.ts";
+import { DESIGN_ONLY } from "../mode.ts";
 
 function headers(accept: string, contentType?: string): Record<string, string> {
   const h: Record<string, string> = { Accept: accept };
@@ -18,7 +20,7 @@ function headers(accept: string, contentType?: string): Record<string, string> {
 async function send(method: string, path: string, init: { headers: Record<string, string>; body?: BodyInit }): Promise<Response> {
   let res: Response;
   try {
-    res = await fetch(path, { method, ...init });
+    res = await transport(method, path, init);
   } catch (e) {
     throw new ApiError(`engine unreachable: ${e instanceof Error ? e.message : String(e)}`);
   }
@@ -109,7 +111,7 @@ export const filesApi = {
   restorePrefs: (file: string) => json<unknown>("POST", "/api/prefs/backups/restore", { file, origin: UI_ORIGIN }),
   /** OpenEtch's `.oebundle`, or a LightBurn `.lbzip` (devices, material libraries, material test and image presets, art libraries). */
   exportBundle: (parts: string[], format: "oebundle" | "lbzip" = "oebundle") =>
-    download(`/api/bundle/export?parts=${encodeURIComponent(parts.join(","))}${format === "lbzip" ? "&format=lbzip" : ""}`),
+    download(`/api/bundle/export?parts=${encodeURIComponent(parts.join(","))}${!DESIGN_ONLY && format === "lbzip" ? "&format=lbzip" : ""}`),
   importBundle: (parts: string[], file: Blob) => upload<unknown>(`/api/bundle/import?parts=${encodeURIComponent(parts.join(","))}&origin=${UI_ORIGIN}`, file, "application/zip"),
 };
 

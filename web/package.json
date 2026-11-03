@@ -7,6 +7,9 @@
   "scripts": {
     "dev": "node scripts/wasm.mjs --dev && vite",
     "build": "node scripts/wasm.mjs && tsc --noEmit && vite build",
+    "build:design": "node scripts/wasm.mjs && tsc --noEmit && vite build --mode design && node scripts/check-design-dist.mjs",
+    "build:design-engine": "node scripts/wasm.mjs && vite build --mode design-engine",
+    "check:design": "node scripts/check-design-dist.mjs",
     "wasm": "node scripts/wasm.mjs",
     "wasm:dev": "node scripts/wasm.mjs --dev",
     "wasm:design": "node scripts/wasm.mjs --design",

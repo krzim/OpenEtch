@@ -5,6 +5,7 @@
 
 import { ApiError, authToken, UI_ORIGIN } from "../api/client.ts";
 import type { ExtractorConfig, ProductionStatus, ReminderDraft, TargetDraft } from "./model.ts";
+import { transport } from "../api/transport.ts";
 
 function headers(contentType?: string): Record<string, string> {
   const h: Record<string, string> = { Accept: "application/json" };
@@ -17,7 +18,7 @@ function headers(contentType?: string): Record<string, string> {
 async function call<T = unknown>(method: string, path: string, body?: unknown): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(path, { method, headers: headers(body === undefined ? undefined : "application/json"), body: body === undefined ? undefined : JSON.stringify(body) });
+    res = await transport(method, path, { headers: headers(body === undefined ? undefined : "application/json"), body: body === undefined ? undefined : JSON.stringify(body) });
   } catch (e) {
     throw new ApiError(`engine unreachable: ${e instanceof Error ? e.message : String(e)}`);
   }
@@ -39,7 +40,7 @@ async function call<T = unknown>(method: string, path: string, body?: unknown): 
 async function download(path: string): Promise<{ blob: Blob; filename: string | null }> {
   let res: Response;
   try {
-    res = await fetch(path, { headers: { ...headers(), Accept: "*/*" } });
+    res = await transport("GET", path, { headers: { ...headers(), Accept: "*/*" } });
   } catch (e) {
     throw new ApiError(`engine unreachable: ${e instanceof Error ? e.message : String(e)}`);
   }

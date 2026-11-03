@@ -1,6 +1,8 @@
 /target
 /web/node_modules
 /web/dist
+/web/dist-design
+/web/dist-design-engine
 /web/src/wasm/pkg
 /web/src/standalone/pkg
 

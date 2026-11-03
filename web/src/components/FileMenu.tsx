@@ -78,6 +78,8 @@ import { formatChord } from "./formatChord.ts";
 import { usePublish } from "./Ribbon.tsx";
 import { WorkspaceFileItems, workspaceFileMenuItems, type WsDialog } from "../workspace/useWorkspace.tsx";
 import { useT } from "../workspace/usePrefs.ts";
+import { DESIGN_ONLY } from "../mode.ts";
+import { StorageNotices } from "../designmode/StorageNotices.tsx";
 import type { T } from "../workspace/i18n.ts";
 import { errorText } from "../api/errorText.ts";
 
@@ -320,6 +322,8 @@ export function useFileActions(p: {
         if (d && d.name !== name && engine.has(C.OPT.docRename)) await engine.run(C.docRename(name)).catch(() => undefined);
         const fromScope = guideScope(live.current.projectName, live.current.openedName);
         await api.saveProject(name, overwrite);
+        // OpenEtch Design keeps projects in this browser: ask it not to evict them (a no-op where unsupported).
+        if (DESIGN_ONLY) void navigator.storage?.persist?.().catch(() => false);
         // The guides follow the document into the project it is now saved as.
         carryGuides(fromScope, guideScope(name, null));
         setDetachedFrom(undefined);
@@ -623,6 +627,7 @@ export function FileMenu({
     saveGcode: onSaveGcode,
     saveRd: onSaveRd,
     devices: onDevices,
+    design: DESIGN_ONLY ? { exportLightBurn: t("dm.exportLbrn2"), downloadCopy: t("dm.downloadCopy") } : undefined,
     parts,
     labels: {
       new: t("fm.new"),
@@ -821,7 +826,7 @@ function OpenDialog({ file, onClose }: { file: FileActions; onClose: () => void 
       footer={
         <>
           <button className="btn" onClick={() => input.current?.click()} disabled={file.busy}>
-            <Icon name="upload" /> {t("fm.upload")}
+            <Icon name="upload" /> {DESIGN_ONLY ? t("dm.openFile") : t("fm.upload")}
           </button>
           <button className="btn" onClick={onClose}>
             {t("common.cancel")}
@@ -841,7 +846,7 @@ function OpenDialog({ file, onClose }: { file: FileActions; onClose: () => void 
           if (f) file.uploadFile(f, "replace");
         }}
       />
-      <div className="section-label">{t("fm.projectsOnEngine")}</div>
+      <div className="section-label">{DESIGN_ONLY ? t("dm.projectsTitle") : t("fm.projectsOnEngine")}</div>
       {useTree && tree.folders ? (
         <div className="folder-browser">
           <FolderTree
@@ -858,7 +863,8 @@ function OpenDialog({ file, onClose }: { file: FileActions; onClose: () => void 
       ) : (
         projects
       )}
-      <p className="hint">{t("fm.uploadHint")}</p>
+      <p className="hint">{DESIGN_ONLY ? t("dm.openFileHint") : t("fm.uploadHint")}</p>
+      {DESIGN_ONLY && <StorageNotices />}
     </Modal>
   );
 }
@@ -944,7 +950,15 @@ function SaveAsDialog({ file, docName, onClose }: { file: FileActions; docName: 
         </>
       )}
       {existing !== null && <p className="hint warn-text">{t("fm.exists", { name: existing })}</p>}
-      <p className="hint">{t("fm.savedAs", { file: trimmed && !problem ? `"${trimmed}.openetch"` : t("fm.nameFile") })}</p>
+      <p className="hint">{t(DESIGN_ONLY ? "dm.savedAs" : "fm.savedAs", { file: trimmed && !problem ? `"${trimmed}.openetch"` : t("fm.nameFile") })}</p>
+      {DESIGN_ONLY && (
+        <p className="hint">
+          {t("dm.storageCopy")}{" "}
+          <button type="button" className="btn small" disabled={file.busy} onClick={file.downloadOpenetch}>
+            {t("dm.downloadCopy")}
+          </button>
+        </p>
+      )}
     </Modal>
   );
 }

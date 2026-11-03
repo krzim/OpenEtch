@@ -20,6 +20,8 @@ import { contentDispositionName, type FileFormat, type ImportMode, type UploadFo
 import { okError } from "./runs.ts";
 import { beginMutation, endMutation, SYNC_HEADER, syncHeaderValue, type SyncPayload } from "./docSync.ts";
 import { decodePreview, type BinaryPreview } from "./previewBinary.ts";
+import { noMachine, transport } from "./transport.ts";
+import { DESIGN_ONLY } from "../mode.ts";
 
 /** localStorage key of the remembered access token. */
 export const TOKEN_KEY = "openetch.token";
@@ -169,7 +171,7 @@ function authHeaders(accept: string): Record<string, string> {
 
 async function send(method: string, path: string, init: { headers: Record<string, string>; body?: BodyInit }): Promise<Response> {
   try {
-    return await fetch(path, { method, ...init });
+    return await transport(method, path, init);
   } catch (e) {
     throw new ApiError(`engine unreachable: ${e instanceof Error ? e.message : String(e)}`);
   }
@@ -297,20 +299,20 @@ export const api = {
    * Red-pointer framing. Never fires the laser. Default: the bounding box of the whole job; `ids` frames only those
    * objects, `mode: "outline"` traces their shapes instead of the box (engine `FrameRequest`).
    */
-  frame: (req: { ids?: string[]; mode?: "bounds" | "outline" } = {}) => checked("/api/machine/frame", req, "framing failed"),
+  frame: DESIGN_ONLY ? noMachine : (req: { ids?: string[]; mode?: "bounds" | "outline" } = {}) => checked("/api/machine/frame", req, "framing failed"),
   /** Ends red-pointer framing only; pending runs are kept. */
-  frameStop: () => checked("/api/machine/frame/stop", {}, "stopping the frame failed"),
+  frameStop: DESIGN_ONLY ? noMachine : () => checked("/api/machine/frame/stop", {}, "stopping the frame failed"),
   /** Emergency stop: abort whatever runs and cancel pending runs. Always allowed, never gated. */
-  stop: () => request<unknown>("POST", "/api/machine/stop", {}),
+  stop: DESIGN_ONLY ? noMachine : () => request<unknown>("POST", "/api/machine/stop", {}),
   /** Creates a pending run; nothing fires until it is approved. */
-  requestRun: () => request<unknown>("POST", "/api/runs", { origin: UI_ORIGIN }),
+  requestRun: DESIGN_ONLY ? noMachine : () => request<unknown>("POST", "/api/runs", { origin: UI_ORIGIN }),
   /**
    * Approve a pending run with the operator PIN, or with `pin` null when the engine runs without a PIN (Start; the
    * browser adds the Sec-Fetch-Site and Origin headers the engine checks). The PIN goes only into this request body;
    * it is never stored. Errors are HTTP 403 with `code` "pin_not_set" | "pin_invalid" | "pin_required" |
    * "pin_locked" | "browser_required".
    */
-  approveRun: (id: string, pin: string | null) =>
+  approveRun: DESIGN_ONLY ? noMachine : (id: string, pin: string | null) =>
     request<unknown>("POST", `/api/runs/${encodeURIComponent(id)}/approve`, pin === null ? {} : { pin }),
   /** The current project name and whether the document changed since it was saved. */
   project: () => request<ProjectInfo>("GET", "/api/project"),

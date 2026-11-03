@@ -3671,6 +3671,8 @@ html {
 /* Touch: a text link button (Preferences > Default moves) is a 44 px target too. */
 :root[data-density="touch"] .link-btn {
   min-height: 44px;
+  /* A short word ("Edit") is as wide as it is tall. */
+  min-width: 44px;
 }
 
 /* Safari before 18.2 (macOS Sonoma, early Sequoia) has no scrollbar-width: the rows and rails above that hide their

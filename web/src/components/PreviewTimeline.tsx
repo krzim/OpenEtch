@@ -19,6 +19,7 @@ import { HudItem } from "../hud/CanvasHud.tsx";
 import { ReliefButton } from "../relief/ReliefView.tsx";
 import type { PreviewOptions } from "./Viewport.tsx";
 import "./job.css";
+import { DESIGN_ONLY } from "../mode.ts";
 
 type Notify = (msg: string, kind?: "info" | "error") => void;
 
@@ -161,6 +162,8 @@ export function PreviewTimeline(p: {
             </option>
           ))}
         </select>
+        {/* OpenEtch Design has no laser to start. */}
+        {!DESIGN_ONLY && (
         <button
           className="btn small btn-start btn-start-here"
           disabled={busy || startAt === null || !startSt.enabled}
@@ -172,6 +175,7 @@ export function PreviewTimeline(p: {
         >
           {t("pvt.startHere")}
         </button>
+        )}
         <button className="icon-btn small" disabled={busy} title={t("pvt.saveImage")} aria-label={t("pvt.saveImage")} onClick={saveImage}>
           <Icon name="image" size={16} />
         </button>

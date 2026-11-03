@@ -30,6 +30,7 @@ import { Dropdown } from "../components/EditMenus.tsx";
 import { RibbonSlot, usePublish } from "../components/Ribbon.tsx";
 import { FileMenuPart } from "../components/FileMenuPart.tsx";
 import { openEngineConsole } from "../components/commandBus.ts";
+import { DESIGN_ONLY } from "../mode.ts";
 import "./libs.css";
 
 type Run = (inv: Invocation | Invocation[]) => Promise<unknown>;
@@ -61,7 +62,9 @@ function selectionCentre(doc: GDocument | null, ids: readonly string[]): Vec2 | 
 export function useLibsUi(p: LibsUiProps) {
   const t = useT();
   const win = useLibsWindow();
-  const cam = useCameraSupported();
+  // OpenEtch Design has no camera (it needs the engine computer's).
+  const camSupported = useCameraSupported();
+  const cam = !DESIGN_ONLY && camSupported;
   const sp = startPointTool.use();
   const ov = cameraOverlay.use();
   const { prefs } = useDevicePrefs();
@@ -235,7 +238,8 @@ export function useLibsUi(p: LibsUiProps) {
     { sep: true },
     // Beginner Mode hides Set Start Point, as LightBurn's does (a running tool can still be stopped).
     ...(beginnerMode && !sp ? [] : [{ label: sp ? t("sp.stop") : t("sp.tool"), actionId: "tool.startPoint", action: toggleStartPoint } as DropItem]),
-    { label: t("pc.title"), actionId: "laser.printCut", action: open("printCut") },
+    // Print and Cut registers with the red pointer: the full app only.
+    ...(DESIGN_ONLY ? [] : [{ label: t("pc.title"), actionId: "laser.printCut", action: open("printCut") } as DropItem]),
     ...(cam ? [{ label: t("cam.title"), actionId: "window.camera", action: open("camera") } as DropItem] : []),
     { sep: true },
     { label: t("lib.title"), actionId: "window.library", action: open("library") },
@@ -263,16 +267,22 @@ export function useLibsUi(p: LibsUiProps) {
     <FileMenuPart
       section="laser"
       close={close}
-      items={[
-        { label: t("lib.title"), actionId: "window.library", action: () => openLibsWindow("library") },
-        { label: t("fml.title"), action: () => openLibsWindow("findLaser") },
-        { label: `${t("batch.title")}…`, action: () => openLibsWindow("batch") },
-        { label: `${t("jlog.title")}…`, actionId: "laser.jobLog", action: () => openLibsWindow("jobLog") },
-      ]}
+      items={
+        // OpenEtch Design: no laser to find, batch or log; the material library is design data.
+        DESIGN_ONLY
+          ? [{ label: t("lib.title"), actionId: "window.library", action: () => openLibsWindow("library") }]
+          : [
+              { label: t("lib.title"), actionId: "window.library", action: () => openLibsWindow("library") },
+              { label: t("fml.title"), action: () => openLibsWindow("findLaser") },
+              { label: `${t("batch.title")}…`, action: () => openLibsWindow("batch") },
+              { label: `${t("jlog.title")}…`, actionId: "laser.jobLog", action: () => openLibsWindow("jobLog") },
+            ]
+      }
     />
   );
 
-  const helpItems = (close: () => void) => (
+  // The engine's console, debug log, bug report and updates: the full app only (OpenEtch Design has no engine).
+  const helpItems = DESIGN_ONLY ? undefined : (close: () => void) => (
     <>
       <button
         role="menuitem"
@@ -324,8 +334,8 @@ export function useLibsUi(p: LibsUiProps) {
     "laser.materialTest": () => openLibsWindow("materialTest"),
     "laser.intervalTest": () => openLibsWindow("intervalTest"),
     "laser.focusTest": () => openLibsWindow("focusTest"),
-    "laser.printCut": () => openLibsWindow("printCut"),
-    "laser.jobLog": () => openLibsWindow("jobLog"),
+    "laser.printCut": () => (DESIGN_ONLY ? false : openLibsWindow("printCut")),
+    "laser.jobLog": () => (DESIGN_ONLY ? false : openLibsWindow("jobLog")),
     "window.camera": () => (cam ? openLibsWindow("camera") : false),
     "tool.startPoint": () => (p.design && (sp || !beginnerMode) ? toggleStartPoint() : false),
   };
@@ -353,6 +363,9 @@ export function useLibsUi(p: LibsUiProps) {
     case "focusTest":
       dialogs = <FocusTestDialog {...gen} />;
       break;
+  }
+  // The rest need the laser or the engine computer: never in OpenEtch Design (a constant test, so they drop out).
+  if (!DESIGN_ONLY) switch (win?.kind) {
     case "printCut":
       dialogs = <PrintCutDialog doc={p.doc} selection={p.selection} run={p.run} notify={p.notify} report={p.report} onClose={close} />;
       break;

@@ -28,6 +28,7 @@ import { refreshActiveDevice } from "../libs/store.ts";
 import { Modal, NumberField } from "./ui.tsx";
 import "./job.css";
 import { errorText } from "../api/errorText.ts";
+import { DESIGN_ONLY } from "../mode.ts";
 
 type Notify = (msg: string, kind?: "info" | "error") => void;
 
@@ -84,7 +85,8 @@ export function DeviceEditor(p: {
     (async () => {
       const raw = (await api.device(device.id)) as Record<string, unknown>;
       const lbdev = await jobApi.deviceLbdevText(device.id).catch(() => null);
-      const inf = p.active ? await jobApi.machineInfo().catch(() => null) : null;
+      // OpenEtch Design has no controller to ask.
+      const inf = p.active && !DESIGN_ONLY ? await jobApi.machineInfo().catch(() => null) : null;
       if (!alive) return;
       const values = profileValues(raw?.profile, lbdev, inf);
       const limits: ProfileValues = {};
@@ -223,13 +225,15 @@ export function DeviceEditor(p: {
       }
     >
       {readOnly && <p className="run-hint">{t("dev.builtinReadOnly")}</p>}
-      {!device.controllable && <p className="run-hint">{t("dev.designOnly")}</p>}
+      {!DESIGN_ONLY && !device.controllable && <p className="run-hint">{t("dev.designOnly")}</p>}
       <label className="field">
         <span className="field-label">{t("dev.displayName")}</span>
         <span className="field-input">
           <input type="text" value={name} disabled={readOnly} onChange={(e) => setName(e.target.value)} />
         </span>
       </label>
+      {/* OpenEtch Design: only the field size matters (no tabs; the rest drives a laser). */}
+      {!DESIGN_ONLY && (
       <div className="segmented dev-tabs" role="tablist" aria-label={t("dev.pages")}>
         {tabs.map((x) => (
           <button key={x.v} role="tab" aria-selected={tab === x.v} className={tab === x.v ? "active" : ""} onClick={() => setTab(x.v)}>
@@ -237,6 +241,7 @@ export function DeviceEditor(p: {
           </button>
         ))}
       </div>
+      )}
       {general && (
         <p className="form-error" role="alert">
           {general}
@@ -246,6 +251,20 @@ export function DeviceEditor(p: {
         <p className="form-error">{loadError}</p>
       ) : !loaded ? (
         <p className="muted">{t("common.loading")}</p>
+      ) : DESIGN_ONLY ? (
+        <div className="dev-page">
+          <Group
+            title={td("dev.g.field", groups.find((g) => g.id === "field")!.title)}
+            fields={groups.find((g) => g.id === "field")!.fields.filter((f) => f.path === "field_mm" || f.path === "field_height_mm")}
+            values={values}
+            edited={edits}
+            errors={{ ...clientErrors, ...errors }}
+            limits={loaded.limits}
+            readOnly={readOnly}
+            onEdit={edit}
+          />
+          <p className="hint">{t("dm.deviceFieldOnly")}</p>
+        </div>
       ) : tab === "lens" ? (
         <div className="dev-page">
           <h4>{t("dev.corTitle")}</h4>

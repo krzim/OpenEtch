@@ -4,6 +4,8 @@
 import { EN_APP } from "./en-app.ts";
 import { EN_DESIGN } from "./en-design.ts";
 import { EN_FILES } from "./en-files.ts";
+import { EN_LBZIP } from "./en-lbzip.ts";
+import { DESIGN_ONLY } from "../../mode.ts";
 import { EN_FILL } from "./en-fill.ts";
 import { EN_JIGS } from "./en-jigs.ts";
 import { EN_GANTRY } from "./en-gantry.ts";
@@ -25,6 +27,7 @@ import { EN_TOOLS } from "./en-tools.ts";
 import { EN_TOUCH } from "./en-touch.ts";
 import { EN_UI } from "./en-ui.ts";
 import { EN_WS } from "./en-ws.ts";
+import { EN_DESIGNMODE } from "./en-designmode.ts";
 
 export const EN = {
   // Text, barcodes and variable text (src/text/).
@@ -39,6 +42,8 @@ export const EN = {
   ...EN_JOB,
   // Files, project and image tools (src/files/).
   ...EN_FILES,
+  // LightBurn bundles: the full app only (a constant test, so the design bundle has none of it).
+  ...(DESIGN_ONLY ? ({} as typeof EN_LBZIP) : EN_LBZIP),
   // A GRBL gantry's Move and Console windows, Save G-code and the GRBL layer options.
   ...EN_GANTRY,
   // A Ruida gantry's File List window, Save RD file and the New Ruida device form.
@@ -57,6 +62,8 @@ export const EN = {
   ...EN_MATERIALS,
   // Document tabs, dockable windows and the Window menu, docking, UI scale (src/workspace/).
   ...EN_WS,
+  // OpenEtch Design, the browser-only build (en-designmode.ts).
+  ...EN_DESIGNMODE,
   // The older components' strings: Properties, File menu, Toolbar, Edit tools, top bar, dialogs.
   ...EN_UI,
   // Strings that were still inline in older components (App, Devices, Edit dialogs, Image settings, Viewport hints).

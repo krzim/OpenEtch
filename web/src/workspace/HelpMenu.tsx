@@ -1,6 +1,7 @@
 // Top bar extras: the Help menu (the user guide, keyboard shortcuts, documentation links, About with versions and the MCP address),
 // the Preferences button and a quick theme switch (Light / Dark / Match system). In the compact layouts and below they
-// fold, with the Window menu, into one ⋯ overflow menu (docs/ux/ui-plan-2026-11.md 1.1).
+// fold, with the Window menu, into one ⋯ overflow menu (docs/ux/ui-plan-2026-11.md 1.1). OpenEtch Design (mode.ts) has
+// no engine and no MCP: its Help offers the full app instead, and About shows neither.
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { MachineStatus } from "../api/types.ts";
@@ -12,9 +13,10 @@ import { hintFor } from "./hotkeys.ts";
 import { updatePrefs, type ThemePref } from "./prefs.ts";
 import { usePrefs, useT } from "./usePrefs.ts";
 import { WsModal } from "./WsModal.tsx";
+import { DESIGN_ONLY, FULL_APP_URL, REPO_URL as SOURCE_URL } from "../mode.ts";
 import "./workspace.css";
 
-export const REPO_URL = "https://github.com/krzim/OpenEtch";
+export const REPO_URL = SOURCE_URL;
 export const DOC_LINKS = {
   readme: `${REPO_URL}#readme`,
   architecture: `${REPO_URL}/blob/main/ARCHITECTURE.md`,
@@ -102,6 +104,7 @@ export function HelpItems(p: { close: () => void; onHotkeys: () => void; onAbout
         <span className="menu-hint">{hintFor("help.hotkeys", prefs.hotkeys)}</span>
       </button>
       <div className="menu-sep" role="separator" />
+      {DESIGN_ONLY && link(FULL_APP_URL, t("dm.fullApp"))}
       {link(DOC_LINKS.readme, t("help.readme"))}
       {link(DOC_LINKS.architecture, t("help.architecture"))}
       {link(DOC_LINKS.webReadme, t("help.webReadme"))}
@@ -245,18 +248,22 @@ function AboutDialogBody(p: { machine: MachineStatus | null; onClose: () => void
       <div className="about">
         <div className="about-brand">
           <span className="brand-mark" aria-hidden="true" />
-          <span className="about-name">OpenEtch</span>
+          <span className="about-name">{DESIGN_ONLY ? t("dm.brand") : "OpenEtch"}</span>
         </div>
-        <p>{t("help.aboutText")}</p>
+        <p>{DESIGN_ONLY ? t("dm.aboutDesign") : t("help.aboutText")}</p>
         <dl className="kv">
           <dt>{t("help.webVersion")}</dt>
           <dd>{WEB_VERSION}</dd>
-          <dt>{t("help.engineVersion")}</dt>
-          <dd>{ev ?? t("help.notReported")}</dd>
-          <dt>{t("help.mcp")}</dt>
-          <dd>
-            <code>{`${origin}/mcp`}</code>
-          </dd>
+          {!DESIGN_ONLY && (
+            <>
+              <dt>{t("help.engineVersion")}</dt>
+              <dd>{ev ?? t("help.notReported")}</dd>
+              <dt>{t("help.mcp")}</dt>
+              <dd>
+                <code>{`${origin}/mcp`}</code>
+              </dd>
+            </>
+          )}
           <dt>{t("help.source")}</dt>
           <dd>
             <a href={REPO_URL} target="_blank" rel="noopener noreferrer">
@@ -264,7 +271,7 @@ function AboutDialogBody(p: { machine: MachineStatus | null; onClose: () => void
             </a>
           </dd>
         </dl>
-        <p className="hint">{t("help.aboutNote")}</p>
+        <p className="hint">{DESIGN_ONLY ? t("dm.notAffiliated") : t("help.aboutNote")}</p>
       </div>
     </WsModal>
   );

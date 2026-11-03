@@ -2,7 +2,8 @@
 // sends its source to the page (Runtime.evaluate) and gets plain JSON back. It looks at the UI a person can see and
 // touch, and reports:
 //
-// - stop:       the STOP button is missing, partly off screen, or not hit-testable at its centre and corners;
+// - stop:       the STOP button is missing (except in OpenEtch Design, which has none), partly off screen, or not
+//               hit-testable at its centre and corners;
 // - overlap:    two visible controls or floating panels whose boxes intersect, neither containing the other in the
 //               DOM, where the one on top at the shared area is not an intended cover layer (ALLOWED_COVERS);
 // - offscreen:  a control or floating panel partly or wholly outside the viewport (after its scroll containers clip it:
@@ -120,7 +121,9 @@ export function checkLayout(opts) {
   // --- STOP ------------------------------------------------------------------------------------------------------
   const problems = [];
   const stops = [...document.querySelectorAll(".btn-stop")].filter((e) => visibleBox(e));
-  if (!stops.length) problems.push({ type: "stop", severity: "critical", detail: "no visible STOP button" });
+  // OpenEtch Design (the browser-only build, html[data-design-only]) has no laser and so no STOP.
+  const designOnly = document.documentElement.hasAttribute("data-design-only");
+  if (!stops.length && !designOnly) problems.push({ type: "stop", severity: "critical", detail: "no visible STOP button" });
   for (const s of stops) {
     const r = s.getBoundingClientRect();
     const pts = [
