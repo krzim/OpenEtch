@@ -51,38 +51,51 @@ pub const APPROVAL_MESSAGE: &str = "The run is pending. Nothing fires until a pe
 /// A planned preview and the document it was planned from.
 pub type PreviewResult = Arc<(Document, Result<Preview, PlanError>)>;
 
-/// Coalesces preview planning: at most one computation runs at a time, and requests that queued behind it share
-/// one computation of the newest document instead of each planning the revision they arrived at.
+/// Everything a preview is planned from besides the document's content: two previews with equal keys are equal.
+#[derive(Debug, Clone, PartialEq)]
+struct PreviewKey {
+    /// Unique across open documents (`Session::raise_revision`), so it stands for the document's content.
+    revision: u64,
+    /// The job counter (auto-rotating fills).
+    run_index: u64,
+    /// The learned time correction factor's bits.
+    correction: u64,
+    target: plan::Target,
+    /// Why the active device cannot plan, if it cannot.
+    design_only: Option<String>,
+}
+
+/// A finished binary preview body and its `Content-Encoding` (module `preview_bin`).
+#[derive(Debug, Clone)]
+pub struct EncodedBody {
+    pub bytes: axum::body::Bytes,
+    pub encoding: Option<&'static str>,
+}
+
+/// A planned preview with what it was planned from, and its binary encodings, made on demand.
+struct CachedPreview {
+    key: PreviewKey,
+    result: PreviewResult,
+    /// Encoded answers by request options and content encoding (the last [`MAX_BIN_VARIANTS`] asked for).
+    bins: Mutex<Vec<(String, Arc<std::sync::OnceLock<EncodedBody>>)>>,
+}
+
+/// Encoded binary previews kept per cached preview (layer filters, level of detail, content encodings).
+const MAX_BIN_VARIANTS: usize = 6;
+
+/// Coalesces and caches preview planning: at most one computation runs at a time, requests that queued behind it
+/// share one computation of the newest document instead of each planning the revision they arrived at, and the
+/// newest result is kept, so asking again at the same revision (the JSON, the binary form, the stats, the SVG, a
+/// second browser) plans nothing.
 #[derive(Default)]
 struct PreviewGate {
     /// Held (owned, inside the blocking task) while a preview is being planned, so a dropped request cannot let a
     /// second computation start while the first is still running.
     running: Arc<tokio::sync::Mutex<()>>,
-    /// The newest result, kept only while some request is waiting (memory is released when the last one leaves).
-    latest: Mutex<Option<PreviewResult>>,
-    /// Requests inside [`AppState::preview`].
-    waiting: AtomicUsize,
+    /// The newest result.
+    latest: Mutex<Option<Arc<CachedPreview>>>,
     /// Plans computed (tests).
     computed: AtomicUsize,
-}
-
-/// Counts a request in [`PreviewGate::waiting`]; the last one out drops the cached result.
-struct PreviewTicket<'a>(&'a PreviewGate);
-
-impl<'a> PreviewTicket<'a> {
-    fn new(gate: &'a PreviewGate) -> Self {
-        gate.waiting.fetch_add(1, Ordering::SeqCst);
-        PreviewTicket(gate)
-    }
-}
-
-impl Drop for PreviewTicket<'_> {
-    fn drop(&mut self) {
-        let mut latest = lock(&self.0.latest);
-        if self.0.waiting.fetch_sub(1, Ordering::SeqCst) == 1 {
-            *latest = None;
-        }
-    }
 }
 
 /// Shared engine state. See the module docs.
@@ -123,6 +136,11 @@ pub struct AppState {
     pub files: crate::userfiles::UserFiles,
     /// The graceful shutdown's state (module `shutdown`).
     pub shutdown: crate::shutdown::ShutdownState,
+    /// Change sets of the active document for clients (module `docsync`). Locked only while the session lock (and
+    /// possibly the documents and project locks) is held, or with no other lock; never the reverse.
+    doc_log: Mutex<crate::docsync::DocLog>,
+    /// This engine run's id for change sets (module `docsync`): revisions start again after a restart.
+    pub epoch: Arc<str>,
 }
 
 /// How an invocation changes which project the document belongs to.
@@ -287,6 +305,16 @@ pub struct DownloadFile {
     pub warnings: Vec<String>,
 }
 
+/// A random id for this engine run (module `docsync`); the time if no random source answers.
+fn new_epoch() -> String {
+    let mut b = [0u8; 8];
+    if getrandom::fill(&mut b).is_err() {
+        let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+        b = (t as u64).to_le_bytes();
+    }
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
 pub(crate) fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -348,6 +376,8 @@ impl AppState {
             libs: crate::libs::Libs::default(),
             files: crate::userfiles::UserFiles::default(),
             shutdown: crate::shutdown::ShutdownState::default(),
+            doc_log: Mutex::default(),
+            epoch: new_epoch().into(),
         })
     }
 
@@ -589,6 +619,43 @@ impl AppState {
 
     pub fn revision(&self) -> u64 {
         lock(&self.session).document().revision
+    }
+
+    /// `GET /api/document`: a copy of the current document, logged so a client holding it can later ask for the
+    /// changes since (module `docsync`).
+    pub fn document_for_client(&self) -> Document {
+        let s = lock(&self.session);
+        let id = self.active_document_id();
+        lock(&self.doc_log).observe(s.document(), &id);
+        s.document().clone()
+    }
+
+    /// `GET /api/document/sync` (and the `sync` member of mutating answers): the changes since `since` (`(epoch,
+    /// revision)`) when the log still reaches back to it, else the whole document; with the timeline and the project
+    /// status of the same revision (module `docsync`).
+    pub fn doc_sync(&self, since: Option<(String, u64)>) -> crate::docsync::SyncPayload {
+        let s = lock(&self.session);
+        let document_id = self.active_document_id();
+        let revision = s.document().revision;
+        let changes = {
+            let mut log = lock(&self.doc_log);
+            log.observe(s.document(), &document_id);
+            since.filter(|(epoch, _)| **epoch == *self.epoch).and_then(|(_, r)| log.since(r))
+        };
+        let document = changes.is_none().then(|| s.document().clone());
+        let history = s.history_view();
+        let project = {
+            let p = lock(&self.project);
+            json!({
+                "name": p.name,
+                "display_name": p.display_name,
+                "saved_revision": p.saved_revision,
+                "revision": revision,
+                "dirty": p.dirty(revision),
+            })
+        };
+        drop(s);
+        crate::docsync::SyncPayload { epoch: self.epoch.clone(), document_id, revision, changes, document, history, project }
     }
 
     /// How runs are approved: the `--approval` mode set at startup, else [`ApprovalMode::Pin`].
@@ -1041,27 +1108,50 @@ impl AppState {
 
     /// Plan the current document (no encoding). An empty document previews as nothing rather than an error.
     ///
-    /// Coalesced ([`PreviewGate`]): at most one plan runs at a time. A request that waited for a running plan
-    /// reuses the newest result if it is of the current revision, and otherwise plans the current document once
-    /// for every request queued with it, so a burst of edits never queues one plan per edit. The result can
+    /// Coalesced and cached ([`PreviewGate`]): a result planned from the same revision, job counter, time correction
+    /// and machine target is reused; otherwise at most one plan runs at a time, and a request that waited for a
+    /// running plan reuses its result if it is current, else plans the current document once for every request
+    /// queued with it, so a burst of edits never queues one plan per edit (the newest revision wins). The result can
     /// therefore be of a newer revision than the one current when the request arrived (never an older one).
     pub async fn preview(&self) -> Result<PreviewResult, EngineError> {
-        let gate = &*self.previews;
-        let _ticket = PreviewTicket::new(gate);
-        let running = gate.running.clone().lock_owned().await;
-        let revision = self.revision();
-        if let Some(r) = lock(&gate.latest).as_ref().filter(|r| r.0.revision == revision) {
-            return Ok(r.clone());
+        Ok(self.preview_cached().await?.result.clone())
+    }
+
+    /// What a preview of revision `revision` would be planned with now.
+    fn preview_key(&self, revision: u64) -> PreviewKey {
+        let device = self.active_device();
+        PreviewKey {
+            revision,
+            // The next run's index (the job counter), as `request_run_with` plans it: auto-rotating fills preview at
+            // the angle they will be marked at, and Start Here segment numbers match the run.
+            run_index: self.job.count(&device.id),
+            // The device's learned estimate correction (module `marktime`), applied to every time of the preview.
+            correction: self.job.times.correction(&device.id).factor.to_bits(),
+            target: self.machine.target(),
+            design_only: device.not_controllable_reason(),
+        }
+    }
+
+    /// The cached preview, if it is of the current document and settings.
+    fn current_preview(&self) -> Option<Arc<CachedPreview>> {
+        let key = self.preview_key(self.revision());
+        lock(&self.previews.latest).as_ref().filter(|c| c.key == key).cloned()
+    }
+
+    async fn preview_cached(&self) -> Result<Arc<CachedPreview>, EngineError> {
+        if let Some(c) = self.current_preview() {
+            return Ok(c);
+        }
+        let running = self.previews.running.clone().lock_owned().await;
+        if let Some(c) = self.current_preview() {
+            return Ok(c);
         }
         let doc = self.document();
-        let target = self.machine.target();
+        let key = self.preview_key(doc.revision);
+        let target = key.target.clone();
+        let (design_only, run_index) = (key.design_only.clone(), key.run_index);
+        let correction = f64::from_bits(key.correction);
         let shared = self.previews.clone();
-        let design_only = self.active_device().not_controllable_reason();
-        // The next run's index (the job counter), as `request_run_with` plans it: auto-rotating fills preview at the
-        // angle they will be marked at, and Start Here segment numbers match the run.
-        let run_index = self.job.count(&self.active_device().id);
-        // The device's learned estimate correction (module `marktime`), applied to every time of the preview.
-        let correction = self.job.times.correction(&self.active_device().id).factor;
         Ok(tokio::task::spawn_blocking(move || {
             let preview = match design_only {
                 // Still a result, so the SVG preview renders the document.
@@ -1076,19 +1166,70 @@ impl AppState {
                     Err(e) => Err(e),
                 },
             };
-            let result: PreviewResult = Arc::new((doc, preview));
+            let cached = Arc::new(CachedPreview { key, result: Arc::new((doc, preview)), bins: Mutex::default() });
             shared.computed.fetch_add(1, Ordering::SeqCst);
-            // Published before the slot is released, so the next queued request finds it; kept only while some
-            // request still waits (the ticket's drop takes the same lock).
-            let mut latest = lock(&shared.latest);
-            if shared.waiting.load(Ordering::SeqCst) > 0 {
-                *latest = Some(result.clone());
-            }
-            drop(latest);
+            // Published before the slot is released, so the next queued request finds it.
+            *lock(&shared.latest) = Some(cached.clone());
             drop(running);
-            result
+            cached
         })
         .await?)
+    }
+
+    /// `GET /api/preview.bin`: the preview encoded (module `preview_bin`) and compressed with `encoding` (`br`,
+    /// `gzip` or none), made once per revision and request options. Returns the body and the revision it is of.
+    pub async fn preview_bin(
+        &self,
+        opts: crate::preview_bin::BinOptions,
+        encoding: Option<&'static str>,
+    ) -> Result<(EncodedBody, u64), EngineError> {
+        let cached = self.preview_cached().await?;
+        if let Err(e) = &cached.result.1 {
+            return Err(EngineError::Plan(e.clone()));
+        }
+        let key = format!("{}|{}", opts.key(), encoding.unwrap_or("identity"));
+        let cell = {
+            let mut bins = lock(&cached.bins);
+            match bins.iter().find(|(k, _)| *k == key) {
+                Some((_, c)) => c.clone(),
+                None => {
+                    let c = Arc::new(std::sync::OnceLock::new());
+                    bins.push((key, c.clone()));
+                    if bins.len() > MAX_BIN_VARIANTS {
+                        bins.remove(0);
+                    }
+                    c
+                }
+            }
+        };
+        let revision = cached.key.revision;
+        if let Some(body) = cell.get() {
+            return Ok((body.clone(), revision));
+        }
+        let body = tokio::task::spawn_blocking(move || {
+            cell.get_or_init(|| {
+                let (doc, preview) = &*cached.result;
+                let p = preview.as_ref().expect("a failed plan returned above");
+                let raw = crate::preview_bin::encode(doc, p, revision, &opts);
+                let (bytes, encoding) = crate::preview_bin::compress(raw, encoding);
+                EncodedBody { bytes: bytes.into(), encoding }
+            })
+            .clone()
+        })
+        .await?;
+        Ok((body, revision))
+    }
+
+    /// `GET /api/preview/stats`: the preview without its segments (stats, passes, layers, warnings), its segment count
+    /// and the revision it is of.
+    pub async fn preview_stats(&self) -> Result<Value, EngineError> {
+        let cached = self.preview_cached().await?;
+        let (doc, preview) = &*cached.result;
+        let p = preview.as_ref().map_err(|e| EngineError::Plan(e.clone()))?;
+        let mut v = crate::preview_bin::summary(doc, p, None);
+        v["revision"] = json!(cached.key.revision);
+        v["segments"] = json!(p.segments.len());
+        Ok(v)
     }
 
     /// The even-odd fill regions of every fill layer of the current document (display only).

@@ -7,7 +7,13 @@
 //
 //   node e2e/perf.mjs --url http://127.0.0.1:7931 --doc heavy.lbrn2 [--label pc-local] [--out ../target/perf/pc-local]
 //                     [--devices macbook-air-1470,iphone15-portrait] [--only load,move,undo] [--quiet 1500]
-//                     [--timeout 240000] [--cdp-port 9334] [--headful]
+//                     [--timeout 240000] [--cdp-port 9334] [--headful] [--throttle-mbps 20] [--latency-ms 5]
+//
+// --throttle-mbps limits the page's network to that many megabits per second each way (DevTools network emulation,
+// with --latency-ms of added round-trip latency, default 5), so a local engine shows what Wi-Fi to a Raspberry Pi
+// would: 20 Mbit/s is about 2.5 MB/s. The quick loop while improving something:
+//
+//   node e2e/perf.mjs --url http://127.0.0.1:7931 --doc heavy.lbrn2 --throttle-mbps 20 --only move,undo,to-laser-preview,layer-speed
 //
 // It needs an OpenEtch engine with the SIMULATOR (never a real machine: it starts framing, and it replaces the engine's
 // document and makes edits). Results: <out>/perf.json and <out>/perf.md. Keep private documents out of the repository:
@@ -44,6 +50,8 @@ function args(argv) {
     else if (k === "--timeout") a.timeout = Number(v());
     else if (k === "--cdp-port") a.port = Number(v());
     else if (k === "--headful") a.headful = true;
+    else if (k === "--throttle-mbps") a.throttleMbps = Number(v());
+    else if (k === "--latency-ms") a.latencyMs = Number(v());
     else if (k === "--no-direct") a.noDirect = true;
     else if (k === "--help" || k === "-h") a.help = true;
   }
@@ -355,6 +363,11 @@ async function walk(browser, d, opts) {
   const url = opts.url;
   await page.send("Network.enable", { maxResourceBufferSize: 1024, maxTotalBufferSize: 1 << 20 });
   await page.send("Network.setCacheDisabled", { cacheDisabled: false });
+  if (opts.throttleMbps > 0) {
+    // Bytes per second each way; the latency is added to every request.
+    const bps = (opts.throttleMbps * 1e6) / 8;
+    await page.send("Network.emulateNetworkConditions", { offline: false, latency: opts.latencyMs ?? 5, downloadThroughput: bps, uploadThroughput: bps });
+  }
   await page.send("Performance.enable", { timeDomain: "timeTicks" });
   await page.send("Page.addScriptToEvaluateOnNewDocument", { source: IN_PAGE });
   await page.send("DOM.enable");
@@ -668,7 +681,8 @@ async function direct(url, opts) {
 // --- report --------------------------------------------------------------------------------------------------------
 
 function markdown(report) {
-  const L = [`# Performance profile: ${report.label}`, "", `Engine ${report.url}, document ${report.docName}, ${report.when}.`, ""];
+  const net = report.throttle ? `, network throttled to ${report.throttle.mbps} Mbit/s with ${report.throttle.latencyMs} ms latency` : "";
+  const L = [`# Performance profile: ${report.label}`, "", `Engine ${report.url}, document ${report.docName}, ${report.when}${net}.`, ""];
   if (report.direct) {
     L.push("## Engine GETs (no browser)", "", "| path | bytes | TTFB ms | total ms | gzip-1 | brotli-4 |", "|---|---:|---:|---:|---:|---:|");
     for (const [p, g] of Object.entries(report.direct.gets))
@@ -692,13 +706,14 @@ function markdown(report) {
 async function main() {
   const opts = args(process.argv.slice(2));
   if (opts.help || !opts.url || !opts.doc) {
-    console.log("usage: node e2e/perf.mjs --url http://127.0.0.1:7931 --doc heavy.lbrn2 [--label name] [--out dir] [--devices ids] [--only actions] [--quiet ms] [--timeout ms] [--no-direct]");
+    console.log("usage: node e2e/perf.mjs --url http://127.0.0.1:7931 --doc heavy.lbrn2 [--label name] [--out dir] [--devices ids] [--only actions] [--quiet ms] [--timeout ms] [--no-direct] [--throttle-mbps n] [--latency-ms n]");
     process.exit(opts.help ? 0 : 2);
   }
   opts.label ??= new URL(opts.url).hostname === "127.0.0.1" ? "local" : "remote";
   opts.out = resolve(opts.out ?? join(here, "..", "..", "target", "perf", opts.label));
   mkdirSync(opts.out, { recursive: true });
-  const report = { label: opts.label, url: opts.url, docName: basename(opts.doc), when: new Date().toISOString(), devices: [] };
+  const throttle = opts.throttleMbps > 0 ? { mbps: opts.throttleMbps, latencyMs: opts.latencyMs ?? 5 } : null;
+  const report = { label: opts.label, url: opts.url, docName: basename(opts.doc), when: new Date().toISOString(), throttle, devices: [] };
   if (!opts.noDirect && !opts.only) {
     console.log("direct timings...");
     report.direct = await direct(opts.url, opts);
@@ -720,7 +735,11 @@ async function main() {
   console.log(`report: ${join(opts.out, "perf.md")}`);
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+main().then(
+  // Exit at once: a closing browser's pipes or a keep-alive socket would otherwise hold node open for minutes.
+  () => process.exit(0),
+  (e) => {
+    console.error(e);
+    process.exit(1);
+  },
+);

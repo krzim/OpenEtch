@@ -38,10 +38,13 @@ pub fn router(state: Arc<AppState>, web_dir: Option<&Path>) -> Router {
         .route("/undo", post(undo))
         .route("/redo", post(redo))
         .route("/document", get(document))
+        .route("/document/sync", get(document_sync))
         .route("/history", get(history))
         .route("/history/goto", post(history_goto))
         .route("/history/delete", post(history_delete))
         .route("/preview", get(preview))
+        .route("/preview.bin", get(preview_bin))
+        .route("/preview/stats", get(preview_stats))
         .route("/fill_regions", get(fill_regions))
         .route("/preview.svg", get(preview_svg))
         .route("/machine", get(machine_status))
@@ -81,7 +84,9 @@ pub fn router(state: Arc<AppState>, web_dir: Option<&Path>) -> Router {
         .merge(crate::folders::routes())
         .merge(crate::test_presets::routes())
         .fallback(api_not_found)
-        .layer(DefaultBodyLimit::max(MAX_BODY_BYTES));
+        .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
+        .layer(middleware::from_fn_with_state(state.clone(), attach_sync))
+        .layer(compression());
     let mut app = Router::new().nest("/api", api).nest_service("/mcp", mcp::service(state.clone()));
     if let Some(dir) = web_dir {
         let dir: Arc<PathBuf> = Arc::new(dir.to_path_buf());
@@ -234,9 +239,113 @@ async fn redo(State(st): State<Arc<AppState>>, body: Bytes) -> Result<Response, 
     Ok(undo_redo_response(st.redo(parse_origin(b.origin.as_ref())?)))
 }
 
-async fn document(State(st): State<Arc<AppState>>) -> Json<doc::Document> {
-    Json(st.document())
+async fn document(State(st): State<Arc<AppState>>) -> Result<Json<doc::Document>, EngineError> {
+    // Blocking thread: a large document takes a while to copy.
+    Ok(Json(st.blocking(|st| Ok(st.document_for_client())).await?))
 }
+
+/// Query of `GET /api/document/sync`.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SyncQuery {
+    /// The revision the client holds (none: send the whole document).
+    since: Option<u64>,
+    /// The engine run that revision is from (`epoch` of an earlier answer).
+    epoch: Option<String>,
+}
+
+/// `GET /api/document/sync?since=<revision>&epoch=<epoch>`: the changes since the client's revision, or the whole
+/// document, with the timeline and project status (module `docsync`).
+async fn document_sync(
+    State(st): State<Arc<AppState>>,
+    q: Result<Query<SyncQuery>, QueryRejection>,
+) -> Result<Response, EngineError> {
+    let Query(q) = q.map_err(|e| EngineError::BadRequest(format!("bad query: {e}")))?;
+    let since = q.since.zip(q.epoch).map(|(r, e)| (e, r));
+    let body = st.blocking(move |st| sync_json(st, since)).await?;
+    Ok(([(header::CONTENT_TYPE, "application/json"), (header::CACHE_CONTROL, "no-store")], body).into_response())
+}
+
+fn sync_json(st: &AppState, since: Option<(String, u64)>) -> Result<Vec<u8>, EngineError> {
+    serde_json::to_vec(&st.doc_sync(since)).map_err(|e| EngineError::Internal(e.to_string()))
+}
+
+/// Header with which a client asks for the document's changes in a mutating answer: `<epoch>:<revision>`.
+pub const SYNC_HEADER: &str = "x-openetch-since";
+
+/// A `POST` carrying [`SYNC_HEADER`] whose answer is a JSON object gets a `sync` member: `GET /api/document/sync`'s
+/// answer for that revision, taken after the request ran (module `docsync`). Saves the client a request (and a round
+/// trip over Wi-Fi) after every edit.
+async fn attach_sync(State(st): State<Arc<AppState>>, req: Request<Body>, next: middleware::Next) -> Response {
+    let since = (req.method() == Method::POST)
+        .then(|| req.headers().get(SYNC_HEADER).and_then(|v| v.to_str().ok()).and_then(crate::docsync::parse_since))
+        .flatten();
+    let res = next.run(req).await;
+    let Some(since) = since else { return res };
+    let json = res
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.starts_with("application/json"));
+    if !json || res.headers().contains_key(header::CONTENT_ENCODING) {
+        return res;
+    }
+    let (mut parts, body) = res.into_parts();
+    let Ok(bytes) = axum::body::to_bytes(body, usize::MAX).await else {
+        return (StatusCode::INTERNAL_SERVER_ERROR, "cannot read the answer").into_response();
+    };
+    let sync = match st.blocking(move |st| sync_json(st, Some(since))).await {
+        Ok(s) => s,
+        Err(_) => return Response::from_parts(parts, Body::from(bytes)),
+    };
+    match splice_member(&bytes, "sync", &sync) {
+        Some(out) => {
+            parts.headers.remove(header::CONTENT_LENGTH);
+            Response::from_parts(parts, Body::from(out))
+        }
+        None => Response::from_parts(parts, Body::from(bytes)),
+    }
+}
+
+/// `object` (JSON text of an object) with member `name: value` added at the end, or `None` when it is not an object.
+pub fn splice_member(object: &[u8], name: &str, value: &[u8]) -> Option<Vec<u8>> {
+    let start = object.iter().position(|b| !b.is_ascii_whitespace())?;
+    let end = object.iter().rposition(|b| !b.is_ascii_whitespace())?;
+    if object[start] != b'{' || object[end] != b'}' || end == start {
+        return None;
+    }
+    let empty = object[start + 1..end].iter().all(u8::is_ascii_whitespace);
+    let mut out = Vec::with_capacity(object.len() + value.len() + name.len() + 6);
+    out.extend_from_slice(&object[..end]);
+    if !empty {
+        out.push(b',');
+    }
+    out.push(b'"');
+    out.extend_from_slice(name.as_bytes());
+    out.extend_from_slice(b"\":");
+    out.extend_from_slice(value);
+    out.push(b'}');
+    Some(out)
+}
+
+/// Compression of API answers (gzip or brotli, as the client accepts) at a fast level: a large document or preview
+/// is mostly repeated keys and numbers, a tenth of its size or less compressed, and Wi-Fi to a Raspberry Pi moves a
+/// few MB/s. Small answers, images and event streams are sent as they are; answers that already carry a
+/// `Content-Encoding` (the binary preview compresses its own, once per revision) are left alone.
+fn compression() -> tower_http::compression::CompressionLayer<impl tower_http::compression::Predicate> {
+    use tower_http::compression::predicate::{NotForContentType, Predicate as _, SizeAbove};
+    use tower_http::compression::{CompressionLayer, CompressionLevel};
+    let predicate = SizeAbove::new(COMPRESS_ABOVE_BYTES)
+        .and(NotForContentType::GRPC)
+        .and(NotForContentType::IMAGES)
+        .and(NotForContentType::SSE);
+    CompressionLayer::new().quality(CompressionLevel::Precise(COMPRESSION_LEVEL)).compress_when(predicate)
+}
+
+/// Answers smaller than this are sent uncompressed (the headers would cost more than they save).
+pub const COMPRESS_ABOVE_BYTES: u16 = 1024;
+/// Brotli quality / gzip level of API answers: fast enough for a Raspberry Pi to keep ahead of Wi-Fi.
+pub const COMPRESSION_LEVEL: i32 = 3;
 
 async fn history(State(st): State<Arc<AppState>>) -> Json<commands::HistoryView> {
     Json(st.history_view())
@@ -299,32 +408,85 @@ async fn preview(
 ) -> Result<Response, EngineError> {
     let Query(q) = q.map_err(|e| EngineError::BadRequest(format!("bad query: {e}")))?;
     let result = st.preview().await?;
-    match &result.1 {
-        Ok(p) => {
-            let mut v = match q.layers {
-                None => serde_json::to_value(p),
-                Some(list) => {
-                    let ids: Vec<&str> = list.split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
-                    let mut p = p.clone();
-                    p.retain_layers(&ids);
-                    serde_json::to_value(&p)
-                }
-            }
-            .map_err(|e| EngineError::Internal(e.to_string()))?;
-            // LAY-034: each layer's LightBurn settings that will not be executed (only where there are some).
-            if let Some(layers) = v.get_mut("layers").and_then(Value::as_array_mut) {
-                for l in layers {
-                    let Some(layer) = l["layer_id"].as_str().and_then(|id| result.0.layer(id)) else { continue };
-                    let u = lbrn::unexecuted_settings(layer);
-                    if !u.is_empty() {
-                        l["unsupported"] = json!(u);
-                    }
-                }
-            }
-            Ok(Json(v).into_response())
-        }
-        Err(e) => Err(EngineError::Plan(e.clone())),
+    if let Err(e) = &result.1 {
+        return Err(EngineError::Plan(e.clone()));
     }
+    // Blocking thread: a large preview is tens of MB of JSON, seconds of work on a Raspberry Pi that must not hold up
+    // the async workers (status polls, Stop).
+    let body = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, EngineError> {
+        let (doc, preview) = &*result;
+        let p = preview.as_ref().map_err(|e| EngineError::Plan(e.clone()))?;
+        let mut v = match q.layers {
+            None => serde_json::to_value(p),
+            Some(list) => {
+                let ids: Vec<&str> = list.split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
+                let mut p = p.clone();
+                p.retain_layers(&ids);
+                serde_json::to_value(&p)
+            }
+        }
+        .map_err(|e| EngineError::Internal(e.to_string()))?;
+        // LAY-034: each layer's LightBurn settings that will not be executed (only where there are some).
+        crate::preview_bin::add_unsupported(doc, &mut v);
+        serde_json::to_vec(&v).map_err(|e| EngineError::Internal(e.to_string()))
+    })
+    .await??;
+    Ok(([(header::CONTENT_TYPE, "application/json")], body).into_response())
+}
+
+/// Query of `GET /api/preview.bin`.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreviewBinQuery {
+    /// `?layers=layer-1,layer-3`, as `GET /api/preview`.
+    layers: Option<String>,
+    /// `?jumps=false` leaves travel out.
+    jumps: Option<bool>,
+    /// `?lod=0.2`: level of detail in mm (see `preview_bin::BinOptions::lod_mm`).
+    lod: Option<f64>,
+}
+
+/// Header naming the document revision a preview answer is of.
+pub const REVISION_HEADER: &str = "x-openetch-revision";
+
+/// `GET /api/preview.bin`: the preview in the binary format of module `preview_bin`, compressed once per revision
+/// (brotli or gzip, as accepted).
+async fn preview_bin(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    q: Result<Query<PreviewBinQuery>, QueryRejection>,
+) -> Result<Response, EngineError> {
+    let Query(q) = q.map_err(|e| EngineError::BadRequest(format!("bad query: {e}")))?;
+    let lod_mm = q.lod.unwrap_or(0.0);
+    if !(lod_mm.is_finite() && lod_mm >= 0.0) {
+        return Err(EngineError::BadRequest("lod must be a number of mm, 0 or more".into()));
+    }
+    let layers = q.layers.map(|l| l.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned).collect());
+    let opts = crate::preview_bin::BinOptions { layers, no_jumps: q.jumps == Some(false), lod_mm };
+    let accept = headers.get(header::ACCEPT_ENCODING).and_then(|v| v.to_str().ok());
+    let (body, revision) = st.preview_bin(opts, crate::preview_bin::pick_encoding(accept)).await?;
+    let mut res = (
+        [
+            (header::CONTENT_TYPE, HeaderValue::from_static("application/octet-stream")),
+            (header::CACHE_CONTROL, HeaderValue::from_static("no-store")),
+            (header::VARY, HeaderValue::from_static("accept-encoding")),
+        ],
+        body.bytes,
+    )
+        .into_response();
+    if let Some(enc) = body.encoding {
+        res.headers_mut().insert(header::CONTENT_ENCODING, HeaderValue::from_static(enc));
+    }
+    if let Ok(v) = HeaderValue::from_str(&revision.to_string()) {
+        res.headers_mut().insert(HeaderName::from_static(REVISION_HEADER), v);
+    }
+    Ok(res)
+}
+
+/// `GET /api/preview/stats`: `GET /api/preview` without its segments (stats, passes, layers, warnings), with the
+/// segment count and the revision.
+async fn preview_stats(State(st): State<Arc<AppState>>) -> Result<Json<Value>, EngineError> {
+    Ok(Json(st.preview_stats().await?))
 }
 
 /// `GET /api/fill_regions`: per fill layer, the even-odd regions its hatch covers, as SVG paths in field mm.

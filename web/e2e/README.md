@@ -45,6 +45,15 @@ npm run e2e:perf -- --url http://<pi-ip>:7881 --doc some-heavy-file.lbrn2 --labe
 Results: `target/perf/<label>/perf.json` and `perf.md` (git ignores `target/`). With `--only` the page still loads and
 the workspaces still switch, but only the named actions are timed.
 
+The quick loop while improving something: a local simulator engine, the page's network throttled to Wi-Fi speed
+(`--throttle-mbps 20` is about 2.5 MB/s, with `--latency-ms 5` by default) and only a few actions, a minute or two per
+run:
+
+```sh
+npm run e2e:perf -- --url http://127.0.0.1:7931 --doc some-heavy-file.lbrn2 --label quick --throttle-mbps 20 \
+  --only move,undo,to-laser-preview,layer-speed
+```
+
 ## Files
 
 - `devices.mjs`: the device matrix (CSS viewport, DPR, touch, user agent, safe-area insets, themes, keyboard height).

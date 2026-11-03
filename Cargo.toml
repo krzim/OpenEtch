@@ -50,7 +50,7 @@ serial2 = "0.2.39"
 # engine
 tokio = { version = "1", features = ["full"] }
 axum = { version = "0.8", features = ["ws"] }
-tower-http = { version = "0.6", features = ["fs", "cors"] }
+tower-http = { version = "0.6", features = ["fs", "cors", "compression-br", "compression-gzip"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rmcp = { version = "3.8", features = ["server", "macros", "transport-streamable-http-server"] }
 resvg = { version = "0.49", default-features = false }

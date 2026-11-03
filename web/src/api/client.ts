@@ -18,6 +18,8 @@ import type {
 } from "./types.ts";
 import { contentDispositionName, type FileFormat, type ImportMode, type UploadFormat } from "./project.ts";
 import { okError } from "./runs.ts";
+import { beginMutation, endMutation, SYNC_HEADER, syncHeaderValue, type SyncPayload } from "./docSync.ts";
+import { decodePreview, type BinaryPreview } from "./previewBinary.ts";
 
 /** localStorage key of the remembered access token. */
 export const TOKEN_KEY = "openetch.token";
@@ -193,13 +195,38 @@ function parseBody(text: string): unknown {
   }
 }
 
+/**
+ * A request that may change the document: it asks for the document's changes in its answer (docSync.ts). Machine,
+ * run and job requests are left out, so Stop and approvals carry nothing extra.
+ */
+function changesDocument(method: string, path: string): boolean {
+  return method === "POST" && path.startsWith("/api/") && !/^\/api\/(machine|runs|job)(\/|$|\?)/.test(path);
+}
+
+/** Run `fn` as a document change: the sync header goes out with it, and the answer's `sync` to useEngine. */
+async function asMutation<T>(method: string, path: string, headers: Record<string, string>, fn: () => Promise<T>): Promise<T> {
+  if (!changesDocument(method, path)) return fn();
+  const since = syncHeaderValue();
+  if (since) headers[SYNC_HEADER] = since;
+  beginMutation();
+  let answer: unknown;
+  try {
+    answer = await fn();
+    return answer as T;
+  } finally {
+    endMutation(answer);
+  }
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const headers = authHeaders("application/json");
   if (body !== undefined) headers["Content-Type"] = "application/json";
-  const res = await send(method, path, { headers, body: body === undefined ? undefined : JSON.stringify(body) });
-  const text = await res.text();
-  if (!res.ok) throw httpError(method, path, res, text);
-  return parseBody(text) as T;
+  return asMutation(method, path, headers, async () => {
+    const res = await send(method, path, { headers, body: body === undefined ? undefined : JSON.stringify(body) });
+    const text = await res.text();
+    if (!res.ok) throw httpError(method, path, res, text);
+    return parseBody(text) as T;
+  });
 }
 
 /** The origin every UI edit is tagged with (ARCHITECTURE.md: `"origin": "ui"`). */
@@ -236,6 +263,15 @@ async function checked(path: string, body: unknown, what: string): Promise<unkno
 export const api = {
   commands: () => request<CommandSpec[]>("GET", "/api/commands"),
   document: () => request<GDocument>("GET", "/api/document"),
+  /**
+   * The document's changes since `since` (a revision of engine run `epoch`), or the whole document, with the timeline
+   * and project status (docSync.ts). 404 on engines without change sets.
+   */
+  documentSync: (since: { epoch: string; revision: number } | null) =>
+    request<SyncPayload>(
+      "GET",
+      since ? `/api/document/sync?since=${since.revision}&epoch=${encodeURIComponent(since.epoch)}` : "/api/document/sync",
+    ),
   /** The timeline (`{marker, steps}`), or an older engine's log array; normalise with `normalizeHistory`. */
   history: () => request<unknown>("GET", "/api/history"),
   /** Roll the timeline marker to `marker` (the index of the last step to keep applied). */
@@ -243,6 +279,13 @@ export const api = {
   /** Remove one timeline step; the later steps are replayed. */
   historyDelete: (index: number) => checked("/api/history/delete", { index }, "deleting the step failed"),
   preview: () => request<Preview>("GET", "/api/preview"),
+  /** GET /api/preview.bin decoded (previewBinary.ts), with the revision it is of. ApiError 404 on older engines. */
+  previewBinary: async (): Promise<BinaryPreview> => {
+    const path = "/api/preview.bin";
+    const res = await send("GET", path, { headers: authHeaders("application/octet-stream") });
+    if (!res.ok) throw httpError("GET", path, res, await res.text());
+    return decodePreview(await res.arrayBuffer());
+  },
   machine: () => request<MachineStatus>("GET", "/api/machine"),
   /** POST /api/undo. Throws ApiError when there is nothing to undo (200 `{ok:false}`). */
   undo: () => checked("/api/undo", { origin: UI_ORIGIN }, "nothing to undo"),
@@ -306,10 +349,12 @@ export const api = {
     const path = `/api/document/upload?format=${format}${project ? `&mode=${mode}` : ""}${field}${extra}`;
     const headers = authHeaders("application/json");
     headers["Content-Type"] = "application/octet-stream";
-    const res = await send("POST", path, { headers, body: file });
-    const text = await res.text();
-    if (!res.ok) throw httpError("POST", path, res, text);
-    return parseBody(text);
+    return asMutation("POST", path, headers, async () => {
+      const res = await send("POST", path, { headers, body: file });
+      const text = await res.text();
+      if (!res.ok) throw httpError("POST", path, res, text);
+      return parseBody(text);
+    });
   },
   /** LightBurn devices the engine knows (`{available, source, default_device, devices}`); normalize with `lightburnInfo`. */
   lightburn: () => request<unknown>("GET", "/api/lightburn"),

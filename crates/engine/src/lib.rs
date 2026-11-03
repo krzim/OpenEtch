@@ -24,6 +24,8 @@ pub mod cli;
 pub mod devices;
 pub mod error;
 pub mod events;
+pub mod docsync;
+pub mod preview_bin;
 pub mod frame;
 pub mod hw;
 pub mod job;
@@ -85,5 +87,7 @@ mod wire_tests;
 mod grbl_tests;
 #[cfg(test)]
 mod ruida_tests;
+#[cfg(test)]
+mod perf_tests;
 #[cfg(test)]
 mod user_tools_tests;
