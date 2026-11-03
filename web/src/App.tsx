@@ -16,6 +16,8 @@ import { createPortal } from "react-dom";
 import { api } from "./api/client.ts";
 import * as C from "./api/commands.ts";
 import { DESIGN_ONLY } from "./mode.ts";
+import { DesignStrip } from "./designmode/DesignStrip.tsx";
+import { DesignPreviewDock } from "./designmode/DesignPreviewDock.tsx";
 import {
   importAccept,
   bytesToBase64,
@@ -1106,7 +1108,8 @@ export function App() {
   // button, so with the Job Checklist on and unticked it opens the checklist instead of firing, and in Design it opens
   // the Laser window first. A run still needs PIN approval, or without a PIN (`--approval click`) Start burns at once.
   const requestRun = () => void startFromHotkey();
-  const laserDisabled = designOnlyReason(device);
+  // OpenEtch Design (mode.ts) has no laser: framing, Start and the red dot are never offered.
+  const laserDisabled = DESIGN_ONLY ? t("dm.noLaser") : designOnlyReason(device);
   // "Open the Laser window" for the Start flow (checklist, Start from Design): the Laser workspace with its right side
   // shown (pinned, or its overlay on a rail); on the phone the Job sheet (workspace/PhoneShell.tsx listens).
   const openLaser = () => {
@@ -1164,11 +1167,11 @@ export function App() {
       "laser.frameSelection": () => (laserDisabled ? false : frameWith()),
       "laser.frameSquare": () => (laserDisabled ? false : frameWith("bounds")),
       "laser.frameOutline": () => (laserDisabled ? false : frameWith("outline")),
-      "laser.frameStop": () => void machineAction(api.frameStop(), t("app.frameStopped")),
+      "laser.frameStop": () => (DESIGN_ONLY ? false : void machineAction(api.frameStop(), t("app.frameStopped"))),
       "laser.requestRun": () => (laserDisabled ? false : requestRun()),
-      "laser.pauseResume": () => void togglePause().then(notify).catch(report),
+      "laser.pauseResume": () => (DESIGN_ONLY ? false : void togglePause().then(notify).catch(report)),
       // Ctrl+. (Cmd+.) stops only while a run is under way; otherwise it stays LightBurn's rotate key.
-      "laser.stop": (chord) => (stopChordActs(chord, machine?.running === true || activeRuns(machine).length > 0) ? stop() : false),
+      "laser.stop": (chord) => (!DESIGN_ONLY && stopChordActs(chord, machine?.running === true || activeRuns(machine).length > 0) ? stop() : false),
       ...text.handlers,
       ...filesUi.handlers,
       ...libsUi.handlers,
@@ -1195,7 +1198,7 @@ export function App() {
       "arrange.dockDown": () => (workspace === "design" && hasSel ? docking.dock("down") : false),
       "laser.position": () => (laserDisabled ? false : togglePositionLaser()),
       "laser.rotary": () => {
-        if (!has("job.set_rotary")) return false;
+        if (DESIGN_ONLY || !has("job.set_rotary")) return false;
         if (workspace !== "laser") switchWorkspace("laser");
         requestRotarySetup();
       },
@@ -1311,7 +1314,7 @@ export function App() {
       )}
       files={filesUi.menu}
       onSaveGcode={
-        isGrblMachine(machine)
+        !DESIGN_ONLY && isGrblMachine(machine)
           ? () =>
               void jobApi
                 .exportGcode()
@@ -1324,7 +1327,7 @@ export function App() {
           : undefined
       }
       onSaveRd={
-        isRuidaMachine(machine)
+        !DESIGN_ONLY && isRuidaMachine(machine)
           ? () =>
               void jobApi
                 .exportRd()
@@ -1350,8 +1353,8 @@ export function App() {
       extra={
         <>
           {layout === "wide" && <WindowMenu focusCanvas={focus} onFocusCanvas={toggleFocus} />}
-          <SimPinBadge machine={machine} />
-          <ShutdownBadge machine={machine} />
+          {!DESIGN_ONLY && <SimPinBadge machine={machine} />}
+          {!DESIGN_ONLY && <ShutdownBadge machine={machine} />}
           <TopActions
             machine={machine}
             onHotkeys={() => ws.open("hotkeys")}
@@ -1367,7 +1370,7 @@ export function App() {
       onUndo={() => void undo()}
       onRedo={() => void redo()}
       onStop={stop}
-      statusExtra={prodUi.chip(layout === "phone")}
+      statusExtra={DESIGN_ONLY ? null : prodUi.chip(layout === "phone")}
       link={engine.link}
       httpError={engine.httpError}
       machine={machine}
@@ -1450,7 +1453,7 @@ export function App() {
 
   // A GRBL gantry's Move and Console windows and a Ruida gantry's File List (LightBurn's), in both workspaces' Window
   // menus as in LightBurn; galvos have none of them.
-  const gantryDocks = (
+  const gantryDocks = DESIGN_ONLY ? null : (
     <>
       {isGrblMachine(machine) && (
         <>
@@ -1512,6 +1515,55 @@ export function App() {
         {text.properties}
         </Dock>
         </>
+      ) : DESIGN_ONLY ? (
+        // OpenEtch Design's Preview workspace: the design device, the estimate and the toolpath; no machine.
+        <div className="props">
+          <DesignPreviewDock
+            device={
+              canDevices ? (
+                <DeviceBar
+                  devices={devices}
+                  machine={machine}
+                  onOpenWindow={desktopFeatures(layout) ? () => setDevicesOpen(true) : undefined}
+                  onSwitched={onDeviceSwitched}
+                  notify={notify}
+                  report={report}
+                />
+              ) : undefined
+            }
+            deviceName={device?.display_name ?? null}
+            estimateS={estimateOf(engine.previewSummary)}
+            doc={doc}
+            has={has}
+            run={run}
+            report={report}
+          />
+          <CutsLayers
+            doc={doc}
+            selection={selection}
+            machine={machine}
+            has={has}
+            run={run}
+            report={report}
+            notify={notify}
+            onSelectLayer={(id, all) => {
+              if (all && doc) setSelection(selectLayerObjects(doc, id));
+              else setSelection({ objects: [], layer: id, stock: false });
+            }}
+          />
+          {libsUi.dock}
+          <Dock help="preview-and-framing#the-toolpath-card" id="machine" title={t("lp.toolpath")}>
+            <PreviewStatsCard
+              preview={engine.preview}
+              error={engine.previewError ? friendlyError(engine.previewError, doc) : null}
+              enabled={previewOn}
+              doc={doc}
+              options={previewOptions}
+              onOptions={setPreviewOptions}
+            />
+            {selectedLayer && <LayerSection layer={selectedLayer} machine={machine} run={run} report={report} has={has} hasImages={layerHasImages(doc, selectedLayer.id)} />}
+          </Dock>
+        </div>
       ) : (
         <div className="props">
           <LaserDock
@@ -1707,8 +1759,10 @@ export function App() {
       doc={doc}
       selection={selection}
       snap={prefs.snap}
-      machineText={statusMachineText(machineState(machine), t)}
-      estimateS={workspace === "design" ? estimateOf(engine.previewSummary) : null}
+      machineText={DESIGN_ONLY ? undefined : statusMachineText(machineState(machine), t)}
+      // OpenEtch Design: "Estimate for <device>" in both workspaces (the Preview window shows it too).
+      estimateS={DESIGN_ONLY || workspace === "design" ? estimateOf(engine.previewSummary) : null}
+      estimateDevice={DESIGN_ONLY ? (device?.display_name ?? null) : undefined}
     />
   );
 
@@ -1760,7 +1814,7 @@ export function App() {
   );
 
   // The production cockpit is a mode of the app: nothing else is shown (its own STOP; the app's toasts and dialogs).
-  if (prodUi.cockpitOpen) return prodUi.renderCockpit(overlays);
+  if (!DESIGN_ONLY && prodUi.cockpitOpen) return prodUi.renderCockpit(overlays);
 
   if (layout === "phone") {
     const themeName = { light: t("theme.light"), dark: t("theme.dark"), system: t("theme.system") }[themePref];
@@ -1774,7 +1828,7 @@ export function App() {
       <PhoneShell
         className={`ws-${workspace}`}
         topBar={(openMenu) => topBar(openMenu)}
-        banner={<ConnectionBanner />}
+        banner={DESIGN_ONLY ? <DesignStrip /> : <ConnectionBanner />}
         canvas={canvasStage}
         canvasHud={
           <>
@@ -1836,7 +1890,7 @@ export function App() {
         jobSheet={workspace === "laser" ? rightContent : null}
         // Start (with the Job Checklist when there is no PIN) pinned under the Job sheet's header: in view at every
         // sheet height. LaserDock leaves its own Start row out on the phone; STOP stays in the top bar.
-        jobPinned={workspace === "laser" ? <StartButton variant="sheet" /> : null}
+        jobPinned={!DESIGN_ONLY && workspace === "laser" ? <StartButton variant="sheet" /> : null}
         onTab={(tab) => {
           const w: Workspace = tab === "job" ? "laser" : "design";
           if (w !== workspace) switchWorkspace(w);
@@ -1857,6 +1911,9 @@ export function App() {
                 {moreRow(t("fm.open"), () => file.setModal({ kind: "open" }), file.busy)}
                 {moreRow(t("fm.save"), () => saveFile(), file.busy)}
                 {moreRow(t("fm.saveAs"), () => file.setModal({ kind: "saveAs" }), file.busy)}
+                {/* OpenEtch Design: what leaves the browser is a file (components/fileMenuModel.ts `design`). */}
+                {DESIGN_ONLY && moreRow(t("dm.downloadCopy"), file.downloadOpenetch, file.busy)}
+                {DESIGN_ONLY && moreRow(t("dm.exportLbrn2"), () => file.setModal({ kind: "export" }), file.busy)}
                 {moreRow(t("fm.import"), openImport, file.busy)}
                 {/* The full File menu (Export, Save RD / G-code, templates...), named so it does not read "File" twice. */}
                 <div className="phone-filemenu">{phoneFileMenu}</div>
@@ -1956,7 +2013,7 @@ export function App() {
   return (
     <div className={`app ws-${workspace}`} style={sizeVars} data-focus={focus ? "" : undefined} data-guide={guideW ? "" : undefined}>
       {topBar()}
-      <ConnectionBanner />
+      {DESIGN_ONLY ? <DesignStrip /> : <ConnectionBanner />}
       {tabs.bar && <div className="doc-tabs-row">{tabs.bar}</div>}
       {layout !== "tablet" && toolbar}
       <div className="main">
@@ -1990,7 +2047,7 @@ export function App() {
           overlay={overlay === "right"}
           onOverlay={setRightOverlay}
           // The area's name, not one of its windows' (Cuts / Layers, the libraries, Shape Properties; Laser, Machine...).
-          label={workspace === "laser" ? t("shell.areaLaser") : t("shell.areaDesign")}
+          label={workspace === "laser" ? (DESIGN_ONLY ? t("dm.areaPreview") : t("shell.areaLaser")) : t("shell.areaDesign")}
         >
           <DockAreaHost area="right" />
           {rightContent}

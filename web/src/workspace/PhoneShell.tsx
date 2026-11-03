@@ -19,6 +19,7 @@ import { sendRevealSelection } from "./viewStatus.ts";
 import { useT } from "./usePrefs.ts";
 import "./phone.css";
 import { Icon } from "../components/ui.tsx";
+import { DESIGN_ONLY } from "../mode.ts";
 
 export type PhoneTab = "canvas" | "layers" | "job" | "more";
 export const PHONE_TABS: readonly PhoneTab[] = ["canvas", "layers", "job", "more"];
@@ -31,7 +32,7 @@ export const PHONE_CANVAS_EVENT = "openetch:phone-canvas";
 
 /** Each tab's sheet height when it opens. */
 const OPEN_AT: Record<PhoneTab, SheetSnap> = { canvas: "peek", layers: "half", job: "half", more: "full" };
-const ICON: Record<PhoneTab, string> = { canvas: "pointer", layers: "layers", job: "zap", more: "more" };
+const ICON: Record<PhoneTab, string> = { canvas: "pointer", layers: "layers", job: DESIGN_ONLY ? "eye" : "zap", more: "more" };
 
 export interface PhoneShellProps {
   /** The top bar; `openMenu` opens the More sheet (the bar's menu button). */
@@ -150,7 +151,8 @@ export function PhoneShell(p: PhoneShellProps) {
   const titles: Record<PhoneTab, string> = {
     canvas: hasSelection ? t("shell.phoneSelection") : t("shell.phoneTools"),
     layers: t("shell.phoneLayers"),
-    job: t("shell.phoneJob"),
+    // OpenEtch Design (mode.ts): no job to run, the preview and the estimate.
+    job: DESIGN_ONLY ? t("dm.preview") : t("shell.phoneJob"),
     more: t("shell.more"),
   };
   const content: Record<PhoneTab, ReactNode> = {

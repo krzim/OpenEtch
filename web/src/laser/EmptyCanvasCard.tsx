@@ -10,6 +10,7 @@ import { chipState } from "./statusChip.ts";
 import { useLaserLive } from "./useLaserLive.ts";
 import "./laser.css";
 import { HelpLink } from "../guide/HelpLink.tsx";
+import { DESIGN_ONLY } from "../mode.ts";
 
 export interface EmptyCanvasCardProps {
   onImport: () => void;
@@ -69,10 +70,13 @@ export function EmptyCanvasCard(p: EmptyCanvasCardProps) {
             </button>
           )}
         </div>
-        <p className={`empty-card-laser tone-${chip.tone}`} role="status">
-          <span className="status-chip-dot" aria-hidden="true" />
-          {device ? t("lz.emptyLaser", { device, state: chip.text }) : t("lz.emptyLaserUnknown", { state: chip.text })}
-        </p>
+        {/* OpenEtch Design has no laser to report. */}
+        {!DESIGN_ONLY && (
+          <p className={`empty-card-laser tone-${chip.tone}`} role="status">
+            <span className="status-chip-dot" aria-hidden="true" />
+            {device ? t("lz.emptyLaser", { device, state: chip.text }) : t("lz.emptyLaserUnknown", { state: chip.text })}
+          </p>
+        )}
       </section>
     </HudItem>
   );

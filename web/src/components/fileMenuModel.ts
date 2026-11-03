@@ -26,6 +26,11 @@ export interface FileMenuInput {
   /** Save RD file: only while the active device is a Ruida gantry. */
   saveRd?: () => void;
   devices?: () => void;
+  /**
+   * OpenEtch Design (mode.ts): what leaves the browser is a file, so Export LightBurn .lbrn2 and Download a copy
+   * (.openetch) are top-level rows under Save As, with these labels.
+   */
+  design?: { exportLightBurn: string; downloadCopy: string };
   /** Entries other layers contribute, by section. */
   parts: Partial<Record<FileSection, MenuItem[]>>;
   /** Labels (translated). */
@@ -85,6 +90,12 @@ export function buildFileMenu(i: FileMenuInput): MenuItem[] {
     { sep: true },
     { label: L.save, icon: "save", actionId: "file.save", disabled: d, action: i.save },
     { label: L.saveAs, actionId: "file.saveAs", disabled: d, action: i.saveAs },
+    ...(i.design
+      ? [
+          { label: i.design.downloadCopy, icon: "save", hint: ".openetch", disabled: d, action: i.downloadOpenetch } as MenuItem,
+          { label: i.design.exportLightBurn, icon: "upload", hint: ".lbrn2", disabled: d, action: i.exportLightBurn } as MenuItem,
+        ]
+      : []),
     { sep: true },
     { label: L.import, icon: "import", actionId: "file.import", disabled: d, action: i.importFiles },
     sub(L.export, exportItems, "upload"),

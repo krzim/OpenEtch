@@ -20,6 +20,8 @@ export interface StatusBarProps {
   machineText?: string;
   /** The job's estimated time, s, planned in the browser (Design workspace); null hides it. */
   estimateS?: number | null;
+  /** OpenEtch Design: the design device the estimate is for ("Estimate for <device>: 2 min"). */
+  estimateDevice?: string | null;
 }
 
 export function StatusBar(p: StatusBarProps) {
@@ -59,8 +61,8 @@ export function StatusBar(p: StatusBarProps) {
       </span>
       <span className="sb-spacer" />
       {typeof p.estimateS === "number" && p.estimateS > 0 && (
-        <span className="sb-cell sb-estimate" title={t("status.estimateTitle")}>
-          {t("status.estimate", { time: formatDuration(p.estimateS) })}
+        <span className="sb-cell sb-estimate" title={p.estimateDevice ? t("dm.estimateForTitle", { device: p.estimateDevice }) : t("status.estimateTitle")}>
+          {p.estimateDevice ? t("dm.estimateFor", { device: p.estimateDevice, time: formatDuration(p.estimateS) }) : t("status.estimate", { time: formatDuration(p.estimateS) })}
         </span>
       )}
       {p.machineText && <span className="sb-cell sb-machine">{p.machineText}</span>}

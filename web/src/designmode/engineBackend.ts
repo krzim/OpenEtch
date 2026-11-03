@@ -28,7 +28,12 @@ export function engineBackend(): DesignBackend {
       const bare = path.split("?")[0];
       const stub = machineStub(method, bare);
       if (stub) {
-        if (stub.status === 404) console.warn(`[design] machine route called: ${method} ${bare}`);
+        if (stub.status === 404) {
+          console.warn(`[design] machine route called: ${method} ${bare}`);
+          // The device harness (e2e/design.mjs) reads these.
+          const g = globalThis as { __oeDesignMachineCalls?: string[] };
+          (g.__oeDesignMachineCalls ??= []).push(`${method} ${bare}`);
+        }
         return jsonResponse(stub.status, stub.body);
       }
       if (method === "GET" && bare === "/api/devices") return jsonResponse(200, designDeviceList(active));

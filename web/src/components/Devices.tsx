@@ -53,6 +53,7 @@ import { useLayoutMode } from "../workspace/layoutMode.ts";
 import { useT } from "../workspace/usePrefs.ts";
 import { tr } from "../workspace/tr.ts";
 import { errorText } from "../api/errorText.ts";
+import { DESIGN_ONLY } from "../mode.ts";
 
 type Notify = (msg: string, kind?: "info" | "error") => void;
 
@@ -438,7 +439,10 @@ export function DevicesWindow(p: {
   const activateBlock = activateBlocker(device, list, p.machine);
   const removeBlock = removeBlocker(device, list);
   const phone = useLayoutMode().layout === "phone";
-  const addItems: MenuItem[] = [
+  // OpenEtch Design: devices come only from a file read here in the browser (no engine computer, no machine to add).
+  const addItems: MenuItem[] = DESIGN_ONLY
+    ? [{ label: t("dv.importFile"), icon: "upload", action: () => input.current?.click() }]
+    : [
     { label: t("dv.importFromLightburnOnThisComputer"), action: () => void runImport(null, "all", t("dv.lightburnOnTheEngineComputer")) },
     { label: t("dv.importFile"), icon: "upload", action: () => input.current?.click() },
     { label: t("dv.importEzcad"), title: t("dv.addADeviceFromAnEzcad"), action: () => markcfgInput.current?.click() },
@@ -623,7 +627,7 @@ export function DevicesWindow(p: {
                       )}
                       {d.display_name}
                     </span>
-                    {!d.controllable && <span className="dev-tag">design only</span>}
+                    {!DESIGN_ONLY && !d.controllable && <span className="dev-tag">design only</span>}
                   </td>
                   <td>
                     {d.name}
@@ -665,7 +669,7 @@ export function DevicesWindow(p: {
           onClose={() => setEditing(false)}
         />
       )}
-      <p className="hint">{t("dv.importHint")}</p>
+      <p className="hint">{DESIGN_ONLY ? t("dm.devicesHint") : t("dv.importHint")}</p>
     </Modal>
   );
 }
@@ -700,8 +704,13 @@ function DeviceSettings(p: { device: DeviceSummary; details: { d: DeviceDetails 
         <dd>{originLabel(device.origin)}</dd>
         <dt>{t("dv.source")}</dt>
         <dd>{sourceLabel(device.source)}</dd>
-        <dt>{t("dv.runsJobs")}</dt>
-        <dd>{device.controllable ? t("rest.yes") : t("dv.noDesignOnly")}</dd>
+        {/* OpenEtch Design runs no jobs on any device. */}
+        {!DESIGN_ONLY && (
+          <>
+            <dt>{t("dv.runsJobs")}</dt>
+            <dd>{device.controllable ? t("rest.yes") : t("dv.noDesignOnly")}</dd>
+          </>
+        )}
         {d?.base && (
           <>
             <dt>{t("dv.profileBase")}</dt>

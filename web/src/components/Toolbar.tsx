@@ -27,6 +27,7 @@ import { formatChord } from "./formatChord.ts";
 import { hintFor } from "../workspace/hotkeys.ts";
 
 import { ARRANGE_ACTION_ID, type ArrangeAction } from "./arrangeActions.ts";
+import { DESIGN_ONLY } from "../mode.ts";
 
 export type { ArrangeAction };
 
@@ -287,7 +288,7 @@ export function Toolbar(p: ToolbarProps) {
           ]
         : [
             { label: t("tb.preview"), checked: p.showPreview, action: p.onTogglePreview },
-            { label: t("tb.frame"), disabled: !!p.designOnly, action: p.onFrame },
+            ...(DESIGN_ONLY ? [] : [{ label: t("tb.frame"), disabled: !!p.designOnly, action: p.onFrame }]),
           ]),
       { label: t("tb.browserPanel"), checked: p.leftOpen, action: p.onToggleLeft },
       { label: t("tb.propertiesPanel"), checked: p.rightOpen, action: p.onToggleRight },
@@ -326,6 +327,9 @@ export function Toolbar(p: ToolbarProps) {
             <RibbonGroup id="preview" label={t("tb.preview")} icon="preview" priority={100} pinned>
               <ToolButton icon="preview" label={t("tb.preview")} active={p.showPreview} onClick={p.onTogglePreview} title={t("tb.previewTitle")} />
             </RibbonGroup>
+            {/* OpenEtch Design (mode.ts) has no laser: no framing, Start or production. */}
+            {!DESIGN_ONLY && (
+            <>
             <RibbonGroup id="job" label={t("rb.job")} icon="run" priority={100} pinned>
               <span className="rb-split">
                 <ToolButton icon="frame" label={t("tb.frame")} onClick={p.onFrame} disabled={!!p.designOnly} title={p.designOnly ?? t("tb.frameTitle")} />
@@ -342,6 +346,8 @@ export function Toolbar(p: ToolbarProps) {
               <ToolButton icon="gauge" label={t("prod.cockpit")} onClick={() => runHotkeyAction("production.cockpit")} title={t("prod.cockpitTitle")} />
               <ToolButton icon="ledger" label={t("prod.ledger")} onClick={() => runHotkeyAction("production.ledger")} />
             </RibbonGroup>
+            </>
+            )}
           </>
         )}
         {endCaps}
