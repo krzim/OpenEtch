@@ -14,8 +14,9 @@ pub struct Moment {
 }
 
 impl Moment {
-    /// Now, in local time (native builds). The zone is written as an offset, e.g. `UTC+02:00`.
-    #[cfg(feature = "system")]
+    /// Now, in local time (feature `clock`: the system clock natively, JS `Date` with `wasm-clock`). The zone is
+    /// written as an offset, e.g. `UTC+02:00`.
+    #[cfg(feature = "clock")]
     pub fn now() -> Moment {
         let now = chrono::Local::now();
         let off = now.offset().local_minus_utc();

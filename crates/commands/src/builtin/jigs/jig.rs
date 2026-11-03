@@ -568,16 +568,10 @@ impl Command for JigImport {
             let cmd = Self::ID;
             let r = match i.format {
                 JigFormat::Svg => super::super::svg_import::ImportSvg::apply(doc, from_json(cmd, json!({ "svg": i.content, "split": true, "name": "Jig drawing" }))?)?,
-                #[cfg(not(target_arch = "wasm32"))]
                 JigFormat::Dxf => super::super::dxf::ImportDxf::apply(
                     doc,
                     from_json(cmd, json!({ "content": i.content, "split": true, "keep_position": i.keep_position, "name": "Jig drawing" }))?,
                 )?,
-                #[cfg(target_arch = "wasm32")]
-                JigFormat::Dxf => {
-                    let _ = i.keep_position;
-                    return Err(invalid(cmd, "DXF jigs are read by the engine only"));
-                }
             };
             let created: Vec<ObjectId> = r.0["created"].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(String::from)).collect();
             if created.is_empty() {

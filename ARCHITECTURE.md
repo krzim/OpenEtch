@@ -64,11 +64,11 @@ the laser: tested on the simulator only.
 | `doc` | Document model: stock, layers with MOPA cut settings, objects (kurbo paths + affine transforms), guides, output curve tolerance. **Pure data + geometry helpers.** | kurbo, geom (polygon outlines) | no |
 | `lbrn` | LightBurn `.lbrn2` projects and `.clb` material libraries: parse, write, convert to and from `doc` for a galvo field or a gantry bed (`lbrn::Frame`, see "File formats"). **Pure.** | doc, kurbo, roxmltree | no |
 | `geom` | 2D geometry on kurbo paths in mm: polygon booleans, weld, cut, offsets (`i_overlay`), curve-preserving path tools (break apart, join, close, optimize, arc fitting and smoothing, fillet on any corner, trim, extend), node editing, generators (polygons, convex hull, tangent circles), warp/deform, path walking, bounding-box and true-shape nesting. **Pure.** | kurbo, i_overlay | no (wasm-ok) |
-| `text` | Text like LightBurn (see "Text"): fonts (installed TrueType/OpenType via fontdb + harfrust shaping + skrifa outlines, the bundled single-line Hershey fonts, AutoCAD `.shx`, EzCad `.jsf`), layout, variable text, barcodes (rxing). **Pure** except font discovery and the clock (feature `system`). | doc, geom, kurbo | `system` feature only (wasm-ok without) |
+| `text` | Text like LightBurn (see "Text"): fonts (installed TrueType/OpenType via fontdb + harfrust shaping + skrifa outlines, the bundled single-line Hershey fonts, AutoCAD `.shx`, EzCad `.jsf`), layout, variable text, barcodes (rxing). **Pure** except font discovery and the clock (feature `system`; `wasm-clock` reads JS `Date` in the browser, and the browser adds its fonts as data). | doc, geom, kurbo | `system` feature only (wasm-ok without) |
 | `commands` | Command registry: every change to a document goes through a registered command with a JSON Schema. Session with a Fusion-style timeline (see "History timeline"). | doc, geom, text | no |
 | `plan` | Document → job: flatten paths, hatch fills, Offset Fill and kerf offsets (through `geom`), raster images (decode, adjust, dither; see "Image engraving"), order travel, encode to LMC list packets for a `MachineProfile`. Also simulation (decode packets to a preview). | doc, lmc, geom, image | no |
 | `machine` | Machine profile (TOML, importable from EzCad `markcfg7` and from a LightBurn device, see "LightBurn devices"), devices (`machine::device`: LightBurn-style device model, family, workspace, origin), the `Link` transport trait, `SimLink`, `UsbLink` (nusb, feature `usb`), `Controller` (init, .cor upload, light framing, run, abort); the GRBL driver (`machine::grbl`) and the Ruida driver (`machine::ruida`). | lmc, corfile, ruida | `usb` feature only |
-| `fileio` | File formats and image tools (see "Files and image tools"): SVG/DXF/PDF/AI export and print, PDF/AI/EPS/HPGL/Gerber/Excellon/EzCad/legacy `.lbrn` import, 3D models to depth maps, TIFF/TGA, zip, trace, rasterise, masks. **Pure** except PDF reading (native only). | doc, geom, kurbo, image, roxmltree, miniz_oxide, lopdf | no (wasm-ok without PDF reading) |
+| `fileio` | File formats and image tools (see "Files and image tools"): SVG/DXF/PDF/AI export and print, PDF/AI/EPS/HPGL/Gerber/Excellon/EzCad/legacy `.lbrn` import, 3D models to depth maps, TIFF/TGA, zip, trace, rasterise, masks. **Pure** (PDF reading on wasm32 takes lopdf's random source from WebCrypto). | doc, geom, kurbo, image, roxmltree, miniz_oxide, lopdf | no (wasm-ok) |
 | `engine` | Binary. axum HTTP + WebSocket API for the web UI, MCP server (rmcp), run approval, serves `web/dist`. | all | yes |
 | `web/` | Fusion-style UI: React + TypeScript + Vite. Talks to the engine over HTTP + WebSocket. | – | – |
 
@@ -1345,7 +1345,7 @@ nothing here approves or starts a run.
   circle / any closed path, enabled), keep-out walls and a plate outline are stored in the jig frame, so `jig.move`
   changes two numbers. `jig.create` (a grid), `jig.from_objects` (closed outlines become pockets: circles and
   axis-aligned rectangles are recognised; the largest outline holding the rest becomes the plate), `jig.import
-  {content, format: svg|dxf}` (DXF native only), `jig.edit` (name, material height, numbering rows / columns /
+  {content, format: svg|dxf}`, `jig.edit` (name, material height, numbering rows / columns /
   serpentine; ids stay), `jig.set_pockets`, `jig.add_keep_out`, `jig.remove_keep_out` (delete or switch),
   `jig.delete`, `jig.list` (Query; per pocket its id, number, order among the enabled pockets, field centre and the
   objects placed there: what a per-slot production record needs).
@@ -1464,7 +1464,7 @@ request or approve a run. At most 50 entries, 50 steps each.
 
 ## Files and image tools
 
-Crate `fileio` (pure and wasm-ok except PDF reading), commands in `crates/commands/src/builtin/{files,image_tools,
+Crate `fileio` (pure and wasm-ok), commands in `crates/commands/src/builtin/{files,image_tools,
 pages}.rs`, routes in `crates/engine/src/userfiles.rs` (its module docs list them). LightBurn behaviour from its docs
 (File Management, Trace Image, Convert to Bitmap, Apply Mask to Image, Image Options, Save Processed Bitmap, Print,
 Pages, Show Notes, Managing Preferences, User Bundles, Import 3D Model, 3D Sliced Engravings).
@@ -1485,7 +1485,7 @@ Pages, Show Notes, Managing Preferences, User Bundles, Import 3D Model, 3D Slice
   image's own grid at the line interval; PNG with its dpi; `GET /api/images/{id}/file`, `.../processed.png`).
 - **Imports** (each Edit, one undo step; placement as `art.import_dxf`: `layer`, `name`, `width_mm`,
   `keep_position` (default centred), `split` (default one object per path in a group named after the file)).
-  `art.import_pdf {data_base64, page?, hidden_layers?}` (native only; lopdf): the page's paths, rectangles and form
+  `art.import_pdf {data_base64, page?, hidden_layers?}` (lopdf): the page's paths, rectangles and form
   XObjects with the CTM, in mm; optional content that is off (hidden Illustrator layers) unless `hidden_layers`;
   image XObjects as image objects where the page draws them (JPEG kept as is; 8-bit gray/RGB/CMYK/ICC/indexed and
   1-bit gray decoded to PNG with the soft mask as alpha; stencil masks, inline images, JPEG 2000/CCITT/JBIG2 left out

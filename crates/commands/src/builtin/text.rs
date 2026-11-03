@@ -22,16 +22,10 @@ const MAX_TEXT: usize = 10_000;
 /// Most cells a loaded CSV file may have (the rows live in the document, which every edit copies for undo).
 const MAX_CSV_CELLS: usize = 1_000_000;
 
-/// The moment date/time variable text shows: now on native builds, none (the format is shown) in the browser.
+/// The moment date/time variable text shows: now, from the system clock (native) or JS `Date` (the browser, through
+/// text's `wasm-clock`).
 pub fn now() -> Option<text::Moment> {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        Some(text::Moment::now())
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        None
-    }
+    Some(text::Moment::now())
 }
 
 /// The device name the cut-setting `L` code shows: the LightBurn device the document came from, if any.
