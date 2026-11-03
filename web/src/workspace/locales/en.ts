@@ -98,7 +98,6 @@ export const EN = {
   "help.readme": "OpenEtch README",
   "help.architecture": "Architecture (engine API, MCP)",
   "help.webReadme": "Web UI README",
-  "help.lightburn": "LightBurn documentation",
   "help.issues": "Report a problem",
   "help.about": "About OpenEtch",
   "help.aboutTitle": "About OpenEtch",

@@ -63,7 +63,6 @@ export const ES: Messages = {
 
   "help.menu": "Ayuda",
   "help.hotkeys": "Atajos de teclado",
-  "help.lightburn": "Documentación de LightBurn",
   "help.issues": "Informar de un problema",
   "help.about": "Acerca de OpenEtch",
   "help.aboutTitle": "Acerca de OpenEtch",

@@ -22,7 +22,6 @@ export const DOC_LINKS = {
   architecture: `${REPO_URL}/blob/main/ARCHITECTURE.md`,
   webReadme: `${REPO_URL}/blob/main/web/README.md`,
   issues: `${REPO_URL}/issues`,
-  lightburn: "https://docs.lightburnsoftware.com/",
 };
 
 /** The web UI's version (package.json, injected by vite.config.ts; "dev" under the Node test runner). */
@@ -108,7 +107,6 @@ export function HelpItems(p: { close: () => void; onHotkeys: () => void; onAbout
       {link(DOC_LINKS.readme, t("help.readme"))}
       {link(DOC_LINKS.architecture, t("help.architecture"))}
       {link(DOC_LINKS.webReadme, t("help.webReadme"))}
-      {link(DOC_LINKS.lightburn, t("help.lightburn"))}
       {link(DOC_LINKS.issues, t("help.issues"))}
       <div className="menu-sep" role="separator" />
       {p.helpExtra && (
