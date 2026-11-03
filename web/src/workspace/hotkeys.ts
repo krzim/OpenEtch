@@ -154,7 +154,7 @@ export const ACTIONS: HotkeyAction[] = [
 
   ws("laser.frameSelection", "laser", "Frame selection", ["Ctrl+Shift+A"]),
   ws("laser.frameSquare", "laser", "Frame (bounding box)", ["Alt+R"]),
-  ws("laser.frameOutline", "laser", "Frame outline (rubber band)", ["Alt+Shift+R"]),
+  ws("laser.frameOutline", "laser", "Frame outline (contour)", ["Alt+Shift+R"]),
   ws("laser.frameStop", "laser", "Stop framing", []),
   // LightBurn's Start (Alt+S) here requests a run: it still needs the PIN approval.
   ws("laser.requestRun", "laser", "Request run", ["Alt+S"]),

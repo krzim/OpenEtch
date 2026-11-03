@@ -295,8 +295,14 @@ export function counterText(c: CycleStatus): { text: string; share: number | nul
 // ---- slots and the ledger -----------------------------------------------------------------------------------------
 
 /** One slot's line in the cockpit: what it shows next, or why it is left out. */
+/** The values a slot shows, each once: the tag's text and its QR code usually carry the same number ("SN 0001",
+ * not "SN 0001 · SN 0001"). */
+export function distinctShown(values: readonly { shown: string }[]): string[] {
+  return [...new Set(values.map((v) => v.shown).filter((x) => x !== ""))];
+}
+
 export function slotLine(s: Slot): { label: string; value: string; state: "marks" | "empty" | "past_end"; badge: string } {
-  const value = s.values.map((v) => v.shown).filter((x) => x !== "").join(" · ") || String(s.value);
+  const value = distinctShown(s.values).join(" · ") || String(s.value);
   return { label: s.label, value, state: s.empty ? "empty" : s.past_end ? "past_end" : "marks", badge: slotBadge(s) };
 }
 
@@ -355,7 +361,7 @@ export function ledgerRows(entries: readonly LedgerEntry[]): LedgerRow[] {
         project: e.project ?? e.document,
         slot: s.number,
         label: slotLabel(s),
-        shown: s.values.map((v) => v.shown).join(" · ") || String(s.value),
+        shown: distinctShown(s.values).join(" · ") || String(s.value),
         marked: s.marked,
         skipped: s.skipped ?? null,
         remarkOf: e.remark_of ? `${e.remark_of.run_id} #${e.remark_of.slot}` : null,

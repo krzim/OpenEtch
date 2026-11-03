@@ -25,6 +25,11 @@ export const EN_GUIDE = {
   "guide.helpFor": "Help: {topic}",
   "guide.opensNewTab": "(opens in a new tab)",
   "guide.imageMissing": "Picture not found: {name}",
+  "guide.docTitle": "OpenEtch user guide",
+  "guide.onThisPage": "On this page",
+  "guide.zoomImage": "Show the picture full size",
+  "guide.zoomActual": "Click for the picture's own size",
+  "guide.zoomFit": "Click to fit the picture to the screen",
   // Topics of "?" buttons whose panel has no title string of its own ("Help: <topic>").
   "guide.topic.imageSettings": "Image settings",
   "guide.topic.offField": "Objects outside the field",

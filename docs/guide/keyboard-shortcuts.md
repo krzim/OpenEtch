@@ -30,7 +30,7 @@ Type in **Search actions or keys** to find an action or a key. Actions are group
 
 ## Change a shortcut {#edit-hotkeys}
 
-1. Open the list and click **Edit…**. Or choose **File > Settings > Edit hotkeys…**, or click **Edit hotkeys…** in Preferences. The title changes to **Edit hotkeys**.
+1. Open the list and click **Edit…** Or choose **File > Settings > Edit hotkeys…**, or click **Edit hotkeys…** in Preferences. The title changes to **Edit hotkeys**.
 2. Next to an action, click **+**. It reads **Press a key… (Esc cancels)**.
 3. Press the key or chord you want.
 4. To remove a key, click **×** on it. To put a changed action back, click **↺** (**Back to the default keys**).
@@ -198,7 +198,7 @@ Hold `Space` and drag, or drag with the middle mouse button, to pan the canvas.
 |---|---|
 | Frame selection | `Ctrl+Shift+A` |
 | Frame (bounding box) | `Alt+R` |
-| Frame outline (rubber band) | `Alt+Shift+R` |
+| Frame outline (contour) | `Alt+Shift+R` |
 | Stop framing | none |
 | Request run | `Alt+S` |
 | Pause / resume the job | `Pause` |

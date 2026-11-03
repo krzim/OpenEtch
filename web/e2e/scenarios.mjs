@@ -146,6 +146,33 @@ export async function menuPath(page, labels) {
   await sleep(500);
 }
 
+/** The guide is what shows where it lies (centre and corners hit it), and its bar's buttons are hit-testable. */
+async function guideOnTop(page) {
+  const r = await page.evaluate(() => {
+    const g = document.querySelector(".guide");
+    if (!g) return { missing: true };
+    const b = g.getBoundingClientRect();
+    const pts = [
+      [b.left + b.width / 2, b.top + b.height / 2],
+      [b.left + 12, b.bottom - 12],
+      [b.right - 12, b.top + b.height / 3],
+    ];
+    const misses = pts.filter(([x, y]) => {
+      const e = document.elementFromPoint(x, y);
+      return !e || !g.contains(e);
+    });
+    const bar = [...g.querySelectorAll(".guide-bar button, .guide-bar a")].filter((e) => {
+      const q = e.getBoundingClientRect();
+      const h = document.elementFromPoint(q.left + q.width / 2, q.top + q.height / 2);
+      return !h || !(h === e || e.contains(h));
+    });
+    return { misses: misses.length, covered: bar.map((e) => e.getAttribute("aria-label") ?? e.textContent) };
+  });
+  if (r.missing) throw new Error("no guide");
+  if (r.misses) throw new Error(`the guide is covered at ${r.misses} of 3 points`);
+  if (r.covered.length) throw new Error(`guide bar buttons covered: ${r.covered.join(", ")}`);
+}
+
 export async function pressFind(page, selector, text) {
   const c = await find(page, selector, text);
   if (!c) throw new Error(`not found: ${selector}${text ? ` "${text}"` : ""}`);
@@ -644,6 +671,51 @@ function stepsFor(d) {
     await sleep(400);
     if (await page.evaluate(() => !!document.querySelector(".guide"))) throw new Error("the guide is still open");
   });
+  // A "?" inside a dialog (Preferences): the guide shows on top where it is (beside the dialog on a wide screen, over
+  // it on a narrow one), readable and clickable; Close the guide leaves the dialog open.
+  add("guide-dialog-help", async ({ page }) => {
+    await escape(page);
+    const gear = await find(page, ".topbar button", "Preferences");
+    if (gear?.hit) await page.press(gear.x, gear.y);
+    else {
+      await pressFind(page, "button", "More");
+      await sleep(350);
+      await pressFind(page, "[role=menuitem], .menu-item", "Preferences");
+    }
+    if (!(await page.waitFor(".oe-dialog", { timeout: 5000 }))) throw new Error("no Preferences dialog");
+    await sleep(300);
+    await pressFind(page, ".oe-dialog .help-link");
+    if (!(await page.waitFor(".guide-md h1", { timeout: 8000 }))) throw new Error("the guide did not open from the dialog's ?");
+    await sleep(500);
+    await guideOnTop(page);
+  }, ["tablet", "desktop"]);
+  add("guide-dialog-close", async ({ page }) => {
+    await pressFind(page, ".guide-bar button", "Close the guide");
+    await sleep(400);
+    if (await page.evaluate(() => !!document.querySelector(".guide"))) throw new Error("the guide is still open");
+    if (!(await page.evaluate(() => !!document.querySelector(".oe-dialog")))) throw new Error("the dialog closed with the guide");
+    await escape(page);
+    await sleep(300);
+  }, ["tablet", "desktop"]);
+  // The production cockpit's "?": the guide under the cockpit's own bar, its Close hit-testable (not under STOP).
+  add("guide-cockpit-help", async ({ page }) => {
+    await escape(page);
+    await page.evaluate(() => {
+      location.hash = "#/cockpit";
+    });
+    if (!(await page.waitFor(".cockpit-bar", { timeout: 8000 }))) throw new Error("the cockpit did not open");
+    await sleep(800);
+    await escape(page);
+    await pressFind(page, ".cockpit .help-link");
+    if (!(await page.waitFor(".guide-md h1", { timeout: 8000 }))) throw new Error("the guide did not open from the cockpit's ?");
+    await sleep(500);
+    await guideOnTop(page);
+    await pressFind(page, ".guide-bar button", "Close the guide");
+    await sleep(400);
+    if (await page.evaluate(() => !!document.querySelector(".guide"))) throw new Error("Close the guide did not close it in the cockpit");
+    await pressFind(page, ".cockpit-exit");
+    await sleep(500);
+  }, ["tablet", "desktop"]);
   add("keyboard-input", async ({ page, ctx }) => {
     // A focused numeric field with the on-screen keyboard up (the visual viewport shrinks by the keyboard height).
     const f = await find(page, "button", "Fit field");

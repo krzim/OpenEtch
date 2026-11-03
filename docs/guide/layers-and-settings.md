@@ -139,7 +139,7 @@ The top of the window has the layer itself:
 
 Under the **Cut settings** heading is a row of tabs: **Main** and one per sub-layer, in burn order. Each tab shows a short summary of its settings. The form below edits the open tab.
 
-Below the form come **More settings** (see [More settings](#more-settings)), the image settings when the layer holds images (see [Images](images.md)), and **Delete layer…**.
+Below the form come **More settings** (see [More settings](#more-settings)), the image settings when the layer holds images (see [Images](images.md)), and **Delete layer…**
 
 ### Mode: line or fill {#fill-vs-line}
 

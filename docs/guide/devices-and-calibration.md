@@ -27,7 +27,7 @@ These kinds of device can be in the list:
 - **GRBL and Ruida gantries you add by hand** (see [Add a GRBL or Ruida gantry](#gantry-devices)). OpenEtch can drive these too, but this is unverified on hardware.
 - **Design-only devices.** Everything else, such as gantry lasers or other galvo boards imported from LightBurn. Their workspace is used for designing and for LightBurn files, but OpenEtch cannot run jobs on them. They are tagged **design only** in the list.
 
-Importing a LightBurn gantry never makes OpenEtch drive it. A gantry only runs jobs when you add it yourself with **New GRBL…** or **New Ruida…**.
+Importing a LightBurn gantry never makes OpenEtch drive it. A gantry only runs jobs when you add it yourself with **New GRBL…** or **New Ruida…**
 
 ## Open the Devices window {#devices-window}
 
@@ -37,7 +37,7 @@ On a computer or tablet:
 - press `Alt+Shift+M`, or
 - in the Laser workspace, click **Devices** next to the device dropdown at the top of the **Laser** window.
 
-On a phone, device editing is a desktop feature, so it is not in the phone's menus. It still opens: tap **More**, open **Desktop features** and tap **Devices, device settings and the lens wizard…**.
+On a phone, device editing is a desktop feature, so it is not in the phone's menus. It still opens: tap **More**, open **Desktop features** and tap **Devices, device settings and the lens wizard…**
 
 ![The Devices window with the device list, the selected device's settings and the footer buttons](img/devices-window.webp)
 
@@ -100,7 +100,7 @@ EzCad keeps the laser's own settings in a file called `markcfg7`, in the laser's
 
 1. Copy `markcfg7` from the computer that came with the laser.
 2. Click **Add device > Import EzCad…** and pick the file.
-3. The new device appears in the list, named after the file. Select it and check its settings with **Edit…**.
+3. The new device appears in the list, named after the file. Select it and check its settings with **Edit…**
 
 The import reads the field size, the galvo axis settings (which galvo is X, and the reverse directions), the correction file name, the frame (red light) speed, the speed and frequency range and the start-marking input. Some of these meanings are unverified on hardware, so check them.
 
@@ -108,7 +108,7 @@ The import stores only the correction file's name. To load the `.cor` file itsel
 
 ### Find My Laser / Add galvo {#find-my-laser}
 
-This wizard adds a galvo from its EzCad files in three steps. To open it, choose **File > Laser > Find My Laser / Add galvo…**. On a phone, tap **More**, open **File**, tap **All file commands** and choose **Laser > Find My Laser / Add galvo…**.
+This wizard adds a galvo from its EzCad files in three steps. To open it, choose **File > Laser > Find My Laser / Add galvo…** On a phone, tap **More**, open **File**, tap **All file commands** and choose **Laser > Find My Laser / Add galvo…**
 
 1. **1. Find the laser.** The wizard scans for BJJCZ galvo boards when it opens; click **Scan USB** to scan again. The table shows each board's **Board (VID:PID)**, **Port**, **Serial** and **Status** (**Supported** or not). If nothing is found, check the cable and that EzCad is closed. An engine built without USB support says so; go on to step 2.
 2. **2. EzCad settings.** Click **Choose markcfg7…** and, if you have it, **Choose .cor…** for the lens correction file.
@@ -158,7 +158,7 @@ An AI agent can list devices but cannot switch, import, edit or remove them.
 
 ## Device settings {#device-settings}
 
-To open a device's settings, select it in the Devices window and click **Edit…**. The dialog is called **Device settings:** followed by the device name. The settings are those of a galvo; for a design-only device a note says "OpenEtch cannot drive this device; its settings are kept for LightBurn."
+To open a device's settings, select it in the Devices window and click **Edit…** The dialog is called **Device settings:** followed by the device name. The settings are those of a galvo; for a design-only device a note says "OpenEtch cannot drive this device; its settings are kept for LightBurn."
 
 At the top you can change the **Device name**. The settings are on six pages: **Galvo and basic**, **Ports and laser**, **Z axis / rotary**, **Job**, **Lens** and **Controller**.
 
@@ -302,8 +302,8 @@ You need: a device you can edit (not the built-in one) that is the active device
 
 To calibrate:
 
-1. In the Devices window, duplicate your device if needed, make the copy active and click **Edit…**.
-2. On the **Lens** page, click **Calibrate lens…**.
+1. In the Devices window, duplicate your device if needed, make the copy active and click **Edit…**
+2. On the **Lens** page, click **Calibrate lens…**
 3. **Test pattern:** set the **Pattern size** (by default 65 % of the field width, at most 100 mm) and the **Layer**. Click **Add test pattern**. A square with centre lines and diagonals is added to the design. If you already marked a pattern of this size, click **I have marked it** to go straight to the measurements.
 4. **Mark:** click **Request marking**. This only requests a run of the pattern; nothing fires from the wizard. Check focus and material, then approve the pending run in the Laser window: with the operator PIN (**Approve…**, type the PIN, then **Confirm and fire**), or with **Start** on an engine without a PIN. When it has marked, click **Next**.
 5. **Measure:** measure each line with calipers and type the values: **Top edge**, **Bottom edge**, **Middle horizontal**, **Left edge**, **Right edge**, **Middle vertical**, **Diagonal up (bottom left to top right)** and **Diagonal down (top left to bottom right)**. Every side should be the pattern size; each diagonal is √2 times that.
@@ -369,6 +369,6 @@ An engine started with `--sim-pin` shows **SIMULATOR TEST PIN**: approvals use a
 ## On a phone or tablet {#phone-and-tablet}
 
 - **Tablet:** the Devices window, device settings and the lens wizard work as on a computer.
-- **Phone:** the **Job** tab shows the device dropdown, so you can switch devices. To add, edit or calibrate a device, tap **More > Desktop features > Devices, device settings and the lens wizard…**. The forms are long; a computer or tablet is easier.
+- **Phone:** the **Job** tab shows the device dropdown, so you can switch devices. To add, edit or calibrate a device, tap **More > Desktop features > Devices, device settings and the lens wizard…** The forms are long; a computer or tablet is easier.
 
 ![The phone's More sheet with the Desktop features section open](img/phone-desktop-features.webp)

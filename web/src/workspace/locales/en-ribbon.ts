@@ -43,7 +43,7 @@ export const EN_RIBBON = {
   "rb.frameWithOptions": "Frame (Laser window options)",
   "rb.frameSelection": "Frame the selection",
   "rb.frameBounds": "Frame the bounding box",
-  "rb.frameOutline": "Frame the outline (rubber band)",
+  "rb.frameOutline": "Frame the outline (contour)",
   "rb.search": "Search",
   "rb.searchTitle": "Command search",
   "rb.searchPlaceholder": "Type a command, tool or setting…",

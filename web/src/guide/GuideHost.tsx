@@ -4,7 +4,7 @@
 // stays in view above it), or the whole tab for `?guide` (Open in new tab, main.tsx). The viewer and the guide's
 // pages are one lazy chunk (GuideViewer.tsx), loaded the first time the guide opens, so start-up does not grow.
 
-import { Component, lazy, Suspense, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
+import { Component, lazy, Suspense, useLayoutEffect, useMemo, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
 import { useT } from "../workspace/usePrefs.ts";
 import { closeGuide, guideHashNow, parseGuideHash, subscribeGuide, type GuideRoute } from "./route.ts";
 import "./guide-shell.css";
@@ -84,11 +84,46 @@ export function GuidePane(p: { route: GuideRoute; width: number }) {
   );
 }
 
-/** The guide as a full-screen sheet under the top bar (phones, narrow tablets). */
+/** The bottom of the production cockpit's own bar (its STOP and Exit), or null when the cockpit is not open. */
+function useCockpitBarBottom(): number | null {
+  const [bottom, setBottom] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    const bar = document.querySelector<HTMLElement>(".cockpit-bar");
+    if (!bar) return;
+    const read = () => setBottom(Math.round(bar.getBoundingClientRect().bottom));
+    read();
+    const ro = new ResizeObserver(read);
+    ro.observe(bar);
+    window.addEventListener("resize", read);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", read);
+    };
+  }, []);
+  return bottom;
+}
+
+/** While the sheet lies over a dialog, the dialog is inert: one modal at a time for screen readers and the keyboard
+ * (Close the guide gives it back). */
+function useInertDialogs(): void {
+  useLayoutEffect(() => {
+    const under = [...document.querySelectorAll<HTMLElement>(".modal-backdrop")].filter((e) => !e.inert);
+    for (const e of under) e.inert = true;
+    return () => {
+      for (const e of under) e.inert = false;
+    };
+  }, []);
+}
+
+/** The guide as a full-screen sheet under the top bar (phones, narrow tablets), or under the production cockpit's
+ * bar while the cockpit is open (its bar is taller than the app's). */
 export function GuideSheet(p: { route: GuideRoute; newTab: boolean }) {
   const t = useT();
+  const cockpitBottom = useCockpitBarBottom();
+  useInertDialogs();
+  const style: CSSProperties | undefined = cockpitBottom === null ? undefined : { top: cockpitBottom };
   return (
-    <div className="guide-sheet" role="dialog" aria-modal="true" aria-label={t("guide.title")}>
+    <div className="guide-sheet" style={style} role="dialog" aria-modal="true" aria-label={t("guide.title")}>
       <Load route={p.route} mode="sheet" newTab={p.newTab} />
     </div>
   );

@@ -1,6 +1,6 @@
 // LightBurn's Calibrate Galvo Lens, on the engine's lens calibration routes: (1) add the test pattern (a square with
 // centre lines and diagonals) to the design (POST /api/calibration/pattern); (2) mark it: "Request marking" creates a
-// pending run of only the pattern, which still needs the operator PIN in the Runs card (nothing fires from here);
+// pending run of only the pattern, which still needs the operator PIN in the Laser window (nothing fires from here);
 // (3) measure the marked lines with calipers; (4) solve (POST /api/calibration/solve) and compare the current and new
 // corrections; (5) apply them to the active device (UI only; the built-in device is read-only). Repeat to refine.
 

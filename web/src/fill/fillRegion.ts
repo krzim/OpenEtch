@@ -318,6 +318,15 @@ export function fillErrorText(msg: string): string {
     .trim();
 }
 
+/** A failed fill's reason as the engine words it ("point 1 (60, 60): no closed area around this point ..."): which
+ * point (1-based) and the miss code, so the bar can say it in the hover preview's words; null for other errors. */
+export function fillMiss(msg: string): { point: number; code: "not_enclosed" | "on_line" } | null {
+  const m = /point (\d+) \([^)]*\):\s*(.*)$/i.exec(fillErrorText(msg));
+  if (!m) return null;
+  const code = /no closed area/i.test(m[2]) ? "not_enclosed" : /on a line/i.test(m[2]) ? "on_line" : null;
+  return code ? { point: Number(m[1]), code } : null;
+}
+
 /** An area for the bar: "12.35 mm²", or square inches. */
 export function areaText(mm2: number, units: "mm" | "in"): string {
   if (units === "in") return `${(mm2 / 645.16).toFixed(4)} in²`;

@@ -19,7 +19,7 @@ The re-mark is an ordinary run: it goes through the same approval and checks as 
 ## Draw the region {#draw-region}
 
 1. Keep the part where it was. Do not move it or the design.
-2. Choose **Re-mark a region…**. On a computer or tablet, it is in the Design workspace's ribbon, in the **Arrange** group under **Jigs**, and on the canvas's right-click menu (in a long menu, under **Laser**). You can also find it with command search. On a phone, find it under **Jigs** in the **Canvas** tab's tool strip; the open sheet closes so you can draw on the canvas.
+2. Choose **Re-mark a region…** On a computer or tablet, it is in the Design workspace's ribbon, in the **Arrange** group under **Jigs**, and on the canvas's right-click menu (in a long menu, under **Laser**). You can also find it with command search. On a phone, find it under **Jigs** in the **Canvas** tab's tool strip; the open sheet closes so you can draw on the canvas.
 3. A bar over the canvas says **Drag a rectangle over the area to mark again**. Choose **Rectangle** or **Lasso**:
    - **Rectangle**: drag from one corner to the other.
    - **Lasso**: draw round the area with the mouse, pen or finger (**Draw round the area to mark again**).
@@ -55,7 +55,7 @@ The region stays set, and every **Start** burns only inside it, until you clear 
 
 - Click **Clear** in the bar.
 - Press `Esc` (this also stops a frame of the region).
-- Choose **Stop re-marking a region** where you chose **Re-mark a region…**.
+- Choose **Stop re-marking a region** where you chose **Re-mark a region…**
 
 The region is not saved with the project.
 

@@ -33,7 +33,7 @@ The ribbon groups hold these tools:
 | **Inspect** | **Measure**, the snap and view toggles, and the result colours toggle |
 | **Laser Tools** | Material, interval and focus tests, the Material Library and the MOPA materials (see the laser pages) |
 
-To find any command by name, press `S` or click **Search** in the ribbon, then type. On the phone, use **More > Command search…**.
+To find any command by name, press `S` or click **Search** in the ribbon, then type. On the phone, use **More > Command search…**
 
 To see a short menu of what you can do with the selection, right-click it. On a touch screen, press and hold (long-press) instead. A long right-click menu files its entries under **Modify**, **Arrange**, **Select** and **Laser** submenus.
 
@@ -80,7 +80,7 @@ These keys change a drag while you hold them:
 | `Alt` | Snap to guides only |
 | `Esc` | Cancel the drag |
 
-On a touch screen, the modifier bar at the bottom left of the canvas has **Square** and **From centre** buttons for the same thing (see [Modifier bar](#touch-modifier-bar)).
+On a touch screen, the modifier bar at the bottom left of the canvas has **Square** and **From centre** buttons for the same thing (see [The modifier bar](the-workspace.md#touch-modifier-bar)).
 
 > **Note:** With two or more objects selected, `R`, `E`, `C`, `T`, `L` and `B` align the selection instead of choosing a tool. See [Align](#align-and-arrange). Single-letter keys work only while the canvas has the focus.
 
@@ -288,7 +288,7 @@ While dragging:
 
 In Preferences, under **Snapping**, you can set the **Snap distance** (in screen pixels) and switch each kind on or off: **Vertices and endpoints**, **Intersections**, **Centres**, **Quadrants**, **Midpoints**, **Nearest point on outline** and **Alignment guides**. Under **Grid**, you can **Show the grid** and set the **Visual grid spacing**.
 
-Preferences is the gear button in the top bar, or **File > Settings > Preferences…**. In the compact and tablet layouts the gear folds into the **More** (⋯) menu in the top bar. On the phone it is **More > Settings > Preferences**.
+Preferences is the gear button in the top bar, or **File > Settings > Preferences…** In the compact and tablet layouts the gear folds into the **More** (⋯) menu in the top bar. On the phone it is **More > Settings > Preferences**.
 
 ## Guides {#guides}
 
@@ -299,7 +299,7 @@ To add a guide:
 1. Drag down from the top ruler for a horizontal guide, or right from the left ruler for a vertical one.
 2. Let go where you want it.
 
-To place a guide at an exact position, choose **Arrange > Add guide…**. Pick **Vertical (at X)** or **Horizontal (at Y)**, type the position in mm and click **OK**.
+To place a guide at an exact position, choose **Arrange > Add guide…** Pick **Vertical (at X)** or **Horizontal (at Y)**, type the position in mm and click **OK**.
 
 To change a guide, double-click it to type a new position, or drag it with the Select tool. On a touch screen, press and hold a guide before you drag it.
 
@@ -349,7 +349,7 @@ Beginner Mode hides Distribute.
 
 To move the selection to a corner, an edge or the centre:
 
-1. Choose **Arrange > Move selected objects…**.
+1. Choose **Arrange > Move selected objects…**
 2. Under **Relative to**, pick **The workspace (galvo field)** or **The stock**.
 3. Set a **Margin** to keep in from the edges.
 4. Click one of the nine position buttons. Each click is one undo step.
@@ -432,7 +432,7 @@ The **Edit** menu in the **Modify** group holds:
 - **Duplicate** (`Ctrl+D`) and **Delete** (`Delete` or `Backspace`).
 - **Select all**, **Invert selection** and **Select** (open or contained shapes).
 - **Use the system clipboard**: when on, copy and paste go through your computer's clipboard, so you can paste art or an image (up to 50 MB) from another program.
-- **Curve tolerance…**.
+- **Curve tolerance…**
 
 ### Curve tolerance {#curve-tolerance}
 
@@ -467,7 +467,7 @@ For a perspective warp, the four corners must form a convex shape.
 A grid array makes rows and columns of copies.
 
 1. Select the objects to copy.
-2. Click **Array** in the **Insert** group, or choose **Arrange > Grid array…**.
+2. Click **Array** in the **Insert** group, or choose **Arrange > Grid array…**
 3. Set **Columns** and **Rows**. The counts include the original. Or set **Total width** or **Total height** to fit as many as possible.
 4. Pick the **Spacing**: **Padding between edges** (**Gap X**, **Gap Y**) or **Centre to centre** (**Pitch X**, **Pitch Y**).
 5. Check the preview, then click **Create**.
@@ -518,45 +518,15 @@ In the compact and tablet layouts the timeline shares the bottom row with the st
 
 > **Note:** AI agents connected over MCP edit the same design, and their steps appear on the timeline like yours. Agents can design, but they can never approve or start a burn. See [AI agents](ai-agents.md).
 
-![The timeline with steps by you and by an agent](img/timeline.webp)
+![The left end of the timeline: New document, Rectangle, Ellipse and a grey Move step after the marker](img/timeline.webp)
 
 ## Touch controls {#touch-controls}
 
-On a tablet or phone:
-
-- One finger works like the left mouse button.
-- Two fingers pan and pinch to zoom. A second finger cancels a drag.
-- A long-press is the right-click.
-- A tap on a selected object switches its handles between scale and rotate.
-- While you draw with a pen, a resting palm is ignored.
-
-### Modifier bar {#touch-modifier-bar}
-
-A finger has no `Shift`, `Ctrl` or `Alt` key, so the modifier bar at the bottom left of the canvas gives you the ones the current tool uses. Tap a button for the next gesture only; double-tap it to keep it on until you tap it again.
-
-| Tool | Buttons |
-|---|---|
-| Select | **Add** (constrain), **Toggle** (no snap), **Guides** |
-| Rotating | **15° steps**, **5° steps** |
-| Rectangle, Ellipse | **Square**, **From centre** |
-| Circle | **No snap** |
-| Line, Pen, Measure, canvas picks | **15° steps**, **No snap** |
-| Polygon | **15° steps** |
-| Edit nodes | **Add** |
-
-Other tools have no modifier buttons.
-
-### Selection action bar {#selection-action-bar}
-
-With something selected, a bar floats above the selection with **Copy**, **Paste**, **Duplicate**, **Delete**, **Group** or **Ungroup**, **Rotate 90°**, **Flip horizontal**, **Flip vertical** and **More…**. Buttons that do not fit go under **More…**, with **All actions…** for the full menu.
-
-In Preferences, **Selection action bar** sets when it shows: **Auto** (on touch screens), **Always** or **Never**.
-
-![The modifier bar and the selection action bar on an iPad](img/touch-modifier-bar.webp)
+On a tablet or phone, one finger works like the left mouse button, two fingers pan and zoom, and a long-press is the right-click. The modifier bar gives you `Shift` and the other keys a finger lacks, and the selection action bar puts Copy, Duplicate, Rotate 90° and more next to the selection. See [Touch controls](the-workspace.md#touch-controls) in The workspace.
 
 ## Keyboard shortcuts {#keyboard-shortcuts}
 
-OpenEtch uses LightBurn's default keys. To see them all, press `?` (`Shift+?`). `F1` opens this guide. To change a key, choose **File > Settings > Edit hotkeys…**. Your keys are saved in this browser.
+OpenEtch uses LightBurn's default keys. To see them all, press `?` (`Shift+?`). `F1` opens this guide. To change a key, choose **File > Settings > Edit hotkeys…** Your keys are saved in this browser.
 
 ## Common mistakes {#common-mistakes}
 

@@ -12,20 +12,7 @@ OpenEtch is open-source software for designing jobs and running them on galvo fi
 
 This guide shows you how to use the app on a PC, a MacBook, an iPad and a phone.
 
-## Open the guide {#open-the-guide}
-
-To open the guide from the app:
-
-- On a PC with a wide window, choose **Help > User guide**, or press `F1`.
-- On a MacBook or in a narrower window, **Help** is inside the **More** (⋯) menu at the top right. Choose **More**, then **User guide**. On a MacBook keyboard you may need `fn+F1`.
-- On an iPad, tap **More** (⋯) at the top right, then **User guide**.
-- On a phone, tap the **More** tab, open **Help**, then tap **User guide**.
-
-You can also use command search: press `S` (on a phone, tap **More**, then **Command search…**) and type "guide".
-
-On a PC, a MacBook or an iPad held sideways, the guide opens beside the canvas, so you can follow the steps while you work. **Open in new tab** shows it on its own in a browser tab. On a phone, or an iPad held upright, the guide fills the screen under the top bar. **Back** returns to the page you read before, and **Close the guide** returns to the app.
-
-![The user guide open beside the canvas on a MacBook, with the Two-tone MOPA coin example on the canvas](img/guide-beside-canvas.webp)
+New to OpenEtch? Follow [Your first job](getting-started.md#your-first-job): one job from opening an example to the finished burn, step by step.
 
 ## Find a topic {#find-a-topic}
 
@@ -33,42 +20,6 @@ On a PC, a MacBook or an iPad held sideways, the guide opens beside the canvas, 
 - Type in **Search the guide** to search page titles, headings and text.
 - A small **?** button next to a panel, a dialog or a tool bar opens the guide at the part that explains it.
 - Pages marked **Needs a laser** only matter when a laser is connected.
-
-## How OpenEtch fits together {#how-it-fits-together}
-
-OpenEtch has two parts.
-
-- **The engine** is a small program. It runs on a Raspberry Pi that sits on the laser, or on a PC or Mac cabled to the laser. It holds your design, keeps your projects and settings, and is the only part that talks to the laser.
-- **The app** runs in a web browser. The engine serves it, so you install nothing on your PC, Mac, iPad or phone. You can also add it to your Dock or Home Screen as an app.
-
-Every browser connected to the same engine shows the same live design. A change you make on the iPad appears on the PC straight away.
-
-AI agents can connect to the engine too, through its MCP endpoint. An agent can design with the same commands you use, and each change it makes appears in the timeline with the agent's name. An agent can also frame with the red pointer and prepare a run, but it can never approve or start a burn. Only a person can: with the operator PIN in the app or, when the engine runs with `--approval click`, with **Start** in the app or the foot switch. See [AI agents](ai-agents.md).
-
-> **Note:** Many features have so far only run on the engine's simulator, not on a real laser. Settings in this guide are starting points to test on your own material, never guaranteed results.
-
-## How this guide is organised {#how-the-guide-is-organised}
-
-The pages are in six sections, in the order you are likely to need them:
-
-1. **Getting started**: install, connect and find your way around.
-2. **Designing**: draw, write text, import images and prepare a design.
-3. **Layers and materials**: cut settings, material libraries and MOPA colour.
-4. **Running jobs**: safety, preview, framing and the burn itself.
-5. **Production**: repeat jobs, jigs, serial numbers and machine care.
-6. **Setup and reference**: devices, preferences, agents, shortcuts and fixes.
-
-Every page is listed by section under [Contents](#contents) at the end of this page.
-
-Some pages only matter when a laser is connected. A copy of OpenEtch made for design only can leave those pages out.
-
-### How the pages are written {#conventions}
-
-- Buttons, menus and messages are written in **bold**, exactly as the app shows them.
-- A menu path such as **File > Save as…** means: open the **File** menu, then choose **Save as…**.
-- Keys are written like `Ctrl+S`. On a Mac, iPad or iPhone, use `Cmd` where the guide says `Ctrl`, and `Option` where it says `Alt`. The app shows Apple key symbols there.
-- Where the desktop and the phone or iPad differ, each page says where to find a thing on both.
-- **Note**, **Tip** and **Warning** boxes mark extra information, shortcuts and safety points.
 
 ## Contents {#contents}
 
@@ -120,6 +71,61 @@ Some pages only matter when a laser is connected. A copy of OpenEtch made for de
 - [Devices and calibration](devices-and-calibration.md): Add and switch laser devices, import them from LightBurn or EzCad, edit device settings, load a lens correction file, calibrate the galvo lens and the red dot, and set up a rotary. (Needs a laser)
 - [Settings](settings.md): Preferences for display, units, snapping and input, layer and optimisation defaults, importing LightBurn preferences, and preference backups and bundles.
 - [Camera](camera.md): Use a camera over the work area to see the stock under your design: capture a frame, calibrate the camera lens, align it to the galvo field and show the overlay. (Needs a laser)
-- [AI agents](ai-agents.md): Connect an AI agent to OpenEtch over MCP, what tools it gets, why it can never approve or start a burn, and how to ask it for good work. (Needs a laser)
+- [AI agents](ai-agents.md): Connect an AI agent to OpenEtch over MCP, what tools it gets, why it can never approve or start a burn, and how to ask it for good work.
 - [Keyboard shortcuts](keyboard-shortcuts.md): Every keyboard shortcut in OpenEtch, how to open the list, how to change a key, and which keys browsers keep for themselves.
 - [Troubleshooting](troubleshooting.md): Fixes for common problems: cannot connect, access token, no laser, refused starts, slow preview, missing fonts after a LightBurn import, wrong field size, bug reports, logs and updates.
+
+## Open the guide {#open-the-guide}
+
+To open the guide from the app:
+
+- On a PC with a wide window, choose **Help > User guide**, or press `F1`.
+- On a MacBook or in a narrower window, **Help** is inside the **More** (⋯) menu at the top right. Choose **More**, then **User guide**. On a MacBook keyboard you may need `fn+F1`.
+- On an iPad, tap **More** (⋯) at the top right, then **User guide**.
+- On a phone, tap the **More** tab, open **Help**, then tap **User guide**.
+
+You can also use command search: press `S` (on a phone, tap **More**, then **Command search…**) and type "user guide", then choose **User guide**.
+
+On a PC, a MacBook or an iPad held sideways, the guide opens beside the canvas, so you can follow the steps while you work. **Open in new tab** shows it on its own in a browser tab. On a phone, or an iPad held upright, the guide fills the screen under the top bar.
+
+The guide's bar shows which page you are on. **Back** (the arrow at the left of the bar) returns to the page you read before. On a phone it is always there; beside the canvas it appears once you have followed a link. **Close the guide** (×), or `Esc`, returns to the app. A long page starts with an **On this page** list of its sections. Click or tap a picture to see it full size; click it again to see it at its own size, and press `Esc` or **Close** to go back.
+
+When you open the guide with a **?** inside a dialog, the dialog stays open: beside the guide on a wide screen, or under it on a phone. Close the guide to carry on in the dialog.
+
+![The user guide open beside the canvas on a MacBook, with the Two-tone MOPA coin example on the canvas](img/guide-beside-canvas.webp)
+
+## How OpenEtch fits together {#how-it-fits-together}
+
+OpenEtch has two parts.
+
+- **The engine** is a small program. It runs on a Raspberry Pi that sits on the laser, or on a PC or Mac cabled to the laser. It holds your design, keeps your projects and settings, and is the only part that talks to the laser.
+- **The app** runs in a web browser. The engine serves it, so you install nothing on your PC, Mac, iPad or phone. You can also add it to your Dock or Home Screen as an app.
+
+Every browser connected to the same engine shows the same live design. A change you make on the iPad appears on the PC straight away.
+
+AI agents can connect to the engine too, through its MCP endpoint. An agent can design with the same commands you use, and each change it makes appears in the timeline with the agent's name. An agent can also frame with the red pointer and prepare a run, but it can never approve or start a burn. Only a person can: with the operator PIN in the app or, when the engine runs with `--approval click`, with **Start** in the app or the foot switch. See [AI agents](ai-agents.md).
+
+> **Note:** Many features have so far only run on the engine's simulator, not on a real laser. Settings in this guide are starting points to test on your own material, never guaranteed results.
+
+## How this guide is organised {#how-the-guide-is-organised}
+
+The pages are in six sections, in the order you are likely to need them:
+
+1. **Getting started**: install, connect and find your way around.
+2. **Designing**: draw, write text, import images and prepare a design.
+3. **Layers and materials**: cut settings, material libraries and MOPA colour.
+4. **Running jobs**: safety, preview, framing and the burn itself.
+5. **Production**: repeat jobs, jigs, serial numbers and machine care.
+6. **Setup and reference**: devices, preferences, agents, shortcuts and fixes.
+
+Every page is listed by section under [Contents](#contents) near the top of this page.
+
+Some pages only matter when a laser is connected. A copy of OpenEtch made for design only can leave those pages out.
+
+### How the pages are written {#conventions}
+
+- Buttons, menus and messages are written in **bold**, exactly as the app shows them.
+- A menu path such as **File > Save as…** means: open the **File** menu, then choose **Save as…**
+- Keys are written like `Ctrl+S`. On a Mac, iPad or iPhone, use `Cmd` where the guide says `Ctrl`, and `Option` where it says `Alt`. The app shows Apple key symbols there.
+- Where the desktop and the phone or iPad differ, each page says where to find a thing on both.
+- **Note**, **Tip** and **Warning** boxes mark extra information, shortcuts and safety points.

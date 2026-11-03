@@ -189,7 +189,7 @@ export const EN_LIBS = {
   "ltest.focusNoZ": "This device has no Z axis on the board: the plan warns, and each line can be marked on its own with the height set by hand.",
   "ltest.focusWhat": "A focus test of {lines} lines",
   "ltest.added": "{what} added and selected.",
-  "ltest.addedRun": "{what} added; run requested. Approve it in the Runs card.",
+  "ltest.addedRun": "{what} added; run requested. Approve it in the Laser window, under Waiting for approval.",
   "ltest.preset": "Preset",
   "ltest.presetPick": "Choose a preset…",
   "ltest.presetNone": "No saved presets",
@@ -230,6 +230,7 @@ export const EN_LIBS = {
   "safe.doorOn": "Door Protect on {input}: approval is refused while the enclosure is open.",
   "safe.checklist": "Job Checklist",
   "safe.tickAll": "Tick every item to enable Confirm and fire.",
+  "safe.tickAllStart": "Tick every item to enable Start.",
   "safe.unsupported": "This engine has no job preferences.",
   "safe.activeOnly": "These settings belong to the active device: make this device active to change them.",
   "safe.framingTitle": "Framing",
@@ -303,7 +304,7 @@ export const EN_LIBS = {
   "batch.addTitle": "Add to the batch",
   "batch.remove": "Remove",
   "batch.request": "Request run of {count}",
-  "batch.requested": "Batch of {count} projects requested. Approve it in the Runs card.",
+  "batch.requested": "Batch of {count} projects requested. Approve it in the Laser window, under Waiting for approval.",
   "batch.framingNote": "Require Framing is satisfied by framing the open document, not the queued projects: frame each project before batching it.",
 
   // ---- Repeat Marking ----
@@ -318,7 +319,7 @@ export const EN_LIBS = {
   "tbl.returnToStart": "Return to start when finished",
   "tbl.hint": "The table travels {total} {unit} in all. One approval covers every run. Unverified on hardware.",
   "tbl.request": "Request run",
-  "tbl.requested": "Repeat Marking of {count} runs requested. Approve it in the Runs card.",
+  "tbl.requested": "Repeat Marking of {count} runs requested. Approve it in the Laser window, under Waiting for approval.",
 
   // ---- job log ----
   "jlog.title": "Job log",

@@ -100,6 +100,8 @@ export function installEscape(): void {
     "keydown",
     (e) => {
       if (e.key !== "Escape" || e.defaultPrevented || e.isComposing) return;
+      // Esc inside the user guide (opened from a dialog's "?") closes the guide, not the dialog under or beside it.
+      if (e.target instanceof Element && e.target.closest(".guide, .guide-lightbox")) return;
       if (layers.escape()) {
         e.preventDefault();
         e.stopImmediatePropagation();

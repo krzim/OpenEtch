@@ -114,14 +114,15 @@ export function footCycle(m: MachineStatus | null): FootCycle | null {
   return c && c.available === true ? c : null;
 }
 
-/** The Laser window's line about the foot switch cycle: what a press does now. Null without a foot switch cycle. */
-export function footCycleText(m: MachineStatus | null): string | null {
+/** The Laser window's line about the foot switch cycle: what a press does now. Null without a foot switch cycle.
+ * With the Job Checklist on, the engine refuses every foot switch burn (a foot cannot tick the list): the line says so. */
+export function footCycleText(m: MachineStatus | null, checklistOn = false): string | null {
   const c = footCycle(m);
   if (!c) return null;
-  if (c.phase === "framing") return tr("apir.cycleFraming");
   if (c.phase === "burning") return tr("apir.cycleBurning");
+  if (c.phase === "framing") return tr(checklistOn ? "apir.cycleFramingChecklist" : "apir.cycleFraming");
   const foot = footSwitch(m);
-  return tr("apir.cycleOffV1", { v1: foot ? foot.input_bit : "?" });
+  return tr(checklistOn ? "apir.cycleOffChecklistV1" : "apir.cycleOffV1", { v1: foot ? foot.input_bit : "?" });
 }
 
 /**

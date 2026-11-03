@@ -102,7 +102,7 @@ LightBurn files do not store the field size. When you open one, OpenEtch picks t
 
 ## Report a bug and read the logs {#report-a-bug}
 
-Open **Help > Report a bug…**. (In smaller windows and on tablets, **Help** is in the **More** (⋯) menu; on a phone, tap **More > Help**.)
+Open **Help > Report a bug…** (In smaller windows and on tablets, **Help** is in the **More** (⋯) menu; on a phone, tap **More > Help**.)
 
 The dialog shows the engine's recent log lines.
 
@@ -118,7 +118,7 @@ The engine keeps its recent log lines in memory, so they are lost when it restar
 
 ## Check for updates {#updates}
 
-1. Open **Help > Check for updates…**.
+1. Open **Help > Check for updates…**
 2. Tick **Check for updates (asks GitHub's releases; opt-in)**. It is off until you turn it on, and **Check now** stays off until then.
 3. Click **Check now**.
 

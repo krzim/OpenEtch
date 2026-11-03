@@ -482,6 +482,148 @@
   padding-right: var(--sp-4);
 }
 
-.guide-wide .guide-search {
+/* The bar and the search field line up with the contents and page columns below (.guide-columns), centred. */
+.guide-wide .guide-head {
+  align-items: center;
+}
+
+.guide-wide .guide-head > * {
+  width: min(100%, calc(280px + var(--sp-6) + 760px));
+}
+
+.guide-wide .guide-search input {
   max-width: 480px;
+}
+
+/* The page's title after "User guide" in the bar (after a "?" or a search hit the page's own title is scrolled away). */
+.guide-bar-title > .guide-bar-name {
+  flex: none;
+}
+
+.guide-bar-page {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: var(--fw-regular, 400);
+  color: var(--text-2);
+}
+
+/* A short window (a phone in landscape): the search field sits in the bar's row, so the page keeps the height. */
+@media (max-height: 500px) {
+  .guide-head {
+    flex-direction: row;
+    align-items: center;
+    padding-bottom: var(--sp-1);
+  }
+
+  .guide-head > .guide-bar {
+    flex: 1 1 auto;
+    min-width: 0;
+    order: 1;
+  }
+
+  .guide-head > .guide-search {
+    flex: 0 1 40%;
+    min-width: 140px;
+    order: 0;
+  }
+}
+
+/* "On this page": the sections of a long page, under its introduction. */
+.guide-onpage {
+  margin: var(--sp-3) 0 var(--sp-4);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  font-size: var(--fs-md);
+}
+
+.guide-onpage-title {
+  margin: 0 0 var(--sp-1);
+  font-weight: var(--fw-semibold);
+}
+
+.guide-onpage ul {
+  margin: 0;
+  padding-left: var(--sp-4);
+  columns: 2 180px;
+  column-gap: var(--sp-4);
+}
+
+.guide-onpage li {
+  break-inside: avoid;
+  margin: 2px 0;
+}
+
+/* A picture is a button: it opens full size. */
+.guide-md .guide-img-btn {
+  display: block;
+  max-width: 100%;
+  padding: 0;
+  margin: var(--sp-2) 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+}
+
+.guide-md .guide-img-btn > .guide-img {
+  margin: 0;
+}
+
+.guide-md .guide-img-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-md);
+}
+
+/* The dark theme: the light screenshots a little dimmer, so they do not glare on a dark page. */
+:root[data-theme="dark"] .guide-md .guide-img {
+  filter: brightness(0.9);
+  border-color: var(--border);
+}
+
+/* The picture full size, over the guide and the app (STOP stays above it). */
+.guide-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--z-modal) + 2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: calc(var(--safe-top) + 48px) calc(var(--safe-right) + 12px) calc(var(--safe-bottom) + 12px) calc(var(--safe-left) + 12px);
+  background: rgba(0, 0, 0, 0.82);
+  overflow: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-x pan-y pinch-zoom;
+}
+
+.guide-lightbox > img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  background: #fff;
+  border-radius: var(--r-md);
+  cursor: zoom-in;
+}
+
+/* At the picture's own size: scroll (or pinch) to read it. */
+.guide-lightbox.actual {
+  align-items: flex-start;
+  justify-content: flex-start;
+}
+
+.guide-lightbox.actual > img {
+  max-width: none;
+  max-height: none;
+  margin: auto;
+  cursor: zoom-out;
+}
+
+.guide-lightbox-close {
+  position: fixed;
+  top: calc(var(--safe-top) + 6px);
+  right: calc(var(--safe-right) + 8px);
+  color: #fff;
+  background: rgba(0, 0, 0, 0.5);
 }

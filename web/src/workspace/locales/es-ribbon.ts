@@ -43,7 +43,7 @@ export const ES_RIBBON: Messages = {
   "rb.frameWithOptions": "Encuadrar (opciones de la ventana Láser)",
   "rb.frameSelection": "Encuadrar la selección",
   "rb.frameBounds": "Encuadrar el rectángulo envolvente",
-  "rb.frameOutline": "Encuadrar el contorno (banda elástica)",
+  "rb.frameOutline": "Encuadrar el contorno de las formas",
   "rb.search": "Buscar",
   "rb.searchTitle": "Búsqueda de comandos",
   "rb.searchPlaceholder": "Escriba un comando, herramienta o ajuste…",

@@ -73,7 +73,7 @@ contact sheet and New from example on an iPhone, an iPad and a MacBook (screensh
 `guide-shots.mjs` (`npm run guide:shots`) takes the user guide's pictures: it reads `docs/guide/shots.json` and writes
 `docs/guide/img/<name>.webp` (WebP at quality 82, at most 1600 px wide unless a shot sets `maxWidth`). Pages show them
 as `![Alt text](img/<name>.webp)`; `npm test` fails when a page uses a picture that is not listed or not taken yet, or a
-listed shot that no page uses.
+listed shot that no page uses. After a run into `docs/guide/img/` it rewrites `docs/guide/img-sizes.json` (each picture's pixel size, which the guide gives its `<img>` so pages do not jump while pictures load).
 
 ```sh
 # Let the script start its own simulator engine (temporary --config-dir and --projects-dir, no LightBurn prefs,
@@ -98,7 +98,8 @@ address, this computer's name or the login name is still on screen. Times the en
 are not fixed: keep those out of pictures.
 
 A shot: `{ "name": "kebab-case", "device": "<devices.mjs id>", "theme"?: "light" | "dark", "example": "<built-in
-example id>", "steps": [...], "crop"?: "<CSS selector>", "maxWidth"?: px, "note"?: "what it shows" }`. Each step is an
+example id>", "steps": [...], "crop"?: "<CSS selector>", "cropWidth"?: CSS px, "cropPad"?: CSS px, "maxWidth"?: px, "note"?: "what it shows"
+}` (`cropWidth` keeps only the left part of a long crop, such as the timeline's first steps; `cropPad` is the margin round the crop, 8 px by default). Each step is an
 object with exactly one action key:
 
 | Step | What it does |

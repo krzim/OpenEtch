@@ -150,3 +150,11 @@ test("the Laser Tools items and the File menu's New tab row carry their action i
   ]);
   assert.equal(menu.length, 1);
 });
+
+test("\"guide\" finds the user guide before the ruler guides", () => {
+  // Seen in the app: "guide" listed Add guide… first, so Enter opened the Add guide dialog, not the user guide.
+  const cmds = [cmd("menu.addGuide", "Add guide…"), cmd("help.guide", "User guide"), cmd("menu.clearGuides", "Clear guides")];
+  assert.equal(searchCommands(cmds, "guide")[0].label, "User guide");
+  assert.equal(searchCommands(cmds, "user guide")[0].label, "User guide");
+  assert.equal(searchCommands(cmds, "add guide")[0].label, "Add guide…");
+});

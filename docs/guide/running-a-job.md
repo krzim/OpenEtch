@@ -46,7 +46,7 @@ From top to bottom, the window has:
 - Runs waiting for approval (**Waiting for approval**).
 - The foot switch line, when the device has a foot switch and the engine runs without a PIN.
 - The run options (**Repeat**, **Run continuously** and so on).
-- **Red dot always on** and the buttons **Laser Tools**, **Batch…**, **Repeat table…**, **Print and Cut…** and **Job log…**.
+- **Red dot always on** and the buttons **Laser Tools**, **Batch…**, **Repeat table…**, **Print and Cut…** and **Job log…**
 - The job counter: **Count**, **Reset count** and **Stop at**.
 - **Red dot and Z**, then **Optimization…** and **Rotary…** (hidden in Beginner Mode).
 
@@ -57,6 +57,8 @@ On a phone, **Frame** comes right after the laser's state, and **Start** is pinn
 ## Start a job (no PIN) {#start}
 
 Use this when the **Approval** row says **Start in the app**.
+
+> **Warning:** Start fires the laser at once. Wear eye protection rated for your laser's wavelength (about 1064 nm for a fibre laser), run fume extraction and never leave a running job unattended. **STOP** in the app is a software stop, so know where the laser's hardware E-stop is.
 
 1. Check the preview and frame the job.
 2. If the Job Checklist shows above **Start**, tick every item.
@@ -110,10 +112,12 @@ A keep-out zone or an object outside the field also refuses the job, with a mess
 
 Use this when the **Approval** row says **Operator PIN**.
 
+> **Warning:** **Confirm and fire** fires the laser at once. Wear eye protection rated for your laser's wavelength (about 1064 nm for a fibre laser), run fume extraction and never leave a running job unattended. **STOP** in the app is a software stop, so know where the laser's hardware E-stop is.
+
 1. Check the preview and frame the job.
-2. Click **Request run**. Nothing fires yet. The message says **Run requested. Approve it in the Runs card.** The run waits under **Waiting for approval** in the **Laser** window, right below the button.
+2. Click **Request run**. Nothing fires yet. The message says **Run requested. Approve it in the Laser window, under Waiting for approval.** The run waits under **Waiting for approval** in the **Laser** window, right below the button.
 3. Read the run's details: who asked for it (**You**, or an agent's name), the summary, **Est. time**, **Mark** and **Jump** (travel) lengths, **Segments** and the **Revision**.
-4. Click **Approve…**.
+4. Click **Approve…**
 5. Read **This fires the laser.** Enclosure closed, eyewear on, focus and stock checked?
 6. Tick the Job Checklist, if it shows.
 7. Type your **Operator PIN** (6 to 12 digits).
@@ -132,7 +136,7 @@ Things to know:
 
 If the engine was started with a physical confirmation input, the run then shows **Press the foot pedal (input N) within 30 s to start. STOP cancels.** Release and press the pedal to begin.
 
-The **Pending runs** card in the **Machine and runs** window says how approval works on this engine. While runs are waiting, it points you to the **Laser** window, where you approve them.
+The **Pending runs** card in the **Machine and runs** window says how approval works on this engine. With nothing waiting, it says where runs wait: in the **Laser** window. While runs are waiting, it points you there, where you approve them.
 
 ## Job Checklist and Require framing {#job-checklist}
 
@@ -145,7 +149,7 @@ With a PIN, the checklist shows in the approval step. Without a PIN, it shows ab
 
 The **Job** page also has **Play sound when a job finishes** and **Mute in this browser**.
 
-> **Note:** A foot cannot tick a checklist. With the Job Checklist on, every foot switch burn is refused; use **Start** in the app.
+> **Note:** A foot cannot tick a checklist. With the Job Checklist on, every foot switch burn is refused; use **Start** in the app. The foot switch still frames, and the **Laser** window says so: **Foot switch (input N): press to frame the job. It cannot burn while the Job Checklist is on: tick the list and use Start.**
 
 ## The foot switch: frame, then burn {#foot-switch}
 

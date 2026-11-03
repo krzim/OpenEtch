@@ -38,7 +38,7 @@ If the engine has no material libraries, the window says "This engine has no mat
 
 ## Load a LightBurn library {#load-a-library}
 
-1. Click **Load…**.
+1. Click **Load…**
 2. Pick a `.clb` file.
 
 The library is added to the library list and selected. If a library of the same name is already loaded, the new one gets " (2)" after its name.
@@ -49,7 +49,7 @@ OpenEtch keeps its copy in the engine's libraries folder, so it is there next ti
 
 ## Start a new library {#new-library}
 
-1. Open **Manage Library** and pick **Create New Library…**.
+1. Open **Manage Library** and pick **Create New Library…**
 2. Type a **Library name** and click **Create**.
 
 The library starts empty. Add presets with **Create new from layer** (see [Save a layer as a preset](#create-a-preset)).

@@ -4,13 +4,14 @@
 // under the top bar (phone, iPad portrait) with a back button, and "page", the guide alone in its own tab (`?guide`).
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as RKeyboardEvent } from "react";
+import { createPortal } from "react-dom";
 import { Icon } from "../components/ui.tsx";
 import { useT } from "../workspace/usePrefs.ts";
-import { imageUrl, loadGuide } from "./content.ts";
+import { imageSize, imageUrl, loadGuide } from "./content.ts";
 import { designOnlyBuild } from "./flags.ts";
 import { contents, prevNext, searchGuide, type GuidePage } from "./pages.ts";
 import { anchorDomId, Markdown, type RenderCtx } from "./render.tsx";
-import { backGuide, closeGuide, guideHash, navigateGuide, standaloneUrl, type GuideRoute } from "./route.ts";
+import { backGuide, closeGuide, GUIDE_FOCUS_EVENT, guideDepth, guideHash, navigateGuide, standaloneUrl, type GuideRoute } from "./route.ts";
 import "./guide.css";
 
 export interface GuideViewerProps {
@@ -27,6 +28,9 @@ export default function GuideViewer(p: GuideViewerProps) {
   const [q, setQ] = useState("");
   const [toc, setToc] = useState(false);
   const [nonce, setNonce] = useState(0);
+  // A picture shown full size over the guide (render.tsx's zoom button), or null.
+  const [zoom, setZoom] = useState<{ url: string; alt: string } | null>(null);
+  const [zoomActual, setZoomActual] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
   const root = useRef<HTMLDivElement>(null);
   const found = guide.bySlug.get(p.route.slug);
@@ -45,6 +49,25 @@ export default function GuideViewer(p: GuideViewerProps) {
   }, [p.mode]);
   const showToc = toc || (wide && !q.trim());
 
+  // The guide alone in its tab: the tab and its bookmarks name the page.
+  useEffect(() => {
+    if (p.mode !== "page") return;
+    document.title = page && page.slug !== "index" ? `${page.title} · ${t("guide.docTitle")}` : t("guide.docTitle");
+  }, [p.mode, page, t]);
+
+  // F1, Help > User guide or a "?" while the guide is open already: take the focus (the anchor's heading, else the
+  // page's title), so Esc closes the guide at once.
+  useEffect(() => {
+    const focus = () =>
+      window.requestAnimationFrame(() => {
+        const box = scroller.current;
+        const el = box?.querySelector<HTMLElement>(p.route.anchor ? `#${CSS.escape(anchorDomId(p.route.anchor))}` : "h1") ?? null;
+        (el ?? box)?.focus({ preventScroll: true });
+      });
+    window.addEventListener(GUIDE_FOCUS_EVENT, focus);
+    return () => window.removeEventListener(GUIDE_FOCUS_EVENT, focus);
+  }, [p.route.anchor]);
+
   const go = (r: GuideRoute) => {
     setQ("");
     setToc(false);
@@ -61,7 +84,11 @@ export default function GuideViewer(p: GuideViewerProps) {
       // Only the guide's own scroller moves (scrollIntoView would also scroll the app's overflow-hidden boxes).
       box.scrollTop += el.getBoundingClientRect().top - box.getBoundingClientRect().top - 8;
       el.focus({ preventScroll: true });
-    } else box.scrollTop = 0;
+    } else {
+      box.scrollTop = 0;
+      // Keyboard users land in the guide (Esc closes it); the page's title takes the focus without scrolling.
+      if (p.mode !== "page") (box.querySelector<HTMLElement>("h1") ?? box).focus({ preventScroll: true });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [p.route.slug, p.route.anchor, nonce, toc]);
 
@@ -69,14 +96,21 @@ export default function GuideViewer(p: GuideViewerProps) {
     slug: p.route.slug,
     go,
     image: imageUrl,
+    imageSize,
     newTab: t("guide.opensNewTab"),
     missingImage: (name) => t("guide.imageMissing", { name }),
+    zoom: (url, alt) => {
+      setZoomActual(false);
+      setZoom({ url, alt });
+    },
+    zoomLabel: t("guide.zoomImage"),
   };
 
   const onKey = (e: RKeyboardEvent) => {
     if (e.key !== "Escape") return;
     e.stopPropagation();
-    if (q) setQ("");
+    if (zoom) setZoom(null);
+    else if (q) setQ("");
     else if (toc && !wide) setToc(false);
     else if (p.mode !== "page") closeGuide();
   };
@@ -142,6 +176,31 @@ export default function GuideViewer(p: GuideViewerProps) {
     </div>
   );
 
+  // Long pages start with a list of their sections (the h2 headings), after the title and the first paragraph.
+  const sections = page ? page.headings.filter((h) => h.level === 2) : [];
+  const lead = page ? Math.max(1, page.blocks.findIndex((b, i) => i > 0 && b.t !== "para")) : 0;
+  const onThisPage = page && sections.length > ON_THIS_PAGE_MIN && (
+    <nav className="guide-onpage" aria-label={t("guide.onThisPage")}>
+      <p className="guide-onpage-title">{t("guide.onThisPage")}</p>
+      <ul>
+        {sections.map((h) => (
+          <li key={h.id}>
+            <a
+              href={guideHash({ slug: page.slug, anchor: h.id })}
+              onClick={(e) => {
+                if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey) return;
+                e.preventDefault();
+                go({ slug: page.slug, anchor: h.id });
+              }}
+            >
+              {h.text}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </nav>
+  );
+
   const body = page ? (
     <article className="guide-page" aria-labelledby={page.headings[0] ? anchorDomId(page.headings[0].id) : undefined}>
       {page.needs === "machine" && (
@@ -149,7 +208,15 @@ export default function GuideViewer(p: GuideViewerProps) {
           <NeedsTag />
         </p>
       )}
-      <Markdown blocks={page.blocks} ctx={ctx} />
+      {onThisPage ? (
+        <>
+          <Markdown blocks={page.blocks.slice(0, lead)} ctx={ctx} />
+          {onThisPage}
+          <Markdown blocks={page.blocks.slice(lead)} ctx={ctx} />
+        </>
+      ) : (
+        <Markdown blocks={page.blocks} ctx={ctx} />
+      )}
       {(prev || next) && (
         <nav className="guide-prevnext" aria-label={t("guide.prevNext")}>
           {prev ? (
@@ -190,14 +257,22 @@ export default function GuideViewer(p: GuideViewerProps) {
     <div className={`guide guide-mode-${p.mode}${wide ? " guide-wide" : ""}`} ref={root} onKeyDown={onKey}>
       <header className="guide-head">
         <div className="guide-bar">
-          {p.mode === "sheet" && (
+          {/* Back: on a sheet always (at the first page it closes the guide); beside the canvas once a link was
+              followed (a Dock or Home Screen app has no browser Back). */}
+          {(p.mode === "sheet" || (p.mode === "pane" && guideDepth() > 1)) && (
             <button type="button" className="icon-btn guide-back" title={t("guide.back")} aria-label={t("guide.back")} onClick={backGuide}>
               <Icon name="arrowLeft" />
             </button>
           )}
           <h2 className="guide-bar-title">
             <Icon name="book" size={18} />
-            <span>{t("guide.title")}</span>
+            <span className="guide-bar-name">{t("guide.title")}</span>
+            {page && page.slug !== "index" && (
+              <span className="guide-bar-page">
+                <span aria-hidden="true">› </span>
+                {page.title}
+              </span>
+            )}
           </h2>
           {!wide && (
             <button
@@ -241,9 +316,35 @@ export default function GuideViewer(p: GuideViewerProps) {
           body
         )}
       </div>
+      {zoom &&
+        createPortal(
+          // The picture full size, over everything but STOP: fitted to the screen, or at its own size (scroll, and on a
+          // touch screen pinch) after a click on it. Esc, Close or a click beside it closes it.
+          <div
+            className={`guide-lightbox${zoomActual ? " actual" : ""}`}
+            role="dialog"
+            aria-modal="true"
+            aria-label={zoom.alt}
+            onKeyDown={(e) => {
+              if (e.key !== "Escape") return;
+              e.stopPropagation();
+              setZoom(null);
+            }}
+            onClick={(e) => e.target === e.currentTarget && setZoom(null)}
+          >
+            <button type="button" className="icon-btn guide-lightbox-close" title={t("common.close")} aria-label={t("common.close")} onClick={() => setZoom(null)} autoFocus>
+              <Icon name="close" />
+            </button>
+            <img src={zoom.url} alt={zoom.alt} onClick={() => setZoomActual((v) => !v)} title={zoomActual ? t("guide.zoomFit") : t("guide.zoomActual")} />
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
+
+/** Pages with more sections than this start with an "On this page" list. */
+const ON_THIS_PAGE_MIN = 6;
 
 function NeedsTag() {
   const t = useT();

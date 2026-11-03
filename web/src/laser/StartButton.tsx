@@ -82,7 +82,7 @@ export function StartButton({ variant }: StartButtonProps) {
   }
   return (
     <div className={`start-block start-block-${variant}`}>
-      {variant === "sheet" && noPin && <ApprovalChecks state={gates} disabled={flow.starting} showDoor={false} />}
+      {variant === "sheet" && noPin && <ApprovalChecks state={gates} disabled={flow.starting} showDoor={false} noPin />}
       <StartRefusal text={flow.refusal} />
       <PreflightNotes variant={variant} />
       {button}

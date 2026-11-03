@@ -18,6 +18,12 @@ export interface RenderCtx {
   newTab: string;
   /** "Image not found: {name}". */
   missingImage: (name: string) => string;
+  /** The picture's pixel size (docs/guide/img-sizes.json), so it takes its room before it loads. */
+  imageSize?: (name: string) => readonly [number, number] | undefined;
+  /** Show a picture full size (the viewer's lightbox); without it pictures are not buttons. */
+  zoom?: (url: string, alt: string) => void;
+  /** "Show the picture full size", for the picture's button. */
+  zoomLabel?: string;
 }
 
 /** The DOM id of a heading anchor (prefixed: the guide shares the document with the app). */
@@ -45,7 +51,15 @@ function inline(n: Inline, ctx: RenderCtx): ReactNode {
       const name = imageName(n.src);
       const url = name ? ctx.image(name) : undefined;
       if (!url) return <span className="guide-img-missing">{ctx.missingImage(name ?? n.src)}</span>;
-      return <img className="guide-img" src={url} alt={n.alt} loading="lazy" decoding="async" />;
+      const size = name ? ctx.imageSize?.(name) : undefined;
+      const img = <img className="guide-img" src={url} alt={n.alt} width={size?.[0]} height={size?.[1]} loading="lazy" decoding="async" />;
+      const zoom = ctx.zoom;
+      if (!zoom) return img;
+      return (
+        <button type="button" className="guide-img-btn" title={ctx.zoomLabel} aria-label={ctx.zoomLabel ? `${ctx.zoomLabel}: ${n.alt}` : n.alt} onClick={() => zoom(url, n.alt)}>
+          {img}
+        </button>
+      );
     }
     case "link": {
       const to = linkTarget(n.href);

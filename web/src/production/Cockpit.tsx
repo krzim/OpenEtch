@@ -24,12 +24,13 @@ import { JobCounter, useJobStatus } from "../components/JobControls.tsx";
 import { PendingApprovals } from "../components/LaserPanel.tsx";
 import { useToastStrip } from "../components/useToastHost.ts";
 import { Icon } from "../components/ui.tsx";
+import { deviceName } from "../laser/EmptyCanvasCard.tsx";
 import { StartButton } from "../laser/StartButton.tsx";
 import { onlineOf } from "../laser/laserContext.ts";
 import { useLaserLive } from "../laser/useLaserLive.ts";
 import { useT } from "../workspace/usePrefs.ts";
 import { prodApi } from "./api.ts";
-import { LOCK_RENEW_MS, clock, cockpitPhase, counterText, hours, nextValues, shortDuration, slotLine, toggleEmpty, type ProductionStatus } from "./model.ts";
+import { LOCK_RENEW_MS, clock, cockpitPhase, counterText, distinctShown, hours, nextValues, shortDuration, slotLine, toggleEmpty, type ProductionStatus } from "./model.ts";
 import { refreshProduction, useProduction } from "./store.ts";
 import "./cockpit.css";
 import { HelpLink } from "../guide/HelpLink.tsx";
@@ -139,7 +140,7 @@ export function Cockpit(p: CockpitProps) {
         </button>
         <div className="cockpit-title">
           <strong>{title}</strong>
-          {s && <span className="cockpit-sub">{s.device}</span>}
+          {s && <span className="cockpit-sub">{deviceName(facts.machine) ?? s.device}</span>}
         </div>
         {s?.lock.locked && (
           <span className="cockpit-lock" title={t("prod.lockedTitle")}>
@@ -379,10 +380,10 @@ function LedgerCard({ s, act }: { s: ProductionStatus; act: (fn: () => Promise<u
                 key={sl.number}
                 className={`btn small cl-slot${sl.marked ? "" : " skipped"}`}
                 disabled={!sl.marked}
-                title={t("prod.remarkTitle", { slot: sl.number, value: sl.values.map((v) => v.shown).join(" · ") })}
+                title={t("prod.remarkTitle", { slot: sl.number, value: distinctShown(sl.values).join(" · ") })}
                 onClick={() => act(() => prodApi.remark(e.run_id, e.time_unix_s, sl.number, s.revision), t("prod.remarkRequested"))}
               >
-                {sl.number}: {sl.values.map((v) => v.shown).join(" · ") || sl.value}
+                {sl.number}: {distinctShown(sl.values).join(" · ") || sl.value}
               </button>
             ))}
           </div>

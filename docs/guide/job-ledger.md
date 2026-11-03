@@ -14,8 +14,8 @@ Use it to answer questions like "what settings did I use on that coin last month
 
 ## Open the Job log {#job-log-window}
 
-- **Computer and tablet:** click **Job log…** in the **Laser** window, or choose **File > Laser > Job log…**.
-- **Phone:** tap **Job** and scroll down to **Job log…**.
+- **Computer and tablet:** click **Job log…** in the **Laser** window, or choose **File > Laser > Job log…**
+- **Phone:** tap **Job** and scroll down to **Job log…**
 
 You can also search for "Job log" in command search.
 
@@ -29,7 +29,7 @@ Each row shows a small picture of what burned, the project name, a verdict if yo
 
 To narrow the list:
 
-- Type in **Search project, layer, setting, value, note…**. Every word must appear somewhere in the run: the project, document, device, summary, layers and settings, variable text values, note or error.
+- Type in **Search project, layer, setting, value, note…** Every word must appear somewhere in the run: the project, document, device, summary, layers and settings, variable text values, note or error.
 - Choose a **Verdict**: **Any verdict**, **OK**, **Scrap** or **Not judged**.
 - Choose a **Result**: **Any result**, **Finished**, **Failed**, **Aborted** or **Cancelled**.
 - Under **Show**, choose how many runs to list: 50, 200 or 1000.
@@ -81,7 +81,7 @@ The run then shows **Noted** by whom and when. Verdicts and notes are searchable
 3. The message says the job is open with a run ready. Check it.
 4. Frame it, then start it as usual (see [Running a job](running-a-job.md)):
    - Without a PIN, the prepared run shows under **Waiting for approval** in the **Laser** window with its own **Start** button. The foot switch also burns the open job, after framing it.
-   - With the operator PIN, approve it with **Approve…**.
+   - With the operator PIN, approve it with **Approve…**
 
 Nothing starts until you do. Every check that **Start** has still applies.
 

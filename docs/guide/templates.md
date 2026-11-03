@@ -16,11 +16,11 @@ OpenEtch also comes with example projects. Each one shows a few features, ready 
 
 To open an example:
 
-1. Choose **File > New from example…**. On an empty canvas you can also click **Examples**. On the phone, use **More > File > All file commands > New from example…**.
+1. Choose **File > New from example…** On an empty canvas you can also click **Examples**. On the phone, use **More > File > All file commands > New from example…**
 2. Read the cards. Click **Walkthrough (n steps)** to see how an example was made.
 3. Click **Open**.
 
-The example opens as a new, unsaved document laid out for the active device, with its walkthrough in the project notes. The notes show when it opens; to read them again, choose **File > Project > Notes…**. When you save, OpenEtch offers the example's name.
+The example opens as a new, unsaved document laid out for the active device, with its walkthrough in the project notes. The notes show when it opens; to read them again, choose **File > Project > Notes…** When you save, OpenEtch offers the example's name.
 
 | Example | What it shows | Read more |
 |---|---|---|
@@ -32,7 +32,6 @@ The example opens as a new, unsaved document laid out for the active device, wit
 
 The colour choices in the two coin examples come from your selected Material Library: its entries with a result colour become the choices. Without any, the Two-tone coin offers Gold, Blue and Black, and the palette coin Gold, Blue and Purple.
 
-> **Note:** Some walkthrough steps in the example notes still name older menu paths. Use the paths on this page.
 
 ![The New from example dialog](img/examples-dialog.webp)
 
@@ -65,7 +64,7 @@ Line layers (the names, rims and labels) mark along a line, so this formula does
 
 When a document has fill-in fields, a **Fill in** button shows at the top right of the canvas. Opening a template or project with fields shows the form straight away.
 
-1. Click **Fill in**, or choose **File > Project > Fill in template…**.
+1. Click **Fill in**, or choose **File > Project > Fill in template…**
 2. Fill in each field:
    - **Text**: type the text. When the field has a limit, a counter shows how many characters you have used out of it.
    - **Date**: pick a date, or click **Today**.
@@ -86,7 +85,7 @@ All the values go in as one undo step. If a text no longer fits its shape, the f
 
 To turn a design into a template:
 
-1. Choose **File > Project > Template fields…**. Or right-click a selected plain text and choose **Make a template field…**.
+1. Choose **File > Project > Template fields…** Or right-click a selected plain text and choose **Make a template field…**
 2. Under **Add a field:**, click the kind of field: **Text**, **Date**, **Font**, **Finish** or **Serial number**.
 3. Set the field's options (see the table below) and click **Add field**.
 4. Repeat for each field. Use **Move up** and **Move down** to order them as the form shows them.
@@ -112,7 +111,7 @@ A template can have up to 32 fields, and a font or finish field up to 64 choices
 ## Save and open templates {#save-and-open-templates}
 
 - To save the design as a template, choose **File > Project > Save as template…** and give it a **Template name**. A template with the same name is replaced.
-- To use a template, choose **File > Project > Open template…** and pick it, or pick it under **File > Project > Recent templates**. It opens as a new untitled document; the template itself is never overwritten.
+- To use a template, choose **File > Project > Open template…** and pick it. After you have opened a template, it is also listed under **Recent templates** in **File > Project** (the list belongs to this browser). It opens as a new untitled document; the template itself is never overwritten.
 - To use a LightBurn template, click **Upload LightBurn .lbt** in the Open template window.
 
 The engine keeps the templates. The fields are saved with the project and with the template.

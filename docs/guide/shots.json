@@ -5,17 +5,29 @@
     "example": "two-tone-coin",
     "steps": [
       {
+        "wait": ".viewport canvas"
+      },
+      {
+        "wait": 1500
+      },
+      {
+        "key": "F1"
+      },
+      {
+        "wait": ".guide-md h1"
+      },
+      {
         "hash": "#/guide#open-the-guide"
       },
       {
         "wait": ".guide-md h2"
       },
       {
-        "wait": 600
+        "wait": 800
       }
     ],
     "maxWidth": 1470,
-    "note": "The guide open beside the canvas on a MacBook, at the start page's Open the guide section."
+    "note": "The guide open beside the canvas on a MacBook (F1), at the start page's Open the guide section, with the Two-tone MOPA coin on the canvas."
   },
   {
     "name": "use-as-an-app-dialog",
@@ -148,7 +160,9 @@
       }
     ],
     "crop": ".timeline",
-    "note": "Three steps with the marker rolled back after the ellipse, so the Move step is grey."
+    "note": "The left end of the timeline: New document, Rectangle, Ellipse and Move, with the marker rolled back after the ellipse, so the Move step is grey.",
+    "cropWidth": 560,
+    "maxWidth": 1120
   },
   {
     "name": "command-search",
@@ -665,7 +679,8 @@
         "wait": 800
       }
     ],
-    "crop": ".tx-font-pop"
+    "crop": ".tx-font-pop",
+    "cropPad": 0
   },
   {
     "name": "text-on-path",

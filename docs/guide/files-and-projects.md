@@ -49,10 +49,10 @@ On the desktop, **File** is at the left of the top bar. On a phone, tap **More**
 | **Import…** | Add a file's shapes to your design. | `Ctrl+I` |
 | **Export** | **Export…**, **Print…**, **Export image…**, **Save processed bitmap…** and **Download .openetch**. | |
 | **Project** | **Fill in template…**, **Template fields…**, **Open template…**, **Recent templates**, **Save as template…**, **Notes…**, **Restore from autosave / backup…** and the autosave status. | |
-| **LightBurn** | **Import LightBurn…**, **Export to LightBurn…** and **Preferences and bundles…**. | |
-| **Laser** | **Devices…**, **Material Library**, **Find My Laser / Add galvo…**, **Batch run…**, **Job log…** and **Check every row…**. | |
+| **LightBurn** | **Import LightBurn…**, **Export to LightBurn…** and **Preferences and bundles…** | |
+| **Laser** | **Devices…**, **Material Library**, **Find My Laser / Add galvo…**, **Batch run…**, **Job log…** and **Check every row…** | |
 | **New tab** | Open a new document in its own tab. See [The workspace](the-workspace.md#document-tabs). | |
-| **Settings** | **Preferences…**, **Edit hotkeys…** and **Import options…**. | |
+| **Settings** | **Preferences…**, **Edit hotkeys…** and **Import options…** | |
 
 Entries that need something first are greyed out until it is there: **Export image…** needs a selected image, and **Fill in template…** a design with template fields. On a phone, **Devices…** is under **More > Desktop features** instead.
 
@@ -84,7 +84,7 @@ If your design has unsaved changes, you are asked first. Choose **Discard and op
 
 To open a file that is on your PC, Mac, iPad or phone:
 
-1. Choose **File > Open…**.
+1. Choose **File > Open…**
 2. Click **Upload from this device** and pick the file.
 
 What happens depends on the file:
@@ -124,7 +124,7 @@ The document name in the top bar shows a dot while there are unsaved changes. Ho
 
 You can keep projects in folders, up to four deep, such as `Clients/Acme/badge`.
 
-To make a folder, open **Save as** or **Open**, pick the folder to put it in, and click **New folder…**. Type a **Folder name** and click **Create**.
+To make a folder, open **Save as** or **Open**, pick the folder to put it in, and click **New folder…** Type a **Folder name** and click **Create**.
 
 You can also type a name with `/` in **Save as**. It makes the folders for you.
 
@@ -152,7 +152,7 @@ The engine protects your work in two ways:
 
 To restore a copy:
 
-1. Choose **File > Project > Restore from autosave / backup…**.
+1. Choose **File > Project > Restore from autosave / backup…**
 2. Under **Show**, choose the current project or **All projects**.
 3. Pick a copy under **Autosaves** or **Backups made on save**.
 
@@ -174,7 +174,7 @@ Click **Save settings** to apply them. They are kept by the engine, so they appl
 
 Importing adds a file's shapes to your current design. To import:
 
-- Choose **File > Import…** (`Ctrl+I`), or **Import** in the ribbon's **Insert** group, and pick one or more files. On a phone, tap **More**, open **File** and tap **Import…**.
+- Choose **File > Import…** (`Ctrl+I`), or **Import** in the ribbon's **Insert** group, and pick one or more files. On a phone, tap **More**, open **File** and tap **Import…**
 - Or drop files from your computer onto the canvas.
 
 Imported shapes go on the active layer, as one group, centred on the field and selected. **Import options** change this. See [Import options](#import-options).
@@ -211,7 +211,7 @@ Some files are refused, with the reason:
 
 ### Import options {#import-options}
 
-To change how imports are placed, choose **File > Settings > Import options…**. These are LightBurn's Import/Export settings, kept in this browser.
+To change how imports are placed, choose **File > Settings > Import options…** These are LightBurn's Import/Export settings, kept in this browser.
 
 | Option | Default | What it does |
 |---|---|---|
@@ -227,7 +227,7 @@ A 3D model or a Gerber or drill file opens an options dialog before it is import
 
 For a 3D model, the **Import 3D model** dialog renders the model, seen from above, into a grey depth map: the top is white and the floor black, so black engraves deepest. Its options are **Width**, **Rotate X**, **Rotate Y**, **Rotate Z**, **DPI** (254 DPI is 0.1 mm per pixel), **Depth cutoff**, **16-bit grey**, **Invert**, **Transparent background**, **Equalize** and **Generate outline**. Engrave the result with the layer's image mode set to **3D Sliced**.
 
-The model is kept in the project. To render it again with other options, right-click the image and choose **Edit 3D model…**.
+The model is kept in the project. To render it again with other options, right-click the image and choose **Edit 3D model…**
 
 For Gerber files, the **Import Gerber** dialog has **File type** (**Automatic**, **Copper (RS-274X)** or **Drill (Excellon)**) and **Invert (board outside the copper)**. Copper becomes closed outlines and drill files become circles of the tool size.
 
@@ -262,7 +262,7 @@ The dialog shows the size it will use and where it came from. OpenEtch uses, in 
 
 To use another size, click **Edit**. Type the size, or pick a quick choice such as **current design** or **this laser**. **Use the automatic size** goes back.
 
-If the file was made for a LightBurn device you do not have, the dialog says so. To use that device's size, import the device in **File > Laser > Devices…**. See [Devices and calibration](devices-and-calibration.md).
+If the file was made for a LightBurn device you do not have, the dialog says so. To use that device's size, import the device in **File > Laser > Devices…** See [Devices and calibration](devices-and-calibration.md).
 
 > **Tip:** Use the **Field Size** from LightBurn's **Device Settings** on the computer that made the file.
 
@@ -296,7 +296,7 @@ Everything OpenEtch does not use is kept, so the file can go back to LightBurn. 
 
 To save your design for LightBurn:
 
-1. Choose **File > LightBurn > Export to LightBurn…**.
+1. Choose **File > LightBurn > Export to LightBurn…**
 2. The **Export to LightBurn** dialog shows the field size from your active device. If the file will be opened on a laser with another field size, click **Edit** and type that size.
 3. Click **Export**.
 
@@ -306,7 +306,7 @@ If the design came from a LightBurn file, the export uses the field size it was 
 
 The export writes the stock outline on tool layer T1 (T2 when T1 is in use). With several pages, only the active page is exported, and a warning says so.
 
-For a gantry device, the export uses the device's bed and origin corner. To export for another device, make it active in **File > Laser > Devices…**.
+For a gantry device, the export uses the device's bed and origin corner. To export for another device, make it active in **File > Laser > Devices…**
 
 ## Export {#export}
 
@@ -414,7 +414,7 @@ The Pages window is not in the phone layout. A LightBurn export carries only the
 
 Use bundles to move your settings, devices and material libraries to another computer, or to back them up.
 
-To open them, choose **File > LightBurn > Preferences and bundles…**.
+To open them, choose **File > LightBurn > Preferences and bundles…**
 
 ![The Preferences and bundles dialog](img/prefs-bundles-dialog.webp)
 

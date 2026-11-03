@@ -109,6 +109,9 @@ test("counter, slots and next values", () => {
   assert.equal(slotLine(withEmpty.slots[1]).state, "empty");
   assert.equal(slotLine(withEmpty.slots[2]).state, "past_end");
   assert.equal(nextValues({ ...plan, slots: [] }), "–");
+  // A tag's text and its QR code carry the same number: the slot shows it once.
+  const twice = slot(1, { values: [{ object: "t1", mode: "serial", shown: "SN 0001" }, { object: "q1", mode: "serial", shown: "SN 0001" }] });
+  assert.equal(slotLine(twice).value, "SN 0001");
 });
 
 test("ledger rows: one per slot, newest run first", () => {

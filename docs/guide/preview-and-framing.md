@@ -163,11 +163,11 @@ Each key press is an ordinary edit, so you can undo it. The keys do nothing whil
 
 ### Frame shortcuts {#frame-shortcuts}
 
-The arrow next to **Frame** in the ribbon's **Job** group (**Frame options**) offers **Frame (Laser window options)**, **Frame the selection**, **Frame the bounding box** and **Frame the outline (rubber band)**.
+The arrow next to **Frame** in the ribbon's **Job** group (**Frame options**) offers **Frame (Laser window options)**, **Frame the selection**, **Frame the bounding box** and **Frame the outline (contour)**.
 
 | Keys | What they do |
 |---|---|
-| `Ctrl+Shift+A` | Frame with the Laser window's options |
+| `Ctrl+Shift+A` | **Frame the selection**, with the Laser window's options (the whole job when nothing is selected) |
 | `Alt+R` | Frame the bounding box (**Bounds** style) |
 | `Alt+Shift+R` | Frame the shapes' own outlines (**Contour** style) |
 

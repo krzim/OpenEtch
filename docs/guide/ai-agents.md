@@ -2,7 +2,7 @@
 title: AI agents
 order: 33
 section: Setup and reference
-needs: machine
+needs: design
 summary: Connect an AI agent to OpenEtch over MCP, what tools it gets, why it can never approve or start a burn, and how to ask it for good work.
 ---
 
@@ -10,7 +10,7 @@ summary: Connect an AI agent to OpenEtch over MCP, what tools it gets, why it ca
 
 OpenEtch has an MCP server, so an AI agent (an AI assistant that can use tools) can design with you. The agent works on the same live document you see. Its edits appear in the timeline like yours, and you can undo them.
 
-An agent can design, preview, frame with the red pointer and prepare a run. **It can never approve or start a burn.** A person at the machine always does that.
+An agent can design, preview, frame with the red pointer and prepare a run. **It can never approve or start a burn.** A person always does that, in the app or with the foot switch.
 
 ## What an agent can and cannot do {#what-agents-can-do}
 
@@ -30,7 +30,7 @@ An agent **can**:
 
 An agent **cannot**:
 
-- approve or start a run, or fire the laser in any way;
+- approve or start a run, or fire the marking laser in any way;
 - see, ask for, guess or set the operator PIN;
 - continue a paused run;
 - switch, import, edit or remove devices, or change device settings;
@@ -82,7 +82,7 @@ An engine started with `--no-token` needs no token, even on the network. Then an
 
 `execute` and `batch` run the engine's document commands, the same ones the app uses. None of them moves the machine or fires the laser.
 
-To see the same command list yourself, use **Help > Developer: engine commands (JSON)…**.
+To see the same command list yourself, use **Help > Developer: engine commands (JSON)…**
 
 ## Burns always need a person {#burns-need-a-person}
 

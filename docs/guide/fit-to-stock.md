@@ -12,7 +12,7 @@ The stock is the piece of material you burn on: a coin, a tag, a plate. Once Ope
 
 ## Define the stock {#define-the-stock}
 
-1. Click **Stock** in the **Create** group.
+1. Click **Stock** in the **Create** group. On an iPad it is in the tool rail at the left (in its **More** flyout when the rail is short). On a phone, tap the **Canvas** tab, then **Stock** in the tool strip.
 2. Choose **Rectangle** or **Circle**.
 3. Give it a **Name**.
 4. For a rectangle, set **Width**, **Height** and **Corner r** (the corner radius). For a circle, set **Diameter**.
@@ -67,7 +67,7 @@ On a rectangle, rounded corners are respected. **Rotation** decides whether the 
 **Place** puts the selection at a chosen point of the stock, with more control over the size.
 
 1. Select the design.
-2. Click **Place** in the **Insert** group. It needs a stock.
+2. Click **Place** in the **Insert** group. When the window is too narrow for the whole ribbon, the group folds into an **Insert** button: click **Insert**, then **Place**. On an iPad, **Place** is in the tool rail; on a phone, in the **Canvas** tab's tool strip. Place is greyed out until there is a stock (its tooltip says **Define a stock first**).
 3. Click an **Anchor** in the grid: a corner, an edge or the centre.
 4. Choose **Fit**:
    - **Keep size**

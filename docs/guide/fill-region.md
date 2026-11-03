@@ -50,6 +50,8 @@ A tap in another area shows that one instead. The modifier bar has no buttons fo
 
 ## When it does not fill {#fill-region-messages}
 
+When a click or a tap does not find an area, the bar under the canvas says why. With several areas collected, the message starts with the point's number, for example **Point 2: That is on a line: click inside an area**.
+
 - **"No closed area here: the lines around this point leave an opening (try a gap tolerance)"**: the lines do not quite meet. Raise **Gap** a little, or close the path (**Modify > Close path**).
 - **"That is on a line: click inside an area"**: you clicked on a line. Click a little further in.
 

@@ -12,6 +12,7 @@ import {
   faceContains,
   facePathData,
   fillErrorText,
+  fillMiss,
   fillPreview,
   fillRegion,
   onAdd,
@@ -212,6 +213,9 @@ test("engine errors lose the command id and the closing words", () => {
   assert.equal(fillErrorText("path.fill_region: point 1 (60, 60): no closed area around this point; nothing was created"), "point 1 (60, 60): no closed area around this point");
   const other = "invalid input for 'path.fill_region': gap_mm must be at most 10 (got 50)";
   assert.equal(fillErrorText(other), other, "other errors stay as they are");
+  assert.deepEqual(fillMiss("path.fill_region: point 2 (60, 60): no closed area around this point (the lines around it leave an opening; a gap tolerance can close small ones); nothing was created"), { point: 2, code: "not_enclosed" });
+  assert.deepEqual(fillMiss("Point 1 (0, 19.75): the point is on a line; pick a point inside an area"), { point: 1, code: "on_line" });
+  assert.equal(fillMiss(other), null);
 });
 
 test("the tool is a canvas tool, has a hotkey action and is found by command search", () => {

@@ -66,3 +66,11 @@ test("timelineLabel: every importer is an Import step", () => {
     assert.deepEqual(timelineLabel(step(cmd, "imported", cmd.split(".")[1]), t), { text: "Import", icon: "import" }, cmd);
   }
 });
+
+test("timelineLabel: jig steps say they were jig steps", () => {
+  // Seen in the app: New jig… and Place selection in every pocket left chips reading "create" and "place".
+  assert.equal(timelineLabel(step("jig.create", "created jig j1", "create"), t).text, "New jig");
+  assert.equal(timelineLabel(step("jig.place", "placed in 6 pockets", "place"), t).text, "Place in pockets");
+  assert.equal(timelineLabel(step("jig.set_pockets", "pockets", "set_pockets"), t).text, "Switch pockets");
+  assert.equal(timelineLabel(step("object.fit_to_stock", "fitted", "fit_to_stock"), t).text, "Fit to stock");
+});

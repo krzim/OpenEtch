@@ -23,5 +23,6 @@ export const EN_FILL = {
   "fill.filled": "Filled {n} area(s) on {layer}",
   "fill.notEnclosed": "No closed area here: the lines around this point leave an opening (try a gap tolerance)",
   "fill.onLine": "That is on a line: click inside an area",
+  "fill.pointN": "Point {n}: {text}",
   "tlx.fillRegion": "Fill region",
 } as const;

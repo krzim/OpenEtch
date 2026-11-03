@@ -22,7 +22,7 @@ export interface EmptyCanvasCardProps {
 }
 
 /** The device name GET /api/machine reports, or null. */
-function deviceName(m: Record<string, unknown> | null): string | null {
+export function deviceName(m: Record<string, unknown> | null): string | null {
   if (!m) return null;
   const d = m.device && typeof m.device === "object" ? (m.device as { display_name?: unknown }).display_name : null;
   const name = typeof d === "string" && d ? d : m.profile;

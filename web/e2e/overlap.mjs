@@ -219,10 +219,14 @@ export function checkLayout(opts) {
       problems.push({ type: "offscreen", severity: it.kind === "panel" || !whole ? "medium" : "low", a: it.label, box: rnd(b), detail: `${it.label} ${whole ? "wholly" : "partly"} outside the ${vw}x${vh} viewport` });
     }
     const bands = [];
-    if (safe.top && b.top < safe.top - 0.5 && b.bottom > 0) bands.push("top");
-    if (safe.bottom && b.bottom > vh - safe.bottom + 0.5 && b.top < vh) bands.push("bottom");
-    if (safe.left && b.left < safe.left - 0.5 && b.right > 0) bands.push("left");
-    if (safe.right && b.right > vw - safe.right + 0.5 && b.left < vw) bands.push("right");
+    // A full-bleed panel (the guide sheet, a dialog sheet) that pads its content clear of a band is clear of it: its
+    // background may run under the notch, its controls do not (they are checked on their own).
+    const pad = it.kind === "panel" ? getComputedStyle(it.el) : null;
+    const padded = (side, band) => !!pad && parseFloat(pad[`padding${side}`]) >= band - 0.5;
+    if (safe.top && b.top < safe.top - 0.5 && b.bottom > 0 && !padded("Top", safe.top - b.top)) bands.push("top");
+    if (safe.bottom && b.bottom > vh - safe.bottom + 0.5 && b.top < vh && !padded("Bottom", b.bottom - (vh - safe.bottom))) bands.push("bottom");
+    if (safe.left && b.left < safe.left - 0.5 && b.right > 0 && !padded("Left", safe.left - b.left)) bands.push("left");
+    if (safe.right && b.right > vw - safe.right + 0.5 && b.left < vw && !padded("Right", b.right - (vw - safe.right))) bands.push("right");
     if (bands.length) problems.push({ type: "safe-area", severity: "medium", a: it.label, box: rnd(b), detail: `${it.label} reaches into the ${bands.join("+")} safe-area band` });
     if (o.touch && it.kind === "control") {
       let r = it.el.getBoundingClientRect();

@@ -44,7 +44,7 @@ The window lists one row per slot, newest run first. If no run has marked serial
 | **Project** | The project, or the document name when the project was not saved. |
 | **Slot** | The slot number. |
 | **Pocket** | The slot's name, with the jig pocket when it sits in one, for example "Serial · Coins P3". |
-| **Value** | What the slot's texts and barcodes showed, for example "SN 00009". A slot that was left out shows "–". |
+| **Value** | What the slot's texts and barcodes showed, for example "SN 0009". A slot that was left out shows "–". |
 | **Result** | How the run ended: finished, aborted (stopped) or failed. A slot that was left out shows **Empty** or **Past End**. |
 | (last column) | **Re-mark**, on every slot that was marked. |
 
@@ -99,11 +99,11 @@ To re-mark a slot from the Serial ledger window:
 
 1. Open the **Serial ledger**.
 2. Find the row of the run and slot.
-3. Press **Re-mark**. OpenEtch says, for example, "Re-mark of SN 00009 requested: approve it in the Laser window or the cockpit".
+3. Press **Re-mark**. OpenEtch says, for example, "Re-mark of SN 0009 requested: approve it in the Laser window or the cockpit".
 4. Put the part (or a fresh blank) in that pocket. For a jig, you can check the position with the frame icon beside the pocket number in the [Jigs window](jigs.md#frame-pockets).
 5. Under **Waiting for approval**, in the Laser window or the cockpit, start the run. On an engine without a PIN, press **Start** on its row. With a PIN, press **Approve…**, type the **Operator PIN** and press **Confirm and fire**.
 
-To re-mark from the cockpit, tap the slot's button in the **Serial ledger** card (for example "3: SN 00009"). OpenEtch says "Re-mark requested: approve it to burn". Start it under **Waiting for approval** as above.
+To re-mark from the cockpit, tap the slot's button in the **Serial ledger** card (for example "3: SN 0009"). OpenEtch says "Re-mark requested: approve it to burn". Start it under **Waiting for approval** as above.
 
 > **Warning:** Marking the same spot again adds energy. On a part that is already marked, a second pass can darken the mark, shift a MOPA colour, or melt or warp thin stock. Work out the energy density first (J/mm² = power W ÷ (speed mm/s × line interval mm)) and test on scrap.
 

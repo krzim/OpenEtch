@@ -21,7 +21,7 @@ Changing a browser setting never changes your designs or the engine. The engine,
 
 To open Preferences:
 
-- **Wide desktop window:** click the gear button (**Preferences**) at the right of the top bar, or choose **File > Settings > Preferences…**.
+- **Wide desktop window:** click the gear button (**Preferences**) at the right of the top bar, or choose **File > Settings > Preferences…**
 - **Smaller windows, MacBooks and tablets:** click **More** (⋯) at the right of the top bar, then **Preferences**. **File > Settings > Preferences…** works too.
 - **Phone:** tap **More**, open **Settings** and tap **Preferences**.
 
@@ -149,7 +149,7 @@ The **Defaults** button in the dialog only puts the fields back to OpenEtch's de
 You can bring some of your LightBurn preferences into OpenEtch: display, snapping, import, framing and dialog settings, LightBurn's autosave interval and the optimisation defaults.
 
 1. Find a LightBurn `.lbprefs` backup (on Windows in `%LOCALAPPDATA%\LightBurn\backup\prefs`) or LightBurn's `prefs.ini`.
-2. Click **Import LightBurn preferences…** at the bottom of Preferences. The same button is in **File > LightBurn > Preferences and bundles…**.
+2. Click **Import LightBurn preferences…** at the bottom of Preferences. The same button is in **File > LightBurn > Preferences and bundles…**
 3. Pick the file. A preview says how many LightBurn settings OpenEtch can use, and lists them:
    - **Autosave every … minute(s) (engine)**
    - **Optimization Settings defaults of the active device (engine)**
@@ -162,7 +162,7 @@ To import LightBurn devices, use the Devices window instead (see [Devices and ca
 
 ## Preferences and bundles {#preferences-and-bundles}
 
-To open it, choose **File > LightBurn > Preferences and bundles…**. On a phone, tap **More**, open **File**, tap **All file commands** and choose **LightBurn > Preferences and bundles…**.
+To open it, choose **File > LightBurn > Preferences and bundles…** On a phone, tap **More**, open **File**, tap **All file commands** and choose **LightBurn > Preferences and bundles…**
 
 ![The Preferences and bundles dialog with engine preferences, automatic backups and user bundles](img/preferences-and-bundles.webp)
 

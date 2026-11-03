@@ -20,7 +20,8 @@ export interface Command {
 export const ALIASES: Readonly<Record<string, readonly string[]>> = {
   "app.preferences": ["settings", "options", "config"],
   "help.hotkeys": ["shortcuts", "keys", "keyboard", "cheat sheet"],
-  "help.guide": ["help", "manual", "documentation", "docs", "how to", "instructions"],
+  // "guide" alone finds the user guide first; the ruler guides ("Add guide…", "Clear guides") come after it.
+  "help.guide": ["guide", "help", "manual", "documentation", "docs", "how to", "instructions"],
   "edit.delete": ["remove", "erase"],
   "edit.duplicate": ["clone", "copy"],
   "edit.selectAll": ["everything"],
@@ -111,6 +112,9 @@ export function scoreCommand(c: Command, query: string): number {
     if (!s) return 0;
     sum += s;
   }
+  // The whole query is one of the command's aliases: as good as typing its label.
+  const whole = toks.join(" ");
+  if ((c.aliases ?? []).some((a) => normalize(a) === whole)) sum = Math.max(sum, 1000 * toks.length);
   return sum;
 }
 

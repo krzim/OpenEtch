@@ -23,7 +23,7 @@ The list starts with **1 pre-flight warning** or **N pre-flight warnings**. Warn
 
 | Check | Example message | What to do |
 |---|---|---|
-| Cut before fill | Layer “Outline” (lines) burns before layer “Fill” (fill) where they overlap… | Reorder the layers in **Cuts / Layers**, or turn on **Sort cuts last** in **Optimization…**. A cut that frees the part can let it move before it is filled. |
+| Cut before fill | Layer “Outline” (lines) burns before layer “Fill” (fill) where they overlap… | Reorder the layers in **Cuts / Layers**, or turn on **Sort cuts last** in **Optimization…** A cut that frees the part can let it move before it is filled. |
 | Empty output layers | Layer “…” is set to output but has nothing on it. | Switch the layer's output off, or check you put the shapes on the right layer. |
 | Unfilled variables | … merges CSV columns but no CSV file is loaded: it would burn empty. | Load the CSV, or check the row and End. Similar warnings cover a CSV row past the last one, an empty cell, and a serial number past End. See [Variable text and barcodes](variable-text-and-barcodes.md). |
 | Serial / CSV rows | "…" at 0042: … | A serial or CSV text would run outside its pocket or stock, or has missing letters. Click **Check every row…** next to the warning to see every row. |
@@ -80,7 +80,7 @@ To add a keep-out zone to a jig:
 
 1. In the Design workspace, draw a closed shape over the area to protect, for example a rectangle over a clamp.
 2. Select it.
-3. In the ribbon's **Arrange** group, open **Jigs** and choose **Jigs…**.
+3. In the ribbon's **Arrange** group, open **Jigs** and choose **Jigs…**
 4. Pick the jig.
 5. Under **Keep-out zones**, click **Add selection as keep-out zone**.
 

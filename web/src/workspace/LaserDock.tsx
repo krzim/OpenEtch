@@ -3,7 +3,7 @@
 // (components/FramingOptions.tsx), Start or Request run with the run options (Repeat, Run continuously, Start Marking
 // input, Cut Selected Graphics), the job counter (Count, Reset Count, Stop At), Optimization Settings and Rotary Setup,
 // and STOP, which is always allowed. With the operator PIN, Request run never fires by itself: the run waits for PIN
-// approval in the Runs card. Without a PIN (`--approval click`), Start burns the job in one click like LightBurn's
+// approval in the Laser window. Without a PIN (`--approval click`), Start burns the job in one click like LightBurn's
 // (with the Job Checklist and Require Framing shown inline when they are on), and the foot switch cycle's state is shown
 // (press to frame, press again to burn what was framed).
 
@@ -101,7 +101,7 @@ export function LaserDock(p: LaserDockProps) {
   const noPin = noPinMode(p.machine);
   const gates = useSharedApprovalGates();
   const cycle = footCycle(p.machine);
-  const cycleText = footCycleText(p.machine);
+  const cycleText = footCycleText(p.machine, gates.gates.checklist.enabled);
   const pending = p.pendingRuns > 0;
   // What the Start button, the status chip and the banner need from here (laser/laserContext.ts).
   useLaserSource("dock", {
@@ -192,7 +192,7 @@ export function LaserDock(p: LaserDockProps) {
       <JobProgress state={job} notify={p.notify} report={p.report} />
 
       {!phone && framing}
-      {!phone && noPin && <ApprovalChecks state={gates} disabled={flow.starting} showDoor={false} />}
+      {!phone && noPin && <ApprovalChecks state={gates} disabled={flow.starting} showDoor={false} noPin />}
       {!phone && (
         <div className="laser-start-row">
           <StartButton variant="dock" />

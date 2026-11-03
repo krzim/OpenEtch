@@ -1,7 +1,7 @@
 // HTTP calls for job control, framing, calibration and device settings (ARCHITECTURE.md, "Job control, calibration
 // and device settings"). Same auth and error handling as client.ts (bearer token, ApiError with the engine's `error`
 // text, `code` and HTTP status); kept apart so the machine side of the UI has its own module. `requestRun` only creates
-// a pending run, which still needs approval in the Runs card; `start` is the no-PIN engine's one-click Start (LightBurn's
+// a pending run, which still needs approval in the Laser window (Waiting for approval); `start` is the no-PIN engine's one-click Start (LightBurn's
 // Start), which the engine accepts only from this page in a browser.
 
 import { ApiError, authToken, UI_ORIGIN } from "./client.ts";
@@ -146,7 +146,7 @@ export const jobApi = {
   ruidaFiles: () => call("GET", "/api/machine/files"),
   /** Send: the job (or the objects `ids`) stored on the controller as `name`; never started. UI only. */
   ruidaSend: (name: string, ids?: readonly string[]) => call("POST", "/api/machine/files/send", { name, ...(ids ? { ids } : {}), origin: UI_ORIGIN }),
-  /** A pending run of stored file `index` (named `name`): it starts only when approved in the Runs card. UI only. */
+  /** A pending run of stored file `index` (named `name`): it starts only when approved in the Laser window. UI only. */
   ruidaRun: (index: number, name: string) => call("POST", `/api/machine/files/${index}/run`, { name, origin: UI_ORIGIN }),
   /** Delete stored file `index` if it is still named `name`. UI only. */
   ruidaDelete: (index: number, name: string) => call("POST", `/api/machine/files/${index}/delete`, { name, origin: UI_ORIGIN }),

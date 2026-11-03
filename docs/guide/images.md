@@ -15,11 +15,11 @@ An image engraves dot by dot. How it looks on metal depends on the image itself,
 To bring in a picture, do one of these:
 
 - Click **Import** in the **Insert** group, or press `Ctrl+I`.
-- Choose **File > Import…**.
+- Choose **File > Import…**
 - Drop the file on the window.
 - Copy an image in another program and paste it (`Ctrl+V`) with **Use the system clipboard** on in the **Edit** menu (up to 50 MB).
 
-On the phone, use **More > File > Import…**.
+On the phone, use **More > File > Import…**
 
 OpenEtch reads PNG, JPEG, GIF, BMP, WebP, TIFF and TGA. The image is sized from its own resolution (or 254 DPI, 0.1 mm per pixel, when it has none), and shrunk to fit 80 % of the field if it is larger.
 
@@ -154,7 +154,7 @@ Tracing turns a picture into vector outlines you can cut, fill or edit.
 
 To trace many pictures with the same settings, choose **Tools > Multi-File Trace…**:
 
-1. Under **Trace**, pick **Selected images (n)**, or pick **Image files** and click **Choose images…**.
+1. Under **Trace**, pick **Selected images (n)**, or pick **Image files** and click **Choose images…**
 2. Set **Resolution when the file has none**.
 3. Under **Result**, pick **Download the SVGs (one .zip)** or **Add the traced vectors to the document**. Tick **Delete the images after tracing** if you want.
 4. Click **Trace**.

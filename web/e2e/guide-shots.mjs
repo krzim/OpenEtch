@@ -22,6 +22,7 @@ import { fileURLToPath } from "node:url";
 import { launch, sleep } from "./cdp.mjs";
 import { DEVICES } from "./devices.mjs";
 import { parseKey, shotsProblems } from "./guideSteps.mjs";
+import { sizesJson } from "./webpSize.mjs";
 import { api, applySafeArea, canvasPoint, escape, execute, find, menuPath, phoneTab, pressFind, selectionCount, sheetOpen, sheetTo } from "./scenarios.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -433,15 +434,19 @@ async function shoot(browser, shot, o) {
     if (left.length) throw new Error(`refused: something private is on screen (${left.join(", ")})`);
     let clip;
     if (shot.crop) {
-      clip = await page.evaluate((sel) => {
-        const e = document.querySelector(sel);
-        if (!e) return null;
-        const r = e.getBoundingClientRect();
-        const pad = 8;
-        const x = Math.max(0, r.left - pad);
-        const y = Math.max(0, r.top - pad);
-        return { x, y, width: Math.min(innerWidth, r.right + pad) - x, height: Math.min(innerHeight, r.bottom + pad) - y };
-      }, shot.crop);
+      clip = await page.evaluate(
+        ([sel, maxW, pad]) => {
+          const e = document.querySelector(sel);
+          if (!e) return null;
+          const r = e.getBoundingClientRect();
+          const x = Math.max(0, r.left - pad);
+          const y = Math.max(0, r.top - pad);
+          // cropWidth: only the left part of a long strip (the timeline's first steps).
+          const right = Math.min(innerWidth, r.right + pad, maxW ? x + maxW : Infinity);
+          return { x, y, width: right - x, height: Math.min(innerHeight, r.bottom + pad) - y };
+        },
+        [shot.crop, shot.cropWidth ?? 0, shot.cropPad ?? 8],
+      );
       if (!clip || clip.width < 10 || clip.height < 10) throw new Error(`crop: no visible ${shot.crop}`);
     } else clip = { x: 0, y: 0, width: d.width, height: d.height };
     const maxW = shot.maxWidth ?? 1600;
@@ -500,6 +505,8 @@ async function main() {
   } finally {
     engine?.stop();
   }
+  // Every picture's size, for the guide's <img width height> (docs/guide/img-sizes.json; docs.test.ts checks it).
+  if (out === resolve(join(GUIDE, "img"))) writeFileSync(join(GUIDE, "img-sizes.json"), await sizesJson(out));
   if (failed) {
     console.error(`${failed} of ${picked.length} shots failed`);
     process.exitCode = 1;

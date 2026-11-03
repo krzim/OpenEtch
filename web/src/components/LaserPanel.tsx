@@ -145,7 +145,7 @@ export function RunsCard(props: {
           </p>
         )}
         {pending.length === 0 ? (
-          <p className="muted">{t("lp.noneRequestRunCreatesOneNothing")}</p>
+          <p className="muted">{t(noPinMode(props.machine) ? "lp.noneNoPin" : "lp.noneRequestRunCreatesOneNothing")}</p>
         ) : inDock ? (
           <p className="muted">{t("lz.approvalsInDock")}</p>
         ) : (
@@ -358,7 +358,7 @@ function PendingRunRow(props: {
       {error && <p className="run-error">{error}</p>}
       {noPin && (
         <>
-          <ApprovalChecks state={gates} disabled={step === "sending"} showDoor={false} />
+          <ApprovalChecks state={gates} disabled={step === "sending"} showDoor={false} noPin />
           <button className="btn btn-start" onClick={() => void approve()} disabled={!canFire} title={t("lz.startTitle")}>
             {step === "sending" ? t("rest.approving") : t("lp.start")}
           </button>

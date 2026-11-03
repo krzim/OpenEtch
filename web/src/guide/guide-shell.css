@@ -9,6 +9,16 @@
   min-height: 0;
   background: var(--panel);
   border-left: 1px solid var(--border);
+  /* Above a modal dialog's backdrop, which stops at the pane (below): a "?" inside a dialog shows the guide beside it,
+     readable and clickable, while the dialog stays open on the left. Menus, toasts and STOP stay above it. */
+  position: relative;
+  z-index: calc(var(--z-modal) + 1);
+}
+
+/* While the guide is beside the canvas, a dialog centres in the room left of it (the backdrop still dims the rest of
+   the app; the guide lies above it). */
+.app[data-guide] .modal-backdrop {
+  padding-right: calc(16px + var(--safe-right) + var(--guide-w, 0px));
 }
 
 /* A right dock opened from its rail lies over the canvas, left of the guide (not over it). */

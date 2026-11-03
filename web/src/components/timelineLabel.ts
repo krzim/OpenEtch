@@ -95,6 +95,24 @@ function labelFor(cmd: string, summary: string, t: T): StepLabel | null {
       return { text: t("tlx.place"), icon: "place" };
     case "art.array":
       return { text: t("tlx.array"), icon: "array" };
+    case "object.fit_to_stock":
+      return { text: t("tlx.fitStock"), icon: "fitStock" };
+    // Jigs (src/jigs/): the chip says it was a jig step ("New jig", "Place in pockets"), not the bare "create".
+    case "jig.create":
+    case "jig.from_objects":
+    case "jig.import":
+      return { text: t("tlx.newJig"), icon: "jig" };
+    case "jig.edit":
+    case "jig.move":
+    case "jig.add_keep_out":
+    case "jig.remove_keep_out":
+      return { text: t("tlx.editJig"), icon: "jig" };
+    case "jig.set_pockets":
+      return { text: t("tlx.switchPockets"), icon: "jig" };
+    case "jig.delete":
+      return { text: t("tlx.deleteJig"), icon: "jig" };
+    case "jig.place":
+      return { text: t("tlx.placeInPockets"), icon: "jig" };
     // The Tools menu extras merged from main (tools/toolsApi.ts TOOLS_CMD).
     case "tabs.add":
       return { text: t("tlx.addTab"), icon: "plus" };

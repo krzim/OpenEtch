@@ -31,7 +31,7 @@ export const PHONE_CANVAS_EVENT = "openetch:phone-canvas";
 
 /** Each tab's sheet height when it opens. */
 const OPEN_AT: Record<PhoneTab, SheetSnap> = { canvas: "peek", layers: "half", job: "half", more: "full" };
-const ICON: Record<PhoneTab, string> = { canvas: "pointer", layers: "layers", job: "zap", more: "ellipsis" };
+const ICON: Record<PhoneTab, string> = { canvas: "pointer", layers: "layers", job: "zap", more: "more" };
 
 export interface PhoneShellProps {
   /** The top bar; `openMenu` opens the More sheet (the bar's menu button). */

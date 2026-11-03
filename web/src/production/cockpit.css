@@ -54,6 +54,10 @@
 .cockpit-sub {
   color: var(--topbar-muted);
   font-size: var(--fs-sm, 12px);
+  /* The device's name on one line (a phone's narrow bar shortens it), so the bar keeps its height. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .cockpit-lock {

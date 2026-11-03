@@ -10,6 +10,9 @@ export interface GuideRoute {
 }
 
 export const GUIDE_EVENT = "openetch:guide";
+/** Sent when the guide is asked to open (F1, Help > User guide, a "?"): the viewer then takes the focus, also when it
+ * was open already at that page, so Esc closes it straight away. */
+export const GUIDE_FOCUS_EVENT = "openetch:guide-focus";
 const SLUG = "[a-z0-9][a-z0-9-]*";
 const ANCHOR = "[A-Za-z][\\w-]*";
 const HASH_RE = new RegExp(`^#/guide(?:/(${SLUG})?)?(?:#(${ANCHOR}))?$`);
@@ -59,11 +62,19 @@ function notify(): void {
   window.dispatchEvent(new Event(GUIDE_EVENT));
 }
 
-/** Show a route: a new history entry, or `replace` the current one (an anchor on the same page). */
+/** How many guide pages lie in the history up to here (1 on the first page the guide opened at; 0 while closed). */
+export function guideDepth(): number {
+  return depthNow();
+}
+
+/** Show a route: a new history entry, or `replace` the current one (an anchor on the same page). The route already
+ * shown (F1 pressed again, the same "?" twice) replaces its entry, so Back still leaves the guide in one press. */
 export function navigateGuide(r: GuideRoute, o: { replace?: boolean } = {}): void {
-  const open = parseGuideHash(location.hash) !== null;
+  const cur = parseGuideHash(location.hash);
+  const open = cur !== null;
+  const same = open && cur.slug === r.slug && cur.anchor === r.anchor;
   const url = `${location.pathname}${location.search}${guideHash(r)}`;
-  if (o.replace && open) history.replaceState({ ...(history.state ?? {}), oeGuide: depthNow() }, "", url);
+  if ((o.replace || same) && open) history.replaceState({ ...(history.state ?? {}), oeGuide: depthNow() }, "", url);
   else history.pushState({ oeGuide: open ? depthNow() + 1 : 1 }, "", url);
   notify();
 }
@@ -72,6 +83,7 @@ export function navigateGuide(r: GuideRoute, o: { replace?: boolean } = {}): voi
 export function openGuide(target = "index"): void {
   const r = parseTarget(target) ?? { slug: "index", anchor: null };
   navigateGuide(r);
+  window.dispatchEvent(new Event(GUIDE_FOCUS_EVENT));
 }
 
 /** Close the guide: back past the guide's own history entries, or drop the hash when the app was opened on one. */

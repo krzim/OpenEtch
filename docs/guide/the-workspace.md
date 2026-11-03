@@ -176,7 +176,7 @@ On a phone the Browser is under **More > Browser**.
 
 The timeline runs along the bottom of the window, like Fusion 360's design timeline. It has one chip for each change to the design, oldest on the left, and a marker after the last step that is applied.
 
-![The timeline with several steps and the history marker rolled back](img/timeline.webp)
+![The left end of the timeline: New document, Rectangle, Ellipse and a grey Move step after the marker](img/timeline.webp)
 
 Each chip says what the step did, such as **Rectangle**, **Move** or **Text "Hello"**. Its badge says who made it: **You**, **Script** or the AI agent's name. A step an agent has just made flashes briefly.
 
@@ -219,7 +219,7 @@ Command search finds any command, tool or setting by name, like Fusion 360's `S`
 
 To use it:
 
-1. Press `S` while the canvas has focus, or click **Search** at the right end of the ribbon. On a phone, tap **More**, then **Command search…**.
+1. Press `S` while the canvas has focus, or click **Search** at the right end of the ribbon. On a phone, tap **More**, then **Command search…**
 2. Type part of a name. Other words work too: "settings" finds **Preferences**.
 3. Use `↑` and `↓` to move, `Enter` to run, `Esc` to close.
 
@@ -234,7 +234,7 @@ Command search never offers **Request run** or **Start**. A burn starts only fro
 The status bar along the bottom shows, from left to right:
 
 - The pointer's position (**X** and **Y**), or the snapped point and what it snapped to.
-- The selection's size, such as **2 selected: 40 × 40**, or **Nothing selected**.
+- The selection's size, such as **2 selected: 40 mm × 40 mm**, or **Nothing selected**.
 - **Job ≈** the estimated time of the whole job (Design workspace only; an estimate, not a promise).
 - The laser's state, such as **Ready (simulator)**.
 - **Snap:** what snapping is on.
@@ -282,7 +282,7 @@ The top bar has **Menu**, the document name, the status dot and **STOP**. Over t
 
 | Tab | What it opens |
 |---|---|
-| **Canvas** | The **Tools** sheet: the drawing tools as a strip. With a shape selected, the sheet is called **Selection** and also shows its position and size, **Centre on stock**, **Centre on field**, **Rotate 90°** and **Delete**. |
+| **Canvas** | The **Tools** sheet: the drawing tools as a strip. With a shape selected, the sheet is called **Selection** and also shows its position and size, **Centre on stock**, **Centre on field**, **Fit to stock**, **Rotate 90°** and **Delete**. |
 | **Layers** | **Cuts / Layers**, the layer colours and the **Material Library**. |
 | **Job** | The Laser window in the Laser workspace, so the canvas shows the job preview. **Start** (or **Request run**) stays pinned under the sheet's header at every height. |
 | **More** | Command search, File commands, the Browser, History, Settings, Help and the desktop features. |
@@ -310,7 +310,7 @@ The **More** sheet has these sections:
 - **Browser**: the document tree.
 - **History**: the timeline as a list.
 - **Settings**: **Preferences** and the theme switch.
-- **Help**: the Help menu, including **Use as an app…**.
+- **Help**: the Help menu, including **Use as an app…**
 - **Desktop features**.
 
 ![The phone's More sheet with the File section open](img/phone-more-sheet.webp)
@@ -320,14 +320,14 @@ The **More** sheet has these sections:
 Some features are made for a bigger screen and a mouse or pen, so they are left out of the phone's tool strip, menus and command search. **More > Desktop features** lists them and opens the ones a phone can still run:
 
 - **Edit nodes**, **Pen**, **Polygon** and **Trim** (each closes the sheet so the canvas is in view). **Edit nodes** needs a selected shape.
-- **Weld** (with shapes selected), **Add Tabs** and **Manage User Tools…**.
-- **Devices, device settings and the lens wizard…**.
+- **Weld** (with shapes selected), **Add Tabs** and **Manage User Tools…**
+- **Devices, device settings and the lens wizard…**
 
 Only on a computer or tablet: **Docking**, editing the Art library, and the GRBL console.
 
 ## Touch controls {#touch-controls}
 
-On a touch screen, one finger acts as the left mouse button and two fingers move the view. A long-press is the right-click. While you draw with a pen, touches from a resting palm only move the view.
+On a touch screen, one finger acts as the left mouse button and two fingers move the view (pan, and pinch to zoom). A second finger cancels a drag. A long-press is the right-click. While a pen touches the screen, other touches (a resting palm) are ignored; for a second after the pen lifts, a touch only moves the view.
 
 Tap a selected shape again to switch its handles between scaling and rotating.
 
@@ -343,7 +343,7 @@ The modifier bar, at the bottom left of the canvas, gives you the keys a finger 
 | Rotating | **15° steps**, **5° steps** |
 | Rectangle, Ellipse | **Square**, **From centre** |
 | Circle | **No snap** |
-| Line, Pen, Measure | **15° steps**, **No snap** |
+| Line, Pen, Measure, canvas picks | **15° steps**, **No snap** |
 | Polygon | **15° steps** |
 | Edit nodes | **Add** |
 
@@ -351,9 +351,11 @@ Tap a button to use it for the next gesture only. Double-tap it to keep it on un
 
 ### The selection action bar {#selection-action-bar}
 
-With shapes selected and the Select tool active, a bar of buttons floats above the selection: **Copy**, **Paste**, **Duplicate**, **Delete**, **Group** (two or more shapes) or **Ungroup** (a group), **Rotate 90°**, **Flip horizontal**, **Flip vertical** and **More…**. Buttons that do not fit go under the last ⋯, with **All actions…** for the full menu.
+With shapes selected and the Select tool active, a bar of buttons floats above the selection: **Copy**, **Paste**, **Duplicate**, **Delete**, **Group** (two or more shapes) or **Ungroup** (a group), **Rotate 90°**, **Flip horizontal**, **Flip vertical** and **More…** Buttons that do not fit go under the last ⋯, with **All actions…** for the full menu.
 
 The bar shows on touch screens by default. To show it with a mouse too, or never, set **Preferences > Layout and input > Selection action bar** to **Always** or **Never**. It hides while a sheet covers the selection.
+
+![The modifier bar and the selection action bar on an iPad](img/touch-modifier-bar.webp)
 
 ## Full screen and Focus canvas {#full-screen}
 
@@ -399,6 +401,6 @@ The **Help** menu (in the **More** (⋯) menu in the compact and tablet layouts,
 - **User guide** (`F1`): this guide. See [Open the guide](index.md#open-the-guide).
 - **Keyboard shortcuts** (`Shift+?`). See [Keyboard shortcuts](keyboard-shortcuts.md).
 - Links to the **OpenEtch README**, **Architecture (engine API, MCP)**, **Web UI README**, **LightBurn documentation** and **Report a problem**.
-- **Developer: engine commands (JSON)…**, **Enable debug log**, **Report a bug…** and **Check for updates…**.
+- **Developer: engine commands (JSON)…**, **Enable debug log**, **Report a bug…** and **Check for updates…**
 - **Use as an app…** (not shown inside an app window). See [Getting started](getting-started.md#install-as-an-app).
 - **About OpenEtch**: the versions of the app and the engine, and the engine's MCP address for AI agents.

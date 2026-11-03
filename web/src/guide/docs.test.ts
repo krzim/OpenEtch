@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { DEVICES } from "../../e2e/devices.mjs";
 import { shotsProblems } from "../../e2e/guideSteps.mjs";
+import { sizesJson } from "../../e2e/webpSize.mjs";
 import { collectRefs, imageName, linkTarget, type Block, type Inline } from "./markdown.ts";
 import { anchorsOf, buildGuide, withContents } from "./pages.ts";
 
@@ -107,6 +108,11 @@ test("shots.json is valid, every shot is used by a page and every file in img/ i
   const used = new Set(Object.values(files).flatMap((src) => [...src.matchAll(/\]\(img\/([a-z0-9-]+)\.[a-z]+\)/g)].map((m) => m[1])));
   for (const s of shots) assert.ok(used.has(s.name), `shot "${s.name}" is not used by any page`);
   for (const f of imgFiles) assert.ok(shotNames.has(f.replace(/\.[a-z]+$/, "")), `docs/guide/img/${f} is not a shot in shots.json`);
+});
+
+test("img-sizes.json gives every picture's real size (npm run guide:shots rewrites it)", async () => {
+  const want = await sizesJson(join(dir, "img"));
+  assert.equal(readFileSync(join(dir, "img-sizes.json"), "utf8").replace(/\r\n?/g, "\n"), want);
 });
 
 test("index.md's contents list is up to date (npm run guide:index)", () => {

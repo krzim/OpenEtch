@@ -40,7 +40,7 @@ export interface LaserFacts {
   notify: Notify;
   report: (e: unknown) => void;
   refreshMachine: () => void;
-  /** The pending runs' approval is shown under Request run in the Laser dock (the Runs card then only points there). */
+  /** The pending runs' approval is shown under Request run in the Laser dock (the Pending runs card then only points there). */
   approvalsInDock: boolean;
 }
 

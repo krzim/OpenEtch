@@ -2,7 +2,7 @@
 // the controller's File List window (LightBurn's File List: list, start, delete, and Send) and File > Save RD file,
 // on the engine's POST /api/devices/ruida, GET /api/machine/files, POST /api/machine/files/send,
 // /api/machine/files/{index}/run and /delete, and GET /api/export/rd. Starting a stored file fires the laser, so it
-// only creates a pending run: it is approved in the Laser window's Runs card like any other run (the operator PIN or
+// only creates a pending run: it is approved in the Laser window (Waiting for approval) like any other run (the operator PIN or
 // Start), never from here. Pure, so `npm test` covers it.
 
 import type { DeviceOrigin } from "./devices.ts";

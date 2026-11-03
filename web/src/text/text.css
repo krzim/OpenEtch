@@ -499,6 +499,10 @@
   stroke-width: 1.3px;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+/* vector-effect is not inherited: on the <svg> it left the path's stroke 1.3 viewBox units wide, which drew the
+   single-line fonts as heavy blobs. On the path, the line stays 1.3 screen px at any size. */
+.tx-sample.stroke path {
   vector-effect: non-scaling-stroke;
 }
 .tx-sample-wait {

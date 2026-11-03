@@ -42,7 +42,7 @@ A library name cannot contain `\ / : * ? " < > |`, or start or end with a dot.
 To add shapes from your design:
 
 1. Select the shapes.
-2. Click **Add selection**, or right-click and choose **Add to Art Library…**.
+2. Click **Add selection**, or right-click and choose **Add to Art Library…**
 3. Give the item a name if you like, and click **OK**.
 
 The item keeps the artwork only, not the cut settings.

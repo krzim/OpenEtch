@@ -180,27 +180,46 @@ function snippetOf(text: string, tokens: string[], width = 140): string {
   if (at < 0 || flat.length <= width) return flat.slice(0, width) + (flat.length > width ? "…" : "");
   const pos = Math.round((at / Math.max(1, low.length)) * flat.length);
   const start = Math.max(0, pos - Math.round(width / 3));
-  const s = flat.slice(start, start + width);
+  // A cut that starts on punctuation ("....", "…) and") starts after it.
+  const s = start > 0 ? flat.slice(start, start + width).replace(/^[\s.,;:!?)\]…-]+/, "") : flat.slice(start, start + width);
   return `${start > 0 ? "…" : ""}${s}${start + width < flat.length ? "…" : ""}`;
+}
+
+/** A word without its ending (framing, framed, frames, frame -> fram), so a title's "framing" counts for "frame". */
+export function stem(w: string): string {
+  return w.length > 4 ? w.replace(/(ing|ed|es|s|e)$/, "") : w;
+}
+
+function stems(h: string): string[] {
+  return h.split(" ").filter(Boolean).map(stem);
 }
 
 /** Search the guide: every word must appear (in the title, the heading or the text); headings and titles weigh more. */
 export function searchGuide(g: Guide, query: string, designOnly: boolean, limit = 30): SearchHit[] {
   const tokens = fold(query).split(" ").filter(Boolean);
   if (!tokens.length) return [];
-  const hits: SearchHit[] = [];
+  const hits: (SearchHit & { order: number })[] = [];
+  // Ties go in reading order (the contents' sections, pages and headings), not by title.
+  const rank = new Map(contents(g, designOnly).flatMap((s) => s.pages).map((p, i) => [p.slug, i]));
   for (const p of visiblePages(g, designOnly))
-    for (const s of sectionsOf(p)) {
+    for (const [k, s] of sectionsOf(p).entries()) {
+      const order = (rank.get(p.slug) ?? rank.size) * 10000 + k;
       const title = ` ${fold(s.pageTitle)} `;
       const heading = ` ${fold(s.heading)} `;
       const text = ` ${fold(s.text)} `;
+      const titleStems = stems(title);
+      const headStems = stems(heading);
       let score = 0;
       let all = true;
       for (const t of tokens) {
         const word = (h: string) => h.includes(` ${t}`);
+        const st = stem(t);
         let ts = 0;
         if (heading.includes(t)) ts += word(heading) ? 8 : 4;
+        else if (headStems.includes(st)) ts += 6;
         if (title.includes(t)) ts += word(title) ? 4 : 2;
+        // The page about it: its title has the word in another form ("Preview and framing" for "frame").
+        if (titleStems.includes(st)) ts += 3;
         if (text.includes(t)) ts += word(text) ? 2 : 1;
         if (!ts) {
           all = false;
@@ -209,12 +228,14 @@ export function searchGuide(g: Guide, query: string, designOnly: boolean, limit 
         score += ts;
       }
       if (!all) continue;
+      // A heading that starts with the query ("Frame the job" for "frame") is what was looked for.
+      if (heading.startsWith(` ${tokens.join(" ")}`) || headStems[0] === stem(tokens[0])) score += 3;
       // The page's own top section ranks a little above its parts for the same words.
       if (s.anchor === null) score += 1;
-      hits.push({ ...s, score, snippet: snippetOf(s.text, tokens) });
+      hits.push({ ...s, score, snippet: snippetOf(s.text, tokens), order });
     }
-  hits.sort((a, b) => b.score - a.score || a.pageTitle.localeCompare(b.pageTitle));
-  return hits.slice(0, limit);
+  hits.sort((a, b) => b.score - a.score || a.order - b.order);
+  return hits.slice(0, limit).map(({ order: _o, ...h }) => h);
 }
 
 // --- the start page's contents (GitHub readers have no viewer) --------------------------------------------------------
@@ -235,10 +256,13 @@ export function contentsMarkdown(g: Guide): string {
   return out.join("\n");
 }
 
-/** index.md with its contents section regenerated (appended when it has none). */
+/** index.md with its contents section regenerated (appended when it has none). The section runs to the next `## `
+ * heading, so the start page can go on after it. */
 export function withContents(indexSrc: string, g: Guide): string {
   const text = indexSrc.replace(/\r\n?/g, "\n");
   const at = text.indexOf(`\n${CONTENTS_HEADING}`);
   const head = (at >= 0 ? text.slice(0, at) : text).replace(/\s+$/, "");
-  return `${head}\n\n${contentsMarkdown(g)}`;
+  const next = at >= 0 ? text.indexOf("\n## ", at + 1 + CONTENTS_HEADING.length) : -1;
+  const tail = next >= 0 ? text.slice(next + 1).replace(/\s+$/, "") : "";
+  return `${head}\n\n${contentsMarkdown(g)}${tail ? `\n${tail}\n` : ""}`;
 }

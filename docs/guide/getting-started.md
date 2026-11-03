@@ -237,8 +237,8 @@ You can run OpenEtch in its own window, without the browser's tabs and address b
 
 To see the steps for your device:
 
-- On a desktop, choose **Help > Use as an app…**. In the compact and tablet layouts, **Help** is in the **More** (⋯) menu at the top right.
-- On a phone, tap **More**, then open **Help** and tap **Use as an app…**.
+- On a desktop, choose **Help > Use as an app…** In the compact and tablet layouts, **Help** is in the **More** (⋯) menu at the top right.
+- On a phone, tap **More**, then open **Help** and tap **Use as an app…**
 
 The **Use OpenEtch as an app** dialog shows the steps for the browser you are using. The first time you open the app on a touch device, it offers this dialog once by itself. Inside an app window the entry is not shown.
 
@@ -255,7 +255,7 @@ The **Use OpenEtch as an app** dialog shows the steps for the browser you are us
 
 > **Note:** An iPad or iPhone Home Screen app keeps its own storage. It asks for the access token once, even if Safari already had it.
 
-Where the platform supports app shortcuts, the installed app has a **Production cockpit** shortcut that opens the [Production cockpit](production-cockpit.md) directly.
+Where the platform supports app shortcuts, the installed app has a **Production cockpit** shortcut (shown as **Cockpit** where space is short) that opens the [Production cockpit](production-cockpit.md) directly.
 
 ## Start a design {#start-a-design}
 
@@ -267,7 +267,7 @@ An empty design shows the **Start a design** card in the middle of the canvas. I
 - **Templates…**: start from a saved template.
 - **Examples**: open one of the example projects below.
 
-You can also drop a file anywhere on the canvas. The last line of the card shows the laser and its state, for example **Laser: ComMarker B6 MOPA 60W · Idle (simulator)**.
+You can also drop a file anywhere on the canvas. The last line of the card shows the laser and its state, for example **Laser: ComMarker B6 MOPA 60W (EzCad) · Idle (simulator)**.
 
 ## Open an example project {#open-an-example}
 
@@ -275,7 +275,7 @@ OpenEtch comes with five example projects. Each one shows a few features and has
 
 To open an example:
 
-1. Choose **File > New from example…**. Or click **Examples** on the empty canvas card. On a phone, tap **More**, open **File**, then **All file commands > New from example…**.
+1. Choose **File > New from example…** Or click **Examples** on the empty canvas card. On a phone, tap **More**, open **File**, then **All file commands > New from example…**
 2. In the **New from example** dialog, read the summary. Open **Walkthrough** to see the steps.
 3. Click **Open** beside the example.
 4. If your current design has unsaved changes, choose **Discard and start new**, or **Cancel** and save first.
@@ -315,6 +315,19 @@ For power, use the laser's rated power times the power percentage. For example, 
 30 ÷ (300 × 0.02) = 30 ÷ 6 = **5 J/mm²**
 
 On stainless steel with a 60 W MOPA, roughly 2 to 15 J/mm² marks without melting. Higher values can melt or warp thin stock. Slower speed, a finer interval or more power all raise the energy. Treat these numbers as a guide and test on scrap first.
+
+## Your first job {#your-first-job}
+
+This walks you through one job from start to finish with the Two-tone MOPA coin example. Try it on the simulator first: nothing fires there.
+
+1. Choose **File > New from example…** and open the **Two-tone MOPA coin**. See [Open an example project](#open-an-example).
+2. Open the **Cuts / Layers** window (on a phone, the **Layers** tab) and look at each layer's power, speed and line interval. See [Layers and cut settings](layers-and-settings.md).
+3. Work out the energy density of each fill layer, as in [Energy density, simply](#energy-density). The coin's **Colour ring** layer in Gold comes to about 3.4 J/mm² (28 % of 60 W at 500 mm/s and a 0.01 mm interval). If you change a setting, work it out again.
+4. Switch to the **Laser** workspace and check the preview. See [Preview and framing](preview-and-framing.md).
+5. Put a blank coin of the right size under the lens, then click **Frame** and check that the red pointer traces the coin's outline. See [Frame the job](preview-and-framing.md#framing).
+6. Put on eye protection rated for your laser's wavelength and switch on fume extraction. See [Laser safety](safety.md).
+7. Click **Start** (or **Request run** and approve it with your PIN). See [Running a job](running-a-job.md).
+8. Stay at the machine until the job ends. **STOP** stops it at any time.
 
 ## Next steps {#next-steps}
 

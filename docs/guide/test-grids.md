@@ -74,7 +74,7 @@ The defaults are a 10 × 10 grid: speed 500 to 5000 mm/s down the rows, power 10
 
 For MOPA colour, a frequency × Q-Pulse width grid at a fixed power and speed is a common start.
 
-**Create and request run** adds the test and asks for a run of only the test. Nothing fires yet: the message says "Approve it in the Runs card." The waiting run also shows in the Laser window under Start. A person approves it there, with the operator PIN when one is set (see [Running a job](running-a-job.md)). The button is greyed out when the active device cannot run jobs.
+**Create and request run** adds the test and asks for a run of only the test. Nothing fires yet: the message says "Approve it in the Laser window, under Waiting for approval." The waiting run shows in the Laser window under Start. A person approves it there, with the operator PIN when one is set (see [Running a job](running-a-job.md)). The button is greyed out when the active device cannot run jobs.
 
 ### Material Test presets {#material-test-presets}
 
@@ -121,7 +121,7 @@ A bracket test makes a small grid around one library preset. Use it to re-check 
 To make one:
 
 1. In the [Material Library](material-libraries.md), pick the preset.
-2. Click **Bracket test…** under its details, or pick **Materials > Bracket test of a preset…**. If no preset is picked, OpenEtch opens the Material Library and says "Pick a preset in the Material Library first".
+2. Click **Bracket test…** under its details, or pick **Materials > Bracket test of a preset…** If no preset is picked, OpenEtch opens the Material Library and says "Pick a preset in the Material Library first".
 3. Under **Columns** and **Rows**, choose **By** (**Power**, **Speed**, **Frequency**, **Q-pulse**, **Interval** or **Passes**), **± %** (how far each way, 0.1 to 50 %) and **Boxes** (1 to 15). The two must differ. **Q-pulse** is only offered when the preset has a pulse width.
 4. Set **Box size** (1 to 30 mm).
 5. Leave **In a new document** ticked to keep the test apart from your design.
@@ -176,7 +176,7 @@ See [Preview and framing](preview-and-framing.md) and [Running a job](running-a-
 - Look for the box that marks fully and evenly, without a raised, glossy or melted edge.
 - If the best box is at the edge of the grid, make a new grid centred on it.
 - Save the winner as a preset (see [Save a layer as a preset](material-libraries.md#create-a-preset)). Each box is its own layer, so you can use **Create new from layer** straight from its layer.
-- Write down the material, lot, lens and focus with the preset's **Finish…**.
+- Write down the material, lot, lens and focus with the preset's **Finish…**
 
 ## Common mistakes {#common-mistakes}
 

@@ -111,13 +111,13 @@ pub const EXAMPLES: &[Example] = &[
             into the centre, and a date. A template: fill in the name, date, font and ring colour.",
         tags: &["template", "fill region", "fit to stock", "auto-fit text", "MOPA colour"],
         steps: &[
-            "The stock is a 40 mm disc (Laser Tools > Stock). Everything sits on it, centred in the field.",
-            "The ring: two circles on the Rim layer, then Fill Region (Tools) clicked between them made the \"Colour \
-             ring\" shape on its own layer. Place on Stock centred the ring on the coin and sized it to 39.5 mm, a 0.25 mm margin.",
-            "The name is live text with Auto-fit: Box (Text properties > Fit), so any name grows or shrinks to fill \
+            "The stock is a 40 mm disc (Create > Stock). Everything sits on it, centred in the field.",
+            "The ring: two circles on the Rim layer, then Fill Region (Modify) clicked between them made the \"Colour \
+             ring\" shape on its own layer. Place (Insert) centred the ring on the coin and sized it to 39.5 mm, a 0.25 mm margin.",
+            "The name is live text with Auto-fit: Box (Properties > Fit), so any name grows or shrinks to fill \
              the 24 x 9 mm box. Try a long name and a short one.",
-            "File > Fill in template (or the Fill in button on the canvas) asks for the name, the date, the font and \
-             the ring colour. Everything else is locked, so a tap on the iPad cannot move the rim.",
+            "File > Project > Fill in template… (or the Fill in button on the canvas) asks for the name, the date, the \
+             font and the ring colour. Everything else is locked, so a tap on the iPad cannot move the rim.",
             "The ring colours are starting points, not tested values: run Laser Tools > Material Test on your own \
              stock, then save the finishes you like as presets.",
             "Frame, then Start (or the foot switch). The ring burns first, then the name, then the rim.",
@@ -133,11 +133,11 @@ pub const EXAMPLES: &[Example] = &[
         steps: &[
             "Each pocket of the jig is a rounded rectangle on tool layer T1: it frames with the job but never burns.",
             "The tag text is Variable Text in serial mode (format SN 0dddd) and the QR code carries the same number. \
-             The grid array (Edit > Grid Array) made five more tags with Auto-increment 1, so the six tags show six \
+             The grid array (Arrange > Grid array…) made five more tags with Auto-increment 1, so the six tags show six \
              numbers.",
             "Variable Text: start 1, end 60, advance by 6 after every finished run, so the next jig gets the next six \
              numbers.",
-            "Check every row (Variable Text window, or command search) draws the ten jig loads (sixty tags) in a \
+            "Check every row (File > Laser > Check every row…, or command search) draws the ten jig loads (sixty tags) in a \
              grid and flags any number that runs off its pocket.",
             "Fill in template sets the first number; the range keeps its length.",
         ],
@@ -151,7 +151,7 @@ pub const EXAMPLES: &[Example] = &[
         tags: &["template", "text on a path", "star"],
         steps: &[
             "The two arcs on the \"Path guide\" layer (output off) are the paths the texts follow (select a text and \
-             a shape, then Apply Path to Text).",
+             a shape, then Apply path to text in Properties).",
             "The top text sits on its arc by its baseline (Align Y bottom); the bottom text hangs from its arc by the \
              tops of its capitals (Align Y top), so both read left to right, upright.",
             "The star is a Polygon with 5 points and an inner ratio of 0.45, filled.",

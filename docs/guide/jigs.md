@@ -43,7 +43,7 @@ A project can hold up to 32 jigs.
 To make a jig with pockets in rows and columns:
 
 1. Measure your real jig: the pocket size, and the distance from the centre of one pocket to the centre of the next.
-2. Choose **Jigs > New jig…**.
+2. Choose **Jigs > New jig…**
 3. Fill in the fields (see the table below).
 4. Press **Create**.
 
@@ -90,7 +90,7 @@ The shapes you selected become part of the jig, so they leave the design. Undo b
 
 To use a drawing of your jig, for example from the CAD file it was cut from:
 
-1. Choose **Jigs > Import jig (DXF or SVG)…**.
+1. Choose **Jigs > Import jig (DXF or SVG)…**
 2. Pick the file.
 
 OpenEtch finds the pockets and the plate outline in the same way as for shapes you drew. Nothing is added to the design. The jig is named after the file and is centred on the stock (or on the field centre when there is no stock). It says, for example, "Jig “Tray” imported (12 pockets)".
@@ -137,11 +137,11 @@ For the next run to start after the last pocket, Variable Text's **Advance by** 
 
 ## The Jigs window {#jigs-window}
 
-To open the Jigs window, choose **Jigs > Jigs…**. On a phone, it opens as a full-screen sheet.
+To open the Jigs window, choose **Jigs > Jigs…** On a phone, it opens as a full-screen sheet.
 
 ![The Jigs window with 5 of 6 pockets on, one design placed, and the jig's settings and keep-out zones](img/jigs-window.webp)
 
-At the top are a picker for the jig (when there are several) and the buttons **New jig…**, **Import jig (DXF or SVG)…** and **Make jig from selection**.
+At the top are a **Jigs** picker, to choose which jig the window shows, and the buttons **New jig…**, **Import jig (DXF or SVG)…** and **Make jig from selection**.
 
 The window then has these sections:
 

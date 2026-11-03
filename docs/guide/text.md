@@ -166,7 +166,7 @@ Text can follow any vector shape: an arc, a circle, a wave.
 To put text on a path:
 
 1. Select the text.
-2. Under **Text on path**, click **Apply path…**.
+2. Under **Text on path**, click **Apply path…**
 3. Click the shape for the text to follow. Press `Esc` to cancel.
 
 Or select the text and the shape together, then click **Apply path to text** in Properties (or right-click and choose it).

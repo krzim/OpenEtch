@@ -32,6 +32,7 @@ import {
   MAX_GAP_MM,
   facePathData,
   fillErrorText,
+  fillMiss,
   fillPreview,
   fillRegion,
   onAdd,
@@ -187,7 +188,15 @@ export function useFillRegionTool(p: FillToolProps) {
         if (ids.length) P.current.selectIds(ids);
         P.current.notify(t("fill.filled", { n: ids.length, layer: name }));
       })
-      .catch((e: unknown) => set(onCommitted(S.current, fillErrorText(errText(e)))));
+      .catch((e: unknown) => {
+        // A point outside every area: the hover preview's wording (fill.notEnclosed / fill.onLine), with the point's
+        // number when several were collected.
+        const raw = errText(e);
+        const miss = fillMiss(raw);
+        const why = miss ? (miss.code === "not_enclosed" ? t("fill.notEnclosed") : t("fill.onLine")) : null;
+        const msg = miss && why ? (points.length > 1 ? t("fill.pointN", { n: miss.point, text: why }) : why) : fillErrorText(raw);
+        set(onCommitted(S.current, msg));
+      });
   };
 
   const apply = ([s, fx]: [FillState, FillEffect]) => {

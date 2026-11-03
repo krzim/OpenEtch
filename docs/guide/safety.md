@@ -132,7 +132,7 @@ Every burn has to be approved by a person in the OpenEtch app (or with the foot 
 | Keep-out zones | A job that would mark inside a keep-out zone is refused. | See [Keep-out zones](preflight-and-keep-out.md#keep-out-zones) |
 | **Stop at** | No run is approved once the job counter reaches it. | The **Laser** window, see [Job counter](running-a-job.md#job-counter) |
 
-To open the device settings on a computer or tablet: **File > Laser > Devices…**, select the device, then **Edit…**. The **Job** page can only be changed for the active device. On a phone, open **More > Desktop features** and tap **Devices, device settings and the lens wizard…**. See [Devices and calibration](devices-and-calibration.md).
+To open the device settings on a computer or tablet: **File > Laser > Devices…**, select the device, then **Edit…** The **Job** page can only be changed for the active device. On a phone, open **More > Desktop features** and tap **Devices, device settings and the lens wizard…** See [Devices and calibration](devices-and-calibration.md).
 
 ## What AI agents can and cannot do {#ai-agents}
 

@@ -38,7 +38,7 @@ You can also open it in these ways:
 - Click **Production cockpit** at the top of the **Production** window (see [The Production window](#production-window)).
 - Open command search and type "Production cockpit".
 - Add `#/cockpit` to the end of the app's address in the browser.
-- If you installed OpenEtch as an app, use its **Cockpit** shortcut where your system shows app shortcuts.
+- If you installed OpenEtch as an app, use its **Production cockpit** shortcut (shown as **Cockpit** where space is short) where your system shows app shortcuts.
 
 On a phone, tap the **Job** tab at the bottom of the screen. Then tap **Production cockpit** in the **Production** part of the sheet.
 
@@ -87,7 +87,7 @@ The large panel says what the machine is doing, most urgent first. When the lase
 The buttons under the title change with the state:
 
 - **Start** is the app's normal Start, with the Job Checklist when the device uses one. On an engine with an operator PIN it reads **Request run**. It shows when no job is running.
-- **Frame** traces the job with the red pointer (no emission). While a frame runs, the button reads **Stop frame**. Frame is greyed out while the engine is offline.
+- **Frame** traces the job's bounding box with the red pointer (no emission), whatever the Laser window's **Framing options** say. To frame in another style, use **Frame** in the Laser window. While a frame runs, the button reads **Stop frame**. Frame is greyed out while the engine is offline.
 - **Pause** and **Resume** show while a job runs.
 - **Continue** shows while a run waits at a layer pause.
 
@@ -120,7 +120,7 @@ At 50 the status panel shows **Target reached: 50 / 50**, and the card says "Cou
 
 The **Next** card is for designs with serial-number or CSV text (see [Variable text and barcodes](variable-text-and-barcodes.md)). Without such text, it says "No serial-number or CSV text in this design."
 
-The headline shows what the next run marks, for example "SN 00007 – SN 00012".
+The headline shows what the next run marks, for example "SN 0007 – SN 0012" in the Serial-numbered tags example. A tag's text and its QR code carry the same number, so each number shows once.
 
 Below it there is one button per **slot**. A slot is everything that shares one Variable Text offset, which is usually one pocket's tag and its barcode. Each slot button shows:
 
@@ -167,7 +167,7 @@ When maintenance is due, the card shows one line per item, for example "Due: Cle
 
 The **Serial ledger** card shows the last three runs that marked serial numbers or CSV rows. Each run shows its time and its result (finished, aborted or failed), or "re-mark of slot 3".
 
-Each marked slot is a button, for example "3: SN 00009". To mark that pocket again with the same value, tap the button. OpenEtch says "Re-mark requested: approve it to burn". See [Re-mark a slot](serial-ledger.md#re-mark-a-slot). Slots that were left out are greyed out.
+Each marked slot is a button, for example "3: SN 0009". To mark that pocket again with the same value, tap the button. OpenEtch says "Re-mark requested: approve it to burn". See [Re-mark a slot](serial-ledger.md#re-mark-a-slot). Slots that were left out are greyed out.
 
 ## The design lock {#design-lock}
 
@@ -232,7 +232,7 @@ On an engine with an operator PIN, the cockpit shows "This engine approves runs 
 To run a job:
 
 1. Press **Request run**.
-2. Under **Waiting for approval**, press **Approve…**.
+2. Under **Waiting for approval**, press **Approve…**
 3. Type the **Operator PIN**, then press **Confirm and fire**.
 
 The foot switch cycle is off on these engines. A run can still wait for the foot pedal if you choose the run option **Wait for foot pedal (Start Marking input)**. The panel then shows **Waiting for you**. See [Running a job](running-a-job.md).

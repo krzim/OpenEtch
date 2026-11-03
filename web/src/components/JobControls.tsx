@@ -3,7 +3,7 @@
 // Pause / Resume / End after this run, the run options for the next request (Repeat, Run continuously, Start Marking
 // input with Require Full Pulse, Cut Selected Graphics) and the job counter (Count, Reset Count, Stop At).
 //
-// With the operator PIN, "Request run" creates a pending run that still needs the PIN in the Runs card. Without a PIN
+// With the operator PIN, "Request run" creates a pending run that still needs the PIN in the Laser window. Without a PIN
 // (`--approval click`), Start ([`runJob`]) plans and burns the job in one click, like LightBurn's Start; the engine
 // accepts that only from this page in a browser. Pause is never gated; Resume continues a run a person approved, so the
 // engine only takes it from the UI.

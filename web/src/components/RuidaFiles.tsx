@@ -1,7 +1,7 @@
 // LightBurn's File List window for a Ruida gantry (shown only while one is active; unverified on hardware): the files
 // stored in the controller's memory, Send (the current job stored under a name, never started), Start and Delete.
 // Start fires the laser, so it only asks for a run (POST /api/machine/files/{index}/run): the run waits in the Laser
-// window's Runs card and starts only when approved there (the operator PIN, or Start in the no-PIN mode), with the
+// window (Waiting for approval) and starts only when approved there (the operator PIN, or Start in the no-PIN mode), with the
 // same gates as any run (Job Checklist; Require Framing refuses stored files, which cannot be framed). Every request
 // here is UI only; the engine refuses MCP clients. The pure parts live in api/ruida.ts.
 

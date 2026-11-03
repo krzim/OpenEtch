@@ -41,7 +41,7 @@ To record one:
 
 1. In the [Material Library](material-libraries.md), pick the preset.
 2. Click **Finish…** (or pick it in the preset's right-click or long-press menu). The window **Finish of** and the preset's path opens.
-3. Under **Result photo**, click **Take photo** or **Choose file…**.
+3. Under **Result photo**, click **Take photo** or **Choose file…**
    - On a phone or iPad, **Take photo** opens the rear camera.
    - On a computer it opens a file chooser.
    - The photo is scaled down to at most 1280 px and uploaded at once.
@@ -157,7 +157,7 @@ Colour separation turns an image (a logo, for example) into a few solid colour a
 To separate an image:
 
 1. Select one image on the canvas.
-2. Pick **Materials > Colour separation…**, or right-click the image (long-press on touch) and pick **Colour separation…**.
+2. Pick **Materials > Colour separation…**, or right-click the image (long-press on touch) and pick **Colour separation…**
 3. Set the options. The preview on the right updates as you go.
 4. Untick any colour you do not want traced.
 5. Click **Create layers**.
@@ -189,7 +189,7 @@ The example "Frost, black and colour palette coin" shows three finishes side by 
 
 To open it:
 
-1. Pick **File > New from example…**. On a phone: **More > File > All file commands > New from example…**. On an empty canvas you can also click **Examples**.
+1. Pick **File > New from example…** On a phone: **More > File > All file commands > New from example…** On an empty canvas you can also click **Examples**.
 2. Choose **Frost, black and colour palette coin** and click **Open**.
 
 It has three sectors, each a closed shape on its own fill layer (**Frost**, **Black** and **Colour**), and a **Labels** layer with the rim and the words. The walkthrough shows in the project notes.
@@ -210,7 +210,7 @@ The Black sector is above the rough 2 to 15 J/mm² range for stainless, because 
 
 ## Share finish data {#share-finish-data}
 
-Photos, colours and notes are kept beside the library, not inside the `.clb`. To move them to another OpenEtch, use **Manage Library > Download finish data** and **Import finish data…**. See [Finish data](material-libraries.md#finish-data).
+Photos, colours and notes are kept beside the library, not inside the `.clb`. To move them to another OpenEtch, use **Manage Library > Download finish data** and **Import finish data…** See [Finish data](material-libraries.md#finish-data).
 
 ## AI agents and colour {#ai-agents}
 

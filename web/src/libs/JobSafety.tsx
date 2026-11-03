@@ -109,7 +109,9 @@ export function useSharedApprovalGates(): ApprovalGatesState {
  * Require Framing, Door Protect and the Job Checklist in the approval card's confirm step, or inline above Start
  * (no-PIN engines; `showDoor` false there, as the door is simply checked on every Start).
  */
-export function ApprovalChecks({ state, disabled, showDoor = true }: { state: ApprovalGatesState; disabled?: boolean; showDoor?: boolean }) {
+/** `noPin`: the engine runs without a PIN (`--approval click`), so the button the ticks enable is Start, not Confirm
+ * and fire. */
+export function ApprovalChecks({ state, disabled, showDoor = true, noPin = false }: { state: ApprovalGatesState; disabled?: boolean; showDoor?: boolean; noPin?: boolean }) {
   const t = useT();
   const { gates, ticks, setTicks } = state;
   const list = gates.checklist;
@@ -138,7 +140,7 @@ export function ApprovalChecks({ state, disabled, showDoor = true }: { state: Ap
               <span>{item}</span>
             </label>
           ))}
-          {!state.complete && <p className="run-hint">{t("safe.tickAll")}</p>}
+          {!state.complete && <p className="run-hint">{t(noPin ? "safe.tickAllStart" : "safe.tickAll")}</p>}
         </fieldset>
       )}
     </div>

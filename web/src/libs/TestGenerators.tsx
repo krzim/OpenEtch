@@ -2,7 +2,7 @@
 // options of LightBurn's dialogs (two tested parameters with Count / Min / Max, box size and spacing, centre, the base
 // material setting, labels, border, title; interval range and fill; Z range and steps), a live preview of the layout
 // in field mm with LightBurn's safe burn order numbered, then Create (the test is added and selected) or Create and
-// request run (a pending run of just the test: it still needs the operator PIN in the Runs card).
+// request run (a pending run of just the test: it still needs the operator PIN in the Laser window).
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { Invocation } from "../api/client.ts";
