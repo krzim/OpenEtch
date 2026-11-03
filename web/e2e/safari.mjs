@@ -4,7 +4,7 @@
 // device-emulation harness (scenarios.mjs). A screenshot after every step; report.json and report.md like
 // scenarios.mjs.
 //
-//   node e2e/safari.mjs --port 7965 [--mac my-mac.local] [--driver-port 4479] [--devices iphone,ipad]
+//   node e2e/safari.mjs --port 7965 --mac <host> [--driver-port 4479] [--devices iphone,ipad]
 //                       [--steps guide,cockpit] [--out dir] [--no-tunnel] [--input native|synthetic|auto]
 //                       [--desktop] [--keep-booted]
 //
@@ -51,7 +51,7 @@ export const SIM_DEVICES = {
 };
 
 function args(argv) {
-  const a = { mac: "my-mac.local", driverPort: 4479, devices: "iphone,ipad", input: "auto" };
+  const a = { mac: process.env.OE_SAFARI_MAC, driverPort: 4479, devices: "iphone,ipad", input: "auto" };
   for (let i = 0; i < argv.length; i++) {
     const k = argv[i];
     const v = () => argv[++i];
@@ -1094,8 +1094,8 @@ function markdown(runs) {
 
 async function main() {
   const a = args(process.argv.slice(2));
-  if (a.help || !a.port) {
-    console.log("usage: node e2e/safari.mjs --port <engine port> [--mac host] [--driver-port 4479] [--devices iphone,ipad] [--steps ...] [--out dir] [--no-tunnel] [--input native|synthetic|auto] [--desktop] [--keep-booted]");
+  if (a.help || !a.port || !a.mac) {
+    console.log("usage: node e2e/safari.mjs --port <engine port> --mac <ssh host> (or OE_SAFARI_MAC) [--driver-port 4479] [--devices iphone,ipad] [--steps ...] [--out dir] [--no-tunnel] [--input native|synthetic|auto] [--desktop] [--keep-booted]");
     console.log(`devices: ${Object.keys(SIM_DEVICES).join(", ")}, or "Simulator name@iOS version"`);
     process.exitCode = a.help ? 0 : 2;
     return;

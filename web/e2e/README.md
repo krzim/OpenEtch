@@ -209,19 +209,20 @@ WebDriver's execute script) and the same step helpers as `scenarios.mjs` (`find`
 
 ```sh
 # A simulator engine on this computer (loopback; the flows frame, start a run with click approval and press Continue).
-openetch --config-dir <tmp>/cfg --projects-dir <tmp>/projects --lightburn-prefs <tmp>/none.ini   --listen 127.0.0.1:7965 --no-token --approval click --web-dir web/dist --profile fixtures/b6-mopa-60w.toml
+openetch --config-dir <tmp>/cfg --projects-dir <tmp>/projects --lightburn-prefs <tmp>/none.ini \
+  --listen 127.0.0.1:7965 --no-token --approval click --web-dir web/dist --profile fixtures/b6-mopa-60w.toml
 
 cd web
-npm run e2e:safari -- --port 7965 [--mac my-mac.local] [--devices iphone,ipad,iphone-pro,ipad-mini]
+npm run e2e:safari -- --port 7965 --mac <ssh host of the Mac> [--devices iphone,ipad,iphone-pro,ipad-mini]
   [--steps guide,cockpit] [--driver-port 4479] [--input native|native-all|synthetic] [--desktop] [--keep-booted]
 ```
 
-- The Mac: key-based `ssh` (`ssh -o BatchMode=yes <mac>` must work), Xcode with iOS simulator runtimes. Nothing is
-  installed or changed there: the script opens one SSH connection that runs `caffeinate -i safaridriver -p
-  <driver-port>` (the Mac stays awake while it runs), forwards that port here (`-L`) and the engine's port to the Mac
-  (`-R`), so Safari in the simulator opens `http://127.0.0.1:<port>/`. It refuses to start when a safaridriver already
-  runs there (one WebDriver session at a time). At the end it closes the session, stops its safaridriver (by its port)
-  and the forwards, and shuts down the simulators it booted (`--keep-booted` leaves them).
+- The Mac: key-based `ssh` (`ssh -o BatchMode=yes <mac>` must work; `--mac` or `OE_SAFARI_MAC` names it), Xcode with
+  iOS simulator runtimes. Nothing is installed or changed there: the script opens one SSH connection that runs
+  `caffeinate -i safaridriver -p <driver-port>` (the Mac stays awake while it runs), forwards that port here (`-L`) and
+  the engine's port to the Mac (`-R`), so Safari in the simulator opens `http://127.0.0.1:<port>/`. It refuses to start
+  when a safaridriver already runs there (one WebDriver session at a time). At the end it closes the session, stops its
+  safaridriver (by its port) and the forwards, and shuts down the simulators it booted (`--keep-booted` leaves them).
 - Devices: `iphone` (iPhone 17e, iOS 26), `iphone-pro` (iPhone 16 Pro, iOS 18), `iphone-16e`, `ipad` (iPad Pro 11-inch
   M4, iOS 18), `ipad-13`, `ipad-mini` (iOS 26), or `"Simulator name@iOS version"`. A cold simulator is booted first
   (`simctl boot` and `bootstatus`); a Safari that still holds an old session is restarted (`simctl terminate`).
