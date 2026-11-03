@@ -11,6 +11,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 pub mod file;
+pub mod jig;
 pub mod job;
 pub mod text;
 
@@ -127,6 +128,12 @@ pub struct Document {
     /// JSON while empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub virtual_arrays: Vec<VirtualArray>,
+    /// Production jigs (numbered pockets, datum, material height, keep-out walls; see [`jig`]). Left out while empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub jigs: Vec<jig::Jig>,
+    /// Pre-flight checks switched off for this project ([`jig::Preflight`]). Left out while all are on.
+    #[serde(default, skip_serializing_if = "jig::Preflight::is_default")]
+    pub preflight: jig::Preflight,
 }
 
 /// Object extras key marking a virtual array's clone; the value is the array's id.
@@ -236,6 +243,8 @@ impl Default for Document {
             guides: Vec::new(),
             curve_tolerance_mm: None,
             virtual_arrays: Vec::new(),
+            jigs: Vec::new(),
+            preflight: jig::Preflight::default(),
         };
         let id = doc.alloc_id("layer").expect("a new document has ids to spare");
         doc.layers.push(Layer::new(id, "Layer 1", "#1f77b4"));
@@ -298,6 +307,9 @@ impl Document {
             if dims.into_iter().chain(placement).any(|v| !v.is_finite()) {
                 return Some("the stock has a number that is not finite".into());
             }
+        }
+        if let Some(p) = self.jigs.iter().find_map(jig::Jig::problem) {
+            return Some(p);
         }
         for l in &self.layers {
             for s in std::iter::once(&l.settings).chain(&l.sub_layers) {

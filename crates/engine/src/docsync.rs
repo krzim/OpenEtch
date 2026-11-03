@@ -114,6 +114,8 @@ fn meta_of(d: &Document) -> Map<String, Value> {
         guides,
         curve_tolerance_mm,
         virtual_arrays,
+        jigs,
+        preflight,
     } = d;
     let shell = Document {
         revision: *revision,
@@ -138,6 +140,8 @@ fn meta_of(d: &Document) -> Map<String, Value> {
         guides: guides.clone(),
         curve_tolerance_mm: *curve_tolerance_mm,
         virtual_arrays: virtual_arrays.clone(),
+        jigs: jigs.clone(),
+        preflight: preflight.clone(),
     };
     match serde_json::to_value(&shell) {
         Ok(Value::Object(mut m)) => {
