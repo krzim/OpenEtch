@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { launch, sleep } from "./cdp.mjs";
 import { pickDevices } from "./devices.mjs";
 import { runCheck } from "./overlap.mjs";
-import { api, canvasPoint, execute, find, menuPath, pressFind } from "./scenarios.mjs";
+import { api, applySafeArea, canvasPoint, execute, find, menuPath, pressFind } from "./scenarios.mjs";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 
@@ -52,6 +52,7 @@ async function runDevice(browser, d, theme, url, out) {
     await page.setDevice(d, { theme });
     await execute(url, "doc.new", { example: "two-tone-coin" });
     await page.goto(url + "/", { waitFor: ".btn-stop", timeout: 20000 });
+    await applySafeArea(page, d.safe);
     await sleep(1800);
     const check = async (name, error) => {
       const shot = join(dir, `${String(results.length).padStart(2, "0")}-${name}.png`);

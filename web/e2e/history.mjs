@@ -14,7 +14,7 @@ import { deflateSync, crc32 } from "node:zlib";
 import { launch, sleep } from "./cdp.mjs";
 import { pickDevices } from "./devices.mjs";
 import { runCheck } from "./overlap.mjs";
-import { api, execute, find, loadHeavy, phoneTab, pressFind, sheetTo } from "./scenarios.mjs";
+import { api, applySafeArea, execute, find, loadHeavy, phoneTab, pressFind, sheetTo } from "./scenarios.mjs";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 
@@ -147,6 +147,7 @@ async function runDevice(browser, d, url, out) {
   try {
     await page.setDevice(d, { theme: d.themes[0] });
     await page.goto(url + "/", { waitFor: ".btn-stop", timeout: 20000 });
+    await applySafeArea(page, d.safe);
     // The "Use as an app" offer comes up a moment after the first touch visit.
     for (let i = 0; i < 8; i++) {
       await sleep(500);

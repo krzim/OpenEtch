@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import { launch, sleep } from "./cdp.mjs";
 import { pickDevices } from "./devices.mjs";
 import { runCheck } from "./overlap.mjs";
-import { api, execute, find } from "./scenarios.mjs";
+import { api, applySafeArea, execute, find } from "./scenarios.mjs";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 
@@ -112,6 +112,7 @@ async function main() {
       };
       try {
         await page.goto(`${a.url}/#/cockpit`, { waitFor: ".cockpit", timeout: 20000 });
+        await applySafeArea(page, d.safe);
         // The "Use as an app" offer of the first touch visit comes a moment after the page.
         for (let i = 0; i < 12; i++) {
           await sleep(250);

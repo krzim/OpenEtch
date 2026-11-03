@@ -123,6 +123,16 @@ contact sheet and New from example on an iPhone, an iPad and a MacBook (screensh
   a run, search, Storage) and Re-run as burned (it checks that a pending run appeared and nothing started), with a
   screenshot and the layout check per step, under `target/ux-evidence/history-*/`.
 
+- `links.mjs` (`node e2e/links.mjs --url ... [--devices ...]`): where the feature packages meet. It lays a serial
+  number into a 1 x 3 tag jig with pocket 2 empty plus a tag whose number is too long, burns it once on the simulator,
+  then on an iPad, an iPhone and a MacBook shows the cockpit's slot chips with the pocket numbers, the pre-flight
+  warning from the contact sheet's check of the next row, and the Job log's run with each value's pocket and the
+  jig's pockets. Output under `target/ux-evidence/links/`.
+
+Every script that checks a touch device sets the `--safe-*` tokens to its insets (`applySafeArea`) after loading the
+page; without them the layout check reports the bottom rows as inside the safe-area band although the app would pad
+them out of it.
+
 ## Emulation limits
 
 - Safe areas: headless Chromium reports `env(safe-area-inset-*)` as 0. The app reads them only through the `--safe-*`
