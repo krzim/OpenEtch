@@ -303,6 +303,14 @@ impl Driver {
         }
     }
 
+    /// The galvo board's idle output word plus job lights held on (`Controller::hold_outputs`: the extractor run-on).
+    pub fn hold_outputs(&mut self, extra: u16) -> Result<()> {
+        match self {
+            Driver::Lmc(c) => c.hold_outputs(extra),
+            Driver::Grbl(_) | Driver::Ruida(_) => Err(self.not_on("the output port")),
+        }
+    }
+
     /// The galvo's extension axis (Z lift, rotary, table).
     pub fn move_axis(&mut self, position: u16) -> Result<()> {
         match self {
