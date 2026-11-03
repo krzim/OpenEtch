@@ -7,13 +7,14 @@
 // false and the app uses the engine (GET /api/preview, `path.fill_region_preview`) as before.
 
 import type { DocChanges } from "../api/docSync.ts";
+import type { WorkerArrays } from "../api/packedPreview.ts";
 import type { FromWorker, JobKind, ToWorker } from "./protocol.ts";
 
 /** A finished job. */
 export interface JobResult {
   rev: number;
   json: string;
-  arrays?: { xy: Float32Array; t: Float32Array; info: Uint32Array; pass: Uint32Array; power: Float32Array };
+  arrays?: WorkerArrays;
   ms: { doc: number; job: number };
 }
 

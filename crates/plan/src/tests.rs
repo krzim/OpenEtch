@@ -579,3 +579,101 @@ fn grbl_leads_and_path_pauses_skip_an_images_scan_runs() {
     let plain = plan_job(&doc_with(vec![img, rect("obj-1", 10.0, 10.0, (20.0, 0.0))], cut), &s.target()).unwrap();
     assert!(plain.passes[0].gantry.is_default());
 }
+
+/// Every raster of `preview` draws exactly its segments, and together they hold every image run of `plan`.
+fn assert_rasters_match(plan: &JobPlan, preview: &Preview, what: &str) {
+    for r in &preview.rasters {
+        assert_eq!(raster_mismatch(&preview.segments, r), None, "{what}: raster of pass {}", r.pass);
+    }
+    let runs: usize = plan.rasters.iter().map(|r| r.polylines.len()).sum();
+    let in_rasters: usize = preview
+        .rasters
+        .iter()
+        .map(|r| preview.segments[r.first..r.end].iter().filter(|s| s.kind == SegmentKind::Mark).count())
+        .sum();
+    assert_eq!(in_rasters, runs, "{what}: every image run is in a raster");
+    assert!(preview.rasters.windows(2).all(|w| w[0].end <= w[1].first), "{what}: rasters in burn order");
+}
+
+#[test]
+fn image_previews_carry_rasters_that_draw_exactly_their_runs() {
+    // 4 x 2 px at 1 mm, left half black: a 2 x 2 raster of one level, rows one run each, before the rectangle.
+    let img = image_object("obj-7", 4.0, 2.0, png(4, 2, |x, _| if x < 2 { 0 } else { 255 }), Affine::IDENTITY);
+    let d = doc_with(vec![img, rect("obj-1", 10.0, 10.0, (20.0, 0.0))], coarse(doc::DitherMode::Threshold));
+    let plan = plan_job(&d, &target()).unwrap();
+    let preview = preview_plan(&plan);
+    assert_eq!(preview.rasters.len(), 1);
+    let r = &preview.rasters[0];
+    assert_eq!((r.cols, r.rows, r.levels.as_slice(), r.powers.as_slice()), (2, 2, [1u8, 1, 1, 1].as_slice(), [r.pass_power_pct].as_slice()));
+    assert_eq!((r.first, r.end), (1, 4), "after the jump in: mark, jump, mark");
+    assert_eq!(r.row_segments, [[1, 2], [3, 4]]);
+    assert_eq!(r.row_span, [[0.0, 2.0], [0.0, 2.0]]);
+    let [x, y] = [r.grid[4], r.grid[5]];
+    assert_eq!([x, y], [-2.0, -1.0], "dot (0, 0) is the image's bottom-left corner");
+    assert!(preview.segments[r.end..].iter().all(|s| s.pass == Some(0)), "the rectangle follows as segments");
+    assert_rasters_match(&plan, &preview, "threshold");
+    // The check catches a dot off, a dot too many and a wrong power.
+    let mut bad = r.clone();
+    bad.levels[0] = 0;
+    assert!(raster_mismatch(&preview.segments, &bad).is_some());
+    let mut bad = r.clone();
+    bad.cols = 3;
+    bad.levels = vec![1, 1, 1, 1, 1, 0];
+    assert!(raster_mismatch(&preview.segments, &bad).is_some());
+    let mut bad = r.clone();
+    bad.powers[0] += 1.0;
+    assert!(raster_mismatch(&preview.segments, &bad).is_some());
+
+    // Every dither mode, bidirectional, turned 30 degrees with the scan angle at 15, with a grey ramp.
+    let ramp = image_object("obj-7", 20.0, 10.0, png(40, 20, |x, y| if x < 20 { (x * 6 + y) as u8 } else { 255 }), Affine::rotate(0.5));
+    for m in doc::DitherMode::ALL {
+        let mut s = CutSettings::default();
+        s.image.dither = m;
+        s.image.interval_mm = 0.1;
+        s.image.min_power_pct = 5.0;
+        s.image.angle_deg = 15.0;
+        s.image.bidirectional = true;
+        s.passes = 2;
+        s.image.angle_increment_deg = 90.0;
+        let plan = plan_job(&doc_with(vec![ramp.clone()], s), &target()).unwrap_or_else(|e| panic!("{m:?}: {e}"));
+        let preview = preview_plan(&plan);
+        assert!(!preview.rasters.is_empty(), "{m:?}");
+        assert_rasters_match(&plan, &preview, &format!("{m:?}"));
+        if m == doc::DitherMode::Grayscale {
+            assert!(preview.rasters[0].powers.len() > 10, "grey levels keep their powers");
+        }
+        // Bidirectional rows that mark alternate direction.
+        let r = &preview.rasters[0];
+        let dirs: Vec<bool> = r.row_span.iter().zip(&r.row_segments).filter(|(_, s)| s[1] > s[0]).map(|(sp, _)| sp[1] > sp[0]).collect();
+        assert!(dirs.windows(2).all(|w| w[0] != w[1]), "{m:?}: {dirs:?}");
+    }
+
+    // A masked image, with a power scale on the object: the raster is clipped like the runs, at the scaled power.
+    let img = image_object("obj-1", 10.0, 1.0, png(10, 1, |_, _| 0), Affine::IDENTITY);
+    let mask = image_mask_doc(img);
+    let plan = plan_job(&mask, &target()).unwrap();
+    let preview = preview_plan(&plan);
+    assert_rasters_match(&plan, &preview, "masked");
+    assert_eq!(preview.rasters[0].cols, 4);
+    assert!(preview.rasters[0].powers.iter().all(|p| (*p - 0.5 * plan.passes[0].settings.power_pct).abs() < 1e-9));
+
+    // Pass-through on the image's own pixels; a vector-only job has no rasters.
+    let mut s = coarse(doc::DitherMode::Threshold);
+    s.image.pass_through = true;
+    let img = image_object("obj-7", 8.0, 4.0, png(8, 4, |x, y| if (x + y) % 3 == 0 { 0 } else { 255 }), Affine::translate((3.0, 2.0)));
+    let plan = plan_job(&doc_with(vec![img], s), &target()).unwrap();
+    assert_rasters_match(&plan, &preview_plan(&plan), "pass-through");
+    let plan = plan_job(&doc_with(vec![rect("obj-1", 10.0, 10.0, (0.0, 0.0))], fill(0.5, false)), &target()).unwrap();
+    assert!(preview_plan(&plan).rasters.is_empty());
+}
+
+/// A 10 x 1 mm black image clipped by a 4 mm square mask, at half power (the object's power scale).
+fn image_mask_doc(img: Object) -> Document {
+    let mask = rect("obj-2", 4.0, 4.0, (0.0, 0.0));
+    let mut d = doc_with(vec![img, mask], coarse(doc::DitherMode::Threshold));
+    d.layers.push(doc::Layer { output: false, ..doc::Layer::new("layer-9".into(), "Tool", "#000000") });
+    d.objects[1].layer = "layer-9".into();
+    d.image_masks.insert("obj-1".into(), "obj-2".into());
+    d.object_options.insert("obj-1".into(), doc::ObjectOptions { power_scale_pct: 50.0, ..Default::default() });
+    d
+}

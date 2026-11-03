@@ -70,10 +70,19 @@ function handle(m: ToWorker): void {
         if (m.kind === "full") {
           const p = core.preview();
           const json = p.meta();
-          const arrays = { xy: p.take_xy(), t: p.take_t(), info: p.take_info(), pass: p.take_pass(), power: p.take_power() };
+          const arrays = {
+            xy: p.take_xy(),
+            t: p.take_t(),
+            info: p.take_info(),
+            pass: p.take_pass(),
+            power: p.take_power(),
+            levels: p.take_levels(),
+            rowSegments: p.take_row_segments(),
+            rowSpan: p.take_row_span(),
+          };
           p.free();
           const ms = { doc: t1 - t0, job: performance.now() - t1 };
-          post({ type: "done", id: m.id, kind: m.kind, rev: m.rev, json, arrays, ms }, [arrays.xy.buffer, arrays.t.buffer, arrays.info.buffer, arrays.pass.buffer, arrays.power.buffer]);
+          post({ type: "done", id: m.id, kind: m.kind, rev: m.rev, json, arrays, ms }, Object.values(arrays).map((a) => a.buffer));
         } else {
           const json = m.kind === "stats" ? core.stats() : core.fill_region_preview(JSON.stringify(m.params ?? {}));
           post({ type: "done", id: m.id, kind: m.kind, rev: m.rev, json, ms: { doc: t1 - t0, job: performance.now() - t1 } });

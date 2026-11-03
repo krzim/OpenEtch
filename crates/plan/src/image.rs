@@ -247,22 +247,31 @@ impl Placed<'_> {
     }
 }
 
+/// The dot grid an image is rastered on: dot (column c, row r) covers `c..c + 1` x `r..r + 1` under `to_field`
+/// (grid units to field mm). Rows burn from row 0 up, and a row's runs lie on its centre line `r + 0.5`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct ScanGrid {
+    pub to_field: Affine,
+    pub cols: usize,
+    pub rows: usize,
+}
+
 /// The rows of runs of one image for one pass with settings `s` at scan angle `angle_deg`, rows in burn order, at
 /// most `budget` runs in all.
 #[cfg(test)]
 pub(crate) fn raster(p: &Placed, s: &ImageSettings, angle_deg: f64, budget: usize) -> Result<Vec<Vec<Run>>, RasterError> {
-    raster_slice(p, s, angle_deg, budget, 0.0)
+    raster_slice(p, s, angle_deg, budget, 0.0).map(|(rows, _)| rows)
 }
 
 /// [`raster`] for one slice of a 3D Sliced pass: dots fire where the darkness is above `slice` (0..1); other dither
-/// modes ignore it.
+/// modes ignore it. Also gives the grid the runs lie on.
 pub(crate) fn raster_slice(
     p: &Placed,
     s: &ImageSettings,
     angle_deg: f64,
     budget: usize,
     slice: f32,
-) -> Result<Vec<Vec<Run>>, RasterError> {
+) -> Result<(Vec<Vec<Run>>, ScanGrid), RasterError> {
     let to_pixel = p.local_to_pixel() * p.transform.inverse();
     // Grid (column, row) → field mm, with the dot pitch, and the grid size.
     let (grid, cols, rows, pitch) = if s.pass_through {
@@ -332,7 +341,7 @@ pub(crate) fn raster_slice(
             }
         }
     }
-    Ok(rows_out)
+    Ok((rows_out, ScanGrid { to_field: grid, cols, rows }))
 }
 
 /// Samples one grid row at a time: darkness (0 white ..= 1 black, after `negative`) per dot, or `None` outside the

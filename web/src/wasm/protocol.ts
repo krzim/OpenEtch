@@ -2,6 +2,7 @@
 // transferables: the worker gives its typed arrays away instead of copying them.
 
 import type { DocChanges } from "../api/docSync.ts";
+import type { WorkerArrays } from "../api/packedPreview.ts";
 
 /** What the worker is asked to compute. `full`: the packed preview; `stats`: its summary only; `fill`: Fill Region. */
 export type JobKind = "full" | "stats" | "fill";
@@ -28,8 +29,8 @@ export type FromWorker =
       rev: number;
       /** The preview without segments (full, stats), or the fill answer, as JSON; `{"error": ...}` when it failed. */
       json: string;
-      /** Packed segments (full only). */
-      arrays?: { xy: Float32Array; t: Float32Array; info: Uint32Array; pass: Uint32Array; power: Float32Array };
+      /** Packed segments and image rasters (full only). */
+      arrays?: WorkerArrays;
       /** Time in the worker: parsing the document and computing. */
       ms: { doc: number; job: number };
     }

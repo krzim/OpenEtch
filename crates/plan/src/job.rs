@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::geom::{Point, Subpath, dist, flatten_within, polyline_length};
 use crate::hatch::{HatchError, MAX_SCANLINES, hatch};
-use crate::image::{Gray, MAX_IMAGE_DOTS, Placed, RasterError, Run, clip_runs, raster_slice};
+use crate::image::{Gray, MAX_IMAGE_DOTS, Placed, RasterError, Run, ScanGrid, clip_runs, raster_slice};
 use crate::cutopts;
 use crate::ramp::{RampEdges, ramp_line};
 use crate::order::{Chunk, OrderOpts, order_with};
@@ -46,6 +46,23 @@ pub struct JobPlan {
     /// [`PassPlan::part`]; empty for a job that is one list.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub parts: Vec<PartPlan>,
+    /// Where image scan runs lie in the passes and the dot grid they were rastered on, for drawing the preview as
+    /// rasters ([`crate::PreviewRaster`]). Display data only: the encoders never read it, and a plan that is split or
+    /// cut (rotary strips, Start Here) has none.
+    #[serde(skip)]
+    pub rasters: Vec<ImageRaster>,
+}
+
+/// One image's scan runs in one pass: polylines `polylines` of pass `pass` (each a two-point run), on `grid`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImageRaster {
+    pub pass: usize,
+    pub polylines: std::ops::Range<usize>,
+    /// Dot (column c, row r) covers `c..c + 1` x `r..r + 1` under this affine (grid units to field mm, as kurbo's
+    /// coefficients); rows burn from row 0 up and a row's runs lie on its centre line `r + 0.5`.
+    pub grid: [f64; 6],
+    pub cols: usize,
+    pub rows: usize,
 }
 
 /// One part of a multi-part job: where the extension axis goes before its list.
@@ -486,10 +503,11 @@ pub(crate) fn plan_job_within(doc: &Document, target: &Target, max_segments: usi
             let mut polylines = Vec::new();
             let mut powers = Vec::new();
             let mut start = pos;
+            let mut pass_rasters = Vec::new();
             for (k, image) in decoded.iter().enumerate() {
                 let budget = max_segments - segments - polylines.len();
                 let key = (k, sub_layer, image_angle.to_bits(), slice.to_bits());
-                let rows = match rasters.get(&key) {
+                let raster = match rasters.get(&key) {
                     Some(r) => Rc::clone(r),
                     None => {
                         let r = Rc::new(image.raster(&cut.image, image_angle, budget, max_segments, slice)?);
@@ -497,15 +515,26 @@ pub(crate) fn plan_job_within(doc: &Document, target: &Target, max_segments: usi
                         r
                     }
                 };
+                let (rows, grid) = &*raster;
                 let runs = rows.iter().map(Vec::len).sum::<usize>();
                 if runs > budget {
                     return Err(PlanError::ImageSegments { object: image.object.id.clone(), max: max_segments });
                 }
                 let scale = doc.object_options.get(&image.object.id).map_or(1.0, |o| o.power_scale_pct / 100.0);
+                let first = polylines.len();
                 for run in rows.iter().flatten() {
                     polylines.push(vec![run.from, run.to]);
                     powers.push(run_power(cut, &settings, run.level) * scale);
                     start = run.to;
+                }
+                if polylines.len() > first {
+                    pass_rasters.push(ImageRaster {
+                        pass: plan.passes.len(),
+                        polylines: first..polylines.len(),
+                        grid: grid.to_field.as_coeffs(),
+                        cols: grid.cols,
+                        rows: grid.rows,
+                    });
                 }
             }
             let image_runs = polylines.len();
@@ -536,6 +565,7 @@ pub(crate) fn plan_job_within(doc: &Document, target: &Target, max_segments: usi
                     layer.id
                 )));
             }
+            plan.rasters.append(&mut pass_rasters);
             plan.passes.push(PassPlan {
                 layer_id: layer.id.clone(),
                 sub_layer,
@@ -614,8 +644,8 @@ struct PassCtx {
     gantry: bool,
 }
 
-/// Image runs by (image, settings index, scan angle bits), rows in burn order.
-type Rasters = HashMap<(usize, usize, u64, u32), Rc<Vec<Vec<Run>>>>;
+/// Image runs by (image, settings index, scan angle bits), rows in burn order, with the grid they lie on.
+type Rasters = HashMap<(usize, usize, u64, u32), Rc<(Vec<Vec<Run>>, ScanGrid)>>;
 
 /// The passes of one layer in burn order, as `(sub_layer, repeat)` (`sub_layer` 0 for the main settings, n for
 /// `sub_layers[n - 1]`): each main pass, followed by every cleanup sub-layer due after it ([`doc::Cleanup::runs_after`],
@@ -812,10 +842,10 @@ fn mask_polygons(doc: &doc::Document, o: &Object) -> Option<Vec<Vec<Point>>> {
 }
 
 impl DecodedImage<'_> {
-    fn raster(&self, s: &doc::ImageSettings, angle_deg: f64, budget: usize, max: usize, slice: f32) -> Result<Vec<Vec<Run>>> {
+    fn raster(&self, s: &doc::ImageSettings, angle_deg: f64, budget: usize, max: usize, slice: f32) -> Result<(Vec<Vec<Run>>, ScanGrid)> {
         let placed =
             Placed { gray: &self.gray, width_mm: self.width_mm, height_mm: self.height_mm, transform: self.object.transform };
-        let rows = raster_slice(&placed, s, angle_deg, budget, slice).map_err(|e| match e {
+        let (rows, grid) = raster_slice(&placed, s, angle_deg, budget, slice).map_err(|e| match e {
             RasterError::TooManyDots { rows, cols } => PlanError::ImageTooLarge {
                 object: self.object.id.clone(),
                 rows,
@@ -824,10 +854,10 @@ impl DecodedImage<'_> {
             },
             RasterError::OverBudget => PlanError::ImageSegments { object: self.object.id.clone(), max },
         })?;
-        Ok(match &self.mask {
+        Ok((match &self.mask {
             Some(mask) => clip_runs(&rows, mask),
             None => rows,
-        })
+        }, grid))
     }
 }
 

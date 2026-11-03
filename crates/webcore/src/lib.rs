@@ -61,6 +61,16 @@ impl PackedPreview {
     pub fn take_power(&mut self) -> Vec<f32> {
         std::mem::take(&mut self.packed.power)
     }
+    /// The image rasters' dots (`meta.rasters` indexes them).
+    pub fn take_levels(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.packed.levels)
+    }
+    pub fn take_row_segments(&mut self) -> Vec<u32> {
+        std::mem::take(&mut self.packed.row_segments)
+    }
+    pub fn take_row_span(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.packed.row_span)
+    }
 }
 
 #[wasm_bindgen]

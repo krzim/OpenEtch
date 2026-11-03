@@ -2,7 +2,7 @@
 // All lengths are millimetres and all angles degrees, in the field frame (origin at the galvo field centre, +Y away
 // from the operator).
 
-import type { PackedSegments } from "./packedPreview.ts";
+import type { PackedSegments, PreviewRaster } from "./packedPreview.ts";
 
 /** kurbo `Affine` coefficients `[a, b, c, d, e, f]`: x' = a*x + c*y + e, y' = b*x + d*y + f (same as SVG matrix()). */
 export type Affine = [number, number, number, number, number, number];
@@ -317,8 +317,13 @@ export interface PreviewPass {
 export interface Preview {
   /** Empty when `packed` holds the segments (a preview planned in the browser, src/wasm/). */
   segments: PreviewSegment[];
-  /** The segments as flat arrays (api/packedPreview.ts), from the browser's preview worker. */
+  /** The segments as flat arrays (api/packedPreview.ts), from the browser's preview worker and GET /api/preview.bin. */
   packed?: PackedSegments;
+  /**
+   * The image passes' scan runs as rasters (api/packedPreview.ts), drawn as textures; the packed segments inside them
+   * carry no geometry.
+   */
+  rasters?: PreviewRaster[];
   /** The document revision it was planned from, when known (Start Here runs only that revision). */
   revision?: number;
   /** The job's passes in burn order (engines that report them). */

@@ -2,7 +2,10 @@
 //! `GET /api/preview`: for each document, webcore is given exactly what the web app gets (the JSON of
 //! `GET /api/document` and `GET /api/preview/context`) and must give the same segments (kind, emits, layer, pass,
 //! power, end points and times within f32 precision), the same stats, passes, layers (with their unsupported
-//! LightBurn settings) and warnings, and the same 422 message for a document that cannot be planned.
+//! LightBurn settings) and warnings, and the same 422 message for a document that cannot be planned. Image passes
+//! come as rasters instead of runs: each must draw exactly the engine's segments of its range (every run's dots at
+//! its power, nothing else, rows in burn order: `plan::raster_mismatch`), and together they must hold every image
+//! run the engine plans.
 
 use std::sync::Arc;
 
@@ -16,6 +19,7 @@ use kurbo::{Affine, BezPath};
 use machine::{MachineProfile, PollConfig};
 use serde_json::{Value, json};
 use tower::ServiceExt;
+use plan::SegmentKind;
 use webcore::preview::{Context, EMITS, LAYER_SHIFT, MARK, NO_PASS, Packed};
 
 use crate::hw::Machine;
@@ -104,6 +108,22 @@ async fn assert_parity(app: &Router, name: &str) -> usize {
     assert_eq!(summary["segment_count"], segs.len());
     assert_eq!((packed.xy.len(), packed.info.len(), packed.pass.len(), packed.power.len()), (4 * segs.len(), segs.len(), segs.len(), segs.len()));
     let layer_ids: Vec<&str> = packed.meta["layer_ids"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+    // The rasters, against the engine's own segments.
+    let headers: Vec<plan::RasterHeader> = serde_json::from_value(packed.meta["rasters"].clone()).unwrap();
+    let rasters = plan::PackedRasters {
+        headers,
+        levels: packed.levels.clone(),
+        row_segments: packed.row_segments.clone(),
+        row_span: packed.row_span.clone(),
+    }
+    .unpack()
+    .expect("the raster arrays hold every header");
+    let engine_preview: plan::Preview = serde_json::from_str(&body).unwrap();
+    let mut in_raster = vec![false; segs.len()];
+    for r in &rasters {
+        assert_eq!(plan::raster_mismatch(&engine_preview.segments, r), None, "{name}: raster of pass {}", r.pass);
+        in_raster[r.first..r.end].iter_mut().for_each(|v| *v = true);
+    }
     for (i, s) in segs.iter().enumerate() {
         let info = packed.info[i];
         assert_eq!(info & MARK != 0, s["kind"] == "mark", "{name}: segment {i} kind");
@@ -115,12 +135,17 @@ async fn assert_parity(app: &Router, name: &str) -> usize {
         assert_eq!(layer, s["layer"], "{name}: segment {i} layer");
         let pass = if packed.pass[i] == NO_PASS { Value::Null } else { json!(packed.pass[i]) };
         assert_eq!(pass, s["pass"], "{name}: segment {i} pass");
+        close(f64::from(packed.t[i]), s["t_s"].as_f64().unwrap(), "t_s", i);
+        if in_raster[i] {
+            // Drawn by its raster (checked above): no geometry of its own.
+            assert!(packed.xy[4 * i..4 * i + 4].iter().all(|v| v.is_nan()) && packed.power[i].is_nan(), "{name}: segment {i}");
+            continue;
+        }
         let [fx, fy] = [s["from"][0].as_f64().unwrap(), s["from"][1].as_f64().unwrap()];
         let [tx, ty] = [s["to"][0].as_f64().unwrap(), s["to"][1].as_f64().unwrap()];
         for (k, (want, what)) in [(fx, "x0"), (fy, "y0"), (tx, "x1"), (ty, "y1")].into_iter().enumerate() {
             close(f64::from(packed.xy[4 * i + k]), want, what, i);
         }
-        close(f64::from(packed.t[i]), s["t_s"].as_f64().unwrap(), "t_s", i);
         match s.get("power_pct").and_then(Value::as_f64) {
             Some(p) => close(f64::from(packed.power[i]), p, "power_pct", i),
             None => assert!(packed.power[i].is_nan(), "{name}: segment {i} has no own power"),
@@ -204,6 +229,7 @@ async fn browser_preview_equals_the_engine_preview() {
     let app = api::router(st.clone(), None);
     let n = assert_parity(&app, "mixed").await;
     assert!(n > 1000, "a real job: {n} segments");
+    assert_eq!(browser_preview(&app).await.0.meta["rasters"].as_array().map(Vec::len), Some(1), "the image is a raster");
 
     // The next run's index turns the hatch, and the learned estimate correction scales every time.
     let device = st.active_device().id;
@@ -298,4 +324,84 @@ async fn parity_of_a_local_lightburn_file() {
         exec(&app, "object.move", json!({ "ids": [o.id], "from_point": [0, 0], "to_point": [0.5, 0.25] })).await;
         println!("moved: {} segments equal", assert_parity(&app, "moved").await);
     }
+}
+
+#[tokio::test]
+async fn image_rasters_draw_exactly_the_engines_runs() {
+    // Grayscale, bidirectional, turned, over two passes with a turning scan angle; and a dithered copy at half power.
+    let mut grey = CutSettings::default();
+    grey.image.dither = doc::DitherMode::Grayscale;
+    grey.image.interval_mm = 0.15;
+    grey.image.bidirectional = true;
+    grey.image.angle_deg = 20.0;
+    grey.image.angle_increment_deg = 45.0;
+    grey.image.min_power_pct = 10.0;
+    grey.passes = 2;
+    let mut dots = CutSettings::default();
+    dots.image.dither = doc::DitherMode::FloydSteinberg;
+    dots.image.interval_mm = 0.1;
+    let mut d = Document::default();
+    d.layers[0].settings = grey;
+    d.layers.push(layer("layer-2", "Dots", "#aa0000", dots));
+    let image = |id: &str, layer: &str, at: (f64, f64)| {
+        let g = Geometry::Image { width_mm: 14.0, height_mm: 9.0, mime: "image/png".into(), data_base64: ramp_png(56, 36).into(), adjust: Default::default() };
+        Object::new(id.into(), id, layer.into(), g, Affine::translate(at) * Affine::rotate(0.3))
+    };
+    d.objects = vec![image("obj-1", "layer-1", (-15.0, 0.0)), image("obj-2", "layer-2", (15.0, 0.0)), rect("obj-3", "layer-2", 6.0, 6.0, (15.0, 20.0))];
+    d.object_options.insert("obj-2".into(), doc::ObjectOptions { power_scale_pct: 50.0, ..Default::default() });
+    let st = state(d).await;
+    let app = api::router(st.clone(), None);
+    let n = assert_parity(&app, "images").await;
+    let (packed, _) = browser_preview(&app).await;
+    let rasters = packed.meta["rasters"].as_array().unwrap();
+    assert_eq!(rasters.len(), 3, "two grey passes and the dithered one");
+    let covered: u64 = rasters.iter().map(|r| r["end"].as_u64().unwrap() - r["first"].as_u64().unwrap()).sum();
+    assert!(covered as f64 > 0.9 * n as f64, "nearly every segment is an image's: {covered} of {n}");
+    assert!(rasters[0]["powers"].as_array().unwrap().len() > 20, "grey levels");
+}
+
+#[tokio::test]
+async fn the_binary_preview_carries_the_same_rasters() {
+    let mut d = mixed_doc();
+    d.layers.last_mut().unwrap().settings.image.bidirectional = true;
+    let st = state(d).await;
+    let app = api::router(st.clone(), None);
+    let raw = |uri: &str| {
+        let r = Request::builder().method("GET").uri(uri).header("host", "localhost:7878").body(Body::empty()).unwrap();
+        let app = app.clone();
+        async move { app.oneshot(r).await.unwrap().into_body().collect().await.unwrap().to_bytes().to_vec() }
+    };
+    let (_, body) = get(&app, "/api/preview").await;
+    let engine: plan::Preview = serde_json::from_str(&body).unwrap();
+    let (header, segs, rasters) = crate::preview_bin::decode_with_rasters(&raw("/api/preview.bin").await);
+    assert_eq!(segs.len(), engine.segments.len());
+    assert_eq!(rasters.len(), 1);
+    assert_eq!(header["rasters"][0]["pass"], json!(rasters[0].pass));
+    for r in &rasters {
+        assert_eq!(plan::raster_mismatch(&engine.segments, r), None);
+        assert!(segs[r.first..r.end].iter().all(|s| s["raster"] == true));
+    }
+    assert!(segs.iter().filter(|s| s["raster"] != true).all(|s| s["from"].is_array()), "every other segment has its geometry");
+    // The same rasters as the browser's worker plans.
+    let (packed, _) = browser_preview(&app).await;
+    assert_eq!(packed.meta["rasters"], header["rasters"]);
+    assert_eq!((packed.levels.as_slice(), packed.row_segments.as_slice()), (rasters[0].levels.as_slice(), rasters[0].row_segments.iter().flatten().copied().collect::<Vec<_>>().as_slice()));
+    // Without travel the rows are renumbered: each holds its own runs and nothing else.
+    let (_, segs, lean) = crate::preview_bin::decode_with_rasters(&raw("/api/preview.bin?jumps=false").await);
+    let r = &lean[0];
+    let runs = engine.segments[rasters[0].first..rasters[0].end].iter().filter(|s| s.kind == SegmentKind::Mark).count();
+    assert_eq!(r.end - r.first, runs);
+    assert!(segs[r.first..r.end].iter().all(|s| s["raster"] == true && s["kind"] == "mark"));
+    assert_eq!(r.row_segments.first().map(|s| s[0] as usize), Some(r.first));
+    assert_eq!(r.row_segments.last().map(|s| s[1] as usize), Some(r.end));
+    let marks_per_row = |r: &plan::PreviewRaster| r.row_segments.iter().map(|s| s[1] - s[0]).collect::<Vec<_>>();
+    let full: Vec<u32> = rasters[0]
+        .row_segments
+        .iter()
+        .map(|s| engine.segments[s[0] as usize..s[1] as usize].iter().filter(|g| g.kind == SegmentKind::Mark).count() as u32)
+        .collect();
+    assert_eq!(marks_per_row(r), full);
+    // A layer filter without the image's layer has no raster.
+    let (_, _, none) = crate::preview_bin::decode_with_rasters(&raw("/api/preview.bin?layers=layer-1").await);
+    assert!(none.is_empty());
 }

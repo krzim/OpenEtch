@@ -64,10 +64,14 @@ pub const LAYER_SHIFT: u32 = 2;
 pub const NO_PASS: u32 = u32::MAX;
 
 /// A preview with its segments in flat arrays (segment `i` is `xy[4i..4i+4]`, `t[i]`, `info[i]`, `pass[i]`,
-/// `power[i]`) and everything else as JSON (`meta`).
+/// `power[i]`), its image rasters ([`plan::PreviewRaster`]) in three more, and everything else as JSON (`meta`).
+///
+/// A segment inside a raster (`meta.rasters[k].first..end`: an image's scan runs and the jumps between them) has
+/// no geometry here (`xy` and `power` NaN): the raster draws it, so the page never walks hundreds of thousands of
+/// runs. Its time, kind, layer and pass stay, so the time slider and Start Here count segments as the engine does.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Packed {
-    /// x0, y0, x1, y1 per segment, field mm.
+    /// x0, y0, x1, y1 per segment, field mm (NaN inside a raster).
     pub xy: Vec<f32>,
     /// Estimated time from the job's start to the segment's end, s (`PreviewSegment::t_s`).
     pub t: Vec<f32>,
@@ -75,10 +79,14 @@ pub struct Packed {
     pub info: Vec<u32>,
     /// Index into `meta.passes`, or [`NO_PASS`].
     pub pass: Vec<u32>,
-    /// The mark's own power in %, NaN where it is the pass's (`PreviewSegment::power_pct`).
+    /// The mark's own power in %, NaN where it is the pass's (`PreviewSegment::power_pct`) and inside a raster.
     pub power: Vec<f32>,
-    /// The engine's preview JSON without `segments`, plus `layer_ids` (the segments' layer table) and
-    /// `segment_count`; or `{"error": ...}` when the document cannot be planned.
+    /// The rasters' dots, row segments and row spans, as `meta.rasters` (each a [`plan::RasterHeader`]) index them.
+    pub levels: Vec<u8>,
+    pub row_segments: Vec<u32>,
+    pub row_span: Vec<f32>,
+    /// The engine's preview JSON without `segments`, plus `layer_ids` (the segments' layer table), `segment_count`
+    /// and `rasters`; or `{"error": ...}` when the document cannot be planned.
     pub meta: Value,
 }
 
@@ -91,14 +99,26 @@ pub fn pack(doc: &Document, preview: Preview) -> Packed {
         info: Vec::with_capacity(n),
         pass: Vec::with_capacity(n),
         power: Vec::with_capacity(n),
-        meta: Value::Null,
+        ..Packed::default()
     };
     let mut layer_ids: Vec<String> = Vec::new();
     let mut index: HashMap<String, u32> = HashMap::new();
-    let Preview { segments, passes, stats, layers, warnings } = preview;
-    for s in segments {
-        #[allow(clippy::cast_possible_truncation)]
-        out.xy.extend_from_slice(&[s.from[0] as f32, s.from[1] as f32, s.to[0] as f32, s.to[1] as f32]);
+    let mut last: Option<(String, u32)> = None;
+    let Preview { segments, passes, stats, layers, warnings, rasters } = preview;
+    let mut inside = rasters.iter().map(|r| r.first..r.end).peekable();
+    for (i, s) in segments.into_iter().enumerate() {
+        while inside.peek().is_some_and(|r| r.end <= i) {
+            inside.next();
+        }
+        if inside.peek().is_some_and(|r| r.contains(&i)) {
+            out.xy.extend_from_slice(&[f32::NAN; 4]);
+            out.power.push(f32::NAN);
+        } else {
+            #[allow(clippy::cast_possible_truncation)]
+            out.xy.extend_from_slice(&[s.from[0] as f32, s.from[1] as f32, s.to[0] as f32, s.to[1] as f32]);
+            #[allow(clippy::cast_possible_truncation)]
+            out.power.push(s.power_pct.map_or(f32::NAN, |p| p as f32));
+        }
         #[allow(clippy::cast_possible_truncation)]
         out.t.push(s.t_s as f32);
         let mut info = if s.kind == SegmentKind::Mark { MARK } else { 0 };
@@ -106,12 +126,20 @@ pub fn pack(doc: &Document, preview: Preview) -> Packed {
             info |= EMITS;
         }
         if let Some(l) = s.layer {
-            let k = match index.get(&l) {
-                Some(&k) => k,
-                None => {
-                    let k = u32::try_from(layer_ids.len()).unwrap_or(u32::MAX >> LAYER_SHIFT);
-                    index.insert(l.clone(), k);
-                    layer_ids.push(l);
+            // Runs of one layer: look the table up only when the layer changes.
+            let k = match &last {
+                Some((name, k)) if *name == l => *k,
+                _ => {
+                    let k = match index.get(&l) {
+                        Some(&k) => k,
+                        None => {
+                            let k = u32::try_from(layer_ids.len()).unwrap_or(u32::MAX >> LAYER_SHIFT);
+                            index.insert(l.clone(), k);
+                            layer_ids.push(l.clone());
+                            k
+                        }
+                    };
+                    last = Some((l, k));
                     k
                 }
             };
@@ -119,13 +147,14 @@ pub fn pack(doc: &Document, preview: Preview) -> Packed {
         }
         out.info.push(info);
         out.pass.push(s.pass.and_then(|p| u32::try_from(p).ok()).unwrap_or(NO_PASS));
-        #[allow(clippy::cast_possible_truncation)]
-        out.power.push(s.power_pct.map_or(f32::NAN, |p| p as f32));
     }
+    let packed = plan::PackedRasters::new(&rasters);
     let mut meta = json!({ "passes": passes, "stats": stats, "layers": layers, "warnings": warnings });
     mark_unsupported(doc, &mut meta);
     meta["layer_ids"] = json!(layer_ids);
     meta["segment_count"] = json!(n);
+    meta["rasters"] = json!(packed.headers);
+    (out.levels, out.row_segments, out.row_span) = (packed.levels, packed.row_segments, packed.row_span);
     out.meta = meta;
     out
 }
