@@ -708,8 +708,16 @@ pub(crate) async fn rerun(st: &Arc<AppState>, id: &str, origin: Origin) -> Resul
         v["run_error"] = json!(format!("no run was requested: {m}"));
         return Ok(v);
     }
+    // Options that no longer read (an edited log, a newer engine's) are never replaced by the defaults: those would
+    // burn the whole document instead of the selection or region that was burned.
     let options = match entry.entry.options.clone() {
-        Some(o) => serde_json::from_value::<RunOptions>(o).unwrap_or_default(),
+        Some(o) => match serde_json::from_value::<RunOptions>(o) {
+            Ok(o) => o,
+            Err(e) => {
+                v["run_error"] = json!(format!("no run was requested: the stored run options cannot be read ({e})"));
+                return Ok(v);
+            }
+        },
         None => RunOptions::default(),
     };
     match st.request_run_with(origin, options).await {
