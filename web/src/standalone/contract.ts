@@ -123,7 +123,9 @@ export type FromWorker =
   /** webcore panicked: the instance is poisoned; the page restarts the worker. */
   | { kind: "crashed"; error: string }
   /** A preview job's answer (`error` when it failed); arrays are transferred. */
-  | { kind: "preview"; id: number; result?: PreviewResult; error?: string; ms: number };
+  | { kind: "preview"; id: number; result?: PreviewResult; error?: string; ms: number }
+  /** A start-up step done (opening the storage, loading the wasm, restoring): for diagnostics only. */
+  | { kind: "progress"; step: string };
 
 /** Something the page should tell the person (a toast). `key` is a message key in workspace/locales. */
 export interface Notice {

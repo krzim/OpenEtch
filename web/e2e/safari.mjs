@@ -678,7 +678,21 @@ async function dexec(page, id, params = {}) {
 
 async function crashes(page) {
   const c = await page.evaluate(() => globalThis.__oeDesignCrashes ?? []).catch(() => []);
-  return c?.length ? `(worker: ${c.join(" | ")})` : "";
+  // Where the page is, and whether its IndexedDB opens at all (a blocked or hung open stalls the editor's start).
+  const where = await page
+    .evaluate(
+      () =>
+        new Promise((res) => {
+          const info = { href: location.href, boot: globalThis.__oeDesignBoot ?? null };
+          const r = indexedDB.open("openetch-design");
+          r.onsuccess = () => (r.result.close(), res({ ...info, idb: "ok" }));
+          r.onerror = () => res({ ...info, idb: `error ${r.error}` });
+          r.onblocked = () => res({ ...info, idb: "blocked" });
+          setTimeout(() => res({ ...info, idb: "no answer in 5 s" }), 5000);
+        }),
+    )
+    .catch((e) => ({ evalError: String(e) }));
+  return `${c?.length ? `(worker: ${c.join(" | ")}) ` : ""}${JSON.stringify(where)}`;
 }
 
 async function designReady(page) {
@@ -1191,16 +1205,21 @@ async function runDevice(a, key, dir) {
   mkdirSync(dir, { recursive: true });
   try {
     if (a.design) {
-      // A first visit: nothing stored (preferences, the tab's session, the browser's projects).
-      await page.goto(url, { waitFor: ".topbar", timeout: 60000 });
-      await page.evaluate(async () => {
+      // A first visit: nothing stored (preferences, the tab's session, the browser's projects). Cleared from a plain
+      // file of the same site, before the editor has loaded: deleting the database while the editor's worker holds it
+      // open, then navigating, leaves IndexedDB hung for the whole site in iOS Safari, so the next start never ends.
+      await page.goto(`${url}icon.svg`, { timeout: 60000 });
+      const cleared = await page.evaluate(async () => {
         localStorage.clear();
         sessionStorage.clear();
-        await new Promise((r) => {
+        return await new Promise((r) => {
           const q = indexedDB.deleteDatabase("openetch-design");
-          q.onsuccess = q.onerror = q.onblocked = () => r(null);
+          q.onsuccess = () => r("deleted");
+          q.onerror = () => r("error");
+          q.onblocked = () => r("blocked");
         });
       });
+      if (cleared !== "deleted") throw new Error(`could not clear the site's storage: ${cleared}`);
       const t1 = Date.now();
       await page.goto(`${url}?first=${Date.now()}`, { waitFor: ".topbar", timeout: 60000 });
       await designReady(page);

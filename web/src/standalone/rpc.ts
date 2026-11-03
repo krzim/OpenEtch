@@ -260,6 +260,29 @@ export class StandaloneClient {
     if (this.state === "ready") this.worker?.postMessage({ kind: "flush" });
   }
 
+  /**
+   * The page went into the back-forward cache (`pagehide` with `persisted`). Safari freezes a cached page's worker
+   * where it is, an IndexedDB write included, and that write then holds the store for every later start of the editor
+   * in this browser, which never finishes. So the worker stops now (its unfinished write is rolled back; the recovery
+   * copy from the last autosave stays) and requests wait for `resume`.
+   */
+  suspend(): void {
+    if (this.state === "failed" || !this.worker) return;
+    this.worker.terminate();
+    this.worker = null;
+    this.state = "starting";
+    for (const s of [...this.sockets]) s.drop();
+    for (const p of this.pending.values()) p.sent = false;
+    this.dropPreviews("the page was put away");
+    noteBoot("suspended");
+  }
+
+  /** The page came back from the back-forward cache: a new worker restores the tab's design from its recovery copy. */
+  resume(): void {
+    if (this.state === "failed" || this.worker) return;
+    this.spawn("reload");
+  }
+
   terminate(): void {
     this.worker?.terminate();
     this.worker = null;
@@ -280,6 +303,7 @@ export class StandaloneClient {
 
   private spawn(boot: BootKind): void {
     this.state = "starting";
+    noteBoot(`spawn ${boot}`);
     let w: WorkerLike;
     try {
       w = this.opts.createWorker();
@@ -303,6 +327,8 @@ export class StandaloneClient {
   }
 
   private received(m: FromWorker): void {
+    if (m.kind !== "reply" && m.kind !== "event") noteBoot(m.kind === "failed" ? `failed: ${m.error}` : m.kind === "progress" ? m.step : m.kind);
+    if (m.kind === "progress") return;
     switch (m.kind) {
       case "ready": {
         const wasRestart = this.restarting;
@@ -433,6 +459,14 @@ export class StandaloneClient {
   }
 }
 
+/** The editor's start-up steps as the page saw them, for the device harness (`window.__oeDesignBoot`). */
+function noteBoot(text: string): void {
+  const g = globalThis as { __oeDesignBoot?: string[] };
+  const list = (g.__oeDesignBoot ??= []);
+  list.push(text.slice(0, 300));
+  if (list.length > 20) list.shift();
+}
+
 /** Why the worker stopped, for the console and the device harness (`window.__oeDesignCrashes`). */
 function noteCrash(text: string): void {
   console.error(`[design] ${text}`);
@@ -474,7 +508,13 @@ export function standaloneClient(): StandaloneClient {
     for (const fn of [...listeners]) fn(n);
   });
   const flush = () => c.flush();
-  globalThis.addEventListener?.("pagehide", flush);
+  globalThis.addEventListener?.("pagehide", (e) => {
+    flush();
+    if ((e as PageTransitionEvent).persisted) c.suspend();
+  });
+  globalThis.addEventListener?.("pageshow", (e) => {
+    if ((e as PageTransitionEvent).persisted) c.resume();
+  });
   globalThis.document?.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") flush();
   });

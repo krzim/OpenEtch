@@ -36,7 +36,12 @@ export function workerHost(deps: HostDeps): (m: ToWorker) => void {
   async function start(init: Extract<ToWorker, { kind: "init" }>): Promise<void> {
     let b: ShellBackend | null = null;
     try {
-      const [store, core] = await Promise.all([deps.openStore(), deps.loadCore()]);
+      const step = (name: string) => deps.post({ kind: "progress", step: name });
+      step("start");
+      const [store, core] = await Promise.all([
+        deps.openStore().then((s) => (step(`storage ${s.kind}`), s)),
+        deps.loadCore().then((c) => (step("wasm loaded"), c)),
+      ]);
       const channel = deps.channel();
       b = new ShellBackend({
         core,
@@ -52,6 +57,7 @@ export function workerHost(deps: HostDeps): (m: ToWorker) => void {
         },
       });
       const recovered = await b.boot(init.boot, init.tzOffsetMin);
+      step("booted");
       if (b.isCrashed) return;
       backend = b;
       const live = b;

@@ -166,6 +166,27 @@ test("a reload keeps the session id and brings the unsaved design back, with a n
   second.client.terminate();
 });
 
+test("put in the back-forward cache: the worker stops, requests wait, and coming back restores the design", async () => {
+  const s = setup();
+  await s.client.fetch("POST", "/api/execute", { body: JSON.stringify({ id: "shape.rect" }) });
+  s.client.flush();
+  await tick();
+  s.client.suspend();
+  assert.ok(s.workers[0].terminated);
+  let answered = false;
+  const waiting = s.client.fetch("GET", "/api/document").then((r) => ((answered = true), r));
+  await tick();
+  assert.equal(answered, false);
+  s.client.resume();
+  const doc = await (await waiting).json();
+  assert.equal(s.workers.length, 2);
+  assert.equal(doc.objects.length, 1);
+  // A second resume, or one without a suspend, starts nothing.
+  s.client.resume();
+  assert.equal(s.workers.length, 2);
+  s.client.terminate();
+});
+
 test("a webcore panic restarts the worker, restores the recovery copy and says so", async () => {
   const s = setup();
   const sock = s.client.events();

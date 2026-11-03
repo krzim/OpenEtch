@@ -571,6 +571,20 @@
   height: 44px;
   opacity: 1;
 }
+/* The text bar on touch: every control a 44 px target, and 16 px text in its number fields so iOS Safari does not
+   zoom the page when one takes focus. */
+:root[data-density="touch"] .tx-bar .tx-seg button,
+:root[data-density="touch"] .tx-toggle {
+  min-width: 44px;
+  min-height: 44px;
+}
+:root[data-density="touch"] .tx-bar .tx-font-btn {
+  min-height: 44px;
+}
+:root[data-density="touch"] .tx-num input {
+  min-height: 44px;
+  font-size: 16px;
+}
 
 /* The selected text's auto-fit area (useTextTools.tsx FitFrame). */
 .tx-fit-frame {

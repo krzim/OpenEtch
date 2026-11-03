@@ -165,7 +165,9 @@ export const RECOVERY_KEEP = 8;
 
 /**
  * The tab's recovery copy. `noteChange()` after every change schedules a write `debounceMs` after the last change,
- * at most once per `minGapMs` (longer for slow writes); `writeNow()` is the page's flush (hidden or unloaded).
+ * at most once per `minGapMs` (longer for slow writes); `writeNow()` is the page's flush (hidden or unloaded). The
+ * gap is short because the flush cannot be relied on: Safari stops the worker of a page it puts in the back-forward
+ * cache before the flush is written (rpc.ts `suspend`), so the last regular copy is what a reload gets back.
  */
 export class RecoveryKeeper {
   private readonly ctx: ShellContext;
@@ -187,7 +189,7 @@ export class RecoveryKeeper {
     this.run = run;
     this.timers = opts.timers ?? realTimers;
     this.debounceMs = opts.debounceMs ?? 2000;
-    this.minGapMs = opts.minGapMs ?? 15_000;
+    this.minGapMs = opts.minGapMs ?? 3000;
   }
 
   /** The document (or which one is active) changed. */
