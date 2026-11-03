@@ -26,7 +26,7 @@ export const ES_PRODUCTION: Messages = {
   "prod.phRunning": "Marcando",
   "prod.phFinishing": "Terminando…",
   "prod.phReadyFoot": "Listo: pisa el pedal",
-  "prod.phReadyFootDetail": "El trabajo está encuadrado en la plantilla. La siguiente pisada graba exactamente lo encuadrado.",
+  "prod.phReadyFootDetail": "El trabajo está encuadrado en el utillaje. La siguiente pisada graba exactamente lo encuadrado.",
   "prod.phFraming": "Encuadrando",
   "prod.phTarget": "Objetivo alcanzado: {count} / {target}",
   "prod.phTargetDetail": "Se alcanzó Detener en. Reinicia el contador o sube Detener en para seguir.",
