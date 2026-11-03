@@ -20,7 +20,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -116,8 +116,9 @@ async function installTools() {
   if (sha !== BINARYEN_SHA256) throw new Error(`binaryen download checksum ${sha}, expected ${BINARYEN_SHA256}`);
   const tgz = join(tools, `binaryen-${BINARYEN}-node.tar.gz`);
   writeFileSync(tgz, bytes);
-  // tar ships with Windows 10+, macOS and Linux.
-  run("tar", ["-xzf", tgz, "-C", tools]);
+  // tar ships with Windows 10+, macOS and Linux. Run it in the tools folder with a bare file name: GNU tar (Git Bash's,
+  // first on PATH there) reads "C:\..." as host:path and fails.
+  run("tar", ["-xzf", basename(tgz)], { cwd: tools });
   rmSync(tgz);
   if (!existsSync(join(dir, "wasm-opt.js"))) throw new Error(`no wasm-opt.js in the binaryen ${BINARYEN} archive`);
   log(`binaryen ${BINARYEN} installed in ${dir}`);
