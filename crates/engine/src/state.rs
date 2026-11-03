@@ -1308,6 +1308,9 @@ impl AppState {
                 "the document changed since the run was requested (revision {shown} -> {revision}); nothing was requested: check the job and request it again"
             )));
         }
+        // Shared with the job ledger (module `ledger`), which keeps what this run burns.
+        let doc = Arc::new(doc);
+        let ledger_doc = doc.clone();
         let config = self.machine.config();
         let generation = config.generation;
         let run_index = self.job.count(&self.active_device().id);
@@ -1338,6 +1341,7 @@ impl AppState {
         .await??
         .with_correction(correction);
         prepared.generation = generation;
+        let layer_times = std::mem::take(&mut prepared.layer_times);
         let view = {
             let mut store = self.runs();
             // Under the runs lock the shutdown cancels pending runs under: none is added after that.
@@ -1349,6 +1353,7 @@ impl AppState {
             run.document_id = document_id;
             run.view(revision)
         };
+        crate::ledger::remember(self, &view, ledger_doc, layer_times);
         tracing::info!(run_id = %view.id, ?origin, "run requested; waiting for approval in the UI");
         self.emit(Event::RunPending { run_id: view.id.clone(), origin, summary: view.summary.clone() });
         Ok(view)

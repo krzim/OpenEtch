@@ -268,7 +268,7 @@ impl GalvoMcp {
 
     /// Every tool definition, in [`TOOL_NAMES`] order.
     pub fn tools() -> Vec<Tool> {
-        vec![
+        let mut tools = vec![
             tool::<NoArgs>(
                 "list_commands",
                 "List document commands",
@@ -431,7 +431,10 @@ impl GalvoMcp {
                  are design-only workspaces. Read-only: only a person can change the active device, in the UI.",
                 true,
             ),
-        ]
+        ];
+        // The job ledger's tools (module `ledger_mcp`).
+        tools.extend(crate::ledger_mcp::tools());
+        tools
     }
 
     /// Run tool `name` with `arguments`. Failures come back as tool errors (`is_error`), never protocol errors.
@@ -555,6 +558,7 @@ impl GalvoMcp {
                 v["machine"] = st.lightburn.machine_json(&st.machine.profile());
                 Ok(ok_json(v))
             }
+            ledger if crate::ledger_mcp::TOOL_NAMES.contains(&ledger) => crate::ledger_mcp::dispatch(st, ledger, a).await,
             other => Err(EngineError::NotFound(format!("unknown tool '{other}' (tools: {})", TOOL_NAMES.join(", ")))),
         }
     }
@@ -592,7 +596,9 @@ impl ServerHandler for GalvoMcp {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("OpenEtch", env!("CARGO_PKG_VERSION")))
-            .with_instructions(INSTRUCTIONS)
+            .with_instructions(format!("{INSTRUCTIONS}
+
+{}", crate::ledger_mcp::INSTRUCTIONS))
     }
 
     async fn list_tools(
@@ -644,7 +650,8 @@ mod tests {
     fn tool_list_is_complete() {
 
         let names: Vec<String> = GalvoMcp::tools().iter().map(|t| t.name.to_string()).collect();
-        assert_eq!(names, TOOL_NAMES.map(String::from).to_vec());
+        let all: Vec<String> = TOOL_NAMES.iter().chain(&crate::ledger_mcp::TOOL_NAMES).map(|n| n.to_string()).collect();
+        assert_eq!(names, all);
         for t in GalvoMcp::tools() {
             assert_eq!(t.input_schema.get("type"), Some(&json!("object")), "{}", t.name);
             assert!(t.description.as_deref().is_some_and(|d| !d.is_empty()));

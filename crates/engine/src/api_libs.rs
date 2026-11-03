@@ -25,7 +25,7 @@
 //! | POST | `/api/layers/{id}/reset` | `{builtin?}`: Reset to Default (`builtin`: OpenEtch's defaults, LightBurn's Shift+Reset) |
 //! | POST / DELETE | `/api/optimization/default` | Set as Defaults / forget them |
 //! | POST | `/api/optimization/reset` | `{builtin?}`: the saved defaults (or OpenEtch's) applied to the document |
-//! | GET | `/api/job-log` | `?limit=` (default 200), `?format=csv`: the newest job log entries |
+//! | GET | `/api/job-log` | moved to `api_ledger` (the job ledger) |
 //! | GET | `/api/diagnostics/report` | the bug report bundle (download) |
 //! | GET | `/api/diagnostics/logs` | `{debug, lines}` |
 //! | GET / POST | `/api/updates`, `/api/updates/check` | the last check / check now (only with `check_for_updates` on) |
@@ -88,7 +88,6 @@ pub(crate) fn routes() -> Router<Arc<AppState>> {
         .route("/layers/{id}/reset", post(layer_reset))
         .route("/optimization/default", post(optimization_make_default).delete(optimization_forget_default))
         .route("/optimization/reset", post(optimization_reset))
-        .route("/job-log", get(job_log))
         .route("/diagnostics/report", get(diagnostics_report))
         .route("/diagnostics/logs", get(diagnostics_logs))
         .route("/updates", get(updates_view))
@@ -660,23 +659,6 @@ async fn optimization_reset(State(st): State<Arc<AppState>>, headers: HeaderMap,
 // ---------------------------------------------------------------------------------------------------------------
 // Job log, diagnostics, updates
 // ---------------------------------------------------------------------------------------------------------------
-
-#[derive(Deserialize)]
-struct LogQuery {
-    #[serde(default)]
-    limit: Option<usize>,
-    #[serde(default)]
-    format: Option<String>,
-}
-
-async fn job_log(State(st): State<Arc<AppState>>, Query(q): Query<LogQuery>) -> Result<Response, EngineError> {
-    let entries = st.libs.read_job_log(q.limit.unwrap_or(200))?;
-    match q.format.as_deref() {
-        None | Some("json") => Ok(Json(json!({ "entries": entries })).into_response()),
-        Some("csv") => Ok(attachment("OpenEtchJobs.csv", "text/csv", crate::joblog::to_csv(&entries).into_bytes())),
-        Some(f) => Err(EngineError::BadRequest(format!("unknown format '{f}' (json or csv)"))),
-    }
-}
 
 async fn diagnostics_report(State(st): State<Arc<AppState>>) -> Response {
     let r = crate::diagnostics::report(&st);

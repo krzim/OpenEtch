@@ -27,6 +27,8 @@ camera = ["dep:nokhwa"]
 [dependencies]
 doc = { workspace = true }
 commands = { workspace = true }
+# Variable text values for the job ledger (the `system` feature comes with `commands`).
+text = { workspace = true }
 plan = { workspace = true }
 machine = { workspace = true }
 lmc = { workspace = true }
