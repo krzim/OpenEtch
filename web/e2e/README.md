@@ -43,7 +43,18 @@ npm run e2e:perf -- --url http://<pi-ip>:7881 --doc some-heavy-file.lbrn2 --labe
 ```
 
 Results: `target/perf/<label>/perf.json` and `perf.md` (git ignores `target/`). With `--only` the page still loads and
-the workspaces still switch, but only the named actions are timed.
+the workspaces still switch, but only the named actions are timed and the setup of the others is skipped.
+
+The quick loop for trying a change: a local simulator engine, the four actions that matter most, and the network
+throttled to Wi-Fi speed (`--throttle-mbps 20` is about 2.5 MB/s, with `--latency-ms 5` per request by default), so the
+numbers reflect a Pi over Wi-Fi without one. It takes well under a minute:
+
+```sh
+npm run e2e:perf -- --url http://127.0.0.1:7931 --doc heavy.lbrn2 --label quick --throttle-mbps 20   --only move,undo,to-laser-preview,layer-speed
+```
+
+The preview worker's jobs (src/wasm/, `window.__oeWorker`) hold an action open while they run and are listed with it.
+`--no-worker` turns the worker off (the app then downloads the engine's preview), for a before / after comparison.
 
 The quick loop while improving something: a local simulator engine, the page's network throttled to Wi-Fi speed
 (`--throttle-mbps 20` is about 2.5 MB/s, with `--latency-ms 5` by default) and only a few actions, a minute or two per

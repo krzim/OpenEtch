@@ -8,10 +8,13 @@
 //   node e2e/perf.mjs --url http://127.0.0.1:7931 --doc heavy.lbrn2 [--label pc-local] [--out ../target/perf/pc-local]
 //                     [--devices macbook-air-1470,iphone15-portrait] [--only load,move,undo] [--quiet 1500]
 //                     [--timeout 240000] [--cdp-port 9334] [--headful] [--throttle-mbps 20] [--latency-ms 5]
+//                     [--no-worker]
 //
-// --throttle-mbps limits the page's network to that many megabits per second each way (DevTools network emulation,
-// with --latency-ms of added round-trip latency, default 5), so a local engine shows what Wi-Fi to a Raspberry Pi
-// would: 20 Mbit/s is about 2.5 MB/s. The quick loop while improving something:
+// --throttle-mbps limits the page's network (DevTools Network.emulateNetworkConditions, both directions) to that many
+// megabits per second with --latency-ms (default 5) per request, e.g. 20 for the Pi's Wi-Fi (~2.5 MB/s), so a local
+// engine gives Wi-Fi numbers. --no-worker turns the browser's preview worker off (localStorage
+// "openetch.previewWorker" = "off"): the app then downloads the engine's preview, as before the worker. The quick loop
+// while improving something:
 //
 //   node e2e/perf.mjs --url http://127.0.0.1:7931 --doc heavy.lbrn2 --throttle-mbps 20 --only move,undo,to-laser-preview,layer-speed
 //
@@ -52,6 +55,7 @@ function args(argv) {
     else if (k === "--headful") a.headful = true;
     else if (k === "--throttle-mbps") a.throttleMbps = Number(v());
     else if (k === "--latency-ms") a.latencyMs = Number(v());
+    else if (k === "--no-worker") a.noWorker = true;
     else if (k === "--no-direct") a.noDirect = true;
     else if (k === "--help" || k === "-h") a.help = true;
   }
@@ -149,6 +153,9 @@ async function metrics(page) {
   return { task: m.TaskDuration * 1000, script: m.ScriptDuration * 1000, layout: m.LayoutDuration * 1000, style: m.RecalcStyleDuration * 1000, heapMB: m.JSHeapUsedSize / 1048576 };
 }
 
+/** Whether any of these actions is measured (all without --only): the setup of the others is skipped. */
+const wants = (opts, ...names) => !opts.only || names.some((n) => opts.only.split(",").includes(n));
+
 /** Run `fn` (the input) and wait until the action settles; returns the record. */
 async function measure(ctx, name, fn, { via = "ui", note, always = false } = {}) {
   const { page, net, opts } = ctx;
@@ -183,8 +190,11 @@ async function measure(ctx, name, fn, { via = "ui", note, always = false } = {})
     const lt = await page.evaluate(() => window.__perf.lt.slice(-3)).catch(() => []);
     const ltEnd = Math.max(0, ...lt.map(([s, d]) => s + d).filter((e) => e >= t0));
     const netEnd = Math.max(0, ...reqs.map((r) => r.end ?? now));
-    lastSeen = Math.max(t0 + (frameMs ?? 0), ltEnd, netEnd);
-    if (!inflight && now - lastSeen >= opts.quiet) break;
+    // The browser's preview worker (src/wasm/previewClient.ts): a job running holds the settle open, its end counts.
+    const wk = await page.evaluate(() => ({ busy: window.__oeWorker?.busy ?? 0, last: window.__oeWorker?.last ?? 0 })).catch(() => ({ busy: 0, last: 0 }));
+    const wkEnd = wk.last >= t0 ? wk.last : 0;
+    lastSeen = Math.max(t0 + (frameMs ?? 0), ltEnd, netEnd, wkEnd);
+    if (!inflight && !wk.busy && now - lastSeen >= opts.quiet) break;
     if (now - t0 > opts.timeout) {
       timedOut = true;
       break;
@@ -193,6 +203,9 @@ async function measure(ctx, name, fn, { via = "ui", note, always = false } = {})
   const wallMs = Math.round(lastSeen - t0);
   const m1 = await metrics(page);
   const perf = await page.evaluate((b) => ({ lt: window.__perf.lt.slice(b.lt), parse: window.__perf.parse.slice(b.parse) }), before);
+  const workerJobs = await page
+    .evaluate((t) => (window.__oeWorker?.jobs ?? []).filter((j) => j.at >= t).map((j) => ({ kind: j.kind, docMs: Math.round(j.doc), jobMs: Math.round(j.job), wallMs: Math.round(j.wall) })), t0)
+    .catch(() => []);
   const lts = perf.lt.filter(([s]) => s >= t0 - 50);
   const requests = net
     .since(t0)
@@ -222,6 +235,7 @@ async function measure(ctx, name, fn, { via = "ui", note, always = false } = {})
     bytes: requests.reduce((s, r) => s + (r.bytes ?? 0), 0),
     longTasks: { count: lts.length, totalMs: Math.round(lts.reduce((s, [, d]) => s + d, 0)), maxMs: Math.round(Math.max(0, ...lts.map(([, d]) => d))) },
     jsonParse: perf.parse.map(([, ms, len]) => ({ ms: Math.round(ms), chars: len })),
+    workerJobs,
     renderer: {
       taskMs: Math.round(m1.task - m0.task),
       scriptMs: Math.round(m1.script - m0.script),
@@ -231,7 +245,8 @@ async function measure(ctx, name, fn, { via = "ui", note, always = false } = {})
     },
   };
   const big = requests.filter((r) => (r.bytes ?? 0) > 100000).map((r) => `${r.method} ${r.path.split("?")[0]} ${(r.bytes / 1e6).toFixed(1)}MB ${r.totalMs}ms`);
-  console.log(`  ${name.padEnd(20)} ${String(wallMs).padStart(7)} ms  ${String(requests.length).padStart(2)} req ${(rec.bytes / 1e6).toFixed(1).padStart(6)} MB  lt ${rec.longTasks.totalMs} ms${error ? `  ERROR ${error}` : ""}${timedOut ? "  TIMEOUT" : ""}  ${big.join("; ")}`);
+  const wj = workerJobs.map((j) => `${j.kind} ${j.wallMs}ms`).join(",");
+  console.log(`  ${name.padEnd(20)} ${String(wallMs).padStart(7)} ms  ${String(requests.length).padStart(2)} req ${(rec.bytes / 1e6).toFixed(1).padStart(6)} MB  lt ${rec.longTasks.totalMs} ms${wj ? `  worker ${wj}` : ""}${error ? `  ERROR ${error}` : ""}${timedOut ? "  TIMEOUT" : ""}  ${big.join("; ")}`);
   ctx.results.push(rec);
   return rec;
 }
@@ -379,6 +394,12 @@ async function walk(browser, d, opts) {
       localStorage.setItem("openetch.appModeOffered", "1");
     } catch {}
   });
+  await page.evaluate((off) => {
+    try {
+      if (off) localStorage.setItem("openetch.previewWorker", "off");
+      else localStorage.removeItem("openetch.previewWorker");
+    } catch {}
+  }, !!opts.noWorker);
 
   // The engine's document: a fresh heavy one (not timed here; see `direct` for the import itself).
   await api(url, "/api/machine/frame/stop", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ origin: "ui" }) }).catch(() => {});
@@ -402,7 +423,7 @@ async function walk(browser, d, opts) {
 
   // 2. Select an object (found first, then the press on it timed), then move it (drag 4 mm right).
   let sel = null;
-  for (const [x, y] of PICKS) {
+  for (const [x, y] of wants(opts, "select", "move") ? PICKS : []) {
     const p = await canvasPoint(page, x, y);
     if (!(await onCanvas(page, p))) continue;
     await page.press(p.x, p.y);
@@ -444,34 +465,36 @@ async function walk(browser, d, opts) {
 
   // 3. Fill Region: hover (path.fill_region_preview), then create (path.fill_region).
   const fillAt = sel ? [sel[0] + 9.5, sel[1] + 9.5] : [TARGETS[0][0] + 9.5, TARGETS[0][1] + 9.5];
-  const fillTool = (await clickIf(page, "button", "Fill Region")) || (await (async () => {
-    // The phone keeps it on the Modify strip of the Canvas tab, a tablet on the rail: try the More / Modify routes.
-    if (phone) await clickIf(page, "button", "Modify");
-    await sleep(300);
-    return clickIf(page, "button", "Fill Region");
-  })());
-  await sleep(400);
-  const fp = await canvasPoint(page, fillAt[0], fillAt[1]);
-  await measure(ctx, "fill-hover", async () => {
-    if (!fillTool) {
-      await inPageExec(page, "path.fill_region_preview", { points: [fillAt] });
-      return { via: "api" };
-    }
-    if (phone) await page.tap(fp.x, fp.y);
-    else {
-      await page.mouse("mouseMoved", fp.x - 3, fp.y - 3, { button: "none" });
-      await page.mouse("mouseMoved", fp.x, fp.y, { button: "none" });
-    }
-  });
-  await measure(ctx, "fill-create", async () => {
-    if (!fillTool) {
-      await inPageExec(page, "path.fill_region", { points: [fillAt] });
-      return { via: "api" };
-    }
-    await page.press(fp.x, fp.y);
-  });
-  await escape(page);
-  await escape(page);
+  if (wants(opts, "fill-hover", "fill-create")) {
+    const fillTool = (await clickIf(page, "button", "Fill Region")) || (await (async () => {
+      // The phone keeps it on the Modify strip of the Canvas tab, a tablet on the rail: try the More / Modify routes.
+      if (phone) await clickIf(page, "button", "Modify");
+      await sleep(300);
+      return clickIf(page, "button", "Fill Region");
+    })());
+    await sleep(400);
+    const fp = await canvasPoint(page, fillAt[0], fillAt[1]);
+    await measure(ctx, "fill-hover", async () => {
+      if (!fillTool) {
+        await inPageExec(page, "path.fill_region_preview", { points: [fillAt] });
+        return { via: "api" };
+      }
+      if (phone) await page.tap(fp.x, fp.y);
+      else {
+        await page.mouse("mouseMoved", fp.x - 3, fp.y - 3, { button: "none" });
+        await page.mouse("mouseMoved", fp.x, fp.y, { button: "none" });
+      }
+    });
+    await measure(ctx, "fill-create", async () => {
+      if (!fillTool) {
+        await inPageExec(page, "path.fill_region", { points: [fillAt] });
+        return { via: "api" };
+      }
+      await page.press(fp.x, fp.y);
+    });
+    await escape(page);
+    await escape(page);
+  }
 
   // 4. Undo and redo (the toolbar buttons; Ctrl+Z / Ctrl+Shift+Z on a desktop without them).
   const undoRedo = async (label, path, mod) => {
@@ -488,7 +511,7 @@ async function walk(browser, d, opts) {
 
   // 5. A QR code (Barcode tool: click, the dialog's Create).
   const blank = [TARGETS[1][0] + 2, TARGETS[1][1] - 25];
-  const qrTool = await clickIf(page, "button", "Barcode");
+  const qrTool = wants(opts, "qr-code") && (await clickIf(page, "button", "Barcode"));
   if (qrTool) {
     await sleep(300);
     const bp = await canvasPoint(page, blank[0], blank[1]);
@@ -513,7 +536,7 @@ async function walk(browser, d, opts) {
 
   // 6. Text (Text tool: click, type, Esc to finish).
   const textAt = [TARGETS[1][0] - 20, TARGETS[1][1] - 25];
-  const textTool = await clickIf(page, "button", "Text");
+  const textTool = wants(opts, "text") && (await clickIf(page, "button", "Text"));
   if (textTool) {
     await sleep(300);
     const tp = await canvasPoint(page, textAt[0], textAt[1]);
@@ -552,7 +575,7 @@ async function walk(browser, d, opts) {
   await escape(page);
 
   // 8. Timeline: roll back four steps (to before the fill, QR, text and imports), then forward to the end.
-  const h0 = (await docInfo(url)).history;
+  const h0 = wants(opts, "history-back4") ? (await docInfo(url)).history : null;
   const steps = (h0?.steps ?? h0?.entries ?? []).length || (h0?.marker ?? 0);
   const marker = Math.max(1, (h0?.marker ?? steps) - 4);
   await measure(ctx, "history-back4", async () => {
@@ -584,7 +607,7 @@ async function walk(browser, d, opts) {
   }, { always: true });
 
   // 10. A layer setting (speed of the first output layer) in the Laser workspace: an edit, then the preview again.
-  const doc = (await docInfo(url)).doc;
+  const doc = await api(url, "/api/document");
   const layer = doc.layers.find((l) => l.settings && l.output !== false) ?? doc.layers[0];
   await measure(ctx, "layer-speed", async () => {
     await inPageExec(page, "layer.update", { id: layer.id, settings: { speed_mm_s: (layer.settings.speed_mm_s ?? 100) + 1 } });
@@ -600,7 +623,7 @@ async function walk(browser, d, opts) {
     await inPage(page, "POST", "/api/machine/frame", { origin: "ui" });
     return { via: "api" };
   });
-  await sleep(1000);
+  if (wants(opts, "frame-start", "frame-stop")) await sleep(1000);
   await measure(ctx, "frame-stop", async () => {
     if (await clickIf(page, "button", "Stop frame")) return { via: "ui" };
     await inPage(page, "POST", "/api/machine/frame/stop", { origin: "ui" });
@@ -682,7 +705,7 @@ async function direct(url, opts) {
 
 function markdown(report) {
   const net = report.throttle ? `, network throttled to ${report.throttle.mbps} Mbit/s with ${report.throttle.latencyMs} ms latency` : "";
-  const L = [`# Performance profile: ${report.label}`, "", `Engine ${report.url}, document ${report.docName}, ${report.when}${net}.`, ""];
+  const L = [`# Performance profile: ${report.label}`, "", `Engine ${report.url}, document ${report.docName}, ${report.when}${net}${report.worker === false ? ", preview worker off" : ""}.`, ""];
   if (report.direct) {
     L.push("## Engine GETs (no browser)", "", "| path | bytes | TTFB ms | total ms | gzip-1 | brotli-4 |", "|---|---:|---:|---:|---:|---:|");
     for (const [p, g] of Object.entries(report.direct.gets))
@@ -706,14 +729,14 @@ function markdown(report) {
 async function main() {
   const opts = args(process.argv.slice(2));
   if (opts.help || !opts.url || !opts.doc) {
-    console.log("usage: node e2e/perf.mjs --url http://127.0.0.1:7931 --doc heavy.lbrn2 [--label name] [--out dir] [--devices ids] [--only actions] [--quiet ms] [--timeout ms] [--no-direct] [--throttle-mbps n] [--latency-ms n]");
+    console.log("usage: node e2e/perf.mjs --url http://127.0.0.1:7931 --doc heavy.lbrn2 [--label name] [--out dir] [--devices ids] [--only actions] [--quiet ms] [--timeout ms] [--no-direct] [--throttle-mbps n] [--latency-ms n] [--no-worker]");
     process.exit(opts.help ? 0 : 2);
   }
   opts.label ??= new URL(opts.url).hostname === "127.0.0.1" ? "local" : "remote";
   opts.out = resolve(opts.out ?? join(here, "..", "..", "target", "perf", opts.label));
   mkdirSync(opts.out, { recursive: true });
   const throttle = opts.throttleMbps > 0 ? { mbps: opts.throttleMbps, latencyMs: opts.latencyMs ?? 5 } : null;
-  const report = { label: opts.label, url: opts.url, docName: basename(opts.doc), when: new Date().toISOString(), throttle, devices: [] };
+  const report = { label: opts.label, url: opts.url, docName: basename(opts.doc), when: new Date().toISOString(), throttle, worker: !opts.noWorker, devices: [] };
   if (!opts.noDirect && !opts.only) {
     console.log("direct timings...");
     report.direct = await direct(opts.url, opts);
@@ -736,7 +759,7 @@ async function main() {
 }
 
 main().then(
-  // Exit at once: a closing browser's pipes or a keep-alive socket would otherwise hold node open for minutes.
+  // Exit now: a page wait's timer (up to --timeout) would otherwise keep Node alive for minutes after the report.
   () => process.exit(0),
   (e) => {
     console.error(e);

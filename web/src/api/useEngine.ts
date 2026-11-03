@@ -11,6 +11,8 @@ import { EMPTY_TIMELINE, normalizeHistory, type TimelineModel } from "./history.
 import { footSwitchToast, runFinishedToast, withApprovalLock } from "./runs.ts";
 import type { CommandSpec, EngineEvent, GDocument, MachineStatus, Origin, Preview, ProjectInfo } from "./types.ts";
 import { mutationsInFlight, onSyncPayload, setSyncPoint, syncStep, type SyncPayload } from "./docSync.ts";
+import type { PreviewSummary } from "./packedPreview.ts";
+import { useBrowserPreview } from "../wasm/useBrowserPreview.ts";
 
 /** WebSocket state shown by the connection indicator. */
 export type LinkState = "connecting" | "open" | "closed";
@@ -23,6 +25,10 @@ export interface Engine {
   preview: Preview | null;
   /** Why the engine could not plan a preview (e.g. objects outside the field), or null. */
   previewError: string | null;
+  /** The job's summary (time estimate...) planned in the browser, in either workspace; null without the worker. */
+  previewSummary: PreviewSummary | null;
+  /** Where the preview comes from: the browser's worker, or the engine (GET /api/preview). */
+  previewSource: "browser" | "engine";
   commands: CommandSpec[] | null;
   /** Whether the engine has a command (false while the list is loading). */
   has: (id: string) => boolean;
@@ -65,7 +71,7 @@ function isRemoteOrigin(o: Origin | null | undefined): o is Origin {
 }
 
 export interface EngineOptions {
-  /** Fetch /api/preview whenever the document changes. */
+  /** Keep the preview current (planned in the browser, or fetched from the engine as a fallback). */
   wantPreview: boolean;
   /** Called for asynchronous problems and notable events (e.g. a run became pending). */
   notify: (msg: string, kind?: "info" | "error") => void;
@@ -114,6 +120,15 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
   const wantPreviewRef = useRef(wantPreview);
   wantPreviewRef.current = wantPreview;
 
+  // ---- browser preview (src/wasm/): the preview and its stats are planned in a Web Worker from `doc`; GET
+  // /api/preview only in the "fallback" mode (no WebAssembly, or an engine without /api/preview/context).
+  const [contextSeq, setContextSeq] = useState(0);
+  const browser = useBrowserPreview({ doc, wantPreview, wantStats: true, contextSeq });
+  const engineMode = browser.mode === "fallback";
+  const engineModeRef = useRef(engineMode);
+  engineModeRef.current = engineMode;
+  // ---- end browser preview
+
   const fail = useCallback((e: unknown) => {
     setHttpError(e instanceof Error ? e.message : String(e));
   }, []);
@@ -141,7 +156,12 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
   /** Whether the engine has GET /api/preview.bin (null until the first answer). */
   const binaryPreview = useRef<boolean | null>(null);
 
+  /**
+   * The engine's preview (the compact binary GET /api/preview.bin, JSON on older engines), only while the browser
+   * cannot plan it (`engineMode`); otherwise the worker plans it from the synced document (useBrowserPreview).
+   */
   const fetchPreview = useCoalesced(async () => {
+    if (!engineModeRef.current) return;
     const revision = docRef.current?.revision ?? -1;
     if (revision >= 0 && previewRevision.current === revision) return;
     try {
@@ -254,7 +274,7 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
     }
     // The dirty flag follows the revision.
     void refreshProject();
-    if (wantPreviewRef.current) void refreshPreview();
+    if (wantPreviewRef.current && engineModeRef.current) void refreshPreview();
   });
   const refreshDocRef = useRef(refreshDoc);
   refreshDocRef.current = refreshDoc;
@@ -350,10 +370,11 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
       .catch(fail);
   }, [refreshDoc, refreshMachine, fail]);
 
-  // Preview follows the workspace toggle (fetched again only when the document changed since).
+  // Preview follows the workspace toggle: the engine's (fetched again only when the document changed since) when the
+  // browser cannot plan it.
   useEffect(() => {
-    if (wantPreview) void fetchPreview();
-  }, [wantPreview, fetchPreview]);
+    if (wantPreview && engineMode) void fetchPreview();
+  }, [wantPreview, engineMode, fetchPreview]);
 
   // Event socket with reconnect and backoff.
   /** The document changed to `revision` (an event): fetch the changes, or wait for an edit in flight to bring them. */
@@ -449,6 +470,7 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
           case "device_changed":
             // The profile, field size and controller changed: everything that shows them refetches.
             setDeviceSeq((n) => n + 1);
+            setContextSeq((n) => n + 1);
             void refreshMachine();
             previewRevision.current = -1;
             void refreshDoc();
@@ -456,6 +478,8 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
             break;
           case "run_finished": {
             void refreshMachine();
+            // The job counter and the learned estimate correction the browser preview plans with.
+            setContextSeq((n) => n + 1);
             const t = runFinishedToast(ev);
             notifyRef.current(t.msg, t.kind);
             break;
@@ -494,8 +518,10 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
     doc,
     timeline,
     machine,
-    preview,
-    previewError,
+    preview: engineMode ? preview : browser.preview,
+    previewError: engineMode ? previewError : browser.previewError,
+    previewSummary: browser.summary,
+    previewSource: engineMode ? "engine" : "browser",
     commands,
     has,
     project,

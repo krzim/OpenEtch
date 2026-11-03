@@ -19,7 +19,7 @@ interface Zlib {
 }
 
 /** Files worth a compressed copy: text the browser loads (never source maps, images or the copies themselves). */
-const COMPRESSIBLE = /\.(js|mjs|css|html|svg|json|webmanifest|txt)$/;
+const COMPRESSIBLE = /\.(js|mjs|css|html|svg|json|webmanifest|txt|wasm)$/;
 /** Below this, compression saves less than a packet. */
 const MIN_BYTES = 1024;
 
@@ -52,6 +52,11 @@ function precompress(): Plugin {
 
 export default defineConfig({
   plugins: [react(), precompress()],
+  // The browser's WebAssembly core (crates/webcore), built into src/wasm/pkg by scripts/wasm.mjs (`npm run wasm`),
+  // which `npm run build` and `npm run dev` run first. Its wasm file is an asset with a content hash.
+  resolve: { alias: { "webcore-pkg": "/src/wasm/pkg/webcore.js" } },
+  // The preview worker (src/wasm/previewWorker.ts) is an ES module: it imports the wasm-bindgen glue.
+  worker: { format: "es" },
   // The web UI's version for Help > About (src/workspace/env.d.ts).
   define: { __OPENETCH_VERSION__: JSON.stringify(pkg.version) },
   server: {

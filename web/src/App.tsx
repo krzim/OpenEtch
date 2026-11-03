@@ -26,6 +26,7 @@ import {
   type DirectImport,
 } from "./api/drop.ts";
 import { friendlyError, outsideField } from "./api/laser.ts";
+import { estimateOf } from "./api/packedPreview.ts";
 import { activeDevice, asLightBurnDevices, canvasWorkspace, designOnlyReason, machineDevice } from "./api/devices.ts";
 import { engineLightBurnDevice } from "./api/lightburn.ts";
 import { MAX_UPLOAD_BYTES, commandResult, defaultImportMode, fileError, warningList } from "./api/project.ts";
@@ -1632,7 +1633,13 @@ export function App() {
     />
   );
   const statusBar = (
-    <StatusBar doc={doc} selection={selection} snap={prefs.snap} machineText={statusMachineText(machineState(machine), t)} />
+    <StatusBar
+      doc={doc}
+      selection={selection}
+      snap={prefs.snap}
+      machineText={statusMachineText(machineState(machine), t)}
+      estimateS={workspace === "design" ? estimateOf(engine.previewSummary) : null}
+    />
   );
 
   const overlays = (

@@ -4,6 +4,7 @@
 
 import { objectBounds, type Box } from "../geometry.ts";
 import type { CutSettings, GDocument, Layer, MachineStatus, Preview, PreviewSegment, Vec2 } from "./types.ts";
+import { isMark, layerOf, segmentLength } from "./packedPreview.ts";
 import type { LengthUnit } from "../workspace/prefs.ts";
 import { lengthText } from "../workspace/units.ts";
 import { tr } from "../workspace/tr.ts";
@@ -138,13 +139,17 @@ export function previewLayers(preview: Preview | null, doc: GDocument | null): L
   if (!preview) return [];
   const byId = new Map<string, Layer>((doc?.layers ?? []).map((l) => [l.id, l]));
   const counted = new Map<string, { n: number; len: number }>();
-  for (const s of preview.segments ?? []) {
-    if (s.kind !== "mark") continue;
-    const k = s.layer ?? "";
+  const count = (k: string, len: number) => {
     const c = counted.get(k) ?? { n: 0, len: 0 };
     c.n++;
-    c.len += segLen(s);
+    c.len += len;
     counted.set(k, c);
+  };
+  const pk = preview.packed;
+  if (pk) {
+    for (let i = 0; i < pk.t.length; i++) if (isMark(pk, i)) count(layerOf(pk, i) ?? "", segmentLength(pk, i));
+  } else {
+    for (const s of preview.segments ?? []) if (s.kind === "mark") count(s.layer ?? "", segLen(s));
   }
   const rows: LayerPreview[] = [];
   const seen = new Set<string>();

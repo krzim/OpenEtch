@@ -272,6 +272,8 @@ export const api = {
       "GET",
       since ? `/api/document/sync?since=${since.revision}&epoch=${encodeURIComponent(since.epoch)}` : "/api/document/sync",
     ),
+  /** What the browser's preview worker plans with (src/wasm/; engines without it answer 404). */
+  previewContext: () => request<unknown>("GET", "/api/preview/context"),
   /** The timeline (`{marker, steps}`), or an older engine's log array; normalise with `normalizeHistory`. */
   history: () => request<unknown>("GET", "/api/history"),
   /** Roll the timeline marker to `marker` (the index of the last step to keep applied). */

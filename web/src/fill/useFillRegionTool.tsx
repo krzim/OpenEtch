@@ -21,6 +21,7 @@ import { ContextStripPortal } from "../workspace/contextStrip.tsx";
 import { useLayoutMode } from "../workspace/layoutMode.ts";
 import { usePrefs, useT, useUnitConversion } from "../workspace/usePrefs.ts";
 import { trimNumber } from "../workspace/units.ts";
+import { workerFillPreview } from "../wasm/useBrowserPreview.ts";
 import {
   DEFAULT_FILL_OPTS,
   areaText,
@@ -143,10 +144,15 @@ export function useFillRegionTool(p: FillToolProps) {
     // Answers for points no longer shown are ignored by onPreview; answers that arrive after the tool was left (the
     // epoch moved on) are dropped here.
     const epoch = seq.current;
-    return execute(fillPreview([at], O.current))
-      .then((r) => {
+    const inv = fillPreview([at], O.current);
+    // The browser's worker answers from its copy of this revision (src/wasm/); the engine when it cannot.
+    const rev = P.current.doc?.revision ?? null;
+    const local = rev === null ? Promise.resolve(null) : workerFillPreview(rev, inv.params);
+    return local
+      .then((answer) => (answer !== null ? answer : execute(inv).then((r) => r.result)))
+      .then((result) => {
         if (epoch !== seq.current) return;
-        const [a] = parsePreview(r.result, 1);
+        const [a] = parsePreview(result, 1);
         if ("face" in a) cache.current.add(a.face);
         const shown: PointAnswer = "face" in a ? a : { error: answerText(a) ?? a.error, code: a.code };
         set(onPreview(S.current, at, shown));

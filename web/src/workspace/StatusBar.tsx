@@ -2,6 +2,7 @@
 // its label), the selection's size, the snap settings, zoom, and the display unit (click to switch mm / in).
 
 import { useMemo, useSyncExternalStore } from "react";
+import { formatDuration } from "../api/laser.ts";
 import type { GDocument } from "../api/types.ts";
 import { objectBounds, unionBoxes } from "../geometry.ts";
 import type { Selection } from "../selection.ts";
@@ -17,6 +18,8 @@ export interface StatusBarProps {
   snap: { objects: boolean; grid: boolean; gridMm: number };
   /** Short machine state, e.g. "Ready (simulator)". */
   machineText?: string;
+  /** The job's estimated time, s, planned in the browser (Design workspace); null hides it. */
+  estimateS?: number | null;
 }
 
 export function StatusBar(p: StatusBarProps) {
@@ -55,6 +58,11 @@ export function StatusBar(p: StatusBarProps) {
         )}
       </span>
       <span className="sb-spacer" />
+      {typeof p.estimateS === "number" && p.estimateS > 0 && (
+        <span className="sb-cell sb-estimate" title={t("status.estimateTitle")}>
+          {t("status.estimate", { time: formatDuration(p.estimateS) })}
+        </span>
+      )}
       {p.machineText && <span className="sb-cell sb-machine">{p.machineText}</span>}
       <span className="sb-cell sb-snap" title={t("status.snapTitle")}>
         {t("status.snap")}: {snapText || t("status.off")}

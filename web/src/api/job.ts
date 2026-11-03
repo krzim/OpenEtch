@@ -5,6 +5,7 @@
 // `t_s`). Pure: no React and no fetch, so `npm test` covers it.
 
 import type { Preview, PreviewSegment } from "./types.ts";
+import { segmentCount } from "./packedPreview.ts";
 import { tr } from "../workspace/tr.ts";
 
 // ---- job status -----------------------------------------------------------------------------------------------------
@@ -344,7 +345,19 @@ export function frameKeyEdit(key: string, m: { shift: boolean; ctrl: boolean }):
 type TimedSegment = PreviewSegment & { t_s?: number };
 
 /** Each segment's end time in seconds: the engine's `t_s` when every segment has one, else spread by length. */
-export function segmentTimes(preview: Preview | null): number[] {
+export function segmentTimes(preview: Preview | null): ArrayLike<number> {
+  const pk = preview?.packed;
+  if (pk) {
+    // The browser's preview always has times (f32): never decreasing, as below.
+    const out = new Float64Array(pk.t.length);
+    let last = 0;
+    for (let i = 0; i < out.length; i++) {
+      const t = pk.t[i];
+      if (t > last) last = t;
+      out[i] = last;
+    }
+    return out;
+  }
   const segs = (preview?.segments ?? []) as TimedSegment[];
   if (segs.length === 0) return [];
   if (segs.every((s) => typeof s.t_s === "number" && Number.isFinite(s.t_s))) {
@@ -366,7 +379,7 @@ export function segmentTimes(preview: Preview | null): number[] {
 }
 
 /** How many segments have finished at time `t` (the toolpath shown up to that time). */
-export function segmentsDoneAt(times: readonly number[], t: number): number {
+export function segmentsDoneAt(times: ArrayLike<number>, t: number): number {
   let lo = 0;
   let hi = times.length;
   while (lo < hi) {
@@ -378,7 +391,7 @@ export function segmentsDoneAt(times: readonly number[], t: number): number {
 }
 
 /** The time at which `n` segments have finished (0 for none). */
-export function timeOfSegments(times: readonly number[], n: number): number {
+export function timeOfSegments(times: ArrayLike<number>, n: number): number {
   if (n <= 0 || times.length === 0) return 0;
   return times[Math.min(times.length, n) - 1];
 }
@@ -404,7 +417,7 @@ export function clockText(s: number): string {
  * to run.
  */
 export function startHereSegment(preview: Preview | null, done: number): number | null {
-  const segs = preview?.segments ?? [];
-  if (segs.length === 0 || done >= segs.length) return null;
+  const n = segmentCount(preview);
+  if (n === 0 || done >= n) return null;
   return Math.max(0, Math.floor(done));
 }

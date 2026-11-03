@@ -310,6 +310,8 @@ export const EN = {
   "status.snapTitle": "Snapping (toolbar and Preferences)",
   "status.zoomTitle": "Zoom (100 % = real size). Click to fit the field.",
   "status.unitsTitle": "Display units: click to switch mm / inches",
+  "status.estimate": "Job ≈ {time}",
+  "status.estimateTitle": "Estimated time of the whole job on the active device (planned in this browser; display only)",
 
   "menu.bringToFront": "Bring to front",
   "menu.bringForward": "Bring forward",
