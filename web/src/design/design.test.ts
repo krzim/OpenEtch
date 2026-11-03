@@ -188,6 +188,22 @@ test("clipboard fragments keep groups and layers and paste piece by piece", () =
   assert.deepEqual(inPlace, [[2, 0], [10, 0]]);
   assert.equal(JSON.parse(inv[0].params.content as string).objects.length, 2);
   assert.equal(fragmentOf(d, ["nope"]), null);
+  assert.equal(f.object_options, undefined, "no cut properties, no key");
+});
+
+test("a copied object takes its hand-placed tabs and start point to the paste, piece by piece", () => {
+  const d = doc([
+    obj("a", { kind: "rect", width_mm: 2, height_mm: 2, corner_radius_mm: 0 }, [1, 0, 0, 1, 0, 0]),
+    obj("b", { kind: "ellipse", rx_mm: 1, ry_mm: 1 }, [1, 0, 0, 1, 4, 0]),
+  ]);
+  const opts = { a: { tabs: [[1, 0]], start: { node: 0, local: [-1, -1] } }, gone: { priority: 1 } };
+  const f = fragmentOf({ ...d, object_options: opts } as typeof d, ["a", "b"])!;
+  assert.deepEqual(f.object_options, { a: opts.a }, "only the copied objects' properties");
+  const contents = pasteInvocations(f, null).map((i) => JSON.parse(i.params.content as string));
+  assert.deepEqual(
+    contents.map((c) => c.object_options ?? null),
+    [{ a: opts.a }, null],
+  );
 });
 
 test("the selection as SVG: mm size, flipped y, layer colours, our marker", () => {

@@ -390,3 +390,62 @@ fn nest_true_shapes_interlock() {
         err(&mut s, "art.nest", json!({"ids": [l1], "region": region, "resolution_mm": 0.1})).contains("only for mode")
     );
 }
+
+/// Hand-placed tabs, the start point and the other cut properties go with every copy: Duplicate, Transform with
+/// keep_copy (a mirrored copy), a grid array, a circular array, a page duplicate and a clipboard paste (art.insert of a
+/// fragment carrying `object_options`); the tabs stay on the copy's outline wherever the copy went.
+#[test]
+fn copies_keep_tabs_start_points_and_cut_properties() {
+    let mut s = session();
+    let a = created(&ok(&mut s, "shape.rect", json!({"width_mm": 10, "height_mm": 10, "center": [-20, 0]})));
+    ok(&mut s, "tabs.add", json!({"id": a, "points": [[-15, 0]]}));
+    ok(&mut s, "object.set_start_point", json!({"id": a, "node": 1}));
+    ok(&mut s, "object.set_cut_properties", json!({"ids": [a], "priority": 3, "power_scale_pct": 40}));
+    let original = s.document().object_options[&a].clone();
+    let tab_field = |s: &Session, id: &str| -> Vec<[f64; 2]> {
+        let d = s.document();
+        let o = d.object(id).unwrap();
+        d.object_options[id].tabs.iter().map(|t| {
+            let p = o.transform * Point::new(t[0], t[1]);
+            [(p.x * 1e6).round() / 1e6, (p.y * 1e6).round() / 1e6]
+        }).collect()
+    };
+    let same = |s: &Session, id: &str| assert_eq!(s.document().object_options.get(id), Some(&original), "{id}");
+
+    let dup = created(&ok(&mut s, "object.duplicate", json!({"ids": [a], "offset": [0, 30]})));
+    same(&s, &dup);
+    assert_eq!(tab_field(&s, &dup), [[-15.0, 30.0]], "the tab moved with the copy");
+
+    let mirrored = ok(&mut s, "object.transform", json!({"ids": [a], "mirror": "x", "keep_copy": true}));
+    let m = created(&mirrored);
+    same(&s, &m);
+    assert_eq!(tab_field(&s, &m), [[-25.0, 0.0]], "mirrored about the copy's centre (-20, 0)");
+
+    let grid = ok(&mut s, "art.array", json!({"ids": [a], "rows": 1, "cols": 2, "pitch_x_mm": 15, "pitch_y_mm": 0}));
+    for id in grid["created"].as_array().unwrap() {
+        same(&s, id.as_str().unwrap());
+    }
+    let ring = ok(&mut s, "art.circular_array", json!({"ids": [dup], "count": 3, "center": [0, 30]}));
+    for id in ring["created"].as_array().unwrap() {
+        same(&s, id.as_str().unwrap());
+    }
+
+    // The clipboard: a fragment with object_options pasted elsewhere.
+    let mut frag = super::art_library::art_fragment(s.document(), std::slice::from_ref(&a)).unwrap();
+    assert!(frag.object_options.is_empty(), "Art Library items keep no cut properties");
+    frag.object_options.insert(a.clone(), original.clone());
+    let pasted = ok(&mut s, "art.insert", json!({"content": serde_json::to_string(&frag).unwrap(), "center": [0, -40]}));
+    let p = created(&pasted);
+    same(&s, &p);
+    assert_eq!(tab_field(&s, &p), [[5.0, -40.0]]);
+    frag.object_options.get_mut(&a).unwrap().power_scale_pct = 500.0;
+    assert!(err(&mut s, "art.insert", json!({"content": serde_json::to_string(&frag).unwrap()})).contains("cut properties"));
+
+    // A page duplicate: the copies on the new page keep them too.
+    let before: Vec<String> = s.document().objects.iter().map(|o| o.id.clone()).collect();
+    let page = ok(&mut s, "page.duplicate", json!({}));
+    let copies: Vec<String> = page["created"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_owned()).collect();
+    assert_eq!(copies.len(), before.len());
+    let k = before.iter().position(|id| *id == a).unwrap();
+    same(&s, &copies[k]);
+}

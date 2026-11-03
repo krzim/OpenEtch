@@ -9,7 +9,9 @@
 //! to `layer` when given. Several top-level pieces are wrapped in one new group named `name`. The art is moved so the
 //! centre of its bounds lands on `center` (default the field centre; LightBurn's Add Graphic to Project uses the
 //! centre of the view, a drag the drop point). Text on a path keeps its path when the path is part of the item, else
-//! it is detached (its outline stays). One undo step; returns `created` (objects), `groups`, `layers_created`.
+//! it is detached (its outline stays). A fragment's `object_options` (the app's clipboard copy carries them; library
+//! items never do) go to the new ids, so a pasted copy keeps its tabs and start point. One undo step; returns
+//! `created` (objects), `groups`, `layers_created`.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -47,6 +49,11 @@ pub struct ArtFragment {
     pub groups: Vec<Group>,
     #[serde(default)]
     pub layers: Vec<ArtLayer>,
+    /// Cut properties by object id (priority, power scale, start point, hand-placed tabs; `Document::object_options`):
+    /// carried by a copy on the clipboard so a pasted copy keeps its tabs and start point. Art Library items keep none
+    /// (libraries store art only); ids that name no object of the item are ignored.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub object_options: BTreeMap<String, doc::ObjectOptions>,
 }
 
 impl ArtFragment {
@@ -66,6 +73,16 @@ impl ArtFragment {
         }
         if self.objects.len() > MAX_ART_OBJECTS {
             return Err(format!("the art item holds {} objects (at most {MAX_ART_OBJECTS})", self.objects.len()));
+        }
+        for (id, o) in &self.object_options {
+            let finite = |p: &[f64; 2]| p.iter().all(|v| v.is_finite());
+            let ok = (0.0..=100.0).contains(&o.power_scale_pct)
+                && o.tabs.len() <= doc::MAX_MANUAL_TABS
+                && o.tabs.iter().all(finite)
+                && o.start.as_ref().is_none_or(|p| finite(&p.local));
+            if !ok {
+                return Err(format!("the cut properties of '{id}' are not usable (power scale 0..=100, at most {} tabs, finite points)", doc::MAX_MANUAL_TABS));
+            }
         }
         // The rules of a loaded project (unique ids, positive sizes, names, image data, extras keys, groups that do
         // not contain themselves, usable numbers): a hand-made library file or `art.insert` content must not put into
@@ -163,7 +180,7 @@ pub fn art_fragment(doc: &Document, ids: &[String]) -> Result<ArtFragment> {
             layers.push(ArtLayer { id: l.id.clone(), name: l.name.clone(), color: l.color.clone() });
         }
     }
-    Ok(ArtFragment { format: ART_FORMAT.into(), objects, groups, layers })
+    Ok(ArtFragment { format: ART_FORMAT.into(), objects, groups, layers, object_options: BTreeMap::new() })
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -293,6 +310,14 @@ impl Command for ArtInsert {
             let count = new_objects.len();
             doc.groups.extend(new_groups);
             doc.objects.extend(new_objects);
+            // A pasted copy keeps its cut properties (tabs and start points are in the object's own coordinates).
+            for (from, opt) in &frag.object_options {
+                if let Some(to) = object_map.get(from)
+                    && !opt.is_default()
+                {
+                    doc.object_options.insert(to.clone(), opt.clone());
+                }
+            }
             let mut result = util::edit_result(doc, &created, &[]);
             result["groups"] = json!(group_ids);
             result["layers_created"] = json!(layers_created);

@@ -366,18 +366,36 @@ pub(super) fn copy_objects(
         renamed.insert(old, g.id.clone());
         doc.groups.push(g);
     }
-    originals
+    let created = originals
         .into_iter()
         .map(|mut o| {
-            o.id = doc.alloc_id("obj")?;
+            let from = std::mem::replace(&mut o.id, doc.alloc_id("obj")?);
             o.name.push_str(suffix);
             o.transform = Affine::translate(offset) * o.transform;
             o.group = o.group.map(|g| renamed.get(&g).cloned().unwrap_or(g));
             let id = o.id.clone();
             doc.objects.push(o);
-            Ok(id)
+            Ok((from, id))
         })
-        .collect()
+        .collect::<Result<Vec<_>>>()?;
+    copy_object_extras(doc, &created);
+    Ok(created.into_iter().map(|(_, id)| id).collect())
+}
+
+/// Give each copy (`(original, copy)` ids) its original's cut properties (`object_options`: priority, power scale,
+/// start point and hand-placed tabs, kept in the object's own coordinates, so they follow the copy's transform) and
+/// image mask (the copy of the mask when it was copied too, else the same mask).
+pub(super) fn copy_object_extras(doc: &mut Document, pairs: &[(ObjectId, ObjectId)]) {
+    let map: BTreeMap<&str, &str> = pairs.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+    for (from, to) in pairs {
+        if let Some(opt) = doc.object_options.get(from).cloned() {
+            doc.object_options.insert(to.clone(), opt);
+        }
+        if let Some(mask) = doc.image_masks.get(from).cloned() {
+            let mask = map.get(mask.as_str()).map_or(mask.clone(), |m| (*m).to_owned());
+            doc.image_masks.insert(to.clone(), mask);
+        }
+    }
 }
 
 #[cfg(test)]

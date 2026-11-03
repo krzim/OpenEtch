@@ -395,6 +395,16 @@ export interface ArtFragment {
   objects: DocObject[];
   groups: Group[];
   layers: { id: string; name: string; color: string }[];
+  /** Cut properties by object id (tabs, start point, priority, power scale): a pasted copy keeps them. */
+  object_options?: Record<string, unknown>;
+}
+
+/** The fragment's `object_options` for just these objects (absent when none has any). */
+function optionsFor(all: Record<string, unknown> | undefined, objects: readonly DocObject[]): Record<string, unknown> | undefined {
+  if (!all) return undefined;
+  const out: Record<string, unknown> = {};
+  for (const o of objects) if (all[o.id] !== undefined) out[o.id] = JSON.parse(JSON.stringify(all[o.id]));
+  return Object.keys(out).length ? out : undefined;
 }
 
 /** Every group `id` sits in, innermost first. */
@@ -416,11 +426,14 @@ export function fragmentOf(doc: GDocument, ids: readonly string[]): ArtFragment 
   if (!objects.length) return null;
   const gids = new Set(objects.flatMap((o) => groupChain(doc, o.group)));
   const lids = new Set(objects.map((o) => o.layer));
+  const all = (doc as { object_options?: unknown }).object_options;
+  const options = optionsFor(all && typeof all === "object" ? (all as Record<string, unknown>) : undefined, objects);
   return {
     format: "openetch-art",
     objects: objects.map((o) => JSON.parse(JSON.stringify(o)) as DocObject),
     groups: (doc.groups ?? []).filter((g) => gids.has(g.id)).map((g) => ({ ...g })),
     layers: doc.layers.filter((l) => lids.has(l.id)).map((l) => ({ id: l.id, name: l.name, color: l.color })),
+    ...(options ? { object_options: options } : {}),
   };
 }
 
@@ -449,8 +462,15 @@ export function fragmentPieces(f: ArtFragment): { fragment: ArtFragment; center:
     const lids = new Set(objs.map((o) => o.layer));
     const b = unionBoxes(objs.map(objectBounds));
     if (!b) continue;
+    const options = optionsFor(f.object_options, objs);
     out.push({
-      fragment: { format: "openetch-art", objects: objs, groups: f.groups.filter((g) => gids.has(g.id)), layers: f.layers.filter((l) => lids.has(l.id)) },
+      fragment: {
+        format: "openetch-art",
+        objects: objs,
+        groups: f.groups.filter((g) => gids.has(g.id)),
+        layers: f.layers.filter((l) => lids.has(l.id)),
+        ...(options ? { object_options: options } : {}),
+      },
       center: [(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2],
     });
   }

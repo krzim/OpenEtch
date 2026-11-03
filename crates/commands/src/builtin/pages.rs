@@ -5,6 +5,8 @@
 //! settings are shared by all pages, as in LightBurn. A document without `pages` is one implicit page ("Page 1");
 //! the first page command makes it explicit.
 
+use std::collections::BTreeMap;
+
 use doc::{Document, Group, Object, ObjectId, Page};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -217,14 +219,26 @@ impl Command for PageDuplicate {
                 Some(p) => index_of(cmd, doc, p)?,
                 None => active_index(doc),
             };
-            let (objects, groups) =
-                if k == active_index(doc) { (doc.objects.clone(), doc.groups.clone()) } else { (doc.pages[k].objects.clone(), doc.pages[k].groups.clone()) };
-            let (objects, groups) = copy_shapes(doc, &objects, &groups)?;
+            let active = k == active_index(doc);
+            let (objects, groups, options, masks) = if active {
+                (doc.objects.clone(), doc.groups.clone(), doc.object_options.clone(), doc.image_masks.clone())
+            } else {
+                let p = &doc.pages[k];
+                (p.objects.clone(), p.groups.clone(), p.object_options.clone(), p.image_masks.clone())
+            };
+            let (copies, groups) = copy_shapes(doc, &objects, &groups)?;
+            // Cut properties (tabs, start points, priority, power scale) and image masks go with the copies.
+            let ids: BTreeMap<&str, &str> = objects.iter().zip(&copies).map(|(a, b)| (a.id.as_str(), b.id.as_str())).collect();
+            let object_options = options.into_iter().filter_map(|(o, v)| ids.get(o.as_str()).map(|n| ((*n).to_owned(), v))).collect();
+            let image_masks = masks
+                .into_iter()
+                .filter_map(|(i, m)| ids.get(i.as_str()).map(|n| ((*n).to_owned(), ids.get(m.as_str()).map_or(m.clone(), |c| (*c).to_owned()))))
+                .collect();
             let name = format!("{} copy", doc.pages[k].name);
             let id = doc.alloc_id("page")?;
             doc.pages.insert(
                 k + 1,
-                Page { id: id.clone(), name: name.clone(), objects, groups, locked: Default::default(), object_options: Default::default(), image_masks: Default::default() },
+                Page { id: id.clone(), name: name.clone(), objects: copies, groups, locked: Default::default(), object_options, image_masks },
             );
             switch_to(doc, k + 1);
             let mut r = pages_json(doc);
