@@ -27,10 +27,26 @@ export interface LedgerLayer {
   markMm: number;
 }
 
+/** A variable text's jig pocket, "Discs P3" (engine `doc::jig::PocketPlace`). */
+export interface LedgerPocket {
+  jig: string;
+  jigName: string;
+  pocket: string;
+  number: number;
+}
+
 export interface LedgerVariables {
   current: number;
   csvFile: string | null;
-  texts: { object: string; name: string; mode: string; value: string }[];
+  texts: { object: string; name: string; mode: string; value: string; pocket: LedgerPocket | null }[];
+}
+
+/** A jig of the run and which pockets were on. */
+export interface LedgerJig {
+  id: string;
+  name: string;
+  pocketsOn: number[];
+  pockets: number;
 }
 
 export interface LedgerEntry {
@@ -49,6 +65,7 @@ export interface LedgerEntry {
   error: string | null;
   layers: LedgerLayer[];
   variables: LedgerVariables | null;
+  jigs: LedgerJig[];
   estimatedS: number | null;
   markTimeS: number | null;
   options: Record<string, unknown> | null;
@@ -80,13 +97,26 @@ function layerOf(v: unknown): LedgerLayer | null {
   };
 }
 
+function pocketOf(v: unknown): LedgerPocket | null {
+  const o = obj(v);
+  if (!o || !isNum(o.number)) return null;
+  return { jig: str(o.jig), jigName: str(o.jig_name), pocket: str(o.pocket), number: o.number };
+}
+
+function jigOf(v: unknown): LedgerJig | null {
+  const o = obj(v);
+  if (!o) return null;
+  const on = Array.isArray(o.pockets_on) ? o.pockets_on.filter(isNum) : [];
+  return { id: str(o.id), name: str(o.name), pocketsOn: on, pockets: isNum(o.pockets) ? o.pockets : on.length };
+}
+
 function variablesOf(v: unknown): LedgerVariables | null {
   const o = obj(v);
   if (!o) return null;
   const texts = Array.isArray(o.texts)
     ? o.texts.flatMap((t) => {
         const x = obj(t);
-        return x ? [{ object: str(x.object), name: str(x.name), mode: str(x.mode), value: str(x.value) }] : [];
+        return x ? [{ object: str(x.object), name: str(x.name), mode: str(x.mode), value: str(x.value), pocket: pocketOf(x.pocket) }] : [];
       })
     : [];
   return { current: isNum(o.current) ? o.current : 0, csvFile: optStr(o.csv_file), texts };
@@ -114,6 +144,7 @@ export function parseEntry(v: unknown): LedgerEntry | null {
     error: optStr(o.error),
     layers: Array.isArray(o.layers) ? o.layers.flatMap((l) => layerOf(l) ?? []) : [],
     variables: variablesOf(o.variables),
+    jigs: Array.isArray(o.jigs) ? o.jigs.flatMap((j) => jigOf(j) ?? []) : [],
     estimatedS: isNum(o.estimated_time_s) ? o.estimated_time_s : null,
     markTimeS: isNum(o.mark_time_s) ? o.mark_time_s : null,
     options: obj(o.options),

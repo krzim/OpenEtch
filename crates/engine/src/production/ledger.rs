@@ -37,6 +37,9 @@ pub struct LedgerSlot {
     /// Why it was left out: `empty` or `past_end`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skipped: Option<String>,
+    /// The jig pocket it sits in (its stable id and number), when it sits in one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pocket: Option<doc::jig::PocketPlace>,
 }
 
 /// One run in the ledger.
@@ -96,6 +99,7 @@ pub(crate) fn entry(run_id: &str, device: &str, state: RunState, completed: u32,
                 } else {
                     None
                 },
+                pocket: s.pocket.clone(),
             })
             .collect(),
         remark_of: r.remark_of.as_ref().map(|(run_id, slot)| RemarkOf { run_id: run_id.clone(), slot: *slot }),
@@ -174,7 +178,7 @@ fn csv_field(s: &str) -> String {
 
 /// The entries as CSV, one row per slot (Ruby-style job ledger export).
 pub fn to_csv(entries: &[LedgerEntry]) -> String {
-    let mut out = String::from("time_unix_s,run_id,state,device,project,document,completed,slot,label,value,shown,marked,skipped,remark_of_run,remark_of_slot\n");
+    let mut out = String::from("time_unix_s,run_id,state,device,project,document,completed,slot,label,value,shown,marked,skipped,remark_of_run,remark_of_slot,jig,pocket_id,pocket\n");
     for e in entries {
         for s in &e.slots {
             let shown: Vec<&str> = s.values.iter().map(|v| v.shown.as_str()).collect();
@@ -194,6 +198,9 @@ pub fn to_csv(entries: &[LedgerEntry]) -> String {
                 s.skipped.clone().unwrap_or_default(),
                 e.remark_of.as_ref().map(|r| r.run_id.clone()).unwrap_or_default(),
                 e.remark_of.as_ref().map(|r| r.slot.to_string()).unwrap_or_default(),
+                s.pocket.as_ref().map(|p| p.jig_name.clone()).unwrap_or_default(),
+                s.pocket.as_ref().map(|p| p.pocket.clone()).unwrap_or_default(),
+                s.pocket.as_ref().map(|p| p.number.to_string()).unwrap_or_default(),
             ];
             out.push_str(&row.iter().map(|f| csv_field(f)).collect::<Vec<_>>().join(","));
             out.push('\n');
@@ -225,6 +232,7 @@ mod tests {
                     values: vec![commands::SlotValue { object: "obj-2".into(), mode: "serial".into(), shown: "SN 007".into() }],
                     marked: true,
                     skipped: None,
+                    pocket: Some(doc::jig::PocketPlace { jig: "jig-1".into(), jig_name: "Coins".into(), pocket: "p1".into(), number: 1 }),
                 },
                 LedgerSlot {
                     number: 2,
@@ -234,6 +242,7 @@ mod tests {
                     values: vec![],
                     marked: false,
                     skipped: Some("empty".into()),
+                    pocket: None,
                 },
             ],
             remark_of: None,
@@ -259,6 +268,7 @@ mod tests {
         assert!(csv.contains(",'=coins,"), "{csv}");
         assert!(csv.contains("\"Pocket, 1\",7,SN 007,true,,"), "{csv}");
         assert!(csv.contains(",Pocket 2,1,,false,empty,"), "{csv}");
+        assert!(csv.contains("SN 007,true,,,,Coins,p1,1\n"), "the jig pocket of each slot: {csv}");
         // Without a file the entries stay in memory.
         let m = Ledger::default();
         m.append(&entry(9));

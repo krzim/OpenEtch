@@ -14,6 +14,14 @@ export interface SlotValue {
   shown: string;
 }
 
+/** The jig pocket a slot sits in (engine `doc::jig::PocketPlace`). */
+export interface PocketPlace {
+  jig: string;
+  jig_name: string;
+  pocket: string;
+  number: number;
+}
+
 export interface Slot {
   number: number;
   offset: number;
@@ -23,6 +31,7 @@ export interface Slot {
   past_end: boolean;
   value: number;
   values: SlotValue[];
+  pocket?: PocketPlace | null;
 }
 
 export interface SlotPlan {
@@ -44,6 +53,7 @@ export interface LedgerSlot {
   values: SlotValue[];
   marked: boolean;
   skipped?: string | null;
+  pocket?: PocketPlace | null;
 }
 
 export interface LedgerEntry {
@@ -285,9 +295,22 @@ export function counterText(c: CycleStatus): { text: string; share: number | nul
 // ---- slots and the ledger -----------------------------------------------------------------------------------------
 
 /** One slot's line in the cockpit: what it shows next, or why it is left out. */
-export function slotLine(s: Slot): { label: string; value: string; state: "marks" | "empty" | "past_end" } {
+export function slotLine(s: Slot): { label: string; value: string; state: "marks" | "empty" | "past_end"; badge: string } {
   const value = s.values.map((v) => v.shown).filter((x) => x !== "").join(" · ") || String(s.value);
-  return { label: s.label, value, state: s.empty ? "empty" : s.past_end ? "past_end" : "marks" };
+  return { label: s.label, value, state: s.empty ? "empty" : s.past_end ? "past_end" : "marks", badge: slotBadge(s) };
+}
+
+/** What the cockpit's slot chip shows: the jig pocket's number ("P3", what the operator sees on the jig) when the
+ * slot sits in one, else the slot number. */
+export function slotBadge(s: { number: number; pocket?: PocketPlace | null }): string {
+  return s.pocket ? `P${s.pocket.number}` : String(s.number);
+}
+
+/** A slot's label with its jig pocket when the label does not name it already ("Coin A · Discs P3"). */
+export function slotLabel(s: { label: string; pocket?: PocketPlace | null }): string {
+  if (!s.pocket) return s.label;
+  const p = `${s.pocket.jig_name} P${s.pocket.number}`;
+  return s.label.includes(p) ? s.label : `${s.label} · ${p}`;
 }
 
 /** The `empty_slots` list with `offset` switched (a sorted copy). */
@@ -331,7 +354,7 @@ export function ledgerRows(entries: readonly LedgerEntry[]): LedgerRow[] {
         state: e.state,
         project: e.project ?? e.document,
         slot: s.number,
-        label: s.label,
+        label: slotLabel(s),
         shown: s.values.map((v) => v.shown).join(" · ") || String(s.value),
         marked: s.marked,
         skipped: s.skipped ?? null,

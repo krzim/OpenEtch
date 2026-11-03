@@ -55,6 +55,10 @@ pub struct Slot {
     /// The serial number or CSV row this slot gets when it is marked (`current` + the offset it takes).
     pub value: i64,
     pub values: Vec<SlotValue>,
+    /// The jig pocket the slot's variable texts sit in ([`doc::jig::object_pockets`]), when they all sit in one:
+    /// then every object in that pocket belongs to the slot (a jig placement's clones are not grouped).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pocket: Option<doc::jig::PocketPlace>,
 }
 
 impl Slot {
@@ -190,6 +194,15 @@ pub fn slot_plan(doc: &Document) -> SlotPlan {
     let offsets: Vec<i64> = by_offset.keys().copied().take(MAX_SLOTS).collect();
     let empty: BTreeSet<i64> = v.empty_slots.iter().copied().collect();
     let laser = laser_name(doc);
+    // Jig pockets (module docs of `doc::jig`): a slot whose variable texts all sit in one pocket, alone among the
+    // slots, takes that pocket's objects too.
+    let places = doc::jig::object_pockets(doc);
+    let slot_pocket = |members: &[Counted]| -> Option<doc::jig::PocketPlace> {
+        let mut it = members.iter().map(|(id, _, _)| places.get(id));
+        let first = it.next()??;
+        it.all(|p| p == Some(first)).then(|| first.clone())
+    };
+    let pocket_of: Vec<Option<doc::jig::PocketPlace>> = offsets.iter().map(|o| slot_pocket(&by_offset[o].0)).collect();
     let mut slots = Vec::new();
     let mut position = 0usize;
     for (n, offset) in offsets.iter().enumerate() {
@@ -202,10 +215,12 @@ pub fn slot_plan(doc: &Document) -> SlotPlan {
         }
         let value = v.current.saturating_add(eff);
         let past_end = !is_empty && v.stop_at_end && value > v.end;
+        let jig_pocket = pocket_of[n].clone().filter(|p| pocket_of.iter().filter(|q| q.as_ref() == Some(p)).count() == 1);
         let mut objects: Vec<ObjectId> = Vec::new();
         for o in &doc.objects {
             let in_pocket = o.group.is_some() && chain(doc, &o.id).iter().any(|g| pockets.contains(g));
-            if in_pocket || members.iter().any(|(id, _, _)| *id == o.id) {
+            let in_jig_pocket = jig_pocket.as_ref().is_some_and(|p| places.get(&o.id) == Some(p));
+            if in_pocket || in_jig_pocket || members.iter().any(|(id, _, _)| *id == o.id) {
                 objects.push(o.id.clone());
             }
         }
@@ -213,6 +228,7 @@ pub fn slot_plan(doc: &Document) -> SlotPlan {
             .iter()
             .filter_map(|g| doc.group(g).map(|gr| gr.name.clone()))
             .find(|n| !n.trim().is_empty())
+            .or_else(|| pocket_of[n].as_ref().map(|p| format!("{} P{}", p.jig_name, p.number)))
             .or_else(|| members.iter().filter_map(|(id, _, _)| doc.object(id).map(|o| o.name.clone())).find(|n| !n.trim().is_empty()))
             .unwrap_or_else(|| format!("Slot {}", n + 1));
         let values = members
@@ -223,7 +239,7 @@ pub fn slot_plan(doc: &Document) -> SlotPlan {
                 SlotValue { object: id.clone(), mode: mode_name(var.mode).unwrap_or("serial").into(), shown }
             })
             .collect();
-        slots.push(Slot { number: n + 1, offset: *offset, label, objects, empty: is_empty, past_end, value, values });
+        slots.push(Slot { number: n + 1, offset: *offset, label, objects, empty: is_empty, past_end, value, values, pocket: pocket_of[n].clone() });
     }
     let marked = slots.iter().filter(|s| s.marks()).count();
     let advance = if marked == slots.len() {

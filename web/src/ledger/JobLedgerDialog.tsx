@@ -350,11 +350,24 @@ function Detail(p: { e: LedgerEntry; busy: boolean; onMark: (v: Verdict | null, 
             </dd>
             {e.variables.texts.map((x) => (
               <Fragment key={x.object}>
-                <dt>{x.name || x.object}</dt>
+                <dt>
+                  {x.name || x.object}
+                  {x.pocket && <span className="hint"> · {`${x.pocket.jigName} P${x.pocket.number}`}</span>}
+                </dt>
                 <dd className="led-value">{x.value || "—"}</dd>
               </Fragment>
             ))}
           </dl>
+        </section>
+      )}
+      {e.jigs.length > 0 && (
+        <section className="led-section">
+          <h4>{t("led.jigs")}</h4>
+          <ul className="led-jigs">
+            {e.jigs.map((j) => (
+              <li key={j.id}>{t("led.jigPockets", { jig: j.name || j.id, on: j.pocketsOn.join(", ") || "–", of: j.pockets })}</li>
+            ))}
+          </ul>
         </section>
       )}
       {e.summary && <p className="hint led-section">{e.summary}</p>}

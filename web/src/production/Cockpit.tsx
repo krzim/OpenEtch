@@ -281,7 +281,9 @@ function SlotsCard({ s, report }: { s: ProductionStatus; report: (e: unknown) =>
                     title={l.state === "empty" ? t("prod.slotLoadTitle") : t("prod.slotEmptyTitle")}
                     onClick={() => setSerial({ empty_slots: toggleEmpty(plan, slot.offset) })}
                   >
-                    <span className="cn-num">{slot.number}</span>
+                    <span className="cn-num" title={slot.pocket ? `${slot.pocket.jig_name} P${slot.pocket.number}` : undefined}>
+                      {l.badge}
+                    </span>
                     <span className="cn-label">{l.label}</span>
                     <span className="cn-value">{l.state === "empty" ? t("prod.slotEmpty") : l.state === "past_end" ? t("prod.slotPastEnd") : l.value}</span>
                   </button>

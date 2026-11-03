@@ -69,6 +69,8 @@ export const EN_HISTORY = {
   "led.noLayers": "This run was logged before the job log kept layer settings.",
   "led.values": "Variable text",
   "led.counter": "Serial / CSV row",
+  "led.jigs": "Jigs",
+  "led.jigPockets": "{jig}: pockets {on} on (of {of})",
   "led.storage": "Storage…",
   "led.storageTitle": "Job log storage",
   "led.storageIntro": "The job log keeps every run's settings and values. To re-run a job exactly, it also keeps the burned document of recent jobs, and a small picture of each.",

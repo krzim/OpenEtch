@@ -125,6 +125,7 @@ pub struct Capture {
     doc: Option<Arc<Document>>,
     layers: Vec<LayerSnapshot>,
     variables: Option<VariablesUsed>,
+    jigs: Vec<crate::joblog::JigUsed>,
     estimated_time_s: f64,
     options: Option<Value>,
 }
@@ -386,6 +387,7 @@ fn mode_name(m: VarMode) -> &'static str {
 pub fn variables_used(doc: &Document) -> Option<VariablesUsed> {
     let moment = text::Moment::now();
     let laser = doc.extras.get("lbrn2._root_attrs").and_then(|r| commands::lbrn2_device_name(r)).unwrap_or_default();
+    let pockets = doc::jig::object_pockets(doc);
     let mut texts = Vec::new();
     for o in &doc.objects {
         let (format, var) = match &o.geometry {
@@ -399,7 +401,8 @@ pub fn variables_used(doc: &Document) -> Option<VariablesUsed> {
             },
         };
         let value = text::vars::evaluate(doc, &o.layer, &format, &var, Some(&moment), &laser);
-        texts.push(VariableValue { object: o.id.clone(), name: o.name.clone(), mode: mode_name(var.mode).into(), value });
+        let pocket = pockets.get(&o.id).cloned();
+        texts.push(VariableValue { object: o.id.clone(), name: o.name.clone(), mode: mode_name(var.mode).into(), value, pocket });
     }
     if texts.is_empty() {
         return None;
@@ -435,6 +438,7 @@ pub(crate) fn remember(st: &AppState, view: &RunView, doc: Arc<Document>, times:
         run_id: view.id.clone(),
         layers: if queue { Vec::new() } else { layer_snapshots(&doc, &times) },
         variables: if queue { None } else { variables_used(&doc) },
+        jigs: if queue { Vec::new() } else { crate::joblog::jigs_used(&doc) },
         doc: (!queue).then_some(doc),
         estimated_time_s: view.stats.estimated_time_s,
         options,
@@ -453,6 +457,7 @@ pub(crate) fn record(st: &Arc<AppState>, mut entry: JobLogEntry) {
     if let Some(c) = &capture {
         entry.layers = c.layers.clone();
         entry.variables = c.variables.clone();
+        entry.jigs = c.jigs.clone();
         entry.estimated_time_s = Some(c.estimated_time_s);
         entry.options = c.options.clone();
         entry.document = c.doc.as_ref().map(|d| d.name.clone());
@@ -535,6 +540,9 @@ fn haystack(e: &JobLogEntry, note: Option<&Note>) -> String {
     }
     if let Some(v) = &e.variables {
         h.push(crate::joblog::variables_short(v));
+    }
+    for j in &e.jigs {
+        h.push(j.name.clone());
     }
     if let Some(n) = note {
         h.push(n.note.clone());

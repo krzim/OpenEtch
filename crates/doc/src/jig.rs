@@ -251,6 +251,89 @@ pub fn document_keep_outs(doc: &crate::Document) -> Vec<(String, BezPath)> {
     doc.jigs.iter().flat_map(Jig::keep_out_zones).collect()
 }
 
+/// The jig pocket an object sits in ([`object_pockets`]): what the serial ledger, the cockpit and the job ledger
+/// record per slot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PocketPlace {
+    /// The jig's id ("jig-4").
+    pub jig: String,
+    pub jig_name: String,
+    /// The pocket's stable id within its jig ("p3").
+    pub pocket: String,
+    /// The pocket's number (burn and serial order), 1-based.
+    pub number: u32,
+}
+
+/// How far an object may reach past a pocket's bounds and still count as sitting in it, mm.
+const POCKET_SLACK_MM: f64 = 0.5;
+
+/// The jig pocket of every object that sits in one, by object id:
+/// - clones placed by `jig.place` (their [`JIG_POCKET_KEY`] tag);
+/// - the originals of a placement (its source pocket);
+/// - else, for designs laid out by hand (a LightBurn file on a jig), the enabled pocket whose bounds hold the whole
+///   object (within 0.5 mm) and whose outline holds its centre.
+///
+/// Objects on no jig (or spanning several pockets, like the plate outline) are left out.
+pub fn object_pockets(doc: &crate::Document) -> std::collections::BTreeMap<crate::ObjectId, PocketPlace> {
+    let mut out = std::collections::BTreeMap::new();
+    if doc.jigs.is_empty() {
+        return out;
+    }
+    let place = |jig_id: &str, pocket_id: &str| -> Option<PocketPlace> {
+        let jig = doc.jigs.iter().find(|j| j.id == jig_id)?;
+        let p = jig.pocket(pocket_id)?;
+        Some(PocketPlace { jig: jig.id.clone(), jig_name: jig.name.clone(), pocket: p.id.clone(), number: p.number })
+    };
+    for o in &doc.objects {
+        if let Some((j, p)) = o.extras.get(JIG_POCKET_KEY).and_then(|t| t.split_once('/'))
+            && let Some(pl) = place(j, p)
+        {
+            out.insert(o.id.clone(), pl);
+        }
+    }
+    for a in &doc.virtual_arrays {
+        let (Some(j), Some(p)) = (a.settings.get("jig").and_then(|v| v.as_str()), a.settings.get("source_pocket").and_then(|v| v.as_str())) else {
+            continue;
+        };
+        if let Some(pl) = place(j, p) {
+            for s in &a.sources {
+                out.entry(s.clone()).or_insert_with(|| pl.clone());
+            }
+        }
+    }
+    let pockets: Vec<(PocketPlace, BezPath, Rect)> = doc
+        .jigs
+        .iter()
+        .flat_map(|j| {
+            j.enabled_pockets().into_iter().map(move |p| {
+                let outline = j.pocket_outline(p);
+                let b = outline.bounding_box().inflate(POCKET_SLACK_MM, POCKET_SLACK_MM);
+                (PocketPlace { jig: j.id.clone(), jig_name: j.name.clone(), pocket: p.id.clone(), number: p.number }, outline, b)
+            })
+        })
+        .collect();
+    for o in &doc.objects {
+        if out.contains_key(&o.id) {
+            continue;
+        }
+        let path = o.field_path();
+        if path.elements().is_empty() {
+            continue;
+        }
+        let b = path.bounding_box();
+        if !(b.x0.is_finite() && b.y0.is_finite() && b.x1.is_finite() && b.y1.is_finite()) {
+            continue;
+        }
+        let hit = pockets.iter().find(|(_, outline, pb)| {
+            pb.contains(kurbo::Point::new(b.x0, b.y0)) && pb.contains(kurbo::Point::new(b.x1, b.y1)) && outline.contains(b.center())
+        });
+        if let Some((pl, _, _)) = hit {
+            out.insert(o.id.clone(), pl.clone());
+        }
+    }
+    out
+}
+
 /// The pre-flight checks a project has switched off ([`crate::Document::preflight`]).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]

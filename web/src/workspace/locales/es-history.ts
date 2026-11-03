@@ -47,6 +47,8 @@ export const ES_HISTORY: Messages = {
   "led.time": "Tiempo",
   "led.values": "Texto variable",
   "led.counter": "Serie / fila CSV",
+  "led.jigs": "Utillajes",
+  "led.jigPockets": "{jig}: alojamientos {on} activos (de {of})",
   "led.storage": "Almacenamiento…",
   "led.storageTitle": "Almacenamiento del registro",
   "led.keepDocuments": "Guardar documentos",

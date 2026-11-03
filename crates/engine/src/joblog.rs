@@ -59,6 +59,33 @@ pub struct JobLogEntry {
     /// The run options (repeat, continuous, selection, start here, queue, table) when not the default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub options: Option<serde_json::Value>,
+    /// The document's jigs and the pockets that were on (job ledger; see "Jigs and placement").
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub jigs: Vec<JigUsed>,
+}
+
+/// A jig of a ledger entry: which of its pockets were on (the pockets the run could mark).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct JigUsed {
+    pub id: String,
+    pub name: String,
+    /// The numbers of the pockets that were on, in burn order.
+    pub pockets_on: Vec<u32>,
+    /// How many pockets it has.
+    pub pockets: usize,
+}
+
+/// The jigs of `doc` for its ledger entry.
+pub fn jigs_used(doc: &doc::Document) -> Vec<JigUsed> {
+    doc.jigs
+        .iter()
+        .map(|j| JigUsed {
+            id: j.id.clone(),
+            name: j.name.clone(),
+            pockets_on: j.enabled_pockets().iter().map(|p| p.number).collect(),
+            pockets: j.pockets.len(),
+        })
+        .collect()
 }
 
 /// One layer of a ledger entry: its settings as burned (`settings` and `sub_layers` are `doc::CutSettings` as JSON,
@@ -113,6 +140,9 @@ pub struct VariableValue {
     /// `serial`, `csv`, `date_time` or `cut_setting`.
     pub mode: String,
     pub value: String,
+    /// The jig pocket it sat in (`doc::jig::object_pockets`), if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pocket: Option<doc::jig::PocketPlace>,
 }
 
 impl JobLogEntry {
@@ -255,7 +285,11 @@ pub fn variables_short(v: &VariablesUsed) -> String {
     }
     if !v.texts.is_empty() {
         out.push_str("; ");
-        out.push_str(&v.texts.iter().map(|t| format!("{}: {}", t.name, t.value)).collect::<Vec<_>>().join(", "));
+        let text = |t: &VariableValue| match &t.pocket {
+            Some(p) => format!("{} [{} P{}]: {}", t.name, p.jig_name, p.number, t.value),
+            None => format!("{}: {}", t.name, t.value),
+        };
+        out.push_str(&v.texts.iter().map(text).collect::<Vec<_>>().join(", "));
     }
     out
 }
