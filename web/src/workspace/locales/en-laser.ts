@@ -22,6 +22,7 @@ export const EN_LASER = {
   "lz.whyNoLaser": "No laser connected.",
   "lz.whyRunning": "A job is running. Wait for it, or press STOP.",
   "lz.whyFraming": "Framing: stop the frame first (Stop frame or Esc).",
+  "lz.whyStopAt": "Target reached ({count} / {target}): reset the count or raise Stop At to go on.",
   "lz.whyEmpty": "Nothing to burn: the document is empty.",
   "lz.whyChecklist": "Tick every item of the Job Checklist first.",
   "lz.whyChecklistOpen": "Tick the Job Checklist first: Start opens it.",

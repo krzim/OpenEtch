@@ -23,6 +23,7 @@ export const ES_LASER: Messages = {
   "lz.whyNoLaser": "No hay ningún láser conectado.",
   "lz.whyRunning": "Hay un trabajo en marcha. Espere o pulse STOP.",
   "lz.whyFraming": "Encuadrando: detenga primero el encuadre (Detener encuadre o Esc).",
+  "lz.whyStopAt": "Objetivo alcanzado ({count} / {target}): reinicie el contador o suba Detener en para seguir.",
   "lz.whyEmpty": "Nada que grabar: el documento está vacío.",
   "lz.whyChecklist": "Marque primero todos los puntos de la lista de comprobación.",
   "lz.whyChecklistOpen": "Marque primero la lista de comprobación: Iniciar la abre.",
