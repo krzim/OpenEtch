@@ -86,6 +86,7 @@ The reason shows under the button:
 | **Waiting for the laser's status…** | Wait a moment. |
 | **No laser connected.** | Connect the laser, or check the device. |
 | **A job is running. Wait for it, or press STOP.** | Wait, or stop the job. |
+| **Target reached (12 / 12): reset the count or raise Stop At to go on.** | Reset the count, or raise **Stop at** (see [Job counter and Stop at](#job-counter)). |
 | **Framing: stop the frame first (Stop frame or Esc).** | Stop the frame. |
 | **Nothing to burn: the document is empty.** | Add something to burn. |
 | **Tick every item of the Job Checklist first.** | Tick the checklist above **Start**. |
@@ -201,7 +202,7 @@ The status chip sits just left of **STOP** in the top bar in every layout. It sh
 
 Tap the chip to open the **Laser** window (on a phone, the **Job** sheet). On a phone the chip is just a coloured dot, and its action is an icon.
 
-When a job ends, a message says whether it finished, failed or was aborted. A sound can play too: turn on **Play sound when a job finishes** on the device's **Job** settings page.
+When a job ends, a message says how: **Job finished.**, **Job stopped before the end.**, **Job cancelled before it started.** or **Job failed.** A sound can play too: turn on **Play sound when a job finishes** on the device's **Job** settings page.
 
 ## Pause, resume and stop {#pause-resume-stop}
 

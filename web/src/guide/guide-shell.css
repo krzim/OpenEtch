@@ -105,3 +105,10 @@
   height: 22px;
   font-size: 14px;
 }
+
+/* On a phone the canvas bars (tool options, pocket mode, re-mark, Fill Region) float over a small canvas: no "?"
+   there, where a 44 px button would take the canvas a tap was meant for. The guide is in More > Help, and the
+   sheets and dialogs keep theirs. */
+:root[data-layout="phone"] .vp-overlay .help-link {
+  display: none;
+}

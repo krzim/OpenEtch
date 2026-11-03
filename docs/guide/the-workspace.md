@@ -261,7 +261,7 @@ On an iPad, or any window narrower than 1100 pixels, the app uses the tablet lay
 
 ![The tablet layout on an iPad with the tool rail, the modifier bar and the Properties pill](img/ipad-layout.webp)
 
-- **The tool rail** runs down the left edge with the ribbon's groups. Groups that do not fit open from a ▸ button to the side.
+- **The tool rail** runs down the left edge with the ribbon's groups. When the window is not tall enough for every group, the least-used groups move into a **More** button at the end of the rail, which opens them to the side.
 - **The side panels** are rails. The **Browser** button on the tool rail opens the left panel. Tap the right rail to slide the right panel over the canvas.
 - **Properties**: with shapes selected in Design, a **Properties** button appears over the canvas at the bottom right. Tap it to open the selection's settings. Selecting never opens the panel on its own.
 - **The top bar** shows the workspaces as icons and folds **Window**, **Help**, the theme and **Preferences** into the **More** (⋯) menu.
