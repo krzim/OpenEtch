@@ -574,7 +574,10 @@ impl Command for JigImport {
                     from_json(cmd, json!({ "content": i.content, "split": true, "keep_position": i.keep_position, "name": "Jig drawing" }))?,
                 )?,
                 #[cfg(target_arch = "wasm32")]
-                JigFormat::Dxf => return Err(invalid(cmd, "DXF jigs are read by the engine only")),
+                JigFormat::Dxf => {
+                    let _ = i.keep_position;
+                    return Err(invalid(cmd, "DXF jigs are read by the engine only"));
+                }
             };
             let created: Vec<ObjectId> = r.0["created"].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(String::from)).collect();
             if created.is_empty() {
