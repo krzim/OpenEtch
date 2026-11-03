@@ -126,6 +126,10 @@ export function clock(ms: number): string {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
+function abortError(): Error {
+  return typeof DOMException === "function" ? new DOMException("The operation was aborted.", "AbortError") : Object.assign(new Error("aborted"), { name: "AbortError" });
+}
+
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
@@ -193,9 +197,21 @@ export class StandaloneClient {
     new Headers(init.headers).forEach((v, k) => headers.push([k, v]));
     const id = this.nextId++;
     const msg: Extract<ToWorker, { kind: "request" }> = { kind: "request", id, method: method.toUpperCase(), path: p, query, headers, body };
-    const res = await new Promise<Response>((resolve) => {
+    const signal = init.signal;
+    if (signal?.aborted) throw abortError();
+    const res = await new Promise<Response>((resolve, reject) => {
       const timer = this.setTimer(() => this.timedOut(id), this.opts.timeoutMs ?? 300_000);
       this.pending.set(id, { resolve, timer, msg, sent: false });
+      // Like fetch: the promise rejects; the worker may still run the request.
+      signal?.addEventListener(
+        "abort",
+        () => {
+          if (!this.pending.delete(id)) return;
+          this.clearTimer(timer);
+          reject(abortError());
+        },
+        { once: true },
+      );
       if (this.state === "ready") this.send(id);
     });
     if (msg.method === "POST" && p === "/api/projects/save" && res.ok) this.askPersist();

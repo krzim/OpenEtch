@@ -130,6 +130,25 @@ becomes `click` or `menu` with the label exactly as the UI shows it, "select Y" 
 Layers tab" becomes `tab`, a setting becomes `exec` with the engine command's parameters, "showing just the panel"
 becomes `crop`. `npm test` checks every step's shape; run the shot to check that it works.
 
+## Design-only worker shell
+
+`standalone.mjs` checks the design-only build's backend worker (`src/standalone/`) in a real browser, without an
+engine: it builds a small check page (`e2e/standalone/`, the real worker with the mock webcore), serves it on
+127.0.0.1 and runs one scenario in two tabs of one profile: IndexedDB, save / list / thumbnail, the BroadcastChannel
+refresh, the two-tab 409, a reload bringing the unsaved design back, a webcore panic restarting the worker, a 4 MB
+project, a font, the download fallback. The output folder (default under the system temp folder) gets
+`report.json` and a screenshot of the results.
+
+```sh
+cd web
+node e2e/standalone.mjs [--out dir] [--port 7993] [--cdp-port 9341]   # headless Edge or Chrome
+node e2e/standalone.mjs --safari <ssh host> [--out dir]               # Safari on a Mac over ssh
+```
+
+With `--safari` the page is copied to a temporary folder on the Mac, served on the Mac's 127.0.0.1 with
+`python3 -m http.server`, and driven through `safaridriver` over an ssh tunnel (Safari > Settings > Advanced > Show
+features for web developers, then Develop > Allow Remote Automation, once). The folder is removed afterwards.
+
 ## Files
 
 - `devices.mjs`: the device matrix (CSS viewport, DPR, touch, user agent, safe-area insets, themes, keyboard height).

@@ -129,6 +129,21 @@ test("a clean untitled document leaves no recovery copy; old copies of closed ta
   assert.equal(await store.get(S.recoveryData, "old"), undefined);
 });
 
+test("at most 8 other tabs' recovery copies are kept, the newest", async () => {
+  const store = new MemoryStore();
+  const clock = { t: Date.UTC(2026, 10, 3, 9, 0, 0) };
+  for (let i = 0; i < 11; i++) {
+    const t = makeTab({ store, clock, sessionId: `s${i}` });
+    await t.call("POST", "/api/execute", { id: "shape.rect" });
+    await t.backend.flush();
+    clock.t += 1000;
+  }
+  const me = makeTab({ store, clock, sessionId: "me" });
+  await me.backend.boot("fresh");
+  assert.deepEqual(await store.keys(S.recovery), ["s10", "s3", "s4", "s5", "s6", "s7", "s8", "s9"]);
+  assert.equal((await store.keys(S.recoveryData)).length, 8);
+});
+
 test("a webcore panic: 500 editor_crashed, then 503 for everything, and onCrash once", async () => {
   const tab = makeTab();
   await tab.call("POST", "/api/execute", { id: "shape.rect" });

@@ -267,6 +267,20 @@ test("a build whose core cannot load fails once, with a notice, and answers 503"
   assert.equal(sock.readyState, FakeSocket.CLOSED);
 });
 
+test("an aborted request rejects with AbortError, like fetch", async () => {
+  const s = setup();
+  await s.client.fetch("GET", "/api/project");
+  const c = new AbortController();
+  const p = s.client.fetch("GET", "/api/document", { signal: c.signal });
+  c.abort();
+  await assert.rejects(p, (e: Error) => e.name === "AbortError");
+  const pre = new AbortController();
+  pre.abort();
+  await assert.rejects(s.client.fetch("GET", "/api/document", { signal: pre.signal }), (e: Error) => e.name === "AbortError");
+  assert.equal((await s.client.fetch("GET", "/api/project")).status, 200);
+  s.client.terminate();
+});
+
 test("splitPath", () => {
   assert.deepEqual(splitPath("/api/x?y=1&z=2"), { path: "/api/x", query: "y=1&z=2" });
   assert.deepEqual(splitPath("/api/x"), { path: "/api/x", query: "" });

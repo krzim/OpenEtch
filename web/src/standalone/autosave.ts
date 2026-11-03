@@ -160,6 +160,8 @@ const realTimers: Timers = {
 
 /** Recovery records older than this are dropped at boot (tabs closed long ago). */
 export const RECOVERY_MAX_AGE_MS = 14 * 24 * 3600_000;
+/** Other tabs' recovery records kept at most. */
+export const RECOVERY_KEEP = 8;
 
 /**
  * The tab's recovery copy. `noteChange()` after every change schedules a write `debounceMs` after the last change,
@@ -271,9 +273,13 @@ export class RecoveryKeeper {
     this.ctx.known.set(st.documentId, { name, modified_ms: modifiedMs });
   }
 
-  /** Drop recovery records older than `maxAgeMs` (other tabs, long closed). */
-  static async prune(ctx: ShellContext, maxAgeMs = RECOVERY_MAX_AGE_MS): Promise<void> {
-    const old = (await ctx.store.entries<RecoveryMeta>(S.recovery)).filter(([k, m]) => k !== ctx.sessionId && ctx.now() - m.saved_ms > maxAgeMs);
+  /**
+   * Drop other tabs' recovery records older than `maxAgeMs`, and all but the newest `keep` (tabs closed: a closed tab
+   * cannot be told from a reloading one, so its record stays until then).
+   */
+  static async prune(ctx: ShellContext, maxAgeMs = RECOVERY_MAX_AGE_MS, keep = RECOVERY_KEEP): Promise<void> {
+    const others = (await ctx.store.entries<RecoveryMeta>(S.recovery)).filter(([k]) => k !== ctx.sessionId).sort(([, a], [, b]) => b.saved_ms - a.saved_ms);
+    const old = others.filter(([, m], i) => i >= keep || ctx.now() - m.saved_ms > maxAgeMs);
     if (!old.length) return;
     await ctx.store.batch(old.flatMap(([k]) => [
       { store: S.recovery, key: k, value: null },
