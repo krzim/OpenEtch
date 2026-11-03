@@ -259,6 +259,41 @@ async fn text_barcodes_and_empty_documents_match() {
     assert!(assert_parity(&app, "text and QR filled").await > 10);
 }
 
+/// Empty pockets (and pockets past End with Stop at End) are left out of both previews and their time, as the run
+/// leaves them out.
+#[tokio::test]
+async fn empty_slots_are_left_out_of_both_previews() {
+    let st = state(Document::default()).await;
+    let app = api::router(st.clone(), None);
+    let font = json!({ "family": "Hershey Sans", "kind": "stroke" });
+    for k in 0..3 {
+        let x = -30.0 + 20.0 * f64::from(k);
+        let disc = exec(&app, "shape.ellipse", json!({ "center": [x, 0], "rx_mm": 7.5, "ry_mm": 7.5 })).await["result"]["created"][0]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let text = exec(&app, "shape.text", json!({ "text": "'SN '0ddd", "font": font, "height_mm": 3, "center": [x, 0],
+            "variable": { "mode": "serial", "offset": k } }))
+        .await["result"]["created"][0]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        exec(&app, "group.create", json!({ "ids": [disc, text], "name": format!("Pocket {}", k + 1) })).await;
+    }
+    exec(&app, "var.set_serial", json!({ "start": 1, "end": 100, "current": 1 })).await;
+    let all = assert_parity(&app, "three pockets").await;
+    let time = |v: &Value| v["stats"]["estimated_time_s"].as_f64().unwrap();
+    let full: Value = serde_json::from_str(&get(&app, "/api/preview").await.1).unwrap();
+    exec(&app, "var.set_serial", json!({ "empty_slots": [1] })).await;
+    let two = assert_parity(&app, "pocket 2 empty").await;
+    let less: Value = serde_json::from_str(&get(&app, "/api/preview").await.1).unwrap();
+    assert!(two < all && time(&less) < time(&full), "{two} of {all} segments, {} s of {} s", time(&less), time(&full));
+    // Stop at End: only the first value is left, so only the first pocket is marked.
+    exec(&app, "var.set_serial", json!({ "empty_slots": [], "end": 1, "stop_at_end": true })).await;
+    let one = assert_parity(&app, "past End").await;
+    assert!(one < two, "{one} of {two}");
+}
+
 #[tokio::test]
 async fn planning_errors_match() {
     // Outside the 110 mm field.

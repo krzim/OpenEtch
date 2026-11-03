@@ -1115,7 +1115,7 @@ continue, start, approve or switch anything. Stop is never gated.
   takes `empty_slots` (offsets whose pockets are empty: their objects are left out of the run and the slots after them
   take consecutive values) and `stop_at_end` (no wrap: slots past End are not marked, the counter stops one past End
   and runs are refused once every value is used). The run is planned from the document with those slots applied
-  (`commands::apply_slot_plan`, before `prepare_output`); after a finished run the counter moves on by what was marked
+  (`commands::apply_slot_plan`, before `prepare_output`), and both previews (`GET /api/preview` and the browser's webcore) leave out the same pockets (`doc::slots::without_skipped_slots`), so their segments and time match the run; after a finished run the counter moves on by what was marked
   (unchanged when every slot marks: `var.advance`). The canvas still shows the document's own offsets; the cockpit
   shows the values the run marks. Every run that streamed with slots appends a line to
   `<config-dir>/serial-ledger.jsonl` (`{time_unix_s, run_id, state, device, project, document, completed, counter,

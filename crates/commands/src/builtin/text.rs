@@ -16,7 +16,7 @@ use crate::{Command, CommandError, Result, Risk};
 
 /// Object extras key holding a barcode's parameters (JSON of [`BarcodeInput`]), so it can be edited and follow
 /// variable text.
-pub const BARCODE_KEY: &str = "openetch.barcode";
+pub const BARCODE_KEY: &str = doc::slots::BARCODE_KEY;
 /// Longest text accepted, in characters.
 const MAX_TEXT: usize = 10_000;
 /// Most cells a loaded CSV file may have (the rows live in the document, which every edit copies for undo).

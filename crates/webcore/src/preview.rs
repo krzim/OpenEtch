@@ -43,6 +43,8 @@ pub fn plan_preview(doc: &Document, ctx: &Context) -> Result<Preview, String> {
         return Err("the engine gave no planning target".into());
     };
     let opts = JobOptions { preview: true, run_index: ctx.run_index, ..JobOptions::default() };
+    // As the engine plans it: the pockets of empty and past-End production slots left out.
+    let doc = &*doc::slots::without_skipped_slots(doc);
     match plan::plan_job_with(doc, target, &opts) {
         Ok(job) => {
             let mut p = plan::preview_document(doc, &job);
