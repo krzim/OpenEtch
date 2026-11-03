@@ -478,7 +478,7 @@ fn swatches_of(st: &AppState, lib: &str, link: bool) -> Result<Vec<Value>, Engin
         for e in &m.entries {
             let path = e.link_path(m.name());
             let Some(color) = l.finish.get(&path).and_then(|f| f.color.clone()) else { continue };
-            let Ok(p) = preset_of(e) else { continue };
+            let Ok(p) = preset_of(e).map(|p| p.with_pauses(l.finish.get(&path))) else { continue };
             let mut v = json!({
                 "color": color, "name": e.description(), "settings": p.settings, "sub_layers": p.sub_layers,
                 "global_passes": p.global_passes, "extras": p.extras,

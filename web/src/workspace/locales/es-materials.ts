@@ -35,4 +35,6 @@ export const ES_MATERIALS = {
   "mat.separateTitle": "Separación de colores",
   "mat.sepColors": "Colores",
   "mat.sepCreate": "Crear capas",
+  "lib.clbPauseLost":
+    "Se descargó el .clb. {n} ajuste(s) hacen una pausa para el operador antes de su capa: un .clb no tiene sitio para eso, así que LightBurn no hará la pausa. La biblioteca propia de OpenEtch conserva la pausa.",
 };

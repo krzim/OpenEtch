@@ -150,6 +150,43 @@ async fn library_load_assign_link_and_follow_edits() {
     assert_eq!(s, StatusCode::BAD_REQUEST);
 }
 
+/// A preset saved from a layer that pauses for the operator keeps the pause (in OpenEtch's library data, since a
+/// `.clb` has no place for it), gives it back when applied, keeps it through Edit Cut and Save, and its `.clb`
+/// download says what it leaves out.
+#[tokio::test]
+async fn a_presets_pause_for_the_operator_is_kept_beside_the_clb() {
+    let (st, dir) = state_with(MachineProfile::generic_lmc_fiber(), "libs-pause").await;
+    let app = api::router(st.clone(), None);
+    ok(&app, raw_req("POST", "/api/library/load?name=steel", CLB.as_bytes().to_vec())).await;
+    exec(&app, "layer.update", json!({"id": "layer-1", "settings": {"options": {"operator_pause": true}}})).await;
+    let v = ok(&app, req("POST", "/api/library/steel/entries", Some(json!({"layer": "layer-1", "material": "Steel", "title": "Finish", "description": "Paused"})))).await;
+    let id = v["id"].as_str().unwrap().to_owned();
+    let other = exec(&app, "layer.add", json!({"name": "Other"})).await["id"].as_str().unwrap().to_owned();
+    ok(&app, req("POST", &format!("/api/library/steel/entries/{id}/apply"), Some(json!({"layer": other, "link": true})))).await;
+    assert!(st.document().layer(&other).unwrap().settings.options.operator_pause, "applied with its pause");
+    // Edit Cut (settings without the pause, as the dialog sends them) keeps it.
+    let mut edited = st.document().layer(&other).unwrap().settings.clone();
+    edited.options.operator_pause = false;
+    edited.power_pct = 21.0;
+    ok(&app, req("PUT", &format!("/api/library/steel/entries/{id}"), Some(json!({"settings": edited})))).await;
+    let l = st.document().layer(&other).unwrap().clone();
+    assert!(l.settings.options.operator_pause && l.settings.power_pct == 21.0, "{:?}", l.settings.options);
+    // A preset without the pause stays without it.
+    ok(&app, req("POST", "/api/library/steel/entries/m0.e0/apply", Some(json!({"layer": other})))).await;
+    assert!(!st.document().layer(&other).unwrap().settings.options.operator_pause);
+    // The .clb download says it leaves the pause out; Save keeps it in the sidecar.
+    let res = app.clone().oneshot(req("GET", "/api/library/steel/download", None)).await.unwrap();
+    assert_eq!(res.headers().get("x-openetch-warnings").and_then(|v| v.to_str().ok()), Some("1"));
+    ok(&app, req("POST", "/api/library/save", Some(json!({"name": "steel"})))).await;
+    let sidecar = std::fs::read_to_string(dir.join(format!("libraries/steel{}", crate::finish::SIDECAR_SUFFIX))).unwrap();
+    assert!(sidecar.contains("\"operator_pause\": true") || sidecar.contains("\"operator_pause\":true"), "{sidecar}");
+    // Update from a layer without the pause takes it away.
+    exec(&app, "layer.update", json!({"id": "layer-1", "settings": {"options": {"operator_pause": false}}})).await;
+    ok(&app, req("PUT", &format!("/api/library/steel/entries/{id}"), Some(json!({"from_layer": "layer-1"})))).await;
+    let res = app.clone().oneshot(req("GET", "/api/library/steel/download", None)).await.unwrap();
+    assert_eq!(res.headers().get("x-openetch-warnings").and_then(|v| v.to_str().ok()), Some("0"));
+}
+
 #[tokio::test]
 async fn layer_and_optimization_defaults() {
     let (st, _dir) = state_with(MachineProfile::generic_lmc_fiber(), "libs-b").await;

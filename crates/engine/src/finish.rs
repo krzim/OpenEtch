@@ -3,7 +3,8 @@
 //! byte for byte. Per entry (keyed by its LinkPath, `material/title/description`; duplicated entries share a path and
 //! so share their finish until one is renamed): a result photo (from the iPad or phone camera, or a file), the
 //! expected result colour (by default the photo's average), notes, the lens, focus / defocus, the supplier, lot and
-//! date, and the surface finish the setting was made for.
+//! date, and the surface finish the setting was made for. Also the preset's OpenEtch-only settings a `.clb` cannot
+//! hold: its layer's (and sub-layers') pause for the operator.
 //!
 //! Sidecar format: `{"format": "openetch-finish", "version": 1, "entries": {"<LinkPath>": Finish}}`, photos inline
 //! as base64 (the web app sends them scaled to at most 1280 px, JPEG). Edits stay in memory with the library's other
@@ -83,6 +84,13 @@ pub struct Finish {
     pub date: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub photo: Option<Photo>,
+    /// The preset's pause for the operator before its layer (`CutOptions::operator_pause`, OpenEtch only): a `.clb`
+    /// has no place for it, so it is kept here and given back when the preset is applied.
+    #[serde(skip_serializing_if = "is_false")]
+    pub operator_pause: bool,
+    /// The preset's sub-layers (by index) that pause for the operator.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub sub_layer_pauses: Vec<usize>,
     /// When the entry's settings last changed through a hue step or a bracket pick (a photo older than this shows the
     /// old settings).
     #[serde(skip_serializing_if = "Option::is_none")]

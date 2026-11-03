@@ -1109,7 +1109,9 @@ continue, start, approve or switch anything. Stop is never gated.
   run at the pause, and a pause waits at most an hour. `GET /api/job` reports `waiting_at_layer` and `waiting_layer`
   (the clock stands still, a staged job's progress follows the clock). Galvo jobs only: rotary jobs and GRBL / Ruida
   jobs leave the pause out and say so in the run summary; a pause before the job's first pass is ignored. Tested on
-  the simulator only.
+  the simulator only. A material-library preset saved from a paused layer keeps the pause in the library's OpenEtch
+  sidecar (`finish::Finish.operator_pause` / `sub_layer_pauses`, a `.clb` has no place for it) and gives it back when
+  applied; the `.clb` download counts it in `X-OpenEtch-Warnings` and the app says LightBurn will not pause.
 - **Serial slots and the ledger.** A slot is one variable-text offset (serial-number or CSV texts and barcodes) and
   its pocket, the highest group around it whose variable texts all share that offset (`var.slots`). `var.set_serial`
   takes `empty_slots` (offsets whose pockets are empty: their objects are left out of the run and the slots after them

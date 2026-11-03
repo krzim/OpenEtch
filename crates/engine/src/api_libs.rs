@@ -58,7 +58,7 @@ use serde_json::{Value, json};
 
 use crate::camera::{self, View};
 use crate::libs::lock;
-use crate::library::{self, EntryMeta, Preset, entry_id, parse_entry_id, preset_of};
+use crate::library::{self, EntryMeta, Preset, entry_id, parse_entry_id};
 use crate::prefs::{ALL_COLORS, Checklist, LayerDefault};
 use crate::security::has_mcp_marker;
 use crate::state::parse_origin;
@@ -257,8 +257,20 @@ async fn library_merge(State(st): State<Arc<AppState>>, b: Bytes) -> Result<Json
 }
 
 async fn library_download(State(st): State<Arc<AppState>>, UrlPath(name): UrlPath<String>) -> Result<Response, EngineError> {
-    let (name, text) = lock(&st.libs.library).text(&name)?;
-    Ok(attachment(&format!("{name}.clb"), "application/xml", text.into_bytes()))
+    let ((name, text), losses) = {
+        let s = lock(&st.libs.library);
+        (s.text(&name)?, s.clb_losses(&name)?)
+    };
+    let mut res = attachment(&format!("{name}.clb"), "application/xml", text.into_bytes());
+    // As a `.lbrn2` export: how many settings the file has no place for (the presets' pauses for the operator; they
+    // stay in OpenEtch's library data). The app says so.
+    for l in &losses {
+        tracing::info!(library = %name, "{l}");
+    }
+    if let Ok(v) = axum::http::HeaderValue::from_str(&losses.len().to_string()) {
+        res.headers_mut().insert(axum::http::HeaderName::from_static("x-openetch-warnings"), v);
+    }
+    Ok(res)
 }
 
 /// The preset at `path` in library `name`.
@@ -266,7 +278,7 @@ pub(crate) fn preset_for(st: &AppState, name: &str, path: &str) -> Result<Preset
     let store = lock(&st.libs.library);
     let l = store.get(name)?;
     let (m, e) = l.lib.find_path(path).ok_or_else(|| EngineError::NotFound(format!("library \"{name}\" has no preset \"{path}\"")))?;
-    preset_of(&l.lib.materials[m].entries[e])
+    store.preset(name, (m, e))
 }
 
 pub(crate) fn apply_invocation(layer: &str, preset: &Preset, link: Option<&PresetLink>) -> Invocation {
@@ -358,8 +370,15 @@ async fn entry_create(State(st): State<Arc<AppState>>, UrlPath(name): UrlPath<St
     let doc = st.document();
     let layer = doc.layer(&b.layer).ok_or_else(|| EngineError::NotFound(format!("no layer with id '{}'", b.layer)))?;
     let entry = library::entry_from_layer(layer, meta.thickness_mm, &meta.title, &meta.description)?;
-    let id = lock(&st.libs.library).add_entry(&name, &meta.material, entry)?;
-    let (material, e) = { let s = lock(&st.libs.library); let (m, e) = s.entry(&name, id)?; (m.to_string(), e.link_path(m)) };
+    let (material, e, id) = {
+        let mut s = lock(&st.libs.library);
+        let id = s.add_entry(&name, &meta.material, entry)?;
+        let (m, e) = s.entry(&name, id)?;
+        let (m, e) = (m.to_string(), e.link_path(m));
+        // The layer's pauses for the operator, which a `.clb` cannot hold (module `finish`).
+        s.set_pauses(&name, &e, &layer.settings, &layer.sub_layers)?;
+        (m, e, id)
+    };
     Ok(Json(json!({ "ok": true, "id": entry_id(id), "material": material, "path": e })))
 }
 
@@ -388,33 +407,42 @@ async fn entry_edit(
     let b: EditBody = body(&b)?;
     let mut id = parse_entry_id(&id)?;
     let old_path = { let s = lock(&st.libs.library); let (m, e) = s.entry(&name, id)?; e.link_path(m) };
-    let current = lock(&st.libs.library).entry(&name, id)?.1.clone();
-    let new_settings = if let Some(layer_id) = &b.from_layer {
+    let (current, with_pauses) = {
+        let s = lock(&st.libs.library);
+        (s.entry(&name, id)?.1.clone(), s.preset(&name, id)?)
+    };
+    // The new settings as a layer: its pauses for the operator are kept beside the entry (a `.clb` has none).
+    let new_layer = if let Some(layer_id) = &b.from_layer {
         let doc = st.document();
         let layer = doc.layer(layer_id).ok_or_else(|| EngineError::NotFound(format!("no layer with id '{layer_id}'")))?;
-        Some(library::entry_from_layer(layer, current.thickness(), current.title(), current.description())?)
+        Some(layer.clone())
     } else if b.settings.is_some() || b.sub_layers.is_some() {
-        let p = preset_of(&current)?;
+        let p = with_pauses;
+        let finish = lock(&st.libs.library).finish_of(&name, &old_path)?;
+        // Edit Cut changes the cut values, never the preset's pauses for the operator (kept beside the entry).
         let preset = Preset {
             settings: b.settings.unwrap_or(p.settings),
             sub_layers: b.sub_layers.unwrap_or(p.sub_layers),
             global_passes: p.global_passes,
             extras: p.extras,
-        };
+        }
+        .with_pauses(Some(&finish));
         // Checked as layer.apply_preset checks a preset, on a scratch document.
         let mut scratch = commands::Session::new(doc::Document::default());
         let layer_id = scratch.document().layers[0].id.clone();
         scratch.execute(apply_invocation(&layer_id, &preset, None), Origin::Script)?;
-        let l = scratch.document().layers[0].clone();
-        Some(library::entry_from_layer(&l, current.thickness(), current.title(), current.description())?)
+        Some(scratch.document().layers[0].clone())
     } else {
         None
     };
-    if new_settings.is_none() && b.meta.is_none() {
+    if new_layer.is_none() && b.meta.is_none() {
         return Err(EngineError::BadRequest("give from_layer, settings / sub_layers, or meta".into()));
     }
-    if let Some(e) = new_settings {
-        lock(&st.libs.library).replace_settings(&name, id, e)?;
+    if let Some(l) = new_layer {
+        let e = library::entry_from_layer(&l, current.thickness(), current.title(), current.description())?;
+        let mut s = lock(&st.libs.library);
+        s.replace_settings(&name, id, e)?;
+        s.set_pauses(&name, &old_path, &l.settings, &l.sub_layers)?;
     }
     if let Some(m) = &b.meta {
         id = lock(&st.libs.library).edit_meta(&name, id, m)?;
@@ -457,10 +485,11 @@ async fn entry_apply(
         let s = lock(&st.libs.library);
         let l = s.get(&name)?;
         let lib_name = l.name.clone();
-        let (m, e) = s.entry(&name, parse_entry_id(&id)?)?;
+        let id = parse_entry_id(&id)?;
+        let (m, e) = s.entry(&name, id)?;
         let path = e.link_path(m);
         let color = l.finish.get(&path).and_then(|f| f.color.clone());
-        (lib_name, path, preset_of(e)?, color)
+        (lib_name, path, s.preset(&name, id)?, color)
     };
     let link = b.link.then_some(PresetLink { library: lib_name, path });
     let mut invs = vec![apply_invocation(&b.layer, &preset, link.as_ref())];

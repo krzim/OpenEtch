@@ -101,6 +101,23 @@ pub fn preset_of(entry: &LibEntry) -> Result<Preset, EngineError> {
     Ok(Preset { settings: layer.settings, sub_layers: layer.sub_layers, global_passes: layer.global_passes, extras })
 }
 
+/// A layer's pauses for the operator: its own, and its sub-layers' by index.
+pub fn pauses_of(settings: &CutSettings, sub_layers: &[CutSettings]) -> (bool, Vec<usize>) {
+    let subs = sub_layers.iter().enumerate().filter(|(_, s)| s.options.operator_pause).map(|(i, _)| i).collect();
+    (settings.options.operator_pause, subs)
+}
+
+impl Preset {
+    /// The preset with the pauses kept in its entry's OpenEtch data (`finish`; a `.clb` has no place for them).
+    pub fn with_pauses(mut self, finish: Option<&Finish>) -> Preset {
+        self.settings.options.operator_pause = finish.is_some_and(|f| f.operator_pause);
+        for (i, s) in self.sub_layers.iter_mut().enumerate() {
+            s.options.operator_pause = finish.is_some_and(|f| f.sub_layer_pauses.contains(&i));
+        }
+        self
+    }
+}
+
 /// An entry made from a layer's settings (LightBurn's Create new from layer / Update).
 pub fn entry_from_layer(layer: &Layer, thickness: Option<f64>, title: &str, description: &str) -> Result<LibEntry, EngineError> {
     let (cs, _warnings) = lbrn::cut_setting_from_layer(layer).map_err(|e| EngineError::BadRequest(e.to_string()))?;
@@ -608,6 +625,39 @@ impl LibraryStore {
     pub fn text(&self, name: &str) -> Result<(String, String), EngineError> {
         let l = self.get(name)?;
         Ok((l.name.clone(), lbrn::write_clb(&l.lib)))
+    }
+
+    /// Keep the pauses for the operator of `settings` / `sub_layers` for the entry at `path` (OpenEtch's own data:
+    /// a `.clb` has no place for them). Unchanged pauses change nothing.
+    pub fn set_pauses(&mut self, name: &str, path: &str, settings: &CutSettings, sub_layers: &[CutSettings]) -> Result<(), EngineError> {
+        let (main, subs) = pauses_of(settings, sub_layers);
+        let cur = self.get(name)?.finish.get(path);
+        if cur.is_some_and(|f| f.operator_pause) == main && cur.map_or(&[][..], |f| &f.sub_layer_pauses) == subs.as_slice() {
+            return Ok(());
+        }
+        self.edit_finish(name, path, |f| {
+            f.operator_pause = main;
+            f.sub_layer_pauses = subs;
+            Ok(())
+        })
+    }
+
+    /// The preset of entry `id` with its pauses for the operator.
+    pub fn preset(&self, name: &str, id: EntryId) -> Result<Preset, EngineError> {
+        let (material, e) = self.entry(name, id)?;
+        let path = e.link_path(material);
+        Ok(preset_of(e)?.with_pauses(self.get(name)?.finish.get(&path)))
+    }
+
+    /// What a `.clb` of library `name` leaves out (said on its download, as a `.lbrn2` export says what it loses):
+    /// the presets' pauses for the operator, which stay in OpenEtch's library data.
+    pub fn clb_losses(&self, name: &str) -> Result<Vec<String>, EngineError> {
+        let l = self.get(name)?;
+        Ok(l.paths()
+            .into_iter()
+            .filter(|p| l.finish.get(p).is_some_and(|f| f.operator_pause || !f.sub_layer_pauses.is_empty()))
+            .map(|p| format!("preset \"{p}\": its pause for the operator (OpenEtch only) was not written"))
+            .collect())
     }
 }
 
