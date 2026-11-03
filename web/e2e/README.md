@@ -61,6 +61,13 @@ The preview worker's jobs (src/wasm/, `window.__oeWorker`) hold an action open w
 (never the Pi: it edits freely): rounds of concurrent edits, undo/redo, timeline moves, edits from another client and
 document switches, with the browser's copy compared to `GET /api/document` after each round.
 
+## Text and template screens
+
+`templates.mjs` (`node e2e/templates.mjs --url http://127.0.0.1:7931 [--devices ...]`) opens the example projects
+and walks the fill-in form, text auto-fit, the font picker's favourites and samples, the template fields dialog, the
+contact sheet and New from example on an iPhone, an iPad and a MacBook (screenshots and layout checks under
+`target/ux-evidence/templates/`). It replaces the engine's document, so run it against a simulator engine.
+
 ## Files
 
 - `devices.mjs`: the device matrix (CSS viewport, DPR, touch, user agent, safe-area insets, themes, keyboard height).

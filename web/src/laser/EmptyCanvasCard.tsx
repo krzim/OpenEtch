@@ -16,6 +16,8 @@ export interface EmptyCanvasCardProps {
   /** Pick a drawing tool. */
   onDraw: (tool: "rect" | "text") => void;
   onTemplates: () => void;
+  /** New from example (templates/Examples.tsx); absent on engines without examples. */
+  onExamples?: () => void;
 }
 
 /** The device name GET /api/machine reports, or null. */
@@ -59,6 +61,11 @@ export function EmptyCanvasCard(p: EmptyCanvasCardProps) {
           <button className="btn" onClick={p.onTemplates}>
             <Icon name="array" size={18} /> {t("lz.emptyTemplates")}
           </button>
+          {p.onExamples && (
+            <button className="btn" onClick={p.onExamples}>
+              <Icon name="book" size={18} /> {t("tpl.emptyExamples")}
+            </button>
+          )}
         </div>
         <p className={`empty-card-laser tone-${chip.tone}`} role="status">
           <span className="status-chip-dot" aria-hidden="true" />

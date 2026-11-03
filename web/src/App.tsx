@@ -47,6 +47,7 @@ import { FileDialogs, FileMenu, useFileActions } from "./components/FileMenu.tsx
 import { ENGINE_ACCEPT, importTargetLayer } from "./files/fileFormats.ts";
 import { filesState } from "./files/filesStore.ts";
 import { useFilesUi } from "./files/useFilesUi.tsx";
+import { useTemplateUi } from "./templates/useTemplateUi.tsx";
 import { ShutdownBadge, SimPinBadge } from "./libs/JobSafety.tsx";
 import { LaserExtras } from "./libs/LaserExtras.tsx";
 import { useLibsUi } from "./libs/useLibsUi.tsx";
@@ -299,6 +300,8 @@ export function App() {
   // Export, Print, further import formats, templates, notes, backups, pages and image tools (src/files/).
   const filesUi = useFilesUi({ engine, file, selection: selection.objects, selectIds, activeLayer, design: workspace === "design", notify, report });
   openOtherRef.current = filesUi.openOther;
+  // Templates with fill-in fields, example projects and the contact sheet (src/templates/).
+  const tpl = useTemplateUi({ engine, file, selection: selection.objects, design: workspace === "design", notify, report });
   // Material library, defaults, test generators, laser tools, camera, job log, Help additions (src/libs/).
   const libsUi = useLibsUi({
     doc,
@@ -1067,6 +1070,7 @@ export function App() {
     ...designUi.menuItems,
     ...jigsUi.menuItems,
     ...(text.menuItems.length ? [{ sep: true } as const, ...text.menuItems] : []),
+    ...tpl.menuItems,
     { sep: true },
     { label: t("app.alignLeft"), actionId: "arrange.alignLeft", hint: "L", disabled: units < 2, action: () => alignTo("left") },
     { label: t("app.alignHCenter"), actionId: "arrange.alignHCenter", hint: "C", disabled: units < 2, action: () => alignTo("center") },
@@ -1125,7 +1129,7 @@ export function App() {
   });
   // Workspace hotkeys (workspace/hotkeys.ts); App's own keys stay in the handler above.
   ws.keymap.current = {
-    blocked: () => !!dialog || fileModalOpen || devicesOpen || filesUi.modalOpen || libsUi.modalOpen || toolsUi.modalOpen || designUi.modalOpen || jigsUi.modalOpen || materialsUi.modalOpen || appModeDialogOpen(),
+    blocked: () => !!dialog || fileModalOpen || devicesOpen || filesUi.modalOpen || libsUi.modalOpen || toolsUi.modalOpen || designUi.modalOpen || jigsUi.modalOpen || materialsUi.modalOpen || tpl.modalOpen || appModeDialogOpen(),
     modalOpen: () => ws.dialog !== null,
     handlers: {
       "app.preferences": () => ws.open("prefs"),
@@ -1288,6 +1292,7 @@ export function App() {
           )}
           <WorkspaceFileItems close={close} open={ws.open} />
           {libsUi.fileItems(close)}
+          {tpl.fileItems(close)}
         </>
       )}
       files={filesUi.menu}
@@ -1648,8 +1653,10 @@ export function App() {
           onOpen={() => file.setModal({ kind: "open" })}
           onDraw={(d) => setTool(d === "rect" ? "rect" : "text")}
           onTemplates={filesUi.openTemplates}
+          onExamples={has("example.list") ? tpl.openExamples : undefined}
         />
       )}
+      {tpl.hud}
       {/* Always mounted: it shows itself on touch, or everywhere with the selection bar set to Always. */}
       <TouchHud tool={tool} selectionCount={selection.objects.length} onAction={touchAction} />
       {/* A run waiting at a layer for the operator: Continue over the canvas (src/production/). */}
@@ -1709,6 +1716,7 @@ export function App() {
       {jigsUi.dialogs}
       {designUi.dialogs}
       {text.dialogs}
+      {tpl.dialogs}
       {ws.dialogs}
       <FileDialogs file={file} docName={doc?.name ?? null} />
       {devicesOpen && (

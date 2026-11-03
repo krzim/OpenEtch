@@ -16,6 +16,7 @@ import { ES_MATERIALS } from "./es-materials.ts";
 import { ES_RIBBON } from "./es-ribbon.ts";
 import { ES_SHELL } from "./es-shell.ts";
 import { ES_TOUCH } from "./es-touch.ts";
+import { ES_TEMPLATES } from "./es-templates.ts";
 
 export const ES_MACHINE_TRANSLATED = true;
 
@@ -33,6 +34,7 @@ export const ES: Messages = {
   ...ES_PRODUCTION,
   // MOPA materials (es-materials.ts).
   ...ES_MATERIALS,
+  ...ES_TEMPLATES,
   "common.cancel": "Cancelar",
   "common.close": "Cerrar",
   "common.loading": "Cargando…",

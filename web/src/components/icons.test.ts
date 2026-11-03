@@ -48,6 +48,8 @@ test("every timeline chip icon is registered", () => {
     "layer.update",
     "group.create",
     "path.weld",
+    "template.fill",
+    "template.set_field",
     "unknown.thing",
   ];
   for (const c of cmds)

@@ -33,6 +33,12 @@ mod trace_many;
 pub(crate) mod text;
 // Production slots of variable text (the serial ledger, empty pockets, Stop at End).
 pub mod slots;
+// Font samples, the contact sheet of every serial / CSV row, template fill-in fields.
+mod contact_sheet;
+mod font_preview;
+pub(crate) mod template;
+// Example projects (doc.new {example}, example.list).
+mod examples;
 mod util;
 // Geometry commands (crates/geom): booleans, offsets, path tools, nodes, generators, arrays, arrange.
 mod arrays;
@@ -282,4 +288,12 @@ fn register_text(r: &mut Registry) {
     r.register::<slots::Slots>();
     r.register::<text::ShapeBarcode>();
     r.register::<text::FontList>();
+    r.register::<font_preview::FontPreview>();
+    r.register::<contact_sheet::ContactSheet>();
+    r.register::<template::Fields>();
+    r.register::<template::SetField>();
+    r.register::<template::RemoveField>();
+    r.register::<template::SetLock>();
+    r.register::<template::Fill>();
+    r.register::<examples::ExampleList>();
 }

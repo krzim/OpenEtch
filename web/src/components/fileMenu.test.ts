@@ -46,10 +46,11 @@ function full(): FileMenuInput {
     devices: a,
     labels: LABELS,
     parts: {
+      new: [it("New from example…")],
       export: [it("Export…", { actionId: "file.export" }), it("Print…", { actionId: "file.print" }), it("Export image…"), it("Save processed bitmap…")],
-      project: [it("Open template…"), it("Recent templates", { content: () => null }), it("Save as template…"), { sep: true }, it("Notes…", { actionId: "window.notes" }), it("Restore from autosave / backup…")],
+      project: [it("Open template…"), it("Recent templates", { content: () => null }), it("Save as template…"), it("Fill in template…"), it("Template fields…"), { sep: true }, it("Notes…", { actionId: "window.notes" }), it("Restore from autosave / backup…")],
       lightburn: [it("Preferences and bundles…")],
-      laser: [it("Material Library", { actionId: "window.library" }), it("Find My Laser / Add galvo…"), it("Batch run…"), it("Job log…", { actionId: "laser.jobLog" })],
+      laser: [it("Material Library", { actionId: "window.library" }), it("Find My Laser / Add galvo…"), it("Batch run…"), it("Check every row…"), it("Job log…", { actionId: "laser.jobLog" })],
       settings: [it("Preferences…", { actionId: "app.preferences" }), it("Edit hotkeys…"), it("Import options…")],
       top: [it("New tab", { actionId: "window.newTab" })],
     },
@@ -61,7 +62,7 @@ test("at most 14 top-level rows with everything contributed", () => {
   assert.ok(topLevelCount(m) <= FILE_MENU_MAX_TOP, `${topLevelCount(m)} rows`);
   assert.deepEqual(
     m.filter((x) => !x.sep).map((x) => !x.sep && x.label),
-    ["New", "Open…", "Open Recent", "Save", "Save as…", "Import…", "Export", "Project", "LightBurn", "Laser", "New tab", "Settings"],
+    ["New", "New from example…", "Open…", "Open Recent", "Save", "Save as…", "Import…", "Export", "Project", "LightBurn", "Laser", "New tab", "Settings"],
   );
 });
 

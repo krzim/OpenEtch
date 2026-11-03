@@ -49,6 +49,12 @@ function labelFor(cmd: string, summary: string, t: T): StepLabel | null {
       return { text: t("tlx.editText"), icon: "type" };
     case "text.convert_to_path":
       return { text: t("tlx.textToPath"), icon: "path" };
+    case "template.fill":
+      return { text: t("tpl.tlFill"), icon: "fillIn" };
+    case "template.set_field":
+    case "template.remove_field":
+    case "template.set_lock":
+      return { text: t("tpl.tlFields"), icon: "fillIn" };
     case "object.transform": {
       // The first part of "move [1, 2], rotate 15° on o1" names the step.
       if (/^\s*rotate/.test(sum)) return { text: t("tlx.rotate"), icon: "rotate" };

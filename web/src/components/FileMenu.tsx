@@ -127,6 +127,8 @@ export interface FileActions {
   setModal: (m: FileModal | null) => void;
   dismissWarnings: () => void;
   newDocument: () => void;
+  /** New from example (templates/Examples.tsx): `doc.new {example}`, after the same unsaved-changes question. */
+  newFromExample: (id: string, title: string) => void;
   save: () => void;
   /** Save under `name`; `overwrite: false` lets the engine refuse to replace another project (outcome "exists"). */
   saveAs: (name: string, overwrite?: boolean) => Promise<SaveOutcome>;
@@ -284,6 +286,25 @@ export function useFileActions(p: {
       });
     }, null);
   }, [guard, task, engine, detach, notify, t]);
+
+  const newFromExample = useCallback(
+    (id: string, title: string) => {
+      guard(t("fm.aNewDocument"), t("fm.discardNew"), () => {
+        setModal(null);
+        void task(async () => {
+          await engine.run({ id: C.CMD.docNew, params: { example: id } });
+          clearGuides(UNSAVED_SCOPE);
+          // Save asks for a name, offering the example's.
+          detach(title);
+          setLoadedUnsaved(false);
+          setImportedFieldMm(null);
+          setOpenedName(null);
+          notify(t("tpl.exampleOpened", { name: title }));
+        });
+      }, null);
+    },
+    [guard, task, engine, detach, notify, t],
+  );
 
   const saveAs = useCallback(
     async (name: string, overwrite?: boolean): Promise<SaveOutcome> => {
@@ -487,6 +508,7 @@ export function useFileActions(p: {
     setModal,
     dismissWarnings: () => setWarnings(null),
     newDocument,
+    newFromExample,
     save,
     saveAs,
     openProject,

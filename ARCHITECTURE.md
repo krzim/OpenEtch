@@ -904,6 +904,51 @@ undocumented and not read.
   is kept (written from `variable.offset`); LightBurn's attribute names for upper case, bend, path, max width, ignore
   empty vars and the variable mode are unknown, so those are not written (a warning says so; the outline shows them).
   `<VariableText>` maps to `Document.variables` and is written back with its values.
+- **Auto-fit** (`Text.fit {shape: box|circle, width_mm, height_mm, mode: contain|stretch|shrink}`, `crates/text/src/fit.rs`,
+  xTool's Auto Fit): after layout and bend the ink is scaled into a box placed on the origin by Align X / Y (left: the
+  box's left edge on the origin, ...; the ink sits in it the same way) or a circle of diameter `width_mm` centred on the
+  origin, sized by every outline point (a coin face fits more than its inscribed square). `contain` grows or shrinks
+  proportionally, `stretch` (box only) fills both sides, `shrink` only shrinks what does not fit. `text.update {fit}`
+  (`{shape: none}` clears it); text on a path refuses it; LightBurn exports list it as not written. UI: Text properties
+  > Fit (`web/src/text/TextFit.tsx`, with Fit to stock: centred, 80 % of the stock, one batch) and the dashed area on
+  the canvas.
+- **Font samples, favourites, hidden fonts** (LightBurn 2.1's Font Manager): `font.preview {fonts, text?}` (Query)
+  draws a one-line sample per font (the browser has neither Hershey/SHX/JSF nor the engine computer's installed fonts);
+  the picker asks for the rows in view, 32 per call (`web/src/text/fontSamples.ts`). Favourites and hidden fonts live in
+  `<config-dir>/font-prefs.json`, `GET/PUT /api/fonts/prefs` (`crates/engine/src/fontprefs.rs`, UI only), so every
+  device shares them. Spell check is on in text fields (off for variable-text formats).
+- **Contact sheet** (`var.contact_sheet {from?, count? (60, max 500), outlines?, problems_only?}`, Query,
+  `crates/commands/src/builtin/contact_sheet.rs`): every counter value from start to end in steps of advance_by, the
+  serial / CSV texts and barcodes rendered as a run would burn them (on a copy), each checked for `overflow` (outside the
+  smallest closed shape holding its origin, else the stock, else the workspace; auto-fit texts only the workspace),
+  `missing_glyph`, `empty` (blank, an empty CSV cell it uses, a row past the CSV), `shrunk` (under half its set height)
+  and `error`; `outlines` adds SVG paths (mm, y down) and the rest of the design by layer for the grid
+  (`web/src/text/ContactSheet.tsx`, File > Laser > Check every row…, the Variable Text window). Agents run it as a
+  check before asking for a run.
+
+**Templates with fill-in fields** (`crates/commands/src/builtin/template.rs`, competitor-gaps item 5, on UX-049's
+templates). `Document.extras["openetch.template"]` holds the fields as JSON (so they travel in `.openetch` projects and
+templates; LightBurn exports leave them out): `{id, label, kind: text|date|font|preset|serial, targets, required,
+max_chars, multiline, format, choices, hint, value}`. text / date / font target plain text objects, preset targets
+layers and offers `choices` of complete cut settings (a MOPA colour, frost, black), font may offer font choices, serial
+sets the variable text's start (the range keeps its length). `template.fields` (Query, with each field's `current`
+value and `problems`), `template.set_field {field, index?}`, `template.remove_field {id}`, `template.set_lock
+{lock_others}` (locks every object but the field texts and remembers which, so turning it off unlocks only those),
+`template.fill {values}` (one undoable design edit: dates written in the field's format, finishes applied like
+Assign; returns `overflow` from the contact sheet's check). Agents fill templates through `execute`; filling never
+requests, approves or starts a run. UI (`web/src/templates/`): File > Project > Fill in template… / Template fields…,
+the canvas HUD's Fill in button while the document has fields, "Make a template field…" on a selected text; the form
+opens by itself after a template (or project) with fields is opened, as a full-screen sheet on the phone.
+
+**Example projects** (`crates/commands/src/builtin/examples.rs`): `doc.new {example}` builds one from commands into the
+new document (so it follows the current format and the active device's field, and opens clean like New), with its
+walkthrough as the project notes (shown on open) for the user guide; `example.list` (Query) lists `{id, title, summary,
+tags, steps}`. Five, all OpenEtch's own content with the bundled Hershey fonts and a generated test picture: two-tone
+MOPA coin (Fill Region ring, Place on stock, auto-fit name, template with name / date / font / ring colour, rest
+locked), serial tags for a 2 x 3 jig (T1 pocket outlines, serial text and QR code, grid array with auto-increment,
+advance by 6), text-on-a-circle medallion, image / dither sample (Stucki and halftone), frost / black / colour palette
+coin. Their cut settings are illustrative starting points, and the notes say so. UI: File > New from example… and the
+empty-canvas card's Examples button (`web/src/templates/Examples.tsx`).
 
 **Projects.** Named projects are `<projects-dir>/<name>.openetch` (`--projects-dir`, default the OS data dir +
 `openetch/projects`, e.g. `%APPDATA%\openetch\projects`, `~/Library/Application Support/openetch/projects`,

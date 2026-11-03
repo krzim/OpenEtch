@@ -131,6 +131,15 @@ const ALL_IDS: &[&str] = &[
     "var.slots",
     "shape.barcode",
     "font.list",
+    // Font samples, the contact sheet, template fields, examples.
+    "font.preview",
+    "var.contact_sheet",
+    "template.fields",
+    "template.set_field",
+    "template.remove_field",
+    "template.set_lock",
+    "template.fill",
+    "example.list",
     "layer.apply_preset",
     "layer.unlink_preset",
     "generate.material_test",
@@ -222,6 +231,7 @@ fn registry_lists_every_command_with_documented_schema() {
                 | "tabs.list" | "image.trace_files" | "path.fill_region_preview" | "var.slots"
                 | "jig.list" | "job.preflight" | "job.remark_check"
                 | "material.hue_step" | "image.color_separate_preview"
+                | "font.preview" | "var.contact_sheet" | "template.fields" | "example.list"
         );
         assert_eq!(spec.risk == Risk::Query, query, "{}", spec.id);
         let props = spec.input_schema["properties"].as_object();

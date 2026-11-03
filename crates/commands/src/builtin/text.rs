@@ -45,7 +45,7 @@ pub(crate) fn barcode_params(o: &doc::Object) -> Option<BarcodeInput> {
 }
 
 /// Render text object `id` again (its settings, the document's variables, its path) and store the outline.
-fn rerender(cmd: &str, doc: &mut Document, id: &str, moment: Option<&text::Moment>) -> Result<Vec<String>> {
+pub(crate) fn rerender(cmd: &str, doc: &mut Document, id: &str, moment: Option<&text::Moment>) -> Result<Vec<String>> {
     let laser = laser_name(doc);
     let o = util::object(doc, id)?;
     let r = text::render_object(doc, o, moment, &laser).map_err(|e| CommandError::Failed(format!("{cmd}: {id}: {e}")))?;
@@ -183,7 +183,7 @@ pub fn auto_advance_due(doc: &Document) -> bool {
 // Inputs
 // ---------------------------------------------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FontInput {
     /// Family name, e.g. "Arial"; for `.shx` / `.jsf` fonts the file name without extension. `font.list` lists them.
@@ -265,6 +265,55 @@ pub struct TextFields {
     pub variable: Option<VarInput>,
     /// Distance along the path in mm, for text on a path (`text.apply_path`).
     pub path_offset_mm: Option<f64>,
+    /// Auto-fit: `{shape: box, width_mm, height_mm, mode?}` scales the text into a box placed by its alignment,
+    /// `{shape: circle, width_mm (the diameter), mode?}` into a circle centred on its origin (a coin's face);
+    /// `{shape: none}` turns it off. `mode`: contain (default; up or down, proportional), stretch (box only: width
+    /// and height separately) or shrink (only text that does not fit gets smaller). Not for text on a path.
+    pub fit: Option<FitInput>,
+}
+
+/// `fit` of [`TextFields`].
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FitInput {
+    pub shape: FitShapeInput,
+    /// Box width, or the circle's diameter, mm. Default: the text's current fit's.
+    pub width_mm: Option<f64>,
+    /// Box height, mm (box only). Default: the text's current fit's.
+    pub height_mm: Option<f64>,
+    pub mode: Option<doc::FitMode>,
+}
+
+/// The area of a text's auto-fit, or none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FitShapeInput {
+    None,
+    Box,
+    Circle,
+}
+
+impl FitInput {
+    /// The fit this input sets on a text whose fit was `cur`.
+    fn resolve(&self, cmd: &str, cur: Option<doc::TextFit>) -> Result<Option<doc::TextFit>> {
+        let shape = match self.shape {
+            FitShapeInput::None => return Ok(None),
+            FitShapeInput::Box => doc::FitShape::Box,
+            FitShapeInput::Circle => doc::FitShape::Circle,
+        };
+        let width_mm = self.width_mm.or(cur.map(|c| c.width_mm)).ok_or_else(|| invalid(cmd, "fit.width_mm is required"))?;
+        let height_mm = match shape {
+            doc::FitShape::Box => {
+                self.height_mm.or(cur.map(|c| c.height_mm)).ok_or_else(|| invalid(cmd, "fit.height_mm is required for a box"))?
+            }
+            doc::FitShape::Circle => 0.0,
+        };
+        let f = doc::TextFit { shape, width_mm, height_mm, mode: self.mode.or(cur.map(|c| c.mode)).unwrap_or_default() };
+        if let Some(p) = f.problem() {
+            return Err(invalid(cmd, p));
+        }
+        Ok(Some(f))
+    }
 }
 
 fn check_text(cmd: &str, s: &str) -> Result<()> {
@@ -321,6 +370,9 @@ impl TextFields {
         t.ignore_empty_vars = self.ignore_empty_vars.unwrap_or(t.ignore_empty_vars);
         if let Some(v) = &self.variable {
             t.variable = var_of(v);
+        }
+        if let Some(f) = &self.fit {
+            t.fit = f.resolve(cmd, t.fit)?;
         }
         if let Some(p) = t.problem() {
             return Err(invalid(cmd, p));
@@ -997,14 +1049,14 @@ fn barcode_settings(b: &BarcodeInput) -> Value {
     v
 }
 
-fn barcode_data(doc: &Document, layer: &str, b: &BarcodeInput, moment: Option<&text::Moment>) -> String {
+pub(crate) fn barcode_data(doc: &Document, layer: &str, b: &BarcodeInput, moment: Option<&text::Moment>) -> String {
     match b.variable.as_ref().and_then(var_of) {
         Some(v) => text::vars::evaluate(doc, layer, &b.data, &v, moment, &laser_name(doc)),
         None => b.data.clone(),
     }
 }
 
-fn draw_barcode(cmd: &str, b: &BarcodeInput, data: &str) -> Result<text::barcode::Drawn> {
+pub(crate) fn draw_barcode(cmd: &str, b: &BarcodeInput, data: &str) -> Result<text::barcode::Drawn> {
     let kind = text::barcode::Kind::from_name(&b.kind).ok_or_else(|| {
         let names: Vec<&str> = text::barcode::Kind::ALL.iter().map(|k| k.name()).collect();
         invalid(cmd, format!("unknown barcode kind '{}'; one of {}", b.kind, names.join(", ")))

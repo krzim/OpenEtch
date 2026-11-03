@@ -7,9 +7,9 @@
 //! VSpace, %), `Ah` / `Av` (Align X 0 left / 1 middle / 2 right; Align Y 1 middle, 0 top and 2 bottom assumed from
 //! the order of LightBurn's list), `Weld` (0/1), `HasBackupPath` and, on copies made by arrays, `VariableOffset`.
 //! LightBurn's attribute names for upper case, bend, distort, text on path, max width, squeeze, ignore empty vars and
-//! the variable text mode are not known (no sample uses them), so those settings are not written; the outline
-//! (`BackupPath`) still shows the text as OpenEtch rendered it, but LightBurn renders the text again from the
-//! attributes when it has the font.
+//! the variable text mode are not known (no sample uses them), and LightBurn has no auto-fit, so those settings are
+//! not written; the outline (`BackupPath`) still shows the text as OpenEtch rendered it, but LightBurn renders the
+//! text again from the attributes when it has the font.
 
 use doc::{AlignH, AlignV, FontSpec, Text};
 use kurbo::BezPath;
@@ -153,6 +153,9 @@ pub fn to_attributes(t: &Text, attrs: &mut Vec<(String, String)>) -> Vec<&'stati
     }
     if t.ignore_empty_vars {
         lost.push("ignore empty vars");
+    }
+    if t.fit.is_some() {
+        lost.push("auto-fit");
     }
     if t.variable.is_some() {
         lost.push("the variable text mode");

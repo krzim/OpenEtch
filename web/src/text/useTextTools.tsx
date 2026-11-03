@@ -65,6 +65,8 @@ import {
   type TextDefaults,
 } from "./textModel.ts";
 import { VarTextWindow } from "./VarTextWindow.tsx";
+import { fitOutline } from "./fitModel.ts";
+import type { TextObject } from "./textModel.ts";
 import "./text.css";
 
 type Run = (inv: Invocation | Invocation[]) => Promise<unknown>;
@@ -362,6 +364,8 @@ export function useTextTools(p: TextToolsProps): TextTools {
       defaults={defaults}
       barValues={barValues}
       barEditing={!!barTextObj}
+      sample={editor?.value || barTextObj?.geometry.text || undefined}
+      fitText={barTextObj?.geometry.fit ? barTextObj : null}
       pickPath={pickPath ? (objOf(pickPath)?.name ?? pickPath) : null}
       onCancelPick={() => setPickPath(null)}
       onChange={(value) => editorRef.current && setEditor({ ...editorRef.current, value })}
@@ -542,6 +546,10 @@ function TextOverlay(p: {
   defaults: TextDefaults;
   barValues: TextDefaults;
   barEditing: boolean;
+  /** What the font samples show. */
+  sample?: string;
+  /** The selected text, when it has an auto-fit: its area is drawn dashed. */
+  fitText: TextObject | null;
   pickPath: string | null;
   onCancelPick: () => void;
   onChange: (v: string) => void;
@@ -585,7 +593,8 @@ function TextOverlay(p: {
         // and the off-field warning covered it: the text was typed blind).
         data-hud-obstacle=""
         autoFocus
-        spellCheck={false}
+        // Spell check for words (Fider #817), not for variable-text formats.
+        spellCheck={!g?.variable}
         wrap="off"
         aria-label={t("text.editorLabel")}
         placeholder={t("text.editorPlaceholder")}
@@ -634,7 +643,7 @@ function TextOverlay(p: {
       </div>
     );
   } else if (p.tool === "text" || (editor && p.tool === "select")) {
-    bar = <OptionsBar values={p.barValues} editingText={p.barEditing} fonts={p.fonts} onChange={p.onBar} onReloadFonts={p.onReloadFonts} />;
+    bar = <OptionsBar values={p.barValues} editingText={p.barEditing} fonts={p.fonts} sample={p.sample} onChange={p.onBar} onReloadFonts={p.onReloadFonts} />;
   } else if (p.tool === "barcode") {
     bar = (
       <div className="vp-overlay et-bar tx-bar" role="toolbar" aria-label={t("barcode.tool")}>
@@ -657,6 +666,7 @@ function TextOverlay(p: {
           </span>
         );
       })}
+      {p.fitText && <FitFrame r={r} o={p.fitText} />}
       {edit}
       {/* The Text Options bar goes to the context strip itself; Apply to Path and Barcode float in the canvas HUD.
           While a text is being typed the bar gives way when there is no room beside the field (optional). */}
@@ -669,8 +679,28 @@ function TextOverlay(p: {
   );
 }
 
+/** The auto-fit area of the selected text, dashed (no pointer events: it is a guide, not a handle). */
+function FitFrame(p: { r: RenderCtx; o: TextObject }) {
+  const pts = fitOutline(p.o);
+  if (!pts) return null;
+  const [w, h] = p.r.size;
+  const s = pts.map((q) => p.r.toScreen(q).map((v) => Math.round(v * 10) / 10).join(",")).join(" ");
+  return (
+    <svg className="vp-overlay tx-fit-frame" width={w} height={h} viewBox={`0 0 ${w} ${h}`} aria-hidden="true" focusable="false">
+      <polygon points={s} />
+    </svg>
+  );
+}
+
 /** LightBurn's Text Options toolbar while the Text tool is active. */
-function OptionsBar(p: { values: TextDefaults; editingText: boolean; fonts: FontInfo[] | null; onChange: (c: Partial<TextDefaults>) => void; onReloadFonts: () => void }) {
+function OptionsBar(p: {
+  values: TextDefaults;
+  editingText: boolean;
+  fonts: FontInfo[] | null;
+  sample?: string;
+  onChange: (c: Partial<TextDefaults>) => void;
+  onReloadFonts: () => void;
+}) {
   const t = useT();
   const v = p.values;
   const al = alignOptions(t);
@@ -685,7 +715,7 @@ function OptionsBar(p: { values: TextDefaults; editingText: boolean; fonts: Font
     <ContextStripPortal>
     <div className="vp-overlay et-bar tx-bar" role="toolbar" aria-label={t("text.options")}>
       <b>{p.editingText ? t("text.optionsSelected") : t("text.optionsNew")}</b>
-      <FontPicker compact value={v.font} fonts={p.fonts} onPick={(font) => p.onChange({ font })} onReload={p.onReloadFonts} placeholder={t("text.font.default")} />
+      <FontPicker compact value={v.font} fonts={p.fonts} sample={p.sample} onPick={(font) => p.onChange({ font })} onReload={p.onReloadFonts} placeholder={t("text.font.default")} />
       <BarNumber label={t("text.height")} unit="mm" value={v.height_mm} min={0.01} onCommit={(height_mm) => p.onChange({ height_mm })} />
       <BarNumber label={t("text.hSpaceShort")} unit="%" value={v.h_spacing} min={-100} max={1000} onCommit={(h_spacing) => p.onChange({ h_spacing })} />
       <BarNumber label={t("text.vSpaceShort")} unit="%" value={v.v_spacing} min={-100} max={1000} onCommit={(v_spacing) => p.onChange({ v_spacing })} />

@@ -130,9 +130,19 @@ export interface TextGeometry {
   squeeze: boolean;
   ignore_empty_vars: boolean;
   variable?: { mode: VarMode; offset: number } | null;
+  /** Auto-fit into a box or a circle (crates/text/src/fit.rs). */
+  fit?: TextFit | null;
   outline: BezPathJson;
   /** What the outline shows (the evaluated variable text) when it differs from `text`. */
   shown?: string | null;
+}
+
+/** A text's auto-fit: a `width_mm` x `height_mm` box placed by its alignment, or a circle of diameter `width_mm`. */
+export interface TextFit {
+  shape: "box" | "circle";
+  width_mm: number;
+  height_mm: number;
+  mode: "contain" | "stretch" | "shrink";
 }
 
 /** The document's serial number / CSV row counter (LightBurn's Variable Text window). */

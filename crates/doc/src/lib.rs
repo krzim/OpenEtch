@@ -19,7 +19,7 @@ pub use job::{
     CutDirection, CutOptions, DotMode, FillGrouping, Lead, LeadStyle, MAX_GANTRY_EXTRA_MM, MAX_MANUAL_TABS, MAX_PATH_PAUSE_MS, ObjectOptions, Optimization, OrderBy, Perforation, Rotary, RotaryKind,
     StartPoint, TabGeneration, Tabs, Taper, Wobble,
 };
-pub use text::{AlignH, AlignV, CsvData, FontKind, FontSpec, Text, TextPath, VarMode, VarText, VariableState};
+pub use text::{AlignH, AlignV, CsvData, FitMode, FitShape, FontKind, FontSpec, Text, TextFit, TextPath, VarMode, VarText, VariableState};
 
 pub type ObjectId = String;
 pub type LayerId = String;

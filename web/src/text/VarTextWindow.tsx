@@ -96,6 +96,14 @@ export function VarTextWindow(p: {
                 {t("var.test")}
               </button>
             </div>
+            {can(TXT.contactSheet) && (
+              <div className="tx-row-btns">
+                {/* The contact sheet (text/ContactSheet.tsx), opened by templates/useTemplateUi.tsx. */}
+                <button className="btn" onClick={() => window.dispatchEvent(new CustomEvent("openetch:contact-sheet"))} title={t("sheet.openTitle")}>
+                  <Icon name="contactSheet" size={16} /> {t("sheet.menu")}
+                </button>
+              </div>
+            )}
             {test && (
               <div className="tx-test" role="status">
                 <div className="tx-test-head">{t("var.testFor", { value: test.value })}</div>
