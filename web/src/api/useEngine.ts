@@ -8,6 +8,8 @@ import { publishEngineEvent, type EngineMessage } from "./events.ts";
 import { EMPTY_TIMELINE, normalizeHistory, type TimelineModel } from "./history.ts";
 import { footSwitchToast, runFinishedToast, withApprovalLock } from "./runs.ts";
 import type { CommandSpec, EngineEvent, GDocument, MachineStatus, Origin, Preview, ProjectInfo } from "./types.ts";
+import type { PreviewSummary } from "./packedPreview.ts";
+import { useBrowserPreview } from "../wasm/useBrowserPreview.ts";
 
 /** WebSocket state shown by the connection indicator. */
 export type LinkState = "connecting" | "open" | "closed";
@@ -20,6 +22,10 @@ export interface Engine {
   preview: Preview | null;
   /** Why the engine could not plan a preview (e.g. objects outside the field), or null. */
   previewError: string | null;
+  /** The job's summary (time estimate...) planned in the browser, in either workspace; null without the worker. */
+  previewSummary: PreviewSummary | null;
+  /** Where the preview comes from: the browser's worker, or the engine (GET /api/preview). */
+  previewSource: "browser" | "engine";
   commands: CommandSpec[] | null;
   /** Whether the engine has a command (false while the list is loading). */
   has: (id: string) => boolean;
@@ -111,6 +117,15 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
   const wantPreviewRef = useRef(wantPreview);
   wantPreviewRef.current = wantPreview;
 
+  // ---- browser preview (src/wasm/): the preview and its stats are planned in a Web Worker from `doc`; GET
+  // /api/preview only in the "fallback" mode (no WebAssembly, or an engine without /api/preview/context).
+  const [contextSeq, setContextSeq] = useState(0);
+  const browser = useBrowserPreview({ doc, wantPreview, wantStats: true, contextSeq });
+  const engineMode = browser.mode === "fallback";
+  const engineModeRef = useRef(engineMode);
+  engineModeRef.current = engineMode;
+  // ---- end browser preview
+
   const fail = useCallback((e: unknown) => {
     setHttpError(e instanceof Error ? e.message : String(e));
   }, []);
@@ -158,7 +173,7 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
     }
     // The dirty flag follows the revision.
     void refreshProject();
-    if (wantPreviewRef.current) void refreshPreview();
+    if (wantPreviewRef.current && engineModeRef.current) void refreshPreview();
   });
 
   const refreshMachine = useCoalesced(async () => {
@@ -233,10 +248,10 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
       .catch(fail);
   }, [refreshDoc, refreshMachine, fail]);
 
-  // Preview follows the workspace toggle.
+  // Preview follows the workspace toggle (the engine's, when the browser cannot plan it).
   useEffect(() => {
-    if (wantPreview) void refreshPreview();
-  }, [wantPreview, refreshPreview]);
+    if (wantPreview && engineMode) void refreshPreview();
+  }, [wantPreview, engineMode, refreshPreview]);
 
   // Event socket with reconnect and backoff.
   const docRevision = useRef<number>(-1);
@@ -305,11 +320,14 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
           case "device_changed":
             // The profile, field size and controller changed: everything that shows them refetches.
             setDeviceSeq((n) => n + 1);
+            setContextSeq((n) => n + 1);
             void refreshMachine();
             void refreshDoc();
             break;
           case "run_finished": {
             void refreshMachine();
+            // The job counter and the learned estimate correction the browser preview plans with.
+            setContextSeq((n) => n + 1);
             const t = runFinishedToast(ev);
             notifyRef.current(t.msg, t.kind);
             break;
@@ -348,8 +366,10 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
     doc,
     timeline,
     machine,
-    preview,
-    previewError,
+    preview: engineMode ? preview : browser.preview,
+    previewError: engineMode ? previewError : browser.previewError,
+    previewSummary: browser.summary,
+    previewSource: engineMode ? "engine" : "browser",
     commands,
     has,
     project,

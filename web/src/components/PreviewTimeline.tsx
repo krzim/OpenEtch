@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { PLAYBACK_SPEEDS, clockText, segmentTimes, segmentsDoneAt, startHereSegment, timeOfSegments } from "../api/job.ts";
 import { jobApi, saveBlob } from "../api/jobApi.ts";
+import { segmentCount } from "../api/packedPreview.ts";
 import type { Preview } from "../api/types.ts";
 import { useT } from "../workspace/usePrefs.ts";
 import { noPinMode } from "../api/runs.ts";
@@ -38,7 +39,7 @@ export function PreviewTimeline(p: {
   const t = useT();
   const { preview, options, onOptions } = p;
   const times = useMemo(() => segmentTimes(preview), [preview]);
-  const total = preview.segments?.length ?? 0;
+  const total = segmentCount(preview);
   const duration = times.length ? times[times.length - 1] : 0;
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);

@@ -10,6 +10,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, ApiError } from "../api/client.ts";
 import { formatDuration, previewLayers, segLen, statRows } from "../api/laser.ts";
+import { isMark, segmentCount } from "../api/packedPreview.ts";
 import { modeLabel, passResolver, previewPasses, settingsSummary, soloPass, togglePass, type PassPreview } from "../api/passes.ts";
 import {
   activeRuns,
@@ -445,14 +446,21 @@ export function PreviewStatsCard(p: {
   );
   if (!p.enabled) return null;
   const segs = preview?.segments ?? [];
+  const pk = preview?.packed;
+  const segTotal = segmentCount(preview);
   let markN = 0;
   let markLen = 0;
   let jumpLen = 0;
-  for (const s of segs) {
-    if (s.kind === "mark") {
-      markN++;
-      markLen += segLen(s);
-    } else jumpLen += segLen(s);
+  if (pk) {
+    // The browser's preview: the counts from its arrays (lengths from the stats below when present).
+    for (let i = 0; i < segTotal; i++) if (isMark(pk, i)) markN++;
+  } else {
+    for (const s of segs) {
+      if (s.kind === "mark") {
+        markN++;
+        markLen += segLen(s);
+      } else jumpLen += segLen(s);
+    }
   }
   const layers = previewLayers(preview, p.doc);
   const time = typeof preview?.stats?.estimated_time_s === "number" ? preview.stats.estimated_time_s : null;
@@ -492,7 +500,7 @@ export function PreviewStatsCard(p: {
             </dd>
             <dt>{t("lp.travel")}</dt>
             <dd>
-              {segs.length - markN} · {lengthText(typeof preview.stats?.jump_length_mm === "number" ? preview.stats.jump_length_mm : jumpLen, lu, 1)}
+              {segTotal - markN} · {lengthText(typeof preview.stats?.jump_length_mm === "number" ? preview.stats.jump_length_mm : jumpLen, lu, 1)}
             </dd>
             {rows.map(([k, v]) => (
               <FragmentKV key={k} k={k} v={v} raw />
@@ -577,7 +585,7 @@ function fmtNum(v: number): string {
 /** Draw-order animation: a slider over the job's segments with play/pause, like LightBurn's Preview time slider. */
 export function PreviewPlayer({ preview, options, onOptions }: { preview: Preview; options: PreviewOptions; onOptions: (o: PreviewOptions) => void }) {
   const t = useT();
-  const total = preview.segments?.length ?? 0;
+  const total = segmentCount(preview);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
   const at = options.upTo ?? total;

@@ -236,6 +236,8 @@ async function checked(path: string, body: unknown, what: string): Promise<unkno
 export const api = {
   commands: () => request<CommandSpec[]>("GET", "/api/commands"),
   document: () => request<GDocument>("GET", "/api/document"),
+  /** What the browser's preview worker plans with (src/wasm/; engines without it answer 404). */
+  previewContext: () => request<unknown>("GET", "/api/preview/context"),
   /** The timeline (`{marker, steps}`), or an older engine's log array; normalise with `normalizeHistory`. */
   history: () => request<unknown>("GET", "/api/history"),
   /** Roll the timeline marker to `marker` (the index of the last step to keep applied). */

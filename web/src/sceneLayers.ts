@@ -3,6 +3,7 @@
 // typed arrays bucketed by tile, so a frame strokes only the tiles it can see. No DOM here (tested in Node).
 
 import { energyOpacity, layerEnergy } from "./api/laser.ts";
+import { NO_PASS, isMark, layerOf, passSubLayers, segmentCount } from "./api/packedPreview.ts";
 import { markHidden, passColor, passEnergy, passResolver } from "./api/passes.ts";
 import type { Affine, GDocument, Layer, Preview, Vec2 } from "./api/types.ts";
 import type { Box } from "./geometry.ts";
@@ -124,9 +125,8 @@ const MAX_TILES_PER_SIDE = 64;
 
 /** Packs the preview's segments by style (layer and pass for marks; one batch of jumps) and tile. */
 export function buildToolpath(preview: Preview, doc: GDocument | null, o: ToolpathOptions): Toolpath {
-  const segs = preview.segments ?? [];
-  const n = o.upTo === null ? segs.length : Math.min(segs.length, Math.max(0, o.upTo));
-  const resolve = passResolver(preview, doc);
+  const total = segmentCount(preview);
+  const n = o.upTo === null ? total : Math.min(total, Math.max(0, o.upTo));
   const groups = new Map<string, { kind: "mark" | "jump"; layer: string; pass: number | null; xy: number[] }>();
   let x0 = Infinity;
   let y0 = Infinity;
@@ -134,34 +134,54 @@ export function buildToolpath(preview: Preview, doc: GDocument | null, o: Toolpa
   let y1 = -Infinity;
   let shown = 0;
   let head: Vec2 | null = null;
-  for (let i = 0; i < n; i++) {
-    const s = segs[i];
-    head = s.to;
+  const add = (mark: boolean, layer: string, pass: number | null, ax: number, ay: number, bx: number, by: number) => {
     let key: string;
-    let layer = "";
-    let pass: number | null = null;
-    if (s.kind === "mark") {
-      layer = s.layer ?? "";
-      pass = resolve(s);
-      if (markHidden(o, layer, pass)) continue;
+    if (mark) {
+      if (markHidden(o, layer, pass)) return;
       key = `${layer}#${pass ?? ""}`;
     } else {
-      if (!o.jumps) continue;
+      if (!o.jumps) return;
       key = "jump";
+      layer = "";
+      pass = null;
     }
     let g = groups.get(key);
     if (!g) {
-      g = { kind: s.kind === "mark" ? "mark" : "jump", layer, pass, xy: [] };
+      g = { kind: mark ? "mark" : "jump", layer, pass, xy: [] };
       groups.set(key, g);
     }
-    const [ax, ay] = s.from;
-    const [bx, by] = s.to;
     g.xy.push(ax, ay, bx, by);
     x0 = Math.min(x0, ax, bx);
     y0 = Math.min(y0, ay, by);
     x1 = Math.max(x1, ax, bx);
     y1 = Math.max(y1, ay, by);
     shown++;
+  };
+  const pk = preview.packed;
+  if (pk) {
+    // The browser's preview: read the arrays directly; a segment's pass is `passes[pass].sub_layer`.
+    const subs = passSubLayers(preview);
+    const xy = pk.xy;
+    for (let i = 0; i < n; i++) {
+      const j = 4 * i;
+      const mark = isMark(pk, i);
+      let pass: number | null = null;
+      if (mark) {
+        const p = pk.pass[i];
+        pass = p === NO_PASS ? null : (subs[p] ?? null);
+      }
+      add(mark, mark ? (layerOf(pk, i) ?? "") : "", pass, xy[j], xy[j + 1], xy[j + 2], xy[j + 3]);
+    }
+    if (n > 0) head = [xy[4 * n - 2], xy[4 * n - 1]];
+  } else {
+    const segs = preview.segments ?? [];
+    const resolve = passResolver(preview, doc);
+    for (let i = 0; i < n; i++) {
+      const s = segs[i];
+      head = s.to;
+      const mark = s.kind === "mark";
+      add(mark, mark ? (s.layer ?? "") : "", mark ? resolve(s) : null, s.from[0], s.from[1], s.to[0], s.to[1]);
+    }
   }
   const side = Math.max(1, Math.min(MAX_TILES_PER_SIDE, Math.ceil(Math.sqrt(shown / TILE_TARGET))));
   const grid = shown
@@ -172,7 +192,7 @@ export function buildToolpath(preview: Preview, doc: GDocument | null, o: Toolpa
   const ordered = [...groups.entries()].sort((a, b) => (a[1].kind === b[1].kind ? 0 : a[1].kind === "jump" ? -1 : 1));
   for (const [key, g] of ordered) batches.push({ key, kind: g.kind, layer: g.layer, pass: g.pass, ...tileSort(g.xy, grid) });
   const maxE = Math.max(0, ...(doc?.layers ?? []).flatMap((l) => [l.settings, ...(l.sub_layers ?? [])].map(layerEnergy)));
-  return { batches, grid, head: o.upTo !== null && n < segs.length ? head : null, maxE, segments: shown };
+  return { batches, grid, head: o.upTo !== null && n < total ? head : null, maxE, segments: shown };
 }
 
 /** Counting sort of segments (x0, y0, x1, y1 each) by the tile of their midpoint. */
