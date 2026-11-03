@@ -313,6 +313,8 @@ function stepsFor(d) {
     await page.send("Page.reload");
     await sleep(500);
     await ready(page);
+    // The emulated safe area is page CSS: a reload drops it.
+    if (d.safe && Object.values(d.safe).some((v) => v > 0)) await applySafeArea(page, d.safe);
     const list = (await api(page).req("GET", "/api/projects")).body;
     if (!list.some((p) => p.name === "Harness")) throw new Error(`after a reload: ${JSON.stringify(list)}`);
     const o = await api(page).req("POST", "/api/projects/open", { name: "Harness", origin: "ui" });
@@ -327,6 +329,8 @@ function stepsFor(d) {
     await page.send("Page.reload");
     await sleep(500);
     await ready(page);
+    // The emulated safe area is page CSS: a reload drops it.
+    if (d.safe && Object.values(d.safe).some((v) => v > 0)) await applySafeArea(page, d.safe);
     await sleep(800);
     const doc = (await api(page).req("GET", "/api/document")).body;
     const p = (await api(page).req("GET", "/api/project")).body;

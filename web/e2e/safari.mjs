@@ -170,7 +170,10 @@ export class WebDriver {
   }
 
   async start(capabilities) {
-    const r = await fetch(`${this.base}/session`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ capabilities: { alwaysMatch: capabilities } }) });
+    const r = await fetch(`${this.base}/session`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ capabilities: { alwaysMatch: capabilities } }) }).catch((e) => {
+      // The tunnel or safaridriver went away: say why (fetch's own message is only "fetch failed").
+      throw new Error(`new session: ${e.message}${e.cause ? ` (${e.cause.code ?? e.cause.message ?? e.cause})` : ""}`);
+    });
     const j = await r.json();
     if (j.value?.error) throw new Error(`new session: ${j.value.error}: ${j.value.message}`);
     this.id = j.value.sessionId;
@@ -673,6 +676,11 @@ async function dexec(page, id, params = {}) {
   return r.body;
 }
 
+async function crashes(page) {
+  const c = await page.evaluate(() => globalThis.__oeDesignCrashes ?? []).catch(() => []);
+  return c?.length ? `(worker: ${c.join(" | ")})` : "";
+}
+
 async function designReady(page) {
   if (!(await page.waitFor("!!window.__oeDesign", { expr: true, timeout: 40000 }))) throw new Error("no design backend");
   for (let i = 0; i < 100; i++) {
@@ -680,7 +688,7 @@ async function designReady(page) {
     if (r?.status === 200) return;
     await sleep(250);
   }
-  throw new Error("the design backend did not answer");
+  throw new Error(`the design backend did not answer ${await crashes(page)}`);
 }
 
 const MACHINE_WORDS = "^(start|start here|frame|framing|stop|jog|home|connect|find my laser|camera|run|approve)$";
@@ -779,7 +787,7 @@ function designStepsFor(kind) {
     await designReady(page);
     await sleep(1200);
     const doc = (await dreq(page, "GET", "/api/document")).body;
-    if (!doc.objects.some((o) => o.name === "Unsaved square")) throw new Error("the unsaved edit did not come back");
+    if (!doc.objects.some((o) => o.name === "Unsaved square")) throw new Error(`the unsaved edit did not come back ${await crashes(page)}`);
     return (await dreq(page, "GET", "/api/project")).body;
   });
   add("preview-estimate", async ({ page }) => {

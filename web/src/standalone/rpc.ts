@@ -295,6 +295,7 @@ export class StandaloneClient {
       if (this.worker !== w) return;
       const msg = (e as { message?: unknown } | null)?.message;
       // A script error before `ready` is a broken build: retrying would loop.
+      noteCrash(`the editor's worker failed: ${typeof msg === "string" ? msg : String(e)}`);
       if (this.state === "starting") this.fail(typeof msg === "string" ? msg : "The editor could not start in this browser.");
       else this.restart();
     };
@@ -348,6 +349,7 @@ export class StandaloneClient {
         for (const s of this.sockets) s.deliver(m.data);
         break;
       case "crashed":
+        noteCrash(`the editor stopped: ${m.error}`);
         this.restart();
         break;
       case "preview": {
@@ -429,6 +431,13 @@ export class StandaloneClient {
     const p = this.opts.persist;
     if (p) void p().catch(() => false);
   }
+}
+
+/** Why the worker stopped, for the console and the device harness (`window.__oeDesignCrashes`). */
+function noteCrash(text: string): void {
+  console.error(`[design] ${text}`);
+  const g = globalThis as { __oeDesignCrashes?: string[] };
+  (g.__oeDesignCrashes ??= []).push(text.slice(0, 600));
 }
 
 function defaultId(): string {
