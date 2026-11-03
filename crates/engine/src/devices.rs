@@ -186,6 +186,15 @@ impl DeviceRegistry {
         Ok((r, notes))
     }
 
+    /// Whether device `id` may still have settings kept for it: it is in the registry, or its device file is still
+    /// in the devices directory (an unreadable file skipped at startup), or the registry keeps nothing on disk.
+    pub fn may_return(&self, id: &str) -> bool {
+        match &self.dir {
+            None => true,
+            Some(dir) => self.get(id).is_some() || !device::is_valid_id(id) || dir.join(format!("{id}.toml")).exists(),
+        }
+    }
+
     /// The bases devices are built on.
     pub fn bases(&self) -> &Bases {
         &self.bases

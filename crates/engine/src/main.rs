@@ -341,6 +341,7 @@ async fn run(config: Config) -> Result<(), String> {
     for note in state.libs.open(&config.config_dir) {
         println!("openetch: {note}");
     }
+    engine::libs::forget_removed_devices(&state);
     engine::libs::select_device_library(&state);
     engine::libs::apply_startup_defaults(&state);
     engine::libs::spawn_io_watch(state.clone());

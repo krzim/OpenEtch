@@ -1732,9 +1732,36 @@ async fn devices_routes_import_list_show_and_remove() {
     }
     // Remove: never the built-in or the active device.
     assert_eq!(send(&app, req("DELETE", "/api/devices/commarker-b6-mopa-60w-ezcad", None)).await.0, StatusCode::CONFLICT);
+    // The removed device's preferences and camera calibration go with it; the others' stay.
+    for id in ["bench-110-lens", "test-bed-400"] {
+        crate::libs::lock(&st.libs.prefs).device_mut(id).require_framing = true;
+        crate::libs::lock(&st.libs.camera).calibrations.insert(id.into(), crate::libs::CameraCalibration::default());
+    }
     let (s, v) = send(&app, req("DELETE", "/api/devices/bench-110-lens", None)).await;
     assert_eq!((s, &v["ok"]), (StatusCode::OK, &json!(true)), "{v}");
     assert_eq!(send(&app, req("GET", "/api/devices", None)).await.1["devices"].as_array().unwrap().len(), 3);
+    {
+        let p = crate::libs::lock(&st.libs.prefs);
+        assert!(!p.prefs.devices.contains_key("bench-110-lens") && p.device("test-bed-400").require_framing);
+        let c = crate::libs::lock(&st.libs.camera);
+        assert!(!c.calibrations.contains_key("bench-110-lens") && c.calibrations.contains_key("test-bed-400"));
+    }
+    // Imported again it gets the same id, and the defaults.
+    let (_, v) = send(&app, raw("POST", "/api/devices/import?from=lightburn&add=all", "")).await;
+    assert_eq!(v["added"], json!(["bench-110-lens"]), "{v}");
+    assert!(!crate::libs::lock(&st.libs.prefs).device("bench-110-lens").require_framing);
+    // Settings left behind by an engine before this fix are forgotten at startup, unless the device file is still
+    // there (an unreadable device keeps them).
+    crate::libs::lock(&st.libs.prefs).device_mut("long-gone").play_sound = true;
+    crate::libs::lock(&st.libs.prefs).device_mut("unreadable").play_sound = true;
+    std::fs::write(dir.join("config").join("devices").join("unreadable.toml"), "broken").unwrap();
+    crate::libs::forget_removed_devices(&st);
+    {
+        let p = crate::libs::lock(&st.libs.prefs);
+        let kept: Vec<&str> = p.prefs.devices.keys().map(String::as_str).collect();
+        assert_eq!(kept, ["test-bed-400", "unreadable"]);
+    }
+    send(&app, req("DELETE", "/api/devices/bench-110-lens", None)).await;
     assert_eq!(std::fs::read_to_string(dir.join("prefs.ini")).unwrap(), LB_PREFS, "prefs.ini is never written");
     let _ = std::fs::remove_dir_all(&dir);
 }

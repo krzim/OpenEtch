@@ -103,9 +103,56 @@ impl Libs {
         *lock(&self.last_frame) = Some(req.clone());
     }
 
+    /// Forget the per-device settings of device `id` (its preferences and camera calibration) when the device is
+    /// removed, so a later device given the same id starts from the defaults. Renames keep the id, and with it the
+    /// settings. Returns whether anything was forgotten; a failed save is logged (the device is gone either way).
+    pub fn forget_device(&self, id: &str) -> bool {
+        self.forget_devices(|d| d == id)
+    }
+
+    /// Forget the per-device settings of every device `gone` says is gone (see [`Libs::forget_device`]).
+    pub fn forget_devices(&self, gone: impl Fn(&str) -> bool) -> bool {
+        let mut forgot = false;
+        {
+            let mut p = lock(&self.prefs);
+            let before = p.prefs.devices.len();
+            p.prefs.devices.retain(|d, _| !gone(d));
+            if p.prefs.devices.len() != before {
+                forgot = true;
+                if let Err(e) = p.save() {
+                    tracing::warn!(error = %e, "cannot save the preferences after removing a device");
+                }
+            }
+        }
+        let mut c = lock(&self.camera);
+        let before = c.calibrations.len();
+        c.calibrations.retain(|d, _| !gone(d));
+        if c.calibrations.len() != before {
+            forgot = true;
+            if let Err(e) = c.save() {
+                tracing::warn!(error = %e, "cannot save the camera calibrations after removing a device");
+            }
+        }
+        forgot
+    }
+
     /// `(machine generation, document revision)` of the last frame started.
     pub fn framed_at(&self) -> Option<(u64, u64)> {
         *lock(&self.framed)
+    }
+}
+
+/// At startup: forget the settings of devices removed before removal took them along (see
+/// [`Libs::forget_device`]); a device whose file is still there (unreadable, skipped) keeps them.
+pub fn forget_removed_devices(st: &AppState) {
+    let mut ids: Vec<String> = lock(&st.libs.prefs).prefs.devices.keys().cloned().collect();
+    ids.extend(lock(&st.libs.camera).calibrations.keys().cloned());
+    let gone: Vec<String> = {
+        let reg = st.devices();
+        ids.into_iter().filter(|id| !reg.may_return(id)).collect()
+    };
+    if !gone.is_empty() && st.libs.forget_devices(|id| gone.iter().any(|g| g == id)) {
+        tracing::info!(devices = ?gone, "forgot the settings of removed devices");
     }
 }
 
