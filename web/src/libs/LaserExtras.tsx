@@ -1,12 +1,12 @@
 // Laser window extras: Red Dot Always On (the device's IO setting, from the Laser window as LightBurn's red-light
-// toggle), Batch (run several saved projects with one approval), Repeat Marking with the external axis table, the job
-// log viewer (Save Job Log as CSV) and LightBurn's Print and Cut wizard (pick two registration targets, find each with
-// the red dot, align the design). Every run request is a pending run that still needs the operator PIN.
+// toggle), Batch (run several saved projects with one approval), Repeat Marking with the external axis table, the Job
+// log button (the window is the job ledger, src/ledger/JobLedgerDialog.tsx) and LightBurn's Print and Cut wizard (pick
+// two registration targets, find each with the red dot, align the design). Every run request is a pending run that
+// still needs the operator PIN.
 
 import { useEffect, useMemo, useState } from "react";
 import { runRequestBody } from "../api/job.ts";
 import type { Invocation } from "../api/client.ts";
-import { formatDuration } from "../api/laser.ts";
 import { projectList } from "../api/project.ts";
 import type { GDocument, Vec2 } from "../api/types.ts";
 import { getRunOptions } from "../components/jobStore.ts";
@@ -21,16 +21,12 @@ import {
   alignToTargets,
   batchBody,
   ioPorts,
-  jobLogTotals,
-  originText,
-  parseJobLog,
   printCutProblem,
   tableBody,
   tableRole,
-  type JobLogEntry,
 } from "./model.ts";
 import { openLibsWindow, refreshActiveDevice, useActiveDevice } from "./store.ts";
-import { DropMenu, errText, saveDownload, type DropItem } from "./ui.tsx";
+import { DropMenu, errText, type DropItem } from "./ui.tsx";
 import "./libs.css";
 
 type Notify = (msg: string, kind?: "info" | "error") => void;
@@ -240,96 +236,6 @@ export function RepeatTableDialog(p: { selection: readonly string[]; notify: Not
           <NumberField label={t("tbl.settle")} unit="ms" value={settle} min={0} max={60000} digits={0} onCommit={(v) => v !== null && setSettle(v)} />
           <CheckField label={t("tbl.returnToStart")} checked={back} onChange={setBack} />
           <p className="hint">{t("tbl.hint", { total: Number(((repeat - 1) * increment).toFixed(3)), unit })}</p>
-        </>
-      )}
-    </WsModal>
-  );
-}
-
-// ---- job log --------------------------------------------------------------------------------------------------------
-
-export function JobLogDialog(p: { report: (e: unknown) => void; onClose: () => void }) {
-  const t = useT();
-  const [rows, setRows] = useState<JobLogEntry[] | null>(null);
-  const [limit, setLimit] = useState(200);
-  const load = () =>
-    libsApi
-      .jobLog(limit)
-      .then((r) => setRows(parseJobLog(r)))
-      .catch((e) => {
-        setRows([]);
-        p.report(new Error(errText(e)));
-      });
-  useEffect(() => void load(), [limit]);
-  const totals = rows ? jobLogTotals(rows) : null;
-  return (
-    <WsModal
-      title={t("jlog.title")}
-      wide
-      onClose={p.onClose}
-      footer={
-        <>
-          <label className="lx-inline">
-            {t("jlog.show")}
-            <select value={limit} onChange={(e) => setLimit(Number(e.target.value))}>
-              {[50, 200, 1000].map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button className="btn" onClick={() => void load()}>
-            {t("jlog.refresh")}
-          </button>
-          <button className="btn" onClick={() => void saveDownload(libsApi.jobLogCsv(), "OpenEtchJobs.csv").catch(p.report)}>
-            {t("jlog.csv")}
-          </button>
-          <button className="btn btn-primary" onClick={p.onClose}>
-            {t("common.close")}
-          </button>
-        </>
-      }
-    >
-      {rows === null ? (
-        <p className="muted">{t("common.loading")}</p>
-      ) : rows.length === 0 ? (
-        <p className="hint">{t("jlog.empty")}</p>
-      ) : (
-        <>
-          {totals && <p className="hint">{t("jlog.totals", { runs: totals.runs, finished: totals.finished, failed: totals.failed, time: formatDuration(totals.seconds) || "0 s" })}</p>}
-          <div className="lx-table-wrap">
-            <table className="lx-table">
-              <thead>
-                <tr>
-                  <th>{t("jlog.time")}</th>
-                  <th>{t("jlog.state")}</th>
-                  <th>{t("jlog.by")}</th>
-                  <th>{t("jlog.project")}</th>
-                  <th>{t("jlog.device")}</th>
-                  <th className="num">{t("jlog.duration")}</th>
-                  <th className="num">{t("jlog.runs")}</th>
-                  <th>{t("jlog.summary")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r, i) => (
-                  <tr key={`${r.run_id}#${i}`} className={`lx-state-${r.state}`}>
-                    <td>{r.time_unix_s ? new Date(r.time_unix_s * 1000).toLocaleString() : ""}</td>
-                    <td>{r.state}</td>
-                    <td>{originText(r.origin)}</td>
-                    <td>{r.project ?? "—"}</td>
-                    <td>{r.device}</td>
-                    <td className="num">{formatDuration(r.duration_s)}</td>
-                    <td className="num">{r.completed}</td>
-                    <td className="lx-sum" title={r.error ?? r.summary}>
-                      {r.error ? <span className="form-error">{r.error}</span> : r.summary}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
         </>
       )}
     </WsModal>

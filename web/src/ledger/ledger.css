@@ -1,0 +1,356 @@
+/* The Job log window as the job ledger (ledger/JobLedgerDialog.tsx). Colours come from the theme tokens in styles.css
+   (light and dark); sizes from tokens.css. Wide: list and run side by side; phone: one pane at a time. */
+
+.led-body {
+  display: grid;
+  grid-template-columns: minmax(260px, 5fr) 7fr;
+  gap: var(--sp-3);
+  min-height: min(520px, 62vh);
+  max-height: min(680px, 72vh);
+}
+.led-body.single {
+  grid-template-columns: 1fr;
+  max-height: none;
+}
+.led-list-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.led-filters {
+  display: flex;
+  gap: var(--sp-1);
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: var(--sp-1);
+}
+.led-filters select {
+  flex: 1 1 96px;
+  min-width: 0;
+  height: var(--ctl-h);
+}
+.led-search {
+  flex: 1 1 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: 0 var(--sp-2);
+  border: 1px solid var(--input-border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--muted);
+}
+.led-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: var(--ctl-h);
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+}
+.led-search input.led-search-input:focus-visible {
+  box-shadow: none;
+  outline: none;
+}
+.led-search:focus-within {
+  box-shadow:
+    0 0 0 2px var(--panel),
+    0 0 0 4px var(--accent);
+}
+.led-totals {
+  margin: 0 0 var(--sp-1);
+}
+.led-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  min-height: 0;
+  flex: 1 1 auto;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-md);
+}
+.led-row {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: center;
+  width: 100%;
+  min-height: 64px;
+  padding: var(--sp-1) var(--sp-2);
+  border: none;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+@media (hover: hover) {
+  .led-row:hover {
+    background: var(--surface-hover);
+  }
+}
+.led-row.selected {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.led-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.led-row-title {
+  display: flex;
+  gap: var(--sp-1);
+  align-items: center;
+  font-weight: var(--fw-medium);
+  min-width: 0;
+}
+.led-ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.led-row-sub {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.led-row-layers {
+  display: flex;
+  gap: var(--sp-1);
+  flex-wrap: nowrap;
+  overflow: hidden;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+.led-layer-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+.led-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 4px;
+  border-radius: 2px;
+  border: 1px solid var(--swatch-border);
+  vertical-align: -1px;
+  flex: none;
+}
+.led-thumb {
+  flex: none;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-md);
+  background: #ffffff;
+  color: #9aa1a9;
+  overflow: hidden;
+}
+.led-thumb img {
+  max-width: 100%;
+  max-height: 100%;
+  display: block;
+}
+.led-state-failed .led-state,
+.led-state.led-state-failed,
+.led-state-aborted .led-state,
+.led-state.led-state-aborted {
+  color: var(--danger);
+}
+.led-state-cancelled .led-state,
+.led-state.led-state-cancelled {
+  color: var(--muted);
+}
+.led-verdict {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  padding: 0 6px;
+  border-radius: 9px;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  line-height: 18px;
+}
+.led-verdict-ok {
+  color: var(--on-accent);
+  background: var(--ok-fill);
+}
+.led-verdict-scrap {
+  color: #ffffff;
+  background: var(--danger-dark);
+}
+
+/* ---- the selected run ---- */
+.led-detail {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding-right: var(--sp-1);
+}
+.led-back {
+  margin-bottom: var(--sp-2);
+}
+.led-dhead {
+  display: flex;
+  gap: var(--sp-3);
+  align-items: flex-start;
+}
+.led-dhead-text {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.led-title {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+  overflow-wrap: anywhere;
+}
+.led-sub {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  margin: 2px 0 var(--sp-2);
+}
+.led-kv {
+  font-size: var(--fs-sm);
+}
+.led-kv dt {
+  text-transform: none;
+}
+.led-value {
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--fw-medium);
+}
+.led-error {
+  margin: var(--sp-1) 0 0;
+}
+.led-section {
+  margin-top: var(--sp-3);
+}
+.led-section h4 {
+  margin: 0 0 var(--sp-1);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+}
+.led-verdict-bar {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: center;
+  flex-wrap: wrap;
+}
+.led-verdict-bar .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.led-v-ok.active {
+  background: var(--ok-fill);
+  border-color: var(--ok-fill);
+  color: var(--on-accent);
+}
+.led-v-scrap.active {
+  background: var(--danger-dark);
+  border-color: var(--danger-dark);
+  color: #ffffff;
+}
+.led-noted {
+  font-size: var(--fs-xs);
+}
+.led-note {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: var(--sp-2);
+}
+.led-note textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 44px;
+  font: inherit;
+}
+.led-note-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+  margin-top: var(--sp-1);
+}
+.led-actions {
+  display: flex;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  align-items: center;
+}
+.led-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.led-actions .hint {
+  flex: 1 1 100%;
+  margin: 0;
+}
+.led-table-wrap {
+  overflow: auto;
+}
+.led-layers td {
+  font-variant-numeric: tabular-nums;
+}
+.led-sub-layer,
+.led-preset {
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+.led-off td {
+  color: var(--muted);
+}
+.led-usage {
+  margin: var(--sp-2) 0 0;
+  font-size: var(--fs-sm);
+}
+.led-limit {
+  flex: 0 1 auto;
+  margin-right: auto;
+}
+
+.led-storage {
+  max-width: 560px;
+}
+.led-storage .led-title {
+  margin-bottom: var(--sp-2);
+}
+
+/* Narrow dialogs (an iPad in portrait, a small window): one pane above the other. */
+@media (max-width: 760px) {
+  .led-body:not(.single) {
+    grid-template-columns: 1fr;
+    max-height: none;
+  }
+  .led-body:not(.single) .led-list {
+    max-height: 40vh;
+  }
+}
+[data-pointer="coarse"] .led-row {
+  min-height: 72px;
+}
+[data-pointer="coarse"] .led-verdict-bar .btn,
+[data-pointer="coarse"] .led-actions .btn,
+[data-pointer="coarse"] .led-note-actions .btn,
+[data-pointer="coarse"] .led-back {
+  min-height: 44px;
+}
+[data-pointer="coarse"] .led-filters select,
+[data-pointer="coarse"] .led-search input {
+  height: 44px;
+}

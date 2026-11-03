@@ -6,6 +6,7 @@ import { EN_DESIGN } from "./en-design.ts";
 import { EN_FILES } from "./en-files.ts";
 import { EN_FILL } from "./en-fill.ts";
 import { EN_GANTRY } from "./en-gantry.ts";
+import { EN_HISTORY } from "./en-history.ts";
 import { EN_JOB } from "./en-job.ts";
 import { EN_LASER } from "./en-laser.ts";
 import { EN_LIBS } from "./en-libs.ts";
@@ -50,6 +51,8 @@ export const EN = {
   ...EN_TOUCH,
   ...EN_APP,
   ...EN_LASER,
+  // The job ledger (Job log window) and the 3D relief preview (src/ledger/, src/relief/).
+  ...EN_HISTORY,
   "common.cancel": "Cancel",
   "common.close": "Close",
   "common.loading": "Loading…",
