@@ -100,7 +100,8 @@ export function PreviewTimeline(p: {
   const startCtx = startCtxOf(facts, "startHere", {
     fromSegment: startAt,
     designOnly: p.designOnly,
-    revision: p.docRevision ?? facts.revision,
+    // The revision the shown preview (and so the segment number) is of; the engine starts nothing at another one.
+    revision: preview.revision ?? p.docRevision ?? facts.revision,
     notify: (m) => p.notify(m),
     report: (e) => (e instanceof Error && !("status" in e) ? p.notify(e.message, "error") : p.report(e)),
     refreshMachine: p.onRequested,

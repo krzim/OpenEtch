@@ -266,3 +266,36 @@ async fn context_names_the_active_device() {
     let ctx: Context = serde_json::from_str(&body).unwrap();
     assert_eq!(ctx.target.as_ref(), Some(&st.machine.target()));
 }
+
+/// Parity on a real file kept outside the repository: `OPENETCH_PARITY_DOC=<a .lbrn2 file> cargo test -p engine
+/// --release parity_of_a_local_lightburn_file -- --ignored --nocapture`. Each document variant is checked after a
+/// change the web app makes (layer settings, a move, Order By), so a large import with images, fills, sub-layers and
+/// tabs is compared segment by segment.
+#[tokio::test]
+#[ignore = "needs OPENETCH_PARITY_DOC: a local .lbrn2 file"]
+async fn parity_of_a_local_lightburn_file() {
+    let Ok(path) = std::env::var("OPENETCH_PARITY_DOC") else { return };
+    let bytes = std::fs::read(&path).expect("read OPENETCH_PARITY_DOC");
+    let st = state(Document::default()).await;
+    let app = api::router(st.clone(), None);
+    let r = Request::builder()
+        .method("POST")
+        .uri("/api/document/upload?format=lbrn2")
+        .header("host", "localhost:7878")
+        .header("content-type", "application/octet-stream")
+        .body(Body::from(bytes))
+        .unwrap();
+    let res = app.clone().oneshot(r).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK, "upload");
+    let n = assert_parity(&app, "as imported").await;
+    println!("as imported: {n} segments equal");
+    let d = st.document();
+    if let Some(l) = d.layers.iter().find(|l| d.objects.iter().any(|o| o.layer == l.id)) {
+        exec(&app, "layer.update", json!({ "id": l.id, "settings": { "speed_mm_s": 777 } })).await;
+        println!("layer speed: {} segments equal", assert_parity(&app, "layer speed").await);
+    }
+    if let Some(o) = d.objects.first() {
+        exec(&app, "object.move", json!({ "ids": [o.id], "from_point": [0, 0], "to_point": [0.5, 0.25] })).await;
+        println!("moved: {} segments equal", assert_parity(&app, "moved").await);
+    }
+}

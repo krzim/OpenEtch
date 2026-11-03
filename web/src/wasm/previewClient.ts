@@ -29,6 +29,8 @@ interface Pending {
   id: number;
   kind: JobKind;
   rev: number;
+  /** The document generation (`WorkerCore.gen`) the job is for. */
+  gen: number;
   params?: unknown;
   resolve: (r: JobResult) => void;
   reject: (e: unknown) => void;
@@ -73,7 +75,12 @@ export class WorkerCore {
   private readyWaiters: ((ok: boolean) => void)[] = [];
   private ctx: string | null = null;
   private doc: { rev: number; doc: unknown } | null = null;
-  /** The revision the current worker was sent. */
+  /**
+   * Counts the documents set: a job is for one of them. A revision number alone does not name a document (an engine
+   * restarted counts its revisions again), so staleness and cancelling go by this.
+   */
+  private gen = 0;
+  /** The revision the current worker was sent (-1: nothing, or a document it must get whole). */
   private sentRev = -1;
   /** Change sets since the last revision noted, contiguous (each starts where the previous one ended). */
   private chain: DocChanges[] = [];
@@ -101,22 +108,31 @@ export class WorkerCore {
     return new Promise((r) => this.readyWaiters.push(r));
   }
 
-  setContext(json: string): void {
-    if (this.ctx === json) return;
+  /** Set the planning context; false when it is the one already set. */
+  setContext(json: string): boolean {
+    if (this.ctx === json) return false;
     this.ctx = json;
     if (this.worker) this.send({ type: "context", json });
+    return true;
   }
 
   /**
    * The document the next jobs are for (only sent to the worker when a job needs it). `delta` is the change set it was
    * made with from the previous document (docSync.ts `deltaOf`): while those chain up from the revision the worker
-   * holds, the worker gets them instead of the whole document.
+   * holds, the worker gets them instead of the whole document. `base` is the document `delta` was applied to
+   * (docSync.ts `deltaBaseOf`): it must be the document set before, not merely one of the same revision.
    */
-  setDocument(rev: number, doc: unknown, delta?: DocChanges): void {
+  setDocument(rev: number, doc: unknown, delta?: DocChanges, base?: unknown): void {
     if (this.doc && this.doc.rev === rev && this.doc.doc === doc) return;
+    this.gen++;
     // A worker that has not run a job for many edits (the Fill Region one) gets the whole document instead.
-    if (delta && this.doc && delta.from === this.doc.rev && delta.to === rev && this.chain.length < MAX_CHAIN) this.chain.push(delta);
-    else this.chain = [];
+    if (delta && this.doc && base === this.doc.doc && delta.from === this.doc.rev && delta.to === rev && this.chain.length < MAX_CHAIN) {
+      this.chain.push(delta);
+    } else {
+      this.chain = [];
+      // Whole, even when the worker holds a document of this revision (another engine run's, or a refetch).
+      this.sentRev = -1;
+    }
     this.doc = { rev, doc };
   }
 
@@ -127,12 +143,12 @@ export class WorkerCore {
     if (!this.ok()) return Promise.reject(new Error("the preview worker is not available"));
     this.ensure();
     return new Promise<JobResult>((resolve, reject) => {
-      const job: Pending = { id: this.nextId++, kind, rev: doc.rev, params, resolve, reject };
+      const job: Pending = { id: this.nextId++, kind, rev: doc.rev, gen: this.gen, params, resolve, reject };
       // The newest request of a kind replaces the one waiting.
       this.waiting.get(kind)?.reject(new Stale());
       this.waiting.set(kind, job);
-      // A running job for an older revision is cancelled: wasm cannot be interrupted, so the worker goes.
-      if (this.inflight && this.inflight.rev < doc.rev) this.restart();
+      // A running job for an older document is cancelled: wasm cannot be interrupted, so the worker goes.
+      if (this.inflight && this.inflight.gen !== this.gen) this.restart();
       this.pump();
     });
   }
@@ -200,7 +216,7 @@ export class WorkerCore {
     if (!next) return;
     this.waiting.delete(next.kind);
     const doc = this.doc;
-    if (!doc || doc.rev !== next.rev) {
+    if (!doc || next.gen !== this.gen) {
       next.reject(new Stale());
       this.pump();
       return;

@@ -17,6 +17,8 @@ const scope = self as unknown as { postMessage(m: unknown, transfer: Transferabl
 let core: Core | null = null;
 /** The revision parsed into `core`. */
 let docRev = -1;
+/** Whether `held` changed since it was parsed (a whole document of the same revision counts: another engine run's). */
+let fresh = false;
 /** The page's document as of the last message (patched by change sets), parsed into `core` when a job needs it. */
 let held: { rev: number; doc: GDocument } | null = null;
 const queue: ToWorker[] = [];
@@ -37,6 +39,7 @@ function handle(m: ToWorker): void {
     case "doc":
       // Kept until a job needs it: a burst of revisions parses only the last one.
       held = { rev: m.rev, doc: m.doc as GDocument };
+      fresh = true;
       break;
     case "changes": {
       // Patch the copy held; a change set that does not fit drops it, and the next job reports the revision missing
@@ -44,14 +47,20 @@ function handle(m: ToWorker): void {
       let d: GDocument | null = held ? held.doc : null;
       for (const ch of m.changes) d = d ? applyChanges(d, ch) : null;
       held = d && d.revision === m.rev ? { rev: m.rev, doc: d } : null;
+      fresh = true;
       break;
     }
     case "job": {
       try {
         const t0 = performance.now();
-        if (held && held.rev !== docRev) {
+        if (held && fresh) {
           core.set_document(JSON.stringify(held.doc));
           docRev = held.rev;
+          fresh = false;
+        } else if (!held && fresh) {
+          // A change set that did not fit: what core holds is not the page's document.
+          docRev = -1;
+          fresh = false;
         }
         const t1 = performance.now();
         if (docRev !== m.rev) {

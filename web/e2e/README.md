@@ -57,6 +57,10 @@ npm run e2e:perf -- --url http://127.0.0.1:7931 --doc heavy.lbrn2 --label quick 
 The preview worker's jobs (src/wasm/, `window.__oeWorker`) hold an action open while they run and are listed with it.
 `--no-worker` turns the worker off (the app then downloads the engine's preview), for a before / after comparison.
 
+`node e2e/syncstorm.mjs http://127.0.0.1:7931 60 1` checks the document change sets against a local simulator engine
+(never the Pi: it edits freely): rounds of concurrent edits, undo/redo, timeline moves, edits from another client and
+document switches, with the browser's copy compared to `GET /api/document` after each round.
+
 ## Files
 
 - `devices.mjs`: the device matrix (CSS viewport, DPR, touch, user agent, safe-area insets, themes, keyboard height).

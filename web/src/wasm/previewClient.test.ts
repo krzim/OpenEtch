@@ -3,9 +3,9 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { applyChanges, deltaOf, syncStep, type DocChanges } from "../api/docSync.ts";
+import { applyChanges, deltaBaseOf, deltaOf, syncStep, type DocChanges } from "../api/docSync.ts";
 import type { GDocument } from "../api/types.ts";
-import { docMessage } from "./previewClient.ts";
+import { docMessage, Stale, WorkerCore } from "./previewClient.ts";
 
 function doc(revision: number, xs: number[]): GDocument {
   return {
@@ -55,3 +55,118 @@ test("syncStep remembers the change set an applied document was made with", () =
   assert.equal(deltaOf(step.doc), c1);
   assert.equal(deltaOf(d3), undefined);
 });
+
+// ---- WorkerCore with a stand-in Worker: what reaches the worker, by document rather than by revision -------------
+
+class FakeWorker {
+  static all: FakeWorker[] = [];
+  sent: { type: string; [k: string]: unknown }[] = [];
+  terminated = false;
+  onmessage: ((e: { data: unknown }) => void) | null = null;
+  onerror: ((e: unknown) => void) | null = null;
+  constructor() {
+    FakeWorker.all.push(this);
+  }
+  postMessage(m: { type: string }): void {
+    this.sent.push(m);
+  }
+  terminate(): void {
+    this.terminated = true;
+  }
+  /** The worker says it is ready. */
+  ready(): void {
+    this.onmessage?.({ data: { type: "ready" } });
+  }
+  /** Finish the last job sent, as the worker would. */
+  finish(): void {
+    const job = [...this.sent].reverse().find((m) => m.type === "job") as { id: number; kind: string; rev: number };
+    this.sent = this.sent.filter((m) => m.type !== "job");
+    this.onmessage?.({ data: { type: "done", id: job.id, kind: job.kind, rev: job.rev, json: "{}", ms: { doc: 0, job: 0 } } });
+  }
+  /** The document messages sent so far (`doc` whole or `changes`), taken off the log. */
+  take(): string[] {
+    const out = this.sent.filter((m) => m.type === "doc" || m.type === "changes").map((m) => m.type);
+    this.sent = this.sent.filter((m) => m.type === "job");
+    return out;
+  }
+}
+
+function withFakeWorker(fn: () => Promise<void>): () => Promise<void> {
+  return async () => {
+    const g = globalThis as { Worker?: unknown };
+    const before = g.Worker;
+    g.Worker = FakeWorker;
+    FakeWorker.all = [];
+    try {
+      await fn();
+    } finally {
+      g.Worker = before;
+    }
+  };
+}
+
+const sync = (held: GDocument, epoch: string, ch: DocChanges): GDocument => {
+  const s = syncStep(held, epoch, { epoch, document_id: "default", revision: ch.to, changes: ch, history: null, project: null });
+  assert.equal(s.kind, "apply");
+  return (s as { doc: GDocument }).doc;
+};
+
+test(
+  "a whole document of the revision the worker holds (a restarted engine) is sent again, never patched over",
+  withFakeWorker(async () => {
+    const core = new WorkerCore("test");
+    const d3 = doc(3, [0, 0]);
+    core.setDocument(3, d3);
+    const first = core.run("full");
+    const w = FakeWorker.all[0];
+    w.ready();
+    assert.deepEqual(w.take(), ["doc"]);
+    w.finish();
+    await first;
+
+    // An edit: the change set travels.
+    const d4 = sync(d3, "run-1", move(3, d3, 0, 5));
+    core.setDocument(4, d4, deltaOf(d4), deltaBaseOf(d4));
+    const second = core.run("full");
+    assert.deepEqual(w.take(), ["changes"]);
+    w.finish();
+    await second;
+
+    // The engine restarted and is at revision 4 too, with another document: it goes whole.
+    const other = doc(4, [9, 9, 9]);
+    core.setDocument(4, other);
+    const third = core.run("full");
+    const sent = w.sent.find((m) => m.type === "doc") as { doc: unknown } | undefined;
+    assert.deepEqual(w.take(), ["doc"]);
+    assert.equal(sent?.doc, other);
+    w.finish();
+    await third;
+
+    // A change set from revision 4 of the old run's document does not patch the new one.
+    const stale = sync(d4, "run-1", move(4, d4, 1, 2));
+    core.setDocument(5, stale, deltaOf(stale), deltaBaseOf(stale));
+    const fourth = core.run("full");
+    assert.deepEqual(w.take(), ["doc"]);
+    w.finish();
+    await fourth;
+  }),
+);
+
+test(
+  "a job for a replaced document of the same revision is cancelled",
+  withFakeWorker(async () => {
+    const core = new WorkerCore("test");
+    core.setDocument(7, doc(7, [0]));
+    const old = core.run("full");
+    FakeWorker.all[0].ready();
+    core.setDocument(7, doc(7, [1, 2]));
+    const next = core.run("full");
+    await assert.rejects(old, Stale);
+    assert.equal(FakeWorker.all[0].terminated, true, "the busy worker was replaced");
+    const w = FakeWorker.all[1];
+    w.ready();
+    assert.deepEqual(w.take(), ["doc"]);
+    w.finish();
+    await next;
+  }),
+);

@@ -12,7 +12,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api/client.ts";
-import { deltaOf } from "../api/docSync.ts";
+import { deltaBaseOf, deltaOf } from "../api/docSync.ts";
 import { previewFromWorker, type PreviewSummary } from "../api/packedPreview.ts";
 import type { GDocument, Preview } from "../api/types.ts";
 import { Stale, fillCore, previewCore, workerSupported } from "./previewClient.ts";
@@ -33,12 +33,26 @@ export interface BrowserPreview {
 /** Wait this long after the last edit before planning stats in the Design workspace. */
 const STATS_DELAY_MS = 350;
 
+/** A number per document object: what a preview was planned from (revisions repeat after an engine restart). */
+const serials = new WeakMap<object, number>();
+let nextSerial = 1;
+function serialOf(doc: object): number {
+  let n = serials.get(doc);
+  if (n === undefined) {
+    n = nextSerial++;
+    serials.set(doc, n);
+  }
+  return n;
+}
+
 export function useBrowserPreview(o: { doc: GDocument | null; wantPreview: boolean; wantStats: boolean; contextSeq: number }): BrowserPreview {
   const [mode, setMode] = useState<BrowserPreviewMode>(workerSupported() ? "starting" : "fallback");
   const [ctxVersion, setCtxVersion] = useState(0);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [summary, setSummary] = useState<{ rev: number; s: PreviewSummary | null } | null>(null);
+  /** Bumped to plan again after a job failed (the worker restarted; after a few failures it gives up: fallback). */
+  const [retry, setRetry] = useState(0);
   const modeRef = useRef(mode);
   modeRef.current = mode;
   // What the shown preview / summary was planned from: [revision, context version].
@@ -62,7 +76,7 @@ export function useBrowserPreview(o: { doc: GDocument | null; wantPreview: boole
         return;
       }
       const json = JSON.stringify(ctx);
-      previewCore.setContext(json);
+      const changed = previewCore.setContext(json);
       fillCore.setContext(json);
       const ok = await previewCore.ready();
       if (!live) return;
@@ -71,7 +85,8 @@ export function useBrowserPreview(o: { doc: GDocument | null; wantPreview: boole
         return;
       }
       setMode("worker");
-      setCtxVersion((v) => v + 1);
+      // The same context (refetched after a reconnect) plans nothing again.
+      if (changed) setCtxVersion((v) => v + 1);
     })();
     return () => {
       live = false;
@@ -84,10 +99,17 @@ export function useBrowserPreview(o: { doc: GDocument | null; wantPreview: boole
     if (mode !== "worker" || !doc || rev === null) return;
     // The change set this revision came with, so the workers patch their copies instead of receiving it whole.
     const delta = deltaOf(doc);
-    previewCore.setDocument(rev, doc, delta);
-    fillCore.setDocument(rev, doc, delta);
-    const key = `${rev}:${ctxVersion}`;
+    const base = deltaBaseOf(doc);
+    previewCore.setDocument(rev, doc, delta, base);
+    fillCore.setDocument(rev, doc, delta, base);
+    const key = `${serialOf(doc)}:${ctxVersion}`;
     let live = true;
+    // A failed job restarted the worker: plan again (after a few failures in a row the worker gives up: fallback).
+    const failed = (e: unknown) => {
+      if (!live || e instanceof Stale) return;
+      if (previewCore.ok()) setRetry((n) => n + 1);
+      else setMode("fallback");
+    };
     if (o.wantPreview) {
       if (fullKey.current === key) return;
       previewCore
@@ -97,14 +119,13 @@ export function useBrowserPreview(o: { doc: GDocument | null; wantPreview: boole
           const w = previewFromWorker(r.json, r.arrays);
           fullKey.current = key;
           statsKey.current = key;
+          // The revision it shows: Start Here asks the engine to run only that revision.
+          if (w.preview) w.preview.revision = r.rev;
           setPreview(w.preview);
           setPreviewError(w.error);
           setSummary({ rev: r.rev, s: w.summary });
         })
-        .catch((e: unknown) => {
-          if (!live || e instanceof Stale) return;
-          if (!previewCore.ok()) setMode("fallback");
-        });
+        .catch(failed);
       return () => {
         live = false;
       };
@@ -119,10 +140,7 @@ export function useBrowserPreview(o: { doc: GDocument | null; wantPreview: boole
             statsKey.current = key;
             setSummary({ rev: r.rev, s: w.error ? null : w.summary });
           })
-          .catch((e: unknown) => {
-            if (!live || e instanceof Stale) return;
-            if (!previewCore.ok()) setMode("fallback");
-          });
+          .catch(failed);
       }, STATS_DELAY_MS);
       return () => {
         live = false;
@@ -130,8 +148,8 @@ export function useBrowserPreview(o: { doc: GDocument | null; wantPreview: boole
       };
     }
     return undefined;
-    // `doc` is read through its revision: revisions are unique across the engine's open documents.
-  }, [mode, rev, ctxVersion, o.wantPreview, o.wantStats]);
+    // By document object, not revision: an engine restarted counts revisions again from its own start.
+  }, [mode, doc, rev, ctxVersion, retry, o.wantPreview, o.wantStats]);
 
   return { mode, preview, previewError, summary: summary?.s ?? null, summaryRev: summary?.rev ?? null };
 }

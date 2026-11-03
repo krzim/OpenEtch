@@ -319,6 +319,8 @@ export interface Preview {
   segments: PreviewSegment[];
   /** The segments as flat arrays (api/packedPreview.ts), from the browser's preview worker. */
   packed?: PackedSegments;
+  /** The document revision it was planned from, when known (Start Here runs only that revision). */
+  revision?: number;
   /** The job's passes in burn order (engines that report them). */
   passes?: PreviewPass[];
   /** Free-form job statistics (time estimate, mark/jump length...). */

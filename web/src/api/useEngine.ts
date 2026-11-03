@@ -170,7 +170,7 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
           const b = await api.previewBinary();
           binaryPreview.current = true;
           previewRevision.current = b.revision;
-          setPreview(b.preview);
+          setPreview(b.revision >= 0 ? { ...b.preview, revision: b.revision } : b.preview);
           setPreviewError(null);
           return;
         } catch (e) {
@@ -221,6 +221,8 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
     if (step.kind === "gap") return "gap";
     payloads.current++;
     if (step.kind === "replace" || step.kind === "apply") {
+      // A whole document may repeat the revision of the preview shown (an engine restarted counts again).
+      if (step.kind === "replace") previewRevision.current = -1;
       docRef.current = step.doc;
       epochRef.current = p.epoch;
       setSyncPoint(p.epoch, step.doc.revision);
@@ -408,6 +410,8 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
     let timer: number | undefined;
     let delay = 500;
     let stopped = false;
+    /** Whether the socket was open before (a reconnect refetches the preview context). */
+    let opened = false;
     const connect = () => {
       setLink("connecting");
       try {
@@ -419,8 +423,11 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
       ws.onopen = () => {
         delay = 500;
         setLink("open");
-        // Anything may have changed while we were away (also a restarted engine, whose revisions start again).
+        // Anything may have changed while we were away (also a restarted engine, whose revisions start again),
+        // including the browser preview's planning context (a device change or a finished run while disconnected).
         announced.current = -1;
+        if (opened) setContextSeq((n) => n + 1);
+        opened = true;
         void refreshDoc();
         void refreshMachine();
       };
