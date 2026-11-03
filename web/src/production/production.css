@@ -199,10 +199,13 @@
   color: var(--muted);
 }
 
-/* On a phone the pocket, the value, the result and Re-mark fit without scrolling sideways once the run and project
-   columns go (the times tell the runs apart; CSV export keeps every column). */
-:root[data-layout="phone"] .prod-ledger :is(th, td):is(:nth-child(2), :nth-child(3)) {
+/* On a phone the pocket, the value, the result and Re-mark fit without scrolling sideways once the run, project and
+   slot columns go (the times tell the runs apart, the pocket names the slot; CSV export keeps every column). */
+:root[data-layout="phone"] .prod-ledger :is(th, td):is(:nth-child(2), :nth-child(3), :nth-child(4)) {
   display: none;
+}
+:root[data-layout="phone"] .prod-ledger .prod-value {
+  white-space: normal;
 }
 
 [data-pointer="coarse"] .prod-chip,

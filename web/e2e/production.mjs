@@ -72,6 +72,8 @@ async function setup(url) {
   await execute(url, "layer.update", { id: frost, settings: { options: { operator_pause: true } } });
   await execute(url, "var.set_serial", { start: 1, end: 60, current: 41, advance_by: 6, auto_advance: true, empty_slots: [3] });
   await api(url, "/api/job/settings", put({ stop_at: 12 }));
+  // Each device burns once: a reused engine's counter would reach Stop At and refuse the next Start.
+  await api(url, "/api/job/count/reset", json({}));
   await api(url, "/api/production/maintenance", put({ reminders: [{ name: "Clean the lens", every_hours: 40 }, { name: "Check the jig", every_runs: 1 }], origin: "ui" }));
   return pedal;
 }
