@@ -215,7 +215,7 @@ pub fn to_csv(entries: &[LedgerEntry]) -> String {
 pub(crate) fn append_line(path: &Path, line: &str) -> std::io::Result<()> {
     use std::io::{Read as _, Seek as _, SeekFrom};
     let mut f = std::fs::OpenOptions::new().create(true).read(true).append(true).open(path)?;
-    let mut last = [b'\n'];
+    let mut last = *b"\n";
     if f.metadata()?.len() > 0 {
         f.seek(SeekFrom::End(-1))?;
         f.read_exact(&mut last)?;
