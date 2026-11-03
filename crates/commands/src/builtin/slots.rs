@@ -247,7 +247,8 @@ pub fn slot_plan(doc: &Document) -> SlotPlan {
     } else if marked == 0 {
         0
     } else {
-        offsets[marked] - offsets[0]
+        // Offsets are the texts' own (any i64): never an overflow.
+        offsets[marked].saturating_sub(offsets[0])
     };
     SlotPlan {
         exhausted: v.stop_at_end && !slots.is_empty() && v.current > v.end,

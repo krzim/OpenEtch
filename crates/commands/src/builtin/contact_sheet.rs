@@ -390,7 +390,7 @@ impl Command for ContactSheet {
         if from < lo || from > hi {
             return Err(invalid(cmd, format!("from must be within the start and end values {lo}..={hi}")));
         }
-        let total = (hi - lo) / step + 1;
+        let total = (hi.saturating_sub(lo) / step).saturating_add(1);
         let skip: Vec<ObjectId> = found.iter().map(|(id, ..)| id.clone()).collect();
         let list: Vec<Target> = found
             .iter()

@@ -308,6 +308,9 @@ impl Document {
                 return Some("the stock has a number that is not finite".into());
             }
         }
+        if self.jigs.len() > jig::MAX_JIGS {
+            return Some(format!("the document has more than {} jigs", jig::MAX_JIGS));
+        }
         if let Some(p) = self.jigs.iter().find_map(jig::Jig::problem) {
             return Some(p);
         }
