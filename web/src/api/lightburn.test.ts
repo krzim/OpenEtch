@@ -202,7 +202,17 @@ test("machineLightBurn reads the machine status's lightburn diffs", () => {
   assert.equal(L.formatDiffValue(false), "No");
   assert.equal(L.formatDiffValue(null), "–");
   assert.equal(L.formatDiffValue("jcz150.cor"), "jcz150.cor");
-  assert.equal(L.diffLabel("timing.laser_on_delay_us"), "Timing laser on delay us");
+  // Human labels with units, the device editor's where it has one.
+  assert.equal(L.diffLabel("timing.jump_speed_mm_s"), "Jump speed (mm/s)");
+  assert.equal(L.diffLabel("timing.laser_on_delay_us"), "Laser On TC (µs)");
+  assert.equal(L.diffLabel("field_mm"), "Field width (mm)");
+  assert.equal(L.diffLabel("calibration.scale_x"), "Scale (X)");
+  assert.equal(L.diffLabel("red_dot.offset_x_mm"), "Red dot: Offset X (mm)");
+  assert.equal(L.diffLabel("calibration.offset_x_mm"), "Field: Offset X (mm)");
+  assert.equal(L.diffLabel("cor_file"), "Correction file");
+  assert.equal(L.diffLabel("some_new.max_thing_mm_s"), "Some new max thing (mm/s)");
+  assert.equal(L.diffLabel("(LightBurn prefs)"), "(LightBurn prefs)");
+  assert.equal(L.diffLabel("Max Speed"), "Max Speed");
 });
 
 // ---- prefs.ini upload ---------------------------------------------------------------------------------------------

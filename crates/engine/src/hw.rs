@@ -905,6 +905,8 @@ impl Machine {
             "profile": config.profile.name,
             "laser_source": config.profile.laser_source,
             "max_power_pct": config.profile.max_power_pct,
+            // Whether jobs send a pulse width (a MOPA with Q-pulse enabled), so the UI shows the Q-Pulse field only then.
+            "pulse_width_enabled": driver == DriverKind::Lmc && config.profile.pulse_width_enabled && config.profile.fiber_kind == FiberKind::Mopa,
             "last_error": self.last_error(),
             "sim_counters": self.sim.as_ref().map(|c| c.json()),
         });

@@ -79,6 +79,7 @@ import { EditToolbar } from "./EditMenus.tsx";
 import { RULER_PX, Rulers } from "./Rulers.tsx";
 import type { Tool } from "./Viewport.tsx";
 import "./edit.css";
+import { errorText } from "../api/errorText.ts";
 
 type Run = (inv: Invocation | Invocation[]) => Promise<unknown>;
 
@@ -266,7 +267,7 @@ function canvasFocused(): boolean {
 const lu = () => getPrefs().units;
 
 function errText(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
+  return errorText(e);
 }
 
 const SHAPE_WORD: Record<string, string> = { rect: "rectangle", ellipse: "ellipse", path: "path" };

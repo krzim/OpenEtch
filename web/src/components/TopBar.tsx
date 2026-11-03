@@ -36,6 +36,8 @@ export interface TopBarProps {
   projectName: string | null;
   /** Unsaved changes; null when the engine reports no project state. */
   dirty: boolean | null;
+  /** File > Save as…, offered with the full project name when the name is tapped. */
+  onSaveAs?: () => void;
   pendingRuns: number;
   /** Extra controls before undo/redo (Window and Help menus, theme switch, Preferences, or the ⋯ overflow). */
   extra?: ReactNode;
@@ -87,7 +89,7 @@ export function TopBar(p: TopBarProps) {
         <div className="brand">
           <span className="brand-mark" aria-hidden="true" />
           <span className="brand-name">OpenEtch</span>
-          <ProjectIndicator name={p.projectName} docName={p.docName} dirty={p.dirty} />
+          <ProjectIndicator name={p.projectName} docName={p.docName} dirty={p.dirty} onSaveAs={p.onSaveAs} />
           {!phone && p.docExtra}
           {beginnerMode && !phone && (
             <span className="pill beginner-badge" title={t("prefs.beginnerBadgeTitle")}>

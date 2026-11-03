@@ -179,6 +179,8 @@ test("canvas workspace: a galvo field (square or not), a gantry rectangle, else 
   // A galvo shows its real field: square within 0.05 mm (LightBurn's 0.1 mm display), else width x height.
   assert.equal(D.deviceSizeText({ kind: "jcz_galvo", workspace_mm: [153.75, 153.8] }), "153.75 mm");
   assert.equal(D.deviceSizeText({ kind: "jcz_galvo", workspace_mm: [153.75, 100] }), "153.75 × 100 mm");
+  // A gantry's bed reads W x H even when square (it read "400 mm" like a galvo field).
+  assert.equal(D.deviceSizeText({ kind: "grbl", workspace_mm: [400, 400] }), "400 × 400 mm");
 });
 
 // ---- switching and removing ---------------------------------------------------------------------------------------
@@ -371,4 +373,23 @@ test("a GRBL device form becomes the engine's profile, typing slips caught first
   assert.equal(D.kindLabel("grbl"), "GRBL gantry");
   assert.equal(D.isGalvo("grbl"), false);
   assert.equal(D.deviceSummary({ id: "g", name: "GRBL", display_name: "Diode", kind: "grbl", workspace_mm: [400, 300], origin: "bottom_left", controllable: true })?.kind, "grbl");
+});
+
+test("the Devices window groups by kind, galvos first, the active device first in its group, then by name", () => {
+  const dev = (id: string, kind: string, controllable = true) => ({ id, display_name: id, kind, workspace_mm: [100, 100], controllable });
+  const l = D.deviceList({
+    active: "galvo 2",
+    devices: [dev("shop grbl", "grbl"), dev("galvo 10", "jcz_galvo"), dev("galvo 9", "jcz_galvo", false), dev("galvo 2", "jcz_galvo"), dev("co2", "ruida"), dev("galvo 1", "jcz_galvo")],
+  });
+  const g = D.deviceGroups(l);
+  assert.deepEqual(
+    g.map((x) => [x.kind, x.devices.map((d) => d.id)]),
+    [
+      ["jcz_galvo", ["galvo 2", "galvo 1", "galvo 10", "galvo 9"]],
+      ["grbl", ["shop grbl"]],
+      ["ruida", ["co2"]],
+    ],
+  );
+  assert.equal(g[1].label, "GRBL gantry");
+  assert.deepEqual(D.deviceGroups({ active: null, devices: [] }), []);
 });

@@ -9,6 +9,7 @@ import { CheckField, Modal, NumberField } from "../components/ui.tsx";
 import { DEFAULT_TRACE, traceProblem, type TraceOptions } from "../files/fileFormats.ts";
 import { saveBlob } from "../files/filesApi.ts";
 import { errText, fileBase64 } from "../libs/ui.tsx";
+import { userMessage } from "../api/errorText.ts";
 import { useT } from "../workspace/usePrefs.ts";
 import {
   DEFAULT_SLOTS,
@@ -192,7 +193,7 @@ export function MultiTraceDialog(p: Common & { imageIds: string[]; activeLayer: 
     });
     if (!res) return;
     const traced = res.files.filter((f) => f.svg);
-    for (const f of res.files.filter((x) => x.error)) p.notify(t("mtrace.failed", { name: f.name, error: f.error ?? "" }), "error");
+    for (const f of res.files.filter((x) => x.error)) p.notify(t("mtrace.failed", { name: f.name, error: userMessage(f.error ?? "") }), "error");
     if (!traced.length) return setError(t("mtrace.doneFiles", { n: 0, total: res.files.length }));
     if (toDoc) {
       const r = await go(() => p.run(importTracedSvgs(traced, p.activeLayer)));

@@ -84,6 +84,28 @@ export function barActions(selectionCount: number, grouped: boolean): HudAction[
   return out;
 }
 
+/** One action bar button and the gap after it, px (touch.css: 44 px buttons, 2 px apart). */
+const BAR_SLOT = 46;
+/** The bar's padding and border, both sides, px. */
+const BAR_CHROME = 10;
+
+/** How many action bar buttons fit in `widthPx` (at least one, the ⋯). */
+export function barCapacity(widthPx: number): number {
+  return Math.max(1, Math.floor((widthPx - BAR_CHROME + 2) / BAR_SLOT));
+}
+
+/**
+ * The action bar's buttons for `capacity` slots, so it never scrolls sideways: all of them when they fit, else the
+ * first ones and a last ⋯ whose menu lists the rest (the full context menu after them).
+ */
+export function fitBarActions(actions: readonly HudAction[], capacity: number): { shown: HudAction[]; overflow: HudAction[] } {
+  if (actions.length <= capacity) return { shown: [...actions], overflow: [] };
+  const more = actions.find((a) => a.id === "menu") ?? { id: "menu", label: "touch.more", icon: "more" };
+  const rest = actions.filter((a) => a.id !== "menu");
+  const n = Math.max(0, capacity - 1);
+  return { shown: [...rest.slice(0, n), more], overflow: rest.slice(n) };
+}
+
 export interface Rect {
   left: number;
   top: number;

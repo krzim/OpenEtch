@@ -139,3 +139,25 @@
   min-width: 44px;
   min-height: 44px;
 }
+
+/* The toasts while a dialog is open (App.tsx portals them into the top dialog): a strip above the dialog's buttons, in
+   the dialog's own flow, so a toast never covers the dialog. */
+.oe-dialog > .modal-foot {
+  order: 2;
+}
+.toasts-dialog {
+  order: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 14px 0;
+}
+.toasts-dialog .toast {
+  width: 100%;
+}
+/* In the phone's full-height sheet: a strip under its content, above the tab bar. */
+.bottom-sheet > .toasts-dialog {
+  flex: none;
+  padding: 8px 14px;
+  border-top: 1px solid var(--border-soft);
+}

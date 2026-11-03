@@ -37,7 +37,14 @@ type Notify = (msg: string, kind?: "info" | "error") => void;
 type Run = (inv: Invocation | Invocation[]) => Promise<unknown>;
 
 /** Red Dot Always On and the Laser tools buttons, under the Laser window's run options. */
-export function LaserExtras(p: { designOnly: string | null; tools?: DropItem[]; notify: Notify; report: (e: unknown) => void }) {
+export function LaserExtras(p: {
+  designOnly: string | null;
+  /** The active machine is a galvo: a GRBL or Ruida gantry has no red pointer, so no Red dot always on. */
+  galvo?: boolean;
+  tools?: DropItem[];
+  notify: Notify;
+  report: (e: unknown) => void;
+}) {
   const t = useT();
   const dev = useActiveDevice();
   const io = dev ? ioPorts(dev.profile) : null;
@@ -56,7 +63,7 @@ export function LaserExtras(p: { designOnly: string | null; tools?: DropItem[]; 
   };
   return (
     <div className="lx-laser-extras">
-      {io && (
+      {io && p.galvo !== false && (
         // Same look as the dock's other checkboxes (box first, one line), not a form field with a fixed-width label.
         <label className="laser-check" title={t("lx.redDotTitle")}>
           <input type="checkbox" checked={io.red_dot_always_on} disabled={busy || !!p.designOnly} onChange={(e) => setRedDot(e.target.checked)} />

@@ -191,6 +191,20 @@ export function resolveOptions(settings: CutSettings | null | undefined): Resolv
  * How many options differ from a new layer's (for the collapsed section's badge). The GRBL layer options count only
  * when `gantry` (the active device is a GRBL gantry, the only one that shows and uses them).
  */
+/**
+ * Whether a pass's GRBL overscan applies, as the planner decides it (plan/src/job.rs `overscan_mm`): only passes that
+ * hold scan lines get it, the hatch lines of Fill and Fill + Line (Offset Fill traces closed rings) and image runs
+ * (an image on the layer, whatever the pass's mode).
+ */
+export function overscanApplies(mode: CutSettings["mode"], hasImages: boolean): boolean {
+  return hasImages || mode === "fill" || mode === "fill_then_line";
+}
+
+/** Whether the layer holds an image object (its pass settings then also scan the image). */
+export function layerHasImages(doc: GDocument | null | undefined, layerId: string): boolean {
+  return !!doc?.objects.some((o) => o.layer === layerId && o.geometry.kind === "image");
+}
+
 export function activeOptionCount(r: ResolvedOptions, gantry = false): number {
   let c = 0;
   if (!r.output) c++;

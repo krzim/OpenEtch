@@ -14,6 +14,7 @@
 
 import type { MachineStatus } from "./types.ts";
 import { tr } from "../workspace/tr.ts";
+import { profileGroups } from "./deviceProfile.ts";
 
 /** One device of GET /api/lightburn (only these fields are sent). */
 export interface LightBurnDevice {
@@ -117,10 +118,58 @@ export function formatDiffValue(v: unknown): string {
   return String(v);
 }
 
-/** A profile field name for display: "max_mark_speed_mm_s" -> "Max mark speed mm s". */
+/** Unit suffixes of profile field names, longest first, and how they read. */
+const FIELD_UNITS: readonly [RegExp, string][] = [
+  [/_mm_s$/, "mm/s"],
+  [/_mm$/, "mm"],
+  [/_us$/, "µs"],
+  [/_ms$/, "ms"],
+  [/_ns$/, "ns"],
+  [/_khz$/, "kHz"],
+  [/_pct$/, "%"],
+  [/_deg$/, "°"],
+  [/_s$/, "s"],
+];
+
+/** Profile fields the device editor does not list. */
+const EXTRA_LABELS: Record<string, string> = { cor_file: "Correction file" };
+
+let profileLabelCache: Map<string, string> | null = null;
+
+/** The device editor's own labels by profile path ("Jump speed (mm/s)"); a label two groups share names its group. */
+function profileLabels(): Map<string, string> {
+  if (profileLabelCache) return profileLabelCache;
+  const rows = profileGroups(false).flatMap((g) => g.fields.map((f) => ({ path: f.path, label: f.label, unit: f.unit, group: g.title })));
+  const count = new Map<string, number>();
+  for (const r of rows) count.set(r.label, (count.get(r.label) ?? 0) + 1);
+  profileLabelCache = new Map(
+    rows.map((r) => {
+      const name = (count.get(r.label) ?? 0) > 1 ? `${r.group}: ${r.label}` : r.label;
+      return [r.path, r.unit ? `${name} (${r.unit})` : name];
+    }),
+  );
+  return profileLabelCache;
+}
+
+/**
+ * A profile field name for display, with its unit: the device editor's label when it has one
+ * ("timing.jump_speed_mm_s" -> "Jump speed (mm/s)"), else the name in words ("max_mark_speed_mm_s" ->
+ * "Max mark speed (mm/s)"). Text that is already a label passes through.
+ */
 export function diffLabel(field: string): string {
-  const t = field.replace(/[._]+/g, " ").trim();
-  return t.charAt(0).toUpperCase() + t.slice(1);
+  const known = profileLabels().get(field) ?? EXTRA_LABELS[field];
+  if (known) return known;
+  if (!/[._]/.test(field)) return field.charAt(0).toUpperCase() + field.slice(1);
+  let base = field;
+  let unit = "";
+  for (const [re, u] of FIELD_UNITS)
+    if (re.test(base)) {
+      base = base.replace(re, "");
+      unit = u;
+      break;
+    }
+  const t = base.replace(/[._]+/g, " ").trim();
+  return t.charAt(0).toUpperCase() + t.slice(1) + (unit ? ` (${unit})` : "");
 }
 
 /** Case-insensitive comparison key for device names. */

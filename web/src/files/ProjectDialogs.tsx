@@ -23,6 +23,7 @@ import { filesApi, saveBlob } from "./filesApi.ts";
 import { FilePick, NumBox, Segmented, parseBox } from "./FilesUiParts.tsx";
 import { LightBurnPrefsImport, applyLightBurnPrefs } from "./LightBurnPrefsImport.tsx";
 import { planLightBurnPrefs } from "./lightburnPrefs.ts";
+import { errorText } from "../api/errorText.ts";
 
 type Notify = (msg: string, kind?: "info" | "error") => void;
 
@@ -34,7 +35,7 @@ function useLoad<T>(load: () => Promise<unknown>, parse: (r: unknown) => T, deps
     let alive = true;
     load()
       .then((r) => alive && (setData(parse(r)), setError(null)))
-      .catch((e) => alive && (setData(parse(undefined)), setError(e instanceof Error ? e.message : String(e))));
+      .catch((e) => alive && (setData(parse(undefined)), setError(errorText(e))));
     return () => {
       alive = false;
     };

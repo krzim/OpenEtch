@@ -13,7 +13,7 @@ import { useLayoutMode } from "../workspace/layoutMode.ts";
 import type { Invocation } from "../api/client.ts";
 import * as C from "../api/commands.ts";
 import { gantryOf } from "../api/grbl.ts";
-import { boxOutside, frequencyRange, nearestPulseWidth, pulseWidths } from "../api/laser.ts";
+import { boxOutside, frequencyRange, nearestPulseWidth, pulseWidths, sourceFields } from "../api/laser.ts";
 import { useCircleLock } from "../circleLock.ts";
 import { MAX_SUB_LAYERS, clampPass, cleanupPass, passAfterDelete, passAfterMove, passColor, passEntries, passFromResult, settingsSummary } from "../api/passes.ts";
 import type { Cleanup, CutSettings, FillMode, GDocument, Layer, MachineStatus, Vec2 } from "../api/types.ts";
@@ -25,6 +25,7 @@ import { ANCHORS, anchorPoint, useAnchor } from "../workspace/numeric.ts";
 import { passLabelText, shapeKindText, usePrefs, useT, useTD } from "../workspace/usePrefs.ts";
 import { formatLength, lengthDigits, lengthToDisplay, trimNumber } from "../workspace/units.ts";
 import { CutOptionsSection, ShapeCutProperties } from "./CutOptions.tsx";
+import { layerHasImages } from "../api/cutOptions.ts";
 import { ImageSettings } from "./ImageSettings.tsx";
 import { LayerPresetBar } from "../libs/LayerDefaults.tsx";
 import { layerLink } from "../libs/model.ts";
@@ -319,6 +320,7 @@ export function LayerSection({
   report,
   doc,
   has,
+  hasImages,
 }: {
   layer: Layer;
   machine: MachineStatus | null;
@@ -326,6 +328,8 @@ export function LayerSection({
   report: (e: unknown) => void;
   doc?: GDocument;
   has?: (cmd: string) => boolean;
+  /** The layer holds an image (for the overscan field); read from `doc` when not given. */
+  hasImages?: boolean;
 }) {
   const t = useT();
   const setL = (patch: { name?: string; color?: string; visible?: boolean; output?: boolean }) => run(C.layerUpdate(layer.id, patch)).catch(report);
@@ -343,7 +347,7 @@ export function LayerSection({
       <CheckField label={t("pp.output")} checked={layer.output} onChange={(output) => setL({ output })} />
 
       <LayerPresetBar layer={layer} run={run} report={report} />
-      <PassEditor layer={layer} machine={machine} run={run} report={report} has={has} />
+      <PassEditor layer={layer} machine={machine} run={run} report={report} has={has} hasImages={hasImages ?? layerHasImages(doc, layer.id)} />
       <ImageSettings layer={layer} doc={doc} run={run} report={report} has={has} />
 
       {doc && has?.(C.OPT.layerDelete) && others.length > 0 && (
@@ -382,12 +386,14 @@ function PassEditor({
   run,
   report,
   has,
+  hasImages,
 }: {
   layer: Layer;
   machine: MachineStatus | null;
   run: Run;
   report: (e: unknown) => void;
   has?: (cmd: string) => boolean;
+  hasImages: boolean;
 }) {
   const t = useT();
   // The open pass, per layer: selecting another layer opens its Main tab.
@@ -544,7 +550,7 @@ function PassEditor({
         <>
           <CutSettingsForm key={`${layer.id}#${pass}`} settings={entry.settings} machine={machine} onPatch={patch} />
           {/* Beginner Mode hides the advanced cut settings (tabs included), as LightBurn's Cut Settings Editor does. */}
-          {!beginnerMode && <CutOptionsSection key={`opts-${layer.id}#${pass}`} layer={layer} sub={sub} settings={entry.settings} run={run} report={report} has={has} gantry={gantryOf(machine)} />}
+          {!beginnerMode && <CutOptionsSection key={`opts-${layer.id}#${pass}`} layer={layer} sub={sub} settings={entry.settings} run={run} report={report} has={has} gantry={gantryOf(machine)} hasImages={hasImages} />}
         </>
       ) : (
         <dl className="kv">
@@ -566,6 +572,8 @@ function CutSettingsForm({ settings: s, machine, onPatch }: { settings: CutSetti
   const freq = frequencyRange(machine);
   const pw = s.pulse_width_ns;
   const pwKnown = pw === null || widths.includes(pw);
+  // Only the source settings the active device type takes (a GRBL or Ruida gantry has no frequency or pulse width).
+  const fields = sourceFields(machine);
   return (
     <>
       <label className="field">
@@ -582,16 +590,19 @@ function CutSettingsForm({ settings: s, machine, onPatch }: { settings: CutSetti
       </label>
       <NumberField label={t("pp.power")} unit="%" value={s.power_pct} min={0} max={100} digits={1} stepper onCommit={num((power_pct) => ({ power_pct }))} />
       <NumberField label={t("pp.speed")} unit="mm/s" value={s.speed_mm_s} min={0.1} digits={1} stepper onCommit={num((speed_mm_s) => ({ speed_mm_s }))} />
-      <NumberField
-        label={t("pp.frequency")}
-        unit="kHz"
-        value={s.frequency_khz}
-        min={freq.min}
-        max={freq.max}
-        digits={1}
-        stepper
-        onCommit={num((frequency_khz) => ({ frequency_khz }))}
-      />
+      {fields.frequency && (
+        <NumberField
+          label={t("pp.frequency")}
+          unit="kHz"
+          value={s.frequency_khz}
+          min={freq.min}
+          max={freq.max}
+          digits={1}
+          stepper
+          onCommit={num((frequency_khz) => ({ frequency_khz }))}
+        />
+      )}
+      {fields.pulseWidth && (
       <label className="field">
         <span className="field-label">{t("pp.pulseWidth")}</span>
         <span className="field-input">
@@ -610,7 +621,8 @@ function CutSettingsForm({ settings: s, machine, onPatch }: { settings: CutSetti
           </select>
         </span>
       </label>
-      {!pwKnown && pw !== null && <p className="warn-text">{t("pp.pwPick", { pw })}</p>}
+      )}
+      {fields.pulseWidth && !pwKnown && pw !== null && <p className="warn-text">{t("pp.pwPick", { pw })}</p>}
       <NumberField label={t("pp.passes")} value={s.passes} min={1} max={1000} digits={0} stepper onCommit={num((v) => ({ passes: Math.round(v) }))} />
 
       <h4 className={hatching ? "" : "muted"}>{hatching ? t("pp.hatch") : t("pp.hatchFillOnly")}</h4>

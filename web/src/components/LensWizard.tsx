@@ -13,6 +13,7 @@ import type { GDocument } from "../api/types.ts";
 import { useT } from "../workspace/usePrefs.ts";
 import { Modal, NumberField } from "./ui.tsx";
 import "./job.css";
+import { errorText } from "../api/errorText.ts";
 
 /** The measurements the engine solves from, in the order the wizard asks for them. */
 export const LENS_MEASURES = ["top_mm", "bottom_mm", "middle_x_mm", "left_mm", "right_mm", "middle_y_mm", "diagonal_up_mm", "diagonal_down_mm"] as const;
@@ -63,7 +64,7 @@ export function LensWizard(p: {
   const [solved, setSolved] = useState<{ current: Record<string, number>; calibration: Record<string, number> } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const fail = (e: unknown) => setError(e instanceof ApiError ? (e.detail ?? e.message) : e instanceof Error ? e.message : String(e));
+  const fail = (e: unknown) => setError(errorText(e));
 
   const addPattern = async () => {
     setBusy(true);

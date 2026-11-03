@@ -8,6 +8,7 @@ import { isMark, layerOf, segmentLength } from "./packedPreview.ts";
 import type { LengthUnit } from "../workspace/prefs.ts";
 import { lengthText } from "../workspace/units.ts";
 import { tr } from "../workspace/tr.ts";
+import { userMessage } from "./errorText.ts";
 
 /** JPT M7 MOPA pulse widths (fixtures/b6-mopa-60w.toml), used when the engine does not report its profile's list. */
 export const DEFAULT_PULSE_WIDTHS_NS = [2, 4, 6, 9, 13, 20, 30, 45, 55, 60, 80, 100, 150, 200, 250, 300, 350, 400, 450, 500];
@@ -26,6 +27,17 @@ export function pulseWidths(machine: MachineStatus | null): number[] {
 export function frequencyRange(machine: MachineStatus | null): { min: number; max: number } {
   const num = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : d);
   return { min: num(machine?.frequency_khz_min, 1), max: num(machine?.frequency_khz_max, 4000) };
+}
+
+/**
+ * The per-layer source settings the active device takes, as LightBurn's Cut Settings show them per device type: a
+ * galvo has Frequency, and Q-Pulse width only when the engine sends one (a MOPA with Q-pulse enabled,
+ * `pulse_width_enabled`); a GRBL or Ruida gantry has neither. With no machine reported every field shows.
+ */
+export function sourceFields(machine: MachineStatus | null | undefined): { frequency: boolean; pulseWidth: boolean } {
+  const driver = machine?.driver;
+  if (driver === "grbl" || driver === "ruida") return { frequency: false, pulseWidth: false };
+  return { frequency: true, pulseWidth: machine?.pulse_width_enabled !== false };
 }
 
 /** The allowed pulse width closest to `ns`. */
@@ -65,19 +77,9 @@ export function boxOutside(b: Box, halfX: number, halfY: number = halfX): boolea
   return b.x0 <= -halfX || b.y0 <= -halfY || b.x1 >= halfX || b.y1 >= halfY;
 }
 
-/** Replace internal object and layer ids in an engine message with their names ("obj-5" -> "Ellipse [0,2]"). */
-export function humanizeIds(msg: string, doc: GDocument | null): string {
-  if (!doc) return msg;
-  const names = new Map<string, string>();
-  for (const o of doc.objects) names.set(o.id, `"${o.name || o.id}"`);
-  for (const l of doc.layers) names.set(l.id, `layer "${l.name}"`);
-  return msg.replace(/\b(obj|layer)-\d+\b/g, (id) => names.get(id) ?? id);
-}
-
-/** An engine error for display: the HTTP prefix ("POST /api/runs: 422 ") dropped and ids named. */
+/** An engine error for display: the HTTP prefix ("POST /api/runs: 422 ") and command ids dropped, ids named. */
 export function friendlyError(msg: string, doc: GDocument | null): string {
-  const m = /^[A-Z]+ \/api\/\S+: \d{3} (.*)$/s.exec(msg);
-  return humanizeIds(m ? m[1] : msg, doc);
+  return userMessage(msg, doc);
 }
 
 /** Seconds as "0.3 s", "42 s", "3 min 05 s" or "1 h 02 min". */
@@ -210,6 +212,7 @@ export const MACHINE_SHOWN_KEYS = new Set([
   "profile",
   "laser_source",
   "max_power_pct",
+  "pulse_width_enabled",
   "pulse_widths_ns",
   "frequency_khz_min",
   "frequency_khz_max",

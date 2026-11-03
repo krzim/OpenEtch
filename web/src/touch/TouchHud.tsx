@@ -11,13 +11,15 @@
 // covers the selection (hudState coverTop). The bars never cover STOP (the HUD sits inside the canvas, below --z-stop)
 // and fade during a gesture.
 
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import type { Tool } from "../components/Viewport.tsx";
 import { usePrefs, useT } from "../workspace/usePrefs.ts";
 import { useLayoutMode } from "../workspace/layoutMode.ts";
 import { useHud } from "./hudState.ts";
-import { barActions, modToggles, selectionCovered } from "./hudModel.ts";
-import { HudItem } from "../hud/CanvasHud.tsx";
+import { barActions, barCapacity, fitBarActions, modToggles, selectionCovered } from "./hudModel.ts";
+import { HudItem, useHudAreaWidth } from "../hud/CanvasHud.tsx";
+import { HUD_GAP } from "../hud/hudLayout.ts";
+import { Menu, type MenuItem } from "../components/Menu.tsx";
 import { latch, lock, useVirtualMods, type VirtualMod } from "./virtualMods.ts";
 import "./touch.css";
 import { Icon } from "../components/ui.tsx";
@@ -44,7 +46,17 @@ export function TouchHud({ tool, selectionCount, onAction }: TouchHudProps) {
   const coarse = layout.pointer === "coarse" || layout.density === "touch";
   const toggles = coarse ? modToggles(tool, hud.rotateMode) : [];
   const showBar = tool === "select" && selectionCount > 0 && !!hud.selRect && (showBarPref === "always" || (showBarPref === "auto" && coarse));
-  const actions = showBar ? barActions(selectionCount, hud.grouped) : [];
+  const all = showBar ? barActions(selectionCount, hud.grouped) : [];
+  // As many buttons as the canvas is wide (a narrow phone has no room for all of them): the rest go under the last ⋯,
+  // so the bar never scrolls sideways or shows a button cut off.
+  const areaW = useHudAreaWidth();
+  const { shown: actions, overflow } = fitBarActions(all, areaW > 0 ? barCapacity(areaW - 2 * HUD_GAP) : all.length);
+  const [overflowAt, setOverflowAt] = useState<{ rect: DOMRect; owner: HTMLElement } | null>(null);
+  const overflowItems: MenuItem[] = [
+    ...overflow.map((a) => ({ label: t(a.label), icon: a.icon, danger: a.id === "delete", action: () => onAction(a.id) })),
+    { sep: true as const },
+    { label: t("touch.allActions"), icon: "more", action: () => onAction("menu") },
+  ];
 
   const lastTap = useRef<{ mod: VirtualMod; t: number } | null>(null);
   const tap = (mod: VirtualMod) => {
@@ -64,7 +76,7 @@ export function TouchHud({ tool, selectionCount, onAction }: TouchHudProps) {
   // selection (or below it), clear of the HUD's other controls and of the sheet.
   const at = showBar && hud.selRect && !selectionCovered(hud.selRect, hud.coverTop) ? hud.selRect : null;
 
-  if (!toggles.length && !actions.length) return null;
+  if (!toggles.length && !actions.length && !overflowAt) return null;
   return (
     <>
       {toggles.length > 0 && (
@@ -104,14 +116,23 @@ export function TouchHud({ tool, selectionCount, onAction }: TouchHudProps) {
                 className={`touch-action${a.id === "delete" ? " danger" : ""}`}
                 title={t(a.label)}
                 aria-label={t(a.label)}
+                aria-haspopup={a.id === "menu" && overflow.length > 0 ? "menu" : undefined}
                 onPointerDown={(e) => e.preventDefault()}
-                onClick={() => onAction(a.id)}
+                onClick={(e) => {
+                  if (a.id === "menu" && overflow.length > 0) {
+                    const owner = e.currentTarget;
+                    setOverflowAt((o) => (o ? null : { rect: owner.getBoundingClientRect(), owner }));
+                  } else onAction(a.id);
+                }}
               >
                 <Icon name={a.icon} size={24} />
               </button>
             ))}
           </div>
         </HudItem>
+      )}
+      {overflowAt && at && overflow.length > 0 && (
+        <Menu items={overflowItems} anchor={overflowAt.rect} placement="above" align="end" label={t("touch.more")} owner={overflowAt.owner} onClose={() => setOverflowAt(null)} />
       )}
     </>
   );

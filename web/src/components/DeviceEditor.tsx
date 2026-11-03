@@ -6,7 +6,7 @@
 // and invalid values, and its message is shown at the field it names. The built-in device is read-only: duplicate it.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, ApiError, type Invocation } from "../api/client.ts";
+import { api, type Invocation } from "../api/client.ts";
 import {
   checkValues,
   errorField,
@@ -27,6 +27,7 @@ import { DeviceJobSettings } from "../libs/JobSafety.tsx";
 import { refreshActiveDevice } from "../libs/store.ts";
 import { Modal, NumberField } from "./ui.tsx";
 import "./job.css";
+import { errorText } from "../api/errorText.ts";
 
 type Notify = (msg: string, kind?: "info" | "error") => void;
 
@@ -92,7 +93,7 @@ export function DeviceEditor(p: {
       }
       setLoaded({ values, limits, raw });
       setInfo(inf && typeof inf === "object" ? (inf as Record<string, unknown>) : null);
-    })().catch((e: unknown) => alive && setLoadError(e instanceof ApiError ? (e.detail ?? e.message) : String(e)));
+    })().catch((e: unknown) => alive && setLoadError(errorText(e)));
     return () => {
       alive = false;
     };
@@ -132,7 +133,7 @@ export function DeviceEditor(p: {
       void refreshActiveDevice();
       p.onChanged();
     } catch (e) {
-      const msg = e instanceof ApiError ? (e.detail ?? e.message) : String(e);
+      const msg = errorText(e);
       const f = errorField(msg);
       if (f) {
         setErrors({ [f]: msg });

@@ -24,6 +24,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Invocation } from "../api/client.ts";
 import * as C from "../api/commands.ts";
 import { createdIds } from "../api/drop.ts";
+import { frequencyRange, sourceFields } from "../api/laser.ts";
 import type { GDocument, Layer, MachineStatus } from "../api/types.ts";
 import { ContextMenu, type MenuItem } from "../components/ContextMenu.tsx";
 import { LayerSection } from "../components/PropertiesPanel.tsx";
@@ -259,6 +260,8 @@ export function CutsLayers(p: CutsLayersProps) {
   // The quick-edit pass: 0 = the main settings, n = sub-layer n (kept in range when sub-layers are deleted).
   const pass = sel ? Math.min(passTab[sel.id] ?? 0, subCount) : 0;
   const passSettings = sel ? (pass === 0 ? sel.settings : sel.sub_layers[pass - 1]) : undefined;
+  const fields = sourceFields(p.machine);
+  const freq = frequencyRange(p.machine);
   const patch = (l: Layer, settings: C.CutSettingsPatch) =>
     void run(pass === 0 ? C.layerUpdate(l.id, { settings }) : C.layerSubUpdate(l.id, pass - 1, { settings })).catch(report);
   const modeText = (m: string) =>
@@ -609,8 +612,20 @@ export function CutsLayers(p: CutsLayersProps) {
                 <NumberField label={t("layers.speed")} unit="mm/s" value={passSettings.speed_mm_s} min={0.01} stepper onCommit={(v) => v !== null && patch(sel, { speed_mm_s: v })} />
                 <NumberField label={t("layers.power")} unit="%" value={passSettings.power_pct} min={0} max={100} stepper onCommit={(v) => v !== null && patch(sel, { power_pct: v })} />
                 <NumberField label={t("layers.passes")} value={passSettings.passes} min={1} max={1000} digits={0} stepper onCommit={(v) => v !== null && patch(sel, { passes: Math.round(v) })} />
-                <NumberField label={t("layers.frequency")} unit="kHz" value={passSettings.frequency_khz} min={1} stepper onCommit={(v) => v !== null && patch(sel, { frequency_khz: v })} />
+                {/* Only the source settings the active device type takes: a GRBL or Ruida gantry has neither. */}
+                {fields.frequency && (
+                  <NumberField
+                    label={t("layers.frequency")}
+                    unit="kHz"
+                    value={passSettings.frequency_khz}
+                    min={freq.min}
+                    max={freq.max}
+                    stepper
+                    onCommit={(v) => v !== null && patch(sel, { frequency_khz: v })}
+                  />
+                )}
                 {/* LightBurn's Q-Pulse (MOPA): empty keeps the source's current pulse width. */}
+                {fields.pulseWidth && (
                 <NumberField
                   label={t("layers.qpulse")}
                   unit="ns"
@@ -621,6 +636,7 @@ export function CutsLayers(p: CutsLayersProps) {
                   placeholder={t("layers.qpulseDefault")}
                   onCommit={(v) => patch(sel, { pulse_width_ns: v === null ? null : Math.round(v) })}
                 />
+                )}
                 {passSettings.mode !== "line" && (
                   <NumberField
                     label={t("layers.interval")}

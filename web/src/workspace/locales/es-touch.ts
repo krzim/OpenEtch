@@ -44,6 +44,7 @@ export const ES_TOUCH: Messages = {
   "touch.flipH": "Voltear en horizontal",
   "touch.flipV": "Voltear en vertical",
   "touch.more": "Más…",
+  "touch.allActions": "Todas las acciones…",
 
   "touch.nudge": "Desplazar",
   "touch.nudgeLeft": "Desplazar a la izquierda",

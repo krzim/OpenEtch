@@ -208,7 +208,8 @@ export function LaserDock(p: LaserDockProps) {
           {cycleText}
         </p>
       )}
-      <RunOptionsPanel selected={p.selection.length} hasStartInput={null} />
+      {/* A GRBL or Ruida gantry has no start-marking (foot pedal) input. */}
+      <RunOptionsPanel selected={p.selection.length} hasStartInput={p.machine?.driver === "grbl" || p.machine?.driver === "ruida" ? false : null} />
       {p.extras}
       <JobCounter state={job} report={p.report} />
       <MachineJog designOnly={p.designOnly} notify={p.notify} report={p.report} onChanged={p.onChanged} />

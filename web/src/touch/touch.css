@@ -114,12 +114,13 @@
     0 0 0 4px var(--accent, #0a73ad);
 }
 
-/* The selection action bar: a pill above the selection (the canvas HUD anchors it there); it scrolls when narrowed. */
+/* The selection action bar: a pill above the selection (the canvas HUD anchors it there). TouchHud shows only the
+   buttons the canvas has room for (the rest under ⋯), so it never scrolls sideways; squeezed further it wraps. */
 .touch-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 2px;
   padding: 4px;
-  overflow-x: auto;
   border-radius: 26px;
   background: var(--surface, #2b2f34);
   border: 1px solid var(--border, #555);
@@ -129,7 +130,6 @@
   user-select: none;
   -webkit-touch-callout: none;
   touch-action: manipulation;
-  scrollbar-width: none;
 }
 .touch-action {
   flex: none;

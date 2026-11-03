@@ -8,6 +8,7 @@ import { MenuButton } from "../components/Menu.tsx";
 import { WsModal } from "../workspace/WsModal.tsx";
 import { useT } from "../workspace/usePrefs.ts";
 import "./libs.css";
+import { errorText } from "../api/errorText.ts";
 
 export type DropItem =
   | { sep: true }
@@ -137,6 +138,5 @@ export function FilePick(p: { label: string; accept: string; onFile: (f: File) =
 
 /** The engine's error text of a failure. */
 export function errText(e: unknown): string {
-  if (e && typeof e === "object" && "detail" in e && typeof (e as { detail?: unknown }).detail === "string") return (e as { detail: string }).detail;
-  return e instanceof Error ? e.message : String(e);
+  return errorText(e);
 }

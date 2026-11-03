@@ -45,6 +45,7 @@ export const EN_TOUCH = {
   "touch.flipH": "Flip horizontal",
   "touch.flipV": "Flip vertical",
   "touch.more": "More…",
+  "touch.allActions": "All actions…",
 
   // The nudge pad (components/PropertiesPanel.tsx, coarse pointers).
   "touch.nudge": "Nudge",

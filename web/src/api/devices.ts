@@ -332,7 +332,8 @@ export function workspaceText(ws: Vec2): string {
  * engine's rule for a non-square field), anything else its workspace. */
 export function deviceSizeText(d: Pick<DeviceSummary, "kind" | "workspace_mm">): string {
   const [w, h] = d.workspace_mm;
-  return workspaceText(isGalvo(d.kind) && Math.abs(w - h) <= 0.05 + 1e-9 ? [w, w] : d.workspace_mm);
+  if (!isGalvo(d.kind)) return `${Number(w.toFixed(2))} × ${Number(h.toFixed(2))} mm`; // a square bed is still W x H
+  return workspaceText(Math.abs(w - h) <= 0.05 + 1e-9 ? [w, w] : d.workspace_mm);
 }
 
 /**
@@ -367,6 +368,22 @@ export function removeBlocker(device: DeviceSummary | null, list: DeviceList | n
 export function keepSelection(list: DeviceList, selected: string | null): string | null {
   if (selected !== null && list.devices.some((d) => d.id === selected)) return selected;
   return list.active ?? list.devices[0]?.id ?? null;
+}
+
+/** The Devices window's groups, in this order: galvos, then each kind of gantry. */
+const GROUP_ORDER: readonly DeviceKind[] = ["jcz_galvo", "galvo_other", "grbl", "ruida", "gantry", "unknown"];
+
+/**
+ * The Devices window's list, grouped by kind (galvos first) and sorted inside each group: the active device first,
+ * then the ones that run jobs before design-only ones, then by name (numbers in names in numeric order).
+ */
+export function deviceGroups(list: DeviceList): { kind: DeviceKind; label: string; devices: DeviceSummary[] }[] {
+  const byName = (a: DeviceSummary, b: DeviceSummary) => a.display_name.localeCompare(b.display_name, undefined, { numeric: true, sensitivity: "base" });
+  const rank = (d: DeviceSummary) => (d.id === list.active ? 0 : d.controllable ? 1 : 2);
+  return GROUP_ORDER.flatMap((kind) => {
+    const devices = list.devices.filter((d) => d.kind === kind).sort((a, b) => rank(a) - rank(b) || byName(a, b));
+    return devices.length ? [{ kind, label: kindLabel(kind), devices }] : [];
+  });
 }
 
 /** The registry device whose display name or name is `nameOrDisplay` (case-insensitive; display names first). */

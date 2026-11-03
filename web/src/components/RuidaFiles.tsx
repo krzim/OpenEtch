@@ -6,18 +6,18 @@
 // here is UI only; the engine refuses MCP clients. The pure parts live in api/ruida.ts.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ApiError } from "../api/client.ts";
 import { onEngineEvent } from "../api/events.ts";
 import { jobApi } from "../api/jobApi.ts";
 import { fileNameProblem, parseFiles, suggestFileName, type StoredFile } from "../api/ruida.ts";
 import { useT } from "../workspace/usePrefs.ts";
 import "./job.css";
 import "./ruida.css";
+import { errorText } from "../api/errorText.ts";
 
 type Notify = (msg: string, kind?: "info" | "error") => void;
 
 function why(e: unknown): string {
-  return e instanceof ApiError ? (e.detail ?? e.message) : e instanceof Error ? e.message : String(e);
+  return errorText(e);
 }
 
 export function RuidaFiles(p: { notify: Notify; projectName: string | null; selection: readonly string[] }) {

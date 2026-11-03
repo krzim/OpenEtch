@@ -242,6 +242,7 @@ async fn switching_back_to_the_galvo_restores_the_lmc_driver() {
     assert_eq!(st.runs().get(&stale).unwrap().state, RunState::Cancelled, "a GRBL run never runs on the galvo");
     let (_, m) = send(&app, req("GET", "/api/machine", None)).await;
     assert_eq!((&m["driver"], &m["link"]), (&json!("lmc"), &json!("sim")), "{m}");
+    assert_eq!(m["pulse_width_enabled"], json!(true), "the B6 is a MOPA with Q-pulse on: {m}");
     assert!(m.get("grbl").is_none());
     let counters = st.machine.sim_counters().unwrap().clone();
     let (_, v) = send(&app, req("POST", "/api/runs", None)).await;

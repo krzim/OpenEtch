@@ -12,6 +12,7 @@
 // has the device dropdown.
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
 import { api } from "./api/client.ts";
 import * as C from "./api/commands.ts";
 import {
@@ -26,8 +27,9 @@ import {
   type DirectImport,
 } from "./api/drop.ts";
 import { friendlyError, outsideField } from "./api/laser.ts";
+import { layerHasImages } from "./api/cutOptions.ts";
 import { estimateOf } from "./api/packedPreview.ts";
-import { activeDevice, asLightBurnDevices, canvasWorkspace, designOnlyReason, machineDevice } from "./api/devices.ts";
+import { activeDevice, asLightBurnDevices, canvasWorkspace, designOnlyReason, isGalvo, machineDevice } from "./api/devices.ts";
 import { engineLightBurnDevice } from "./api/lightburn.ts";
 import { MAX_UPLOAD_BYTES, commandResult, defaultImportMode, fileError, warningList } from "./api/project.ts";
 import { activeRuns, noPinMode, pendingRuns, stopToast } from "./api/runs.ts";
@@ -96,6 +98,7 @@ import { ConnectionBanner } from "./laser/ConnectionBanner.tsx";
 import { EmptyCanvasCard } from "./laser/EmptyCanvasCard.tsx";
 import { TouchHud } from "./touch/TouchHud.tsx";
 import { CanvasHud, HudItem, useHudFixed } from "./hud/CanvasHud.tsx";
+import { useToastHost } from "./components/useToastHost.ts";
 import { useDocTabs } from "./workspace/DocTabs.tsx";
 import { useDocking } from "./workspace/DockingTool.tsx";
 import { useFlash, withLayerFlash } from "./workspace/flash.tsx";
@@ -129,6 +132,7 @@ import {
   type SelectOp,
   type Selection,
 } from "./selection.ts";
+import { errorText } from "./api/errorText.ts";
 
 /** Field size until /api/machine reports `field_mm`. */
 const DEFAULT_FIELD_MM = 153.75;
@@ -181,6 +185,7 @@ export function App() {
   // Toasts take the canvas HUD's top centre after the required controls are placed (the optional ones make room for
   // them), so they never cover one.
   const toastsRef = useHudFixed<HTMLDivElement>({ id: "toasts", slot: "tc", rank: 90, minW: 200, late: true, stack: true });
+  const toastDialog = useToastHost();
   const [prefs, setPrefs] = useState<ViewPrefs>(loadPrefs);
   const [previewOptions, setPreviewOptions] = useState<PreviewOptions>({ hidden: new Set(), hiddenPasses: new Set(), upTo: null, shade: true, jumps: true });
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
@@ -231,7 +236,7 @@ export function App() {
   docRef.current = doc;
 
   // Engine errors name objects and layers rather than internal ids, without the HTTP prefix.
-  const report = useCallback((e: unknown) => notify(friendlyError(e instanceof Error ? e.message : String(e), docRef.current), "error"), [notify]);
+  const report = useCallback((e: unknown) => notify(errorText(e, docRef.current), "error"), [notify]);
 
   // A rail's overlay never outlives a change of layout.
   useEffect(() => setOverlay(null), [layout]);
@@ -530,7 +535,7 @@ export function App() {
             imported.push(imp.file.name);
             created.push(...ids);
           } catch (e) {
-            refused.push({ name: imp.file.name, reason: friendlyError(e instanceof Error ? e.message : String(e), docRef.current) });
+            refused.push({ name: imp.file.name, reason: errorText(e, docRef.current) });
           }
         }
       } finally {
@@ -1335,6 +1340,7 @@ export function App() {
       docName={file.openedName ?? doc?.name ?? null}
       projectName={file.projectName}
       dirty={file.dirty}
+      onSaveAs={() => file.setModal({ kind: "saveAs" })}
       pendingRuns={runs.length}
       docExtra={tabs.addButton}
     />
@@ -1405,6 +1411,32 @@ export function App() {
     </Dock>
   );
 
+  // A GRBL gantry's Move and Console windows and a Ruida gantry's File List (LightBurn's), in both workspaces' Window
+  // menus as in LightBurn; galvos have none of them.
+  const gantryDocks = (
+    <>
+      {isGrblMachine(machine) && (
+        <>
+          <Dock id="move" title={t("win.move")}>
+            <GrblMove notify={notify} report={report} />
+          </Dock>
+          {/* The console is a desktop feature (workspace/desktopOnly.ts): not in the phone's Job sheet. */}
+          {desktopFeatures(layout) && (
+            <Dock id="console" title={t("win.console")}>
+              <GrblConsole notify={notify} report={report} />
+            </Dock>
+          )}
+        </>
+      )}
+      {/* Stored files, Send, Start (through approval). */}
+      {isRuidaMachine(machine) && (
+        <Dock id="files" title={t("win.files")}>
+          <RuidaFiles notify={notify} projectName={file.projectName ?? file.openedName ?? doc?.name ?? null} selection={selection.objects} />
+        </Dock>
+      )}
+    </>
+  );
+
   const rightContent = (
     <>
       {workspace === "design" ? (
@@ -1426,6 +1458,7 @@ export function App() {
         {libsUi.dock}
         {designUi.dock}
         {docking.window}
+        {gantryDocks}
         <Dock id="properties" title={t("win.properties")}>
         <PropertiesPanel
           doc={doc}
@@ -1471,7 +1504,7 @@ export function App() {
             report={report}
             onChanged={() => void engine.refreshMachine()}
             onStop={stop}
-            extras={<LaserExtras designOnly={laserDisabled} tools={libsUi.laserTools} notify={notify} report={report} />}
+            extras={<LaserExtras designOnly={laserDisabled} galvo={!isGrblMachine(machine) && !isRuidaMachine(machine)} tools={libsUi.laserTools} notify={notify} report={report} />}
           />
           <CutsLayers
             doc={doc}
@@ -1487,26 +1520,7 @@ export function App() {
             }}
           />
           {libsUi.dock}
-          {/* A GRBL gantry's Move and Console windows (LightBurn's); galvos have neither. */}
-          {isGrblMachine(machine) && (
-            <>
-              <Dock id="move" title={t("win.move")}>
-                <GrblMove notify={notify} report={report} />
-              </Dock>
-              {/* The console is a desktop feature (workspace/desktopOnly.ts): not in the phone's Job sheet. */}
-              {desktopFeatures(layout) && (
-                <Dock id="console" title={t("win.console")}>
-                  <GrblConsole notify={notify} report={report} />
-                </Dock>
-              )}
-            </>
-          )}
-          {/* A Ruida gantry's File List window (LightBurn's): stored files, Send, Start (through approval). */}
-          {isRuidaMachine(machine) && (
-            <Dock id="files" title={t("win.files")}>
-              <RuidaFiles notify={notify} projectName={file.projectName ?? file.openedName ?? doc?.name ?? null} selection={selection.objects} />
-            </Dock>
-          )}
+          {gantryDocks}
           <Dock id="machine" title={t("win.machine")}>
           <MachineCard machine={machine} httpError={engine.httpError}>
             {/* Engines without the device registry: LightBurn's devices and the profile diffs. */}
@@ -1534,12 +1548,25 @@ export function App() {
             options={previewOptions}
             onOptions={setPreviewOptions}
           />
-          {selectedLayer && <LayerSection layer={selectedLayer} machine={machine} run={run} report={report} has={has} />}
+          {selectedLayer && <LayerSection layer={selectedLayer} machine={machine} run={run} report={report} has={has} hasImages={layerHasImages(doc, selectedLayer.id)} />}
           </Dock>
         </div>
       )}
     </>
   );
+
+  const toastButtons = toasts.map((x) => (
+    <button
+      type="button"
+      key={x.id}
+      className={`toast toast-${x.kind}`}
+      role={x.kind === "error" ? "alert" : "status"}
+      title={t("shell.dismiss")}
+      onClick={() => setToasts((all) => all.filter((y) => y.id !== x.id))}
+    >
+      {x.msg}
+    </button>
+  ));
 
   const emptyDoc = !!doc && doc.objects.length === 0 && workspace === "design";
   const canvasStage = (
@@ -1547,6 +1574,7 @@ export function App() {
       <Viewport
         doc={doc}
         workspaceMm={workspaceMm}
+        galvo={device ? isGalvo(device.kind) : undefined}
         selection={selection}
         tool={tool}
         activeLayer={activeLayer}
@@ -1673,19 +1701,10 @@ export function App() {
       {layout !== "phone" && <FloatHost />}
       {menu && <ContextMenu x={menu.x} y={menu.y} items={forLayout(menuItems, layout)} onClose={() => setMenu(null)} />}
       {dropLabel && <DropOverlay label={dropLabel} />}
+      {/* While a dialog (or a full-height sheet) is open the toasts are a strip inside it, so none covers it. */}
+      {toastDialog && toasts.length > 0 && createPortal(<div className="toasts-dialog">{toastButtons}</div>, toastDialog)}
       <div className="toasts" ref={toastsRef}>
-        {toasts.map((x) => (
-          <button
-            type="button"
-            key={x.id}
-            className={`toast toast-${x.kind}`}
-            role={x.kind === "error" ? "alert" : "status"}
-            title={t("shell.dismiss")}
-            onClick={() => setToasts((all) => all.filter((y) => y.id !== x.id))}
-          >
-            {x.msg}
-          </button>
-        ))}
+        {!toastDialog && toastButtons}
       </div>
       {about && <AboutDialog machine={machine} onClose={() => setAbout(false)} />}
     </>

@@ -1149,6 +1149,8 @@ const ICONS: Record<string, ReactNode> = {
   unlock: <path d="M6 11h12v9H6z M8.5 11V8a3.5 3.5 0 0 1 6.8-1.2" />,
   // L [link]
   link: <path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1 M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" />,
+  // W [warning] (Lucide triangle-alert)
+  warning: <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3 M12 9v4 M12 17h.01" />,
 };
 
 /** Every registered icon name. */

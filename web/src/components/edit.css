@@ -54,6 +54,35 @@
   top: calc(26px + max(36px, var(--hit, 36px)) + 12px);
 }
 
+/* The phone's off-field warning: a warning icon and "3 off field" in the danger colour; a tap shows the sentence. */
+.vp-warn-compact {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-height: 36px;
+  border: 0;
+  font: inherit;
+  font-size: calc(12px * var(--ui-scale, 1));
+  text-align: left;
+  cursor: pointer;
+}
+:root[data-density="touch"] .vp-warn-compact {
+  min-height: 44px;
+  justify-content: center;
+}
+.vp-warn-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.vp-warn-compact:focus-visible {
+  outline: 2px solid var(--on-accent);
+  outline-offset: -4px;
+}
+
 /* ---- rulers ---- */
 .et-ruler {
   position: absolute;

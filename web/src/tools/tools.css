@@ -20,6 +20,17 @@
   gap: 12px 20px;
 }
 
+/* Multi-File Trace: a number is as wide as the other dialogs' numeric fields (it stretched to about 360 px across a
+   column), next to its label. */
+.tools-cols .field:not(.field-check) .field-label {
+  flex: 0 1 auto;
+  width: calc(150px * var(--ui-scale, 1));
+}
+.tools-cols .field:not(.field-check) .field-input {
+  flex: 0 0 auto;
+  width: calc(120px * var(--ui-scale, 1));
+}
+
 .tools-set {
   border: 1px solid var(--border);
   border-radius: 6px;

@@ -17,6 +17,7 @@ import type { LinkState } from "../api/useEngine.ts";
 import type { MachineStatus } from "../api/types.ts";
 import type { Workspace } from "../components/TopBar.tsx";
 import { libsToast } from "../libs/store.ts";
+import { errorText } from "../api/errorText.ts";
 
 export type Notify = (msg: string, kind?: "info" | "error") => void;
 
@@ -69,7 +70,7 @@ export const DEFAULT_FACTS: LaserFacts = {
     if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(OPEN_LASER_EVENT));
   },
   notify: fallbackToast,
-  report: (e) => fallbackToast(e instanceof Error ? e.message : String(e), "error"),
+  report: (e) => fallbackToast(errorText(e), "error"),
   refreshMachine: () => undefined,
   approvalsInDock: false,
 };

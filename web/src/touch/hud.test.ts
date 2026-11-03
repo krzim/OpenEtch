@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { barActions, modToggles, selectionCovered } from "./hudModel.ts";
+import { barActions, barCapacity, fitBarActions, modToggles, selectionCovered } from "./hudModel.ts";
 import { LongPressTracker } from "./useLongPress.ts";
 import { TOUCH_ACTIONS, chordForAction, keyInitFor } from "./actions.ts";
 
@@ -95,4 +95,25 @@ test("the action bar hides while a sheet covers the selection (the canvas HUD pl
   assert.equal(selectionCovered(sel, 545), false);
   // A sheet at full height covers everything.
   assert.equal(selectionCovered({ left: 100, top: 200, right: 200, bottom: 260 }, 50), true);
+});
+
+test("the action bar fits the canvas width: the rest go under the last ⋯", () => {
+  const all = barActions(2, false);
+  assert.equal(all.length, 9);
+  // 9 buttons need 9 * 46 - 2 + 10 = 422 px.
+  assert.equal(barCapacity(422), 9);
+  assert.equal(barCapacity(421), 8);
+  assert.equal(barCapacity(20), 1);
+  assert.deepEqual(fitBarActions(all, 9).overflow, []);
+  // An iPhone SE (375 px canvas, 8 px HUD gaps): 7 slots, the last the ⋯.
+  const fit = fitBarActions(all, barCapacity(375 - 16));
+  assert.deepEqual(
+    fit.shown.map((a) => a.id),
+    ["copy", "paste", "duplicate", "delete", "group", "rotate90", "menu"],
+  );
+  assert.deepEqual(
+    fit.overflow.map((a) => a.id),
+    ["flipH", "flipV"],
+  );
+  assert.deepEqual(fitBarActions(all, 1).shown.map((a) => a.id), ["menu"]);
 });
