@@ -1736,6 +1736,7 @@ async fn devices_routes_import_list_show_and_remove() {
     for id in ["bench-110-lens", "test-bed-400"] {
         crate::libs::lock(&st.libs.prefs).device_mut(id).require_framing = true;
         crate::libs::lock(&st.libs.camera).calibrations.insert(id.into(), crate::libs::CameraCalibration::default());
+        st.job.times.record(id, 10.0, 12.0);
     }
     let (s, v) = send(&app, req("DELETE", "/api/devices/bench-110-lens", None)).await;
     assert_eq!((s, &v["ok"]), (StatusCode::OK, &json!(true)), "{v}");
@@ -1745,6 +1746,8 @@ async fn devices_routes_import_list_show_and_remove() {
         assert!(!p.prefs.devices.contains_key("bench-110-lens") && p.device("test-bed-400").require_framing);
         let c = crate::libs::lock(&st.libs.camera);
         assert!(!c.calibrations.contains_key("bench-110-lens") && c.calibrations.contains_key("test-bed-400"));
+        // Its recorded run times too: a device added later under its id starts with an uncorrected estimate.
+        assert!(st.job.times.samples("bench-110-lens").is_empty() && !st.job.times.samples("test-bed-400").is_empty());
     }
     // Imported again it gets the same id, and the defaults.
     let (_, v) = send(&app, raw("POST", "/api/devices/import?from=lightburn&add=all", "")).await;
@@ -1754,12 +1757,15 @@ async fn devices_routes_import_list_show_and_remove() {
     // there (an unreadable device keeps them).
     crate::libs::lock(&st.libs.prefs).device_mut("long-gone").play_sound = true;
     crate::libs::lock(&st.libs.prefs).device_mut("unreadable").play_sound = true;
+    st.job.times.record("times-only-gone", 10.0, 12.0);
+    st.job.times.record("unreadable", 10.0, 12.0);
     std::fs::write(dir.join("config").join("devices").join("unreadable.toml"), "broken").unwrap();
     crate::libs::forget_removed_devices(&st);
     {
         let p = crate::libs::lock(&st.libs.prefs);
         let kept: Vec<&str> = p.prefs.devices.keys().map(String::as_str).collect();
         assert_eq!(kept, ["test-bed-400", "unreadable"]);
+        assert_eq!(st.job.times.device_ids(), ["test-bed-400", "unreadable"]);
     }
     send(&app, req("DELETE", "/api/devices/bench-110-lens", None)).await;
     assert_eq!(std::fs::read_to_string(dir.join("prefs.ini")).unwrap(), LB_PREFS, "prefs.ini is never written");

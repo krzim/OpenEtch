@@ -142,16 +142,20 @@ impl Libs {
     }
 }
 
-/// At startup: forget the settings of devices removed before removal took them along (see
+/// At startup: forget the settings and recorded run times of devices removed before removal took them along (see
 /// [`Libs::forget_device`]); a device whose file is still there (unreadable, skipped) keeps them.
 pub fn forget_removed_devices(st: &AppState) {
     let mut ids: Vec<String> = lock(&st.libs.prefs).prefs.devices.keys().cloned().collect();
     ids.extend(lock(&st.libs.camera).calibrations.keys().cloned());
+    ids.extend(st.job.times.device_ids());
     let gone: Vec<String> = {
         let reg = st.devices();
         ids.into_iter().filter(|id| !reg.may_return(id)).collect()
     };
-    if !gone.is_empty() && st.libs.forget_devices(|id| gone.iter().any(|g| g == id)) {
+    let is_gone = |id: &str| gone.iter().any(|g| g == id);
+    // `|`, not `||`: both forget.
+    let forgot = st.libs.forget_devices(is_gone) | st.job.times.forget(is_gone);
+    if !gone.is_empty() && forgot {
         tracing::info!(devices = ?gone, "forgot the settings of removed devices");
     }
 }

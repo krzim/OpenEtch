@@ -168,6 +168,24 @@ impl MarkTimes {
     pub fn samples(&self, device: &str) -> Vec<Sample> {
         lock(&self.0).devices.get(device).cloned().unwrap_or_default()
     }
+
+    /// The devices with recorded runs.
+    pub fn device_ids(&self) -> Vec<String> {
+        lock(&self.0).devices.keys().cloned().collect()
+    }
+
+    /// Drop the runs of every device `gone` says is gone (a removed device: one added later under its id starts
+    /// uncorrected). Returns whether anything was dropped.
+    pub fn forget(&self, gone: impl Fn(&str) -> bool) -> bool {
+        let mut s = lock(&self.0);
+        let before = s.devices.len();
+        s.devices.retain(|d, _| !gone(d));
+        let forgot = s.devices.len() != before;
+        if forgot {
+            s.save();
+        }
+        forgot
+    }
 }
 
 #[cfg(test)]

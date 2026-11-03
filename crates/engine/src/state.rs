@@ -454,11 +454,12 @@ impl AppState {
         Ok(report)
     }
 
-    /// `DELETE /api/devices/{id}`: not the active one, not the built-in one; its preferences and camera calibration
-    /// go with it. Emits `devices_changed`.
+    /// `DELETE /api/devices/{id}`: not the active one, not the built-in one; its preferences, camera calibration and
+    /// recorded run times (the estimate's correction) go with it. Emits `devices_changed`.
     pub fn remove_device(&self, id: &str) -> Result<(), EngineError> {
         self.devices().remove(id)?;
         self.libs.forget_device(id);
+        self.job.times.forget(|d| d == id);
         self.emit(Event::DevicesChanged);
         Ok(())
     }
