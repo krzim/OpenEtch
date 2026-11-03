@@ -5,6 +5,7 @@
 // run: nothing here can bypass it.
 
 import { ApiError } from "../api/client.ts";
+import type { Vec2 } from "../api/types.ts";
 import { runRequestBody } from "../api/job.ts";
 import { jobApi } from "../api/jobApi.ts";
 import { approvalErrorText } from "../api/runs.ts";
@@ -18,11 +19,17 @@ import { tr } from "../workspace/tr.ts";
  * document revision this page shows (for Start Here, the revision the preview and so the segment number are of); the
  * engine plans nothing when the document is at another one, so a stale segment never starts a newer document.
  */
-export async function requestRunWithOptions(selection: readonly string[], fromSegment: number | null = null, revision: number | null = null): Promise<string> {
+export async function requestRunWithOptions(
+  selection: readonly string[],
+  fromSegment: number | null = null,
+  revision: number | null = null,
+  region: readonly Vec2[] | null = null,
+): Promise<string> {
   // Beginner Mode hides Cut Selected Graphics and ignores it (LightBurn ignores hidden optional settings).
   const o = getRunOptions();
-  const body = runRequestBody(fromSegment === null && !getPrefs().beginnerMode ? o : { ...o, cutSelected: false }, { selection, fromSegment });
+  const body = withRegion(runRequestBody(fromSegment === null && !getPrefs().beginnerMode ? o : { ...o, cutSelected: false }, { selection, fromSegment }), region);
   await jobApi.requestRun(revision === null ? body : { ...body, revision });
+  if (region) return tr("rm.requested");
   return fromSegment === null ? tr("rest.runRequested") : tr("rest.runFromRequested", { n: fromSegment });
 }
 
@@ -39,10 +46,11 @@ export async function runJob(
   fromSegment: number | null = null,
   checklist: boolean[] | null = null,
   revision: number | null = null,
+  region: readonly Vec2[] | null = null,
 ): Promise<string> {
-  if (!noPin) return requestRunWithOptions(selection, fromSegment, revision);
+  if (!noPin) return requestRunWithOptions(selection, fromSegment, revision, region);
   const o = getRunOptions();
-  const body = runRequestBody(fromSegment === null && !getPrefs().beginnerMode ? o : { ...o, cutSelected: false }, { selection, fromSegment });
+  const body = withRegion(runRequestBody(fromSegment === null && !getPrefs().beginnerMode ? o : { ...o, cutSelected: false }, { selection, fromSegment }), region);
   try {
     await jobApi.start({ ...body, ...(checklist ? { checklist } : {}), ...(revision === null ? {} : { revision }) });
   } catch (e) {
@@ -50,5 +58,11 @@ export async function runJob(
     const detail = e.detail || e.message;
     throw new Error(approvalErrorText(e.code, approvalRefusalText(detail) ?? detail));
   }
+  if (region) return tr("rm.started");
   return fromSegment === null ? tr("rest.jobStarted") : tr("rest.jobStartedFrom", { n: fromSegment });
+}
+
+/** Re-mark region: the run body with the region (the engine clips the planned toolpath to it, jigs/). */
+function withRegion(body: Record<string, unknown>, region: readonly Vec2[] | null): Record<string, unknown> {
+  return region && region.length >= 3 ? { ...body, region: region.map((p) => [p[0], p[1]]) } : body;
 }

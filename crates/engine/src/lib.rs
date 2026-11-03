@@ -42,6 +42,8 @@ pub mod ruida_dsp;
 pub mod security;
 pub mod shutdown;
 pub mod state;
+// Re-mark region and keep-out zones applied to every planned run (jigs and placement).
+pub mod zones;
 // Libraries, preferences, job log, diagnostics, camera, updates (see `libs`).
 mod api_libs;
 pub mod camera;
@@ -77,6 +79,8 @@ pub use state::AppState;
 mod tests;
 #[cfg(test)]
 mod job_tests;
+#[cfg(test)]
+mod zones_tests;
 #[cfg(test)]
 mod libs_tests;
 #[cfg(test)]

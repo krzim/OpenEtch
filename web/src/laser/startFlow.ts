@@ -12,7 +12,7 @@
 // - openLaserAndFire: from the Design workspace: open the Laser panel (so the job's status is visible) and start.
 // - fire: start.
 
-import type { MachineStatus } from "../api/types.ts";
+import type { MachineStatus, Vec2 } from "../api/types.ts";
 import { activeRuns, noPinMode } from "../api/runs.ts";
 import type { Workspace } from "../components/TopBar.tsx";
 import { getRunOptions } from "../components/jobStore.ts";
@@ -20,6 +20,7 @@ import { getPrefs } from "../workspace/prefs.ts";
 import { tr } from "../workspace/tr.ts";
 import { getLaserFacts, getLaserFlow, onlineOf, setLaserFlow, type LaserFacts } from "./laserContext.ts";
 import { runJob } from "./runJob.ts";
+import { getRemarkRegion } from "../jigs/regionStore.ts";
 
 /** Where Start was pressed. */
 export type StartSource = "toolbar" | "dock" | "sheet" | "hotkey" | "startHere";
@@ -51,6 +52,8 @@ export interface StartCtx {
   refreshMachine?: () => void;
   /** "Start here": the preview segment to start from (P5 addition; null or absent: the whole job). */
   fromSegment?: number | null;
+  /** Re-mark region (jigs/): only the planned toolpath inside this field-mm polygon (null or absent: everything). */
+  region?: readonly Vec2[] | null;
 }
 
 export interface StartState {
@@ -139,8 +142,11 @@ export function startDecision(ctx: StartCtx): StartDecision {
 }
 
 /** What the run covers: the selection (Cut Selected Graphics with something selected), a segment on, or everything. */
-export function startScope(ctx: Pick<StartCtx, "selection" | "fromSegment">): { kind: "all" } | { kind: "selection"; count: number } | { kind: "from"; segment: number } {
+export function startScope(
+  ctx: Pick<StartCtx, "selection" | "fromSegment" | "region">,
+): { kind: "all" } | { kind: "selection"; count: number } | { kind: "from"; segment: number } | { kind: "region" } {
   if (typeof ctx.fromSegment === "number") return { kind: "from", segment: ctx.fromSegment };
+  if (ctx.region && ctx.region.length >= 3) return { kind: "region" };
   // Beginner Mode hides Cut Selected Graphics and ignores it (laser/runJob.ts).
   const cutSelected = getRunOptions().cutSelected && !getPrefs().beginnerMode;
   if (cutSelected && ctx.selection.length > 0) return { kind: "selection", count: ctx.selection.length };
@@ -165,6 +171,7 @@ export function startLabel(ctx: StartCtx, starting = false): string {
   const scope = startScope(ctx);
   if (scope.kind === "selection") parts.push(tr("lz.scopeSelection", { n: scope.count }));
   else if (scope.kind === "from") parts.push(tr("lz.scopeFrom", { n: scope.segment }));
+  else if (scope.kind === "region") parts.push(tr("rm.scope"));
   else parts.push(tr("lz.scopeAll"));
   const est = ctx.estimateS;
   if (scope.kind === "all" && typeof est === "number" && Number.isFinite(est) && est > 0) parts.push(tr("lz.estimate", { time: shortClock(est) }));
@@ -207,6 +214,8 @@ export function startCtxOf(f: LaserFacts, source: StartSource, extra: Partial<St
     notify: (m) => f.notify(m),
     report: f.report,
     refreshMachine: f.refreshMachine,
+    // A re-mark region set on the canvas (jigs/), never with Start Here (the engine refuses both together).
+    region: extra.fromSegment != null ? null : getRemarkRegion(),
     ...extra,
   };
 }
@@ -236,7 +245,7 @@ export async function startFlow(ctx: StartCtx): Promise<void> {
   if (d === "openLaserAndFire") ctx.openLaser();
   setLaserFlow({ starting: true, refusal: null });
   try {
-    const msg = await runJob(noPinMode(ctx.machine), ctx.selection, ctx.fromSegment ?? null, ticksForStart(ctx), ctx.revision);
+    const msg = await runJob(noPinMode(ctx.machine), ctx.selection, ctx.fromSegment ?? null, ticksForStart(ctx), ctx.revision, ctx.region ?? null);
     // The checklist is ticked again for every job.
     setLaserFlow({ ticks: [] });
     ctx.notify(msg);

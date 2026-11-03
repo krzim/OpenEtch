@@ -182,6 +182,10 @@ export const ACTIONS: HotkeyAction[] = [
   ws("edit.selectOpen", "edit", "Select open shapes", []),
   ws("arrange.movePosition", "arrange", "Move selected objects (page positions)", []),
   ws("window.artLibrary", "view", "Art Library", []),
+  // Jigs and placement (src/jigs/useJigsUi.tsx); no default keys.
+  ws("arrange.fitStock", "arrange", "Fit to stock", []),
+  ws("window.jigs", "view", "Jigs window", []),
+  ws("laser.remarkRegion", "laser", "Re-mark a region", []),
 
   // F12 (LightBurn's Toggle Side Panels) belongs to the browser's developer tools; bind another key to use it.
   ws("window.sidePanels", "view", "Toggle side panels", []),

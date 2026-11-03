@@ -120,11 +120,35 @@ pub struct FrameRequest {
     /// pixels (a convex hull) instead of their rectangle.
     #[serde(default)]
     pub image_bounds: bool,
+    /// Frame pockets of a jig instead of objects: `{jig, pockets: [number or id]}` (empty: every enabled pocket);
+    /// their outlines, or bounds with mode "bounds" (module `zones`). Not with ids.
+    #[serde(default)]
+    pub jig_pockets: Option<crate::zones::JigPockets>,
+    /// Frame a region (Re-mark region): this polygon, field mm, at least 3 points. Not with ids or jig_pockets.
+    #[serde(default)]
+    pub region: Option<Vec<[f64; 2]>>,
 }
 
 /// The polylines (field mm) a frame request traces. Unknown ids and empty selections are refused.
 pub fn outline_for(doc: &Document, req: &FrameRequest) -> Result<Vec<Vec<(f64, f64)>>, EngineError> {
+    if let Some(r) = &req.region {
+        if req.ids.is_some() || req.jig_pockets.is_some() {
+            return Err(EngineError::BadRequest("give region, ids or jig_pockets (one of them)".into()));
+        }
+        if let Some(p) = crate::zones::polygon_problem(r) {
+            return Err(EngineError::BadRequest(format!("region {p}")));
+        }
+        let mut ring: Vec<(f64, f64)> = r.iter().map(|p| (p[0], p[1])).collect();
+        ring.push(ring[0]);
+        return Ok(vec![ring]);
+    }
+    let pockets = match &req.jig_pockets {
+        Some(_) if req.ids.is_some() => return Err(EngineError::BadRequest("give ids or jig_pockets, not both".into())),
+        Some(jp) => crate::zones::pocket_objects(doc, jp)?,
+        None => Vec::new(),
+    };
     let objects: Vec<&doc::Object> = match &req.ids {
+        _ if req.jig_pockets.is_some() => pockets.iter().collect(),
         Some(ids) => {
             let missing: Vec<&str> =
                 ids.iter().filter(|id| doc.object(id).is_none() && doc.group(id).is_none()).map(String::as_str).collect();

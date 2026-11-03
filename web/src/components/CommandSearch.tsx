@@ -18,7 +18,7 @@ import { usePublished } from "./Ribbon.tsx";
 import "./ribbon.css";
 
 /** Published menus searched (Ribbon.tsx usePublish): key -> where it lives. */
-export const SEARCHED_MENUS = ["menu.file", "menu.edit", "menu.tools", "menu.modify", "ribbon.arrange", "menu.laserTools", "menu.webTools", "menu.ribbon"] as const;
+export const SEARCHED_MENUS = ["menu.file", "menu.edit", "menu.tools", "menu.modify", "ribbon.arrange", "menu.laserTools", "menu.webTools", "menu.jigs", "menu.ribbon"] as const;
 
 /** Actions never offered here. */
 const HIDDEN = new Set(["laser.requestRun", "app.commandSearch"]);
@@ -85,6 +85,7 @@ export function CommandSearch(p: { onClose: () => void; onEngineConsole: () => v
     "ribbon.arrange": usePublished<{ label: string; items: MenuItem[] }>("ribbon.arrangeMenu"),
     "menu.laserTools": usePublished<{ label: string; items: MenuItem[] }>("menu.laserTools"),
     "menu.webTools": usePublished<{ label: string; items: MenuItem[] }>("menu.webTools"),
+    "menu.jigs": usePublished<{ label: string; items: MenuItem[] }>("menu.jigs"),
     "menu.ribbon": usePublished<{ label: string; items: MenuItem[] }>("menu.ribbon"),
   };
 

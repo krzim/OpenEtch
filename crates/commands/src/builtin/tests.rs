@@ -181,6 +181,22 @@ const ALL_IDS: &[&str] = &[
     "path.resize_slots",
     "image.trace_many",
     "image.trace_files",
+    // Jigs and placement (module `jigs`).
+    "object.fit_to_stock",
+    "jig.create",
+    "jig.from_objects",
+    "jig.import",
+    "jig.edit",
+    "jig.move",
+    "jig.set_pockets",
+    "jig.add_keep_out",
+    "jig.remove_keep_out",
+    "jig.delete",
+    "jig.place",
+    "jig.list",
+    "job.preflight",
+    "job.preflight_set",
+    "job.remark_check",
 ];
 
 #[test]
@@ -197,6 +213,7 @@ fn registry_lists_every_command_with_documented_schema() {
                 | "doc.export" | "doc.print" | "image.trace_preview" | "image.export" | "image.processed" | "page.list"
                 | "select.open_shapes" | "select.open_on_fill" | "select.contained" | "art.tangent_circle_candidates"
                 | "tabs.list" | "image.trace_files" | "path.fill_region_preview" | "var.slots"
+                | "jig.list" | "job.preflight" | "job.remark_check"
         );
         assert_eq!(spec.risk == Risk::Query, query, "{}", spec.id);
         let props = spec.input_schema["properties"].as_object();

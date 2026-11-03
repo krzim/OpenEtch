@@ -202,6 +202,10 @@ export interface GDocument {
   curve_tolerance_mm?: number | null;
   /** LightBurn's virtual arrays (`art.array` with virtual): linked clones laid out again after every edit; absent while none. */
   virtual_arrays?: VirtualArray[];
+  /** Production jigs (src/jigs/jigModel.ts `Jig`); absent while none. */
+  jigs?: import("../jigs/jigModel.ts").Jig[];
+  /** Pre-flight checks switched off for this project (`job.preflight_set`); absent while all are on. */
+  preflight?: { disabled?: string[] };
 }
 
 /** A virtual array (doc::VirtualArray): the originals, their clones cell by cell, and the grid settings. */

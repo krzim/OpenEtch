@@ -144,16 +144,17 @@ fn plan_program(
     doc: &Document,
     target: &Target,
     profile: &RuidaProfile,
-    selection: Option<Vec<String>>,
-    from_segment: Option<usize>,
+    options: &RunOptions,
     run_index: u64,
     name: Option<&str>,
 ) -> Result<(RuidaProgram, JobPlan), EngineError> {
     let doc = commands::prepare_output(doc).map_err(|e| EngineError::BadRequest(format!("text: {e}")))?;
-    let mut job = plan::plan_job_with(&doc, target, &JobOptions { selection, run_index, preview: false })?;
-    if let Some(n) = from_segment {
+    let mut job = plan::plan_job_with(&doc, target, &JobOptions { selection: options.selection.clone(), run_index, preview: false })?;
+    if let Some(n) = options.from_segment {
         job = plan::start_at(&job, n, target)?;
     }
+    // Keep-out zones: the jigs' always, a run's region and the device's zones (filled in for runs only).
+    crate::zones::apply(&mut job, &doc, options.region.as_deref(), &options.device_keep_out, target)?;
     let rd = rd_job_from_plan(&doc, &job, profile)?;
     let program = RuidaProgram::from_job(&rd, name).map_err(|e| EngineError::BadRequest(e.to_string()))?;
     let purpose = if name.is_some() { Purpose::Store } else { Purpose::Run };
@@ -180,7 +181,7 @@ pub fn prepare_ruida_job(
             return Err(EngineError::BadRequest(format!("{what} is not available on a Ruida machine yet")));
         }
     }
-    let (program, job) = plan_program(doc, target, profile, options.selection.clone(), options.from_segment, run_index, None)?;
+    let (program, job) = plan_program(doc, target, profile, options, run_index, None)?;
     let stats = job.stats;
     let mut summary = format!(
         "{} polylines, {:.1} mm marked, about {:.1} s, Ruida job of {} bytes",
@@ -365,7 +366,7 @@ async fn files_send(State(st): State<Arc<AppState>>, headers: HeaderMap, b: Byte
     let run_index = st.job.count(&st.active_device().id);
     let name = b.name.clone();
     let (program, _) = tokio::task::spawn_blocking(move || {
-        plan_program(&doc, &config.target, &profile, b.ids.filter(|v| !v.is_empty()), None, run_index, Some(&name))
+        plan_program(&doc, &config.target, &profile, &RunOptions { selection: b.ids.filter(|v| !v.is_empty()), ..RunOptions::default() }, run_index, Some(&name))
     })
     .await??;
     let result = with_ruida(&st, move |r| r.upload_file(&program)).await;
@@ -462,7 +463,7 @@ async fn export_rd(State(st): State<Arc<AppState>>, Query(q): Query<ExportQuery>
     let doc = st.document();
     let stem = crate::userfiles::download_stem(&st);
     let bytes = tokio::task::spawn_blocking(move || {
-        plan_program(&doc, &config.target, &profile, selection, None, 0, None).map(|(p, _)| p.rd_file(profile.magic))
+        plan_program(&doc, &config.target, &profile, &RunOptions { selection, ..RunOptions::default() }, 0, None).map(|(p, _)| p.rd_file(profile.magic))
     })
     .await??;
     let file: String = stem.chars().map(|c| if c.is_ascii_alphanumeric() || " -_.()".contains(c) { c } else { '_' }).collect();

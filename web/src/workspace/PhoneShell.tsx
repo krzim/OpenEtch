@@ -26,6 +26,8 @@ export const PHONE_TABS: readonly PhoneTab[] = ["canvas", "layers", "job", "more
 /** Window event: open command search from the More sheet. The search lives in the tool strip, which is mounted only
  *  in the Canvas sheet, so the shell opens that sheet first and asks once the strip is there. */
 export const PHONE_SEARCH_EVENT = "openetch:phone-search";
+/** A canvas tool that needs the whole canvas (jigs/: pocket mode, Re-mark region) closes the open sheet. */
+export const PHONE_CANVAS_EVENT = "openetch:phone-canvas";
 
 /** Each tab's sheet height when it opens. */
 const OPEN_AT: Record<PhoneTab, SheetSnap> = { canvas: "peek", layers: "half", job: "half", more: "full" };
@@ -83,6 +85,12 @@ export function PhoneShell(p: PhoneShellProps) {
     const open = () => showRef.current("job");
     window.addEventListener(OPEN_LASER_EVENT, open);
     return () => window.removeEventListener(OPEN_LASER_EVENT, open);
+  }, []);
+
+  useEffect(() => {
+    const clear = () => setOpen(false);
+    window.addEventListener(PHONE_CANVAS_EVENT, clear);
+    return () => window.removeEventListener(PHONE_CANVAS_EVENT, clear);
   }, []);
 
   useEffect(() => {

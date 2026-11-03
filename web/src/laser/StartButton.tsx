@@ -10,6 +10,8 @@ import { useT } from "../workspace/usePrefs.ts";
 import { setLaserFlow } from "./laserContext.ts";
 import { startCtxOf, startFlow, startState } from "./startFlow.ts";
 import { useLaserLive } from "./useLaserLive.ts";
+import { PreflightNotes } from "../jigs/Preflight.tsx";
+import { useRemarkRegion } from "../jigs/regionStore.ts";
 import "./laser.css";
 
 export type StartButtonVariant = "toolbar" | "dock" | "sheet";
@@ -37,6 +39,8 @@ export function StartRefusal({ text }: { text: string | null }) {
 export function StartButton({ variant }: StartButtonProps) {
   const t = useT();
   const { facts, flow } = useLaserLive();
+  // Re-mark region (jigs/): Start runs only inside it while one is set; the label then says so.
+  useRemarkRegion();
   const gates = useSharedApprovalGates();
   const noPin = noPinMode(facts.machine);
   const ctx = startCtxOf(facts, variant, { checklistIncomplete: noPin && !gates.complete });
@@ -67,6 +71,7 @@ export function StartButton({ variant }: StartButtonProps) {
       <span className="start-toolbar">
         {button}
         {reason}
+        <PreflightNotes variant="toolbar" />
         {flow.refusal && (
           <button className="start-refusal-pill" role="alert" title={flow.refusal} aria-label={`${t("lz.refused")}: ${flow.refusal}`} onClick={() => setLaserFlow({ refusal: null })}>
             ! {t("lz.refused")}
@@ -79,6 +84,7 @@ export function StartButton({ variant }: StartButtonProps) {
     <div className={`start-block start-block-${variant}`}>
       {variant === "sheet" && noPin && <ApprovalChecks state={gates} disabled={flow.starting} showDoor={false} />}
       <StartRefusal text={flow.refusal} />
+      <PreflightNotes variant={variant} />
       {button}
       {reason}
     </div>

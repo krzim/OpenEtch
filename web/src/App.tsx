@@ -52,6 +52,7 @@ import { LaserExtras } from "./libs/LaserExtras.tsx";
 import { useLibsUi } from "./libs/useLibsUi.tsx";
 import { useProductionUi } from "./production/useProductionUi.tsx";
 import { useToolsUi } from "./tools/useToolsUi.tsx";
+import { useJigsUi } from "./jigs/useJigsUi.tsx";
 import { useFillRegionTool } from "./fill/useFillRegionTool.tsx";
 import { useDesignUi } from "./design/useDesignUi.tsx";
 import { MachineCard, PreviewStatsCard, RunsCard } from "./components/LaserPanel.tsx";
@@ -326,6 +327,8 @@ export function App() {
     selectIds,
     onTabTool: () => setTool("select"),
   });
+  // Jigs and placement: Fit to stock, jigs with pockets, Re-mark region, pre-flight next to Start (src/jigs/).
+  const jigsUi = useJigsUi({ doc, selection: selection.objects, design: workspace === "design", run: engine.run, notify, report, selectIds, onCanvasTool: () => setTool("select") });
   // Shape Properties, warp / deform, tangent circle, rubber band, toolpath to path, selection queries, page positions,
   // grid array, curve tolerance, the Art Library and the clipboard (src/design/).
   const designUi = useDesignUi({
@@ -440,7 +443,7 @@ export function App() {
     notify,
     report,
     onGridArray: designUi.openArray,
-    arrangeExtra: [...distributeItems, ...designUi.arrangeItems],
+    arrangeExtra: [...distributeItems, ...designUi.arrangeItems, ...jigsUi.arrangeItems],
     // Guides belong to the project (not the document's name, which projects can share); wait until both are known.
     guideScope: doc && engine.projectKnown ? guideScope(file.projectName, file.openedName) : null,
   });
@@ -823,7 +826,7 @@ export function App() {
         return;
       }
       if (typingIn(e.target)) return;
-      if (dialog || fileModalOpen || filesUi.modalOpen || libsUi.modalOpen || toolsUi.modalOpen || designRef.current.modalOpen || appModeDialogOpen()) return;
+      if (dialog || fileModalOpen || filesUi.modalOpen || libsUi.modalOpen || toolsUi.modalOpen || designRef.current.modalOpen || jigsUi.modalOpen || appModeDialogOpen()) return;
       const d = docRef.current;
       const design = workspace === "design";
       const m = { shift: e.shiftKey, ctrl: mod, alt: e.altKey };
@@ -975,6 +978,7 @@ export function App() {
     filesUi.modalOpen,
     libsUi.modalOpen,
     toolsUi.modalOpen,
+    jigsUi.modalOpen,
     saveFile,
     file,
     tool,
@@ -1057,6 +1061,7 @@ export function App() {
     ...filesUi.contextItems,
     ...libsUi.menuItems,
     ...designUi.menuItems,
+    ...jigsUi.menuItems,
     ...(text.menuItems.length ? [{ sep: true } as const, ...text.menuItems] : []),
     { sep: true },
     { label: t("app.alignLeft"), actionId: "arrange.alignLeft", hint: "L", disabled: units < 2, action: () => alignTo("left") },
@@ -1116,7 +1121,7 @@ export function App() {
   });
   // Workspace hotkeys (workspace/hotkeys.ts); App's own keys stay in the handler above.
   ws.keymap.current = {
-    blocked: () => !!dialog || fileModalOpen || devicesOpen || filesUi.modalOpen || libsUi.modalOpen || toolsUi.modalOpen || designUi.modalOpen || appModeDialogOpen(),
+    blocked: () => !!dialog || fileModalOpen || devicesOpen || filesUi.modalOpen || libsUi.modalOpen || toolsUi.modalOpen || designUi.modalOpen || jigsUi.modalOpen || appModeDialogOpen(),
     modalOpen: () => ws.dialog !== null,
     handlers: {
       "app.preferences": () => ws.open("prefs"),
@@ -1147,6 +1152,7 @@ export function App() {
       ...libsUi.handlers,
       ...prodUi.handlers,
       ...designUi.handlers,
+      ...jigsUi.handlers,
       ...edit.handlers,
       ...fillTool.handlers,
       // LightBurn 2.0 defaults (workspace/hotkeys.ts): Trim Ctrl+K, Measure Alt+M, Align centres Alt+Home, Move together
@@ -1389,6 +1395,7 @@ export function App() {
           {designUi.toolbar}
           {libsUi.toolbar}
           {toolsUi.toolbar}
+          {jigsUi.toolbar}
         </>
       }
     />
@@ -1599,7 +1606,7 @@ export function App() {
         notify={notify}
         report={report}
         canvasTool={withPositionLaser(
-          withLayerFlash(designUi.wrap(toolsUi.wrap(libsUi.wrap(text.wrap(fillTool.wrap(edit.canvas))))), doc, flash),
+          withLayerFlash(jigsUi.wrap(designUi.wrap(toolsUi.wrap(libsUi.wrap(text.wrap(fillTool.wrap(edit.canvas)))))), doc, flash),
           positioning,
           (pt) =>
             void machineAction(jobApi.pointer(roundMm(pt[0]), roundMm(pt[1])), t("poslaser.done", { x: roundMm(pt[0]), y: roundMm(pt[1]) })),
@@ -1691,6 +1698,7 @@ export function App() {
       {libsUi.dialogs}
       {prodUi.dialogs}
       {toolsUi.dialogs}
+      {jigsUi.dialogs}
       {designUi.dialogs}
       {text.dialogs}
       {ws.dialogs}
@@ -1758,6 +1766,7 @@ export function App() {
                 <button type="button" className="btn" onClick={() => centreOn("field")}>
                   {t("app.centreField")}
                 </button>
+                {jigsUi.phoneButtons}
                 <button type="button" className="btn" onClick={() => touchAction("rotate90")}>
                   {t("shell.rotate90")}
                 </button>

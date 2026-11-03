@@ -307,7 +307,7 @@ pub struct DeleteDuplicates;
 
 /// A shape's identity for duplicate detection: its layer and its field-frame outline, rounded to 1 µm, starting
 /// point and direction ignored.
-fn shape_key(cmd: &str, o: &doc::Object) -> Result<String> {
+pub(super) fn shape_key(cmd: &str, o: &doc::Object) -> Result<String> {
     if let Geometry::Image { data_base64, width_mm, height_mm, .. } = &o.geometry {
         let c = o.transform.as_coeffs().map(|v| (v * 1e6).round() as i64);
         return Ok(format!("{}|img|{width_mm}|{height_mm}|{c:?}|{}", o.layer, data_base64.len()) + data_base64);

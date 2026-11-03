@@ -737,8 +737,13 @@ export function useDesignUi(p: DesignUiProps): DesignUi {
     varr && has("array.flatten")
       ? [
           { sep: true },
-          { label: t("dz.va.edit"), action: () => setDlg({ kind: "array", edit: varr }) },
-          { label: t("dz.va.duplicate"), action: () => void exec({ id: "array.duplicate", params: { array: varr.id } }, (r) => (selectResult(r), notify(tr("dz.va.duplicated")))) },
+          // A jig placement (jigs/) is laid out by its jig's pockets: no grid to edit or duplicate.
+          ...(typeof varr.settings.jig === "string"
+            ? []
+            : [
+                { label: t("dz.va.edit"), action: () => setDlg({ kind: "array", edit: varr }) },
+                { label: t("dz.va.duplicate"), action: () => void exec({ id: "array.duplicate", params: { array: varr.id } }, (r) => (selectResult(r), notify(tr("dz.va.duplicated")))) },
+              ]),
           { label: t("dz.va.flatten"), action: () => void exec({ id: "array.flatten", params: { arrays: [varr.id] } }, () => notify(tr("dz.va.flattened"))) },
           { label: t("dz.va.removeFrom"), disabled: !varrOriginals.length, action: () => void exec({ id: "array.remove", params: { ids: varrOriginals } }) },
           { label: t("dz.va.addTo"), disabled: !freeSel.length, action: () => void exec({ id: "array.add", params: { array: varr.id, ids: freeSel } }) },
