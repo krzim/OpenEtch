@@ -29,6 +29,8 @@ mod tabs;
 mod trace_many;
 // Text, variable text and barcodes (crates/text).
 pub(crate) mod text;
+// Production slots of variable text (the serial ledger, empty pockets, Stop at End).
+pub mod slots;
 mod util;
 // Geometry commands (crates/geom): booleans, offsets, path tools, nodes, generators, arrays, arrange.
 mod arrays;
@@ -263,6 +265,7 @@ fn register_text(r: &mut Registry) {
     r.register::<text::LoadCsv>();
     r.register::<text::ClearCsv>();
     r.register::<text::PreviewRow>();
+    r.register::<slots::Slots>();
     r.register::<text::ShapeBarcode>();
     r.register::<text::FontList>();
 }

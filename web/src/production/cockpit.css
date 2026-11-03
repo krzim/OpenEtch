@@ -1,0 +1,467 @@
+/* The production cockpit (production/Cockpit.tsx): a full-screen operator view sized for an iPad on a stand. Large type,
+   44 px+ targets everywhere, STOP in its own bar at --z-stop. Colours come from the theme tokens (styles.css), so it
+   follows light and dark. */
+
+/* The page itself while the cockpit is open (App.tsx renders nothing else). No stacking context of its own (no z-index,
+   no transform), so STOP's --z-stop reaches the page's root and stays above the dialogs (--z-modal) and menus. */
+.cockpit {
+  position: relative;
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+  padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
+  overflow: hidden;
+}
+
+.cockpit-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3, 12px);
+  padding: var(--sp-2, 8px) var(--sp-4, 16px);
+  background: var(--topbar-bg);
+  color: var(--topbar-fg);
+  border-bottom: 1px solid var(--topbar-border);
+  flex: none;
+  min-height: 64px;
+}
+
+.cockpit-exit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 48px;
+  min-width: 48px;
+}
+
+.cockpit-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.cockpit-title strong {
+  font-size: var(--fs-xl, 18px);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cockpit-sub {
+  color: var(--topbar-muted);
+  font-size: var(--fs-sm, 12px);
+}
+
+.cockpit-lock {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  font-size: var(--fs-sm, 12px);
+  white-space: nowrap;
+}
+
+/* STOP: the largest control on screen, never covered (the cockpit's own dialogs sit below --z-stop). */
+.cockpit .cockpit-stop {
+  position: relative;
+  z-index: var(--z-stop);
+  min-width: 140px;
+  min-height: 56px;
+  font-size: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.cockpit-unsupported {
+  padding: var(--sp-5, 24px);
+}
+
+.cockpit-grid {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  grid-auto-rows: min-content;
+  gap: var(--sp-4, 16px);
+  padding: var(--sp-4, 16px);
+  align-content: start;
+}
+
+.cockpit-phase {
+  /* As tall as its content and kept in view while the cards beside it scroll: Start and Continue stay on screen. */
+  grid-row: span 4;
+  align-self: start;
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3, 12px);
+  padding: var(--sp-5, 24px);
+  border-radius: var(--r-lg, 8px);
+  background: var(--panel);
+  border: 2px solid var(--border);
+}
+
+.cockpit.tone-armed .cockpit-phase {
+  border-color: var(--warn);
+  background: var(--warn-bg);
+}
+
+.cockpit.tone-run .cockpit-phase {
+  border-color: var(--run-icon);
+}
+
+.cockpit.tone-bad .cockpit-phase {
+  border-color: var(--danger);
+  background: var(--danger-bg);
+}
+
+.cockpit.tone-ok .cockpit-phase {
+  border-color: var(--ok);
+}
+
+.cp-badge {
+  align-self: flex-start;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--warn);
+  color: var(--on-warn);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: var(--fs-sm, 12px);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .cockpit.tone-armed .cp-badge {
+    animation: cp-pulse 1.6s ease-in-out infinite;
+  }
+}
+
+@keyframes cp-pulse {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+.cp-title {
+  font-size: clamp(28px, 4vw, 44px);
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+.cp-clock {
+  font-size: clamp(56px, 9vw, 112px);
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.cp-clock-label {
+  margin-top: -6px;
+  font-size: var(--fs-md, 13px);
+  color: var(--text-2);
+}
+
+.cp-bar {
+  height: 14px;
+  border-radius: 7px;
+  background: var(--border-soft);
+  overflow: hidden;
+}
+
+.cp-bar span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.4s linear;
+}
+
+.cp-detail {
+  margin: 0;
+  font-size: var(--fs-lg, 15px);
+  color: var(--text-2);
+  max-width: 60ch;
+}
+
+.cp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3, 12px);
+  align-items: flex-start;
+  margin-top: var(--sp-3, 12px);
+}
+
+.cp-actions .btn {
+  min-height: 56px;
+  font-size: 18px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 20px;
+}
+
+/* Two classes: styles.css loads after the components' CSS, and its `.btn` would win over one. */
+.cockpit .cp-continue {
+  background: var(--warn);
+  border-color: var(--warn);
+  color: var(--on-warn);
+  font-weight: 600;
+  min-width: 220px;
+  justify-content: center;
+}
+
+.cp-start {
+  flex: 1 1 260px;
+  min-width: 220px;
+}
+
+/* The app's Start, scaled up for a finger at arm's length (three classes: laser.css styles each variant). */
+.cockpit .cp-start .btn-start {
+  width: 100%;
+  min-height: 72px;
+  font-size: 22px;
+  justify-content: center;
+}
+
+.cp-pin {
+  margin: 0;
+}
+
+.cockpit-card {
+  padding: var(--sp-4, 16px);
+  border-radius: var(--r-lg, 8px);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  min-width: 0;
+}
+
+.cockpit-card h3 {
+  margin: 0 0 var(--sp-2, 8px);
+  font-size: var(--fs-xs, 11px);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
+.cc-count {
+  font-size: clamp(40px, 6vw, 72px);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.cc-bar {
+  margin: var(--sp-2, 8px) 0;
+}
+
+.cc-eta {
+  margin: 0 0 var(--sp-2, 8px);
+  font-size: var(--fs-lg, 15px);
+}
+
+.cockpit-counter .job-counter {
+  flex-wrap: wrap;
+}
+
+.cn-head {
+  font-size: clamp(22px, 3vw, 32px);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  margin-bottom: var(--sp-2, 8px);
+  overflow-wrap: anywhere;
+}
+
+.cn-slots {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: var(--sp-2, 8px);
+}
+
+.cn-slot {
+  width: 100%;
+  min-height: 56px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 8px;
+  align-items: center;
+  text-align: left;
+  padding: 6px 10px;
+  border-radius: var(--r-md, 4px);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+}
+
+.cn-slot.st-empty {
+  background: var(--chrome-2);
+  color: var(--muted);
+  border-style: dashed;
+}
+
+.cn-slot.st-past_end {
+  background: var(--danger-bg);
+  color: var(--danger-dark);
+}
+
+.cn-num {
+  grid-row: span 2;
+  font-size: 20px;
+  font-weight: 600;
+  min-width: 1.6em;
+  text-align: center;
+}
+
+.cn-label {
+  font-size: var(--fs-sm, 12px);
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cn-value {
+  font-size: var(--fs-lg, 15px);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.cn-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2, 8px);
+  align-items: center;
+  margin-top: var(--sp-3, 12px);
+}
+
+.cn-tools .btn,
+.cn-check {
+  min-height: 44px;
+}
+
+.cn-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cs-times {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  margin: 0 0 var(--sp-3, 12px);
+  font-size: var(--fs-lg, 15px);
+}
+
+.cs-times dt {
+  color: var(--text-2);
+}
+
+.cs-times dd {
+  margin: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.cs-extractor,
+.cs-due {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border-soft);
+}
+
+.cs-extractor.on {
+  color: var(--ok);
+}
+
+.cs-due {
+  color: var(--warn-text);
+}
+
+.cockpit .btn.small,
+.cs-extractor .btn,
+.cs-due .btn,
+.cl-slot {
+  min-height: 44px;
+}
+
+.cl-run + .cl-run {
+  margin-top: var(--sp-3, 12px);
+}
+
+.cl-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--fs-sm, 12px);
+  color: var(--text-2);
+  margin-bottom: 4px;
+}
+
+.cl-slots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cl-slot.skipped {
+  opacity: 0.6;
+  text-decoration: line-through;
+}
+
+/* Tablet portrait and phones: one column, the state panel first. */
+@media (max-width: 900px) {
+  .cockpit-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cockpit-phase {
+    grid-row: auto;
+    position: static;
+  }
+}
+
+@media (max-width: 600px) {
+  .cockpit-bar {
+    padding: 6px 8px;
+    gap: 8px;
+  }
+
+  .cockpit-exit span,
+  .cockpit-lock span {
+    display: none;
+  }
+
+  .cockpit .cockpit-stop {
+    min-width: 96px;
+  }
+
+  .cockpit-grid {
+    padding: 8px;
+    gap: 8px;
+  }
+
+  .cockpit-phase {
+    padding: var(--sp-4, 16px);
+  }
+}

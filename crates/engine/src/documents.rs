@@ -142,6 +142,7 @@ impl AppState {
 
     /// Make open document `id` the active one (see the module docs). Returns `{ok, active, revision}`.
     pub fn activate_document(&self, id: &str, origin: Origin) -> Result<Value, EngineError> {
+        crate::production::lock::check_timeline(self)?;
         let (revision, hist) = {
             let mut s = lock(&self.session);
             let mut p = lock(&self.project);

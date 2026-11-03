@@ -8,6 +8,7 @@ import { EN_FILL } from "./en-fill.ts";
 import { EN_GANTRY } from "./en-gantry.ts";
 import { EN_JOB } from "./en-job.ts";
 import { EN_LASER } from "./en-laser.ts";
+import { EN_PRODUCTION } from "./en-production.ts";
 import { EN_LIBS } from "./en-libs.ts";
 import { EN_REST } from "./en-rest.ts";
 import { EN_RIBBON } from "./en-ribbon.ts";
@@ -50,6 +51,8 @@ export const EN = {
   ...EN_TOUCH,
   ...EN_APP,
   ...EN_LASER,
+  // The production cockpit, notifications, serial ledger, layer pauses, maintenance, extractor (src/production/).
+  ...EN_PRODUCTION,
   "common.cancel": "Cancel",
   "common.close": "Close",
   "common.loading": "Loading…",

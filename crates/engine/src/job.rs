@@ -77,6 +77,10 @@ struct Active {
     /// The last elapsed time reported, so the clock never runs backwards.
     last_elapsed: f64,
     last_tick: Option<Instant>,
+    /// Waiting at a layer for the operator (`production::layer_pause`): the layer's name. The clock stands still.
+    layer_wait: Option<String>,
+    /// A job run in stages (layer pauses): its progress follows the clock (the board's packet counts are per stage).
+    staged: bool,
 }
 
 impl Active {
@@ -263,7 +267,23 @@ impl JobTracker {
             pause_began: None,
             last_elapsed: 0.0,
             last_tick: None,
+            layer_wait: None,
+            staged: false,
         });
+    }
+
+    /// The job runs in stages (`production::layer_pause`).
+    pub(crate) fn set_staged(&self) {
+        if let Some(a) = lock(&self.active).as_mut() {
+            a.staged = true;
+        }
+    }
+
+    /// The job waits at layer `layer` for the operator (`None`: it goes on).
+    pub(crate) fn layer_wait(&self, layer: Option<&str>) {
+        if let Some(a) = lock(&self.active).as_mut() {
+            a.layer_wait = layer.map(str::to_owned);
+        }
     }
 
     pub(crate) fn waiting(&self, iteration: u32) {
@@ -315,7 +335,8 @@ impl JobTracker {
     pub(crate) fn tick(&self, paused: bool) {
         if let Some(a) = lock(&self.active).as_mut() {
             let now = Instant::now();
-            a.account(paused, now);
+            let held = paused || a.layer_wait.is_some();
+            a.account(held, now);
             a.last_tick = Some(now);
         }
     }
@@ -337,7 +358,8 @@ impl JobTracker {
             let mut guard = lock(&self.active);
             guard.as_mut().map(|a| {
                 let now = Instant::now();
-                a.account(paused, now);
+                // Waiting at a layer for the operator: the clock stands still as while paused.
+                a.account(paused || a.layer_wait.is_some(), now);
                 let elapsed = a.elapsed(now);
                 (a.clone(), elapsed)
             })
@@ -348,11 +370,13 @@ impl JobTracker {
                 "packets_sent": 0, "packets_acknowledged": 0, "packets_total": 0, "part": 0, "parts": 0, "paused": false,
                 "elapsed_s": 0.0, "estimated_time_s": 0.0, "remaining_s": 0.0, "finishing": false, "progress": 0.0,
                 "progress_source": "time",
-                "count": count, "stop_at": stop_at, "end_after_current": false,
+                "count": count, "stop_at": stop_at, "end_after_current": false, "waiting_layer": null,
             });
         };
         let state = if paused {
             "paused"
+        } else if a.layer_wait.is_some() {
+            "waiting_at_layer"
         } else if a.waiting_for_input {
             "waiting_for_start_input"
         } else if a.started.is_none() {
@@ -363,8 +387,14 @@ impl JobTracker {
         let est = a.estimated_time_s;
         let sent = if a.started.is_some() { p.packets_sent } else { 0 };
         let done = if a.started.is_some() { p.packets_done.min(sent) } else { 0 };
-        let (progress, source) =
-            if a.started.is_some() { blended_progress(done, sent, p.packets_total, elapsed, est) } else { (0.0, "time") };
+        // A staged job's packet counts are those of the stage that runs: its progress follows the clock.
+        let (progress, source) = if a.started.is_none() {
+            (0.0, "time")
+        } else if a.staged {
+            blended_progress(0, 0, 0, elapsed, est)
+        } else {
+            blended_progress(done, sent, p.packets_total, elapsed, est)
+        };
         // What is left ([`remaining_s`]); `None` while running: finishing (never "0 s left" while the job runs).
         let left = if a.started.is_some() { remaining_s(progress, elapsed, est) } else { Some(est) };
         let finishing = a.started.is_some() && left.is_none();
@@ -393,6 +423,7 @@ impl JobTracker {
             "count": count,
             "stop_at": stop_at,
             "end_after_current": self.ending(),
+            "waiting_layer": a.layer_wait,
         })
     }
 }
@@ -537,6 +568,8 @@ mod tests {
             pause_began: None,
             last_elapsed: 0.0,
             last_tick: None,
+            layer_wait: None,
+            staged: false,
         };
         let at = |ms: u64| t0 + Duration::from_millis(ms);
         a.account(false, at(1000));

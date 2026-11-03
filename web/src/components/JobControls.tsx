@@ -131,7 +131,7 @@ export function JobProgress(p: { state: JobState; notify: Notify; report: (e: un
     <div className="job-progress" aria-label={t("job.progress")}>
       <div className="job-progress-head">
         <span className={`job-state job-state-${job.paused ? "paused" : job.active ? "active" : "idle"}`} role="status">
-          {t(st.key)}
+          {t(st.key, st.vars)}
         </span>
         {it && <span className="job-iter">{it}</span>}
         {job.active && job.parts > 1 && <span className="job-iter">{t("job.part", { part: Math.max(1, job.part), parts: job.parts })}</span>}

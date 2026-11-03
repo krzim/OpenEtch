@@ -193,6 +193,8 @@ pub struct Run {
     pub completed: u32,
     /// The learned correction applied to `stats.estimated_time_s` ([`PreparedJob::estimate_correction`]).
     pub estimate_correction: f64,
+    /// Where the run waits for the operator before a layer (`production::layer_pause`).
+    pub pauses: Vec<crate::production::layer_pause::LayerStop>,
 }
 
 impl Run {
@@ -261,6 +263,9 @@ pub struct RunView {
     pub parts: usize,
     /// Iterations that ran to the end.
     pub completed: u32,
+    /// The layers the run waits at for the operator (Continue or the foot switch), in order.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub layer_pauses: Vec<String>,
 }
 
 impl Run {
@@ -282,6 +287,7 @@ impl Run {
             options: self.options.clone(),
             parts: self.parts.len(),
             completed: self.completed,
+            layer_pauses: self.pauses.iter().map(|p| p.layer.clone()).collect(),
         }
     }
 }
@@ -322,6 +328,7 @@ impl RunStore {
             options: prepared.options,
             completed: 0,
             estimate_correction: prepared.estimate_correction,
+            pauses: prepared.pauses,
         });
         self.prune();
         Ok(self.runs.last_mut().expect("just pushed"))
@@ -438,6 +445,8 @@ pub struct PreparedJob {
     /// The factor `stats.estimated_time_s` was multiplied by (the device's learned correction, module `marktime`);
     /// 1 from [`prepare_job`]. The planner's own estimate is `stats.estimated_time_s / estimate_correction`.
     pub estimate_correction: f64,
+    /// Where the run waits for the operator before a layer (`production::layer_pause`); empty for most jobs.
+    pub pauses: Vec<crate::production::layer_pause::LayerStop>,
 }
 
 impl PreparedJob {
@@ -521,7 +530,11 @@ pub fn prepare_job_with(
     if let Some(n) = options.from_segment {
         job = plan::start_at(&job, n, target)?;
     }
-    let encoded = plan::encode_parts(&job, target)?;
+    // Pause at a layer (module `production::layer_pause`): the job in stages, each starting at a paused layer.
+    let (encoded, pauses) = match crate::production::layer_pause::encode_stages(doc, &job, target)? {
+        Some(staged) => staged,
+        None => (plan::encode_parts(&job, target)?, Vec::new()),
+    };
     let mut parts = Vec::with_capacity(encoded.len());
     let mut rotary = false;
     for e in encoded {
@@ -565,6 +578,12 @@ pub fn prepare_job_with(
     if job.parts.len() > 1 {
         summary.push_str(&format!(", in {} parts", job.parts.len()));
     }
+    if !pauses.is_empty() {
+        let names: Vec<String> = pauses.iter().map(|p| format!("\"{}\"", p.layer)).collect();
+        summary.push_str(&format!(", waiting for the operator before {}", names.join(", ")));
+    } else if rotary && crate::production::layer_pause::any_pause(doc) {
+        summary.push_str(" (layer pauses are not available for a rotary job)");
+    }
     match options.iterations() {
         None => summary.push_str(", continuously"),
         Some(n) if n > 1 => summary.push_str(&format!(", {n} times")),
@@ -576,7 +595,7 @@ pub fn prepare_job_with(
     if let Some(n) = options.from_segment {
         summary.push_str(&format!(" (from segment {n})"));
     }
-    Ok(PreparedJob { parts, gcode: None, ruida: None, stats, summary, generation: 0, options: options.clone(), estimate_correction: 1.0 })
+    Ok(PreparedJob { parts, gcode: None, ruida: None, stats, summary, generation: 0, options: options.clone(), estimate_correction: 1.0, pauses })
 }
 
 /// Plan `doc` for a GRBL gantry: the same planning as [`prepare_job_with`] on the bed's target, then G-code
@@ -617,6 +636,9 @@ pub fn prepare_gcode_job(
         about(stats.estimated_time_s),
         program.len()
     );
+    if crate::production::layer_pause::any_pause(doc) {
+        summary.push_str(" (layer pauses are galvo-only and were left out)");
+    }
     match options.iterations() {
         None => summary.push_str(", continuously"),
         Some(n) if n > 1 => summary.push_str(&format!(", {n} times")),
@@ -637,6 +659,7 @@ pub fn prepare_gcode_job(
         generation: 0,
         options: options.clone(),
         estimate_correction: 1.0,
+        pauses: Vec::new(),
     })
 }
 
@@ -653,6 +676,7 @@ pub fn prepare_queue(
     options.check()?;
     let single = RunOptions { queue: None, repeat: None, continuous: false, table: None, ..options.clone() };
     let mut parts = Vec::new();
+    let mut pauses = Vec::new();
     let mut stats = Stats::default();
     for (name, doc) in docs {
         let doc = commands::prepare_output(doc).map_err(|e| EngineError::BadRequest(format!("project \"{name}\": text: {e}")))?;
@@ -661,6 +685,8 @@ pub fn prepare_queue(
             EngineError::BadRequest(m) => EngineError::BadRequest(format!("project \"{name}\": {m}")),
             other => other,
         })?;
+        let offset = parts.len();
+        pauses.extend(p.pauses.into_iter().map(|s| crate::production::layer_pause::LayerStop { part: s.part + offset, ..s }));
         parts.extend(p.parts);
         stats.polyline_count += p.stats.polyline_count;
         stats.mark_length_mm += p.stats.mark_length_mm;
@@ -682,7 +708,7 @@ pub fn prepare_queue(
         Some(n) if n > 1 => summary.push_str(&format!(", {n} times")),
         _ => {}
     }
-    Ok(PreparedJob { parts, gcode: None, ruida: None, stats, summary, generation: 0, options: options.clone(), estimate_correction: 1.0 })
+    Ok(PreparedJob { parts, gcode: None, ruida: None, stats, summary, generation: 0, options: options.clone(), estimate_correction: 1.0, pauses })
 }
 
 #[cfg(test)]
@@ -700,6 +726,7 @@ mod tests {
             generation: 0,
             options: RunOptions::default(),
             estimate_correction: 1.0,
+            pauses: Vec::new(),
         }
     }
 

@@ -10,7 +10,7 @@ import { tr } from "../workspace/tr.ts";
 
 // ---- job status -----------------------------------------------------------------------------------------------------
 
-export type JobState = "idle" | "starting" | "waiting_for_start_input" | "running" | "paused";
+export type JobState = "idle" | "starting" | "waiting_for_start_input" | "waiting_at_layer" | "running" | "paused";
 
 /** GET /api/job (also `job_progress.status`). */
 export interface JobStatus {
@@ -40,6 +40,8 @@ export interface JobStatus {
   count: number;
   stop_at: number | null;
   end_after_current: boolean;
+  /** Waiting at a layer for the operator (`state` "waiting_at_layer"): the layer's name. */
+  waiting_layer?: string | null;
 }
 
 export const IDLE_JOB: JobStatus = {
@@ -119,7 +121,10 @@ export function repeating(j: JobStatus): boolean {
 }
 
 /** Message key and vars for the job's state line. */
-export function jobStateKey(j: JobStatus): { key: "job.idle" | "job.starting" | "job.waitingPedal" | "job.running" | "job.paused"; vars?: Record<string, number> } {
+export function jobStateKey(j: JobStatus): {
+  key: "job.idle" | "job.starting" | "job.waitingPedal" | "prod.jobWaitingLayer" | "job.running" | "job.paused";
+  vars?: Record<string, number | string>;
+} {
   if (!j.active) return { key: "job.idle" };
   if (j.paused) return { key: "job.paused" };
   switch (j.state) {
@@ -127,6 +132,8 @@ export function jobStateKey(j: JobStatus): { key: "job.idle" | "job.starting" | 
       return { key: "job.starting" };
     case "waiting_for_start_input":
       return { key: "job.waitingPedal" };
+    case "waiting_at_layer":
+      return { key: "prod.jobWaitingLayer", vars: { layer: j.waiting_layer ?? "" } };
     default:
       return { key: "job.running" };
   }

@@ -24,6 +24,8 @@ export type FillGrouping = "individually" | "all_at_once" | "by_group";
 export interface CutOptions {
   output?: boolean;
   pause_before_ms?: number;
+  /** Pause at this layer for the operator (Continue or the foot switch; engine `production::layer_pause`). */
+  operator_pause?: boolean;
   pause_after_ms?: number;
   dot_mode?: { dot_time_ms: number; dot_spacing_mm: number } | null;
   wobble?: { step_mm: number; size_mm: number } | null;
@@ -70,6 +72,7 @@ export interface Lead {
 export interface ResolvedOptions {
   output: boolean;
   pause_before_ms: number;
+  operator_pause: boolean;
   pause_after_ms: number;
   dot_mode: { dot_time_ms: number; dot_spacing_mm: number } | null;
   wobble: { step_mm: number; size_mm: number } | null;
@@ -150,6 +153,7 @@ export function resolveOptions(settings: CutSettings | null | undefined): Resolv
   return {
     output: r.output !== false,
     pause_before_ms: n(r.pause_before_ms, 0),
+    operator_pause: r.operator_pause === true,
     pause_after_ms: n(r.pause_after_ms, 0),
     dot_mode: dot ? { dot_time_ms: n(dot.dot_time_ms, 0.5), dot_spacing_mm: n(dot.dot_spacing_mm, 0.1) } : null,
     wobble: wob ? { step_mm: n(wob.step_mm, 0.1), size_mm: n(wob.size_mm, 0.5) } : null,
@@ -209,6 +213,7 @@ export function activeOptionCount(r: ResolvedOptions, gantry = false): number {
   let c = 0;
   if (!r.output) c++;
   if (r.pause_before_ms) c++;
+  if (r.operator_pause) c++;
   if (r.pause_after_ms) c++;
   if (r.dot_mode) c++;
   if (r.wobble) c++;

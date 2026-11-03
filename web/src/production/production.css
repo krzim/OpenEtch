@@ -1,0 +1,220 @@
+/* Production: the Settings sections, the Production window, the layer pause HUD, the maintenance chip and the serial
+   ledger table (the cockpit has cockpit.css). Theme tokens only; 44 px targets on coarse pointers. */
+
+.prod-section h4 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.prod-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+}
+
+.prod-wide {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 6px 0;
+  font-size: var(--fs-sm, 12px);
+  color: var(--text-2);
+}
+
+.prod-wide input,
+.prod-wide select {
+  font-size: var(--fs-md, 13px);
+}
+
+.prod-row > label:not(.prod-check) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.prod-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.prod-target {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md, 4px);
+  padding: 8px 10px;
+  margin: 8px 0;
+}
+
+.prod-target legend {
+  padding: 0 4px;
+}
+
+.prod-name {
+  font-weight: 600;
+  min-width: 12ch;
+}
+
+.prod-events {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 2px 12px;
+  margin: 6px 0;
+  font-size: var(--fs-sm, 12px);
+}
+
+.prod-end {
+  margin-left: auto;
+}
+
+.prod-bad {
+  color: var(--danger);
+}
+
+.prod-reminder {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.prod-reminder > input {
+  flex: 1 1 14ch;
+  min-width: 12ch;
+}
+
+.prod-due {
+  color: var(--warn-text);
+  font-weight: 600;
+}
+
+.prod-remlist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.prod-remlist li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.prod-remname {
+  flex: 1;
+}
+
+.prod-dock {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.prod-dock .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.prod-kv {
+  margin: 0;
+}
+
+.prod-wait {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-radius: var(--r-md, 4px);
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  border: 1px solid var(--warn);
+}
+
+/* Two classes: styles.css loads after this file. */
+.btn.prod-continue {
+  background: var(--warn);
+  border-color: var(--warn);
+  color: var(--on-warn);
+  font-weight: 600;
+}
+
+.prod-lockline {
+  color: var(--warn-text);
+}
+
+.prod-hud {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  border: 2px solid var(--warn);
+  border-radius: var(--r-lg, 8px);
+}
+
+.prod-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 220px;
+  padding: 2px 10px;
+  min-height: 28px;
+  border-radius: 999px;
+  border: 1px solid var(--warn);
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  font: inherit;
+  font-size: var(--fs-sm, 12px);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: none;
+}
+
+.prod-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.prod-ledger .prod-value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.prod-ledger .prod-nowrap {
+  white-space: nowrap;
+}
+
+.prod-ledger .prod-skipped {
+  color: var(--muted);
+}
+
+[data-pointer="coarse"] .prod-chip,
+[data-density="touch"] .prod-chip,
+[data-pointer="coarse"] .prod-dock .btn,
+[data-density="touch"] .prod-dock .btn,
+[data-pointer="coarse"] .prod-section .btn,
+[data-density="touch"] .prod-section .btn,
+[data-pointer="coarse"] .prod-hud .btn,
+[data-density="touch"] .prod-hud .btn,
+[data-pointer="coarse"] .prod-ledger .btn,
+[data-density="touch"] .prod-ledger .btn {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+[data-pointer="coarse"] .prod-check input,
+[data-density="touch"] .prod-check input {
+  width: 22px;
+  height: 22px;
+}

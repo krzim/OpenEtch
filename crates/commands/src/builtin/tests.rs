@@ -128,6 +128,7 @@ const ALL_IDS: &[&str] = &[
     "var.load_csv",
     "var.clear_csv",
     "var.preview_row",
+    "var.slots",
     "shape.barcode",
     "font.list",
     "layer.apply_preset",
@@ -195,7 +196,7 @@ fn registry_lists_every_command_with_documented_schema() {
             "doc.inspect" | "doc.save" | "doc.export_lbrn2" | "node.list" | "var.preview_row" | "font.list"
                 | "doc.export" | "doc.print" | "image.trace_preview" | "image.export" | "image.processed" | "page.list"
                 | "select.open_shapes" | "select.open_on_fill" | "select.contained" | "art.tangent_circle_candidates"
-                | "tabs.list" | "image.trace_files" | "path.fill_region_preview"
+                | "tabs.list" | "image.trace_files" | "path.fill_region_preview" | "var.slots"
         );
         assert_eq!(spec.risk == Risk::Query, query, "{}", spec.id);
         let props = spec.input_schema["properties"].as_object();

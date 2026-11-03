@@ -7,6 +7,7 @@
 
 import { NumberField } from "../components/ui.tsx";
 import { ProjectLocationsSection } from "../files/ProjectFolders.tsx";
+import { ProductionSettingsSections } from "../production/ProductionSettings.tsx";
 import { LightBurnPrefsImport } from "../files/LightBurnPrefsImport.tsx";
 import { libsToast } from "../libs/store.ts";
 import { languages, type MsgKey } from "./i18n.ts";
@@ -291,6 +292,8 @@ export function PreferencesDialog(p: { onClose: () => void; onHotkeys: () => voi
         </section>
 
         <ProjectLocationsSection />
+        {/* Notifications, maintenance reminders and the extractor (src/production/). */}
+        <ProductionSettingsSections />
       </div>
     </WsModal>
   );

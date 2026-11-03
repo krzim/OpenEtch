@@ -194,6 +194,12 @@ pub struct CutOptions {
     /// Wait after each pass, ms (Pause After).
     #[serde(skip_serializing_if = "is_zero")]
     pub pause_after_ms: f64,
+    /// Pause at a layer (OpenEtch's production option, not LightBurn's): before the first pass of these settings the
+    /// run stops with the board idle (MO closed, laser enable off) and waits for the operator to press Continue in
+    /// the app or the foot switch (the profile's Start Marking input). Galvo (LMC) jobs only; see the engine's
+    /// `production::layer_pause`.
+    #[serde(skip_serializing_if = "is_false")]
+    pub operator_pause: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dot_mode: Option<DotMode>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -279,6 +285,7 @@ impl Default for CutOptions {
             output: true,
             pause_before_ms: 0.0,
             pause_after_ms: 0.0,
+            operator_pause: false,
             dot_mode: None,
             wobble: None,
             fill_dot_width_mm: 0.0,
@@ -632,6 +639,7 @@ mod tests {
         let o = CutOptions {
             output: false,
             pause_after_ms: 50.0,
+            operator_pause: true,
             dot_mode: Some(DotMode { dot_time_ms: 1.0, dot_spacing_mm: 0.5 }),
             fill_grouping: FillGrouping::AllAtOnce,
             tabs: Some(Tabs { generation: TabGeneration::Manual, skip_inner: true, cut_power_pct: 20.0, ..Tabs::default() }),

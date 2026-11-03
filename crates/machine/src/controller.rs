@@ -634,6 +634,28 @@ impl<L: Link> Controller<L> {
         self.single(Single::write_port(idle & !lmc::LASER_ENABLE_BIT)).map(|_| ())
     }
 
+    /// Write the idle output word plus `extra` while the board is idle: OpenEtch's extractor run-on keeps the Busy
+    /// output (the extractor's relay) on for a while after a job (`extra` = that bit) and clears it again with `0`.
+    /// `extra` may hold only the job lights (`IoPorts::run_outputs`, the outputs a job itself switches on), so it can
+    /// never be the laser-enable, red-pointer or focus bit. Refused while a job runs or a frame is on (they own the
+    /// port); a later stop, frame or job writes its own word over it.
+    pub fn hold_outputs(&mut self, extra: u16) -> Result<()> {
+        if self.state == ControllerState::Uninitialized {
+            return Err(ControllerError::NotInitialized);
+        }
+        if matches!(self.state, ControllerState::Running | ControllerState::Framing) {
+            return Err(ControllerError::Busy(self.state));
+        }
+        let allowed = self.profile.as_ref().map_or(0, |p| p.io.run_outputs()) & !lmc::LASER_ENABLE_BIT;
+        if extra & !allowed != 0 {
+            return Err(ControllerError::Refused(format!(
+                "output word {extra:#06x} holds bits that are not the profile's job lights ({allowed:#06x})"
+            )));
+        }
+        let word = (self.idle_outputs() | extra) & !lmc::LASER_ENABLE_BIT;
+        self.single(Single::write_port(word)).map(|_| ())
+    }
+
     /// Read the board's input port: `ReadPort`, reply word 1 (as galvoplotter's `wait_for_input` reads it). Used for
     /// a physical confirmation input. Needs an initialised board; sends nothing that can emit and changes no state.
     pub fn read_port(&mut self) -> Result<u16> {
@@ -1371,6 +1393,26 @@ mod tests {
         c.link_mut().clear_traffic();
         c.apply_idle_outputs().unwrap();
         assert_eq!(c.link().singles_without_polls(), [Single::write_port(idle)]);
+    }
+
+    #[test]
+    fn hold_outputs_keeps_only_job_lights_on_while_idle() {
+        let mut c = controller(SimBoard::default());
+        c.init(&io_profile(), None).unwrap();
+        let idle = 0x10 | lmc::RED_POINTER_BIT;
+        // The extractor run-on: the Busy light (bit 3) held on after a job, then off again.
+        c.hold_outputs(0x08).unwrap();
+        assert_eq!(c.link().port(), idle | 0x08);
+        c.hold_outputs(0).unwrap();
+        assert_eq!(c.link().port(), idle);
+        // Never the laser enable, the red pointer as an extra, or an output that is not a job light.
+        for bad in [lmc::LASER_ENABLE_BIT, 0x40, 0x0100] {
+            assert!(matches!(c.hold_outputs(bad), Err(ControllerError::Refused(_))), "{bad:#x}");
+        }
+        assert_eq!(c.link().port() & lmc::LASER_ENABLE_BIT, 0);
+        // Not before init.
+        let mut fresh = controller(SimBoard::default());
+        assert!(matches!(fresh.hold_outputs(0x08), Err(ControllerError::NotInitialized)));
     }
 
     #[test]

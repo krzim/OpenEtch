@@ -345,6 +345,11 @@ async fn run(config: Config) -> Result<(), String> {
     engine::libs::select_device_library(&state);
     engine::libs::apply_startup_defaults(&state);
     engine::libs::spawn_io_watch(state.clone());
+    // Production: serial ledger, hour meter, extractor, notification targets (module `production`).
+    for note in state.production.open(&config.config_dir) {
+        println!("openetch: {note}");
+    }
+    engine::production::spawn(state.clone());
     for note in state.files.open(&config.config_dir) {
         println!("openetch: {note}");
     }

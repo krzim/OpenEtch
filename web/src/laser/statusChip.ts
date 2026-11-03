@@ -47,6 +47,8 @@ export function chipState(machine: MachineStatus | null, link: LinkState, job: J
     if (j.paused) return base("paused", "armed", tr("lz.chipPaused", { pct }), { pct, action: "resume", pending });
     if (j.state === "starting") return base("starting", "run", tr("lz.chipStarting"), { action: "pause", pending });
     if (j.state === "waiting_for_start_input") return base("pedal", "armed", tr("lz.chipPedal"), { pending });
+    // A run waiting at a layer for the operator (production::layer_pause): Continue in the cockpit or the HUD.
+    if (j.state === "waiting_at_layer") return base("pedal", "armed", tr("prod.chipLayer"), { pending });
     const left = j.finishing || j.remaining_s < 1 ? null : j.remaining_s;
     const text = left === null ? tr("lz.chipRunning", { pct }) : tr("lz.chipRunningLeft", { pct, time: shortClock(left) });
     return base("running", "run", text, { pct, remainingS: left, action: "pause", pending });

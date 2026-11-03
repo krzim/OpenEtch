@@ -141,6 +141,8 @@ pub struct AppState {
     doc_log: Mutex<crate::docsync::DocLog>,
     /// This engine run's id for change sets (module `docsync`): revisions start again after a restart.
     pub epoch: Arc<str>,
+    /// Production: the cockpit's lock, notifications, the serial ledger, layer pauses, the hour meter, the extractor.
+    pub production: crate::production::Production,
 }
 
 /// How an invocation changes which project the document belongs to.
@@ -378,6 +380,7 @@ impl AppState {
             shutdown: crate::shutdown::ShutdownState::default(),
             doc_log: Mutex::default(),
             epoch: new_epoch().into(),
+            production: crate::production::Production::default(),
         })
     }
 
@@ -398,7 +401,7 @@ impl AppState {
     }
 
     /// Refused (422) while the active device is design-only.
-    fn require_controllable(&self) -> Result<(), EngineError> {
+    pub(crate) fn require_controllable(&self) -> Result<(), EngineError> {
         match self.active_device().not_controllable_reason() {
             Some(reason) => Err(EngineError::NotControllable(format!("{reason}. Make a JCZ galvo active in Devices to run or frame."))),
             None => Ok(()),
@@ -460,6 +463,7 @@ impl AppState {
         self.devices().remove(id)?;
         self.libs.forget_device(id);
         self.job.times.forget(|d| d == id);
+        self.production.forget_device(id);
         self.emit(Event::DevicesChanged);
         Ok(())
     }
@@ -712,6 +716,7 @@ impl AppState {
         origin: Origin,
         op: impl FnOnce(&mut Session) -> Result<u64, commands::CommandError>,
     ) -> Result<Value, EngineError> {
+        crate::production::lock::check_timeline(self)?;
         let (before, after, hist, doc_id) = {
             let mut s = lock(&self.session);
             let before = s.document().revision;
@@ -801,6 +806,8 @@ impl AppState {
                         )));
                     }
                     if spec.risk == Risk::Edit {
+                        // The production cockpit's design lock (module `production::lock`).
+                        crate::production::lock::check_edit(self, &inv.id)?;
                         last_edit = replaces(inv);
                     }
                 }
@@ -1308,6 +1315,10 @@ impl AppState {
                 "the document changed since the run was requested (revision {shown} -> {revision}); nothing was requested: check the job and request it again"
             )));
         }
+        // Production slots: empty pockets and Stop at End (module `production`); a batch queue plans its own projects.
+        let slots = if options.queue.is_none() { crate::production::slot_plan_for_run(&doc)? } else { None };
+        let doc_name = doc.name.clone();
+        let doc = crate::production::output_document(&doc, slots.as_ref());
         let config = self.machine.config();
         let generation = config.generation;
         let run_index = self.job.count(&self.active_device().id);
@@ -1349,6 +1360,7 @@ impl AppState {
             run.document_id = document_id;
             run.view(revision)
         };
+        crate::production::record_request(self, &view.id, slots, &doc_name);
         tracing::info!(run_id = %view.id, ?origin, "run requested; waiting for approval in the UI");
         self.emit(Event::RunPending { run_id: view.id.clone(), origin, summary: view.summary.clone() });
         Ok(view)
