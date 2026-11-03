@@ -199,6 +199,12 @@
   color: var(--muted);
 }
 
+/* On a phone the pocket, the value, the result and Re-mark fit without scrolling sideways once the run and project
+   columns go (the times tell the runs apart; CSV export keeps every column). */
+:root[data-layout="phone"] .prod-ledger :is(th, td):is(:nth-child(2), :nth-child(3)) {
+  display: none;
+}
+
 [data-pointer="coarse"] .prod-chip,
 [data-density="touch"] .prod-chip,
 [data-pointer="coarse"] .prod-dock .btn,

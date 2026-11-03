@@ -465,3 +465,9 @@
     padding: var(--sp-4, 16px);
   }
 }
+
+/* The toasts: the cockpit has no timeline, status bar or tab bar, so they sit at its foot (--bar-bottom would hold them
+   up over the counter's controls on a phone). */
+.cockpit .toasts {
+  bottom: calc(var(--safe-bottom) + 18px);
+}
