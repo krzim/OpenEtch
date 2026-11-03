@@ -558,7 +558,36 @@ diagnostics,updates,camera}.rs`; the module docs of `api_libs` list every route)
   /api/optimization/default` (Set as Defaults; new documents start with them through `doc.new`'s `optimization`),
   `DELETE` forgets them, `POST /api/optimization/reset {builtin?}`.
 - **Job log**: one JSON line per ended run (time, run, state, origin, device, project, summary, duration,
-  iterations, error) appended to `<config-dir>/job-log.jsonl`; `GET /api/job-log?limit=&format=csv`.
+  iterations, error) appended to `<config-dir>/job-log.jsonl`; `GET /api/job-log?limit=&format=csv`. It is the job
+  ledger's record (below): newer lines also carry what was burned.
+- **Job ledger** (`ledger.rs`, routes `api_ledger.rs`, MCP `ledger_mcp.rs`, thumbnails `ledger_thumb.rs`; short list
+  #5). When a run is requested (`AppState::request_run_at`) the engine notes, beside the pending run, the document it
+  was planned from (shared, not copied), each layer with objects (its `CutSettings` and sub-layers as JSON, object and
+  image counts, the preset link, its passes, mark length and share of the estimate from `plan::layer_times`), the
+  variable text values (counter, CSV file, each variable text's and barcode's value, through `text::vars::evaluate`)
+  and the run options (at most 32 notes; a run never approved leaves nothing). When the run ends (`libs::after_run`)
+  the note joins its job log line (`layers`, `variables`, `options`, `estimated_time_s`, the board's `mark_time_s`,
+  `document`, `revision`) and the engine writes, in the background, a thumbnail (tiny-skia: the output objects'
+  outlines in their layer colours and the images themselves, framed on them) and the document as gzipped
+  `.openetch` to `<config-dir>/job-ledger/<id>.png` / `<id>.openetch.gz`; the id is `<end unix s>-<run id>`.
+  Storage is capped by `job-ledger/settings.json` (`GET` / `PUT /api/job-ledger/settings`, the PUT UI only):
+  documents of the newest `keep_documents` jobs (default 100) up to `max_document_mb` each (25), thumbnails of the
+  newest `keep_thumbnails` (2000) at `thumbnail_px` (160); older files are deleted after each run and when the
+  settings change, the log lines stay. Verdicts: `POST /api/job-log/{id}/mark {verdict: ok|scrap|null, note}`
+  appends to `job-ledger/notes.jsonl` (the last line per id wins; the author's origin is kept, MCP headers make it
+  the agent's). Search: `GET /api/job-log` takes `q` (every word must appear in the project, document, device,
+  summary, layer names, colours and settings, variable values, note or error), `verdict` (`ok`, `scrap`,
+  `unmarked`), `state`, `device`, `project`, `since_unix_s`, `until_unix_s`; entries come newest first with `id`,
+  `verdict`, `note`, `thumbnail`, `rerun` and `rerun_reason`; the CSV gains verdict, note, layers and variables
+  columns. **Re-run exactly as burned** never starts anything: `POST /api/job-log/{id}/open` loads the stored
+  document into a new open document (unsaved, named "<project> (as burned <run>)") and activates it;
+  `/rerun` does that and then requests a *pending* run of it with the stored options through
+  `AppState::request_run_with`, so it is approved like any run (operator PIN or Start, with every `approve` gate);
+  on another device than it burned on it only opens the document and says why. The stored counter makes the serial
+  number or CSV row come out the same. MCP: `job_ledger_search`, `job_ledger_get {id, thumbnail?}`,
+  `job_ledger_mark {id, verdict, note?}`, `job_ledger_open {id}` (an agent then uses `job_request_run`; no ledger
+  tool requests or approves a run, and a test checks the module names no arming code). Web: the Job log window
+  (`web/src/ledger/`).
 - **Play Sound on Job Finished** (per device): a finished run sends `machine` event `job_finished_sound`; the UI
   plays it.
 - **Diagnostics**: a tracing layer keeps the last 2000 log lines (info and up; debug of OpenEtch's crates while
@@ -1013,7 +1042,9 @@ whose name differs only in case, needs `overwrite: true`, default false; returns
 `lightburn_devices` (`GET /api/lightburn` plus `machine`: the `lightburn` part of `GET /api/machine`) and
 `devices_list` (`GET /api/devices`, read-only: activating, importing and removing devices change the machine, so they
 are UI-only, and the server instructions say so; design-only devices refuse `frame_start` and `job_request_run`), and
-`documents_list` / `document_activate {id}` (the open documents; every other tool works on the active one). The
+`documents_list` / `document_activate {id}` (the open documents; every other tool works on the active one), and the
+job ledger's `job_ledger_search`, `job_ledger_get`, `job_ledger_mark` and `job_ledger_open` (module `ledger_mcp`,
+listed after the others; see "Job ledger"). The
 `doc.import_lbrn2` description and the server instructions state the field-size rule.
 Project tools take names, never paths.
 File contents go through `execute` with `doc.save`, `doc.load`, `doc.import_lbrn2` and `doc.export_lbrn2`. The MCP
@@ -1515,6 +1546,23 @@ selected planar face's outline, or the sketch being edited) as DXF and posts it 
 (`openetch_send.inx` + `.py`, Inkscape 1.x): "Save selection to OpenEtch" posts the selection (with its groups'
 transforms and the document's size, so it keeps its place) as SVG. Neither can fire the laser. Their request and
 selection code is tested without Fusion or Inkscape (`python -I tools/tests/test_integrations.py`).
+
+## 3D relief preview
+
+`web/src/relief/` (comparison: xTool's 3D preview, Rayforge's 3D simulation). A WebGL2 height view of what the job
+removes, opened from the Laser preview's bar (the mountain button) or the `laser.relief3d` command; display only, it
+reads the preview the Laser workspace already has (`api/packedPreview.ts`: packed segments and image rasters, pass by
+pass) and never talks to the engine. `reliefModel.ts` (pure, tested) marks the passes of layers whose images are depth
+maps (3D Sliced, Grayscale; a 3D Sliced layer's cleanup sub-layers count with it) and passes with a Z step as relief
+(else, or with "Relief layers only" off, every marking pass) and builds a height field over what they mark: a cell
+of an image goes as deep as the average of its dots, each at its power against the pass's (no aliasing when the grid
+is coarser than the dots), a vector mark deepens every cell its lines cross once per pass; each pass removes the
+assumed "depth per pass" (default 10 µm), a Z-stepped pass its Z step. The grid (at most 360 cells a side, 224 on a
+phone, never finer than the coarsest dot) is fixed for the whole job, so the scrubber (the job's time, as the
+preview's timeline) only refills depths: whole raster rows and segments done by then. `reliefWorker.ts` builds fields
+off the page's thread (newest request wins); `reliefGL.ts` draws one indexed mesh lit from the upper left and
+coloured surface to deepest, with orbit / pan / zoom by mouse, touch and keys. Depths are estimates, and the view says
+so.
 
 ## Licensing and provenance
 
