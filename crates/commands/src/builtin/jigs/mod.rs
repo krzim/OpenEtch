@@ -6,6 +6,8 @@ mod fit;
 mod jig;
 mod preflight;
 mod remark;
+#[cfg(test)]
+mod links_tests;
 
 pub(crate) use jig::{placement_cells, refuse_placement};
 

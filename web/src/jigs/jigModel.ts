@@ -313,7 +313,14 @@ export function preflightKey(w: PreflightWarning): { key: string; vars: Record<s
           return { key: "pf.csvEmptyCell", vars: { names: s("names"), row: n("row"), column: n("column") } };
         case "serial_wrap":
           return { key: "pf.serialWrap", vars: { names: s("names"), end: n("end"), start: n("start") } };
+        case "stop_at_end":
+          return { key: "pf.stopAtEnd", vars: { names: s("names"), end: n("end") } };
       }
+      break;
+    case "contact_sheet":
+      // The contact sheet's checks of the next run's row (engine `contact_sheet::next_run_problems`).
+      if (p.kind === "partial") return { key: "pf.rowPartial", vars: { n: n("checked") } };
+      return { key: "pf.rowCheck", vars: { name: s("name"), value: n("value"), message: s("message") } };
   }
   return { key: "", vars: {} };
 }

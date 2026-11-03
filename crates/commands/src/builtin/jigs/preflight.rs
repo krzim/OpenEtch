@@ -6,12 +6,17 @@
 //! - `empty_layer`: a layer that outputs but has nothing on it (the wrong layer was probably switched on);
 //! - `unfilled_variable`: variable text with no CSV loaded, a CSV row past the file's end or an empty cell, or a
 //!   serial number past End (it would wrap to Start);
+//! - `contact_sheet`: the next run's serial / CSV texts and barcodes checked as the contact sheet
+//!   (`var.contact_sheet`) checks each row: running outside their pocket, stock or workspace, missing glyphs, drawn
+//!   under half their height, errors;
 //! - `duplicate_shapes`: exact duplicates on output layers, which burn twice (`path.delete_duplicates`' detector);
 //! - `keep_out`: a shape on an output layer that reaches into a keep-out zone (a jig wall, a clamp, or a zone of the
 //!   device). This one is a refusal, not a warning: the engine refuses to plan such a job, so it cannot be switched
 //!   off here (switch the zone off instead).
 //!
-//! The checks look at the design; the keep-out refusal itself is enforced on the planned toolpath by the engine.
+//! The variable-text checks look at the document as the run plans it: the production slot plan applied (empty
+//! pockets, and slots past End with Stop at End, are left out; the others take their compacted values; module
+//! `slots`). The checks look at the design; the keep-out refusal itself is enforced on the planned toolpath by the engine.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -26,7 +31,7 @@ use super::super::util::{invalid, transact};
 use crate::{Command, CommandError, Result, Risk};
 
 /// Every check, in the order they are listed.
-pub const CHECKS: [&str; 5] = ["keep_out", "cut_before_fill", "empty_layer", "unfilled_variable", "duplicate_shapes"];
+pub const CHECKS: [&str; 6] = ["keep_out", "cut_before_fill", "empty_layer", "unfilled_variable", "contact_sheet", "duplicate_shapes"];
 
 /// A keep-out zone handed in by the caller (the device's zones, which live in the engine's preferences).
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -219,6 +224,53 @@ fn unfilled_variables(doc: &Document, out: &mut Vec<Finding>) {
     }
 }
 
+/// Slots the run leaves out because their value is past End (Stop at End): said once, so a skipped pocket is not a
+/// surprise.
+fn stop_at_end(plan: &super::super::slots::SlotPlan, out: &mut Vec<Finding>) {
+    let past: Vec<&super::super::slots::Slot> = plan.slots.iter().filter(|s| s.past_end).collect();
+    if past.is_empty() || plan.exhausted {
+        return;
+    }
+    let names = past.iter().map(|s| format!("\"{}\"", s.label)).collect::<Vec<_>>().join(", ");
+    out.push(Finding {
+        check: "unfilled_variable",
+        text: format!("{names} would get a value past End ({}): Stop at End leaves them out of this run.", plan.end),
+        params: json!({ "kind": "stop_at_end", "names": names, "end": plan.end, "count": past.len() }),
+        layers: vec![],
+        objects: past.iter().flat_map(|s| s.values.iter().map(|v| v.object.clone())).collect(),
+    });
+}
+
+/// The contact sheet's checks of the next run's row (`contact_sheet::next_run_problems`), one finding per shape.
+fn row_check(doc: &Document, out: &mut Vec<Finding>) {
+    let (problems, more) = super::super::contact_sheet::next_run_problems(doc);
+    let mut by_object: BTreeMap<String, (String, Vec<(String, String)>)> = BTreeMap::new();
+    for p in problems {
+        by_object.entry(p.id).or_insert_with(|| (p.name, Vec::new())).1.push((p.kind, p.message));
+    }
+    for (id, (name, list)) in by_object {
+        let kinds: Vec<&str> = list.iter().map(|(k, _)| k.as_str()).collect();
+        let message = list.iter().map(|(_, m)| m.as_str()).collect::<Vec<_>>().join("; ");
+        out.push(Finding {
+            check: "contact_sheet",
+            text: format!("\"{name}\" at {}: {message}. File \u{203a} Laser \u{203a} Check every row shows every row.", doc.variables.current),
+            params: json!({ "kind": kinds.first().copied().unwrap_or("warning"), "kinds": kinds, "name": name, "value": doc.variables.current, "message": message }),
+            layers: vec![],
+            objects: vec![id],
+        });
+    }
+    if more {
+        let n = super::super::contact_sheet::PREFLIGHT_MAX_TARGETS;
+        out.push(Finding {
+            check: "contact_sheet",
+            text: format!("Only the first {n} serial / CSV shapes were checked: File \u{203a} Laser \u{203a} Check every row checks them all."),
+            params: json!({ "kind": "partial", "checked": n }),
+            layers: vec![],
+            objects: vec![],
+        });
+    }
+}
+
 fn duplicates(doc: &Document, out: &mut Vec<Finding>) {
     let mut seen: HashMap<String, String> = HashMap::new();
     let mut dup: Vec<String> = Vec::new();
@@ -331,11 +383,12 @@ impl Command for Preflight {
     const ID: &'static str = "job.preflight";
     const TITLE: &'static str = "Pre-flight check";
     const DESCRIPTION: &'static str = "Check the job before Start: cut_before_fill (a line layer burns before a fill \
-        or image layer it overlaps), empty_layer (outputs but has nothing), unfilled_variable (CSV text with no \
-        file, a row past its end or an empty cell; a serial past End), duplicate_shapes (exact copies on output \
-        layers burn twice) and keep_out (a shape reaching into a jig's or the given keep_out zone: the engine \
-        refuses such a job; blocking). Checks switched off for the project (job.preflight_set) are skipped. \
-        Returns warnings [{check, blocking, text, params, layers, objects}], disabled and checks. Read-only.";
+        or image layer it overlaps), empty_layer (outputs, nothing on it), unfilled_variable (CSV text with no file, \
+        a row past its end, an empty cell; a serial past End), contact_sheet (the next row's serial / CSV texts as \
+        var.contact_sheet checks them), duplicate_shapes (exact copies burn twice) and keep_out (a shape in a jig's \
+        or the given keep_out zone: refused by the engine; blocking). Checks off for the project \
+        (job.preflight_set) are skipped. Returns warnings [{check, blocking, text, params, layers, objects}], \
+        disabled and checks. Read-only.";
     const RISK: Risk = Risk::Query;
 
     fn apply(doc: &mut Document, i: PreflightInput) -> Result<(Value, String)> {
@@ -353,8 +406,15 @@ impl Command for Preflight {
         if on("empty_layer") {
             empty_layers(doc, &mut found);
         }
+        // The variable-text checks see the document the run plans (production slots applied).
+        let plan = super::super::slots::slot_plan(doc);
+        let run_doc = if plan.skips() { std::borrow::Cow::Owned(super::super::slots::apply_slot_plan(doc, &plan)) } else { std::borrow::Cow::Borrowed(&*doc) };
         if on("unfilled_variable") {
-            unfilled_variables(doc, &mut found);
+            unfilled_variables(&run_doc, &mut found);
+            stop_at_end(&plan, &mut found);
+        }
+        if on("contact_sheet") {
+            row_check(&run_doc, &mut found);
         }
         if on("duplicate_shapes") {
             duplicates(doc, &mut found);
@@ -372,7 +432,7 @@ impl Command for Preflight {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PreflightSetInput {
-    /// The check: cut_before_fill, empty_layer, unfilled_variable or duplicate_shapes (keep_out cannot be switched
+    /// The check: cut_before_fill, empty_layer, unfilled_variable, contact_sheet or duplicate_shapes (keep_out cannot be switched
     /// off; switch the zone off instead).
     pub check: String,
     /// Warn about it in this project (true) or not (false).
@@ -387,7 +447,7 @@ impl Command for PreflightSet {
     const ID: &'static str = "job.preflight_set";
     const TITLE: &'static str = "Switch a pre-flight check";
     const DESCRIPTION: &'static str = "Switch one pre-flight warning on or off for this project (saved with it): \
-        cut_before_fill, empty_layer, unfilled_variable or duplicate_shapes. keep_out is a refusal and cannot be \
+        cut_before_fill, empty_layer, unfilled_variable, contact_sheet or duplicate_shapes. keep_out is a refusal and cannot be \
         switched off (switch the keep-out zone off instead). Returns disabled.";
     const RISK: Risk = Risk::Edit;
 

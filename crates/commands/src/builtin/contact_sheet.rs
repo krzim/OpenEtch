@@ -315,6 +315,47 @@ pub(crate) fn overflow_of(doc: &Document, id: &str) -> Vec<String> {
     leaves(&o.field_path(), &container_of(doc, id, &[id.to_string()]), workspace(doc))
 }
 
+/// Most variable shapes the pre-flight row check draws (each is one text render).
+pub(crate) const PREFLIGHT_MAX_TARGETS: usize = 200;
+
+/// One problem of the next run's row ([`next_run_problems`]).
+pub(crate) struct RowProblem {
+    pub id: ObjectId,
+    pub name: String,
+    /// `overflow`, `missing_glyph`, `shrunk`, `empty` (a serial text that shows nothing), `error` or `warning`.
+    pub kind: String,
+    pub message: String,
+}
+
+/// The contact sheet's checks of the row the next run burns (pre-flight `contact_sheet`, `job.preflight`): every
+/// serial / CSV text and barcode on an output layer of `doc` (the document as the run plans it) at the counter as it
+/// is now. Empty CSV cells and rows past the file are `unfilled_variable`'s, so they are left out here. At most
+/// [`PREFLIGHT_MAX_TARGETS`] shapes are drawn; `true` when some were left unchecked.
+pub(crate) fn next_run_problems(doc: &Document) -> (Vec<RowProblem>, bool) {
+    let emitting: Vec<&str> = doc.layers.iter().filter(|l| l.emits()).map(|l| l.id.as_str()).collect();
+    let all = targets(doc);
+    let skip: Vec<ObjectId> = all.iter().map(|(id, ..)| id.clone()).collect();
+    let found: Vec<_> = all.into_iter().filter(|(id, ..)| doc.object(id).is_some_and(|o| emitting.contains(&o.layer.as_str()))).collect();
+    let more = found.len() > PREFLIGHT_MAX_TARGETS;
+    let ws = workspace(doc);
+    let mut work = doc.clone();
+    let value = doc.variables.current;
+    let mut out = Vec::new();
+    for (id, barcode, mode) in found.into_iter().take(PREFLIGHT_MAX_TARGETS) {
+        let name = doc.object(&id).map(|o| o.name.clone()).unwrap_or_default();
+        let t = Target { id: id.clone(), name: name.clone(), barcode, mode, container: container_of(doc, &id, &skip) };
+        let (_, _, flags) = check_row(&mut work, &t, value, ws);
+        for f in flags {
+            let kind = f["kind"].as_str().unwrap_or("warning").to_string();
+            if kind == "empty" && mode == VarMode::Csv {
+                continue;
+            }
+            out.push(RowProblem { id: id.clone(), name: name.clone(), kind, message: f["message"].as_str().unwrap_or_default().to_string() });
+        }
+    }
+    (out, more)
+}
+
 /// `var.contact_sheet`.
 pub struct ContactSheet;
 
