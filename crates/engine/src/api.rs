@@ -85,6 +85,7 @@ pub fn router(state: Arc<AppState>, web_dir: Option<&Path>) -> Router {
         .merge(crate::artlib::routes())
         .merge(crate::folders::routes())
         .merge(crate::test_presets::routes())
+        .merge(crate::fontprefs::routes())
         .fallback(api_not_found)
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(middleware::from_fn_with_state(state.clone(), attach_sync))

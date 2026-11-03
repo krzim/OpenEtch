@@ -66,6 +66,8 @@ pub mod documents;
 pub mod folders;
 // Material test presets (and LightBurn .lbmt).
 pub mod test_presets;
+// Font favourites and hidden fonts (the font picker).
+pub mod fontprefs;
 
 pub use error::EngineError;
 pub use events::Event;
@@ -96,3 +98,5 @@ mod user_tools_tests;
 // The browser's preview (crates/webcore) equals GET /api/preview.
 #[cfg(test)]
 mod webcore_parity_tests;
+#[cfg(test)]
+mod text_templates_tests;
