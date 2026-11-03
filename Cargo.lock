@@ -769,6 +769,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "webcore",
 ]
 
 [[package]]
@@ -3199,6 +3200,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d7d179596ff5ec0f6de4db64d54011bde6289cc49603d3a6e4ce3f329207ab88"
 dependencies = [
  "js-sys",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "webcore"
+version = "0.1.0"
+dependencies = [
+ "commands",
+ "doc",
+ "geom",
+ "kurbo",
+ "lbrn",
+ "plan",
+ "serde",
+ "serde_json",
  "wasm-bindgen",
 ]
 

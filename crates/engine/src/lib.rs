@@ -31,6 +31,8 @@ pub mod marktime;
 pub mod lightburn;
 pub mod mcp;
 pub mod pin;
+// What the browser plans the display preview with (GET /api/preview/context, crates/webcore).
+pub mod preview_context;
 pub mod projects;
 pub mod render;
 pub mod runs;
@@ -87,3 +89,6 @@ mod grbl_tests;
 mod ruida_tests;
 #[cfg(test)]
 mod user_tools_tests;
+// The browser's preview (crates/webcore) equals GET /api/preview.
+#[cfg(test)]
+mod webcore_parity_tests;

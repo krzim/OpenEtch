@@ -55,3 +55,14 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rmcp = { version = "3.8", features = ["server", "macros", "transport-streamable-http-server"] }
 resvg = { version = "0.49", default-features = false }
 base64 = "0.22"
+
+# The browser's WebAssembly core (crates/webcore, built by web/scripts/wasm.mjs): speed first (it plans whole job
+# previews), one codegen unit and fat LTO for size, no unwinding. Symbol names stay for wasm-bindgen's feature
+# detection (target_features section); wasm-opt drops them. Native builds are unchanged.
+[profile.wasm-release]
+inherits = "release"
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "debuginfo"

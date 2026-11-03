@@ -42,6 +42,8 @@ pub fn router(state: Arc<AppState>, web_dir: Option<&Path>) -> Router {
         .route("/history/goto", post(history_goto))
         .route("/history/delete", post(history_delete))
         .route("/preview", get(preview))
+        // What the browser plans the display preview with (crates/webcore; module preview_context).
+        .route("/preview/context", get(crate::preview_context::handler))
         .route("/fill_regions", get(fill_regions))
         .route("/preview.svg", get(preview_svg))
         .route("/machine", get(machine_status))
