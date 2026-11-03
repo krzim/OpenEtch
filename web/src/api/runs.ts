@@ -255,12 +255,12 @@ export function runStatRows(run: PendingRun, lu: LengthUnit = "mm"): [string, st
   return rows;
 }
 
-/** Toast for a `run_finished` event: an error for anything but a clean finish. */
+/** Toast for a `run_finished` event ("Job finished."), localised; an error for anything but a clean finish. */
 export function runFinishedToast(ev: RunFinishedEvent): { msg: string; kind: "info" | "error" } {
-  const id = ev.id ?? ev.run_id ?? "run";
-  if (ev.ok) return { msg: `Run ${id} finished.`, kind: "info" };
-  const what = ev.state === "aborted" ? "was aborted" : ev.state === "cancelled" ? "was cancelled" : "failed";
-  return { msg: `Run ${id} ${what}${ev.error ? `: ${ev.error}` : "."}`, kind: "error" };
+  if (ev.ok) return { msg: tr("apir.jobFinished"), kind: "info" };
+  const what = ev.state === "aborted" ? tr("apir.jobAborted") : ev.state === "cancelled" ? tr("apir.jobCancelled") : tr("apir.jobFailed");
+  // The engine's reason stays as it came (it names the device or file).
+  return { msg: ev.error ? `${what} ${ev.error}` : what, kind: "error" };
 }
 
 /** Toast for the answer to POST /api/machine/stop. */

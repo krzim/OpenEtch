@@ -208,17 +208,19 @@ test("durations and state labels", () => {
 });
 
 test("run_finished toasts errors for failures and aborts", () => {
+  // Job wording, never the engine's run id.
   assert.deepEqual(runFinishedToast({ type: "run_finished", id: "run-2", ok: true, state: "finished", error: null }), {
-    msg: "Run run-2 finished.",
+    msg: "Job finished.",
     kind: "info",
   });
   const failed = runFinishedToast({ type: "run_finished", id: "run-2", ok: false, state: "failed", error: "usb timeout" });
   assert.equal(failed.kind, "error");
-  assert.equal(failed.msg, "Run run-2 failed: usb timeout");
+  assert.equal(failed.msg, "Job failed. usb timeout");
   const aborted = runFinishedToast({ type: "run_finished", run_id: "run-3", ok: false, state: "aborted", error: null });
-  assert.deepEqual(aborted, { msg: "Run run-3 was aborted.", kind: "error" });
+  assert.deepEqual(aborted, { msg: "Job stopped before the end.", kind: "error" });
   const cancelled = runFinishedToast({ type: "run_finished", id: "run-4", ok: false, state: "cancelled", error: "stopped" });
-  assert.deepEqual(cancelled, { msg: "Run run-4 was cancelled: stopped", kind: "error" });
+  assert.deepEqual(cancelled, { msg: "Job cancelled before it started. stopped", kind: "error" });
+  for (const ev of [failed, aborted, cancelled]) assert.doesNotMatch(ev.msg, /run-\d/);
 });
 
 test("STOP answer: connected, not connected, cancelled runs", () => {

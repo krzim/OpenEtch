@@ -104,6 +104,10 @@ export const ES_LASER: Messages = {
   "lz.stepFrameHint": "Encuadre el trabajo con el puntero rojo y compruebe dónde cae.",
   "lz.stepStartHint": "¿Carcasa cerrada y gafas puestas? Entonces, Iniciar.",
   "lz.stepRunningHint": "Grabando. STOP o Ctrl+. (⌘.) lo detiene.",
+  "apir.jobFinished": "Trabajo terminado.",
+  "apir.jobAborted": "Trabajo detenido antes del final.",
+  "apir.jobCancelled": "Trabajo cancelado antes de empezar.",
+  "apir.jobFailed": "El trabajo falló.",
   "lz.stopTitle":
     "Parada de emergencia: termina cualquier trabajo o encuadre y cancela las ejecuciones pendientes. Siempre permitida. Teclas: Ctrl+Pausa, o Ctrl+. (⌘.) mientras corre un trabajo.",
 };
