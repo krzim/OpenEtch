@@ -69,8 +69,51 @@ the laser: tested on the simulator only.
 | `plan` | Document → job: flatten paths, hatch fills, Offset Fill and kerf offsets (through `geom`), raster images (decode, adjust, dither; see "Image engraving"), order travel, encode to LMC list packets for a `MachineProfile`. Also simulation (decode packets to a preview). | doc, lmc, geom, image | no |
 | `machine` | Machine profile (TOML, importable from EzCad `markcfg7` and from a LightBurn device, see "LightBurn devices"), devices (`machine::device`: LightBurn-style device model, family, workspace, origin), the `Link` transport trait, `SimLink`, `UsbLink` (nusb, feature `usb`), `Controller` (init, .cor upload, light framing, run, abort); the GRBL driver (`machine::grbl`) and the Ruida driver (`machine::ruida`). | lmc, corfile, ruida | `usb` feature only |
 | `fileio` | File formats and image tools (see "Files and image tools"): SVG/DXF/PDF/AI export and print, PDF/AI/EPS/HPGL/Gerber/Excellon/EzCad/legacy `.lbrn` import, 3D models to depth maps, TIFF/TGA, zip, trace, rasterise, masks. **Pure** (PDF reading on wasm32 takes lopdf's random source from WebCrypto). | doc, geom, kurbo, image, roxmltree, miniz_oxide, lopdf | no (wasm-ok) |
+| `appcore` | The document glue the engine and the browser core share (see "OpenEtch Design"): the open documents and project state, the batch path (risk gate, field and layout fill), upload and import routing, preview planning, `render::preview_svg`, the `Event` enum, store types (preferences, devices, libraries, presets, font favourites) whose changes return store writes. No tokio, axum or std::fs. | doc, commands, plan, machine, lbrn, fileio | no (wasm-ok) |
+| `webcore` | WebAssembly for the browser: the full app's preview worker (`Core`: display preview, stats, Fill Region hovers), and with feature `design` OpenEtch Design's whole backend (`Backend`, `handle`, `add_font`). | appcore, commands, plan, text | no (wasm) |
 | `engine` | Binary. axum HTTP + WebSocket API for the web UI, MCP server (rmcp), run approval, serves `web/dist`. | all | yes |
 | `web/` | Fusion-style UI: React + TypeScript + Vite. Talks to the engine over HTTP + WebSocket. | – | – |
+
+## OpenEtch Design (browser-only build)
+
+The same web UI built with `npm run build:design` (`vite build --mode design`, src/mode.ts `DESIGN_ONLY`) into
+`web/dist-design`: the editor alone, as static files for a site such as GitHub Pages, with no engine, no laser and no
+MCP. docs/design-only/plan.md has the decisions; the user guide's "Design in your browser" page has what people see.
+
+- **One backend worker.** Every `/api/...` request of the UI goes through `web/src/api/transport.ts` (the fetch
+  wrappers call `transport`; `fetch` in the normal build) to one Dedicated Web Worker per tab
+  (`web/src/standalone/worker.ts`, the "worker shell"), and the event stream is a `FakeSocket` fed by it, so
+  `useEngine` and `publishEngineEvent` are unchanged. The shell answers projects, folders, thumbnails, autosaves,
+  backups, templates, user fonts and storage itself from IndexedDB (`standalone/routes.ts`, `idb.ts`) and passes
+  everything else to crates/webcore's `Backend.handle(method, path, query, body, since)`, which answers like the
+  engine (status, headers, body) and returns the events to send and the store writes to keep
+  (`{store, key, value | null}`: preferences, devices, libraries, presets, font favourites), which the shell writes
+  before it answers. At start the shell gives the stored records back (`new Backend({stores, epoch})`); a record
+  another tab changed reaches it as `PUT|DELETE /core/store`, and the tabs tell each other over a BroadcastChannel
+  (`stores_changed`). Projects and the other large stores travel as text: the shell opens one with
+  `POST /core/open?kind=project|template|backup|recovery` and saves the text of
+  `GET /api/document/download?format=openetch`, then `POST /core/saved` (crates/webcore/src/backend/shell.rs).
+  `standalone/core.ts` maps the shell's internal routes onto these.
+- **Same JSON as the engine.** The engine's glue lives in crates/appcore, used by both; `crates/webcore/tests/parity.rs`
+  sends the same scripted requests (documents, edits, imports, exports, history, previews, preferences, presets,
+  libraries including Edit Cut's pauses, devices) to the engine's router and to `Backend` and compares the answers.
+- **Machine routes are stubs.** `GET /api/machine` answers `{connected: false, design_only: true, ...}`, `GET /api/job`
+  idle; every other machine route answers 404 `{code: "design_only"}` and the UI never calls them (it hides the
+  machine UI behind `DESIGN_ONLY`, so Rollup drops it). `scripts/check-design-dist.mjs` fails the build when the
+  bundle holds machine routes, `/mcp`, the `.lbzip` names or a source map.
+- **Preview.** The preview client (`web/src/wasm/previewClient.ts`) gets its worker from `spawnPreviewWorker.ts`; the
+  design build swaps that module (a Vite alias) for `standalone/previewPort.ts`, a port onto the backend worker,
+  which plans the preview, stats and Fill Region hovers from the document it holds, in order with the requests. So
+  the site downloads one wasm (`web/src/standalone/pkg`, `npm run wasm:design`, cargo profile `wasm-design`) and the
+  normal build does not include the design backend at all (designmode/noBackend.ts).
+- **Storage and recovery.** Projects stay in the browser; saving asks for persistent storage. A tab writes a
+  recovery copy a couple of seconds after each change, so a reload or a crashed worker (a wasm panic restarts it)
+  brings the unsaved design back. A save over a project another tab saved since is refused (409
+  `changed_elsewhere`) until the person confirms.
+- **Checks.** `cargo test -p webcore --features design` (parity), `npm test` (the shell against a mock core),
+  `node e2e/design-site.mjs` (the built site served under its base path on the device matrix, every network request
+  logged: only the site's own files), `npm run e2e:safari -- --url ...` (real Mobile Safari), and
+  `.github/workflows/design-site.yml` (by hand only: builds, licence gate with deny.toml, size gate; no deploy).
 
 ## Coordinate frames and units
 

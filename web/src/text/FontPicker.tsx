@@ -5,10 +5,13 @@
 // marks a favourite and the eye hides a font from the list (fontPrefs.ts; kept by the engine for every device); "Show
 // hidden" brings hidden fonts back. A font the engine does not have is shown with the "missing" badge.
 
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
 import type { FontKind } from "../api/types.ts";
 import { Icon } from "../components/ui.tsx";
 import { errorText } from "../api/errorText.ts";
+import { transport } from "../api/transport.ts";
+import { DESIGN_ONLY } from "../mode.ts";
 import { useT } from "../workspace/usePrefs.ts";
 import { fontPrefs, isFavourite, isHidden, loadFontPrefs, pickerGroups, saveFontPrefs, subscribeFontPrefs, toggleFavourite, toggleHidden, type PickerGroupId } from "./fontPrefs.ts";
 import { cachedSample, clearSamples, requestSample, sampleText, subscribeSamples } from "./fontSamples.ts";
@@ -58,6 +61,26 @@ export function FontPicker(p: {
   const [own, setOwn] = useState("");
   const [showHidden, setShowHidden] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // OpenEtch Design: a font file the person adds, kept in the browser (standalone/fonts.ts).
+  const fontFile = useRef<HTMLInputElement>(null);
+  const [adding, setAdding] = useState(false);
+  const addFont = async (f: File) => {
+    setAdding(true);
+    setError(null);
+    try {
+      const r = await transport("POST", `/api/fonts/user?name=${encodeURIComponent(f.name)}`, { body: f });
+      if (!r.ok) {
+        const b = (await r.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(b?.error ?? `${f.name}: ${r.status}`);
+      }
+      clearSamples();
+      p.onReload?.();
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setAdding(false);
+    }
+  };
   const box = useRef<HTMLDivElement>(null);
   const list = useRef<HTMLDivElement>(null);
   const prefs = useFontPrefs();
@@ -92,10 +115,44 @@ export function FontPicker(p: {
     };
   }, [open, text]);
 
+  // The pop-up lives on <body> at a fixed place under (or over) the button: the text bar sits in the context strip,
+  // whose overflow would clip it otherwise.
+  const pop = useRef<HTMLDivElement>(null);
+  const [place, setPlace] = useState<CSSProperties | null>(null);
+  useLayoutEffect(() => {
+    if (!open) {
+      setPlace(null);
+      return;
+    }
+    const at = () => {
+      const b = box.current?.getBoundingClientRect();
+      if (!b) return;
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const width = Math.min(Math.max(b.width, 300), vw - 32);
+      const left = Math.max(16, Math.min(p.compact ? b.left : b.right - width, vw - 16 - width));
+      const below = vh - b.bottom - 12;
+      const above = b.top - 12;
+      setPlace(
+        below >= 260 || below >= above
+          ? { position: "fixed", left, width, top: b.bottom + 4, maxHeight: below }
+          : { position: "fixed", left, width, bottom: vh - b.top + 4, maxHeight: above },
+      );
+    };
+    at();
+    window.addEventListener("resize", at);
+    window.addEventListener("scroll", at, true);
+    return () => {
+      window.removeEventListener("resize", at);
+      window.removeEventListener("scroll", at, true);
+    };
+  }, [open, p.compact]);
+
   useEffect(() => {
     if (!open) return;
     const down = (e: PointerEvent) => {
-      if (box.current && !box.current.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (box.current && !box.current.contains(t) && !pop.current?.contains(t)) setOpen(false);
     };
     document.addEventListener("pointerdown", down, true);
     return () => document.removeEventListener("pointerdown", down, true);
@@ -131,8 +188,8 @@ export function FontPicker(p: {
           ▾
         </span>
       </button>
-      {open && (
-        <div className="tx-font-pop popover" role="dialog" aria-label={t("text.font")}>
+      {open && createPortal(
+        <div ref={pop} className="tx-font-pop popover" role="dialog" aria-label={t("text.font")} style={place ?? { position: "fixed", visibility: "hidden" }}>
           <div className="tx-font-search">
             <input
               autoFocus
@@ -159,6 +216,24 @@ export function FontPicker(p: {
               >
                 {t("text.font.reload")}
               </button>
+            )}
+            {DESIGN_ONLY && (
+              <>
+                <button type="button" className="btn btn-small" title={t("dm.addFontTitle")} disabled={adding} onClick={() => fontFile.current?.click()}>
+                  {t("dm.addFont")}
+                </button>
+                <input
+                  ref={fontFile}
+                  type="file"
+                  accept=".ttf,.otf,.ttc,font/ttf,font/otf,font/collection"
+                  hidden
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    e.target.value = "";
+                    if (f) void addFont(f);
+                  }}
+                />
+              </>
             )}
           </div>
           <div className="tx-font-tools">
@@ -210,7 +285,8 @@ export function FontPicker(p: {
               </div>
             ))}
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

@@ -2,6 +2,24 @@
 
 Plan against `main` @ `d9129a1`. Nothing in the repo was edited.
 
+## Status (branch `integrate`)
+
+| WP | State |
+|---|---|
+| WP0 Spike | Done; measured below. |
+| WP1 `crates/appcore` | Done. The engine calls it; `cargo test -p engine` unchanged. |
+| WP2 webcore router | Done, behind feature `design`; parity test `crates/webcore/tests/parity.rs`. Not ported: art libraries, `.oebundle`, `.lbprefs` import, prefs backups, `preview.bin`, `/api/materials/*`, `fill_example_finishes`. |
+| WP3 wasm blockers | Done: DXF, PDF/AI import, `{date}`/`{time}` and added fonts work on wasm32. No substitute OFL fonts (the owner's call). |
+| WP4 worker shell | Done (`web/src/standalone`), on the real core through `standalone/core.ts`. |
+| WP5 design UI | Done (`web/src/designmode`, `mode.ts`, `api/transport.ts`); Add font in the font picker; the preview runs in the backend worker (one wasm). |
+| WP6 CI | `.github/workflows/design-site.yml`: by hand only, builds and checks, licence gate (`deny.toml`), size gate; **no deploy job** until the hosting option (3.2) is chosen. |
+| WP7 docs and QA | ARCHITECTURE.md "OpenEtch Design"; guide page "Design in your browser"; `web/e2e/design-site.mjs` and `safari.mjs --design`. The owner's checks below are still open. |
+
+Measured: the design wasm is about 10.5 MB raw and 4.0 MB gzip after `wasm-opt -Oz`, over the 3.5 MB gate in 1.4.
+The biggest parts are PDF/AI import (lopdf, about 0.3 MB gzip), DXF import (about 0.23 MB), rxing, the image codecs
+and text shaping; lazy-loading PDF/DXF import or dropping codecs are the candidates. The workflow's budget input
+defaults to 4.2 MB until the owner decides.
+
 I checked the API map against the code, and it holds:
 - **Native-only parts:** `commands/Cargo.toml` makes `dxf` and `text/system` native-only. `fileio/Cargo.toml` makes `lopdf` native-only. `builtin.rs:115,128` skips registering `ImportDxf`, `ImportPdf` and `ImportAi` on wasm32.
 - **Fonts:** `text::registry::add_font_data(family, Vec<u8>)` exists at `registry.rs:85`, but nothing calls it.

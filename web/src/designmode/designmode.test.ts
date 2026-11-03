@@ -106,3 +106,13 @@ test("the design build's guide: machine and MCP pages keep only their front matt
     } else assert.ok(out.length > src.length * 0.8, `${slug} kept its text`);
   }
 });
+
+test("the design build's guide: the contents leave out the pages it hides", () => {
+  const hidden = designHiddenPages(pages);
+  const index = pages.find(([slug]) => slug === "index");
+  assert.ok(index);
+  const out = designGuideSource("index", index[1], hidden);
+  assert.ok(!out.includes("(running-a-job.md)"), "Running a job is listed");
+  assert.ok(!out.includes("(ai-agents.md)"), "AI agents is listed");
+  assert.ok(out.includes("(drawing-shapes.md)"), "a design page went too");
+});

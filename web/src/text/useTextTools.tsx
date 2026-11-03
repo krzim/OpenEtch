@@ -13,6 +13,7 @@
 // The engine is the source of truth: everything is a command (text/textModel.ts builds them).
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { onEngineEvent } from "../api/events.ts";
 import { execute, type Invocation } from "../api/client.ts";
 import * as C from "../api/commands.ts";
 import { createdIds } from "../api/drop.ts";
@@ -133,6 +134,16 @@ export function useTextTools(p: TextToolsProps): TextTools {
   useEffect(() => {
     if (canFonts) loadFonts();
   }, [canFonts, loadFonts]);
+  // OpenEtch Design: a font added in this tab or another one.
+  useEffect(
+    () =>
+      onEngineEvent((ev) => {
+        if (!canFonts) return;
+        const stores = (ev as { stores?: unknown }).stores;
+        if (ev.type === "fonts_changed" || (ev.type === "stores_changed" && Array.isArray(stores) && stores.includes("fonts"))) loadFonts();
+      }),
+    [canFonts, loadFonts],
+  );
 
   // ---- defaults for new text (this browser) ----
   const [defaults, setDefaultsRaw] = useState<TextDefaults>(loadTextDefaults);

@@ -71,6 +71,8 @@ export async function fontRoute(ctx: ShellContext, req: ShellRequest): Promise<S
       { store: S.fontData, key: name, value: req.body },
     ]);
     ctx.changed([S.fonts]);
+    // The page's font lists read font.list again (another tab hears stores_changed for "fonts").
+    ctx.emit(JSON.stringify({ type: "fonts_changed" }));
     return json({ ok: true, name, family });
   }
   if (req.path.startsWith(`${base}/`) && req.method === "DELETE") {

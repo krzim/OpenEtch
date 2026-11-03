@@ -1,0 +1,163 @@
+# OpenEtch Design (the browser-only editor, docs/design-only/plan.md section 3): build the static site and check it.
+#
+# Started by hand only (Actions > Design site > Run workflow). It never runs on push and it publishes nothing: the
+# built site is kept as a workflow artifact (private to the repository, deleted after 7 days) for a look before any
+# hosting is chosen. The deploy job is left out until the owner picks the hosting (plan section 3.2):
+#   A. make this repository public and serve it with GitHub Pages from Actions (actions/deploy-pages);
+#   B. keep it private on GitHub Pro and serve Pages from it (the site itself is still public);
+#   C. (recommended) push the built site to a separate public repository's gh-pages branch with a deploy key
+#      (a secret such as OPENETCH_WEB_DEPLOY_KEY), keeping the source private.
+# Commented templates for A/B and C are at the end of this file.
+#
+# Third-party actions are pinned by commit SHA (check them against the tags named in the comments before the first
+# run). The Rust tools come from rustup and `cargo install --locked`; binaryen is downloaded by web/scripts/wasm.mjs,
+# which checks its SHA-256.
+
+name: Design site
+
+on:
+  workflow_dispatch:
+    inputs:
+      base:
+        description: "The site's base path (/OpenEtch/ for a project site at <owner>.github.io/OpenEtch/)"
+        required: true
+        default: "/OpenEtch/"
+      wasm_gzip_budget:
+        description: "Largest gzip size of the design wasm, bytes (the plan's target is 3500000; today's build is about 4010000)"
+        required: true
+        default: "4200000"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: design-site
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CARGO_TERM_COLOR: always
+      VITE_BASE: ${{ inputs.base }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Rust 1.95.0 with the wasm32 target
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal --target wasm32-unknown-unknown
+          rustup default 1.95.0
+
+      - name: Cache cargo and target
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin
+            target
+          key: design-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: design-${{ runner.os }}-
+
+      - name: Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Pinned wasm tools (wasm-bindgen as in Cargo.lock, binaryen with its checksum)
+        working-directory: web
+        run: node scripts/wasm.mjs --tools
+
+      - name: Licence gate (cargo-deny, deny.toml)
+        run: |
+          cargo install cargo-deny --version 0.18.2 --locked
+          cargo deny check licenses
+
+      - name: Browser core tests (native)
+        run: cargo test --locked -p appcore -p webcore --features webcore/design
+
+      - name: Web tests
+        working-directory: web
+        run: npm test
+
+      - name: Build the design site
+        working-directory: web
+        # wasm:design, typecheck, vite build --mode design, then check-design-dist.mjs (no machine routes, MCP or
+        # LightBurn bundle strings, no source maps).
+        run: npm run build:design
+
+      - name: Size gate
+        working-directory: web
+        env:
+          BUDGET: ${{ inputs.wasm_gzip_budget }}
+        run: |
+          node --input-type=module -e '
+            import { readdirSync, readFileSync } from "node:fs";
+            import { gzipSync } from "node:zlib";
+            const dir = "dist-design/assets";
+            const budget = Number(process.env.BUDGET);
+            let total = 0, fail = false;
+            for (const f of readdirSync(dir)) {
+              if (!/\.(js|css|wasm)$/.test(f)) continue;
+              const raw = readFileSync(`${dir}/${f}`);
+              const gz = gzipSync(raw, { level: 9 }).length;
+              total += gz;
+              if (f.endsWith(".wasm")) {
+                console.log(`${f}: ${raw.length} bytes, ${gz} gzip (budget ${budget})`);
+                if (gz > budget) fail = true;
+              }
+            }
+            console.log(`scripts, styles and wasm: ${total} bytes gzip`);
+            if (fail) { console.error("the design wasm is over its gzip budget"); process.exit(1); }
+          '
+
+      - name: Notices and Pages files
+        run: |
+          cp LICENSE-MIT LICENSE-APACHE ATTRIBUTION.md web/dist-design/
+          touch web/dist-design/.nojekyll
+
+      - name: Keep the built site (workflow artifact, not published)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: design-site
+          path: web/dist-design
+          retention-days: 7
+          if-no-files-found: error
+
+# ---- Deploy: left for the owner's hosting choice (plan section 3.2). Nothing below runs. -----------------------
+#
+# Option A or B (Pages from this repository; Settings > Pages > Source: GitHub Actions). Replace the upload step
+# above with actions/upload-pages-artifact, then:
+#
+#  deploy:
+#    needs: build
+#    runs-on: ubuntu-24.04
+#    permissions: { pages: write, id-token: write }
+#    environment: { name: github-pages, url: "${{ steps.deploy.outputs.page_url }}" }
+#    steps:
+#      - id: deploy
+#        uses: actions/deploy-pages@<sha> # v4
+#
+# Option C (recommended: a separate public repository serves the built files from its gh-pages branch). Add a write
+# deploy key to that repository and its private half as the secret OPENETCH_WEB_DEPLOY_KEY here, then:
+#
+#  deploy:
+#    needs: build
+#    runs-on: ubuntu-24.04
+#    steps:
+#      - uses: actions/download-artifact@<sha> # v4
+#        with: { name: design-site, path: site }
+#      - name: Push to <owner>/openetch-web gh-pages (one commit, no history)
+#        env: { DEPLOY_KEY: "${{ secrets.OPENETCH_WEB_DEPLOY_KEY }}" }
+#        run: |
+#          ... ssh-agent with DEPLOY_KEY, git init in site/, commit, git push --force to gh-pages ...

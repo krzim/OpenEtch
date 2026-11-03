@@ -149,6 +149,26 @@ With `--safari` the page is copied to a temporary folder on the Mac, served on t
 `python3 -m http.server`, and driven through `safaridriver` over an ssh tunnel (Safari > Settings > Advanced > Show
 features for web developers, then Develop > Allow Remote Automation, once). The folder is removed afterwards.
 
+## OpenEtch Design site
+
+`design-site.mjs` walks the published design build (`npm run build:design`, with `VITE_BASE=/OpenEtch/` for the
+github.io base path) as Pages would serve it: `static.mjs` serves `web/dist-design` under the base path on
+127.0.0.1, with the real backend worker and design wasm and no engine. On each device (iPhone, iPad, MacBook, PC by
+default) it opens every built-in example, draws a rectangle, adds a font and text in it, opens the font picker,
+imports and traces an image, makes a Fill Region, fits to stock, saves and opens a template, imports the fixture
+LightBurn file, exports `.lbrn2` and imports it again, exports SVG, DXF, PDF and AI, saves in the browser, reloads
+and reopens, checks the reload recovery copy, saves from two tabs (the second save asks first), shows Preview and the
+estimate, opens the guide without the machine pages, and checks that no machine control shows. Every network request
+is logged: anything outside the site's own files is an error. Screenshots and the layout check after every step.
+
+```sh
+cd web
+node e2e/design-site.mjs [--dir dist-design] [--base /OpenEtch/] [--port 7976] [--devices iphone15-portrait,...] [--out dir]
+node e2e/static.mjs --dir dist-design --base /OpenEtch/ --port 7976     # just serve it
+```
+
+`safari.mjs --design` runs the same kind of walk in real Mobile Safari (see "Real Safari").
+
 ## Files
 
 - `devices.mjs`: the device matrix (CSS viewport, DPR, touch, user agent, safe-area insets, themes, keyboard height).
@@ -236,6 +256,9 @@ openetch --config-dir <tmp>/cfg --projects-dir <tmp>/projects --lightburn-prefs 
 cd web
 npm run e2e:safari -- --port 7965 --mac <ssh host of the Mac> [--devices iphone,ipad,iphone-pro,ipad-mini]
   [--steps guide,cockpit] [--driver-port 4479] [--input native|native-all|synthetic] [--desktop] [--keep-booted]
+
+# OpenEtch Design instead: no engine; the built site is served here under its base path and forwarded the same way.
+npm run e2e:safari -- --design --port 7976 --mac <ssh host of the Mac> [--dir dist-design] [--base /OpenEtch/]
 ```
 
 - The Mac: key-based `ssh` (`ssh -o BatchMode=yes <mac>` must work; `--mac` or `OE_SAFARI_MAC` names it), Xcode with

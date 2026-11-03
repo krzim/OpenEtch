@@ -1721,7 +1721,8 @@ export function App() {
           docRevision={doc?.revision ?? null}
         />
       )}
-      {emptyDoc && (
+      {/* Out of the way while a drawing tool is picked (on a phone the card covers most of the canvas). */}
+      {emptyDoc && tool === "select" && (
         <EmptyCanvasCard
           onImport={openImport}
           onOpen={() => file.setModal({ kind: "open" })}

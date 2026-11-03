@@ -1,0 +1,25 @@
+# cargo-deny (MIT OR Apache-2.0): the licence gate of .github/workflows/design-site.yml, `cargo deny check licenses`.
+# Every crate in Cargo.lock must be available under these licences (an OR expression needs one of its choices, an
+# AND expression all of its parts). The project's own crates are MIT OR Apache-2.0; no GPL code (ARCHITECTURE.md).
+# A new dependency with another licence fails the check until it is reviewed and added here.
+
+[graph]
+all-features = false
+
+[licenses]
+version = 2
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    # unicode-ident, unicode-normalization, unicode-properties (with MIT OR Apache-2.0).
+    "Unicode-3.0",
+]
+confidence-threshold = 0.9
+
+# The workspace's own crates are not published (publish = false).
+[licenses.private]
+ignore = true

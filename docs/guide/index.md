@@ -28,6 +28,7 @@ New to OpenEtch? Follow [Your first job](getting-started.md#your-first-job): one
 - [Getting started](getting-started.md): Run the engine on a Raspberry Pi or a PC, open the app on a PC, Mac, iPad or phone, connect with the access token, install it as an app and open an example project.
 - [The workspace](the-workspace.md): A tour of the app - top bar, Design and Laser workspaces, ribbon, docks, timeline, document tabs, command search and status bar - and the iPad and phone layouts, themes and language.
 - [Files and projects](files-and-projects.md): Create, open and save projects on the engine, use autosave and backups, import SVG, DXF, images, LightBurn and other files, export to SVG, DXF, PDF and LightBurn, and move settings with bundles.
+- [Design in your browser](design-in-your-browser.md): OpenEtch Design runs the editor in a web page with no engine and no laser - what it can do, where it keeps your projects, and how to move work to the full app or to LightBurn.
 
 **Designing**
 

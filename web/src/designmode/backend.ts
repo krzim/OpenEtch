@@ -30,5 +30,14 @@ export async function installDesignBackend(): Promise<void> {
       const type = r.headers.get("content-type") ?? "";
       return { status: r.status, type, body: type.includes("json") ? await r.json() : (await r.arrayBuffer()).byteLength };
     },
+    /** A file round trip: the body and the answer as base64. */
+    bytes: async (method: string, path: string, b64?: string) => {
+      const init: RequestInit = b64 === undefined ? {} : { body: Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)) };
+      const r = await standaloneFetch(method, path, init);
+      const b = new Uint8Array(await r.arrayBuffer());
+      let bin = "";
+      for (let i = 0; i < b.length; i += 0x8000) bin += String.fromCharCode(...b.subarray(i, i + 0x8000));
+      return { status: r.status, type: r.headers.get("content-type") ?? "", disposition: r.headers.get("content-disposition") ?? "", base64: btoa(bin) };
+    },
   };
 }

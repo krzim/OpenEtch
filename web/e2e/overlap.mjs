@@ -38,6 +38,8 @@ export function checkLayout(opts) {
   const ALLOWED_PAIRS = [
     [".tl-marker", ".tl-entry", "the history marker sits on the timeline entries"],
     ["[role=menu], [role=menu] *", ".ribbon-flyout", "a ribbon flyout's dropdown menu opens over the flyout's own edge"],
+    // Menu.tsx anchors a submenu to its row, so it covers a few px of the parent panel's padding (never a row).
+    ["[role=menu]", "[role=menu]", "a submenu opens at its row's edge, over the parent menu's padding"],
   ];
 
   const label = (el) => {

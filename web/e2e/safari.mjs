@@ -8,6 +8,13 @@
 //                       [--steps guide,cockpit] [--out dir] [--no-tunnel] [--input native|synthetic|auto]
 //                       [--desktop] [--keep-booted]
 //
+//   node e2e/safari.mjs --design --port 7976 --mac <host> [--dir dist-design] [--base /OpenEtch/] [--devices ...]
+//
+// --design: OpenEtch Design, the published static site (web/dist-design, `npm run build:design`), served here under
+// its base path (e2e/static.mjs) and reverse-forwarded the same way; no engine. The walk is the design one
+// (examples, drawing, text in an uploaded font, a LightBurn import, saving in the browser, reload and recovery,
+// Preview, the guide, no machine controls, nothing loaded from outside the site).
+//
 // The engine is a SIMULATOR engine on this computer at 127.0.0.1:<port> (the flows frame, start a run, press
 // Continue and replace the document). The script opens one SSH connection to the Mac that runs `safaridriver -p
 // <driver-port>` there, forwards that port here (-L) and forwards the engine's port to the Mac (-R), so Safari in the
@@ -15,11 +22,12 @@
 // and shuts down the simulators it booted. It never runs sudo or changes a setting on the Mac.
 
 import { execFileSync, spawn } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { sleep } from "./cdp.mjs";
 import { checkLayout } from "./overlap.mjs";
+import { serveSite } from "./static.mjs";
 import {
   api,
   canvasCenter,
@@ -65,6 +73,9 @@ function args(argv) {
     else if (k === "--input") a.input = v();
     else if (k === "--desktop") a.desktop = true;
     else if (k === "--keep-booted") a.keepBooted = true;
+    else if (k === "--design") a.design = true;
+    else if (k === "--dir") a.dir = v();
+    else if (k === "--base") a.base = v();
     else if (k === "--help" || k === "-h") a.help = true;
   }
   return a;
@@ -643,6 +654,177 @@ async function openGuide(page, kind) {
   if (!(await page.waitFor(".guide-md h1", { timeout: 8000 }))) throw new Error("the guide did not open");
 }
 
+// --- OpenEtch Design (--design): the static site, its in-page backend (window.__oeDesign, designmode/backend.ts) ---
+
+const repoDir = resolve(here, "..", "..");
+const b64File = (...p) => readFileSync(join(repoDir, ...p)).toString("base64");
+
+async function dreq(page, method, path, body) {
+  return page.evaluate((m, p, b) => window.__oeDesign.request(m, p, b === null ? undefined : b), method, path, body ?? null);
+}
+
+async function dbytes(page, method, path, base64) {
+  return page.evaluate((m, p, b) => window.__oeDesign.bytes(m, p, b === null ? undefined : b), method, path, base64 ?? null);
+}
+
+async function dexec(page, id, params = {}) {
+  const r = await dreq(page, "POST", "/api/execute", { id, params, origin: "ui" });
+  if (r.status !== 200) throw new Error(`${id}: ${r.status} ${JSON.stringify(r.body).slice(0, 200)}`);
+  return r.body;
+}
+
+async function designReady(page) {
+  if (!(await page.waitFor("!!window.__oeDesign", { expr: true, timeout: 40000 }))) throw new Error("no design backend");
+  for (let i = 0; i < 100; i++) {
+    const r = await dreq(page, "GET", "/api/project").catch(() => null);
+    if (r?.status === 200) return;
+    await sleep(250);
+  }
+  throw new Error("the design backend did not answer");
+}
+
+const MACHINE_WORDS = "^(start|start here|frame|framing|stop|jog|home|connect|find my laser|camera|run|approve)$";
+
+function designStepsFor(kind) {
+  const S = [];
+  const add = (name, fn, kinds = ["phone", "tablet", "desktop"]) => {
+    if (kinds.includes(kind)) S.push({ name, fn });
+  };
+  add("examples", async ({ page }) => {
+    const list = (await dexec(page, "example.list")).result;
+    const counts = {};
+    for (const ex of list) {
+      await dexec(page, "doc.new", { example: ex.id });
+      counts[ex.id] = (await dreq(page, "GET", "/api/document")).body.objects.length;
+    }
+    await sleep(1500);
+    await escape(page);
+    return counts;
+  });
+  add("draw-rectangle", async ({ page }) => {
+    await dexec(page, "doc.new");
+    await sleep(1200);
+    const b = await find(page, "button", "Draw a rectangle");
+    if (!b?.hit) throw new Error("no Draw a rectangle on the start card");
+    await page.press(b.x, b.y);
+    await sleep(600);
+    const r = await page.evaluate(() => {
+      const c = document.querySelector("canvas").getBoundingClientRect();
+      return { x0: c.left + c.width * 0.4, y0: c.top + c.height * 0.55, x1: c.left + c.width * 0.6, y1: c.top + c.height * 0.7 };
+    });
+    await page.drag(r.x0, r.y0, r.x1, r.y1);
+    await sleep(1000);
+    const n = (await dreq(page, "GET", "/api/document")).body.objects.length;
+    if (!n) throw new Error("drawing made no object");
+    return { objects: n };
+  });
+  add("text-uploaded-font", async ({ page }) => {
+    await escape(page);
+    const up = await dbytes(page, "POST", "/api/fonts/user?name=openetch-box.ttf", b64File("crates", "text", "tests", "fixtures", "ttf", "openetch-box.ttf"));
+    if (up.status !== 200) throw new Error(`font upload ${up.status}`);
+    await dexec(page, "doc.new");
+    await sleep(1000);
+    await dexec(page, "shape.text", { text: "OE", font: { family: "OpenEtch Box" }, height_mm: 10, center: [0, 30] });
+    await sleep(1000);
+    return { font: "OpenEtch Box" };
+  });
+  add("font-picker", async ({ page }) => {
+    await dexec(page, "doc.new");
+    await sleep(1000);
+    const b = await find(page, "button", "Add text");
+    if (!b?.hit) throw new Error("no Add text on the start card");
+    await page.press(b.x, b.y);
+    await sleep(700);
+    const f = await find(page, ".tx-font-btn");
+    if (!f) throw new Error("no font picker");
+    await page.press(f.x, f.y);
+    await sleep(900);
+    const ok = await page.evaluate(() => ({
+      add: [...document.querySelectorAll(".tx-font-pop button")].some((e) => /add font/i.test(e.textContent)),
+      listed: document.querySelector(".tx-font-list")?.textContent.includes("OpenEtch Box") ?? false,
+    }));
+    if (!ok.add || !ok.listed) throw new Error(`font picker: ${JSON.stringify(ok)}`);
+    return ok;
+  });
+  add("lightburn-import", async ({ page }) => {
+    await escape(page);
+    await escape(page);
+    const up = await dbytes(page, "POST", "/api/document/upload?format=lbrn2&mode=replace&name=shapes.lbrn2", b64File("crates", "lbrn", "tests", "fixtures", "shapes.lbrn2"));
+    if (up.status !== 200) throw new Error(`lbrn2 import ${up.status}`);
+    const dl = await dbytes(page, "GET", "/api/document/download?format=lbrn2");
+    if (dl.status !== 200) throw new Error(`lbrn2 export ${dl.status}`);
+    await sleep(1500);
+    return { objects: (await dreq(page, "GET", "/api/document")).body.objects.length, exported: dl.base64.length };
+  });
+  add("save-in-browser", async ({ page }) => {
+    const s = await dreq(page, "POST", "/api/projects/save", { name: "Safari harness", origin: "ui" });
+    if (s.status !== 200) throw new Error(`save ${s.status}`);
+    await sleep(800);
+    return s.body;
+  });
+  add("reload-and-reopen", async ({ page, ctx }) => {
+    await page.goto(ctx.url, { waitFor: ".topbar" });
+    await designReady(page);
+    const list = (await dreq(page, "GET", "/api/projects")).body;
+    if (!list.some((p) => p.name === "Safari harness")) throw new Error(`after a reload: ${JSON.stringify(list)}`);
+    const o = await dreq(page, "POST", "/api/projects/open", { name: "Safari harness", origin: "ui" });
+    if (o.status !== 200) throw new Error(`open ${o.status}`);
+    await sleep(1500);
+    return (await dreq(page, "GET", "/api/project")).body;
+  });
+  add("recovery-after-reload", async ({ page, ctx }) => {
+    await dexec(page, "shape.rect", { width_mm: 10, height_mm: 10, center: [30, 30], name: "Unsaved square" });
+    await sleep(4500);
+    await page.goto(ctx.url, { waitFor: ".topbar" });
+    await designReady(page);
+    await sleep(1200);
+    const doc = (await dreq(page, "GET", "/api/document")).body;
+    if (!doc.objects.some((o) => o.name === "Unsaved square")) throw new Error("the unsaved edit did not come back");
+    return (await dreq(page, "GET", "/api/project")).body;
+  });
+  add("preview-estimate", async ({ page }) => {
+    await escape(page);
+    if (kind === "phone") await phoneTab(page, "Preview");
+    else await pressFind(page, ".workspaces button, nav[role=tablist] button", "Preview");
+    await sleep(3000);
+    const m = /Estimate for [^\n]*/.exec(await page.evaluate(() => document.body.innerText));
+    if (!m) throw new Error("no time estimate");
+    return { estimate: m[0] };
+  });
+  add("back-to-design", async ({ page }) => {
+    await escape(page);
+    if (kind === "phone") await phoneTab(page, "Canvas");
+    else await pressFind(page, ".workspaces button, nav[role=tablist] button", "Design");
+    await sleep(800);
+  });
+  add("no-machine-ui", async ({ page }) => {
+    const hits = await page.evaluate((src) => {
+      const re = new RegExp(src, "i");
+      return [...document.querySelectorAll("button, a, [role=button], [role=menuitem]")]
+        .filter((e) => {
+          const r = e.getBoundingClientRect();
+          return r.width > 0 && r.height > 0 && re.test((e.textContent ?? "").trim());
+        })
+        .map((e) => e.textContent.trim());
+    }, MACHINE_WORDS);
+    if (hits.length) throw new Error(`machine controls: ${hits.join(", ")}`);
+  });
+  add("guide-open", async ({ page }) => openGuide(page, kind));
+  add("guide-closed", async ({ page }) => {
+    await escape(page);
+    await sleep(500);
+  });
+  add("site-files-only", async ({ page, ctx }) => {
+    const foreign = await page.evaluate(
+      (prefix) => performance.getEntriesByType("resource").map((e) => e.name).filter((n) => !n.startsWith(prefix) && !n.startsWith("blob:") && !n.startsWith("data:")),
+      ctx.url,
+    );
+    if (foreign.length) throw new Error(`loaded from outside the site: ${foreign.join(", ")}`);
+    return { outside: 0 };
+  });
+  return S;
+}
+
 /** The steps for a layout ("phone" | "tablet" | "desktop"). Each returns optional notes. */
 function stepsFor(kind) {
   const S = [];
@@ -996,19 +1178,36 @@ async function runDevice(a, key, dir) {
   }
   notes.sessionSeconds = Math.round((Date.now() - t0) / 1000);
   const page = new SafariPage(wd, { touch: !desktop, kind: "auto" });
-  const url = `http://127.0.0.1:${a.port}`;
+  const url = a.design ? a.siteUrl : `http://127.0.0.1:${a.port}`;
   page.ctxUrl = url;
   mkdirSync(dir, { recursive: true });
   try {
-    await api(url, "/api/machine/frame/stop", json({ origin: "ui" }));
-    await execute(url, "doc.new");
-    await page.goto(`${url}/`, { waitFor: ".btn-stop" });
-    // A first visit: no stored preferences, so the "Use as an app" offer shows.
-    await page.evaluate(() => {
-      localStorage.clear();
-      sessionStorage.clear();
-    });
-    await page.goto(`${url}/?first=${Date.now()}`, { waitFor: ".btn-stop" });
+    if (a.design) {
+      // A first visit: nothing stored (preferences, the tab's session, the browser's projects).
+      await page.goto(url, { waitFor: ".topbar", timeout: 60000 });
+      await page.evaluate(async () => {
+        localStorage.clear();
+        sessionStorage.clear();
+        await new Promise((r) => {
+          const q = indexedDB.deleteDatabase("openetch-design");
+          q.onsuccess = q.onerror = q.onblocked = () => r(null);
+        });
+      });
+      const t1 = Date.now();
+      await page.goto(`${url}?first=${Date.now()}`, { waitFor: ".topbar", timeout: 60000 });
+      await designReady(page);
+      notes.firstLoadMs = Date.now() - t1;
+    } else {
+      await api(url, "/api/machine/frame/stop", json({ origin: "ui" }));
+      await execute(url, "doc.new");
+      await page.goto(`${url}/`, { waitFor: ".btn-stop" });
+      // A first visit: no stored preferences, so the "Use as an app" offer shows.
+      await page.evaluate(() => {
+        localStorage.clear();
+        sessionStorage.clear();
+      });
+      await page.goto(`${url}/?first=${Date.now()}`, { waitFor: ".btn-stop" });
+    }
     // The "Use as an app" offer comes 1.5 s after a first touch visit (AppModeDialog.tsx).
     notes.appOffer = await page.waitFor(`[...document.querySelectorAll("[role=dialog]")].some((e) => /as an app/i.test(e.textContent))`, { expr: true, timeout: 6000 });
     const layout = await page.evaluate(() => document.documentElement.dataset.layout);
@@ -1045,7 +1244,9 @@ async function runDevice(a, key, dir) {
       await sleep(500);
     }
     const ctx = { url };
-    const steps = stepsFor(page.device.kind).filter((s) => !a.steps || a.steps.some((f) => s.name.includes(f)) || s.name === "example-loaded");
+    const steps = (a.design ? designStepsFor(page.device.kind) : stepsFor(page.device.kind)).filter(
+      (s) => !a.steps || a.steps.some((f) => s.name.includes(f)) || s.name === "example-loaded",
+    );
     for (const s of steps) {
       let error;
       let out;
@@ -1061,7 +1262,7 @@ async function runDevice(a, key, dir) {
       console.log(`  ${key} ${s.name}${error ? ` ERROR ${error}` : ""}`);
     }
   } finally {
-    await api(url, "/api/machine/stop", json({})).catch(() => undefined);
+    if (!a.design) await api(url, "/api/machine/stop", json({})).catch(() => undefined);
     await wd.end();
   }
   return { device: key, name: sim ? `${sim.name} iOS ${sim.runtime}` : "macOS Safari", udid: sim?.udid, notes, errors: page.errors.slice(0, 30), results };
@@ -1075,6 +1276,7 @@ function markdown(runs) {
       L.push(`Session failed: ${r.error}`, "");
       continue;
     }
+    if (r.notes.firstLoadMs) L.push(`First visit ready in ${r.notes.firstLoadMs} ms (OpenEtch Design)`, "");
     L.push(`Layout ${r.notes.layout}, "Use as an app" offer ${r.notes.appOffer ? "shown" : "not shown"}, input ${r.notes.input}${r.notes.nativeTouch ? ` (WebDriver touch probe: ${r.notes.nativeTouch.detail})` : ""}`, "");
     for (const s of r.results) {
       const probs = (s.problems ?? []).filter((p) => p.type !== "small");
@@ -1100,9 +1302,16 @@ async function main() {
     process.exitCode = a.help ? 0 : 2;
     return;
   }
-  const m = await api(`http://127.0.0.1:${a.port}`, "/api/machine").catch(() => null);
-  if (!m || typeof m !== "object") throw new Error(`no engine at http://127.0.0.1:${a.port}`);
-  if (m.simulated !== true) throw new Error("the engine does not report a simulator (simulated: true): never point this at a real machine");
+  let site = null;
+  if (a.design) {
+    // OpenEtch Design: the static site, served here; no engine.
+    site = await serveSite({ dir: a.dir ?? join(here, "..", "dist-design"), port: a.port, base: a.base ?? "/OpenEtch/" });
+    a.siteUrl = site.url;
+  } else {
+    const m = await api(`http://127.0.0.1:${a.port}`, "/api/machine").catch(() => null);
+    if (!m || typeof m !== "object") throw new Error(`no engine at http://127.0.0.1:${a.port}`);
+    if (m.simulated !== true) throw new Error("the engine does not report a simulator (simulated: true): never point this at a real machine");
+  }
   const run = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   const out = resolve(a.out ?? join(here, "..", "..", "target", "ux-evidence", `safari-${run}`));
   mkdirSync(out, { recursive: true });
@@ -1123,6 +1332,7 @@ async function main() {
     }
   } finally {
     if (tunnel) await closeTunnel(a, tunnel);
+    if (site) await site.close();
     writeFileSync(join(out, "report.md"), markdown(runs));
   }
   console.log(`report: ${join(out, "report.md")}`);

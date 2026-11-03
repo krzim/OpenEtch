@@ -35,6 +35,8 @@ export const EN_DESIGNMODE = {
   "dm.exportLbrn2Title": "Save the design as a LightBurn project, to open and burn in LightBurn",
   "dm.notAffiliated": "OpenEtch is not affiliated with LightBurn Software.",
   "dm.aboutDesign": "OpenEtch Design runs in your browser: the editor, the preview and the exports, with no server and no laser control.",
+  "dm.addFont": "Add font…",
+  "dm.addFontTitle": "Add a TrueType or OpenType font file (.ttf, .otf), kept in this browser",
   "dm.changedElsewhereTitle": "Saved in another tab",
   "dm.changedElsewhere": "\"{name}\" was saved in another tab or window after you opened it here. Saving now replaces that version with this one.",
   "dm.replaceIt": "Replace it",

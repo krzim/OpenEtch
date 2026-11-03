@@ -212,6 +212,9 @@ pub type GrblDriver = GrblController<Box<dyn SerialLink>>;
 pub type RuidaDriver = RuidaController<Box<dyn RuidaLink>>;
 
 /// The driver the engine holds (see the module docs for why an enum).
+// On wasm32 (the browser core links this crate but never drives a machine) the 32-bit layout makes the variants'
+// sizes differ more than on the engine's 64-bit targets.
+#[cfg_attr(target_arch = "wasm32", allow(clippy::large_enum_variant))]
 pub enum Driver {
     Lmc(LmcDriver),
     Grbl(GrblDriver),

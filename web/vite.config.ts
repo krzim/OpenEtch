@@ -113,7 +113,7 @@ function designManifest(outDir: string): Plugin {
  * OpenEtch Design's guide (src/guide/designFilter.ts): the bundled pages leave out the machine pages' text and the
  * lines about what the design build does not have, so none of it ships in the design bundle.
  */
-function designGuide(): Plugin {
+function designGuide(hidden: readonly string[]): Plugin {
   const PAGE = /[\\/]docs[\\/]guide[\\/]([^\\/]+)\.md\?raw$/;
   return {
     name: "openetch-design-guide",
@@ -123,7 +123,7 @@ function designGuide(): Plugin {
       if (!m) return null;
       const fs = (await import(/* @vite-ignore */ ["node", "fs"].join(":"))) as Fs;
       const src = fs.readFileSync(id.slice(0, id.indexOf("?")), "utf8");
-      return `export default ${JSON.stringify(designGuideSource(m[1], src))};`;
+      return `export default ${JSON.stringify(designGuideSource(m[1], src, hidden))};`;
     },
   };
 }
@@ -139,7 +139,7 @@ export default defineConfig(async ({ mode }): Promise<UserConfig> => {
   const dm = designMode(mode);
   const hiddenGuide = dm.design ? await hiddenGuidePages() : [];
   return {
-  plugins: dm.design ? [react(), designGuide(), designManifest(dm.outDir)] : [react(), precompress()],
+  plugins: dm.design ? [react(), designGuide(hiddenGuide), designManifest(dm.outDir)] : [react(), precompress()],
   base: env.VITE_BASE ?? (dm.design && dm.backend !== "engine" ? "./" : "/"),
   // The browser's WebAssembly core (crates/webcore), built into src/wasm/pkg by scripts/wasm.mjs (`npm run wasm`),
   // which `npm run build` and `npm run dev` run first. Its wasm file is an asset with a content hash.
