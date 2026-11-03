@@ -542,6 +542,43 @@ textarea {
   font-style: italic;
 }
 
+/* The project name is a button (its full name and Save as… in a menu); it looks like the plain name. */
+.project-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 32px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+:root[data-density="touch"] .project-btn {
+  min-height: 44px;
+}
+@media (hover: hover) {
+  .project-btn:hover {
+    background: var(--topbar-hover);
+  }
+}
+.project-pop {
+  padding: 8px 12px;
+  max-width: min(360px, calc(100vw - 32px));
+}
+.project-pop-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.project-pop-state {
+  color: var(--muted);
+  font-size: calc(12px * var(--ui-scale, 1));
+}
+
 .dirty-dot {
   width: 8px;
   height: 8px;
@@ -2918,8 +2955,9 @@ kbd {
   margin-top: 6px;
 }
 
+/* The list scrolls inside a capped box however many devices were ever added (its header row stays). */
 .dev-table-wrap {
-  max-height: 40vh;
+  max-height: min(40vh, 360px);
   overflow: auto;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius);
@@ -2951,6 +2989,23 @@ kbd {
 
 .dev-table tbody tr {
   cursor: pointer;
+}
+
+/* The size ("153.75 mm", "400 × 300 mm") stays on one line. */
+.dev-table td:nth-child(3) {
+  white-space: nowrap;
+}
+
+/* A kind's heading row (Galvo, GRBL gantry, ...) when the list holds more than one kind. */
+.dev-table tbody tr.dev-group-row {
+  cursor: default;
+}
+.dev-table .dev-group-row th {
+  position: static;
+  background: var(--chrome-2);
+  color: var(--text-2);
+  font-weight: 600;
+  font-size: calc(11.5px * var(--ui-scale, 1));
 }
 
 @media (hover: hover) {

@@ -19,10 +19,11 @@ import {
   type LocationDraft,
   type ProjectLocation,
 } from "./folders.ts";
+import { errorText } from "../api/errorText.ts";
 
 function errText(e: unknown): string {
   if (e && typeof e === "object" && "detail" in e && typeof (e as { detail?: unknown }).detail === "string") return (e as { detail: string }).detail;
-  return e instanceof Error ? e.message : String(e);
+  return errorText(e);
 }
 
 /** The engine's folders and locations; `null` while loading (and for an engine without the routes: empty). */

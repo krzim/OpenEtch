@@ -43,6 +43,7 @@ import { useT } from "../workspace/usePrefs.ts";
 import { useLaserFacts } from "../laser/laserContext.ts";
 import { machineRows } from "../laser/machineRows.ts";
 import "../laser/laser.css";
+import { errorText } from "../api/errorText.ts";
 
 /**
  * Machine status as friendly rows (laser/machineRows.ts: "Focus light: Off"), with every raw key behind Advanced;
@@ -337,7 +338,7 @@ function PendingRunRow(props: {
       setStep("idle");
     } catch (e) {
       const code = e instanceof ApiError ? e.code : undefined;
-      const detail = e instanceof ApiError && e.detail ? e.detail : e instanceof Error ? e.message : String(e);
+      const detail = errorText(e);
       const text = (code ? null : approvalRefusalText(detail)) ?? approvalErrorText(code, detail);
       setError(text);
       // A mistyped PIN may be retried straight away; anything else goes back to the start.

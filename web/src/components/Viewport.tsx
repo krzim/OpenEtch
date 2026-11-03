@@ -217,6 +217,8 @@ export interface ViewportProps {
    * device's bed (LightBurn coordinates minus W/2, H/2).
    */
   workspaceMm: Vec2;
+  /** The active device is a galvo (a field) rather than a gantry (a bed); when unknown, a square workspace is a field. */
+  galvo?: boolean;
   selection: Selection;
   tool: Tool;
   /** Layer that new shapes go on. */
@@ -245,7 +247,8 @@ export interface ViewportProps {
 export function Viewport(props: ViewportProps) {
   const { doc, workspaceMm, selection, tool, preview, showPreview, previewOptions, viewStyle, snap, outside } = props;
   const [wsW, wsH] = workspaceMm;
-  const galvo = Math.abs(wsW - wsH) < 1e-3;
+  // A square GRBL bed is not a galvo field: the readout and the off-field warning name the right one.
+  const galvo = props.galvo ?? Math.abs(wsW - wsH) < 1e-3;
   // Display preferences (workspace/prefs.ts): grid, wheel direction, snap distance and kinds, crosshair; and the theme.
   const uiPrefs = usePrefs();
   const t = useT();
@@ -307,6 +310,8 @@ export function Viewport(props: ViewportProps) {
   const layout = useLayoutMode();
   /** The pointer class the handles are drawn for: the last one used on the canvas (a coarse screen starts with touch). */
   const [lastCls, setLastCls] = useState<PointerClass>(() => (layout.pointer === "coarse" ? "touch" : "mouse"));
+  /** The phone's compact off-field warning shows its full text. */
+  const [warnOpen, setWarnOpen] = useState(false);
   // Preferences > Density = Touch asks for touch-sized handles (and tap-again rotate) whatever the pointer.
   const touchDensity = layout.density === "touch";
   const handleCls: PointerClass = lastCls === "mouse" && touchDensity ? "touch" : lastCls;
@@ -1586,14 +1591,32 @@ export function Viewport(props: ViewportProps) {
           </button>
         </div>
       </HudItem>
-      {outsideCount > 0 && (
-        <HudItem id="vp-warn" slot="tr" rank={60} minW={160} maxW={360}>
-          <div className="vp-overlay vp-warn" role="status">
-            {outsideCount} object{outsideCount === 1 ? "" : "s"} outside the {galvo ? "galvo field" : "workspace"} (red). The laser cannot reach{" "}
-            {outsideCount === 1 ? "it" : "them"}.
-          </div>
-        </HudItem>
-      )}
+      {outsideCount > 0 &&
+        (layout.layout === "phone" ? (
+          // The phone: an icon and a few words that still read as a warning; a tap shows the whole sentence.
+          <HudItem id="vp-warn" slot="tr" rank={60} maxW={280}>
+            <button
+              type="button"
+              className="vp-warn vp-warn-compact"
+              role="status"
+              aria-expanded={warnOpen}
+              aria-label={offFieldText(t, outsideCount, galvo)}
+              onClick={() => setWarnOpen((o) => !o)}
+            >
+              <span className="vp-warn-head">
+                <Icon name="warning" size={16} />
+                {t(galvo ? "vp.offFieldShort" : "vp.offWorkspaceShort", { n: outsideCount })}
+              </span>
+              {warnOpen && <span className="vp-warn-detail">{offFieldText(t, outsideCount, galvo)}</span>}
+            </button>
+          </HudItem>
+        ) : (
+          <HudItem id="vp-warn" slot="tr" rank={60} minW={160} maxW={360}>
+            <div className="vp-overlay vp-warn" role="status">
+              {offFieldText(t, outsideCount, galvo)}
+            </div>
+          </HudItem>
+        ))}
       <HudItem id="vp-readout" slot="bl" rank={15} optional passThrough>
         <div className="vp-overlay vp-bottom-left">
           {cursor
@@ -1770,4 +1793,10 @@ function round6(v: number): number {
 }
 function pad(b: Box, m: number): Box {
   return { x0: b.x0 - m, y0: b.y0 - m, x1: b.x1 + m, y1: b.y1 + m };
+}
+
+/** The off-field warning's sentence: how many objects the laser cannot reach (drawn in red). */
+function offFieldText(t: ReturnType<typeof useT>, n: number, galvo: boolean): string {
+  const key = galvo ? (n === 1 ? "vp.offField1" : "vp.offFieldN") : n === 1 ? "vp.offWorkspace1" : "vp.offWorkspaceN";
+  return t(key, { n });
 }

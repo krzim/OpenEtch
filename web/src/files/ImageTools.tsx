@@ -23,6 +23,7 @@ import {
   type TraceOptions,
 } from "./fileFormats.ts";
 import { MmBox, NumBox, Row, parseBox, useBox } from "./FilesUiParts.tsx";
+import { errorText } from "../api/errorText.ts";
 
 type Run = (inv: Invocation | Invocation[]) => Promise<unknown>;
 
@@ -94,7 +95,7 @@ export function TraceDialog(p: { image: DocObject; run: Run; report: (e: unknown
           setPreview({ d: typeof res.d === "string" ? res.d : "", contours: Number(res.contours) || 0, nodes: Number(res.nodes) || 0 });
           setError(null);
         })
-        .catch((e: unknown) => n === seq.current && setError(e instanceof Error ? e.message : String(e)));
+        .catch((e: unknown) => n === seq.current && setError(errorText(e)));
     }, 250);
     return () => window.clearTimeout(h);
     // eslint-disable-next-line react-hooks/exhaustive-deps

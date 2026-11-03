@@ -71,6 +71,19 @@ function subscribe(fn: () => void): () => void {
 }
 const getRoot = (): HTMLElement | null => root;
 
+/** The width of the HUD's area (the canvas minus the safe-area bands), for items that pick their content to fit it. */
+let areaWidth = 0;
+const areaListeners = new Set<() => void>();
+function subscribeArea(fn: () => void): () => void {
+  areaListeners.add(fn);
+  return () => areaListeners.delete(fn);
+}
+
+/** The HUD area's width in px (0 before the first layout); re-renders when it changes. */
+export function useHudAreaWidth(): number {
+  return useSyncExternalStore(subscribeArea, () => areaWidth, () => 0);
+}
+
 /** Lay the HUD out again before the next paint (coalesced). */
 export function invalidateHud(): void {
   if (queued) return;
@@ -115,6 +128,10 @@ function relayout(): void {
   if (rr.width < 1 || rr.height < 1) return;
   const safe = safeInsets();
   const area = safeArea({ x: rr.left, y: rr.top, w: rr.width, h: rr.height }, { w: window.innerWidth, h: window.innerHeight }, safe);
+  if (Math.abs(area.w - areaWidth) > 0.5) {
+    areaWidth = area.w;
+    for (const l of areaListeners) l();
+  }
   const local = (r: ClientRect): Box => ({ x: r.left - rr.left, y: r.top - rr.top, w: r.right - r.left, h: r.bottom - r.top });
 
   const obstacles: Box[] = [];

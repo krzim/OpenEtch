@@ -94,6 +94,7 @@ async fn a_ruida_device_frames_dark_and_runs_only_when_approved() {
     let (_, m) = send(&app, req("GET", "/api/machine", None)).await;
     assert_eq!((&m["driver"], &m["link"], &m["connected"]), (&json!("ruida"), &json!("sim"), &json!(true)), "{m}");
     assert_eq!((&m["work_area_mm"], &m["max_power_pct"]), (&json!([600.0, 400.0]), &json!(60.0)), "{m}");
+    assert_eq!(m["pulse_width_enabled"], json!(false), "a Ruida CO2 takes no pulse width: {m}");
     let ctl = sim(&st);
     rect(&app).await;
 

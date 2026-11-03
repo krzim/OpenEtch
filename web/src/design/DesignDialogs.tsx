@@ -27,6 +27,7 @@ import {
   type ArrayOptions,
   type PageAnchor,
 } from "./model.ts";
+import { errorText } from "../api/errorText.ts";
 
 type Run = (inv: Invocation | Invocation[]) => Promise<unknown>;
 const Num = UnitTextField;
@@ -48,7 +49,7 @@ function useBusy(run: Run, onDone?: (r: unknown) => void) {
       onDone?.(r);
       return true;
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorText(e));
       return false;
     } finally {
       setBusy(false);

@@ -122,13 +122,13 @@ test("objects reaching the field edge are flagged", () => {
 test("engine errors lose the HTTP prefix and name objects", () => {
   assert.equal(
     friendlyError("POST /api/runs: 422 objects obj-5 fall outside the ±76.875 mm field", doc),
-    'objects "Ellipse [0,2]" fall outside the ±76.875 mm field',
+    'Objects "Ellipse [0,2]" fall outside the ±76.875 mm field',
   );
   assert.equal(friendlyError("layer-2 has no objects; obj-77 unknown", doc), 'layer "Fill" has no objects; obj-77 unknown');
-  // The engine's lock refusal names the id once and bare, so it reads with plain quotes.
+  // The engine's lock refusal names the id once and bare, so it reads with plain quotes; the command ids go.
   assert.equal(
     friendlyError("object.transform: object obj-5 is locked; unlock it first (object.lock with locked: false)", doc),
-    'object.transform: object "Ellipse [0,2]" is locked; unlock it first (object.lock with locked: false)',
+    'Object "Ellipse [0,2]" is locked; unlock it first',
   );
 });
 

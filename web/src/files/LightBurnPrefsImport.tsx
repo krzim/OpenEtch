@@ -13,6 +13,7 @@ import { useT } from "../workspace/usePrefs.ts";
 import { filesApi } from "./filesApi.ts";
 import { setImportPrefs } from "./filesStore.ts";
 import { parseLightBurnPrefsResult, planLightBurnPrefs, planSize, type LightBurnBrowserPlan, type LightBurnPrefsResult } from "./lightburnPrefs.ts";
+import { errorText } from "../api/errorText.ts";
 
 /** Window events App.tsx and the design layer listen to for the canvas view and the system clipboard choice. */
 export const VIEW_PREFS_EVENT = "openetch:view-prefs";
@@ -20,7 +21,7 @@ export const SYSTEM_CLIPBOARD_EVENT = "openetch:system-clipboard";
 
 function errText(e: unknown): string {
   if (e && typeof e === "object" && "detail" in e && typeof (e as { detail?: unknown }).detail === "string") return (e as { detail: string }).detail;
-  return e instanceof Error ? e.message : String(e);
+  return errorText(e);
 }
 
 /** Apply the browser part of an import. */

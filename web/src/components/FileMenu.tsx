@@ -79,6 +79,7 @@ import { usePublish } from "./Ribbon.tsx";
 import { WorkspaceFileItems, workspaceFileMenuItems, type WsDialog } from "../workspace/useWorkspace.tsx";
 import { useT } from "../workspace/usePrefs.ts";
 import type { T } from "../workspace/i18n.ts";
+import { errorText } from "../api/errorText.ts";
 
 type Notify = (msg: string, kind?: "info" | "error") => void;
 
@@ -406,7 +407,7 @@ export function useFileActions(p: {
               warnings.push(...outcome.warnings.map((w) => (files.length > 1 ? `${file.name}: ${w}` : w)));
             } catch (e) {
               if (files.length === 1) throw e;
-              failed.push(`${file.name}: ${e instanceof Error ? e.message : String(e)}`);
+              failed.push(`${file.name}: ${errorText(e)}`);
             }
           }
           await engine.refreshDoc();
@@ -632,18 +633,37 @@ export function FileMenu({
   );
 }
 
-/** Project name and unsaved-changes dot for the top bar. */
-export function ProjectIndicator({ name, docName, dirty }: { name: string | null; docName: string | null; dirty: boolean | null }) {
+/**
+ * Project name and unsaved-changes dot for the top bar. A long name is cut with "…", so the name is a button: hover
+ * shows the whole name, and a click or tap opens it in full with Save as… (to give it a new name).
+ */
+export function ProjectIndicator({ name, docName, dirty, onSaveAs }: { name: string | null; docName: string | null; dirty: boolean | null; onSaveAs?: () => void }) {
   const t = useT();
   const label = name ?? docName;
-  const title = [name ? t("fm.projectNamed", { name }) : t("fm.notProject"), dirty ? t("fm.unsavedTitle") : dirty === false ? t("fm.allSaved") : ""]
-    .filter(Boolean)
-    .join("\n");
+  const lines = [name ? t("fm.projectNamed", { name }) : t("fm.notProject"), dirty ? t("fm.unsavedTitle") : dirty === false ? t("fm.allSaved") : ""].filter(Boolean);
   if (!label && !dirty) return null;
+  const items: MenuItem[] = [
+    {
+      label: label ?? t("fm.notProject"),
+      content: () => (
+        <div className="project-pop">
+          {label && <div className="project-pop-name">{label}</div>}
+          {lines.map((l) => (
+            <div key={l} className="project-pop-state">
+              {l}
+            </div>
+          ))}
+        </div>
+      ),
+    },
+  ];
+  if (onSaveAs) items.push({ sep: true }, { label: t("fm.saveAs"), icon: "save", action: onSaveAs });
   return (
-    <span className="project" title={title}>
-      {label && <span className={`doc-name${name ? "" : " unsaved"}`}>{label}</span>}
-      {dirty && <span className="dirty-dot" role="img" aria-label={t("fm.unsavedTitle")} />}
+    <span className="project">
+      <MenuButton className="project-btn" label={label ?? t("fm.notProject")} title={lines.join("\n")} ariaLabel={lines.join(". ")} items={items}>
+        {label && <span className={`doc-name${name ? "" : " unsaved"}`}>{label}</span>}
+        {dirty && <span className="dirty-dot" role="img" aria-label={t("fm.unsavedTitle")} />}
+      </MenuButton>
     </span>
   );
 }
@@ -723,7 +743,7 @@ function useProjectList(): { list: ProjectEntry[] | null; error: string | null }
       .catch((e) => {
         if (!alive) return;
         setList([]);
-        setError(e instanceof Error ? e.message : String(e));
+        setError(errorText(e));
       });
     return () => {
       alive = false;

@@ -12,6 +12,7 @@ import { evalNumber } from "../editing.ts";
 import { boxSize, objectBounds, unionBoxes } from "../geometry.ts";
 import { Modal, UnitTextField } from "./ui.tsx";
 import { useT } from "../workspace/usePrefs.ts";
+import { errorText } from "../api/errorText.ts";
 
 type Run = (inv: Invocation) => Promise<unknown>;
 
@@ -40,7 +41,7 @@ function useSubmit(run: Run, onClose: () => void, onDone?: (result: unknown) => 
       onDone?.(r);
       onClose();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorText(e));
     } finally {
       setBusy(false);
     }
@@ -372,6 +373,7 @@ export function CommandPalette({ commands, run, onClose }: { commands: CommandSp
       const r = await run({ id: picked.id, params: p as Record<string, unknown> });
       setResult(JSON.stringify(r, null, 2) ?? "ok");
     } catch (e) {
+      // The command runner shows the engine's own text: the command id there is the one the user picked.
       setResult(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);

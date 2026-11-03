@@ -6,7 +6,6 @@
 // failed line. The pure parts live in api/grbl.ts.
 
 import { useEffect, useRef, useState } from "react";
-import { ApiError } from "../api/client.ts";
 import {
   appendLog,
   historyPush,
@@ -27,12 +26,13 @@ import { libsApi } from "../libs/api.ts";
 import { useT } from "../workspace/usePrefs.ts";
 import { useGrblStatus } from "./GrblMove.tsx";
 import "./job.css";
+import { errorText } from "../api/errorText.ts";
 
 type Notify = (msg: string, kind?: "info" | "error") => void;
 
 /** The engine's reason for refusing a line (its `error` text), else the message. */
 function why(e: unknown): string {
-  return e instanceof ApiError ? (e.detail ?? e.message) : e instanceof Error ? e.message : String(e);
+  return errorText(e);
 }
 
 /** The device's macros, reloaded when the device or the preferences change. */

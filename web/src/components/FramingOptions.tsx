@@ -18,6 +18,7 @@ import { useEscStopsFraming } from "../laser/escFraming.ts";
 import { placePopover, type Rect } from "../laser/placePopover.ts";
 import { Icon, NumberField } from "./ui.tsx";
 import "./job.css";
+import { errorText } from "../api/errorText.ts";
 
 type Notify = (msg: string, kind?: "info" | "error") => void;
 
@@ -170,7 +171,7 @@ export function FramingControls(p: {
     try {
       jobApi.frame(frameRequestBody(o, ctx.current.selection)).catch(ctx.current.report).finally(ctx.current.onChanged);
     } catch (e) {
-      ctx.current.notify(e instanceof Error ? e.message : String(e), "error");
+      ctx.current.notify(errorText(e), "error");
     }
   }, [o, framing]);
 
@@ -183,7 +184,7 @@ export function FramingControls(p: {
         .catch(p.report)
         .finally(p.onChanged);
     } catch (e) {
-      p.notify(e instanceof Error ? e.message : String(e), "error");
+      p.notify(errorText(e), "error");
     }
   };
   const stop = () =>

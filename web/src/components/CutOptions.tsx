@@ -22,6 +22,7 @@ import {
   globalPasses,
   globalPassesUpdate,
   intervalToLpi,
+  overscanApplies,
   layerTiming,
   lpiPatch,
   optionsPatch,
@@ -96,6 +97,8 @@ export function CutOptionsSection(p: {
   has?: (cmd: string) => boolean;
   /** The active device is a GRBL gantry: show its layer options; `dynamic` is its default power mode (M4). */
   gantry?: { dynamic: boolean } | null;
+  /** The layer holds an image: its image runs are scan lines, overscanned in any mode (the planner's rule). */
+  hasImages?: boolean;
 }) {
   const t = useT();
   const ref: PassRef = { layer: p.layer.id, sub: p.sub };
@@ -192,7 +195,7 @@ export function CutOptionsSection(p: {
           <CheckField label={t("cut.constantPower")} checked={r.constant_power} onChange={(constant_power) => opt({ constant_power })} />
           <p className="hint">{t("cut.constantPowerHint", { mode: p.gantry.dynamic ? "M4" : "M3" })}</p>
           <CheckField label={t("cut.airAssist")} checked={r.air_assist} onChange={(air_assist) => opt({ air_assist })} />
-          {hatching && (
+          {overscanApplies(p.settings.mode, !!p.hasImages) && (
             <>
               <NumberField label={t("cut.overscan")} unit="mm" value={r.overscan_mm} min={0} max={MAX_GANTRY_EXTRA_MM} digits={2} onCommit={num((overscan_mm) => opt({ overscan_mm }))} />
               {r.overscan_mm > 0 && <p className="hint">{t("cut.overscanHint")}</p>}

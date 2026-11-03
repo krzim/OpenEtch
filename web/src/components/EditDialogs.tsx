@@ -15,6 +15,7 @@ import { fixedLength, fixedNumber, formatLength } from "../workspace/units.ts";
 import { useT } from "../workspace/usePrefs.ts";
 import { tr } from "../workspace/tr.ts";
 import { dBool, dNum } from "../workspace/dialogDefaults.ts";
+import { errorText } from "../api/errorText.ts";
 
 export type PickKind = "circularCenter" | "mirror" | "mirrorCopy" | "rotate2" | "scale2" | "scale2rot" | "unfillet";
 
@@ -99,7 +100,7 @@ function useSubmit(p: Props) {
       p.onDone(G.resultIds(r));
       if (close) p.onClose();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorText(e));
     } finally {
       setBusy(false);
     }

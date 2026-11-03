@@ -23,6 +23,7 @@ import { artImportFormat, libraryNameProblem } from "./model.ts";
 import { useLongPress } from "../touch/useLongPress.ts";
 import { acceptLabel, acceptsFile, pickerAccept } from "../touch/filePick.ts";
 import { useLayoutMode } from "../workspace/layoutMode.ts";
+import { errorText } from "../api/errorText.ts";
 
 const LOAD_ACCEPT = ".oeart,.lbart";
 
@@ -76,7 +77,7 @@ export function ArtLibraryDock(p: {
       // Storage unavailable: the choice lasts for this visit.
     }
   };
-  const fail = useCallback((e: unknown) => notify(e instanceof Error ? e.message : String(e), "error"), [notify]);
+  const fail = useCallback((e: unknown) => notify(errorText(e), "error"), [notify]);
 
   const refreshList = useCallback(() => {
     artApi

@@ -10,6 +10,7 @@ import { useT } from "../workspace/usePrefs.ts";
 import type { Selection } from "../selection.ts";
 import { DCMD, shapeUpdate } from "./designApi.ts";
 import { shapeParams, shapePatchProblem, type ShapeParams } from "./model.ts";
+import { errorText } from "../api/errorText.ts";
 
 export function ShapeProperties(p: {
   doc: GDocument | null;
@@ -33,7 +34,7 @@ export function ShapeProperties(p: {
     }
     setErr(null);
     void p.run(shapeUpdate(o.id, patch)).catch((e: unknown) => {
-      setErr(e instanceof Error ? e.message : String(e));
+      setErr(errorText(e));
       p.report(e);
     });
   };

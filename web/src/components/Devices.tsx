@@ -16,6 +16,7 @@ import {
   activeDevice,
   designOnlyReason,
   deviceDetails,
+  deviceGroups,
   deviceImportBody,
   deviceList,
   deviceOptionText,
@@ -46,9 +47,12 @@ import type { GDocument, MachineStatus } from "../api/types.ts";
 import { jobApi } from "../api/jobApi.ts";
 import type { LinkState } from "../api/useEngine.ts";
 import { DeviceEditor } from "./DeviceEditor.tsx";
-import { Icon, Modal } from "./ui.tsx";
+import { Modal } from "./ui.tsx";
+import { MenuButton, type MenuItem } from "./Menu.tsx";
+import { useLayoutMode } from "../workspace/layoutMode.ts";
 import { useT } from "../workspace/usePrefs.ts";
 import { tr } from "../workspace/tr.ts";
+import { errorText } from "../api/errorText.ts";
 
 type Notify = (msg: string, kind?: "info" | "error") => void;
 
@@ -336,7 +340,7 @@ export function DevicesWindow(p: {
     api
       .device(selected)
       .then((res) => alive && setDetails({ id: selected, d: deviceDetails(res), error: null }))
-      .catch((e: unknown) => alive && setDetails({ id: selected, d: null, error: e instanceof ApiError ? (e.detail ?? e.message) : String(e) }));
+      .catch((e: unknown) => alive && setDetails({ id: selected, d: null, error: errorText(e) }));
     return () => {
       alive = false;
     };
@@ -433,6 +437,27 @@ export function DevicesWindow(p: {
 
   const activateBlock = activateBlocker(device, list, p.machine);
   const removeBlock = removeBlocker(device, list);
+  const phone = useLayoutMode().layout === "phone";
+  const addItems: MenuItem[] = [
+    { label: t("dv.importFromLightburnOnThisComputer"), action: () => void runImport(null, "all", t("dv.lightburnOnTheEngineComputer")) },
+    { label: t("dv.importFile"), icon: "upload", action: () => input.current?.click() },
+    { label: t("dv.importEzcad"), title: t("dv.addADeviceFromAnEzcad"), action: () => markcfgInput.current?.click() },
+    { sep: true },
+    { label: t("dv.newGrbl"), title: t("dv.newGrblHint"), action: () => setAsk({ kind: "grbl", form: GRBL_FORM_DEFAULT }) },
+    { label: t("dv.newRuida"), title: t("dv.newRuidaHint"), action: () => setAsk({ kind: "ruida", form: RUIDA_FORM_DEFAULT }) },
+  ];
+  const deviceItems: MenuItem[] = [
+    { label: t("dv.duplicate"), title: t("dv.editACopyOfTheSelected"), disabled: !device, action: () => device && void duplicate(device) },
+    { label: t("dv.edit"), title: t("dv.deviceSettingsFieldRedDotGalvo"), disabled: !device, action: () => setEditing(true) },
+    {
+      label: t("dv.remove"),
+      title: removeBlock ?? t("dv.removeTheSelectedDevice"),
+      disabled: removeBlock !== null,
+      danger: true,
+      action: () => device && setAsk({ kind: "remove", device }),
+    },
+  ];
+  const groups = list ? deviceGroups(list) : [];
 
   return (
     <Modal
@@ -501,30 +526,24 @@ export function DevicesWindow(p: {
           <RuidaDeviceForm form={ask.form} busy={busy} onChange={(form) => setAsk({ kind: "ruida", form })} onCancel={() => setAsk(null)} onAdd={() => void addRuida(ask.form)} />
         ) : (
           <>
-            <button className="btn" disabled={busy} onClick={() => void runImport(null, "all", t("dv.lightburnOnTheEngineComputer"))}>
-              {t("dv.importFromLightburnOnThisComputer")}
-            </button>
-            <button className="btn" disabled={busy} onClick={() => input.current?.click()}>
-              <Icon name="upload" /> Import file…
-            </button>
-            <button className="btn" disabled={busy} title={t("dv.addADeviceFromAnEzcad")} onClick={() => markcfgInput.current?.click()}>
-              {t("dv.importEzcad")}
-            </button>
-            <button className="btn" disabled={busy} title={t("dv.newGrblHint")} onClick={() => setAsk({ kind: "grbl", form: GRBL_FORM_DEFAULT })}>
-              {t("dv.newGrbl")}
-            </button>
-            <button className="btn" disabled={busy} title={t("dv.newRuidaHint")} onClick={() => setAsk({ kind: "ruida", form: RUIDA_FORM_DEFAULT })}>
-              {t("dv.newRuida")}
-            </button>
-            <button className="btn" disabled={busy || !device} title={t("dv.editACopyOfTheSelected")} onClick={() => device && void duplicate(device)}>
-              {t("dv.duplicate")}
-            </button>
-            <button className="btn" disabled={busy || !device} title={t("dv.deviceSettingsFieldRedDotGalvo")} onClick={() => setEditing(true)}>
-              {t("dv.edit")}
-            </button>
-            <button className="btn" disabled={busy || removeBlock !== null} title={removeBlock ?? t("dv.removeTheSelectedDevice")} onClick={() => device && setAsk({ kind: "remove", device })}>
-              {t("dv.remove")}
-            </button>
+            {/* The ways to add a device are one menu, and on the phone the selected device's other actions another,
+                so the footer is one row of the primary actions (it was eight buttons in three rows there). */}
+            <MenuButton className="btn" label={t("dv.addDevice")} caret disabled={busy} items={addItems} placement="above" />
+            {phone ? (
+              <MenuButton className="btn" label={t("dv.more")} caret disabled={busy || !device} items={deviceItems} placement="above" />
+            ) : (
+              <>
+                <button className="btn" disabled={busy || !device} title={t("dv.editACopyOfTheSelected")} onClick={() => device && void duplicate(device)}>
+                  {t("dv.duplicate")}
+                </button>
+                <button className="btn" disabled={busy || !device} title={t("dv.deviceSettingsFieldRedDotGalvo")} onClick={() => setEditing(true)}>
+                  {t("dv.edit")}
+                </button>
+                <button className="btn" disabled={busy || removeBlock !== null} title={removeBlock ?? t("dv.removeTheSelectedDevice")} onClick={() => device && setAsk({ kind: "remove", device })}>
+                  {t("dv.remove")}
+                </button>
+              </>
+            )}
             <button
               className="btn btn-primary"
               disabled={busy || activateBlock !== null}
@@ -567,8 +586,16 @@ export function DevicesWindow(p: {
                 <th scope="col">{t("dv.source")}</th>
               </tr>
             </thead>
-            <tbody>
-              {list.devices.map((d) => (
+            {groups.map((g) => (
+            <tbody key={g.kind}>
+              {groups.length > 1 && (
+                <tr className="dev-group-row">
+                  <th scope="rowgroup" colSpan={5}>
+                    {g.label} <span className="dev-sub">({g.devices.length})</span>
+                  </th>
+                </tr>
+              )}
+              {g.devices.map((d) => (
                 <tr
                   key={d.id}
                   className={`${d.id === selected ? "selected" : ""}${d.id === list.active ? " active" : ""}`}
@@ -607,6 +634,7 @@ export function DevicesWindow(p: {
                 </tr>
               ))}
             </tbody>
+            ))}
           </table>
         </div>
       )}
