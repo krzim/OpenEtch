@@ -59,13 +59,14 @@ export function splitFrontMatter(src: string): { meta: FrontMatter; body: string
 
 /** A heading's id as GitHub makes it (its TableOfContentsFilter, and github-slugger, which matches it): the heading's
  *  rendered text (code spans, emphasis and link text count; an image's alt text does not, as it is not text on the
- *  page), lower-cased (Unicode-aware, so "É" -> "é"), every character that is not a letter, mark, number, connector
- *  (`_`), hyphen or space removed, then each space a hyphen. Nothing is trimmed or collapsed: "A & B" -> "a--b".
+ *  page), lower-cased (Unicode-aware, so "É" -> "é"), every character that is not a letter, mark, decimal digit
+ *  ("²", "½" and "①" go), connector (`_`), hyphen or space removed, then each space a hyphen. Nothing is trimmed or
+ *  collapsed: "A & B" -> "a--b".
  *  Non-ASCII letters stay (GitHub keeps them; the link's href may carry them raw or percent-encoded). */
 export function slugify(s: string): string {
   return s
     .toLowerCase()
-    .replace(/[^\p{L}\p{M}\p{N}\p{Pc} -]/gu, "")
+    .replace(/[^\p{L}\p{M}\p{Nd}\p{Pc} -]/gu, "")
     .replace(/ /g, "-");
 }
 
@@ -95,7 +96,7 @@ export function uniqueSlug(base: string, used: Map<string, number>): string {
 
 /** The characters of a heading id, for a RegExp with the `u` flag (`%` too: an anchor in a link may be
  *  percent-encoded). */
-export const ANCHOR_CHARS = String.raw`[\p{L}\p{M}\p{N}\p{Pc}%-]+`;
+export const ANCHOR_CHARS = String.raw`[\p{L}\p{M}\p{Nd}\p{Pc}%-]+`;
 
 /** The plain text of inline content (alt text for images, no markup). */
 export function inlineText(c: readonly Inline[]): string {

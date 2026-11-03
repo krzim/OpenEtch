@@ -3,6 +3,7 @@
 // search and the ribbon (`production.cockpit`, `production.ledger`), the Production window and the layer pause HUD.
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { postponeAppModeOffer } from "../app/AppModeDialog.tsx";
 import { Icon } from "../components/ui.tsx";
 import { WsModal } from "../workspace/WsModal.tsx";
 import { useT } from "../workspace/usePrefs.ts";
@@ -27,6 +28,10 @@ export function useProductionUi(p: { notify: Notify; report: (e: unknown) => voi
     window.addEventListener("hashchange", on);
     return () => window.removeEventListener("hashchange", on);
   }, []);
+  // Not under the "Use as an app" offer when it came up just as the cockpit opened: it comes back after Exit.
+  useEffect(() => {
+    if (cockpit) postponeAppModeOffer();
+  }, [cockpit]);
   const openCockpit = useCallback(() => {
     if (!isCockpitHash(hashNow())) history.pushState(null, "", COCKPIT_HASH);
     setCockpit(true);

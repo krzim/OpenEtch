@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Rewrite the contents list at the end of docs/guide/index.md (from "## Contents {#contents}" on) from the pages'
+// Rewrite the contents list at the end of docs/guide/index.md (from "## Contents" on) from the pages'
 // front matter, so the guide reads in order on GitHub too. `npm run guide:index`; src/guide/docs.test.ts fails while
 // it is out of date.
 

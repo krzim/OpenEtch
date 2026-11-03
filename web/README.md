@@ -39,12 +39,12 @@ the main bundle carries only the route, the frame and the strings (~3 KB gzip). 
 search open it; `?guide` in the address shows the guide alone (Open in new tab). `VITE_OPENETCH_DESIGN_ONLY=1` leaves
 out the pages with `needs: machine` (the future design-only build).
 
-To add a page: write `docs/guide/<slug>.md` with its front matter, give every `##` / `###` heading an `{#anchor}`,
-run `npm run guide:index` (the contents list at the end of index.md) and `npm test`. To add a screenshot: list it in
-`docs/guide/shots.json` (the step language is in `e2e/README.md`, "Guide screenshots"), reference it as
-`![Alt](img/<name>.webp)` and run `npm run guide:shots`. To link a panel to the guide:
-`<HelpLink to="page#anchor" topic={t("...")} />` (`src/guide/HelpLink.tsx`); `src/guide/helpLinks.test.ts` fails when
-the page or the anchor does not exist.
+To add a page: write `docs/guide/<slug>.md` with its front matter (headings get GitHub's ids from their text, see
+`docs/guide/README.md`; do not add `{#...}`), run `npm run guide:index` (the contents list at the end of index.md)
+and `npm test`. To add a screenshot: list it in `docs/guide/shots.json` (the step language is in `e2e/README.md`,
+"Guide screenshots"), reference it as `![Alt](img/<name>.webp)` and run `npm run guide:shots`. To link a panel to the
+guide: `<HelpLink to="page#heading-id" topic={t("...")} />` (`src/guide/HelpLink.tsx`); `src/guide/helpLinks.test.ts`
+fails when the page or the heading does not exist.
 
 ## How it works
 

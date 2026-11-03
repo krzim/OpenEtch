@@ -49,6 +49,15 @@ test("headings have GitHub's ids: no {#custom-id}, plain ASCII ids, the same num
     // GitHub shows `{#id}` as text and does not use it as the id, so a link to it would not jump there.
     const m = /^ {0,3}#{1,6}[ \t].*\{#[^}]*\}[ \t]*$/m.exec(prose(src));
     assert.equal(m, null, `${f}: "${m?.[0]}": drop the {#...}; a heading's id is its text the GitHub way`);
+    // Text GitHub changes before it makes the id, so the app's id would differ: an entity ("&amp;" becomes "&",
+    // which goes), a tab (the parser makes it spaces, GitHub drops it) and an emoji code (":tada:" becomes a
+    // picture, which goes). Numbers that are not digits ("²", "½", "①") are left out of the id: say "mm2", not "mm²".
+    for (const line of prose(src).split("\n")) {
+      const h = /^ {0,3}#{1,6}[ \t]+(.*)$/.exec(line);
+      if (!h) continue;
+      const bad = /&#?\w+;|\t|:[\w+-]+:|(?!\p{Nd})\p{N}/u.exec(h[1]);
+      assert.equal(bad, null, `${f}: "${line}": "${bad?.[0]}" in a heading: GitHub's id would differ; reword it`);
+    }
   }
   for (const p of guide.pages) {
     const bases = new Set<string>();

@@ -23,6 +23,8 @@ interface InstallPromptEvent extends Event {
 }
 
 let open = false;
+/** Set while the first-visit offer (not Help > Use as an app) is open: puts it back in the queue. */
+let requeueOffer: (() => void) | null = null;
 let installPrompt: InstallPromptEvent | null = null;
 const listeners = new Set<() => void>();
 let root: Root | null = null;
@@ -75,7 +77,16 @@ export function appModeDialogOpen(): boolean {
 export function closeAppModeDialog(): void {
   if (!open) return;
   open = false;
+  requeueOffer = null;
   emit();
+}
+
+/** The production cockpit opened: an open first-visit offer steps aside and comes back once the cockpit is gone. */
+export function postponeAppModeOffer(): void {
+  const again = requeueOffer;
+  if (!open || !again) return;
+  closeAppModeDialog();
+  again();
 }
 
 /** Whether Help > "Use as an app" should be listed (not inside an app window). */
@@ -100,7 +111,13 @@ export function offerAppModeOnce(): void {
   }
   // Not over another dialog, nor over the production cockpit (an operator's full screen, often a tablet's first visit).
   const busy = () => !!document.querySelector('[aria-modal="true"]') || isCockpitHash(location.hash);
-  window.setTimeout(() => openWhenClear(busy, openAppModeDialog, (f) => window.setTimeout(f, 2000)), 1500);
+  // The cockpit may still open while the offer is up (it can open just as the timer fires): postponeAppModeOffer.
+  const offer = () => {
+    openAppModeDialog();
+    if (open) requeueOffer = queue;
+  };
+  const queue = () => openWhenClear(busy, offer, (f) => window.setTimeout(f, 2000));
+  window.setTimeout(queue, 1500);
 }
 
 

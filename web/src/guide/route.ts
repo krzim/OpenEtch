@@ -16,7 +16,7 @@ export const GUIDE_FOCUS_EVENT = "openetch:guide-focus";
 const SLUG = "[a-z0-9][a-z0-9-]*";
 // A heading's id, as GitHub makes it from the heading's text (guide/markdown.ts slugify): letters of any script,
 // digits, "_" and "-". Kept here rather than imported, so the main bundle does not take in the markdown parser.
-const ANCHOR = String.raw`[\p{L}\p{M}\p{N}\p{Pc}-]+`;
+const ANCHOR = String.raw`[\p{L}\p{M}\p{Nd}\p{Pc}-]+`;
 const HASH_RE = new RegExp(`^#/guide(?:/(${SLUG})?)?(?:#(${ANCHOR}))?$`, "u");
 const TARGET_RE = new RegExp(`^(${SLUG})?(?:#(${ANCHOR}))?$`, "u");
 
