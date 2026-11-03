@@ -33,6 +33,12 @@ fn one() -> f64 {
     1.0
 }
 
+impl From<appcore::preview::PreviewContext> for Context {
+    fn from(c: appcore::preview::PreviewContext) -> Self {
+        Context { target: Some(c.target), correction: c.correction, run_index: c.run_index, design_only: c.design_only }
+    }
+}
+
 /// The engine's preview of `doc`: `Ok` with the preview (empty for a document with nothing to output), or `Err`
 /// with the message the engine answers 422 with.
 pub fn plan_preview(doc: &Document, ctx: &Context) -> Result<Preview, String> {

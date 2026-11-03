@@ -3295,14 +3295,25 @@ dependencies = [
 name = "webcore"
 version = "0.1.0"
 dependencies = [
+ "appcore",
+ "axum",
+ "base64 0.22.1",
  "commands",
  "doc",
+ "engine",
+ "fileio",
  "geom",
+ "http-body-util",
+ "image",
+ "js-sys",
  "kurbo",
  "lbrn",
+ "machine",
  "plan",
  "serde",
  "serde_json",
+ "tokio",
+ "tower",
  "wasm-bindgen",
 ]
 
