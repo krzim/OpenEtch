@@ -712,6 +712,8 @@ Halftone cells per inch are LightBurn's `cellsPerInch` (LAY-033; seen next to `d
 
 **Ids and arranging.** Every command that takes object `ids` also takes group ids, which stand for all the group's
 members (nested groups included). `object.duplicate` and `art.array` copy a fully selected group as a new group;
+every copy (duplicate, transform `keep_copy`, the arrays, `page.duplicate`, a clipboard paste) keeps its original's
+`object_options` (hand-placed tabs, start point, priority, power scale) and image mask;
 `object.delete` removes groups left empty. `object.align {ids, reference?, x?, y?, mode?}` follows LightBurn: the
 default reference is the **last** id (the UI passes the selection in the order objects were added to it), which stays
 put; other references are `first`, `selection`, `object {id}`, `stock` and `field`; a group aligns as one object by
