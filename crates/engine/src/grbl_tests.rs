@@ -638,3 +638,30 @@ async fn relative_jogs_are_kept_on_the_bed_from_the_heads_position() {
     assert_eq!(r.position, [15.0, 5.0]);
     assert!(r.lines.iter().any(|l| l == "$J=G91G21X10Y0F1200") && r.fires.is_empty(), "{:?}", r.lines);
 }
+
+#[tokio::test]
+async fn a_grbl_status_refresh_is_refused_while_shutting_down() {
+    let (app, st, _, _) = grbl_engine(false).await;
+    assert_eq!(send(&app, req("GET", "/api/machine/grbl?refresh=true", None)).await.0, StatusCode::OK);
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let opts = crate::shutdown::Options {
+        grace: Duration::from_secs(60),
+        poll: Duration::from_millis(5),
+        report_every: Duration::from_millis(100),
+        abort_wait: Duration::from_secs(5),
+    };
+    let done = tokio::spawn(crate::shutdown::run(st.clone(), rx, opts));
+    tx.send("SIGTERM").unwrap();
+    done.await.unwrap();
+    let before = sim(&st).report().lines_received;
+    let (s, v) = send(&app, req("GET", "/api/machine/grbl?refresh=true", None)).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::SERVICE_UNAVAILABLE, Some("shutting_down")), "{v}");
+    for (uri, body) in [("/api/machine/jog", json!({"dx": 1.0})), ("/api/machine/home", json!({})), ("/api/machine/console", json!({"line": "$$"}))] {
+        let (s, v) = send(&app, req("POST", uri, Some(body))).await;
+        assert_eq!((s, v["code"].as_str()), (StatusCode::SERVICE_UNAVAILABLE, Some("shutting_down")), "{uri}: {v}");
+    }
+    // The last snapshot needs no board.
+    let (s, v) = send(&app, req("GET", "/api/machine/grbl", None)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(sim(&st).report().lines_received, before, "nothing reached the board");
+}

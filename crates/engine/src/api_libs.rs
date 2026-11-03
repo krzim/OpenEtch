@@ -706,7 +706,9 @@ async fn updates_check(State(st): State<Arc<AppState>>) -> Result<Json<Value>, E
 // Find My Laser / Add Galvo
 // ---------------------------------------------------------------------------------------------------------------
 
-async fn devices_scan() -> Result<Json<Value>, EngineError> {
+async fn devices_scan(State(st): State<Arc<AppState>>) -> Result<Json<Value>, EngineError> {
+    // Opens the USB bus: refused while the engine shuts down.
+    st.refuse_if_shutting_down("scanning for boards")?;
     #[cfg(feature = "usb")]
     {
         let boards = tokio::task::spawn_blocking(machine::detect).await?.map_err(|e| EngineError::Internal(e.to_string()))?;
@@ -741,6 +743,10 @@ async fn devices_wizard(State(st): State<Arc<AppState>>, headers: HeaderMap, b: 
     use base64::Engine as _;
     let b: WizardBody = body(&b)?;
     ui_only(&headers, b.origin.as_ref(), "devices can be added")?;
+    if b.activate {
+        // Activation sets the board up: refused before anything is stored.
+        st.refuse_if_shutting_down("adding and activating a device")?;
+    }
     let cor = match (&b.cor_name, &b.cor_base64) {
         (Some(n), Some(data)) => Some((
             n.clone(),

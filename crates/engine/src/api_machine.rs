@@ -104,6 +104,10 @@ struct GrblStatusQuery {
 
 async fn grbl_status(State(st): State<Arc<AppState>>, Query(q): Query<GrblStatusQuery>) -> Result<Json<Value>, EngineError> {
     let profile = st.machine.grbl_profile().ok_or_else(|| EngineError::Conflict("the active machine is not a GRBL gantry".into()))?;
+    if q.refresh {
+        // Asks the board: refused while the engine shuts down (the last snapshot needs no refresh).
+        st.refuse_if_shutting_down("reading the board")?;
+    }
     if q.refresh && !st.machine.is_running() && !st.machine.is_framing() {
         let m = st.machine.clone();
         tokio::task::spawn_blocking(move || m.grbl_refresh_status()).await?;
@@ -432,6 +436,8 @@ async fn machine_axis(State(st): State<Arc<AppState>>, headers: HeaderMap, body:
 /// Controller info (LightBurn's Get Controller Info): the raw words of `GetSerialNo` and `GetVersion` (their meaning
 /// is not decoded) and the serial as hex, as meerk40t shows it.
 async fn machine_info(State(st): State<Arc<AppState>>) -> Result<Json<Value>, EngineError> {
+    // Reads the board when it is idle (and waits for the controller): refused while the engine shuts down.
+    st.refuse_if_shutting_down("reading the board")?;
     let info = st.machine.blocking(|m, ctl| m.board_info(ctl)).await?;
     let profile = st.machine.profile();
     let mut v = json!({
@@ -456,6 +462,7 @@ async fn machine_inputs(State(st): State<Arc<AppState>>) -> Result<Json<Value>, 
     if st.machine.is_gantry() {
         return Err(EngineError::BadRequest("a gantry has no galvo input port to read".into()));
     }
+    st.refuse_if_shutting_down("reading the board")?;
     if st.machine.is_running() {
         return Err(EngineError::Conflict("a run holds the board; read the inputs when it is idle".into()));
     }

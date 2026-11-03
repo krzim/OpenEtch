@@ -437,3 +437,44 @@ async fn a_stuck_board_while_framing_never_keeps_the_engine_from_exiting() {
     stuck.await.unwrap().unwrap();
     until("the frame loop to end", || !st.machine.is_framing()).await;
 }
+
+/// Every request that would touch the board (or the USB bus) is refused once the engine shuts down, reads included:
+/// the board info and inputs, a GRBL or Ruida status refresh, a board scan, the Find My Laser wizard's activation and
+/// a change to the active device (refused before anything is written). Reads that need no board still answer.
+#[tokio::test]
+async fn board_reads_are_refused_while_shutting_down() {
+    let st = engine(MachineProfile::generic_lmc_fiber(), 3).await;
+    let app = api::router(st.clone(), None);
+    // Before the signal they answer.
+    assert_eq!(send(&app, req("GET", "/api/machine/info", None)).await.0, StatusCode::OK);
+    assert_eq!(send(&app, req("GET", "/api/machine/inputs", None)).await.0, StatusCode::OK);
+    // A GRBL gantry made now and then a Ruida one (not active), to ask their status routes.
+    let profile = json!({"port": "COM9", "work_area_mm": [400.0, 300.0], "origin": "bottom_left"});
+    let (s, v) = send(&app, req("POST", "/api/devices/grbl", Some(json!({"display_name": "Diode", "profile": profile})))).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let grbl = v["device"]["id"].as_str().unwrap().to_owned();
+    let galvo = st.active_device().id;
+    let (tx, done) = coordinator(&st, opts(Duration::from_secs(60)));
+    tx.send("SIGTERM").unwrap();
+    assert_eq!(done.await.unwrap(), Outcome::Idle);
+    let refused = |what: &str, s: StatusCode, v: &serde_json::Value| {
+        assert_eq!((s, v["code"].as_str()), (StatusCode::SERVICE_UNAVAILABLE, Some("shutting_down")), "{what}: {v}");
+    };
+    for uri in ["/api/machine/info", "/api/machine/inputs", "/api/devices/scan"] {
+        let (s, v) = send(&app, req("GET", uri, None)).await;
+        refused(uri, s, &v);
+    }
+    let edit = json!({"display_name": "Renamed"});
+    let (s, v) = send(&app, req("PUT", &format!("/api/devices/{galvo}"), Some(edit.clone()))).await;
+    refused("edit the active device", s, &v);
+    // Another device's stored settings are only a file: that still works.
+    let (s, v) = send(&app, req("PUT", &format!("/api/devices/{grbl}"), Some(edit))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (s, v) = send(&app, req("POST", "/api/devices/wizard", Some(json!({"markcfg_base64": "", "activate": true})))).await;
+    refused("wizard with activation", s, &v);
+    // The GRBL status route is asked on a galvo: it says so (409) before anything else, refresh or not; the
+    // refresh refusal itself is covered with a GRBL gantry active (`grbl_tests`).
+    assert_eq!(send(&app, req("GET", "/api/machine/grbl?refresh=true", None)).await.0, StatusCode::CONFLICT);
+    let (s, m) = send(&app, req("GET", "/api/machine", None)).await;
+    assert_eq!((s, &m["shutting_down"]), (StatusCode::OK, &json!(true)), "the status needs no board");
+}

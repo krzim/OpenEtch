@@ -315,6 +315,10 @@ struct StatusQuery {
 
 async fn ruida_status(State(st): State<Arc<AppState>>, Query(q): Query<StatusQuery>) -> Result<Json<Value>, EngineError> {
     let profile = st.machine.ruida_profile().ok_or_else(|| EngineError::Conflict("the active machine is not a Ruida gantry".into()))?;
+    if q.refresh {
+        // Asks the controller: refused while the engine shuts down (the last snapshot needs no refresh).
+        st.refuse_if_shutting_down("reading the controller")?;
+    }
     if q.refresh && !st.machine.is_running() && !st.machine.is_framing() {
         // Reads registers only; a failure leaves the last snapshot (and the machine's last error says why).
         let _ = with_ruida(&st, |r| r.refresh()).await;

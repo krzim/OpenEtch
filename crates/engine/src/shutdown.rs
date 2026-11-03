@@ -3,7 +3,9 @@
 //!
 //! On the first signal ([`run`]):
 //! - New work is refused for good: approvals, Start, the foot switch, run requests (also MCP's `job_request_run`),
-//!   frames and the red-dot jog, axis moves, GRBL motion and device changes answer **503** `code: "shutting_down"`
+//!   frames and the red-dot jog, axis moves, GRBL motion, device changes and every request that touches the board
+//!   (the board info and inputs, a GRBL or Ruida status refresh, a USB scan, a change to the active device) answer
+//!   **503** `code: "shutting_down"`
 //!   ([`AppState::refuse_if_shutting_down`]). The run claim and the shutdown share one atomic word
 //!   (`hw::Machine::begin_shutdown`), so a run is either claimed before the shutdown (and waited for) or refused.
 //!   Pending runs are cancelled, the foot switch cycle ends, and any frame stops (pointer off).

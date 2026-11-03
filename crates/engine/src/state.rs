@@ -566,12 +566,14 @@ impl AppState {
     }
 
     /// Refuse (409) changing the stored settings of the active device while a job holds the machine or framing is
-    /// on: the change would be stored but the machine could not be set up again with it. Checked before anything
-    /// is written (`PUT /api/devices/{id}`, its correction file, an applied lens calibration).
+    /// on (503 while the engine shuts down): the change would be stored but the machine could not be set up again
+    /// with it. Checked before anything is written (`PUT /api/devices/{id}`, its correction file, an applied lens calibration).
     pub fn check_device_editable(&self, id: &str) -> Result<(), EngineError> {
         if self.active_device().id != id {
             return Ok(());
         }
+        // The active device is set up again after the change (the board too): refused before anything is written.
+        self.refuse_if_shutting_down("changing the active device's settings")?;
         if let Some(state) = self.runs().busy_state() {
             return Err(EngineError::Conflict(format!("a run is {state}; change the active device's settings when it has ended")));
         }

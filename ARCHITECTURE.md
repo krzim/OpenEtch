@@ -14,7 +14,10 @@ Mac, PC, phone) and Claude are clients of the same live document. The engine is 
 **Stopping and restarting** (module `engine::shutdown`). A stop or restart never cuts a burn short by itself. On the
 first SIGTERM (what `systemctl stop|restart` sends) or SIGINT (Ctrl-C; Ctrl-C on Windows) the engine refuses new work
 for good (approvals, Start, the foot switch, run requests including MCP's `job_request_run`, frames and the red-dot
-jog, axis and GRBL moves, device changes: **503** `code: "shutting_down"`), cancels pending runs, ends the foot switch
+jog, axis and GRBL moves, device changes, and every request that touches the board or the USB bus: `GET
+/api/machine/info`, `/api/machine/inputs`, `/api/devices/scan`, the GRBL and Ruida status refresh (`?refresh=true`),
+a change to the active device and the wizard's activation: **503** `code: "shutting_down"`; Stop, jog cancel, pause
+and resume stay open), cancels pending runs, ends the foot switch
 cycle and stops any frame (pointer off). A run that already holds the machine (approved, waiting for its confirmation
 or start input, running, paused) is left to end by itself, still obeying Stop, the door and the stop input; a
 continuous run is asked to end after its current iteration (one waiting for its start input between iterations
@@ -361,7 +364,7 @@ computer while nobody watches it; the foot switch is the approval path that need
 ## Engine API (HTTP, JSON)
 
 Errors are `{ "ok": false, "error": "..." }` with a real HTTP status (400, 403, 404, 409, 422, 502) unless the row
-says otherwise. While the engine shuts down (see "Deployment"), requests for new work answer **503**
+says otherwise. While the engine shuts down (see "Deployment"), requests for new work and board reads answer **503**
 `{ ok: false, error, code: "shutting_down" }`. `origin` is `"ui"` (default), `"script"` or `"agent:<name>"`.
 
 | Method | Path | Body / result |
