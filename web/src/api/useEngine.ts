@@ -1,6 +1,8 @@
 // The engine connection as a React hook: fetches the document, history, machine status, project and preview, listens on the
-// /api/events WebSocket, and exposes `run` for edits. The document is only ever replaced by a fresh GET; edits are
-// commands, followed by a refetch (on the `document_changed` event, and after each execute response as a fallback).
+// /api/events WebSocket, and exposes `run` for edits. Edits are commands; the document follows the engine's change sets
+// (docSync.ts): an edit's answer carries the changes from the revision held, a `document_changed` event from elsewhere
+// fetches them (GET /api/document/sync), and the whole document is fetched only on first load, after a gap or when
+// another document becomes active. Engines without change sets get the old whole-document refetch.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, batch, eventsUrl, execute, type Invocation } from "./client.ts";
@@ -8,6 +10,7 @@ import { publishEngineEvent, type EngineMessage } from "./events.ts";
 import { EMPTY_TIMELINE, normalizeHistory, type TimelineModel } from "./history.ts";
 import { footSwitchToast, runFinishedToast, withApprovalLock } from "./runs.ts";
 import type { CommandSpec, EngineEvent, GDocument, MachineStatus, Origin, Preview, ProjectInfo } from "./types.ts";
+import { mutationsInFlight, onSyncPayload, setSyncPoint, syncStep, type SyncPayload } from "./docSync.ts";
 
 /** WebSocket state shown by the connection indicator. */
 export type LinkState = "connecting" | "open" | "closed";
@@ -115,11 +118,51 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
     setHttpError(e instanceof Error ? e.message : String(e));
   }, []);
 
-  const refreshPreview = useCoalesced(async () => {
+  // --- document sync state (docSync.ts) ---
+  /** The document held, ahead of React state (payloads are applied as they arrive). */
+  const docRef = useRef<GDocument | null>(null);
+  /** The engine run `docRef`'s revision belongs to. */
+  const epochRef = useRef<string | null>(null);
+  /** Whether the engine has GET /api/document/sync (null until the first answer). */
+  const syncSupported = useRef<boolean | null>(null);
+  /** Counts sync payloads applied (an edit's answer that brought one needs no refetch). */
+  const payloads = useRef(0);
+  /** The newest revision an event announced while an edit was in flight. */
+  const pendingRevision = useRef(-1);
+  /** The newest revision any event announced (this connection). */
+  const announced = useRef(-1);
+  /**
+   * While GET /api/document/sync is in flight: the newest revision announced when it was sent. Its answer is of that
+   * revision or a later one, so an event up to it (the `history_changed` after a `document_changed`) needs no fetch.
+   */
+  const syncCovers = useRef<number | null>(null);
+  /** The revision the shown preview is of (-1: unknown, fetch again). */
+  const previewRevision = useRef(-1);
+  /** Whether the engine has GET /api/preview.bin (null until the first answer). */
+  const binaryPreview = useRef<boolean | null>(null);
+
+  const fetchPreview = useCoalesced(async () => {
+    const revision = docRef.current?.revision ?? -1;
+    if (revision >= 0 && previewRevision.current === revision) return;
     try {
+      if (binaryPreview.current !== false) {
+        try {
+          const b = await api.previewBinary();
+          binaryPreview.current = true;
+          previewRevision.current = b.revision;
+          setPreview(b.preview);
+          setPreviewError(null);
+          return;
+        } catch (e) {
+          if (!(e instanceof ApiError && e.status === 404 && binaryPreview.current === null)) throw e;
+          binaryPreview.current = false;
+        }
+      }
       setPreview(await api.preview());
+      previewRevision.current = revision;
       setPreviewError(null);
     } catch (e) {
+      previewRevision.current = -1;
       // A document with nothing to output may legitimately have no preview; keep the old one off screen.
       setPreview(null);
       if (e instanceof ApiError && e.status === 422) {
@@ -132,6 +175,12 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
       }
     }
   });
+
+  /** Fetch the preview even if one of this revision is shown (callers that know something else changed). */
+  const refreshPreview = useCallback(() => {
+    previewRevision.current = -1;
+    return fetchPreview();
+  }, [fetchPreview]);
 
   const refreshProject = useCoalesced(async () => {
     try {
@@ -146,9 +195,56 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
     }
   });
 
+  /** Take a sync payload (an edit's answer or GET /api/document/sync); "gap" when it does not apply to what is held. */
+  const acceptSync = useCallback((p: SyncPayload): "ok" | "gap" => {
+    const step = syncStep(docRef.current, epochRef.current, p);
+    if (step.kind === "gap") return "gap";
+    payloads.current++;
+    if (step.kind === "replace" || step.kind === "apply") {
+      docRef.current = step.doc;
+      epochRef.current = p.epoch;
+      setSyncPoint(p.epoch, step.doc.revision);
+      setDoc(step.doc);
+      if (wantPreviewRef.current) void fetchPreview();
+    }
+    // The timeline and project status of an older payload (overtaken by a newer one) are stale.
+    if (docRef.current && p.revision === docRef.current.revision) {
+      setTimeline(normalizeHistory(p.history));
+      const pr = p.project as ProjectInfo | null;
+      setProject(pr && typeof pr === "object" && typeof pr.dirty === "boolean" ? pr : null);
+      setProjectKnown(true);
+    }
+    setHttpError(null);
+    if (pendingRevision.current > (docRef.current?.revision ?? -1) && mutationsInFlight() === 0) {
+      pendingRevision.current = -1;
+      queueMicrotask(() => void refreshDocRef.current());
+    }
+    return "ok";
+  }, [fetchPreview]);
+
   const refreshDoc = useCoalesced(async () => {
+    if (syncSupported.current !== false) {
+      try {
+        const held = docRef.current;
+        const since = held && epochRef.current ? { epoch: epochRef.current, revision: held.revision } : null;
+        syncCovers.current = announced.current;
+        if (acceptSync(await api.documentSync(since)) === "gap") acceptSync(await api.documentSync(null));
+        syncSupported.current = true;
+        return;
+      } catch (e) {
+        if (!(e instanceof ApiError && e.status === 404 && syncSupported.current === null)) {
+          fail(e);
+          return;
+        }
+        syncSupported.current = false;
+      } finally {
+        syncCovers.current = null;
+      }
+    }
+    // Engines without change sets: the whole document every time.
     try {
       const [d, h] = await Promise.all([api.document(), api.history()]);
+      docRef.current = d;
       setDoc(d);
       setTimeline(normalizeHistory(h));
       setHttpError(null);
@@ -160,6 +256,21 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
     void refreshProject();
     if (wantPreviewRef.current) void refreshPreview();
   });
+  const refreshDocRef = useRef(refreshDoc);
+  refreshDocRef.current = refreshDoc;
+
+  // Edits anywhere in the app (client.ts) hand their answers' change sets here.
+  useEffect(() => onSyncPayload((p) => {
+    if (acceptSync(p) === "gap") void refreshDoc();
+  }), [acceptSync, refreshDoc]);
+
+  /** After an edit: fetch the changes unless its answer already brought them (or for an engine without them). */
+  const afterEdit = useCallback(
+    (before: number) => {
+      if (payloads.current === before || syncSupported.current === false) void refreshDoc();
+    },
+    [refreshDoc],
+  );
 
   const refreshMachine = useCoalesced(async () => {
     try {
@@ -172,53 +283,59 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
 
   const run = useCallback(
     async (inv: Invocation | Invocation[]) => {
+      const before = payloads.current;
       try {
         if (Array.isArray(inv)) return await batch(inv);
         return (await execute(inv)).result;
       } finally {
-        // Fallback for a missed WebSocket event; also covers failed commands (the doc may be unchanged but cheap).
-        void refreshDoc();
+        // The answer normally carries the changes; otherwise (a failed request, an older engine) fetch them, which
+        // also covers a missed WebSocket event.
+        afterEdit(before);
       }
     },
-    [refreshDoc],
+    [afterEdit],
   );
 
   const undo = useCallback(async () => {
+    const before = payloads.current;
     try {
       await api.undo();
     } finally {
-      void refreshDoc();
+      afterEdit(before);
     }
-  }, [refreshDoc]);
+  }, [afterEdit]);
 
   const redo = useCallback(async () => {
+    const before = payloads.current;
     try {
       await api.redo();
     } finally {
-      void refreshDoc();
+      afterEdit(before);
     }
-  }, [refreshDoc]);
+  }, [afterEdit]);
 
   const historyGoto = useCallback(
     async (marker: number) => {
+      const before = payloads.current;
       try {
         await api.historyGoto(marker);
       } finally {
-        void refreshDoc();
+        afterEdit(before);
       }
     },
-    [refreshDoc],
+    [afterEdit],
   );
 
   const historyDelete = useCallback(
     async (index: number) => {
+      const before = payloads.current;
       try {
         await api.historyDelete(index);
       } finally {
-        void refreshDoc();
+        afterEdit(before);
       }
     },
-    [refreshDoc],
+    [afterEdit],
   );
 
   const has = useCallback((id: string) => !!commands && commands.some((c) => c.id === id), [commands]);
@@ -233,14 +350,38 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
       .catch(fail);
   }, [refreshDoc, refreshMachine, fail]);
 
-  // Preview follows the workspace toggle.
+  // Preview follows the workspace toggle (fetched again only when the document changed since).
   useEffect(() => {
-    if (wantPreview) void refreshPreview();
-  }, [wantPreview, refreshPreview]);
+    if (wantPreview) void fetchPreview();
+  }, [wantPreview, fetchPreview]);
 
   // Event socket with reconnect and backoff.
-  const docRevision = useRef<number>(-1);
-  docRevision.current = doc?.revision ?? -1;
+  /** The document changed to `revision` (an event): fetch the changes, or wait for an edit in flight to bring them. */
+  const docChangedTo = useCallback(
+    (revision: unknown) => {
+      const held = docRef.current?.revision ?? -1;
+      if (typeof revision !== "number" || revision < 0) {
+        void refreshDoc();
+        return;
+      }
+      announced.current = Math.max(announced.current, revision);
+      if (revision === held) return;
+      if (syncCovers.current !== null && revision <= syncCovers.current) return;
+      if (mutationsInFlight() > 0 && syncSupported.current) {
+        pendingRevision.current = Math.max(pendingRevision.current, revision);
+        // Should the edit's answer not cover it (another client's edit landed after it), fetch once it is done.
+        window.setTimeout(() => {
+          if (pendingRevision.current > (docRef.current?.revision ?? -1) && mutationsInFlight() === 0) {
+            pendingRevision.current = -1;
+            void refreshDoc();
+          }
+        }, 1500);
+        return;
+      }
+      void refreshDoc();
+    },
+    [refreshDoc],
+  );
   useEffect(() => {
     let ws: WebSocket | null = null;
     let timer: number | undefined;
@@ -257,7 +398,8 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
       ws.onopen = () => {
         delay = 500;
         setLink("open");
-        // Anything may have changed while we were away.
+        // Anything may have changed while we were away (also a restarted engine, whose revisions start again).
+        announced.current = -1;
         void refreshDoc();
         void refreshMachine();
       };
@@ -271,8 +413,8 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
         if (ev && typeof ev === "object") publishEngineEvent(ev as EngineMessage);
         switch (ev.type) {
           case "document_changed":
-            if (typeof ev.revision !== "number" || ev.revision !== docRevision.current) void refreshDoc();
-            else void refreshProject();
+            if (typeof ev.revision !== "number" || ev.revision !== (docRef.current?.revision ?? -1)) docChangedTo(ev.revision);
+            else if (syncSupported.current !== true) void refreshProject();
             // An edit makes pending runs stale; fetch their flags now rather than at the next poll.
             void refreshMachine();
             if (typeof ev.revision === "number" && isRemoteOrigin(ev.origin)) {
@@ -300,13 +442,17 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
             void refreshProject();
             break;
           case "history_changed":
-            void refreshDoc();
+            // The timeline comes with the document's changes; one of the revision held is already shown.
+            if (syncSupported.current !== true) void refreshDoc();
+            else docChangedTo((ev as { revision?: unknown }).revision);
             break;
           case "device_changed":
             // The profile, field size and controller changed: everything that shows them refetches.
             setDeviceSeq((n) => n + 1);
             void refreshMachine();
+            previewRevision.current = -1;
             void refreshDoc();
+            if (wantPreviewRef.current) void fetchPreview();
             break;
           case "run_finished": {
             void refreshMachine();
@@ -336,7 +482,7 @@ export function useEngine({ wantPreview, notify }: EngineOptions): Engine {
         ws.close();
       }
     };
-  }, [refreshDoc, refreshMachine, refreshProject]);
+  }, [refreshDoc, refreshMachine, refreshProject, docChangedTo, fetchPreview]);
 
   // Poll machine status slowly as a safety net (and faster while the socket is down).
   useEffect(() => {

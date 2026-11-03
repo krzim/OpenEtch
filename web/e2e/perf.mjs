@@ -735,7 +735,11 @@ async function main() {
   console.log(`report: ${join(opts.out, "perf.md")}`);
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+main().then(
+  // Exit at once: a closing browser's pipes or a keep-alive socket would otherwise hold node open for minutes.
+  () => process.exit(0),
+  (e) => {
+    console.error(e);
+    process.exit(1);
+  },
+);
