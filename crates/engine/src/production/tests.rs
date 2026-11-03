@@ -10,7 +10,7 @@ use axum::http::StatusCode;
 use rmcp::model::{ContentBlock, JsonObject};
 use serde_json::{Value, json};
 
-use crate::approve::tests::{PEDAL, browser, pedal_profile, req, send, set_inputs, state, wait_final};
+use crate::approve::tests::{PEDAL, browser, pedal_profile, pending_run, req, send, set_inputs, state, wait_final};
 use crate::mcp::GalvoMcp;
 use crate::pin::ApprovalMode;
 use crate::runs::RunState;
@@ -285,6 +285,38 @@ async fn the_busy_output_runs_on_after_the_job() {
     assert!(st.production.extractor.state().off_at_unix_s.is_some());
     wait_for("the run-on to end", || !st.production.extractor.state().on).await;
     assert!(st.production.extractor.state().last_error.is_none(), "{:?}", st.production.extractor.state());
+}
+
+#[tokio::test]
+async fn a_refused_approval_leaves_the_extractor_off() {
+    let mut profile = pedal_profile();
+    profile.io.busy_light = Some(3);
+    let st = state(profile, ApprovalMode::Click).await;
+    let app = api::router(st.clone(), None);
+    exec(&app, "shape.rect", json!({"width_mm": 5, "height_mm": 5})).await;
+    let config = json!({"config": {"output": {"kind": "lmc_busy"}, "auto": true, "gate": {"kind": "switched_on"}}, "origin": "ui"});
+    let (s, v) = send(&app, req("PUT", "/api/production/extractor", Some(config))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let approve = |id: &str| browser(req("POST", &format!("/api/runs/{id}/approve"), Some(json!({"origin": "ui"}))));
+    // A stale run: refused by the run checks before the extractor is touched.
+    let id = pending_run(&app, None).await;
+    exec(&app, "shape.rect", json!({"width_mm": 2, "height_mm": 2})).await;
+    let (s, v) = send(&app, approve(&id)).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+    assert!(!st.production.extractor.state().on, "{:?}", st.production.extractor.state());
+    // Refused after the gate switched it on (the machine is taken): switched off again.
+    let id = pending_run(&app, None).await;
+    assert!(st.machine.try_begin_run());
+    let (s, v) = send(&app, approve(&id)).await;
+    st.machine.end_run();
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+    assert!(v["error"].as_str().unwrap().contains("another run"), "{v}");
+    assert!(!st.production.extractor.state().on, "{:?}", st.production.extractor.state());
+    // Approved: switched on for the job.
+    let (s, v) = send(&app, approve(&id)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert!(st.production.extractor.state().on);
+    assert_eq!(wait_final(&st, &id).await.state, RunState::Finished);
 }
 
 #[tokio::test]

@@ -127,9 +127,18 @@ pub(crate) async fn approve(
             state.job.stop_at().unwrap_or_default()
         )));
     }
-    // The extractor's gate (module `production::extractor`).
-    crate::production::before_run(state).await?;
-    let (parts, epoch, run_state, options, estimate, planned_s, stages) = {
+    // The extractor's gate (module `production::extractor`), which may switch the extractor on: only once the run
+    // checks below would pass (a run that is refused anyway is refused by them, without the extractor), and an
+    // extractor switched on here is switched off again when the approval is refused after all.
+    let approvable = state.runs().get(id).is_some_and(|r| {
+        r.state == RunState::Pending
+            && r.generation == state.machine.generation()
+            && r.document_id == active_document
+            && r.revision == current
+    });
+    let switched_on = if approvable { crate::production::before_run(state).await? } else { false };
+    // Inside a closure so that every refusal below comes back here (the runs lock is released at its end).
+    let claimed = (|| {
         let mut store = state.runs();
         let run = store.get_mut(id).ok_or_else(|| EngineError::NotFound(format!("no run with id '{id}'")))?;
         if run.state != RunState::Pending {
@@ -171,8 +180,14 @@ pub(crate) async fn approve(
         run.state = if confirm.is_some() || run.options.start_input { RunState::AwaitingConfirm } else { RunState::Approved };
         let planned_s = run.stats.estimated_time_s / run.estimate_correction;
         let stages = crate::production::layer_pause::stages_of(&run.driver_job(), &run.pauses);
-        (run.driver_job(), epoch, run.state, run.options.clone(), run.stats.estimated_time_s, planned_s, stages)
-    };
+        Ok((run.driver_job(), epoch, run.state, run.options.clone(), run.stats.estimated_time_s, planned_s, stages))
+    })();
+    if claimed.is_err() && switched_on {
+        if let Err(e) = crate::production::extractor::set(state, false, None).await {
+            tracing::warn!(error = %e, "the extractor switched on for a refused approval could not be switched off");
+        }
+    }
+    let (parts, epoch, run_state, options, estimate, planned_s, stages) = claimed?;
     // End any frame loop; `Controller::run_parts` stops a frame still on the board itself.
     state.machine.bump_frame_gen();
     // A pause asked for before this approval (e.g. as the previous job ended) does not carry over.

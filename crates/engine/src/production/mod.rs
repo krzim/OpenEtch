@@ -204,7 +204,7 @@ pub(crate) fn record_request(st: &AppState, run_id: &str, plan: Option<SlotPlan>
 
 /// Before a run is armed (from `approve`, after the door, checklist and framing gates): the extractor's gate, and the
 /// extractor switched on for the job when set so.
-pub(crate) async fn before_run(st: &Arc<AppState>) -> Result<(), EngineError> {
+pub(crate) async fn before_run(st: &Arc<AppState>) -> Result<bool, EngineError> {
     extractor::before_run(st).await
 }
 
