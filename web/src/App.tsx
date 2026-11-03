@@ -50,6 +50,7 @@ import { useFilesUi } from "./files/useFilesUi.tsx";
 import { ShutdownBadge, SimPinBadge } from "./libs/JobSafety.tsx";
 import { LaserExtras } from "./libs/LaserExtras.tsx";
 import { useLibsUi } from "./libs/useLibsUi.tsx";
+import { useMaterialsUi } from "./materials/useMaterialsUi.tsx";
 import { useToolsUi } from "./tools/useToolsUi.tsx";
 import { useFillRegionTool } from "./fill/useFillRegionTool.tsx";
 import { useDesignUi } from "./design/useDesignUi.tsx";
@@ -311,6 +312,8 @@ export function App() {
     refreshMachine: () => void engine.refreshMachine(),
     onStartPointTool: () => setTool("select"),
   });
+  // MOPA materials: finishes, bracket test, colour separation, Result colours view (src/materials/).
+  const materialsUi = useMaterialsUi({ doc, selection: selection.objects, design: workspace === "design", notify, report, selectIds });
   // Tabs, dogbone, Resize Slots, Multi-File Trace and the Web Tools (User Tools) menu (src/tools/).
   const toolsUi = useToolsUi({
     doc,
@@ -1053,6 +1056,7 @@ export function App() {
     ...edit.menuItems,
     ...filesUi.contextItems,
     ...libsUi.menuItems,
+    ...materialsUi.menuItems,
     ...designUi.menuItems,
     ...(text.menuItems.length ? [{ sep: true } as const, ...text.menuItems] : []),
     { sep: true },
@@ -1113,7 +1117,7 @@ export function App() {
   });
   // Workspace hotkeys (workspace/hotkeys.ts); App's own keys stay in the handler above.
   ws.keymap.current = {
-    blocked: () => !!dialog || fileModalOpen || devicesOpen || filesUi.modalOpen || libsUi.modalOpen || toolsUi.modalOpen || designUi.modalOpen || appModeDialogOpen(),
+    blocked: () => !!dialog || fileModalOpen || devicesOpen || filesUi.modalOpen || libsUi.modalOpen || toolsUi.modalOpen || designUi.modalOpen || materialsUi.modalOpen || appModeDialogOpen(),
     modalOpen: () => ws.dialog !== null,
     handlers: {
       "app.preferences": () => ws.open("prefs"),
@@ -1142,6 +1146,7 @@ export function App() {
       ...text.handlers,
       ...filesUi.handlers,
       ...libsUi.handlers,
+      ...materialsUi.handlers,
       ...designUi.handlers,
       ...edit.handlers,
       ...fillTool.handlers,
@@ -1383,6 +1388,7 @@ export function App() {
           {fillTool.toolbar}
           {designUi.toolbar}
           {libsUi.toolbar}
+          {materialsUi.toolbar}
           {toolsUi.toolbar}
         </>
       }
@@ -1572,7 +1578,7 @@ export function App() {
   const canvasStage = (
     <div className="center-stage">
       <Viewport
-        doc={doc}
+        doc={materialsUi.viewDoc}
         workspaceMm={workspaceMm}
         galvo={device ? isGalvo(device.kind) : undefined}
         selection={selection}
@@ -1681,6 +1687,8 @@ export function App() {
       {edit.dialogs}
       {filesUi.dialogs}
       {libsUi.dialogs}
+      {materialsUi.dialogs}
+      {materialsUi.hud}
       {toolsUi.dialogs}
       {designUi.dialogs}
       {text.dialogs}
