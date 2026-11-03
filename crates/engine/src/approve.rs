@@ -182,10 +182,11 @@ pub(crate) async fn approve(
         let stages = crate::production::layer_pause::stages_of(&run.driver_job(), &run.pauses);
         Ok((run.driver_job(), epoch, run.state, run.options.clone(), run.stats.estimated_time_s, planned_s, stages))
     })();
-    if claimed.is_err() && switched_on {
-        if let Err(e) = crate::production::extractor::set(state, false, None).await {
-            tracing::warn!(error = %e, "the extractor switched on for a refused approval could not be switched off");
-        }
+    if claimed.is_err()
+        && switched_on
+        && let Err(e) = crate::production::extractor::set(state, false, None).await
+    {
+        tracing::warn!(error = %e, "the extractor switched on for a refused approval could not be switched off");
     }
     let (parts, epoch, run_state, options, estimate, planned_s, stages) = claimed?;
     // End any frame loop; `Controller::run_parts` stops a frame still on the board itself.
