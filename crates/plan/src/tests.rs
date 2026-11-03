@@ -566,6 +566,10 @@ fn grbl_leads_and_path_pauses_skip_an_images_scan_runs() {
     cut.options.start_pause_ms = 10.0;
     let plan = plan_job(&doc_with(vec![img.clone(), rect("obj-1", 10.0, 10.0, (20.0, 0.0))], cut.clone()), &s.target()).unwrap();
     assert_eq!(plan.passes[0].gantry.image_runs, 2);
+    // The preview draws the image as a raster even though the outlines' leads are baked into the same pass.
+    let preview = preview_plan(&plan);
+    assert_eq!(preview.rasters.len(), 1);
+    assert_rasters_match(&plan, &preview, "grbl leads");
     let lines = gcode_lines(&plan, &s).unwrap();
     // Each run is travelled to at its own start and ends at its own end.
     for run in [["G0 X198 Y149.5", "G1 X200 Y149.5"], ["G0 X198 Y150.5", "G1 X200 Y150.5"]] {

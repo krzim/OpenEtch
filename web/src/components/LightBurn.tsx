@@ -147,7 +147,7 @@ export function LightBurnDevices(p: {
                     ? ` (${fmt(d.width_mm, 2)} × ${fmt(d.height_mm, 2)})`
                     : ""}
                   {d.name === info.default_device ? " · default" : ""}
-                  {d === matchedDevice ? " · used here" : ""}
+                  {d === matchedDevice ? t("lb.usedHere") : ""}
                 </span>
               </li>
             ))}
@@ -158,11 +158,11 @@ export function LightBurnDevices(p: {
           {matched && matched.device && (
             <>
               {matched.diffs.length === 0 ? (
-                <p className="hint">The machine profile matches {matched.device}.</p>
+                <p className="hint">{t("lb.profileMatches", { device: matched.device })}</p>
               ) : (
                 <details className="lb-diffs" open={open} onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
                   <summary>
-                    {matched.diffs.length} difference{matched.diffs.length === 1 ? "" : "s"} from {matched.device}
+                    {matched.diffs.length === 1 ? t("dv.oneDifference", { base: matched.device }) : t("dv.nDifferences", { n: matched.diffs.length, base: matched.device })}
                   </summary>
                   <table className="lb-diff-table">
                     <thead>

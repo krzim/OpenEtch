@@ -176,7 +176,7 @@ export function DeviceBar(p: {
           </button>
         )}
       </div>
-      {blocker && <p className="hint">Switching devices waits: {blocker}</p>}
+      {blocker && <p className="hint">{t("dv.switchWaits", { why: blocker })}</p>}
       {designOnly && (
         <p className="run-hint" role="status">
           {designOnly}
@@ -664,11 +664,7 @@ export function DevicesWindow(p: {
           onClose={() => setEditing(false)}
         />
       )}
-      <p className="hint">
-        Import from LightBurn reads LightBurn's prefs.ini on the engine computer; Import file takes a .lbdev file or a
-        prefs.ini from another computer. Only device settings are read: names, sizes, origin and galvo settings. Nothing
-        is written back to LightBurn.
-      </p>
+      <p className="hint">{t("dv.importHint")}</p>
     </Modal>
   );
 }
@@ -743,7 +739,9 @@ function DeviceSettings(p: { device: DeviceSummary; details: { d: DeviceDetails 
             {d.diffs.length > 0 ? (
               <details className="lb-diffs">
                 <summary>
-                  {d.diffs.length} difference{d.diffs.length === 1 ? "" : "s"} from {d.base ?? t("dv.theBaseProfile")}
+                  {d.diffs.length === 1
+                    ? t("dv.oneDifference", { base: d.base ?? t("dv.theBaseProfile") })
+                    : t("dv.nDifferences", { n: d.diffs.length, base: d.base ?? t("dv.theBaseProfile") })}
                 </summary>
                 <table className="lb-diff-table">
                   <thead>
@@ -768,7 +766,7 @@ function DeviceSettings(p: { device: DeviceSummary; details: { d: DeviceDetails 
                 </table>
               </details>
             ) : (
-              device.controllable && <p className="hint">The profile matches {d.base ?? t("dv.itsBase")}.</p>
+              device.controllable && <p className="hint">{t("dv.profileMatches", { base: d.base ?? t("dv.itsBase") })}</p>
             )}
           </>
         )

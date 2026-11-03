@@ -212,7 +212,10 @@ export function LaserDock(p: LaserDockProps) {
       <RunOptionsPanel selected={p.selection.length} hasStartInput={p.machine?.driver === "grbl" || p.machine?.driver === "ruida" ? false : null} />
       {p.extras}
       <JobCounter state={job} report={p.report} />
-      <MachineJog designOnly={p.designOnly} notify={p.notify} report={p.report} onChanged={p.onChanged} />
+      {/* The red dot and the Z lift are a galvo's; a gantry moves its head from the Move window (Go to, jog). */}
+      {p.machine?.driver !== "grbl" && p.machine?.driver !== "ruida" && (
+        <MachineJog designOnly={p.designOnly} notify={p.notify} report={p.report} onChanged={p.onChanged} />
+      )}
 
       {(canOpt || canRotary) && (
         <div className="laser-buttons laser-more">
