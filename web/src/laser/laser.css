@@ -398,6 +398,10 @@
 .laser-device .dev-bar-row > .btn {
   margin-left: auto;
 }
+/* Touch: a 44 px target in WebKit too (Mobile Safari draws a select only as tall as its text otherwise). */
+:root[data-density="touch"] .laser-device .dev-select select {
+  min-height: 44px;
+}
 
 .machine-advanced {
   margin-top: 6px;
