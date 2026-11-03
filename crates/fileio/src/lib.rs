@@ -18,6 +18,7 @@ use doc::{Document, Geometry, Object, ObjectId};
 use kurbo::BezPath;
 
 pub mod bitmap;
+pub mod colorsep;
 /// The image crate as fileio uses it (with TIFF and TGA), for callers handling decoded images.
 pub use image;
 pub mod dxf_out;

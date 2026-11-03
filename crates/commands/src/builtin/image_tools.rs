@@ -19,7 +19,7 @@ use super::util::{self, invalid, transact};
 use crate::{Command, CommandError, Result, Risk};
 
 /// An image object's geometry, refused with a message for anything else.
-fn image_of<'a>(cmd: &str, doc: &'a Document, id: &str) -> Result<&'a Object> {
+pub(super) fn image_of<'a>(cmd: &str, doc: &'a Document, id: &str) -> Result<&'a Object> {
     let o = pathutil::single_object(cmd, doc, id, false)?;
     let o = doc.object(&o.id).ok_or_else(|| CommandError::Failed(format!("object {id} vanished")))?;
     if !matches!(o.geometry, Geometry::Image { .. }) {
@@ -29,7 +29,7 @@ fn image_of<'a>(cmd: &str, doc: &'a Document, id: &str) -> Result<&'a Object> {
 }
 
 /// The decoded file of an image object.
-fn decoded(cmd: &str, o: &Object) -> Result<(fileio::image::DynamicImage, Vec<u8>)> {
+pub(super) fn decoded(cmd: &str, o: &Object) -> Result<(fileio::image::DynamicImage, Vec<u8>)> {
     let Geometry::Image { data_base64, mime, .. } = &o.geometry else { unreachable!("checked by image_of") };
     let bytes = STANDARD.decode(data_base64.as_bytes()).map_err(|_| invalid(cmd, format!("{}: the image data is not base64", o.id)))?;
     let img = fileio::bitmap::decode(&bytes, Some(mime)).map_err(file_err(cmd))?;

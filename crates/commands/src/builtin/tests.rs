@@ -139,6 +139,13 @@ const ALL_IDS: &[&str] = &[
     "object.set_start_point",
     "object.clear_start_point",
     "object.align_to_targets",
+    // MOPA materials.
+    "generate.bracket_test",
+    "material.hue_step",
+    "layer.hue_nudge",
+    "layer.set_result_color",
+    "image.color_separate",
+    "image.color_separate_preview",
     // Files and image tools.
     "doc.export",
     "doc.print",
@@ -196,6 +203,7 @@ fn registry_lists_every_command_with_documented_schema() {
                 | "doc.export" | "doc.print" | "image.trace_preview" | "image.export" | "image.processed" | "page.list"
                 | "select.open_shapes" | "select.open_on_fill" | "select.contained" | "art.tangent_circle_candidates"
                 | "tabs.list" | "image.trace_files" | "path.fill_region_preview"
+                | "material.hue_step" | "image.color_separate_preview"
         );
         assert_eq!(spec.risk == Risk::Query, query, "{}", spec.id);
         let props = spec.input_schema["properties"].as_object();

@@ -22,6 +22,7 @@ pub use builtin::{ART_FORMAT, ArtFragment, ArtLayer, ORIGIN_KEY, WorkspaceOrigin
 pub use builtin::text::{BARCODE_KEY, auto_advance_due, prepare_output};
 pub use builtin::testgen_presets;
 pub use builtin::camera_markers;
+pub use builtin::{bracket, finish};
 pub use session::{HistoryEntry, HistoryStep, HistoryView, MAX_STEPS, MarkerMove, Session, StepState};
 
 /// What a command can affect. Machine actions (`Pointer`, `Emit`) are not document commands; they are listed here so
