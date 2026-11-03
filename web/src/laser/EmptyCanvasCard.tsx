@@ -9,6 +9,7 @@ import { useT } from "../workspace/usePrefs.ts";
 import { chipState } from "./statusChip.ts";
 import { useLaserLive } from "./useLaserLive.ts";
 import "./laser.css";
+import { HelpLink } from "../guide/HelpLink.tsx";
 
 export interface EmptyCanvasCardProps {
   onImport: () => void;
@@ -40,6 +41,7 @@ export function EmptyCanvasCard(p: EmptyCanvasCardProps) {
       <section className="empty-card" aria-labelledby="empty-card-title">
         <h2 id="empty-card-title" className="empty-card-title">
           {t("lz.emptyTitle")}
+          <HelpLink to="getting-started#start-a-design" topic={t("lz.emptyTitle")} />
         </h2>
         <p className="empty-card-drop">{t("lz.emptyDrop")}</p>
         <div className="empty-card-actions">

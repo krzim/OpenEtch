@@ -39,6 +39,7 @@ export function OptimizationDialog(p: { doc: GDocument | null; run: (inv: Invoca
   const off = !o.enabled;
   return (
     <Modal
+      help="settings#optimisation-defaults"
       title={t("opt.title")}
       onClose={p.onClose}
       onSubmit={save}

@@ -11,6 +11,7 @@ import type { Selection } from "../selection.ts";
 import { DCMD, shapeUpdate } from "./designApi.ts";
 import { shapeParams, shapePatchProblem, type ShapeParams } from "./model.ts";
 import { errorText } from "../api/errorText.ts";
+import { HelpLink } from "../guide/HelpLink.tsx";
 
 export function ShapeProperties(p: {
   doc: GDocument | null;
@@ -41,7 +42,7 @@ export function ShapeProperties(p: {
   const n = (v: number | null, f: (x: number) => void) => v !== null && f(v);
   return (
     <section className="prop-section dz-shape-props">
-      <h3>{t("dz.shapeProps")}</h3>
+      <h3>{t("dz.shapeProps")} <HelpLink to="drawing-and-editing#shape-properties" topic={t("dz.shapeProps")} /></h3>
       {sp.kind === "rect" && (
         <>
           <div className="field-grid">

@@ -31,8 +31,16 @@ export function helpTargets(): [string, string | null][] {
       .replace(/^\s*\/\/.*$/gm, "");
     const rel = relative(src, file).split("\\").join("/");
     for (const m of text.matchAll(/<HelpLink\b([^>]*?)\/?>/gs)) {
+      // Dialog.tsx and Dock.tsx draw the "?" of their `help` prop (checked where it is given, below).
+      if (/\bto=\{\s*p\.help\s*\}/.test(m[1])) continue;
       const to = /\bto=(?:"([^"]*)"|\{\s*"([^"]*)"\s*\}|\{\s*'([^']*)'\s*\})/.exec(m[1]);
       out.push([rel, to ? (to[1] ?? to[2] ?? to[3]) : null]);
+    }
+    // A dialog's or a dock window's `help="page#anchor"` (components/Dialog.tsx, workspace/Dock.tsx): the "?" beside
+    // its title. A wrapper dialog may pass its own prop on (`help={p.help}`); any other `help={...}` cannot be checked.
+    for (const m of text.matchAll(/\shelp=(?:"([^"]*)"|\{\s*"([^"]*)"\s*\}|\{([^}]*)\})/g)) {
+      if (m[3] !== undefined && /^\s*(p|props)\.help\s*$/.test(m[3])) continue;
+      out.push([rel, m[3] !== undefined ? null : (m[1] ?? m[2])]);
     }
     if (rel === "guide/route.ts" || rel === "guide/HelpLink.tsx") continue;
     for (const m of text.matchAll(/\bopenGuide\(\s*(["'])([^"']*)\1\s*\)/g)) out.push([rel, m[2]]);

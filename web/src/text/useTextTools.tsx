@@ -68,6 +68,7 @@ import { VarTextWindow } from "./VarTextWindow.tsx";
 import { fitOutline } from "./fitModel.ts";
 import type { TextObject } from "./textModel.ts";
 import "./text.css";
+import { HelpLink } from "../guide/HelpLink.tsx";
 
 type Run = (inv: Invocation | Invocation[]) => Promise<unknown>;
 
@@ -714,7 +715,7 @@ function OptionsBar(p: {
   return (
     <ContextStripPortal>
     <div className="vp-overlay et-bar tx-bar" role="toolbar" aria-label={t("text.options")}>
-      <b>{p.editingText ? t("text.optionsSelected") : t("text.optionsNew")}</b>
+      <b>{p.editingText ? t("text.optionsSelected") : t("text.optionsNew")}</b> <HelpLink to="text#text-options-bar" topic={t("text.options")} />
       <FontPicker compact value={v.font} fonts={p.fonts} sample={p.sample} onPick={(font) => p.onChange({ font })} onReload={p.onReloadFonts} placeholder={t("text.font.default")} />
       <BarNumber label={t("text.height")} unit="mm" value={v.height_mm} min={0.01} onCommit={(height_mm) => p.onChange({ height_mm })} />
       <BarNumber label={t("text.hSpaceShort")} unit="%" value={v.h_spacing} min={-100} max={1000} onCommit={(h_spacing) => p.onChange({ h_spacing })} />

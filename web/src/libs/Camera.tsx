@@ -138,6 +138,7 @@ export function CameraWindow(p: { doc: GDocument | null; machine: MachineStatus 
 
   return (
     <WsModal
+      help="camera#camera-window"
       title={t("cam.title")}
       wide
       onClose={p.onClose}

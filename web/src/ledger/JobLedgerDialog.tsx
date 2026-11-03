@@ -43,6 +43,7 @@ import {
   type Verdict,
 } from "./ledgerModel.ts";
 import "./ledger.css";
+import { HelpLink } from "../guide/HelpLink.tsx";
 
 type Notify = (msg: string, kind?: "info" | "error") => void;
 type T = ReturnType<typeof useT>;
@@ -285,7 +286,7 @@ function Detail(p: { e: LedgerEntry; busy: boolean; onMark: (v: Verdict | null, 
 
       {e.layers.length > 0 ? (
         <section className="led-section">
-          <h4>{t("led.layers")}</h4>
+          <h4>{t("led.layers")} <HelpLink to="job-ledger#settings-snapshot" topic={t("led.layers")} /></h4>
           <div className="led-table-wrap">
             <table className="lx-table led-layers">
               <thead>
@@ -418,7 +419,7 @@ function StoragePane(p: { report: (e: unknown) => void; notify: Notify; onClose:
         <Icon name="arrowLeft" size={16} />
         {t("led.back")}
       </button>
-      <h3 className="led-title">{t("led.storageTitle")}</h3>
+      <h3 className="led-title">{t("led.storageTitle")} <HelpLink to="job-ledger#storage" topic={t("led.storageTitle")} /></h3>
       {!s ? (
         <p className="muted">{t("common.loading")}</p>
       ) : (
@@ -547,6 +548,7 @@ export function JobLedgerDialog(p: { notify: Notify; report: (e: unknown) => voi
   const detailShown = single && showDetail && sel;
   return (
       <WsModal
+        help="job-ledger#job-log-window"
         title={t("jlog.title")}
         size="xl"
         wide

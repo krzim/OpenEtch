@@ -814,6 +814,7 @@ function OpenDialog({ file, onClose }: { file: FileActions; onClose: () => void 
   );
   return (
     <Modal
+      help="files-and-projects#open-a-project"
       title={t("fm.openTitle")}
       wide={useTree}
       onClose={onClose}
@@ -895,6 +896,7 @@ function SaveAsDialog({ file, docName, onClose }: { file: FileActions; docName: 
   };
   return (
     <Modal
+      help="files-and-projects#save-a-project"
       title={t("fm.saveAsTitle")}
       wide={tree.folders !== null}
       onClose={onClose}
@@ -1082,6 +1084,7 @@ function ImportDialog(p: { file: FileActions; initialFiles: File[]; initialMode:
   const edit = () => setField(fmt((shared ?? defaults[0]).fieldMm, 3));
   return (
     <Modal
+      help="files-and-projects#import-lightburn"
       title={t("fm.lbTitle")}
       onClose={p.onClose}
       footer={
@@ -1218,6 +1221,7 @@ function ExportDialog({ file, onClose }: { file: FileActions; onClose: () => voi
   };
   return (
     <Modal
+      help="files-and-projects#export-lightburn"
       title={t("fm.exportTitle")}
       onClose={onClose}
       footer={

@@ -20,6 +20,7 @@ import {
   type ProjectLocation,
 } from "./folders.ts";
 import { errorText } from "../api/errorText.ts";
+import { HelpLink } from "../guide/HelpLink.tsx";
 
 function errText(e: unknown): string {
   if (e && typeof e === "object" && "detail" in e && typeof (e as { detail?: unknown }).detail === "string") return (e as { detail: string }).detail;
@@ -210,7 +211,7 @@ export function ProjectLocationsSection() {
   const reach = (label: string) => list?.find((l) => l.label === label);
   return (
     <section className="prefs-section prefs-wide">
-      <h4>{t("fold.locations")}</h4>
+      <h4>{t("fold.locations")} <HelpLink to="settings#project-locations" topic={t("fold.locations")} /></h4>
       <p className="hint">{t("fold.locationsHint")}</p>
       {list === null && <p className="muted">{t("common.loading")}</p>}
       {fixed.map((l) => (

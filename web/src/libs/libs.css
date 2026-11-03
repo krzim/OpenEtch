@@ -523,6 +523,15 @@ ol.lx-list li > * {
   font-size: 12px;
   max-width: calc(100% - 32px);
 }
+/* The bar's text is light on dark: its buttons keep the surface's own text colour (they inherited the bar's white,
+   white on white), and the guide's "?" takes the bar's light colour. */
+.lx-sp-bar .btn:not(.btn-primary):not(.btn-warn),
+.lx-sp-bar .segmented button:not(.active) {
+  color: var(--text);
+}
+.lx-sp-bar .help-link {
+  color: var(--hint-fg);
+}
 
 .lx-laser-extras {
   margin: 6px 0;

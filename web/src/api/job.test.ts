@@ -183,3 +183,9 @@ test("clock text", () => {
   assert.equal(clockText(3723), "1:02:03");
   assert.equal(clockText(Number.NaN), "0:00.0");
 });
+
+test("a run waiting before a layer names that layer (the parser keeps waiting_layer)", () => {
+  const j = jobStatus({ active: true, state: "waiting_at_layer", waiting_layer: "Black" });
+  assert.deepEqual(jobStateKey(j), { key: "prod.jobWaitingLayer", vars: { layer: "Black" } });
+  assert.equal(jobStatus({ active: true, state: "running" }).waiting_layer, null);
+});

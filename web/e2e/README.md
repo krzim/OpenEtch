@@ -106,12 +106,15 @@ object with exactly one action key:
 | `{ "exec": "layer.update", "params": { ... } }` | Run an engine command (as the UI, `/api/execute`); file commands are refused |
 | `{ "click": "Accessible name" }` | Press a control by its aria-label, text or title (exact, then prefix, then substring); `"in": ".selector"` narrows it |
 | `{ "click": { "css": "tr.cuts-row", "text": "Rim" } }` | Press an element by selector (and text) |
-| `{ "click": { "object": "Name" } }` | Press a shape on the canvas by its name or id |
+| `{ "click": { "object": "Name" } }` | Press a shape on the canvas by its name or id (checked against the Browser's selected row) |
+| `{ "click": { "point": [17.25, 0] } }` | Press a point of the field, in mm |
+| `{ "set": "#c08a00", "into": target }` | Set a select, colour or date field (one a person sets with a native picker) |
+| `{ "hover": target }` | Move the mouse there (desktop devices); as the last step the pointer stays for the capture |
 | `{ "dblclick": target }` / `{ "context": target }` | Double-click (two taps), or right-click (long-press); `{ "context": "selection" }` opens the selection's menu |
 | `{ "menu": ["File", "Laser", "Devices"] }` | Open a menu path (desktop ribbon / top bar) |
 | `{ "type": "text", "into"?: target }` | Type into the focused field, or into `into` (its text is selected first) |
 | `{ "key": "Ctrl+Shift+Z" }` | A key with modifiers (`Ctrl`, `Alt`, `Shift`, `Meta`/`Cmd`); `Escape`, `Enter`, `Delete`, arrows, `F1`... |
-| `{ "hash": "#/guide/example#tables" }` | Go to a hash route (the guide, `#/cockpit`) |
+| `{ "hash": "#/guide/the-workspace#ribbon" }` | Go to a hash route (the guide, `#/cockpit`) |
 | `{ "wait": ".selector" }` / `{ "wait": 500 }` | Wait for a visible element (up to 10 s), or a number of ms |
 | `{ "select": "all" }`, `"none"` or `["Name", "obj-3"]` | Select shapes (several need a keyboard: desktop only) |
 | `{ "workspace": "design" }` / `"laser"` | Switch workspace (on a phone: the Canvas / Job tab) |

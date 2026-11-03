@@ -102,6 +102,8 @@ export function jobStatus(raw: unknown): JobStatus {
     count: nonNeg(o.count),
     stop_at: stopAt,
     end_after_current: o.end_after_current === true,
+    // The layer a run waits before (state "waiting_at_layer"); left out here, the Laser window read 'layer ""'.
+    waiting_layer: typeof o.waiting_layer === "string" ? o.waiting_layer : null,
   };
 }
 

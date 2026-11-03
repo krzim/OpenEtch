@@ -74,6 +74,7 @@ export function PagesDock(p: { doc: GDocument | null; has: (id: string) => boole
   };
   return (
     <Dock
+      help="files-and-projects#pages"
       id="pages"
       title={rows.length > 1 ? t("files.pagesN", { n: rows.length }) : t("files.pages")}
       defaultCollapsed={rows.length < 2}
@@ -148,6 +149,7 @@ export function PagesDock(p: { doc: GDocument | null; has: (id: string) => boole
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems(menu.row)} onClose={() => setMenu(null)} />}
       {rename && (
         <Modal
+          help="files-and-projects#pages"
           title={t("files.pageRename")}
           onClose={() => setRename(null)}
           onSubmit={submitRename}

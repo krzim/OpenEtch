@@ -192,6 +192,7 @@ export function DeviceEditor(p: {
 
   return (
     <Modal
+      help="devices-and-calibration#device-settings"
       title={t("dev.title", { name: device.display_name })}
       wide
       // While the wizard is open, Escape closes only the wizard (every Modal listens on the window).

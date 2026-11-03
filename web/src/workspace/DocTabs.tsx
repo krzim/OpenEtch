@@ -174,6 +174,7 @@ export function useDocTabs(p: DocTabsProps): DocTabsUi {
       {addMenu}
       {closing && (
         <WsModal
+          help="the-workspace#document-tabs"
           title={t("tabs.closeTitle", { name: closing.title })}
           onClose={() => setClosing(null)}
           footer={

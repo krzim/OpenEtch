@@ -28,6 +28,7 @@ import {
 import { useLayoutMode } from "./layoutMode.ts";
 import { usePrefs, useT } from "./usePrefs.ts";
 import { WsModal } from "./WsModal.tsx";
+import { HelpLink } from "../guide/HelpLink.tsx";
 
 export function PreferencesDialog(p: { onClose: () => void; onHotkeys: () => void }) {
   const t = useT();
@@ -50,6 +51,7 @@ export function PreferencesDialog(p: { onClose: () => void; onHotkeys: () => voi
   );
   return (
     <WsModal
+      help="settings#preferences"
       title={t("prefs.title")}
       wide
       onClose={p.onClose}
@@ -68,7 +70,7 @@ export function PreferencesDialog(p: { onClose: () => void; onHotkeys: () => voi
     >
       <div className="prefs-grid">
         <section className="prefs-section">
-          <h4>{t("prefs.appearance")}</h4>
+          <h4>{t("prefs.appearance")} <HelpLink to="the-workspace#themes" topic={t("prefs.appearance")} /></h4>
           <div className="pref-row">
             <span className="pref-label">{t("prefs.theme")}</span>
             {seg<ThemePref>(
@@ -137,7 +139,7 @@ export function PreferencesDialog(p: { onClose: () => void; onHotkeys: () => voi
         </section>
 
         <section className="prefs-section">
-          <h4>{t("shell.prefsLayout")}</h4>
+          <h4>{t("shell.prefsLayout")} <HelpLink to="settings#layout-and-input" topic={t("shell.prefsLayout")} /></h4>
           <div className="pref-row">
             <span className="pref-label">{t("shell.prefLayout")}</span>
             {seg<LayoutOverride>(
@@ -256,7 +258,7 @@ export function PreferencesDialog(p: { onClose: () => void; onHotkeys: () => voi
         </section>
 
         <section className="prefs-section">
-          <h4>{t("prefs.snapping")}</h4>
+          <h4>{t("prefs.snapping")} <HelpLink to="settings#snapping" topic={t("prefs.snapping")} /></h4>
           <NumberField label={t("prefs.snapTol")} unit="px" value={prefs.snapTolPx} min={1} max={40} digits={0} onCommit={(v) => v !== null && updatePrefs({ snapTolPx: Math.round(v) })} />
           <div className="pref-checks">
             {SNAP_TOGGLES.map((k) => (
@@ -267,7 +269,7 @@ export function PreferencesDialog(p: { onClose: () => void; onHotkeys: () => voi
         </section>
 
         <section className="prefs-section">
-          <h4>{t("prefs.editing")}</h4>
+          <h4>{t("prefs.editing")} <HelpLink to="settings#editing" topic={t("prefs.editing")} /></h4>
           <div className="pref-fields">
             <NumberField label={t("prefs.nudge")} unit="mm" value={prefs.nudge.normal} min={0.001} onCommit={(v) => v !== null && updatePrefs((c) => ({ nudge: { ...c.nudge, normal: v } }))} />
             <NumberField label={t("prefs.nudgeShift")} unit="mm" value={prefs.nudge.shift} min={0.001} onCommit={(v) => v !== null && updatePrefs((c) => ({ nudge: { ...c.nudge, shift: v } }))} />

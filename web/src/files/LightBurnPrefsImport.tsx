@@ -92,6 +92,7 @@ export function LightBurnPrefsImport(p: { notify: (msg: string, kind?: "info" | 
       </label>
       {file && (
         <Modal
+          help="settings#import-lightburn-preferences"
           title={t("lbp.title", { name: file.name })}
           onClose={close}
           footer={

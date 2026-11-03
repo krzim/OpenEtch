@@ -71,6 +71,7 @@ export function ExportDialog(p: Common) {
   };
   return (
     <Modal
+      help="files-and-projects#export-svg-dxf-ai-pdf"
       title={t("files.exportTitle")}
       onClose={p.onClose}
       onSubmit={go}
@@ -213,6 +214,7 @@ export function PrintDialog(p: Common & { colors?: PrintOptions["colors"] }) {
   };
   return (
     <Modal
+      help="files-and-projects#print"
       title={t("files.printTitle")}
       onClose={p.onClose}
       footer={

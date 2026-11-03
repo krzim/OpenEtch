@@ -88,6 +88,7 @@ export function StockDialog({ doc, run, onClose }: { doc: GDocument | null; run:
 
   return (
     <Modal
+      help="fit-to-stock#define-the-stock"
       title={s ? t("dlg.editStock") : "Stock"}
       onClose={onClose}
       onSubmit={() => submit(build())}
@@ -201,6 +202,7 @@ export function PlaceDialog({ ids, run, onClose }: { ids: string[]; run: Run; on
   };
   return (
     <Modal
+      help="fit-to-stock#place-on-stock"
       title={`Place ${ids.length} object${ids.length === 1 ? "" : "s"} on stock`}
       onClose={onClose}
       onSubmit={() => submit(build())}

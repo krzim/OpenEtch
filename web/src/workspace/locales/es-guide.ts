@@ -27,4 +27,7 @@ export const ES_GUIDE: Messages = {
   "guide.helpFor": "Ayuda: {topic}",
   "guide.opensNewTab": "(se abre en una pestaña nueva)",
   "guide.imageMissing": "Imagen no encontrada: {name}",
+  "guide.topic.imageSettings": "Ajustes de imagen",
+  "guide.topic.offField": "Objetos fuera del campo",
+  "guide.topic.preflight": "Avisos previos",
 };

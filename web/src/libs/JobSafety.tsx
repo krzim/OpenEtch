@@ -26,6 +26,7 @@ import {
 import { editPrefs, setSoundMuted, soundMuted, useActiveDevice, useDevicePrefs } from "./store.ts";
 import { errText } from "./ui.tsx";
 import "./libs.css";
+import { HelpLink } from "../guide/HelpLink.tsx";
 
 /** The badge shown while the engine approves runs with the simulator test PIN (`--sim-pin`, simulator only). */
 export function SimPinBadge({ machine, className }: { machine: MachineStatus | null; className?: string }) {
@@ -120,7 +121,7 @@ export function ApprovalChecks({ state, disabled, showDoor = true }: { state: Ap
       {door && <p className="lx-gate">{t("safe.doorOn", { input: inputText(door) })}</p>}
       {list.enabled && (
         <fieldset className="lx-checklist" disabled={disabled}>
-          <legend>{t("safe.checklist")}</legend>
+          <legend>{t("safe.checklist")} <HelpLink to="running-a-job#job-checklist" topic={t("safe.checklist")} /></legend>
           {list.items.map((item, i) => (
             <label key={i} className="lx-check-item">
               <input
@@ -204,7 +205,7 @@ export function DeviceJobSettings({ active, report, notify }: { active: boolean;
   };
   return (
     <div className="dev-page lx-jobprefs">
-      <h4>{t("safe.framingTitle")}</h4>
+      <h4>{t("safe.framingTitle")} <HelpLink to="devices-and-calibration#device-job-settings" topic={t("safe.framingTitle")} /></h4>
       <CheckField label={t("safe.requireFraming")} checked={prefs.require_framing} onChange={(v) => edit({ require_framing: v })} />
       <p className="hint">{t("safe.requireFramingHint")}</p>
 

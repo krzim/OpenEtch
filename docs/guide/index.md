@@ -1,25 +1,23 @@
 ---
 title: OpenEtch user guide
-order: 0
+order: 1
 section: Getting started
 needs: design
-summary: What the guide covers, how to open it from the app and how to find a topic.
+summary: What OpenEtch is, how this guide is organised, and a list of every page by section.
 ---
 
 # OpenEtch user guide
 
-OpenEtch designs and runs jobs for galvo fibre lasers with BJJCZ (LMC) control boards. This guide shows you how to use the app on a PC, a MacBook, an iPad or a phone.
+OpenEtch is open-source software for designing jobs and running them on galvo fibre lasers with BJJCZ (LMC) boards. It works much like LightBurn. You draw or import a design, put shapes on layers with cut settings, preview and frame the job, then start the burn. The reference machine is a ComMarker B6 MOPA 60 W.
 
-The app looks different on each. A PC or a MacBook has a ribbon at the top and docked windows beside the canvas. A phone has four tabs at the bottom (**Canvas**, **Layers**, **Job** and **More**), and each opens a sheet over the canvas. An iPad has a tool rail on the left and panels that slide in from the sides. Where a step differs, the guide says what to do on each.
-
-> **Note:** Many features have only been tested on the simulator, not on every laser. Settings in this guide are starting points to test on your own material, not guaranteed results.
+This guide shows you how to use the app on a PC, a MacBook, an iPad and a phone.
 
 ## Open the guide {#open-the-guide}
 
 To open the guide from the app:
 
 - On a PC with a wide window, choose **Help > User guide**, or press `F1`.
-- On a MacBook or in a narrower window, the Help menu is inside **More** (the ⋯ button at the top right). Choose **More**, then **User guide** under **Help**. On a MacBook keyboard you may need `fn+F1`.
+- On a MacBook or in a narrower window, **Help** is inside the **More** (⋯) menu at the top right. Choose **More**, then **User guide**. On a MacBook keyboard you may need `fn+F1`.
 - On an iPad, tap **More** (⋯) at the top right, then **User guide**.
 - On a phone, tap the **More** tab, open **Help**, then tap **User guide**.
 
@@ -27,41 +25,101 @@ You can also use command search: press `S` (on a phone, tap **More**, then **Com
 
 On a PC, a MacBook or an iPad held sideways, the guide opens beside the canvas, so you can follow the steps while you work. **Open in new tab** shows it on its own in a browser tab. On a phone, or an iPad held upright, the guide fills the screen under the top bar. **Back** returns to the page you read before, and **Close the guide** returns to the app.
 
-![The user guide open beside the canvas on a MacBook, with the two-tone coin example on the canvas](img/guide-beside-canvas.webp)
+![The user guide open beside the canvas on a MacBook, with the Two-tone MOPA coin example on the canvas](img/guide-beside-canvas.webp)
 
 ## Find a topic {#find-a-topic}
 
 - **Contents** lists every page, grouped by section.
 - Type in **Search the guide** to search page titles, headings and text.
-- A small **?** button next to a panel or a dialog opens the guide at the part that explains it.
+- A small **?** button next to a panel, a dialog or a tool bar opens the guide at the part that explains it.
 - Pages marked **Needs a laser** only matter when a laser is connected.
 
-## Keyboard shortcuts {#keyboard-shortcuts}
+## How OpenEtch fits together {#how-it-fits-together}
 
-To see every keyboard shortcut, press `Shift+?` or choose **Help > Keyboard shortcuts**. The keys are LightBurn's defaults where LightBurn has one.
+OpenEtch has two parts.
 
-To change a key:
+- **The engine** is a small program. It runs on a Raspberry Pi that sits on the laser, or on a PC or Mac cabled to the laser. It holds your design, keeps your projects and settings, and is the only part that talks to the laser.
+- **The app** runs in a web browser. The engine serves it, so you install nothing on your PC, Mac, iPad or phone. You can also add it to your Dock or Home Screen as an app.
 
-1. In **Keyboard shortcuts**, choose **Edit…**.
-2. Choose **+** next to the action, then press the new key.
-3. Choose **Done editing**.
+Every browser connected to the same engine shows the same live design. A change you make on the iPad appears on the PC straight away.
 
-Your keys are saved in this browser only. A browser keeps a few keys for itself (such as `Ctrl+W` and `Ctrl+T`), so those cannot be used.
+AI agents can connect to the engine too, through its MCP endpoint. An agent can design with the same commands you use, and each change it makes appears in the timeline with the agent's name. An agent can also frame with the red pointer and prepare a run, but it can never approve or start a burn. Only a person can: with the operator PIN in the app or, when the engine runs with `--approval click`, with **Start** in the app or the foot switch. See [AI agents](ai-agents.md).
 
-## Stay safe {#stay-safe}
+> **Note:** Many features have so far only run on the engine's simulator, not on a real laser. Settings in this guide are starting points to test on your own material, never guaranteed results.
 
-> **Warning:** A fibre laser can blind you in an instant, and its beam is invisible. Wear eye protection rated for your laser's wavelength (1064 nm for most fibre lasers) whenever it can fire. Use fume extraction. Never leave a job running unattended.
+## How this guide is organised {#how-the-guide-is-organised}
 
-Before you try a new setting or a test grid, work out its energy density. See [Energy density](example.md#energy-density) for how.
+The pages are in six sections, in the order you are likely to need them:
 
-## AI agents {#ai-agents}
+1. **Getting started**: install, connect and find your way around.
+2. **Designing**: draw, write text, import images and prepare a design.
+3. **Layers and materials**: cut settings, material libraries and MOPA colour.
+4. **Running jobs**: safety, preview, framing and the burn itself.
+5. **Production**: repeat jobs, jigs, serial numbers and machine care.
+6. **Setup and reference**: devices, preferences, agents, shortcuts and fixes.
 
-OpenEtch has an MCP server, so an AI agent can work on your design: draw shapes, change layers and prepare a job. Through these tools an agent can never approve or start a burn. A job it prepares waits as a pending run until a person starts it in the app (with the operator PIN, if the engine uses one). The foot switch never starts an agent's job: it only burns the design it has just framed.
+Every page is listed by section under [Contents](#contents) at the end of this page.
 
-> **Warning:** This protection covers the MCP tools only. An agent that can also control your browser, or run programs on the computer the laser is connected to, can do whatever you can. If you let an agent do that while nobody is at the laser, run the engine with an operator PIN.
+Some pages only matter when a laser is connected. A copy of OpenEtch made for design only can leave those pages out.
+
+### How the pages are written {#conventions}
+
+- Buttons, menus and messages are written in **bold**, exactly as the app shows them.
+- A menu path such as **File > Save as…** means: open the **File** menu, then choose **Save as…**.
+- Keys are written like `Ctrl+S`. On a Mac, iPad or iPhone, use `Cmd` where the guide says `Ctrl`, and `Option` where it says `Alt`. The app shows Apple key symbols there.
+- Where the desktop and the phone or iPad differ, each page says where to find a thing on both.
+- **Note**, **Tip** and **Warning** boxes mark extra information, shortcuts and safety points.
 
 ## Contents {#contents}
 
+**Getting started**
+
+- [Getting started](getting-started.md): Run the engine on a Raspberry Pi or a PC, open the app on a PC, Mac, iPad or phone, connect with the access token, install it as an app and open an example project.
+- [The workspace](the-workspace.md): A tour of the app - top bar, Design and Laser workspaces, ribbon, docks, timeline, document tabs, command search and status bar - and the iPad and phone layouts, themes and language.
+- [Files and projects](files-and-projects.md): Create, open and save projects on the engine, use autosave and backups, import SVG, DXF, images, LightBurn and other files, export to SVG, DXF, PDF and LightBurn, and move settings with bundles.
+
+**Designing**
+
+- [Drawing and editing](drawing-and-editing.md): Draw shapes and lines, select, move, rotate and scale them, edit nodes, snap to objects and guides, combine and arrange shapes, pan and zoom, and undo with the timeline.
+- [Text](text.md): Add and edit text, choose fonts and keep favourites, bend text, fit it into a box or circle, put it on a path and convert it to shapes.
+- [Variable text and barcodes](variable-text-and-barcodes.md): Serial numbers, dates, CSV fields and cut-setting text, the Variable Text window, barcodes and QR codes, and the Check every row contact sheet.
+- [Images](images.md): Import photos and pictures, adjust them, choose a dither mode, trace them to vectors, mask them, and engrave depth maps with 3D Sliced.
+- [Fill Region](fill-region.md): The Fill Region tool, a paint bucket that makes a closed shape of exactly the area you click between lines.
+- [Fit to stock](fit-to-stock.md): Define the stock, then scale and centre a design to fill a coin, tag or plate with Fit to stock, Place on stock and Centre on stock.
+- [Art Library](art-library.md): Keep reusable artwork in libraries on the engine, add it to any project, and load or save LightBurn .lbart libraries.
+- [Templates and examples](templates.md): Fill in templates on any device, make your own templates with fill-in fields and locks, and learn from the built-in example projects.
+
+**Layers and materials**
+
+- [Layers and cut settings](layers-and-settings.md): Put shapes on layers and set how each layer burns on a galvo laser: mode, power, speed, frequency, pulse width, interval, passes, sub-layers and burn order.
+- [Material libraries and presets](material-libraries.md): Keep cut settings as presets in LightBurn .clb material libraries, and assign or link them to layers.
+- [MOPA colour](mopa-colour.md): Record what each preset gives on the material, preview the colours a design should come out, nudge a colour warmer or cooler, and separate an image into colour layers.
+- [Test grids](test-grids.md): Make material, interval, focus and bracket test grids, check their energy density first, and read the results.
+- [3D relief preview](relief-preview.md): See in 3D how deep a job engraves and in what order, before a long burn.
+
+**Running jobs**
+
+- [Laser safety](safety.md): Eye protection, fume extraction, energy density checks, the STOP button, the safety checks OpenEtch makes before a burn, and what AI agents can and cannot do. (Needs a laser)
+- [Preview and framing](preview-and-framing.md): Check the toolpath and the time estimate in the Laser workspace, play the burn order, and trace the job on the work with the red pointer before you burn.
+- [Running a job](running-a-job.md): Start or approve a burn, use the foot switch to frame then burn, pause, resume and stop, pause at a layer, repeat jobs and use the job counter. (Needs a laser)
+- [Pre-flight warnings and keep-out zones](preflight-and-keep-out.md): The warnings OpenEtch shows next to Start, how to fix or mute them, objects outside the field, and keep-out zones that the laser must never mark. (Needs a laser)
+
+**Production**
+
+- [Re-mark a region](remark-region.md): Burn only part of a job again, inside a rectangle or a lasso you draw, to touch up a spot without re-marking the whole part. (Needs a laser)
+- [Job ledger](job-ledger.md): Find every run in the job log, see the settings it burned with, mark parts OK or scrap, and re-run a job exactly as it burned. (Needs a laser)
+- [Production cockpit](production-cockpit.md): A full-screen operator view for batch work at the laser, with the machine state, the count and Stop at, the next serial numbers, Start, STOP, the foot switch and a design lock. (Needs a laser)
+- [Jigs](jigs.md): Make a jig with numbered pockets, place a design in every pocket, choose the numbering and leave empty pockets out.
+- [Serial ledger](serial-ledger.md): See which serial number or CSV row went on which pocket in every run, save it as CSV, use Stop at End, and re-mark one pocket with the same value. (Needs a laser)
+- [Notifications](notifications.md): Send job events to your phone with ntfy, to any web service with a webhook, or to Home Assistant. (Needs a laser)
+- [Hour meter and maintenance](maintenance.md): See how many hours each laser device has marked, and set reminders such as cleaning the lens every 40 hours or every 500 runs. (Needs a laser)
+- [Extractor](extractor.md): Switch the fume extractor on for every job, keep it running after the job, and refuse Start until it runs. (Needs a laser)
+
 **Setup and reference**
 
-- [Page format example](example.md): Every markdown feature a guide page can use, for checking the renderer. (Needs a laser)
+- [Devices and calibration](devices-and-calibration.md): Add and switch laser devices, import them from LightBurn or EzCad, edit device settings, load a lens correction file, calibrate the galvo lens and the red dot, and set up a rotary. (Needs a laser)
+- [Settings](settings.md): Preferences for display, units, snapping and input, layer and optimisation defaults, importing LightBurn preferences, and preference backups and bundles.
+- [Camera](camera.md): Use a camera over the work area to see the stock under your design: capture a frame, calibrate the camera lens, align it to the galvo field and show the overlay. (Needs a laser)
+- [AI agents](ai-agents.md): Connect an AI agent to OpenEtch over MCP, what tools it gets, why it can never approve or start a burn, and how to ask it for good work. (Needs a laser)
+- [Keyboard shortcuts](keyboard-shortcuts.md): Every keyboard shortcut in OpenEtch, how to open the list, how to change a key, and which keys browsers keep for themselves.
+- [Troubleshooting](troubleshooting.md): Fixes for common problems: cannot connect, access token, no laser, refused starts, slow preview, missing fonts after a LightBurn import, wrong field size, bug reports, logs and updates.

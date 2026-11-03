@@ -36,6 +36,7 @@ export function LedgerDialog(p: { revision: number | null; notify: (m: string) =
       .catch(p.report);
   return (
     <WsModal
+      help="serial-ledger#serial-ledger-window"
       title={t("prod.ledgerTitle")}
       size="xl"
       onClose={p.onClose}

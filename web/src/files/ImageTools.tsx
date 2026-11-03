@@ -137,6 +137,7 @@ export function TraceDialog(p: { image: DocObject; run: Run; report: (e: unknown
   const live = dragFrom && dragTo ? [Math.min(dragFrom[0], dragTo[0]), Math.min(dragFrom[1], dragTo[1]), Math.max(dragFrom[0], dragTo[0]), Math.max(dragFrom[1], dragTo[1])] : null;
   return (
     <Modal
+      help="images#trace-image"
       title={t("files.traceTitle")}
       onClose={p.onClose}
       wide
@@ -238,6 +239,7 @@ export function ConvertBitmapDialog(p: { objects: DocObject[]; run: Run; report:
   };
   return (
     <Modal
+      help="images#convert-to-bitmap"
       title={t("files.toBitmapTitle")}
       onClose={p.onClose}
       onSubmit={ok}

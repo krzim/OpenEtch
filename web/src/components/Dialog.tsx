@@ -12,6 +12,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } f
 import { useT } from "../workspace/usePrefs.ts";
 import { installEscape, layers } from "./dialogStack.ts";
 import { Icon } from "./ui.tsx";
+import { HelpLink } from "../guide/HelpLink.tsx";
 import "./dialog.css";
 
 /** Today's ui.tsx Modal props. */
@@ -22,6 +23,9 @@ export interface ModalProps {
   footer?: ReactNode;
   wide?: boolean;
   onSubmit?: () => void;
+  /** The user guide's page and anchor for this dialog ("page#anchor", a literal: helpLinks.test.ts checks it): a "?"
+   *  button beside the title opens the guide there. */
+  help?: string;
 }
 
 /** sm 360 / md 480 / lg 720 / xl 960 px wide, or full screen. */
@@ -173,8 +177,11 @@ export function Dialog(p: DialogProps) {
         onKeyDown={onKeyDown}
       >
         <div className="modal-head">
-          <span id={titleId} className="oe-dialog-title">
-            {p.title}
+          <span className="oe-dialog-titlebox">
+            <span id={titleId} className="oe-dialog-title">
+              {p.title}
+            </span>
+            {p.help && <HelpLink to={p.help} topic={p.title} />}
           </span>
           <button type="button" className="icon-btn" onClick={requestClose} aria-label={t("common.close")} title={t("common.close")}>
             <Icon name="close" />

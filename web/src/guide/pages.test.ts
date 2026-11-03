@@ -117,7 +117,7 @@ test("shot steps: one action each, private paths and file commands refused", () 
     { menu: ["File", "Laser", "Devices"] },
     { type: "Grace Hopper", into: { css: "#tpl-name" } },
     { key: "Ctrl+Shift+Z" },
-    { hash: "#/guide/example#tables" },
+    { hash: "#/guide/the-workspace#ribbon" },
     { wait: ".guide-md" },
     { wait: 500 },
     { select: "all" },

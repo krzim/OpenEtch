@@ -53,6 +53,7 @@ export function ImportOptionsDialog(p: { onClose: () => void }) {
   const t = useT();
   return (
     <Modal
+      help="files-and-projects#import-options"
       title={t("files.importOptionsTitle")}
       onClose={p.onClose}
       footer={
@@ -126,6 +127,7 @@ export function ImportFilesDialog(p: {
   const keeps = formats.some(takesKeepPosition);
   return (
     <Modal
+      help="files-and-projects#import-3d-models-and-gerber"
       title={groups.has("model") ? t("files.import3dTitle") : groups.has("gerber") ? t("files.importGerberTitle") : t("files.importTitle")}
       onClose={p.onClose}
       onSubmit={submit}
@@ -243,6 +245,7 @@ export function EditModelDialog(p: { name: string; initial: ModelOptions; busy: 
   const flag = (k: keyof ModelOptions) => (v: boolean) => setModel((m) => ({ ...m, [k]: v }));
   return (
     <Modal
+      help="images#import-a-3d-model"
       title={t("files.editModelTitle", { name: p.name })}
       onClose={p.onClose}
       onSubmit={submit}

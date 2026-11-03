@@ -12,6 +12,7 @@ import { objectBounds } from "../geometry.ts";
 import { useT } from "../workspace/usePrefs.ts";
 import { fitFields, fitToStock, startSize, type FitMode, type FitShape } from "./fitModel.ts";
 import { textUpdate, type TextObject } from "./textModel.ts";
+import { HelpLink } from "../guide/HelpLink.tsx";
 
 type Run = (inv: Invocation | Invocation[]) => Promise<unknown>;
 
@@ -36,7 +37,7 @@ export function FitSection(p: { o: TextObject; doc: GDocument; run: Run; report:
   const height = f?.shape === "box" ? f.height_mm : start.h;
   return (
     <>
-      <h4>{t("text.fitHead")}</h4>
+      <h4>{t("text.fitHead")} <HelpLink to="text#auto-fit" topic={t("text.fitHead")} /></h4>
       {onPath ? (
         <p className="hint">{t("text.fitOnPath")}</p>
       ) : (

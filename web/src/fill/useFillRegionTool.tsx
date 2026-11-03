@@ -49,6 +49,7 @@ import {
   type PointAnswer,
 } from "./fillRegion.ts";
 import "./fill.css";
+import { HelpLink } from "../guide/HelpLink.tsx";
 
 export interface FillToolProps {
   doc: GDocument | null;
@@ -360,7 +361,7 @@ function FillBar(p: {
   return (
     <ContextStripPortal>
       <div className="vp-overlay et-bar fr-bar" role="toolbar" aria-label={t("fill.tool")}>
-        <b>{t("fill.tool")}</b>
+        <b>{t("fill.tool")}</b> <HelpLink to="fill-region#fill-region-options" topic={t("fill.tool")} />
         <label className="et-opt" title={t("fill.layerTitle")}>
           <span className="fr-swatch" style={swatch ? { background: swatch } : undefined} aria-hidden="true" />
           {t("fill.layer")}

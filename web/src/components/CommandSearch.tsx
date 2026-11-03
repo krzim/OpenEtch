@@ -129,7 +129,7 @@ export function CommandSearch(p: { onClose: () => void; onEngineConsole: () => v
   };
 
   return (
-    <Dialog title={t("rb.searchTitle")} onClose={p.onClose} size="md" dismissable>
+    <Dialog help="the-workspace#command-search" title={t("rb.searchTitle")} onClose={p.onClose} size="md" dismissable>
       <div className="cs">
         <input
           type="search"

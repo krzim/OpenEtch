@@ -137,6 +137,7 @@ import { onRevealSelection, onViewCommand, publishViewStatus, revealShift } from
 import { useT } from "../workspace/usePrefs.ts";
 import { HeadMarker } from "./HeadMarker.tsx";
 import { canvasKeysFocused } from "../workspace/keyFocus.ts";
+import { HelpLink } from "../guide/HelpLink.tsx";
 
 export type Tool = "select" | "rect" | "ellipse" | "circle" | CanvasToolId;
 
@@ -1614,6 +1615,7 @@ export function Viewport(props: ViewportProps) {
           <HudItem id="vp-warn" slot="tr" rank={60} minW={160} maxW={360}>
             <div className="vp-overlay vp-warn" role="status">
               {offFieldText(t, outsideCount, galvo)}
+              <HelpLink to="preflight-and-keep-out#out-of-field" topic={t("guide.topic.offField")} />
             </div>
           </HudItem>
         ))}

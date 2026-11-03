@@ -62,6 +62,7 @@ export function ColorSeparateDialog(p: { image: string; notify: Notify; report: 
 
   return (
     <WsModal
+      help="mopa-colour#colour-separation"
       title={t("mat.separateTitle")}
       size="lg"
       onClose={p.onClose}

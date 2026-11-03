@@ -25,6 +25,7 @@ export function ExamplesDialog(p: { onOpen: (id: string, title: string) => void;
   }, []);
   return (
     <Dialog
+      help="templates#example-projects"
       title={t("tpl.examplesTitle")}
       size="lg"
       onClose={p.onClose}

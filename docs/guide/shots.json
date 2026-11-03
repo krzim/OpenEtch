@@ -3,24 +3,2642 @@
     "name": "guide-beside-canvas",
     "device": "macbook-air-1470",
     "example": "two-tone-coin",
-    "note": "The guide open beside the canvas on a MacBook, at the start page's Find a topic section.",
-    "steps": [{ "hash": "#/guide#find-a-topic" }, { "wait": ".guide-md h2" }, { "wait": 600 }],
-    "maxWidth": 1470
+    "steps": [
+      {
+        "hash": "#/guide#open-the-guide"
+      },
+      {
+        "wait": ".guide-md h2"
+      },
+      {
+        "wait": 600
+      }
+    ],
+    "maxWidth": 1470,
+    "note": "The guide open beside the canvas on a MacBook, at the start page's Open the guide section."
   },
   {
-    "name": "cuts-layers-coin",
+    "name": "use-as-an-app-dialog",
     "device": "win-1920",
     "example": "two-tone-coin",
-    "note": "The Cuts / Layers window with the two-tone coin's layers, cropped to the right dock.",
-    "steps": [{ "wait": "tr.cuts-row" }],
-    "crop": ".panel-right"
+    "steps": [
+      {
+        "exec": "doc.new",
+        "params": {}
+      },
+      {
+        "menu": [
+          "Help",
+          "Use as an app…"
+        ]
+      },
+      {
+        "wait": ".oe-dialog"
+      }
+    ],
+    "crop": ".oe-dialog",
+    "note": "Help > Use as an app… in Chrome on a PC."
   },
   {
-    "name": "phone-layers-sheet",
+    "name": "examples-dialog",
+    "device": "win-1920",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "exec": "doc.new",
+        "params": {}
+      },
+      {
+        "menu": [
+          "File",
+          "New from example…"
+        ]
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "wait": 800
+      },
+      {
+        "click": "Walkthrough (6 steps)",
+        "in": ".oe-dialog"
+      }
+    ],
+    "crop": ".oe-dialog",
+    "note": "File > New from example… with the Two-tone MOPA coin's walkthrough open."
+  },
+  {
+    "name": "workspace-desktop-design",
+    "device": "win-1920",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "select": [
+          "Name"
+        ]
+      }
+    ],
+    "note": "The wide layout, Design workspace, Two-tone MOPA coin with the name selected."
+  },
+  {
+    "name": "workspace-laser",
+    "device": "win-1920",
+    "example": "text-medallion",
+    "steps": [
+      {
+        "workspace": "laser"
+      },
+      {
+        "wait": 1500
+      }
+    ],
+    "note": "The Laser workspace with the medallion's toolpath preview."
+  },
+  {
+    "name": "timeline",
+    "device": "win-1920",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "exec": "doc.new",
+        "params": {}
+      },
+      {
+        "exec": "shape.rect",
+        "params": {
+          "width_mm": 20,
+          "height_mm": 12,
+          "center": [
+            -20,
+            0
+          ]
+        }
+      },
+      {
+        "exec": "shape.ellipse",
+        "params": {
+          "rx_mm": 10,
+          "ry_mm": 7,
+          "center": [
+            20,
+            0
+          ]
+        }
+      },
+      {
+        "select": [
+          "Rectangle"
+        ]
+      },
+      {
+        "key": "ArrowRight"
+      },
+      {
+        "wait": 400
+      },
+      {
+        "click": {
+          "css": ".timeline button",
+          "text": "Ellipse"
+        }
+      },
+      {
+        "wait": 400
+      }
+    ],
+    "crop": ".timeline",
+    "note": "Three steps with the marker rolled back after the ellipse, so the Move step is grey."
+  },
+  {
+    "name": "command-search",
+    "device": "win-1920",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "click": "Search"
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "type": "export"
+      },
+      {
+        "wait": 500
+      }
+    ],
+    "crop": ".oe-dialog",
+    "note": "Command search with results for export."
+  },
+  {
+    "name": "ipad-layout",
+    "device": "ipad-air-portrait",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "select": [
+          "Name"
+        ]
+      },
+      {
+        "wait": 600
+      }
+    ],
+    "note": "The tablet layout with the name selected: tool rail, modifier bar, selection action bar and Properties pill."
+  },
+  {
+    "name": "phone-canvas-selection",
+    "device": "iphone15-portrait",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "select": [
+          "Name"
+        ]
+      },
+      {
+        "wait": 800
+      }
+    ],
+    "note": "The phone with the name selected and the Selection sheet at its lowest height."
+  },
+  {
+    "name": "phone-more-sheet",
+    "device": "iphone15-portrait",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "tab": "More",
+        "sheet": "full"
+      },
+      {
+        "wait": 500
+      }
+    ],
+    "note": "The phone's More sheet."
+  },
+  {
+    "name": "file-menu",
+    "device": "win-1920",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "menu": [
+          "File",
+          "Export"
+        ]
+      }
+    ],
+    "note": "The File menu with Export open."
+  },
+  {
+    "name": "open-dialog",
+    "device": "win-1920",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "menu": [
+          "File",
+          "Save as…"
+        ]
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "click": "New folder…",
+        "in": ".oe-dialog"
+      },
+      {
+        "type": "Coins"
+      },
+      {
+        "key": "Enter"
+      },
+      {
+        "wait": 500
+      },
+      {
+        "type": "Two-tone coin",
+        "into": {
+          "css": ".oe-dialog input[type=text]"
+        }
+      },
+      {
+        "key": "Enter"
+      },
+      {
+        "wait": 1000
+      },
+      {
+        "menu": [
+          "File",
+          "Open…"
+        ]
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "click": "Coins",
+        "in": ".oe-dialog"
+      },
+      {
+        "wait": 800
+      }
+    ],
+    "crop": ".oe-dialog",
+    "note": "The Open dialog with a Coins folder holding the saved coin."
+  },
+  {
+    "name": "lightburn-import-dialog",
+    "device": "win-1920",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "exec": "doc.new",
+        "params": {}
+      },
+      {
+        "menu": [
+          "File",
+          "LightBurn",
+          "Import LightBurn…"
+        ]
+      },
+      {
+        "wait": ".oe-dialog"
+      }
+    ],
+    "crop": ".oe-dialog"
+  },
+  {
+    "name": "export-dialog",
+    "device": "win-1920",
+    "example": "palette-coin",
+    "steps": [
+      {
+        "select": "none"
+      },
+      {
+        "menu": [
+          "File",
+          "Export",
+          "Export…"
+        ]
+      },
+      {
+        "wait": ".oe-dialog"
+      }
+    ],
+    "crop": ".oe-dialog"
+  },
+  {
+    "name": "backups-dialog",
+    "device": "win-1920",
+    "example": "serial-tags",
+    "steps": [
+      {
+        "menu": [
+          "File",
+          "Save as…"
+        ]
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "type": "Tags",
+        "into": {
+          "css": ".oe-dialog input[type=text]"
+        }
+      },
+      {
+        "key": "Enter"
+      },
+      {
+        "wait": 1000
+      },
+      {
+        "exec": "object.move",
+        "params": {
+          "ids": [
+            "obj-4"
+          ],
+          "from_point": [
+            0,
+            0
+          ],
+          "to_point": [
+            1,
+            0
+          ]
+        }
+      },
+      {
+        "key": "Ctrl+S"
+      },
+      {
+        "wait": 1000
+      },
+      {
+        "menu": [
+          "File",
+          "Project",
+          "Restore from autosave / backup…"
+        ]
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "wait": 800
+      }
+    ],
+    "crop": ".oe-dialog"
+  },
+  {
+    "name": "prefs-bundles-dialog",
+    "device": "win-1920",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "exec": "doc.new",
+        "params": {}
+      },
+      {
+        "menu": [
+          "File",
+          "LightBurn",
+          "Preferences and bundles…"
+        ]
+      },
+      {
+        "wait": ".oe-dialog"
+      }
+    ],
+    "crop": ".oe-dialog"
+  },
+  {
+    "name": "design-ribbon",
+    "device": "win-2560",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "select": "none"
+      }
+    ],
+    "crop": ".toolbar",
+    "maxWidth": 2400,
+    "note": "The whole Design ribbon (a 2560 px window, so no group folds)."
+  },
+  {
+    "name": "phone-selection-sheet",
+    "device": "iphone15-portrait",
+    "example": "text-medallion",
+    "steps": [
+      {
+        "select": [
+          "Star"
+        ]
+      },
+      {
+        "wait": 600
+      },
+      {
+        "tab": "Canvas",
+        "sheet": "half"
+      },
+      {
+        "wait": 500
+      }
+    ]
+  },
+  {
+    "name": "edit-nodes-bar",
+    "device": "win-1920",
+    "example": "text-medallion",
+    "steps": [
+      {
+        "select": [
+          "Top arc"
+        ]
+      },
+      {
+        "key": "Ctrl+`"
+      },
+      {
+        "wait": 400
+      },
+      {
+        "click": "Zoom to selection"
+      },
+      {
+        "wait": 800
+      }
+    ]
+  },
+  {
+    "name": "arrange-menu",
+    "device": "win-1920",
+    "example": "palette-coin",
+    "steps": [
+      {
+        "select": "all"
+      },
+      {
+        "menu": [
+          "Arrange",
+          "Align"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "grid-array-dialog",
+    "device": "win-1920",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "exec": "doc.new",
+        "params": {}
+      },
+      {
+        "exec": "shape.circle",
+        "params": {
+          "diameter_mm": 20,
+          "center": [
+            0,
+            0
+          ]
+        }
+      },
+      {
+        "select": "all"
+      },
+      {
+        "click": "Search"
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "type": "Grid array"
+      },
+      {
+        "wait": 400
+      },
+      {
+        "key": "Enter"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "type": "4",
+        "into": "Columns"
+      },
+      {
+        "type": "3",
+        "into": "Rows"
+      },
+      {
+        "type": "5",
+        "into": "Gap X"
+      },
+      {
+        "type": "5",
+        "into": "Gap Y"
+      },
+      {
+        "key": "Tab"
+      },
+      {
+        "wait": 500
+      }
+    ],
+    "crop": ".oe-dialog"
+  },
+  {
+    "name": "touch-modifier-bar",
+    "device": "ipad-air-portrait",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "select": [
+          "Name"
+        ]
+      },
+      {
+        "wait": 600
+      }
+    ],
+    "crop": ".viewport"
+  },
+  {
+    "name": "text-options-bar",
+    "device": "win-1920",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "exec": "doc.new",
+        "params": {}
+      },
+      {
+        "key": "T"
+      },
+      {
+        "wait": 400
+      }
+    ],
+    "crop": ".tx-bar"
+  },
+  {
+    "name": "text-properties",
+    "device": "win-1920",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "select": [
+          "Name"
+        ]
+      },
+      {
+        "click": {
+          "css": "section.dock[aria-label='Cuts / Layers'] .dock-toggle"
+        }
+      },
+      {
+        "wait": 400
+      },
+      {
+        "scroll": ".tx-section"
+      },
+      {
+        "wait": 300
+      }
+    ],
+    "crop": ".tx-section"
+  },
+  {
+    "name": "font-picker",
+    "device": "win-1920",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "select": [
+          "Name"
+        ]
+      },
+      {
+        "click": {
+          "css": "section.dock[aria-label='Cuts / Layers'] .dock-toggle"
+        }
+      },
+      {
+        "wait": 400
+      },
+      {
+        "scroll": ".tx-section"
+      },
+      {
+        "click": {
+          "css": ".tx-section .tx-font-btn"
+        }
+      },
+      {
+        "wait": ".tx-font-pop"
+      },
+      {
+        "wait": 800
+      },
+      {
+        "click": {
+          "css": ".tx-font-pop [role=group][aria-label='Single-line (Hershey)'] button[aria-label*='avourite']"
+        }
+      },
+      {
+        "wait": 800
+      }
+    ],
+    "crop": ".tx-font-pop"
+  },
+  {
+    "name": "text-on-path",
+    "device": "win-1920",
+    "example": "text-medallion",
+    "steps": [
+      {
+        "select": [
+          "Top text"
+        ]
+      },
+      {
+        "wait": 600
+      }
+    ],
+    "crop": ".viewport"
+  },
+  {
+    "name": "variable-text-window",
+    "device": "win-1920",
+    "example": "serial-tags",
+    "steps": [
+      {
+        "select": [
+          "Serial"
+        ]
+      },
+      {
+        "click": {
+          "css": "section.dock[aria-label='Cuts / Layers'] .dock-toggle"
+        }
+      },
+      {
+        "wait": 400
+      },
+      {
+        "scroll": "section.dock[aria-label='Variable Text']"
+      },
+      {
+        "wait": 300
+      }
+    ],
+    "crop": "section.dock[aria-label='Variable Text']"
+  },
+  {
+    "name": "barcode-dialog",
+    "device": "win-1920",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "click": "Barcode"
+      },
+      {
+        "click": {
+          "css": ".viewport"
+        }
+      },
+      {
+        "wait": ".oe-dialog"
+      }
+    ],
+    "crop": ".oe-dialog"
+  },
+  {
+    "name": "contact-sheet",
+    "device": "ipad-air-portrait",
+    "example": "serial-tags",
+    "steps": [
+      {
+        "menu": [
+          "File",
+          "Laser",
+          "Check every row…"
+        ]
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "wait": 2000
+      }
+    ],
+    "crop": ".oe-dialog"
+  },
+  {
+    "name": "layer-image-settings",
+    "device": "win-1920",
+    "example": "dither-sample",
+    "steps": [
+      {
+        "dblclick": {
+          "css": "tr.cuts-row td.c-name",
+          "text": "Image: Stucki"
+        }
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "click": "Dithered",
+        "in": ".oe-dialog"
+      },
+      {
+        "wait": 800
+      },
+      {
+        "scroll": ".oe-dialog h4:has([data-help-target='images#image-settings-on-a-layer'])"
+      },
+      {
+        "wait": 300
+      }
+    ],
+    "crop": ".oe-dialog"
+  },
+  {
+    "name": "adjust-image-dialog",
+    "device": "win-1920",
+    "example": "dither-sample",
+    "steps": [
+      {
+        "select": [
+          "Test picture (Stucki)"
+        ]
+      },
+      {
+        "key": "Alt+I"
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "wait": 1000
+      }
+    ],
+    "crop": ".oe-dialog"
+  },
+  {
+    "name": "trace-image-dialog",
+    "device": "win-1920",
+    "example": "dither-sample",
+    "steps": [
+      {
+        "select": [
+          "Test picture (Halftone)"
+        ]
+      },
+      {
+        "key": "Alt+T"
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "wait": 2000
+      }
+    ],
+    "crop": ".oe-dialog"
+  },
+  {
+    "name": "fill-region-bar",
+    "device": "win-1920",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "exec": "layer.update",
+        "params": {
+          "id": "layer-1",
+          "visible": false
+        }
+      },
+      {
+        "click": "Fill Region"
+      },
+      {
+        "wait": 500
+      },
+      {
+        "hover": {
+          "point": [
+            17.25,
+            0
+          ]
+        }
+      },
+      {
+        "wait": 1200
+      }
+    ]
+  },
+  {
+    "name": "fit-to-stock-dialog",
+    "device": "win-1920",
+    "example": "text-medallion",
+    "steps": [
+      {
+        "select": [
+          "Star"
+        ]
+      },
+      {
+        "menu": [
+          "Arrange",
+          "Fit to stock…"
+        ]
+      },
+      {
+        "wait": ".oe-dialog"
+      }
+    ],
+    "crop": ".oe-dialog"
+  },
+  {
+    "name": "art-library-window",
+    "device": "win-1920",
+    "example": "palette-coin",
+    "steps": [
+      {
+        "click": {
+          "css": "section.dock[aria-label='Cuts / Layers'] .dock-toggle"
+        }
+      },
+      {
+        "click": {
+          "css": "section.dock[aria-label='Art Library'] .dock-toggle"
+        }
+      },
+      {
+        "wait": 400
+      },
+      {
+        "click": "New",
+        "in": "section.dock[aria-label='Art Library']"
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "type": "Example art",
+        "into": {
+          "css": ".oe-dialog input"
+        }
+      },
+      {
+        "key": "Enter"
+      },
+      {
+        "wait": 800
+      },
+      {
+        "select": "all"
+      },
+      {
+        "click": "Add selection",
+        "in": "section.dock[aria-label='Art Library']"
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "key": "Enter"
+      },
+      {
+        "wait": 1200
+      },
+      {
+        "select": [
+          "Rim"
+        ]
+      },
+      {
+        "click": "Add selection",
+        "in": "section.dock[aria-label='Art Library']"
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "key": "Enter"
+      },
+      {
+        "wait": 1200
+      }
+    ],
+    "crop": "section.dock[aria-label='Art Library']"
+  },
+  {
+    "name": "fill-in-dialog-phone",
+    "device": "iphone15-portrait",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "click": "Fill in"
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "type": "Grace",
+        "into": {
+          "css": ".oe-dialog input[type=text]"
+        }
+      }
+    ]
+  },
+  {
+    "name": "template-fields-dialog",
+    "device": "win-1920",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "menu": [
+          "File",
+          "Project",
+          "Template fields…"
+        ]
+      },
+      {
+        "wait": ".oe-dialog"
+      }
+    ],
+    "crop": ".oe-dialog"
+  },
+  {
+    "name": "cuts-layers-panel",
+    "device": "win-1920",
+    "example": "palette-coin",
+    "steps": [
+      {
+        "click": {
+          "css": "tr.cuts-row",
+          "text": "Black"
+        }
+      },
+      {
+        "wait": 400
+      }
+    ],
+    "crop": "section.dock[aria-label='Cuts / Layers']"
+  },
+  {
+    "name": "cuts-layers-phone",
     "device": "iphone15-portrait",
     "example": "palette-coin",
-    "note": "The phone's Layers tab with its sheet at half height.",
-    "steps": [{ "tab": "Layers", "sheet": "half" }],
-    "maxWidth": 786
+    "steps": [
+      {
+        "tab": "Layers",
+        "sheet": "full"
+      },
+      {
+        "click": {
+          "css": "tbody tr.cuts-row:nth-child(3) td.c-sw"
+        }
+      },
+      {
+        "wait": 500
+      }
+    ]
+  },
+  {
+    "name": "cut-settings-dialog",
+    "device": "win-1920",
+    "example": "palette-coin",
+    "steps": [
+      {
+        "dblclick": {
+          "css": "tr.cuts-row",
+          "text": "Black"
+        }
+      },
+      {
+        "wait": ".oe-dialog"
+      }
+    ],
+    "crop": ".oe-dialog"
+  },
+  {
+    "name": "laser-window-desktop",
+    "device": "win-1920",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "workspace": "laser"
+      },
+      {
+        "wait": 1500
+      }
+    ],
+    "crop": "section.dock[aria-label='Laser']"
+  },
+  {
+    "name": "phone-job-sheet",
+    "device": "iphone15-portrait",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "tab": "Job",
+        "sheet": "peek"
+      },
+      {
+        "wait": 1200
+      }
+    ]
+  },
+  {
+    "name": "toolpath-card",
+    "device": "win-1920",
+    "example": "palette-coin",
+    "steps": [
+      {
+        "workspace": "laser"
+      },
+      {
+        "wait": 1500
+      },
+      {
+        "scroll": "section.card:has([data-help-target='preview-and-framing#toolpath-card'])"
+      },
+      {
+        "wait": 400
+      }
+    ],
+    "crop": "section.card:has([data-help-target='preview-and-framing#toolpath-card'])"
+  },
+  {
+    "name": "preview-timeline",
+    "device": "win-1920",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "workspace": "laser"
+      },
+      {
+        "wait": 1500
+      },
+      {
+        "click": {
+          "css": ".pv-timeline input[type=range]"
+        }
+      },
+      {
+        "wait": 800
+      }
+    ],
+    "crop": ".viewport"
+  },
+  {
+    "name": "framing-options-popover",
+    "device": "win-1920",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "workspace": "laser"
+      },
+      {
+        "wait": 1000
+      },
+      {
+        "click": "Framing options"
+      },
+      {
+        "wait": 400
+      }
+    ],
+    "crop": ".frame-pop"
+  },
+  {
+    "name": "preflight-warnings",
+    "device": "win-1920",
+    "example": "text-medallion",
+    "steps": [
+      {
+        "workspace": "laser"
+      },
+      {
+        "wait": 1500
+      }
+    ],
+    "crop": ".pf-notes-dock"
+  },
+  {
+    "name": "stop-button-topbar",
+    "device": "win-1920",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "workspace": "laser"
+      },
+      {
+        "wait": 1000
+      },
+      {
+        "click": "Frame"
+      },
+      {
+        "wait": 800
+      }
+    ],
+    "crop": ".topbar-stop"
+  },
+  {
+    "name": "material-library-window",
+    "device": "win-1920",
+    "example": "palette-coin",
+    "steps": [
+      {
+        "click": {
+          "css": "section.dock[aria-label='Material Library'] .dock-toggle"
+        }
+      },
+      {
+        "wait": 400
+      },
+      {
+        "click": "Manage Library"
+      },
+      {
+        "click": "Create New Library…"
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "type": "Example steel"
+      },
+      {
+        "key": "Enter"
+      },
+      {
+        "wait": 800
+      },
+      {
+        "click": {
+          "css": "tr.cuts-row",
+          "text": "Colour"
+        }
+      },
+      {
+        "click": "Create new from layer"
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "type": "Stainless steel",
+        "into": "Material name"
+      },
+      {
+        "type": "Colour",
+        "into": "Title"
+      },
+      {
+        "type": "Gold",
+        "into": "Description"
+      },
+      {
+        "key": "Enter"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "click": {
+          "css": "tr.cuts-row",
+          "text": "Black"
+        }
+      },
+      {
+        "click": "Create new from layer"
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "type": "Stainless steel",
+        "into": "Material name"
+      },
+      {
+        "type": "Colour",
+        "into": "Title"
+      },
+      {
+        "type": "Black",
+        "into": "Description"
+      },
+      {
+        "key": "Enter"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "click": {
+          "css": "tr.cuts-row",
+          "text": "Frost"
+        }
+      },
+      {
+        "click": "Create new from layer"
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "type": "Stainless steel",
+        "into": "Material name"
+      },
+      {
+        "type": "Colour",
+        "into": "Title"
+      },
+      {
+        "type": "Frost",
+        "into": "Description"
+      },
+      {
+        "key": "Enter"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "click": {
+          "css": "section.dock[aria-label='Material Library'] [role=treeitem]",
+          "text": "Gold"
+        }
+      },
+      {
+        "wait": 400
+      }
+    ],
+    "crop": "section.dock[aria-label='Material Library']",
+    "note": "Run on a fresh engine: makes the Example steel library the next shots use."
+  },
+  {
+    "name": "finish-dialog",
+    "device": "win-1920",
+    "example": "palette-coin",
+    "steps": [
+      {
+        "click": {
+          "css": "section.dock[aria-label='Material Library'] .dock-toggle"
+        }
+      },
+      {
+        "wait": 500
+      },
+      {
+        "click": {
+          "css": "section.dock[aria-label='Material Library'] [role=treeitem]",
+          "text": "Gold"
+        }
+      },
+      {
+        "click": "Finish…"
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "set": "#c08a00",
+        "into": {
+          "css": ".oe-dialog .mt-color input[type=color]"
+        }
+      },
+      {
+        "set": "brushed",
+        "into": "Made for surface"
+      },
+      {
+        "type": "F254, 175 x 175",
+        "into": "Lens"
+      },
+      {
+        "type": "A1",
+        "into": "Lot"
+      },
+      {
+        "wait": 300
+      }
+    ],
+    "crop": ".oe-dialog",
+    "note": "After material-library-window (the Example steel library)."
+  },
+  {
+    "name": "material-palette-view",
+    "device": "win-1920",
+    "example": "palette-coin",
+    "steps": [
+      {
+        "click": {
+          "css": "section.dock[aria-label='Cuts / Layers'] .dock-toggle"
+        }
+      },
+      {
+        "click": {
+          "css": "section.dock[aria-label='Material Library'] .dock-toggle"
+        }
+      },
+      {
+        "wait": 500
+      },
+      {
+        "click": {
+          "css": "section.dock[aria-label='Material Library'] [role=treeitem]",
+          "text": "Gold"
+        }
+      },
+      {
+        "click": "Finish…"
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "set": "#c08a00",
+        "into": {
+          "css": ".oe-dialog .mt-color input[type=color]"
+        }
+      },
+      {
+        "set": "brushed",
+        "into": "Made for surface"
+      },
+      {
+        "click": "OK",
+        "in": ".oe-dialog"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "click": {
+          "css": "section.dock[aria-label='Material Library'] [role=treeitem]",
+          "text": "Black"
+        }
+      },
+      {
+        "click": "Finish…"
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "set": "#202020",
+        "into": {
+          "css": ".oe-dialog .mt-color input[type=color]"
+        }
+      },
+      {
+        "set": "brushed",
+        "into": "Made for surface"
+      },
+      {
+        "click": "OK",
+        "in": ".oe-dialog"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "click": {
+          "css": "section.dock[aria-label='Material Library'] [role=treeitem]",
+          "text": "Frost"
+        }
+      },
+      {
+        "click": "Finish…"
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "set": "#b0b0b0",
+        "into": {
+          "css": ".oe-dialog .mt-color input[type=color]"
+        }
+      },
+      {
+        "set": "mill",
+        "into": "Made for surface"
+      },
+      {
+        "click": "OK",
+        "in": ".oe-dialog"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "click": "Palette",
+        "in": "section.dock[aria-label='Material Library']"
+      },
+      {
+        "wait": 600
+      }
+    ],
+    "crop": "section.dock[aria-label='Material Library']"
+  },
+  {
+    "name": "result-colours-canvas",
+    "device": "win-1920",
+    "example": "palette-coin",
+    "steps": [
+      {
+        "click": "Search"
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "type": "Result colours"
+      },
+      {
+        "wait": 400
+      },
+      {
+        "key": "Enter"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "wait": 4500
+      }
+    ],
+    "crop": ".viewport"
+  },
+  {
+    "name": "colour-separation-dialog",
+    "device": "win-1920",
+    "example": "dither-sample",
+    "steps": [
+      {
+        "select": [
+          "Test picture (Stucki)"
+        ]
+      },
+      {
+        "click": "Search"
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "type": "Colour separation"
+      },
+      {
+        "wait": 400
+      },
+      {
+        "key": "Enter"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "wait": 2500
+      }
+    ],
+    "crop": ".oe-dialog"
+  },
+  {
+    "name": "material-test-dialog",
+    "device": "win-1920",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "exec": "doc.new",
+        "params": {}
+      },
+      {
+        "click": "Search"
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "type": "Material Test"
+      },
+      {
+        "wait": 400
+      },
+      {
+        "key": "Enter"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "click": "Defaults",
+        "in": ".oe-dialog"
+      },
+      {
+        "wait": 600
+      }
+    ],
+    "crop": ".oe-dialog"
+  },
+  {
+    "name": "bracket-test-dialog",
+    "device": "win-1920",
+    "example": "palette-coin",
+    "steps": [
+      {
+        "click": {
+          "css": "section.dock[aria-label='Material Library'] .dock-toggle"
+        }
+      },
+      {
+        "wait": 500
+      },
+      {
+        "click": {
+          "css": "section.dock[aria-label='Material Library'] [role=treeitem]",
+          "text": "Gold"
+        }
+      },
+      {
+        "click": "Bracket test…"
+      },
+      {
+        "wait": ".oe-dialog"
+      }
+    ],
+    "crop": ".oe-dialog"
+  },
+  {
+    "name": "relief-preview-window",
+    "device": "win-1920",
+    "example": "palette-coin",
+    "steps": [
+      {
+        "workspace": "laser"
+      },
+      {
+        "wait": 1500
+      },
+      {
+        "click": "3D relief"
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "click": "Low",
+        "in": ".oe-dialog"
+      },
+      {
+        "wait": 2500
+      }
+    ],
+    "crop": ".oe-dialog"
+  },
+  {
+    "name": "layer-pause-hud",
+    "device": "win-1920",
+    "example": "palette-coin",
+    "steps": [
+      {
+        "exec": "layer.update",
+        "params": {
+          "id": "layer-2",
+          "settings": {
+            "options": {
+              "operator_pause": true
+            }
+          }
+        }
+      },
+      {
+        "workspace": "laser"
+      },
+      {
+        "wait": 1500
+      },
+      {
+        "click": {
+          "css": ".btn-start",
+          "text": "Start"
+        }
+      },
+      {
+        "wait": ".prod-hud"
+      },
+      {
+        "wait": 800
+      }
+    ],
+    "note": "The run waits before the Black layer; the next shot's start stops it."
+  },
+  {
+    "name": "jigs-keep-out",
+    "device": "win-1920",
+    "example": "serial-tags",
+    "steps": [
+      {
+        "menu": [
+          "Jigs",
+          "New jig…"
+        ]
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "click": "Create",
+        "in": ".oe-dialog"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "exec": "shape.rect",
+        "params": {
+          "width_mm": 8,
+          "height_mm": 8,
+          "center": [
+            60,
+            0
+          ],
+          "name": "Clamp"
+        }
+      },
+      {
+        "select": [
+          "Clamp"
+        ]
+      },
+      {
+        "menu": [
+          "Jigs",
+          "Jigs…"
+        ]
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "click": "Add selection as keep-out zone",
+        "in": ".oe-dialog"
+      },
+      {
+        "wait": 4500
+      },
+      {
+        "scroll": ".jig-zones"
+      }
+    ],
+    "crop": ".oe-dialog"
+  },
+  {
+    "name": "remark-region-bar",
+    "device": "win-1920",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "menu": [
+          "Jigs",
+          "Re-mark a region…"
+        ]
+      },
+      {
+        "wait": 500
+      }
+    ]
+  },
+  {
+    "name": "job-log-window",
+    "device": "win-1920",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "workspace": "laser"
+      },
+      {
+        "wait": 1500
+      },
+      {
+        "click": {
+          "css": ".btn-start",
+          "text": "Start"
+        }
+      },
+      {
+        "wait": 10000
+      },
+      {
+        "wait": 6000
+      },
+      {
+        "click": "Job log…"
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "wait": 800
+      },
+      {
+        "click": "OK",
+        "in": ".led-verdict-bar"
+      },
+      {
+        "wait": 500
+      },
+      {
+        "type": "test on simulator",
+        "into": {
+          "css": ".oe-dialog textarea"
+        }
+      },
+      {
+        "click": "Save note",
+        "in": ".oe-dialog"
+      },
+      {
+        "wait": 800
+      }
+    ],
+    "crop": ".oe-dialog"
+  },
+  {
+    "name": "cockpit-ipad",
+    "device": "ipad-air-landscape",
+    "example": "serial-tags",
+    "steps": [
+      {
+        "hash": "#/cockpit"
+      },
+      {
+        "wait": ".cockpit-bar"
+      },
+      {
+        "click": "Reset count"
+      },
+      {
+        "type": "12",
+        "into": "Stop at"
+      },
+      {
+        "key": "Enter"
+      },
+      {
+        "click": {
+          "css": ".cockpit-phase .btn-start"
+        }
+      },
+      {
+        "wait": 10000
+      },
+      {
+        "wait": 4000
+      }
+    ]
+  },
+  {
+    "name": "cockpit-phone",
+    "device": "iphone15-portrait",
+    "example": "serial-tags",
+    "steps": [
+      {
+        "hash": "#/cockpit"
+      },
+      {
+        "wait": ".cockpit-bar"
+      },
+      {
+        "wait": 600
+      }
+    ]
+  },
+  {
+    "name": "cockpit-next-empty",
+    "device": "ipad-air-portrait",
+    "example": "serial-tags",
+    "steps": [
+      {
+        "hash": "#/cockpit"
+      },
+      {
+        "wait": ".cockpit-bar"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "click": {
+          "css": ".cockpit-card:has([data-help-target='production-cockpit#next-card']) button",
+          "text": "Serial [0,1]"
+        }
+      },
+      {
+        "wait": 500
+      },
+      {
+        "click": "Stop at End (60)"
+      },
+      {
+        "wait": 600
+      }
+    ],
+    "crop": ".cockpit-card:has([data-help-target='production-cockpit#next-card'])"
+  },
+  {
+    "name": "production-window",
+    "device": "win-1920",
+    "example": "serial-tags",
+    "steps": [
+      {
+        "workspace": "laser"
+      },
+      {
+        "wait": 1500
+      },
+      {
+        "click": {
+          "css": ".btn-start",
+          "text": "Start"
+        }
+      },
+      {
+        "wait": 10000
+      },
+      {
+        "wait": 4000
+      },
+      {
+        "scroll": "section.dock[aria-label='Production']"
+      },
+      {
+        "wait": 300
+      }
+    ],
+    "crop": "section.dock[aria-label='Production']"
+  },
+  {
+    "name": "jigs-new-jig",
+    "device": "win-1920",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "menu": [
+          "Jigs",
+          "New jig…"
+        ]
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "type": "Coins",
+        "into": "Name"
+      },
+      {
+        "type": "40",
+        "into": "Diameter"
+      },
+      {
+        "type": "45",
+        "into": "Pitch X"
+      },
+      {
+        "type": "45",
+        "into": "Pitch Y"
+      },
+      {
+        "key": "Tab"
+      },
+      {
+        "wait": 300
+      }
+    ],
+    "crop": ".oe-dialog"
+  },
+  {
+    "name": "jigs-window",
+    "device": "win-1920",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "exec": "object.lock",
+        "params": {
+          "ids": [
+            "obj-4",
+            "obj-5",
+            "obj-6",
+            "obj-7",
+            "obj-8"
+          ],
+          "locked": false
+        }
+      },
+      {
+        "exec": "jig.create",
+        "params": {
+          "name": "Coins",
+          "rows": 2,
+          "cols": 3,
+          "pocket": {
+            "kind": "circle",
+            "diameter_mm": 40
+          },
+          "pitch_x_mm": 45,
+          "pitch_y_mm": 45
+        }
+      },
+      {
+        "select": "all"
+      },
+      {
+        "menu": [
+          "Jigs",
+          "Place selection in every pocket"
+        ]
+      },
+      {
+        "wait": 800
+      },
+      {
+        "menu": [
+          "Jigs",
+          "Jigs…"
+        ]
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "click": {
+          "css": ".jig-pockets button",
+          "text": "5"
+        }
+      },
+      {
+        "wait": 4500
+      }
+    ],
+    "crop": ".oe-dialog"
+  },
+  {
+    "name": "jigs-pocket-mode",
+    "device": "ipad-air-portrait",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "exec": "object.lock",
+        "params": {
+          "ids": [
+            "obj-4",
+            "obj-5",
+            "obj-6",
+            "obj-7",
+            "obj-8"
+          ],
+          "locked": false
+        }
+      },
+      {
+        "exec": "jig.create",
+        "params": {
+          "name": "Coins",
+          "rows": 2,
+          "cols": 3,
+          "pocket": {
+            "kind": "circle",
+            "diameter_mm": 40
+          },
+          "pitch_x_mm": 45,
+          "pitch_y_mm": 45
+        }
+      },
+      {
+        "select": "all"
+      },
+      {
+        "click": "Search"
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "type": "Place selection in every pocket"
+      },
+      {
+        "wait": 400
+      },
+      {
+        "key": "Enter"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "click": "Search"
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "type": "Switch pockets on or off"
+      },
+      {
+        "wait": 400
+      },
+      {
+        "key": "Enter"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "click": {
+          "point": [
+            0,
+            -22.5
+          ]
+        }
+      },
+      {
+        "wait": 600
+      }
+    ]
+  },
+  {
+    "name": "serial-ledger-window",
+    "device": "win-1920",
+    "example": "serial-tags",
+    "steps": [
+      {
+        "workspace": "laser"
+      },
+      {
+        "wait": 1500
+      },
+      {
+        "click": {
+          "css": ".btn-start",
+          "text": "Start"
+        }
+      },
+      {
+        "wait": 10000
+      },
+      {
+        "wait": 4000
+      },
+      {
+        "click": "Serial ledger"
+      },
+      {
+        "wait": ".oe-dialog"
+      }
+    ],
+    "crop": ".oe-dialog"
+  },
+  {
+    "name": "notifications-settings",
+    "device": "win-1920",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "menu": [
+          "File",
+          "Settings",
+          "Preferences…"
+        ]
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "scroll": ".prod-notify"
+      },
+      {
+        "set": "ntfy",
+        "into": {
+          "css": ".prod-notify select"
+        }
+      },
+      {
+        "wait": 600
+      },
+      {
+        "type": "Phone",
+        "into": {
+          "css": ".prod-notify .prod-name"
+        }
+      },
+      {
+        "type": "openetch-example-topic",
+        "into": "Topic"
+      },
+      {
+        "wait": 300
+      }
+    ],
+    "crop": ".prod-notify",
+    "note": "Nothing is saved or tested (that would send to the internet)."
+  },
+  {
+    "name": "maintenance-settings",
+    "device": "win-1920",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "menu": [
+          "File",
+          "Settings",
+          "Preferences…"
+        ]
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "scroll": ".prod-maint"
+      },
+      {
+        "click": "Add a reminder",
+        "in": ".prod-maint"
+      },
+      {
+        "click": "Save",
+        "in": ".prod-maint"
+      },
+      {
+        "wait": 800
+      }
+    ],
+    "crop": ".prod-maint"
+  },
+  {
+    "name": "extractor-settings",
+    "device": "win-1920",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "menu": [
+          "File",
+          "Settings",
+          "Preferences…"
+        ]
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "scroll": ".prod-extractor"
+      },
+      {
+        "set": "gpio",
+        "into": "Switched by"
+      },
+      {
+        "wait": 500
+      },
+      {
+        "click": "On for every job",
+        "in": ".prod-extractor"
+      },
+      {
+        "type": "60",
+        "into": "Keep on after the job"
+      },
+      {
+        "set": "switched_on",
+        "into": "Before Start"
+      },
+      {
+        "wait": 400
+      }
+    ],
+    "crop": ".prod-extractor",
+    "note": "Nothing is saved."
+  },
+  {
+    "name": "devices-window",
+    "device": "win-1920",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "exec": "doc.new",
+        "params": {}
+      },
+      {
+        "menu": [
+          "File",
+          "Laser",
+          "Devices…"
+        ]
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "click": "Add device",
+        "in": ".oe-dialog"
+      },
+      {
+        "click": "New GRBL…"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "type": "Example gantry",
+        "into": "Name"
+      },
+      {
+        "click": "Add"
+      },
+      {
+        "wait": 1200
+      },
+      {
+        "click": {
+          "css": ".oe-dialog tr",
+          "text": "ComMarker B6 MOPA 60W (EzCad)"
+        }
+      },
+      {
+        "wait": 600
+      }
+    ],
+    "crop": ".oe-dialog",
+    "note": "Adds a design-only GRBL device named Example gantry (never made active)."
+  },
+  {
+    "name": "device-settings-galvo",
+    "device": "win-2560",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "exec": "doc.new",
+        "params": {}
+      },
+      {
+        "menu": [
+          "File",
+          "Laser",
+          "Devices…"
+        ]
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "click": {
+          "css": ".oe-dialog tr",
+          "text": "ComMarker B6 MOPA 60W (EzCad)"
+        }
+      },
+      {
+        "click": "Duplicate",
+        "in": ".oe-dialog"
+      },
+      {
+        "wait": 1000
+      },
+      {
+        "click": "Edit…",
+        "in": ".oe-dialog"
+      },
+      {
+        "wait": 1000
+      }
+    ],
+    "crop": ".oe-dialog"
+  },
+  {
+    "name": "device-settings-ports",
+    "device": "win-2560",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "exec": "doc.new",
+        "params": {}
+      },
+      {
+        "menu": [
+          "File",
+          "Laser",
+          "Devices…"
+        ]
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "click": {
+          "css": ".oe-dialog tr",
+          "text": "ComMarker B6 MOPA 60W (EzCad)"
+        }
+      },
+      {
+        "click": "Edit…",
+        "in": ".oe-dialog"
+      },
+      {
+        "wait": 1000
+      },
+      {
+        "click": "Ports and laser"
+      },
+      {
+        "wait": 500
+      }
+    ],
+    "crop": ".oe-dialog"
+  },
+  {
+    "name": "phone-desktop-features",
+    "device": "iphone15-portrait",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "exec": "doc.new",
+        "params": {}
+      },
+      {
+        "tab": "More",
+        "sheet": "full"
+      },
+      {
+        "click": {
+          "css": ".phone-more summary",
+          "text": "Desktop features"
+        }
+      },
+      {
+        "wait": 400
+      },
+      {
+        "scroll": ".phone-more details:last-of-type summary"
+      },
+      {
+        "wait": 300
+      }
+    ]
+  },
+  {
+    "name": "preferences-dialog",
+    "device": "win-1920",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "exec": "doc.new",
+        "params": {}
+      },
+      {
+        "click": "Preferences"
+      },
+      {
+        "wait": ".oe-dialog"
+      }
+    ],
+    "crop": ".oe-dialog"
+  },
+  {
+    "name": "preferences-and-bundles",
+    "device": "win-1920",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "exec": "doc.new",
+        "params": {}
+      },
+      {
+        "menu": [
+          "File",
+          "LightBurn",
+          "Preferences and bundles…"
+        ]
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "click": "Automatic backups",
+        "in": ".oe-dialog"
+      },
+      {
+        "wait": 400
+      }
+    ],
+    "crop": ".oe-dialog"
+  },
+  {
+    "name": "camera-window",
+    "device": "win-1920",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "click": "Search"
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "type": "Camera"
+      },
+      {
+        "wait": 400
+      },
+      {
+        "key": "Enter"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "click": "Alignment",
+        "in": ".oe-dialog"
+      },
+      {
+        "wait": 400
+      }
+    ],
+    "crop": ".oe-dialog"
+  },
+  {
+    "name": "keyboard-shortcuts",
+    "device": "win-1920",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "exec": "doc.new",
+        "params": {}
+      },
+      {
+        "key": "Shift+?"
+      },
+      {
+        "wait": ".oe-dialog"
+      }
+    ],
+    "crop": ".oe-dialog"
+  },
+  {
+    "name": "bug-report",
+    "device": "win-1920",
+    "example": "two-tone-coin",
+    "steps": [
+      {
+        "exec": "doc.new",
+        "params": {}
+      },
+      {
+        "menu": [
+          "Help",
+          "Report a bug…"
+        ]
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "wait": 800
+      }
+    ],
+    "crop": ".oe-dialog"
+  },
+  {
+    "name": "maintenance-chip",
+    "device": "win-1920",
+    "example": "serial-tags",
+    "steps": [
+      {
+        "menu": [
+          "File",
+          "Settings",
+          "Preferences…"
+        ]
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "scroll": ".prod-maint"
+      },
+      {
+        "click": "Add a reminder",
+        "in": ".prod-maint"
+      },
+      {
+        "type": "1",
+        "into": "or every (runs)"
+      },
+      {
+        "click": "Save",
+        "in": ".prod-maint"
+      },
+      {
+        "wait": 800
+      },
+      {
+        "escape": true
+      },
+      {
+        "workspace": "laser"
+      },
+      {
+        "wait": 1500
+      },
+      {
+        "click": {
+          "css": ".btn-start",
+          "text": "Start"
+        }
+      },
+      {
+        "wait": 10000
+      },
+      {
+        "wait": 5000
+      }
+    ],
+    "crop": ".topbar-stop",
+    "note": "Leaves a 'Clean the lens' reminder every 1 run on the engine."
+  },
+  {
+    "name": "bracket-test-bar",
+    "device": "win-1920",
+    "example": "palette-coin",
+    "steps": [
+      {
+        "click": {
+          "css": "section.dock[aria-label='Material Library'] .dock-toggle"
+        }
+      },
+      {
+        "wait": 500
+      },
+      {
+        "click": {
+          "css": "section.dock[aria-label='Material Library'] [role=treeitem]",
+          "text": "Gold"
+        }
+      },
+      {
+        "click": "Bracket test…"
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "click": "Create test",
+        "in": ".oe-dialog"
+      },
+      {
+        "wait": 1500
+      },
+      {
+        "click": "Boxes",
+        "in": ".mt-hud"
+      },
+      {
+        "wait": 600
+      }
+    ],
+    "crop": ".mt-hud",
+    "note": "Creates the default bracket test of the Gold preset in a new document."
   }
 ]

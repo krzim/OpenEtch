@@ -24,6 +24,7 @@ import { FilePick, NumBox, Segmented, parseBox } from "./FilesUiParts.tsx";
 import { LightBurnPrefsImport, applyLightBurnPrefs } from "./LightBurnPrefsImport.tsx";
 import { planLightBurnPrefs } from "./lightburnPrefs.ts";
 import { errorText } from "../api/errorText.ts";
+import { HelpLink } from "../guide/HelpLink.tsx";
 
 type Notify = (msg: string, kind?: "info" | "error") => void;
 
@@ -90,6 +91,7 @@ export function BackupsDialog(p: { project: string | null; onRestore: (kind: "au
   const set = (k: keyof FileSettings) => (v: string) => setDraft((d) => (d ? { ...d, [k]: v } : d));
   return (
     <Modal
+      help="files-and-projects#autosave-and-backups"
       title={t("files.backupsTitle")}
       onClose={p.onClose}
       wide
@@ -160,6 +162,7 @@ export function TemplatesDialog(p: { onOpen: (name: string) => void; onClose: ()
   };
   return (
     <Modal
+      help="templates#save-and-open-templates"
       title={t("files.templatesTitle")}
       onClose={p.onClose}
       footer={
@@ -215,6 +218,7 @@ export function SaveTemplateDialog(p: { initial: string; onSaved: (name: string)
   };
   return (
     <Modal
+      help="templates#save-and-open-templates"
       title={t("files.saveTemplateTitle")}
       onClose={p.onClose}
       onSubmit={submit}
@@ -284,6 +288,7 @@ export function PrefsBundlesDialog(p: { onClose: () => void; notify: Notify; rep
   const partLabel = (k: (typeof PARTS)[number]) => t(PART_LABELS[k]);
   return (
     <Modal
+      help="settings#preferences-and-bundles"
       title={t("files.prefsTitle")}
       // Escape with the confirmation open closes only the confirmation.
       onClose={() => (confirm ? setConfirm(null) : p.onClose())}
@@ -372,7 +377,7 @@ export function PrefsBundlesDialog(p: { onClose: () => void; notify: Notify; rep
           ))}
         </div>
       </details>
-      <div className="section-label">{t("files.bundles")}</div>
+      <div className="section-label">{t("files.bundles")} <HelpLink to="settings#bundles" topic={t("files.bundles")} /></div>
       {PARTS.map((k) => (
         <CheckField key={k} label={partLabel(k)} checked={parts[k]} onChange={(v) => setParts((x) => ({ ...x, [k]: v }))} />
       ))}
@@ -463,6 +468,7 @@ export function NotesWindow(p: { notes: Notes; canEdit: boolean; onSave: (n: Par
   };
   return (
     <Modal
+      help="files-and-projects#project-notes"
       title={t("files.notesTitle")}
       onClose={p.onClose}
       wide

@@ -30,6 +30,7 @@ import {
   type TextObject,
 } from "./textModel.ts";
 import { VarHelp } from "./VarHelp.tsx";
+import { HelpLink } from "../guide/HelpLink.tsx";
 
 type Run = (inv: Invocation | Invocation[]) => Promise<unknown>;
 
@@ -178,6 +179,7 @@ export function TextSection(p: TextPropsCommon & { o: TextObject }) {
     <section className="prop-section tx-section" aria-label={t("text.title")}>
       <h3>
         {t("text.title")}
+        <HelpLink to="text#text-properties" topic={t("text.title")} />
         {missing && <span className="tx-badge warn">{t("text.missing")}</span>}
         {mode !== "normal" && <span className="tx-badge">{t("text.variableBadge")}</span>}
       </h3>
@@ -212,7 +214,7 @@ export function TextSection(p: TextPropsCommon & { o: TextObject }) {
       </div>
       {isStroke && <p className="hint">{t("text.strokeHint")}</p>}
 
-      <h4>{t("text.bend")}</h4>
+      <h4>{t("text.bend")} <HelpLink to="text#bend" topic={t("text.bend")} /></h4>
       <div className="field">
         <span className="field-label">{t("text.bendAngle")}</span>
         <BendSlider value={g.bend_deg} label={t("text.bendAngle")} disabled={!!g.path} onCommit={(bend_deg) => void up({ bend_deg })} />
@@ -222,7 +224,7 @@ export function TextSection(p: TextPropsCommon & { o: TextObject }) {
         <CheckField label={t("text.distort")} checked={g.distort} onChange={(distort) => void up({ distort })} />
       </div>
 
-      <h4>{t("text.maxWidthHead")}</h4>
+      <h4>{t("text.maxWidthHead")} <HelpLink to="text#max-width" topic={t("text.maxWidthHead")} /></h4>
       <div className="field-grid">
         <NumberField label={t("text.maxWidth")} unit="mm" value={g.max_width_mm} min={0} digits={3} placeholder={t("text.none")} onCommit={(v) => v !== null && void up({ max_width_mm: v })} />
         <CheckField label={t("text.squeeze")} checked={g.squeeze} onChange={(squeeze) => void up({ squeeze })} />
@@ -230,7 +232,7 @@ export function TextSection(p: TextPropsCommon & { o: TextObject }) {
 
       <FitSection o={o} doc={p.doc} run={run} report={report} onWarnings={(r) => warnFrom(r, notify)} />
 
-      <h4>{t("text.pathHead")}</h4>
+      <h4>{t("text.pathHead")} <HelpLink to="text#text-on-a-path" topic={t("text.pathHead")} /></h4>
       {g.path ? (
         <>
           <p className="hint">{t("text.onPath", { name: pathObj?.name ?? g.path.object })}</p>
@@ -252,7 +254,7 @@ export function TextSection(p: TextPropsCommon & { o: TextObject }) {
         </div>
       )}
 
-      <h4>{t("text.variableHead")}</h4>
+      <h4>{t("text.variableHead")} <HelpLink to="variable-text-and-barcodes#text-modes" topic={t("text.variableHead")} /></h4>
       <label className="field">
         <span className="field-label">{t("text.mode")}</span>
         <span className="field-input">
@@ -300,7 +302,7 @@ export function BarcodeSection(p: Pick<TextPropsCommon, "run" | "report"> & { id
   if (!o || !params) return null;
   return (
     <section className="prop-section tx-section" aria-label={t("barcode.title")}>
-      <h3>{t("barcode.title")}</h3>
+      <h3>{t("barcode.title")} <HelpLink to="variable-text-and-barcodes#barcodes" topic={t("barcode.title")} /></h3>
       <BarcodeForm live value={params} onChange={(v) => void p.run(barcodeRedraw(o.id, v)).catch(p.report)} />
     </section>
   );
@@ -311,7 +313,7 @@ export function ApplyPathCard(p: Pick<TextPropsCommon, "run" | "report"> & { tex
   const t = useT();
   return (
     <section className="prop-section tx-section">
-      <h3>{t("text.applyPath")}</h3>
+      <h3>{t("text.applyPath")} <HelpLink to="text#text-on-a-path" topic={t("text.applyPath")} /></h3>
       <p className="hint">{t("text.applyPathHint")}</p>
       <button className="btn btn-primary" onClick={() => void p.run(applyPath(p.text, p.path)).catch(p.report)}>
         {t("text.applyPath")}

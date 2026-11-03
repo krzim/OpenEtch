@@ -34,7 +34,7 @@ Then the body:
 - Keys: in code spans, `Ctrl+Z`. No raw HTML anywhere (no `<kbd>`, no comments).
 - Tables: GitHub pipe tables. Fenced code blocks for commands.
 
-[example.md](example.md) uses every one of these.
+The pages in this folder use every one of these; [the-workspace.md](the-workspace.md) and [getting-started.md](getting-started.md) are good models.
 
 ## Writing style
 

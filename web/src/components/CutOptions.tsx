@@ -41,6 +41,7 @@ import { useT } from "../workspace/usePrefs.ts";
 import { CheckField, NumberField } from "./ui.tsx";
 import { TabFields } from "../tools/TabFields.tsx";
 import "./job.css";
+import { HelpLink } from "../guide/HelpLink.tsx";
 
 type Run = (inv: Invocation | Invocation[]) => Promise<unknown>;
 
@@ -115,6 +116,7 @@ export function CutOptionsSection(p: {
     <details className="cut-opts" open={count > 0 || undefined}>
       <summary>
         {t("cut.more")}
+        <HelpLink to="layers-and-settings#more-settings" topic={t("cut.more")} />
         {count > 0 && <span className="pill">{count}</span>}
       </summary>
       {p.sub === null && (
@@ -233,7 +235,7 @@ export function CutOptionsSection(p: {
       )}
 
       <fieldset className="job-fieldset">
-        <legend>{t("cut.pauses")}</legend>
+        <legend>{t("cut.pauses")} <HelpLink to="running-a-job#pause-at-a-layer" topic={t("cut.pauses")} /></legend>
         <NumberField label={t("cut.pauseBefore")} unit="ms" value={r.pause_before_ms} min={0} max={600000} digits={1} onCommit={num((pause_before_ms) => opt({ pause_before_ms }))} />
         <NumberField label={t("cut.pauseAfter")} unit="ms" value={r.pause_after_ms} min={0} max={600000} digits={1} onCommit={num((pause_after_ms) => opt({ pause_after_ms }))} />
         {/* Pause at a layer for the operator (production; galvo jobs): Continue in the app or the foot switch. */}
@@ -284,7 +286,7 @@ export function ShapeCutProperties(p: { doc: GDocument; ids: string[]; run: Run;
   const exec = (inv: Invocation) => void p.run(inv).catch(p.report);
   return (
     <section className="prop-section">
-      <h3>{t("shape.title")}</h3>
+      <h3>{t("shape.title")} <HelpLink to="layers-and-settings#shape-cut-settings" topic={t("shape.title")} /></h3>
       <NumberField
         label={t("shape.powerScale")}
         unit="%"

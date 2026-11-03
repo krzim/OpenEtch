@@ -377,7 +377,7 @@ export function ReliefDialog(p: { preview: Preview; doc: GDocument | null; onClo
   const label = t("rel.viewLabel", { depth: depthText(deepest), layers: shownLayers.map((l) => l.name).join(", ") || "—" });
 
   return (
-    <WsModal title={t("rel.title")} size={phone ? "full" : "xl"} onClose={p.onClose}>
+    <WsModal help="relief-preview#relief-window" title={t("rel.title")} size={phone ? "full" : "xl"} onClose={p.onClose}>
       <div className="rel-body">
         <div className="rel-stage">
           <canvas

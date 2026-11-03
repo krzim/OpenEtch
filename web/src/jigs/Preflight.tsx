@@ -14,6 +14,7 @@ import { useLaserLive } from "../laser/useLaserLive.ts";
 import { useT, useTD } from "../workspace/usePrefs.ts";
 import { J, parsePreflight, preflightKey, splitFindings, type DeviceZone, type PreflightResult, type PreflightWarning } from "./jigModel.ts";
 import "./jigs.css";
+import { HelpLink } from "../guide/HelpLink.tsx";
 
 // ---- shared stores: the device's keep-out zones and the findings per revision -------------------------------------
 
@@ -160,7 +161,7 @@ export function PreflightNotes({ variant }: { variant: "toolbar" | "dock" | "she
   if (n === 0 && disabled.length === 0) return null;
   return (
     <div className={`pf-notes pf-notes-${variant}`} role="status" aria-live="polite">
-      {n > 0 && <div className="pf-head">{refusals.length ? t("pf.refused") : warnings.length === 1 ? t("pf.one") : t("pf.count", { n })}</div>}
+      {n > 0 && <div className="pf-head">{refusals.length ? t("pf.refused") : warnings.length === 1 ? t("pf.one") : t("pf.count", { n })} <HelpLink to="preflight-and-keep-out#pre-flight-warnings" topic={t("guide.topic.preflight")} /></div>}
       <ul className="pf-list">
         {refusals.map((w, i) => (
           <li key={`r${i}`} className="pf-item pf-item-refused">

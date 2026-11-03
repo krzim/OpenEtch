@@ -612,7 +612,7 @@ function stepsFor(d) {
   });
   add("guide-page", async ({ page }) => {
     await pressFind(page, ".guide-hit", "Energy density");
-    if (!(await page.waitFor(".guide-table", { timeout: 4000 }))) throw new Error("the example page did not show");
+    if (!(await page.waitFor(".guide-table", { timeout: 4000 }))) throw new Error("the page did not show");
     await sleep(300);
   });
   add("guide-contents", async ({ page }) => {

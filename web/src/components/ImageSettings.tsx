@@ -40,6 +40,7 @@ import { useT } from "../workspace/usePrefs.ts";
 import type { MsgKey } from "../workspace/i18n.ts";
 import { libsApi } from "../libs/api.ts";
 import { ConfirmDialog, FilePick, NameDialog, errText, saveDownload } from "../libs/ui.tsx";
+import { HelpLink } from "../guide/HelpLink.tsx";
 
 type Run = (inv: Invocation | Invocation[]) => Promise<unknown>;
 /** An image's geometry as the engine sends it (`adjust` only when it changes something). */
@@ -76,7 +77,7 @@ export function ImageSettings({
   return (
     <>
       <h4>
-        Image · {images.length} image{images.length === 1 ? "" : "s"}
+        Image · {images.length} image{images.length === 1 ? "" : "s"} <HelpLink to="images#image-settings-on-a-layer" topic={t("guide.topic.imageSettings")} />
       </h4>
       <label className="field">
         <span className="field-label">{t("img.dither")}</span>
@@ -285,6 +286,7 @@ export function AdjustImageDialog({
   const set = (k: keyof ImageAdjust, v: number) => setDraft({ ...draft, [k]: v });
   return (
     <Modal
+      help="images#adjust-image"
       title={t("img.adjustImageV1", { v1: layer.name })}
       wide
       onClose={onClose}

@@ -133,6 +133,7 @@ function AppModeDialog({ onClose }: { onClose: () => void }) {
   };
   return (
     <Dialog
+      help="getting-started#install-as-an-app"
       title={t("app.mode.title")}
       onClose={onClose}
       size="md"

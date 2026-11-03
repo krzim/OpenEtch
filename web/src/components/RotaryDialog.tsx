@@ -87,6 +87,7 @@ export function RotaryDialog(p: {
   const err = (k: string) => (problems as Record<string, string | undefined>)[k];
   return (
     <Modal
+      help="devices-and-calibration#rotary-setup"
       title={t("rot.title")}
       onClose={p.onClose}
       onSubmit={save}

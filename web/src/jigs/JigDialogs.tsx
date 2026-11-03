@@ -28,6 +28,7 @@ import {
   type PocketShape,
 } from "./jigModel.ts";
 import { loadDeviceZones, useDeviceZones } from "./Preflight.tsx";
+import { HelpLink } from "../guide/HelpLink.tsx";
 
 type Run = (inv: Invocation | Invocation[]) => Promise<unknown>;
 type Notify = (msg: string, kind?: "info" | "error") => void;
@@ -76,6 +77,7 @@ export function FitDialog(p: { ids: string[]; run: Run; notify: Notify; onClose:
   };
   return (
     <Dialog
+      help="fit-to-stock#fit-to-stock-options"
       title={t("fit.title")}
       size="sm"
       onClose={p.onClose}
@@ -142,6 +144,7 @@ export function NewJigDialog(p: { doc: GDocument | null; run: Run; notify: Notif
   };
   return (
     <Dialog
+      help="jigs#new-jig"
       title={t("jig.newTitle")}
       size="md"
       onClose={p.onClose}
@@ -293,6 +296,7 @@ export function JigsDialog(p: JigsDialogProps) {
   return (
     <>
       <Dialog
+        help="jigs#jigs-window"
         title={t("jig.title")}
         size="lg"
         onClose={p.onClose}
@@ -357,6 +361,7 @@ export function JigsDialog(p: JigsDialogProps) {
             <section className="jig-section">
               <h4>
                 {t("jig.on", { on: enabled, n: jig.pockets.length })}
+                <HelpLink to="jigs#empty-pockets" topic={t("jig.on", { on: enabled, n: jig.pockets.length })} />
                 <button className="btn small" onClick={() => void exec(J.setPockets(jig.id, "all", true))} disabled={enabled === jig.pockets.length}>
                   {t("jig.allOn")}
                 </button>
@@ -400,7 +405,7 @@ export function JigsDialog(p: JigsDialogProps) {
               </div>
             </section>
             <section className="jig-section">
-              <h4>{t("jig.placements", { n: placed.length })}</h4>
+              <h4>{t("jig.placements", { n: placed.length })} <HelpLink to="jigs#place-design" topic={t("jig.placements", { n: placed.length })} /></h4>
               <button
                 className="btn"
                 disabled={p.selection.length === 0}
@@ -425,7 +430,7 @@ export function JigsDialog(p: JigsDialogProps) {
             </section>
             <JigEditor key={jig.id} jig={jig} exec={exec} />
             <section className="jig-section">
-              <h4>{t("jig.keepOuts")}</h4>
+              <h4>{t("jig.keepOuts")} <HelpLink to="preflight-and-keep-out#jig-keep-out-zones" topic={t("jig.keepOuts")} /></h4>
               <p className="hint">{t("jig.keepOutHint")}</p>
               <ul className="jig-zones">
                 {(jig.keep_out ?? []).length === 0 && <li className="hint">{t("jig.keepOutNone")}</li>}
@@ -445,7 +450,7 @@ export function JigsDialog(p: JigsDialogProps) {
           </>
         )}
         <section className="jig-section">
-          <h4>{t("jig.deviceZones")}</h4>
+          <h4>{t("jig.deviceZones")} <HelpLink to="preflight-and-keep-out#device-keep-out-zones" topic={t("jig.deviceZones")} /></h4>
           <p className="hint">{t("jig.deviceZonesHint")}</p>
           <ul className="jig-zones">
             {zones.length === 0 && <li className="hint">{t("jig.keepOutNone")}</li>}

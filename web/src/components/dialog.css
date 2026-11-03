@@ -46,6 +46,13 @@
   min-height: 40px;
 }
 
+.oe-dialog-titlebox {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
 .oe-dialog-title {
   overflow: hidden;
   text-overflow: ellipsis;

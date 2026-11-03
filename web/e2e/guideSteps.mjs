@@ -3,10 +3,10 @@
 // (src/guide/docs.test.ts), so a bad shot fails `npm test` before anyone runs a browser.
 
 /** One action key per step; the other keys of a step are its options. */
-export const STEP_KINDS = ["exec", "click", "dblclick", "context", "menu", "type", "key", "hash", "wait", "select", "workspace", "tab", "escape", "scroll"];
+export const STEP_KINDS = ["exec", "click", "dblclick", "context", "menu", "type", "key", "hash", "wait", "select", "workspace", "tab", "escape", "scroll", "hover", "set"];
 
 /** Options each step kind accepts besides its own key. */
-const OPTIONS = { exec: ["params"], click: ["in"], dblclick: ["in"], context: ["in"], type: ["into"], tab: ["sheet"] };
+const OPTIONS = { exec: ["params"], click: ["in"], dblclick: ["in"], context: ["in"], hover: ["in"], type: ["into"], set: ["into"], tab: ["sheet"] };
 
 /** Engine commands a shot may not run: they read or write files (a shot shows only the built-in examples and
  *  shapes drawn fresh) or print. */
@@ -42,8 +42,9 @@ function targetProblem(t) {
     const keys = Object.keys(t);
     if (typeof t.css === "string" && keys.every((k) => k === "css" || k === "text")) return null;
     if (typeof t.object === "string" && keys.length === 1) return null;
+    if (Array.isArray(t.point) && t.point.length === 2 && t.point.every(Number.isFinite) && keys.length === 1) return null;
   }
-  return 'a target must be "Accessible name", { "css": "selector", "text"?: "..." } or { "object": "shape name" }';
+  return 'a target must be "Accessible name", { "css": "selector", "text"?: "..." }, { "object": "shape name" } or { "point": [x_mm, y_mm] }';
 }
 
 /** What is wrong with one step, or null. */
@@ -65,6 +66,7 @@ export function stepProblem(step) {
       return null;
     case "click":
     case "dblclick":
+    case "hover":
     case "context": {
       if (kind === "context" && v === "selection") return null;
       const p = targetProblem(v);
@@ -77,10 +79,13 @@ export function stepProblem(step) {
     case "type":
       if (typeof v !== "string") return "type: the text to type";
       return step.into === undefined || targetProblem(step.into) === null ? null : "type: into must be a target";
+    case "set":
+      if (typeof v !== "string") return "set: the value (a select's option value, a colour such as #c08a00, a date)";
+      return step.into !== undefined && targetProblem(step.into) === null ? null : "set: into must be a target (the field, or its label)";
     case "key":
       return typeof v === "string" && parseKey(v) ? null : `key: "${v}" is not a key such as "Escape" or "Ctrl+Z"`;
     case "hash":
-      return typeof v === "string" && /^#\//.test(v) ? null : 'hash: a route such as "#/guide/example#tables"';
+      return typeof v === "string" && /^#\//.test(v) ? null : 'hash: a route such as "#/guide/the-workspace#ribbon"';
     case "wait":
       if (typeof v === "number") return v >= 0 && v <= 10000 ? null : "wait: at most 10000 ms";
       return typeof v === "string" && v.trim() ? null : "wait: a CSS selector or a number of ms";

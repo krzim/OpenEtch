@@ -32,6 +32,7 @@ import {
 import { encodePhoto } from "./photo.ts";
 import { openMaterials, photoUrl, useHueModel } from "./store.ts";
 import "./materials.css";
+import { HelpLink } from "../guide/HelpLink.tsx";
 
 type Notify = (msg: string, kind?: "info" | "error") => void;
 
@@ -109,7 +110,7 @@ export function HueControls(p: { library: string; entry: LibEntry; notify: Notif
   return (
     <div className={`mt-hue${p.compact ? " compact" : ""}`}>
       <div className="mt-hue-row">
-        <span className="mt-hue-label">{t("mat.hue")}</span>
+        <span className="mt-hue-label">{t("mat.hue")}</span> <HelpLink to="mopa-colour#hue-steps" topic={t("mat.hue")} />
         <button type="button" className="btn small mt-warm" disabled={busy || !p.entry.summary} title={t("mat.warmerTitle")} onClick={() => step(1)}>
           <Icon name="flame" size={14} /> {t("mat.warmer")}
         </button>
@@ -129,7 +130,7 @@ export function HueControls(p: { library: string; entry: LibEntry; notify: Notif
       </div>
       {!p.compact && (
         <div className="mt-hue-row">
-          <span className="mt-hue-label">{t("mat.adapt")}</span>
+          <span className="mt-hue-label">{t("mat.adapt")}</span> <HelpLink to="mopa-colour#finish-compensation" topic={t("mat.adapt")} />
           <select className="mini-select" value={surface} aria-label={t("mat.adapt")} onChange={(e) => setSurface(e.target.value as Surface)}>
             {SURFACES.map((s) => (
               <option key={s} value={s}>
@@ -284,6 +285,7 @@ export function FinishDialog(p: { library: string; entryId: string; photo?: bool
 
   return (
     <WsModal
+      help="mopa-colour#finish-dialog"
       title={t("mat.finishTitle", { path: entry.path })}
       onClose={p.onClose}
       onSubmit={() => void save()}

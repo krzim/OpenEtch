@@ -113,7 +113,7 @@ export function useDocking(p: {
   ];
   const none = selected.length === 0;
   const window = (
-    <Dock id="docking" title={t("dock.title")} defaultCollapsed>
+    <Dock help="drawing-and-editing#docking" id="docking" title={t("dock.title")} defaultCollapsed>
       <div className="docking-buttons" role="group" aria-label={t("dock.title")}>
         {dirs.map((d) => (
           <button key={d.dir} className="btn docking-btn" disabled={none} title={d.label} aria-label={d.label} onClick={() => dock(d.dir)}>

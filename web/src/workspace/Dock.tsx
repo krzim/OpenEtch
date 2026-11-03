@@ -15,9 +15,11 @@ import { updatePrefs } from "./prefs.ts";
 import { usePrefs, useT } from "./usePrefs.ts";
 import { registerWindow, unregisterWindow, useHostsActive, useLayout, useMountedWindows, useSlot } from "./windows.ts";
 import { windowMenuItems } from "./windowMenu.ts";
+import { HelpLink } from "../guide/HelpLink.tsx";
 import "./workspace.css";
 
-export function Dock(p: { id: string; title: string; actions?: ReactNode; children: ReactNode; defaultCollapsed?: boolean }) {
+/** `help`: the user guide's "page#anchor" for this window (a literal: helpLinks.test.ts checks it), a "?" in its head. */
+export function Dock(p: { id: string; title: string; actions?: ReactNode; children: ReactNode; defaultCollapsed?: boolean; help?: string }) {
   const t = useT();
   const docks = usePrefs().docks;
   const layout = useLayout();
@@ -41,10 +43,16 @@ export function Dock(p: { id: string; title: string; actions?: ReactNode; childr
   const toggle = () => updatePrefs((cur) => ({ docks: { ...cur.docks, [p.id]: !collapsed } }));
   const openMenu = (e: React.MouseEvent) => setMenu({ x: e.clientX, y: e.clientY });
 
+  const help = p.help ? <HelpLink to={p.help} topic={p.title} /> : null;
   const frame = (
     <section className={`dock${collapsed ? " collapsed" : ""}${tabbed ? " tabbed" : ""}`} aria-label={p.title}>
       {tabbed ? (
-        p.actions && <div className="dock-head dock-head-tabbed">{<div className="dock-actions">{p.actions}</div>}</div>
+        (p.actions || help) && (
+          <div className="dock-head dock-head-tabbed">
+            {help}
+            {p.actions && <div className="dock-actions">{p.actions}</div>}
+          </div>
+        )
       ) : (
         <div className="dock-head" onContextMenu={hostsActive ? (e) => (e.preventDefault(), openMenu(e)) : undefined}>
           <button className="dock-toggle" aria-expanded={!collapsed} onClick={floating ? undefined : toggle} data-drag-handle={floating ? "" : undefined}>
@@ -53,6 +61,7 @@ export function Dock(p: { id: string; title: string; actions?: ReactNode; childr
             </span>
             <span className="dock-title">{p.title}</span>
           </button>
+          {help}
           {p.actions && !collapsed && <div className="dock-actions">{p.actions}</div>}
           {hostsActive && (
             <button className="icon-btn small dock-menu-btn" title={t("win.menuTitle")} aria-label={t("win.menuTitle")} aria-haspopup="menu" onClick={openMenu}>

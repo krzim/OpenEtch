@@ -1427,7 +1427,7 @@ export function App() {
   );
 
   const leftContent = (
-    <Dock id="browser" title={t("win.browser")}>
+    <Dock help="the-workspace#browser-panel" id="browser" title={t("win.browser")}>
     <BrowserPanel
       doc={doc}
       selection={selection}
@@ -1496,7 +1496,7 @@ export function App() {
         {designUi.dock}
         {docking.window}
         {gantryDocks}
-        <Dock id="properties" title={t("win.properties")}>
+        <Dock help="drawing-and-editing#numeric-fields" id="properties" title={t("win.properties")}>
         <PropertiesPanel
           doc={doc}
           selection={selection}
@@ -1559,7 +1559,7 @@ export function App() {
           {libsUi.dock}
           {prodUi.dock}
           {gantryDocks}
-          <Dock id="machine" title={t("win.machine")}>
+          <Dock help="running-a-job#machine-and-runs" id="machine" title={t("win.machine")}>
           <MachineCard machine={machine} httpError={engine.httpError}>
             {/* Engines without the device registry: LightBurn's devices and the profile diffs. */}
             {!canDevices && (

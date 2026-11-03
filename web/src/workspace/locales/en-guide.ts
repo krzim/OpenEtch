@@ -25,4 +25,8 @@ export const EN_GUIDE = {
   "guide.helpFor": "Help: {topic}",
   "guide.opensNewTab": "(opens in a new tab)",
   "guide.imageMissing": "Picture not found: {name}",
+  // Topics of "?" buttons whose panel has no title string of its own ("Help: <topic>").
+  "guide.topic.imageSettings": "Image settings",
+  "guide.topic.offField": "Objects outside the field",
+  "guide.topic.preflight": "Pre-flight warnings",
 } as const;

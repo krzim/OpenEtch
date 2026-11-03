@@ -16,6 +16,7 @@ import { materialsApi } from "./api.ts";
 import { bracketTests, parseHueModel, pctText, sameLine, selectedCell, type BracketCell } from "./model.ts";
 import { hueModel, openMaterials } from "./store.ts";
 import "./materials.css";
+import { HelpLink } from "../guide/HelpLink.tsx";
 
 type Notify = (msg: string, kind?: "info" | "error") => void;
 
@@ -82,6 +83,7 @@ export function BracketDialog(p: { library: string; entryId: string; notify: Not
   );
   return (
     <WsModal
+      help="test-grids#bracket-test"
       title={t("mat.bracketTitle", { path: entry.path })}
       onClose={p.onClose}
       onSubmit={() => void create()}
@@ -179,7 +181,7 @@ export function BracketHud(p: { doc: GDocument | null; selection: readonly strin
     <HudItem id="bracket-bar" slot="tc" rank={22} minW={220} maxW={560}>
       <div className="vp-overlay mt-hud" role="group" aria-label={t("mat.bracketTitle", { path: test.path })}>
         <div className="mt-hud-row mt-hud-head">
-          <span className="mt-hud-title">{c ? cellText(c) : t("mat.hudSelect", { path: test.path })}</span>
+          <span className="mt-hud-title">{c ? cellText(c) : t("mat.hudSelect", { path: test.path })}</span> <HelpLink to="test-grids#pick-the-best-box" topic={t("mat.hudBoxes")} />
           <button type="button" className="btn small" aria-expanded={open} onClick={() => setOpen(!open)}>
             <Icon name="grid" size={14} /> {t("mat.hudBoxes")}
           </button>

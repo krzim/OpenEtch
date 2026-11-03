@@ -19,6 +19,7 @@ import { placePopover, type Rect } from "../laser/placePopover.ts";
 import { Icon, NumberField } from "./ui.tsx";
 import "./job.css";
 import { errorText } from "../api/errorText.ts";
+import { HelpLink } from "../guide/HelpLink.tsx";
 
 type Notify = (msg: string, kind?: "info" | "error") => void;
 
@@ -236,7 +237,9 @@ export function FramingControls(p: {
       {open &&
         createPortal(
         <div className="frame-pop" role="dialog" aria-label={t("frame.options")} ref={pop} tabIndex={-1} style={place}>
-          <div className="frame-pop-h">{t("frame.style")}</div>
+          <div className="frame-pop-h">
+            {t("frame.style")} <HelpLink to="preview-and-framing#framing-options" topic={t("frame.options")} />
+          </div>
           <div className="segmented" role="radiogroup" aria-label={t("frame.style")}>
             {styles.map((s) => (
               <button key={s.v} role="radio" aria-checked={o.style === s.v} className={o.style === s.v ? "active" : ""} title={s.title} onClick={() => setFrameOptions({ style: s.v })}>

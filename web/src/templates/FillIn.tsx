@@ -82,6 +82,7 @@ export function FillInDialog(p: { run: Run; onClose: () => void; notify: (m: str
   const fieldsOk = spec && spec.fields.length > 0;
   return (
     <Dialog
+      help="templates#fill-in-a-template"
       title={t("tpl.fillTitle")}
       size="md"
       onClose={p.onClose}

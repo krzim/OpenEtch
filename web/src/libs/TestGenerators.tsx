@@ -105,6 +105,7 @@ async function create(p: GenProps, t: T, id: string, params: Record<string, unkn
 }
 
 function GenDialog(p: {
+  help?: string;
   title: string;
   props: GenProps;
   problem: string | null;
@@ -124,6 +125,7 @@ function GenDialog(p: {
   return (
     <WsModal
       title={p.title}
+      help={p.help}
       wide
       onClose={p.props.onClose}
       footer={
@@ -325,6 +327,7 @@ export function MaterialTestDialog(p: GenProps) {
   const boxes = m.rows.count * m.columns.count;
   return (
     <GenDialog
+      help="test-grids#material-test"
       title={t("ltest.materialTitle")}
       props={p}
       problem={problem}
@@ -511,6 +514,7 @@ export function IntervalTestDialog(p: GenProps) {
   const freq = frequencyRange(p.machine);
   return (
     <GenDialog
+      help="test-grids#interval-test"
       title={t("ltest.intervalTitle")}
       props={p}
       problem={intervalTestProblem(m)}
@@ -565,6 +569,7 @@ export function FocusTestDialog(p: GenProps) {
   const zAxis = !!axis && (axis.role === undefined || axis.role === null || axis.role === "z");
   return (
     <GenDialog
+      help="test-grids#focus-test"
       title={t("ltest.focusTitle")}
       props={p}
       problem={focusTestProblem(m)}

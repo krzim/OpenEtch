@@ -44,6 +44,7 @@ import { useLaserFacts } from "../laser/laserContext.ts";
 import { machineRows } from "../laser/machineRows.ts";
 import "../laser/laser.css";
 import { errorText } from "../api/errorText.ts";
+import { HelpLink } from "../guide/HelpLink.tsx";
 
 /**
  * Machine status as friendly rows (laser/machineRows.ts: "Focus light: Off"), with every raw key behind Advanced;
@@ -54,7 +55,7 @@ export function MachineCard({ machine, httpError, children }: { machine: Machine
   const view = machine ? machineRows(machine) : null;
   return (
     <section className="card">
-      <h3>{t("lp.machine")}</h3>
+      <h3>{t("lp.machine")} <HelpLink to="running-a-job#machine-and-runs" topic={t("lp.machine")} /></h3>
       {!view ? (
         <p className="muted">{httpError ? t("lz.mUnreachable") : t("lz.mLoading")}</p>
       ) : (
@@ -187,7 +188,7 @@ export function PendingApprovals(props: { machine: MachineStatus | null; docRevi
   return (
     <div className="pending-approvals" role="group" aria-label={t("lz.pendingTitle")}>
       <div className="pending-approvals-h">
-        {t("lz.pendingTitle")} <SimPinBadge machine={props.machine} />
+        {t("lz.pendingTitle")} <SimPinBadge machine={props.machine} /> <HelpLink to="running-a-job#approve-pin" topic={t("lz.pendingTitle")} />
       </div>
       {notice && (
         <p className="run-hint" role="status">
@@ -484,7 +485,7 @@ export function PreviewStatsCard(p: {
   };
   return (
     <section className="card">
-      <h3>{t("lp.toolpath")}</h3>
+      <h3>{t("lp.toolpath")} <HelpLink to="preview-and-framing#toolpath-card" topic={t("lp.toolpath")} /></h3>
       {p.error ? (
         <p className="run-error" role="alert">
           No preview: {p.error}

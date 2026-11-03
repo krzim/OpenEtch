@@ -184,14 +184,14 @@ export function LibraryDock(p: { doc: GDocument | null; activeLayer: string | nu
 
   if (lib.supported === false) {
     return (
-      <Dock id="library" title={t("lib.title")} defaultCollapsed>
+      <Dock help="material-libraries#material-library-window" id="library" title={t("lib.title")} defaultCollapsed>
         <p className="hint">{t("lib.unsupported")}</p>
       </Dock>
     );
   }
 
   return (
-    <Dock id="library" title={t("lib.title")} defaultCollapsed>
+    <Dock help="material-libraries#material-library-window" id="library" title={t("lib.title")} defaultCollapsed>
       <div className="lx-lib-head">
         <label className="lx-inline">
           <span className="sr-only">{t("lib.select")}</span>
@@ -598,6 +598,7 @@ function EntryMetaDialog(p: { entry: LibEntry | null; layer: Layer | null; mater
   const submit = () => ok && p.onOk({ ...m, material: m.material.trim(), title: m.title.trim(), description: m.description.trim() });
   return (
     <WsModal
+      help="material-libraries#create-a-preset"
       title={p.entry ? t("lib.editDescription") : t("lib.createFrom", { layer: p.layer?.name ?? "" })}
       onClose={p.onClose}
       onSubmit={submit}
@@ -675,6 +676,7 @@ function EditCutDialog(p: { entry: LibEntry; base: Record<string, unknown> | nul
   const num = (k: keyof CutEdit) => (v: number | null) => v !== null && setE((x) => ({ ...x, [k]: v }));
   return (
     <WsModal
+      help="material-libraries#edit-cut"
       title={t("lib.editCutOf", { path: p.entry.path })}
       onClose={p.onClose}
       onSubmit={() => !err && p.onOk(e, p.base)}

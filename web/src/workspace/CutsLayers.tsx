@@ -280,6 +280,7 @@ export function CutsLayers(p: CutsLayersProps) {
 
   return (
     <Dock
+      help="layers-and-settings#cuts-layers-window"
       id="cuts"
       title={t("layers.title")}
       actions={
@@ -659,7 +660,7 @@ export function CutsLayers(p: CutsLayersProps) {
 
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
       {editLayer && (
-        <WsModal title={t("layers.settingsTitle", { name: editLayer.name })} wide onClose={() => setEditing(null)}>
+        <WsModal help="layers-and-settings#cut-settings" title={t("layers.settingsTitle", { name: editLayer.name })} wide onClose={() => setEditing(null)}>
           <LayerSection layer={editLayer} machine={p.machine} run={run} report={report} doc={doc} has={p.has} />
         </WsModal>
       )}
@@ -685,6 +686,7 @@ function DeleteLayerDialog(p: { layer: Layer; doc: GDocument; onClose: () => voi
   const [to, setTo] = useState(others[0]?.id ?? "");
   return (
     <WsModal
+      help="layers-and-settings#delete-a-layer"
       title={t("layers.deleteTitle", { name: p.layer.name })}
       onClose={p.onClose}
       footer={

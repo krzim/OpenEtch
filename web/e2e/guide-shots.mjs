@@ -205,6 +205,7 @@ const CONTROLS = "button, a[href], [role=button], [role=menuitem], [role=menuite
 /** The centre of a target: an accessible name, { css, text } or { object } (a shape on the canvas). */
 async function locate(page, target, within) {
   if (target && typeof target === "object" && target.object) return objectPoint(page, target.object);
+  if (target && typeof target === "object" && Array.isArray(target.point)) return { ...(await canvasPoint(page, target.point[0], target.point[1])), hit: true };
   const scope = (sel) => (within ? sel.split(",").map((s) => `${within} ${s.trim()}`).join(", ") : sel);
   const c = typeof target === "string" ? await find(page, scope(CONTROLS), target) : await find(page, scope(target.css), target.text);
   if (!c) throw new Error(`not found: ${JSON.stringify(target)}${within ? ` in ${within}` : ""}`);
@@ -221,7 +222,13 @@ async function objectPoint(page, nameOrId) {
   const o = objects.find((x) => x.id === nameOrId) ?? objects.find((x) => x.name === nameOrId);
   if (!o?.bounds) throw new Error(`no shape "${nameOrId}" in the document`);
   const b = o.bounds;
-  const [x0, y0, x1, y1] = Array.isArray(b) ? b : [b.x0 ?? b.min_x, b.y0 ?? b.min_y, b.x1 ?? b.max_x, b.y1 ?? b.max_y];
+  // doc.inspect gives { min: [x, y], max: [x, y], center, size } (older shapes: [x0, y0, x1, y1] or named fields).
+  const [x0, y0, x1, y1] = Array.isArray(b)
+    ? b
+    : Array.isArray(b.min) && Array.isArray(b.max)
+      ? [b.min[0], b.min[1], b.max[0], b.max[1]]
+      : [b.x0 ?? b.min_x, b.y0 ?? b.min_y, b.x1 ?? b.max_x, b.y1 ?? b.max_y];
+  if (![x0, y0, x1, y1].every(Number.isFinite)) throw new Error(`shape "${nameOrId}" has no usable bounds`);
   const cx = (x0 + x1) / 2;
   const cy = (y0 + y1) / 2;
   const cands = [
@@ -231,7 +238,21 @@ async function objectPoint(page, nameOrId) {
     [x1, cy],
     [cx, y0],
   ];
-  return { candidates: await Promise.all(cands.map(([x, y]) => canvasPoint(page, x, y))) };
+  // Text and thin art: points across the middle too (a glyph's stroke, not the gap between letters).
+  for (const fx of [0.12, 0.25, 0.37, 0.5, 0.63, 0.75, 0.88]) for (const fy of [0.5, 0.35, 0.65]) cands.push([x0 + (x1 - x0) * fx, y0 + (y1 - y0) * fy]);
+  return { id: o.id, candidates: await Promise.all(cands.map(([x, y]) => canvasPoint(page, x, y))) };
+}
+
+/** Whether the shape `id` is what got selected: its Browser row when the Browser is on the page, else any selection. */
+async function selected(page, id) {
+  if ((await selectionCount(page)) === 0) return false;
+  if (!id) return true;
+  return page.evaluate((oid) => {
+    const rows = document.querySelectorAll("[data-kind=object][data-id]");
+    if (!rows.length) return true;
+    const row = document.querySelector(`[data-kind=object][data-id="${CSS.escape(oid)}"]`);
+    return !row || row.classList.contains("selected");
+  }, id);
 }
 
 async function pressTarget(page, d, target, within, how) {
@@ -250,7 +271,9 @@ async function pressTarget(page, d, target, within, how) {
     } else await page.press(p.x, p.y);
     await sleep(350);
     // A shape: stop at the first point that selected it.
-    if (!c.candidates || (await selectionCount(page)) > 0) return;
+    if (!c.candidates || (await selected(page, c.id))) return;
+    // Something else got selected (a shape under the one asked for): clear it and try the next point.
+    if ((await selectionCount(page)) > 0) await page.key("Escape");
   }
   if (c.candidates) throw new Error(`could not select ${JSON.stringify(target)} on the canvas`);
 }
@@ -262,6 +285,33 @@ async function runStep(page, d, step) {
     await sleep(600);
   } else if ("click" in step) await pressTarget(page, d, step.click, step.in, "press");
   else if ("dblclick" in step) await pressTarget(page, d, step.dblclick, step.in, "dbl");
+  else if ("set" in step) {
+    // A field a person sets with a native picker (a select, a colour, a date): its value, as React sees an edit.
+    const c = await locate(page, step.into);
+    const ok = await page.evaluate(
+      (x, y, value) => {
+        const at = document.elementFromPoint(x, y);
+        const el = at?.matches("input, select, textarea") ? at : at?.closest("label, .field")?.querySelector("input, select, textarea");
+        if (!el) return false;
+        const proto = el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        Object.getOwnPropertyDescriptor(proto, "value").set.call(el, value);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+        return true;
+      },
+      c.x,
+      c.y,
+      step.set,
+    );
+    if (!ok) throw new Error(`set: no field at ${JSON.stringify(step.into)}`);
+  } else if ("hover" in step) {
+    // The pointer stays there for the capture (a highlight under it), on a mouse device only.
+    if (d.touch) throw new Error("hover: only devices with a mouse");
+    const c = await locate(page, step.hover, step.in);
+    const p = c.candidates?.[0] ?? c;
+    await page.mouse("mouseMoved", p.x - 3, p.y, { button: "none" });
+    await page.mouse("mouseMoved", p.x, p.y, { button: "none" });
+  }
   else if ("context" in step) {
     if (step.context === "selection") {
       const box = await page.evaluate(() => {
@@ -304,10 +354,11 @@ async function runStep(page, d, step) {
           if (d.touch) await page.tap(p.x, p.y);
           else await page.click(p.x, p.y, { modifiers: i > 0 ? 8 : 0 });
           await sleep(350);
-          if ((await selectionCount(page)) > 0) {
+          if (await selected(page, c.id)) {
             done = true;
             break;
           }
+          if (i === 0 && (await selectionCount(page)) > 0) await page.key("Escape");
         }
         if (!done) throw new Error(`select: could not select "${name}"`);
       }
@@ -358,7 +409,10 @@ async function shoot(browser, shot, o) {
     await page.send("Page.addScriptToEvaluateOnNewDocument", {
       source: `addEventListener("DOMContentLoaded", () => { const s = document.createElement("style"); s.textContent = "*{caret-color:transparent!important}"; document.head.appendChild(s); });`,
     });
+    // The simulator idle: no frame and no run left over from the shot before (one that started a job or waits at a
+    // layer pause).
     await api(o.url, "/api/machine/frame/stop", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ origin: "ui" }) }).catch(() => {});
+    await api(o.url, "/api/machine/stop", { method: "POST" }).catch(() => {});
     const opened = await execute(o.url, "doc.new", { example: shot.example });
     if (opened && typeof opened === "object" && opened.error) throw new Error(`doc.new ${shot.example}: ${JSON.stringify(opened.error)}`);
     await page.goto(`${o.url}/`, { waitFor: ".btn-stop", timeout: 20000 });
@@ -373,7 +427,7 @@ async function shoot(browser, shot, o) {
       }
     }
     await page.evaluate(() => document.activeElement instanceof HTMLElement && !document.activeElement.matches("input, textarea") && document.activeElement.blur());
-    await page.mouse("mouseMoved", 1, 1, { button: "none" }).catch(() => {});
+    if (!("hover" in (shot.steps.at(-1) ?? {}))) await page.mouse("mouseMoved", 1, 1, { button: "none" }).catch(() => {});
     await page.settle(400);
     const left = await page.evaluate(scrubPage, { origin: o.url, host: o.host, private: o.privateWords });
     if (left.length) throw new Error(`refused: something private is on screen (${left.join(", ")})`);

@@ -80,6 +80,7 @@ import { RULER_PX, Rulers } from "./Rulers.tsx";
 import type { Tool } from "./Viewport.tsx";
 import "./edit.css";
 import { errorText } from "../api/errorText.ts";
+import { HelpLink } from "../guide/HelpLink.tsx";
 
 type Run = (inv: Invocation | Invocation[]) => Promise<unknown>;
 
@@ -1942,6 +1943,11 @@ function EditOverlay(props: {
         <ContextStripPortal>
           <div className="vp-overlay et-bar" role="toolbar" aria-label={t("et.toolOptions")}>
             {bar}
+            {tool === "node" && <HelpLink to="drawing-and-editing#edit-nodes" topic={t("et.editNodes")} />}
+            {(tool === "line" || tool === "pen") && <HelpLink to="drawing-and-editing#draw-lines-and-curves" topic={tool === "line" ? t("et.lineTool") : t("et.penTool")} />}
+            {tool === "polygon" && <HelpLink to="drawing-and-editing#draw-polygons-and-stars" topic={t("shape.Polygon")} />}
+            {tool === "measure" && <HelpLink to="drawing-and-editing#measure" topic={t("et.measure")} />}
+            {tool === "trim" && <HelpLink to="drawing-and-editing#trim" topic={t("et.trim")} />}
           </div>
         </ContextStripPortal>
       )}

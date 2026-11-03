@@ -31,6 +31,7 @@ import { LayerPresetBar } from "../libs/LayerDefaults.tsx";
 import { layerLink } from "../libs/model.ts";
 import type { ArrangeAction } from "./Toolbar.tsx";
 import { CheckField, ColorField, Icon, NumberField, PairField, TextField } from "./ui.tsx";
+import { HelpLink } from "../guide/HelpLink.tsx";
 
 type Run = (inv: Invocation | Invocation[]) => Promise<unknown>;
 
@@ -273,7 +274,7 @@ function StockSection({ doc, has, run, report, onEditStock }: PropertiesPanelPro
       : `Ø ${formatLength(s.shape.diameter_mm, lu, 3)}`;
   return (
     <section className="prop-section">
-      <h3>{t("pp.stock")}</h3>
+      <h3>{t("pp.stock")} <HelpLink to="fit-to-stock#define-the-stock" topic={t("pp.stock")} /></h3>
       <dl className="kv">
         <dt>{t("pp.name")}</dt>
         <dd>{s.name}</dd>
@@ -339,7 +340,7 @@ export function LayerSection({
   return (
     <section className="prop-section">
       <h3>
-        <span className="swatch" style={{ background: layer.color }} /> {t("pp.layer")}
+        <span className="swatch" style={{ background: layer.color }} /> {t("pp.layer")} <HelpLink to="layers-and-settings#cut-settings" topic={t("pp.layer")} />
       </h3>
       <TextField label={t("pp.name")} value={layer.name} onCommit={(name) => setL({ name })} />
       <ColorField label={t("pp.colour")} value={toHex(layer.color)} onCommit={(color) => setL({ color })} />
@@ -450,7 +451,7 @@ function PassEditor({
 
   return (
     <>
-      <h4>{t("pp.cutSettings")}</h4>
+      <h4>{t("pp.cutSettings")} <HelpLink to="layers-and-settings#sub-layers" topic={t("pp.cutSettings")} /></h4>
       <div className="pass-tabs" role="tablist" aria-label={t("pp.passesTabs")}>
         {entries.map((e) => (
           <button
@@ -625,7 +626,7 @@ function CutSettingsForm({ settings: s, machine, onPatch }: { settings: CutSetti
       {fields.pulseWidth && !pwKnown && pw !== null && <p className="warn-text">{t("pp.pwPick", { pw })}</p>}
       <NumberField label={t("pp.passes")} value={s.passes} min={1} max={1000} digits={0} stepper onCommit={num((v) => ({ passes: Math.round(v) }))} />
 
-      <h4 className={hatching ? "" : "muted"}>{hatching ? t("pp.hatch") : t("pp.hatchFillOnly")}</h4>
+      <h4 className={hatching ? "" : "muted"}>{hatching ? t("pp.hatch") : t("pp.hatchFillOnly")} <HelpLink to="layers-and-settings#hatch" topic={t("pp.hatch")} /></h4>
       <NumberField label={t("pp.interval")} unit="mm" value={s.hatch.interval_mm} min={0.001} digits={4} onCommit={num((interval_mm) => ({ hatch: { interval_mm } }))} />
       {s.mode === "offset_fill" && <p className="hint">{t("pp.offsetHint")}</p>}
       <NumberField label={t("pp.angle")} unit="°" value={s.hatch.angle_deg} digits={2} onCommit={num((angle_deg) => ({ hatch: { angle_deg } }))} />

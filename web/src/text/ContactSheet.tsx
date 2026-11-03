@@ -48,6 +48,7 @@ export function ContactSheetDialog(p: { onClose: () => void; onGoto?: (value: nu
   const total = sheet ? Object.values(sheet.problems).reduce((a, b) => a + (b ?? 0), 0) : 0;
   return (
     <Dialog
+      help="variable-text-and-barcodes#check-every-row"
       title={t("sheet.title")}
       size="xl"
       onClose={p.onClose}

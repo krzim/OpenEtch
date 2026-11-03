@@ -138,6 +138,7 @@ export function BarcodeDialog(p: { initial: BarcodeParams; title: string; okLabe
   return (
     <Modal
       title={p.title}
+      help="variable-text-and-barcodes#barcodes"
       onClose={p.onClose}
       footer={
         <>

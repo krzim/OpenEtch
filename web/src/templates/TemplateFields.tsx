@@ -78,6 +78,7 @@ export function TemplateFieldsDialog(p: {
 
   return (
     <Dialog
+      help="templates#template-fields"
       title={t("tpl.fieldsTitle")}
       size="lg"
       onClose={p.onClose}

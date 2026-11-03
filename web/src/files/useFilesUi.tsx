@@ -547,6 +547,7 @@ export function useFilesUi(p: {
       )}
       {m?.kind === "confirm" && (
         <Modal
+          help="files-and-projects#new-document"
           title={t("files.unsavedTitle")}
           onClose={close}
           footer={

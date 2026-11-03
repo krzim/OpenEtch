@@ -4,6 +4,7 @@
 import { useT } from "../workspace/usePrefs.ts";
 import { beginnerSteps, STEPS, type StepInput } from "./steps.ts";
 import "./laser.css";
+import { HelpLink } from "../guide/HelpLink.tsx";
 
 export function StepBar(p: StepInput) {
   const t = useT();
@@ -19,6 +20,7 @@ export function StepBar(p: StepInput) {
           : t("lz.stepStartHint");
   return (
     <div className="step-bar" role="group" aria-label={t("lz.steps")}>
+      <HelpLink to="running-a-job#steps-to-burn" topic={t("lz.steps")} />
       <ol className="step-bar-list">
         {STEPS.map((id, i) => {
           const cur = s.current === id;

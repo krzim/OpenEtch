@@ -31,6 +31,7 @@ import { prodApi } from "./api.ts";
 import { LOCK_RENEW_MS, clock, cockpitPhase, counterText, hours, nextValues, shortDuration, slotLine, toggleEmpty, type ProductionStatus } from "./model.ts";
 import { refreshProduction, useProduction } from "./store.ts";
 import "./cockpit.css";
+import { HelpLink } from "../guide/HelpLink.tsx";
 
 /** This browser's lock holder id (one per page load) and a short label for the others ("iPad", "Mac"). */
 const HOLDER = `cockpit-${Math.random().toString(36).slice(2, 10)}`;
@@ -225,7 +226,7 @@ function CounterCard({ s, job, report }: { s: ProductionStatus; job: ReturnType<
   const c = counterText(s.cycle);
   return (
     <section className="cockpit-card cockpit-counter">
-      <h3>{t("prod.done")}</h3>
+      <h3>{t("prod.done")} <HelpLink to="production-cockpit#counter-and-stop-at" topic={t("prod.done")} /></h3>
       <div className="cc-count" aria-live="polite">
         {c.text}
       </div>
@@ -257,7 +258,7 @@ function SlotsCard({ s, report }: { s: ProductionStatus; report: (e: unknown) =>
       .catch(report);
   return (
     <section className="cockpit-card cockpit-next">
-      <h3>{t("prod.next")}</h3>
+      <h3>{t("prod.next")} <HelpLink to="production-cockpit#next-card" topic={t("prod.next")} /></h3>
       {plan.slots.length === 0 ? (
         <p className="hint">{t("prod.noSlots")}</p>
       ) : (
@@ -315,7 +316,7 @@ function StatsCard({ s, act, busy }: { s: ProductionStatus; act: (fn: () => Prom
   const m = s.maintenance;
   return (
     <section className="cockpit-card cockpit-stats">
-      <h3>{t("prod.times")}</h3>
+      <h3>{t("prod.times")} <HelpLink to="production-cockpit#times-card" topic={t("prod.times")} /></h3>
       <dl className="cs-times">
         <dt>{t("prod.lastBurn")}</dt>
         <dd>{shortDuration(s.cycle.last_burn_s)}</dd>
@@ -360,7 +361,7 @@ function LedgerCard({ s, act }: { s: ProductionStatus; act: (fn: () => Promise<u
   if (runs.length === 0) return null;
   return (
     <section className="cockpit-card cockpit-ledger">
-      <h3>{t("prod.ledger")}</h3>
+      <h3>{t("prod.ledger")} <HelpLink to="serial-ledger#re-mark-a-slot" topic={t("prod.ledger")} /></h3>
       {runs.map((e) => (
         <div key={`${e.run_id}-${e.time_unix_s}`} className="cl-run">
           <div className="cl-head">

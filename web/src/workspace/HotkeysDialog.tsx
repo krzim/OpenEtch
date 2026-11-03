@@ -16,7 +16,6 @@ import {
   unbindChord,
   type HotkeyAction,
 } from "./hotkeys.ts";
-import { HelpLink } from "../guide/HelpLink.tsx";
 import { translateDynamic, type MsgKey } from "./i18n.ts";
 import { updatePrefs } from "./prefs.ts";
 import { setKeyCapture } from "./useKeymap.ts";
@@ -77,6 +76,7 @@ export function HotkeysDialog(p: { onClose: () => void; edit?: boolean }) {
 
   return (
     <WsModal
+      help="keyboard-shortcuts#shortcuts-list"
       title={edit ? t("hotkeys.editTitle") : t("hotkeys.title")}
       wide
       onClose={p.onClose}
@@ -100,8 +100,6 @@ export function HotkeysDialog(p: { onClose: () => void; edit?: boolean }) {
       <div className="hk-top">
         <input className="hk-search" autoFocus type="search" placeholder={t("hotkeys.search")} value={filter} onChange={(e) => setFilter(e.target.value)} aria-label={t("hotkeys.search")} />
         <span className="hint">{edit ? t("hotkeys.editHint") : t("hotkeys.viewHint")}</span>
-        {/* The user guide's "?" (src/guide/HelpLink.tsx): the one demo placement; more go in as the pages land. */}
-        <HelpLink to="index#keyboard-shortcuts" topic={t("hotkeys.title")} />
       </div>
       {note && (
         <p className="hk-note" role="status">

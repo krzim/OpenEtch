@@ -76,6 +76,7 @@ export function MovePositionDialog(p: { doc: GDocument; ids: string[]; run: Run;
   };
   return (
     <Modal
+      help="drawing-and-editing#move-to-a-page-position"
       title={t("dz.moveTitle")}
       onClose={p.onClose}
       footer={
@@ -126,6 +127,7 @@ export function MoveTogetherDialog(p: { ids: string[]; axis: "x" | "y"; run: Run
   };
   return (
     <Modal
+      help="drawing-and-editing#move-together"
       title={axis === "x" ? t("dz.moveHTogether") : t("dz.moveVTogether")}
       onClose={p.onClose}
       onSubmit={() => void ok()}
@@ -171,6 +173,7 @@ export function CurveToleranceDialog(p: { doc: GDocument; run: Run; onClose: () 
   };
   return (
     <Modal
+      help="drawing-and-editing#curve-tolerance"
       title={tr("dz.curveTolerance")}
       onClose={p.onClose}
       onSubmit={() => void ok()}
@@ -210,6 +213,7 @@ export function GuideDialog(p: {
   };
   return (
     <Modal
+      help="drawing-and-editing#guides"
       title={p.guide ? t("dz.guide") : t("dz.addGuide")}
       onClose={p.onClose}
       onSubmit={ok}
@@ -364,6 +368,7 @@ export function GridArrayDialog(p: {
   );
   return (
     <Modal
+      help="drawing-and-editing#grid-array"
       title={editing ? t("dz.editArray") : t("dz.gridArray")}
       wide
       onClose={p.onClose}
