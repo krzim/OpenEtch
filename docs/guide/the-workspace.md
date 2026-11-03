@@ -400,7 +400,7 @@ The **Help** menu (in the **More** (⋯) menu in the compact and tablet layouts,
 
 - **User guide** (`F1`): this guide. See [Open the guide](index.md#open-the-guide).
 - **Keyboard shortcuts** (`Shift+?`). See [Keyboard shortcuts](keyboard-shortcuts.md).
-- Links to the **OpenEtch README**, **Architecture (engine API, MCP)**, **Web UI README**, **LightBurn documentation** and **Report a problem**.
+- Links to the **OpenEtch README**, **Architecture (engine API, MCP)**, **Web UI README** and **Report a problem**.
 - **Developer: engine commands (JSON)…**, **Enable debug log**, **Report a bug…** and **Check for updates…**
 - **Use as an app…** (not shown inside an app window). See [Getting started](getting-started.md#install-openetch-as-an-app).
 - **About OpenEtch**: the versions of the app and the engine, and the engine's MCP address for AI agents.
