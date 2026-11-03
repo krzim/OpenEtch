@@ -16,6 +16,7 @@
     "preview": "vite preview",
     "e2e:devices": "node e2e/scenarios.mjs",
     "e2e:journeys": "node e2e/journeys.mjs",
+    "e2e:safari": "node e2e/safari.mjs",
     "e2e:perf": "node e2e/perf.mjs",
     "guide:shots": "node e2e/guide-shots.mjs",
     "guide:index": "node scripts/guide-index.mjs"

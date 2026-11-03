@@ -3666,3 +3666,13 @@ html {
 :root[data-density="touch"] .link-btn {
   min-height: 44px;
 }
+
+/* Safari before 18.2 (macOS Sonoma, early Sequoia) has no scrollbar-width: the rows and rails above that hide their
+   scroll bar with it hide it the WebKit way too, else a classic scroll bar takes their height or width and clips the
+   buttons (with "Show scroll bars: Always" or a mouse plugged in). */
+.dock-rail::-webkit-scrollbar,
+.context-strip-slot::-webkit-scrollbar,
+:root[data-layout="compact"] .app > .toolbar::-webkit-scrollbar,
+.tool-rail > .ribbon-vertical::-webkit-scrollbar {
+  display: none;
+}

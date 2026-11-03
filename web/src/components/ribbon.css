@@ -413,3 +413,8 @@
     max-height: none;
   }
 }
+
+/* Safari before 18.2 has no scrollbar-width (styles.css, end). */
+.ribbon-strip::-webkit-scrollbar {
+  display: none;
+}

@@ -580,7 +580,8 @@ function TextOverlay(p: {
     const s = r.toScreen(editor.at);
     const px = Math.min(300, Math.max(12, look.height_mm * editor.scale * r.scale));
     const lines = editor.value.split("\n");
-    const cols = Math.max(4, ...lines.map((l) => l.length + 2));
+    // An empty field is as wide as its placeholder ("Type text" was cut to "Typ" in a 4 ch field).
+    const cols = Math.max(editor.value ? 4 : t("text.editorPlaceholder").length + 2, ...lines.map((l) => l.length + 2));
     // Touch (T11): iOS zooms the page into a field under 16 px. The field keeps a 16 px font and is scaled down to the
     // canvas size instead (scale before translate, so the alignment offset is in the visible size).
     const coarse = typeof document !== "undefined" && document.documentElement.dataset.pointer === "coarse";
