@@ -179,6 +179,15 @@ struct Cell {
     rotation_deg: Option<f64>,
 }
 
+/// Where one clone of a virtual array goes: the name suffix ("[r,c]", "[P3]"), how far its variable text counts
+/// on, the transform taking the originals onto it, and for a jig pocket its `JIG_POCKET_KEY` tag.
+pub(crate) struct Placed {
+    pub label: String,
+    pub delta: i64,
+    pub t: Affine,
+    pub tag: Option<String>,
+}
+
 /// SplitMix64: a small deterministic generator (the same seed gives the same orientations on every build).
 struct SplitMix(u64);
 
@@ -429,6 +438,7 @@ fn create_virtual(doc: &mut Document, ids: Vec<ObjectId>, g: Grid) -> Result<(Va
 fn edit_virtual(doc: &mut Document, aid: &str, i: &ArrayInput) -> Result<(Value, String)> {
     let cmd = Array::ID;
     let k = array_index(cmd, doc, aid)?;
+    super::jigs::refuse_placement(cmd, &doc.virtual_arrays[k])?;
     if !i.ids.is_empty() {
         let ids = util::object_ids(cmd, doc, &i.ids)?;
         let mut have = doc.virtual_arrays[k].sources.clone();
@@ -463,10 +473,20 @@ fn edit_virtual(doc: &mut Document, aid: &str, i: &ArrayInput) -> Result<(Value,
 fn relayout(doc: &mut Document, k: usize) -> Result<()> {
     let cmd = "array.sync";
     let a = doc.virtual_arrays[k].clone();
-    let g: Grid = serde_json::from_value(a.settings.clone())
-        .map_err(|e| CommandError::Failed(format!("{cmd}: virtual array {}: bad settings ({e})", a.id)))?;
-    let Some(b) = doc.bounds_of(&a.sources) else { return Ok(()) };
-    let cells = layout(cmd, &g, b)?;
+    // A jig placement (module `jigs`) lays its clones into the jig's pockets instead of a grid.
+    let cells: Vec<Placed> = match super::jigs::placement_cells(doc, &a)? {
+        Some(cells) => cells,
+        None => {
+            let g: Grid = serde_json::from_value(a.settings.clone())
+                .map_err(|e| CommandError::Failed(format!("{cmd}: virtual array {}: bad settings ({e})", a.id)))?;
+            let Some(b) = doc.bounds_of(&a.sources) else { return Ok(()) };
+            let delta = |c: &Cell| i64::from(c.index).saturating_mul(g.auto_increment);
+            layout(cmd, &g, b)?
+                .into_iter()
+                .map(|c| Placed { label: format!("[{},{}]", c.row, c.col), delta: delta(&c), t: c.t, tag: None })
+                .collect()
+        }
+    };
     if cells.len().saturating_mul(a.sources.len()) > MAX_OBJECTS {
         return Err(invalid(cmd, format!("virtual array {} would hold more than {MAX_OBJECTS} clones", a.id)));
     }
@@ -477,7 +497,6 @@ fn relayout(doc: &mut Document, k: usize) -> Result<()> {
     let mut made = Vec::with_capacity(cells.len() * sources.len());
     let mut j = 0;
     for cell in &cells {
-        let delta = i64::from(cell.index).saturating_mul(g.auto_increment);
         for src in &sources {
             let id = match ids.next() {
                 Some(id) => id,
@@ -485,11 +504,14 @@ fn relayout(doc: &mut Document, k: usize) -> Result<()> {
             };
             let mut o = src.clone();
             o.id = id;
-            o.name = format!("{} [{},{}]", src.name, cell.row, cell.col);
+            o.name = format!("{} {}", src.name, cell.label);
             o.group = None;
             o.transform = cell.t * src.transform;
             o.extras.insert(VIRTUAL_ARRAY_KEY.into(), a.id.clone());
-            super::text::bump_copy(cmd, doc, &mut o, delta, prev.get(j).and_then(Option::as_ref))?;
+            if let Some(tag) = &cell.tag {
+                o.extras.insert(doc::jig::JIG_POCKET_KEY.into(), tag.clone());
+            }
+            super::text::bump_copy(cmd, doc, &mut o, cell.delta, prev.get(j).and_then(Option::as_ref))?;
             made.push(o);
             j += 1;
         }
@@ -732,6 +754,7 @@ impl Command for ArrayDuplicate {
             let id = arrays_named(cmd, doc, std::slice::from_ref(&i.array))?.remove(0);
             let [dx, dy] = util::finite2(cmd, "offset", i.offset)?;
             let a = doc.virtual_arrays[array_index(cmd, doc, &id)?].clone();
+            super::jigs::refuse_placement(cmd, &a)?;
             let sources = copy_objects(doc, &a.sources, Vec2::new(dx, dy), "")?;
             let new = doc.alloc_id("array")?;
             doc.virtual_arrays.push(VirtualArray { id: new.clone(), sources: sources.clone(), clones: vec![], settings: a.settings });

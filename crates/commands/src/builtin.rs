@@ -14,6 +14,8 @@ mod dxf;
 mod file;
 mod group;
 mod image;
+// Jigs and placement: Fit to Stock, jig pockets, pre-flight checks, re-mark region (short list #2, #8, #9, #15).
+mod jigs;
 mod job_settings;
 mod layer;
 mod object;
@@ -129,6 +131,7 @@ pub(crate) fn register_all(r: &mut Registry) {
     register_libs(r);
     register_files(r);
     register_tools(r);
+    jigs::register(r);
 }
 
 /// Tabs, dogbones, Resize Slots and Multi-File Trace (`tabs`, `joinery`, `trace_many`).
