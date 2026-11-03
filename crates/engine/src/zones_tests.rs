@@ -135,6 +135,11 @@ async fn pocket_framing_traces_the_pockets() {
     assert!(outline_for(&d, &bad).is_err());
     let both: FrameRequest = serde_json::from_value(json!({"ids": ["obj-1"], "jig_pockets": {"jig": j}})).unwrap();
     assert!(outline_for(&d, &both).is_err());
+    // A re-mark region frames as its closed outline.
+    let region: FrameRequest = serde_json::from_value(json!({"region": [[0, 0], [4, 0], [4, 3]]})).unwrap();
+    assert_eq!(outline_for(&d, &region).unwrap(), vec![vec![(0.0, 0.0), (4.0, 0.0), (4.0, 3.0), (0.0, 0.0)]]);
+    let line: FrameRequest = serde_json::from_value(json!({"region": [[0, 0], [4, 0], [8, 0]]})).unwrap();
+    assert!(outline_for(&d, &line).is_err());
 }
 
 #[tokio::test]

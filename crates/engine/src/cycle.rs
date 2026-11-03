@@ -192,6 +192,7 @@ fn job_frame(last: Option<FrameRequest>) -> FrameRequest {
         ids: None,
         // The job, never the pockets of the last pocket frame.
         jig_pockets: None,
+        region: None,
         tool_layers_only: false,
         pointer: Pointer::Red,
         live: false,

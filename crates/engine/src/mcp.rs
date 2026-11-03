@@ -87,7 +87,8 @@ fine interval on a large image can pass the job's segment limit; planning then n
 5. render_preview - look at the result and the toolpath; inspect_document for exact numbers and warnings.
 6. frame_start - trace the job outline with the red pointer so the person can check placement (no laser), then \
 frame_stop.
-7. job_request_run - create a pending run.
+7. job_request_run - create a pending run (optional selection, and region to re-mark only the toolpath inside a \
+polygon; job.preflight lists warnings first, and a job marking inside a jig's or the device's keep-out zone is refused).
 
 Firing the laser always requires a person at the machine to approve the pending run: in the OpenEtch UI with their \
 operator PIN or, when the engine runs without a PIN, with Start in the app (plus, if configured, a physical \
