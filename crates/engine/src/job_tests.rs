@@ -300,6 +300,19 @@ async fn selection_and_start_here_shape_the_run() {
     assert!((r["stats"]["mark_length_mm"].as_f64().unwrap() - 40.0).abs() < 1e-6, "{r}");
     let (s, _) = send(&app, req("POST", "/api/runs", Some(json!({"selection": ["obj-404"]})))).await;
     assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
+    // With the revision the preview was of: requested at that revision, refused (409, nothing pending) at another.
+    let shown = st.revision();
+    let pending = |m: &Value| m["pending_runs"].as_array().unwrap().len();
+    let before = pending(&send(&app, req("GET", "/api/machine", None)).await.1);
+    let (s, v) = send(&app, req("POST", "/api/runs", Some(json!({"from_segment": 5, "revision": shown})))).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    rect(&app, 40.0).await;
+    let (s, v) = send(&app, req("POST", "/api/runs", Some(json!({"from_segment": 5, "revision": shown})))).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+    assert!(v.to_string().contains("changed since"), "{v}");
+    assert_eq!(pending(&send(&app, req("GET", "/api/machine", None)).await.1), before + 1);
+    let (s, _) = send(&app, req("POST", "/api/runs", Some(json!({"revision": "x"})))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]

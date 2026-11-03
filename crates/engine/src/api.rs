@@ -536,13 +536,19 @@ struct OriginBody {
 }
 
 /// Body of `POST /api/runs`: the origin plus [`crate::runs::RunOptions`] (repeat, continuous, start_input,
-/// full_pulse, selection, from_segment); unknown keys are refused.
+/// full_pulse, selection, from_segment) and `revision` (the document revision the app shows: another one now is a
+/// 409 and nothing is planned, so a Start Here segment of an older preview never names a segment of a newer
+/// document); unknown keys are refused.
 async fn request_run(State(st): State<Arc<AppState>>, body: Bytes) -> Result<Response, EngineError> {
     let mut b: serde_json::Map<String, Value> = body_or_default(&body)?;
     let origin = parse_origin(b.remove("origin").as_ref())?;
+    let revision: Option<u64> = match b.remove("revision") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(serde_json::from_value(v).map_err(|e| EngineError::BadRequest(format!("bad revision: {e}")))?),
+    };
     let options: crate::runs::RunOptions =
         serde_json::from_value(Value::Object(b)).map_err(|e| EngineError::BadRequest(format!("bad run options: {e}")))?;
-    let view = st.request_run_with(origin, options).await?;
+    let view = st.request_run_at(origin, options, revision).await?;
     let body = json!({ "ok": true, "id": view.id, "run": view, "message": crate::state::APPROVAL_MESSAGE });
     Ok((StatusCode::CREATED, Json(body)).into_response())
 }

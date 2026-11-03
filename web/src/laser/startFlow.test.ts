@@ -221,3 +221,32 @@ test("Start is disabled with a visible reason while the document is empty", () =
   assert.equal(startBlock(ctx({ docEmpty: null })), null, "not known: the engine decides");
   assert.equal(startBlock(ctx({ docEmpty: true, machine: machine({ running: true }) })), "running", "a run under way says so first");
 });
+
+test("startFlow: Start Here in the PIN mode requests the run at the preview's revision; a click Start sends it too", async () => {
+  const g = globalThis as Record<string, unknown>;
+  const saved = { fetch: g.fetch, window: g.window };
+  const bodies: Record<string, unknown>[] = [];
+  g.window ??= { location: { protocol: "http:", host: "127.0.0.1:7878", href: "http://127.0.0.1:7878/" } };
+  g.fetch = async (path: string, init: { method: string; body?: unknown }) => {
+    if (init.method === "POST") bodies.push({ path, ...(typeof init.body === "string" ? JSON.parse(init.body) : {}) });
+    return { ok: true, status: 201, statusText: "", text: async () => JSON.stringify({ ok: true, id: "run-1" }) };
+  };
+  try {
+    resetLaserStore();
+    setRunOptions({ repeat: 1, continuous: false, startInput: false, fullPulse: true, cutSelected: false });
+    const said: string[] = [];
+    await startFlow(ctx({ source: "startHere", machine: machine({}, PIN), fromSegment: 12, revision: 41, notify: (m) => said.push(m) }));
+    await startFlow(ctx({ source: "startHere", machine: machine({}, CLICK), fromSegment: 12, revision: 41, notify: (m) => said.push(m) }));
+    assert.equal(bodies.length, 2, JSON.stringify(bodies));
+    assert.deepEqual(
+      bodies.map((b) => [b.path, b.from_segment, b.revision]),
+      [
+        ["/api/runs", 12, 41],
+        ["/api/job/start", 12, 41],
+      ],
+    );
+  } finally {
+    g.fetch = saved.fetch;
+    g.window = saved.window;
+  }
+});

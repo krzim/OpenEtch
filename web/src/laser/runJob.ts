@@ -13,12 +13,16 @@ import { approvalRefusalText } from "../libs/model.ts";
 import { getPrefs } from "../workspace/prefs.ts";
 import { tr } from "../workspace/tr.ts";
 
-/** Request a run with the Laser window's options (and the selection for Cut Selected Graphics). */
-export async function requestRunWithOptions(selection: readonly string[], fromSegment: number | null = null): Promise<string> {
+/**
+ * Request a run with the Laser window's options (and the selection for Cut Selected Graphics). `revision`: the
+ * document revision this page shows (for Start Here, the revision the preview and so the segment number are of); the
+ * engine plans nothing when the document is at another one, so a stale segment never starts a newer document.
+ */
+export async function requestRunWithOptions(selection: readonly string[], fromSegment: number | null = null, revision: number | null = null): Promise<string> {
   // Beginner Mode hides Cut Selected Graphics and ignores it (LightBurn ignores hidden optional settings).
   const o = getRunOptions();
   const body = runRequestBody(fromSegment === null && !getPrefs().beginnerMode ? o : { ...o, cutSelected: false }, { selection, fromSegment });
-  await jobApi.requestRun(body);
+  await jobApi.requestRun(revision === null ? body : { ...body, revision });
   return fromSegment === null ? tr("rest.runRequested") : tr("rest.runFromRequested", { n: fromSegment });
 }
 
@@ -36,7 +40,7 @@ export async function runJob(
   checklist: boolean[] | null = null,
   revision: number | null = null,
 ): Promise<string> {
-  if (!noPin) return requestRunWithOptions(selection, fromSegment);
+  if (!noPin) return requestRunWithOptions(selection, fromSegment, revision);
   const o = getRunOptions();
   const body = runRequestBody(fromSegment === null && !getPrefs().beginnerMode ? o : { ...o, cutSelected: false }, { selection, fromSegment });
   try {

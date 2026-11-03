@@ -1283,6 +1283,13 @@ impl AppState {
     /// [`AppState::request_run`] with [`RunOptions`] (repeat, continuous, start input, selection, start here). The
     /// active device's job count is the run index for auto-rotating fills.
     pub async fn request_run_with(&self, origin: Origin, options: RunOptions) -> Result<RunView, EngineError> {
+        self.request_run_at(origin, options, None).await
+    }
+
+    /// [`AppState::request_run_with`] of the document at revision `shown` (the one the app shows): at another
+    /// revision nothing is planned (409), so a Start Here segment counted on an older preview never starts a run of a
+    /// newer document.
+    pub async fn request_run_at(&self, origin: Origin, options: RunOptions, shown: Option<u64>) -> Result<RunView, EngineError> {
         self.refuse_if_shutting_down("requesting a run")?;
         self.require_controllable()?;
         // The document and which open document it is, read together (module `documents`).
@@ -1291,6 +1298,13 @@ impl AppState {
             (s.document().clone(), self.active_document_id())
         };
         let revision = doc.revision;
+        if let Some(shown) = shown
+            && shown != revision
+        {
+            return Err(EngineError::Conflict(format!(
+                "the document changed since the run was requested (revision {shown} -> {revision}); nothing was                  requested: check the job and request it again"
+            )));
+        }
         let config = self.machine.config();
         let generation = config.generation;
         let run_index = self.job.count(&self.active_device().id);
