@@ -1784,6 +1784,8 @@ export function App() {
             <div className="phone-palette">
               <PaletteBar doc={doc} selected={selection.objects} run={run} report={report} notify={notify} has={has} />
             </div>
+            {/* The Material Library (finishes: photos from the phone camera, Palette, Warmer / Cooler, bracket test). */}
+            {libsUi.dock}
           </>
         }
         jobSheet={workspace === "laser" ? rightContent : null}
