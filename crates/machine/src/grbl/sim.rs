@@ -49,11 +49,14 @@ pub struct SimGrblConfig {
     pub homing: bool,
     /// Start-up blocks `$N0`, `$N1`.
     pub startup: [String; 2],
+    /// Status reports carry the work coordinate offset (`WCO`, on the first and every 10th, as GRBL's default);
+    /// off: never, so the driver has no work position it can trust.
+    pub report_wco: bool,
 }
 
 impl Default for SimGrblConfig {
     fn default() -> Self {
-        SimGrblConfig { laser_mode: true, s_max: 1000.0, s_min: 0.0, homing: false, startup: [String::new(), String::new()] }
+        SimGrblConfig { laser_mode: true, s_max: 1000.0, s_min: 0.0, homing: false, startup: [String::new(), String::new()], report_wco: true }
     }
 }
 
@@ -188,6 +191,9 @@ struct Board {
     reject: Option<(String, u8)>,
     /// Feed hold and soft reset bytes are lost on the way (a flaky cable): the board never sees them.
     lose_stop_bytes: bool,
+    /// Status reports sent (the work offset rides on every 10th), and whether it is reported at all.
+    reports: u32,
+    report_wco: bool,
 }
 
 fn fmt(v: f64) -> String {
@@ -222,6 +228,8 @@ impl Board {
             door: false,
             stalled: false,
             check: false,
+            reports: 0,
+            report_wco: cfg.report_wco,
             report: SimGrblReport::default(),
             disconnected: false,
             reject: None,
@@ -291,8 +299,11 @@ impl Board {
     fn status(&mut self) {
         let pins = if self.door { "|Pn:D" } else { "" };
         let s = self.planner.front().map_or(0.0, |b| if b.spindle != 0 { b.s } else { 0.0 });
+        // GRBL adds the work coordinate offset to the first report and then every 10th (no offsets here: G54 = 0).
+        let wco = if self.report_wco && self.reports % 10 == 0 { "|WCO:0.000,0.000,0.000" } else { "" };
+        self.reports = self.reports.wrapping_add(1);
         let line = format!(
-            "<{}|MPos:{},{},0.000|FS:{},{}{pins}>",
+            "<{}|MPos:{},{},0.000|FS:{},{}{pins}{wco}>",
             self.state_name(),
             fmt(self.position[0]),
             fmt(self.position[1]),

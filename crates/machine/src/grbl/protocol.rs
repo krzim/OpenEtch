@@ -88,6 +88,10 @@ pub struct StatusReport {
     pub spindle: Option<f64>,
     /// Input pins from `Pn` (`D` is the safety door).
     pub pins: String,
+    /// `wpos` is the board's own (a `WPos` field, or `MPos` with a `WCO` seen): not `MPos` assumed to have no work
+    /// offset because no `WCO` has come yet.
+    #[serde(default)]
+    pub wpos_known: bool,
 }
 
 impl StatusReport {
@@ -111,7 +115,7 @@ pub fn parse_status(line: &str, wco: &mut Option<[f64; 3]>) -> Option<StatusRepo
     let body = line.trim().strip_prefix('<')?.strip_suffix('>')?;
     let mut parts = body.split('|');
     let state = GrblState::parse(parts.next()?)?;
-    let mut r = StatusReport { state, mpos: None, wpos: None, feed: None, spindle: None, pins: String::new() };
+    let mut r = StatusReport { state, mpos: None, wpos: None, feed: None, spindle: None, pins: String::new(), wpos_known: false };
     for p in parts {
         let (k, v) = p.split_once(':').unwrap_or((p, ""));
         match k {
@@ -128,6 +132,7 @@ pub fn parse_status(line: &str, wco: &mut Option<[f64; 3]>) -> Option<StatusRepo
             _ => {}
         }
     }
+    r.wpos_known = r.wpos.is_some() || (r.mpos.is_some() && wco.is_some());
     if let Some(o) = *wco {
         match (r.mpos, r.wpos) {
             (Some(m), None) => r.wpos = Some([m[0] - o[0], m[1] - o[1], m[2] - o[2]]),

@@ -142,8 +142,12 @@ export function GrblMove(p: { notify: Notify; report: (e: unknown) => void }) {
     if (!profile) return;
     const why = jogProblem(profile, s, speed);
     if (why) return p.notify(why, "error");
-    // Jogs are not queued behind each other here: one request at a time, like a button held in LightBurn.
-    act(() => jobApi.jog(jogDelta(dir, s), speed));
+    // Jogs are not queued behind each other here: one request at a time, like a button held in LightBurn. The engine
+    // keeps the head on the bed and says when it shortened the step.
+    act(async () => {
+      const r = (await jobApi.jog(jogDelta(dir, s), speed)) as { clamped?: unknown } | null;
+      if (r?.clamped === true) p.notify(t("move.atEdge"));
+    });
   };
   const goTo = (m: [number, number]) => {
     if (!profile) return;

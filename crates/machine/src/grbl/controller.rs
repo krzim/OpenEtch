@@ -165,6 +165,9 @@ pub struct GrblController<P: SerialLink> {
     messages: VecDeque<String>,
     /// Replies collected for the command waiting on them.
     collected: Vec<String>,
+    /// Where the last jog accepted goes (work mm): while the board still jogs, the next relative jog is limited from
+    /// there, not from where the head happens to be.
+    jog_target: Option<[f64; 2]>,
 }
 
 impl<P: SerialLink> GrblController<P> {
@@ -193,6 +196,7 @@ impl<P: SerialLink> GrblController<P> {
             spindle_off: false,
             messages: VecDeque::new(),
             collected: Vec::new(),
+            jog_target: None,
         }
     }
 
@@ -888,8 +892,13 @@ impl<P: SerialLink> GrblController<P> {
     }
 
     /// Jog by `(dx, dy)` mm in the field frame's directions (+X right, +Y away from the operator) at `feed` mm/min
-    /// (default the frame feed): `$J=G91 G21 ...`. The laser stays off. Each step at most the bed's size.
-    pub fn jog(&mut self, dx: f64, dy: f64, feed: Option<f64>) -> Result<()> {
+    /// (default the frame feed): `$J=G91 G21 ...`. The laser stays off. Each step at most the bed's size, and limited
+    /// so the head stays on the bed: from the board's work position (or, while it still jogs, from where the last
+    /// jog goes), a step that would leave the bed is shortened to its edge (a head already off the bed may come back,
+    /// never go farther). Without a work position from the board the step is refused, unless the board's soft
+    /// limits (`$20=1` with homing `$22=1`) keep it within its travel. Returns the step taken (field frame; zero
+    /// at the edge, when nothing is sent).
+    pub fn jog(&mut self, dx: f64, dy: f64, feed: Option<f64>) -> Result<[f64; 2]> {
         let profile = self.ready_to_move(false)?;
         let [w, h] = profile.work_area_mm;
         if !(dx.is_finite() && dy.is_finite() && dx.abs() <= w && dy.abs() <= h) || (dx == 0.0 && dy == 0.0) {
@@ -898,9 +907,42 @@ impl<P: SerialLink> GrblController<P> {
         let feed = self.jog_feed(&profile, feed)?;
         self.require_spindle_off()?;
         let (mx, my) = profile.mirror();
-        let (dx, dy) = (if mx { -dx } else { dx }, if my { -dy } else { dy });
-        let line = format!("$J=G91G21X{}Y{}F{}", num(dx), num(dy), num(feed));
-        self.command_ok(&line, self.poll.response_timeout).map(|_| ())
+        let (mut sx, mut sy) = (if mx { -dx } else { dx }, if my { -dy } else { dy });
+        let s = self.request_status()?;
+        let from = match (s.state, self.jog_target) {
+            (GrblState::Jog, Some(t)) => Some(t),
+            _ => s.wpos.filter(|_| s.wpos_known).map(|p| [p[0], p[1]]),
+        };
+        match from {
+            Some(p) => {
+                // On the bed, or no farther off it than the head already is.
+                let limit = |cur: f64, d: f64, max: f64| (cur + d).clamp(cur.min(0.0), cur.max(max)) - cur;
+                sx = limit(p[0], sx, w);
+                sy = limit(p[1], sy, h);
+                if sx.abs() < 1e-6 && sy.abs() < 1e-6 {
+                    return Ok([0.0, 0.0]);
+                }
+            }
+            None if self.soft_limits() => {}
+            None => {
+                return Err(ControllerError::Refused(
+                    "the head's position is not known yet (no work position from the board) and soft limits are off: \
+                     home the machine or move to a position (x, y) first"
+                        .into(),
+                ));
+            }
+        }
+        let line = format!("$J=G91G21X{}Y{}F{}", num(sx), num(sy), num(feed));
+        self.command_ok(&line, self.poll.response_timeout)?;
+        self.jog_target = from.map(|p| [p[0] + sx, p[1] + sy]);
+        Ok([if mx { -sx } else { sx }, if my { -sy } else { sy }])
+    }
+
+    /// The board's soft limits are on (`$20=1`, which GRBL only allows with homing, `$22=1`): it refuses jogs past
+    /// its travel itself.
+    fn soft_limits(&self) -> bool {
+        let on = |k: u16| self.settings.get(&k).is_some_and(|v| *v != 0.0);
+        on(20) && on(22)
     }
 
     /// Jog to `(x, y)` in the field frame (refused outside the bed): `$J=G90 G21 ...`.
@@ -910,7 +952,9 @@ impl<P: SerialLink> GrblController<P> {
         let feed = self.jog_feed(&profile, feed)?;
         self.require_spindle_off()?;
         let line = format!("$J=G90G21X{}Y{}F{}", num(mx), num(my), num(feed));
-        self.command_ok(&line, self.poll.response_timeout).map(|_| ())
+        self.command_ok(&line, self.poll.response_timeout)?;
+        self.jog_target = Some([mx, my]);
+        Ok(())
     }
 
     fn jog_feed(&self, profile: &GrblProfile, feed: Option<f64>) -> Result<f64> {
@@ -923,6 +967,7 @@ impl<P: SerialLink> GrblController<P> {
 
     /// Cancel a jog (`0x85`).
     pub fn jog_cancel(&mut self) -> Result<()> {
+        self.jog_target = None;
         self.write_rt(JOG_CANCEL)
     }
 

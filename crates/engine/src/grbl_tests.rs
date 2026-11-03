@@ -620,3 +620,21 @@ async fn saved_move_positions_are_ui_only_and_on_the_bed() {
     let (s, v) = send(&app, put(json!({"move_positions": []}))).await;
     assert_eq!(s, StatusCode::CONFLICT, "{v}");
 }
+
+#[tokio::test]
+async fn relative_jogs_are_kept_on_the_bed_from_the_heads_position() {
+    let (app, st, _, _) = grbl_engine(false).await;
+    let board = sim(&st);
+    // The head starts at the origin corner (front left): a step off the bed is cut to its edge, or to nothing.
+    let (s, v) = send(&app, req("POST", "/api/machine/jog", Some(json!({"dx": -5.0, "dy": 0.0})))).await;
+    assert_eq!((s, &v["step"], &v["clamped"]), (StatusCode::OK, &json!([0.0, 0.0]), &json!(true)), "{v}");
+    let (s, v) = send(&app, req("POST", "/api/machine/jog", Some(json!({"dx": 10.0, "dy": -4.0, "feed": 1200})))).await;
+    assert_eq!((s, &v["step"], &v["clamped"]), (StatusCode::OK, &json!([10.0, 0.0]), &json!(true)), "{v}");
+    board.run_blocks(10);
+    let (s, v) = send(&app, req("POST", "/api/machine/jog", Some(json!({"dx": 5.0, "dy": 5.0, "feed": 1200})))).await;
+    assert_eq!((s, &v["step"], &v["clamped"]), (StatusCode::OK, &json!([5.0, 5.0]), &json!(false)), "{v}");
+    board.run_blocks(10);
+    let r = board.report();
+    assert_eq!(r.position, [15.0, 5.0]);
+    assert!(r.lines.iter().any(|l| l == "$J=G91G21X10Y0F1200") && r.fires.is_empty(), "{:?}", r.lines);
+}

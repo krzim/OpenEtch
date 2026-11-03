@@ -35,6 +35,7 @@ export const EN_GANTRY = {
   "move.startup": "A start-up block could turn the laser on; clear it in the Console ($N0= / $N1=) before moving.",
   "move.homed": "Homing finished.",
   "move.unlocked": "Unlocked.",
+  "move.atEdge": "The head is at the edge of the bed: it moved only as far as the edge.",
   "move.alarm": "Alarm {code}: home or unlock the machine.",
   "move.showLast": "Show last position",
   "move.showLastUnknown": "The head's position is not known yet: Get position.",

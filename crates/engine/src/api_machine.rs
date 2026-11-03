@@ -27,7 +27,7 @@
 //! | GET | `/api/machine/grbl` | `?refresh=true` asks an idle board for a status report first (never waits behind a run, frame or homing). A GRBL gantry's profile and board (version, last status report, alarm, laser mode, `$30`/`$31`, unsafe start-up blocks, messages; `board` null while a run or frame holds it) and `position` (`{machine: [x, y], field: [x, y]}` mm from the last status report: machine coordinates from the origin corner and the field frame of the canvas; null when unknown) |
 //! | POST | `/api/machine/home` | GRBL homing cycle `$H` (UI only; moves, never fires) |
 //! | POST | `/api/machine/unlock` | GRBL `$X` after an alarm (UI only) |
-//! | POST | `/api/machine/jog` | `{dx, dy}` mm or `{x, y}` (field frame), `feed?` mm/min: a GRBL jog `$J=` with the laser off (UI only) |
+//! | POST | `/api/machine/jog` | `{dx, dy}` mm or `{x, y}` (field frame), `feed?` mm/min: a GRBL jog `$J=` with the laser off (UI only); a step stays on the bed from the head's known position (`{ok, step, clamped}`; refused without a position unless soft limits are on) |
 //! | POST | `/api/machine/jog/cancel` | GRBL jog cancel (0x85); not gated |
 //! | POST | `/api/machine/console` | `{line}` → `{line, lines, ok, error}`: one console line to a GRBL board (UI only). Lines that could turn the laser on (`M3`/`M4`, `S` > 0, unsafe start-up blocks, realtime characters, `$RST`) are refused (422) before anything is sent; see `machine::grbl::check_console_line` |
 //! | GET | `/api/machine/ports` | the serial ports of the engine's computer (needs the `serial` build feature) |
@@ -188,7 +188,9 @@ struct JogBody {
     origin: Option<Value>,
 }
 
-/// Jog (`$J=`) with the laser off: by `{dx, dy}` mm, or to `{x, y}` in the field frame. UI only.
+/// Jog (`$J=`) with the laser off: by `{dx, dy}` mm, or to `{x, y}` in the field frame. UI only. A step is kept on
+/// the bed from the head's known position (`GrblController::jog`): the answer's `step` is the step taken and
+/// `clamped` says it was shortened (`[0, 0]` at the edge: nothing was sent).
 async fn grbl_jog(State(st): State<Arc<AppState>>, headers: HeaderMap, body: Bytes) -> Result<Json<Value>, EngineError> {
     let b: JogBody = body_or_default(&body)?;
     ui_only(&headers, b.origin.as_ref(), "the head can be jogged")?;
@@ -196,12 +198,16 @@ async fn grbl_jog(State(st): State<Arc<AppState>>, headers: HeaderMap, body: Byt
     match (b.dx.or(b.dy), b.x, b.y) {
         (Some(_), None, None) => {
             let (dx, dy) = (b.dx.unwrap_or(0.0), b.dy.unwrap_or(0.0));
-            with_grbl(&st, move |g| g.jog(dx, dy, feed)).await?;
+            let step = with_grbl(&st, move |g| g.jog(dx, dy, feed)).await?;
+            let clamped = (step[0] - dx).abs() > 1e-6 || (step[1] - dy).abs() > 1e-6;
+            Ok(Json(json!({ "ok": true, "step": step, "clamped": clamped })))
         }
-        (None, Some(x), Some(y)) => with_grbl(&st, move |g| g.jog_to(x, y, feed)).await?,
-        _ => return Err(EngineError::BadRequest("give dx/dy (a step) or x and y (a position)".into())),
+        (None, Some(x), Some(y)) => {
+            with_grbl(&st, move |g| g.jog_to(x, y, feed)).await?;
+            Ok(Json(json!({ "ok": true })))
+        }
+        _ => Err(EngineError::BadRequest("give dx/dy (a step) or x and y (a position)".into())),
     }
-    Ok(Json(json!({ "ok": true })))
 }
 
 /// Jog cancel (0x85): stops motion only, so it is not gated (like pause and stop).

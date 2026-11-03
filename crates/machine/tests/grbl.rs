@@ -244,13 +244,13 @@ fn homing_unlocks_and_alarms_lock() {
     assert!(c.jog(1.0, 0.0, None).is_err());
     c.home().unwrap();
     assert_eq!(h.report().state, "Idle");
-    c.jog(10.0, -5.0, Some(1200.0)).unwrap();
+    c.jog(10.0, 5.0, Some(1200.0)).unwrap();
     c.jog_to(0.0, 0.0, None).unwrap();
     while !c.poll_idle().unwrap() {}
     let r = h.report();
     assert_eq!(r.position, [150.0, 100.0], "jogged to the bed centre");
     assert!(r.fires.is_empty());
-    assert!(r.lines.iter().any(|l| l == "$J=G91G21X10Y-5F1200"), "{:?}", r.lines);
+    assert!(r.lines.iter().any(|l| l == "$J=G91G21X10Y5F1200"), "{:?}", r.lines);
     // Homing off in the profile: refused without sending.
     let (mut c2, _) = connected(&SimGrblConfig::default(), &profile());
     assert!(c2.home().is_err());
@@ -514,4 +514,63 @@ fn air_assist_rides_along_with_an_armed_run_and_stop_turns_it_off() {
     assert!(h.report().air_now);
     c.abort().unwrap();
     assert!(!h.report().air_now && h.report().fires.len() == 2);
+}
+
+#[test]
+fn relative_jogs_stay_on_the_bed() {
+    // A 300 x 200 mm bed, origin front left; the head starts at (0, 0).
+    let (mut c, h) = connected(&SimGrblConfig::default(), &profile());
+    let jogs = |h: &SimGrblHandle| h.report().lines.iter().filter(|l| l.starts_with("$J=")).cloned().collect::<Vec<_>>();
+    // Off the near edges: nothing to do, nothing sent.
+    assert_eq!(c.jog(-5.0, -5.0, None).unwrap(), [0.0, 0.0]);
+    assert!(jogs(&h).is_empty());
+    // Shortened to the edge on one axis, whole on the other.
+    assert_eq!(c.jog(10.0, -3.0, Some(1200.0)).unwrap(), [10.0, 0.0]);
+    while !c.poll_idle().unwrap() {}
+    assert_eq!(h.report().position, [10.0, 0.0]);
+    assert_eq!(c.jog(-25.0, 50.0, Some(1200.0)).unwrap(), [-10.0, 50.0]);
+    while !c.poll_idle().unwrap() {}
+    assert_eq!(h.report().position, [0.0, 50.0]);
+    // While the board still jogs, the next step is limited from where the last one goes, not from the head.
+    h.stall(true);
+    assert_eq!(c.jog(280.0, 0.0, Some(1200.0)).unwrap(), [280.0, 0.0]);
+    assert_eq!(h.report().state, "Jog");
+    assert_eq!(c.jog(50.0, 0.0, Some(1200.0)).unwrap(), [20.0, 0.0], "280 + 20 = the 300 mm edge");
+    h.stall(false);
+    while !c.poll_idle().unwrap() {}
+    assert_eq!(h.report().position, [300.0, 50.0]);
+    assert_eq!(c.jog(1.0, 0.0, None).unwrap(), [0.0, 0.0]);
+    // A head off the bed (moved there from the console) may come back, never go farther.
+    c.console("G0 X-20 Y50").unwrap();
+    while !c.poll_idle().unwrap() {}
+    assert_eq!(c.jog(-5.0, 0.0, None).unwrap(), [0.0, 0.0]);
+    assert_eq!(c.jog(5.0, 0.0, Some(1200.0)).unwrap(), [5.0, 0.0]);
+    while !c.poll_idle().unwrap() {}
+    // The origin on the right: field +X is machine -X, and the limit follows.
+    let right = GrblProfile { origin: machine::Origin::BottomRight, ..profile() };
+    let (mut c, h) = connected(&SimGrblConfig::default(), &right);
+    assert_eq!(c.jog(5.0, 0.0, None).unwrap(), [0.0, 0.0], "the head is at the right edge");
+    assert_eq!(c.jog(-5.0, 0.0, Some(1200.0)).unwrap(), [-5.0, 0.0]);
+    assert!(jogs(&h).iter().any(|l| l == "$J=G91G21X5Y0F1200"), "{:?}", jogs(&h));
+    assert!(h.report().fires.is_empty());
+}
+
+#[test]
+fn a_relative_jog_without_a_known_position_needs_soft_limits() {
+    // No work offset from the board: its MPos is not a work position the bed can be checked against.
+    let cfg = SimGrblConfig { report_wco: false, ..SimGrblConfig::default() };
+    let (mut c, h) = connected(&cfg, &profile());
+    let e = c.jog(5.0, 0.0, None).unwrap_err();
+    assert!(e.to_string().contains("not known"), "{e}");
+    assert!(!h.report().lines.iter().any(|l| l.starts_with("$J=")));
+    // An absolute jog is checked against the bed by its target: still allowed.
+    c.jog_to(0.0, 0.0, None).unwrap();
+    // With soft limits on (they need homing), the board keeps the head in its travel itself.
+    let homed = GrblProfile { homing: true, ..profile() };
+    let (mut c, h) = connected(&SimGrblConfig { homing: true, ..cfg }, &homed);
+    h.set_setting(20, 1.0);
+    c.init(&homed).unwrap();
+    c.home().unwrap();
+    assert_eq!(c.jog(5.0, 0.0, Some(1200.0)).unwrap(), [5.0, 0.0]);
+    assert!(h.report().lines.iter().any(|l| l == "$J=G91G21X5Y0F1200"));
 }
