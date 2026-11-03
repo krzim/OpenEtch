@@ -9,7 +9,9 @@ import {
   checklistFromText,
   checklistProblem,
   checklistTicks,
+  cutEditOf,
   cutEditProblem,
+  editCutBody,
   editCutSettings,
   entryMetaProblem,
   filterTree,
@@ -25,6 +27,7 @@ import {
   parseLibraryView,
   parsePrefs,
   parseScan,
+  parseTree,
   parseUpdateCheck,
   printCutProblem,
   shutdownNotice,
@@ -35,6 +38,7 @@ import {
   treeEntries,
   updateText,
   wizardDeviceName,
+  withSubLayerPause,
 } from "./model.ts";
 import {
   DEFAULT_FOCUS_TEST,
@@ -153,7 +157,7 @@ test("linked layers and Edit Cut", () => {
   assert.equal(layerLink(layer("b")), null);
   assert.deepEqual(linkedLayers(doc, "Fiber", "Steel/1 mm/Black mark").map((l) => l.id), ["a"], "library names compare ignoring case");
   assert.equal(linkedLayers(doc, "Fiber", "Steel/Engrave/Deep").length, 0);
-  const edit = { mode: "line", power_pct: 50, speed_mm_s: 100, frequency_khz: 30, pulse_width_ns: null, passes: 2.4, interval_mm: 0.05 };
+  const edit = { mode: "line", power_pct: 50, speed_mm_s: 100, frequency_khz: 30, pulse_width_ns: null, passes: 2.4, interval_mm: 0.05, operator_pause: false, sub_layer_pauses: [], sub_layers: 0 };
   const full = editCutSettings({ mode: "fill", power_pct: 1, hatch: { interval_mm: 1, angle_deg: 45 }, options: { wobble: { step_mm: 1, size_mm: 1 } } }, edit);
   assert.equal(full.passes, 2);
   assert.deepEqual(full.hatch, { interval_mm: 0.05, angle_deg: 45 });
@@ -162,6 +166,36 @@ test("linked layers and Edit Cut", () => {
   assert.equal(cutEditProblem({ ...edit, passes: 2 }), null);
   assert.match(cutEditProblem({ ...edit, passes: 2, power_pct: 120 }) ?? "", /Power/);
   assert.match(cutEditProblem({ ...edit, passes: 2, mode: "fill", interval_mm: 0 }) ?? "", /interval/);
+});
+
+test("Edit Cut: the preset's pauses for the operator, shown from the summary and sent beside the settings", () => {
+  const tree = parseTree({
+    materials: [
+      {
+        name: "Steel",
+        groups: [
+          {
+            title: "Finish",
+            entries: [
+              { id: "m0.e0", path: "Steel/Finish/Two passes", summary: { mode: "fill", power_pct: 40, speed_mm_s: 800, frequency_khz: 40, passes: 1, interval_mm: 0.02, sub_layers: 2, operator_pause: true, sub_layer_pauses: [1, 5, -1, "x"] } },
+              { id: "m0.e1", path: "Steel/Finish/Old", summary: { mode: "line", power_pct: 40, speed_mm_s: 800, frequency_khz: 40, passes: 1, interval_mm: 0.02, sub_layers: 0 } },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+  const [paused, old] = treeEntries(tree);
+  assert.equal(paused.summary?.operator_pause, true);
+  assert.deepEqual(paused.summary?.sub_layer_pauses, [1, 5], "only sub-layer indices are kept");
+  assert.deepEqual([old.summary?.operator_pause, old.summary?.sub_layer_pauses], [false, []], "an older engine: no pauses");
+  const e = cutEditOf(paused.summary!);
+  assert.deepEqual([e.operator_pause, e.sub_layer_pauses, e.sub_layers], [true, [1], 2], "sub-layers the preset does not have are left out");
+  const on = withSubLayerPause(withSubLayerPause(e, 0, true), 0, true);
+  assert.deepEqual(on.sub_layer_pauses, [0, 1], "sorted, no duplicates");
+  assert.deepEqual(withSubLayerPause(on, 1, false).sub_layer_pauses, [0]);
+  const body = editCutBody(null, { ...withSubLayerPause(on, 1, false), operator_pause: false, power_pct: 21 });
+  assert.deepEqual([body.operator_pause, body.sub_layer_pauses, body.settings.power_pct], [false, [0], 21]);
 });
 
 test("preferences, the Job Checklist and approval texts", () => {

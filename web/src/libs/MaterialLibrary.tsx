@@ -24,7 +24,7 @@ import { libsApi } from "./api.ts";
 import {
   cutEditOf,
   cutEditProblem,
-  editCutSettings,
+  editCutBody,
   entryMeta,
   entryMetaProblem,
   entrySummaryText,
@@ -35,6 +35,7 @@ import {
   linkedLayers,
   newEntryMeta,
   treeEntries,
+  withSubLayerPause,
   type CutEdit,
   type EntryMeta,
   type LibEntry,
@@ -541,7 +542,7 @@ export function LibraryDock(p: { doc: GDocument | null; activeLayer: string | nu
           onOk={(edit, base) => {
             const e = dlg.entry;
             setDlg(null);
-            void actEntry(() => libsApi.entryEditCut(selected, e.id, editCutSettings(base, edit)), (r) => `${t("lib.cutSaved", { path: e.path })} ${countText(r, "updated_layers")}`.trim());
+            void actEntry(() => libsApi.entryEditCut(selected, e.id, editCutBody(base, edit)), (r) => `${t("lib.cutSaved", { path: e.path })} ${countText(r, "updated_layers")}`.trim());
           }}
         />
       )}
@@ -719,6 +720,12 @@ function EditCutDialog(p: { entry: LibEntry; base: Record<string, unknown> | nul
       <NumberField label={t("lib.pulse")} unit="ns" value={e.pulse_width_ns} min={1} digits={0} allowEmpty placeholder={t("lib.sourceDefault")} onCommit={(v) => setE({ ...e, pulse_width_ns: v })} />
       <NumberField label={t("lib.passes")} value={e.passes} min={1} max={1000} digits={0} onCommit={(v) => v !== null && setE({ ...e, passes: Math.round(v) })} />
       {e.mode !== "line" && <NumberField label={t("lib.interval")} unit="mm" value={e.interval_mm} min={0.001} digits={4} onCommit={num("interval_mm")} />}
+      {/* The pauses for the operator (as on the layer, More settings > Pauses), kept by the engine beside the .clb. */}
+      <CheckField label={t("prod.operatorPause")} checked={e.operator_pause} onChange={(operator_pause) => setE({ ...e, operator_pause })} />
+      {Array.from({ length: e.sub_layers }, (_, i) => (
+        <CheckField key={i} label={t("lib.subLayerPause", { n: i + 1 })} checked={e.sub_layer_pauses.includes(i)} onChange={(on) => setE(withSubLayerPause(e, i, on))} />
+      ))}
+      {(e.operator_pause || e.sub_layer_pauses.length > 0) && <p className="hint">{t("lib.editCutPauseHint")}</p>}
       {err && <p className="form-error">{err}</p>}
       <p className="hint">{p.base ? t("lib.editCutLinked") : t("lib.editCutHint")}</p>
     </WsModal>

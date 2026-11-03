@@ -735,7 +735,98 @@ const JOURNEYS = [
       await escape(page);
     },
   },
+  // The Material Library's Edit Cut with a preset's pauses for the operator (kept beside the .clb), on each kind of
+  // screen: a generic one-preset library is loaded, a preset is saved from a layer that pauses before its sub-layer,
+  // and Edit Cut turns the layer's own pause on.
+  ...["iphone15-portrait", "ipad-air-portrait", "macbook-air-1470", "win-1920"].map((device) => ({
+    id: `library-edit-cut-${device}`,
+    device,
+    theme: "light",
+    run: (j) => libraryEditCut(j),
+  })),
 ];
+
+/** A one-preset LightBurn library (generic values, no private settings). */
+const E2E_CLB = [
+  '<?xml version="1.0" encoding="UTF-8"?>',
+  "<LightBurnLibrary>",
+  '  <Material name="Steel">',
+  '    <Entry Thickness="-1.0000" Desc="Engrave" NoThickTitle="Finish">',
+  '      <CutSetting type="Scan">',
+  '        <index Value="0" />',
+  '        <name Value="" />',
+  '        <LinkPath Value="Steel/Finish/Engrave" />',
+  '        <maxPower Value="38" />',
+  '        <speed Value="1000" />',
+  '        <frequency Value="25000" />',
+  '        <interval Value="0.025" />',
+  '        <priority Value="0" />',
+  "      </CutSetting>",
+  "    </Entry>",
+  "  </Material>",
+  "</LightBurnLibrary>",
+  "",
+].join(String.fromCharCode(13, 10));
+
+async function libraryEditCut(j) {
+  const { page } = j;
+  const url = j.ctx.url;
+  const json = (body) => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const lib = `e2e-${j.d.id}`;
+  await api(url, "/api/library/unload", json({ name: lib, discard: true }));
+  const loaded = await api(url, `/api/library/load?name=${lib}`, { method: "POST", body: E2E_CLB });
+  if (!loaded?.selected) throw new Error(`library load: ${JSON.stringify(loaded).slice(0, 200)}`);
+  const doc = await api(url, "/api/document");
+  const layer = doc?.layers?.[0]?.id ?? "layer-1";
+  await execute(url, "shape.rect", { width_mm: 20, height_mm: 20 });
+  await execute(url, "layer.sub_add", { layer });
+  await execute(url, "layer.sub_update", { layer, index: 0, settings: { options: { operator_pause: true } } });
+  const made = await api(url, `/api/library/${lib}/entries`, json({ layer, material: "Steel", title: "Finish", description: "Two passes" }));
+  if (!made?.id) throw new Error(`create preset: ${JSON.stringify(made).slice(0, 200)}`);
+  await j.reload();
+  // The Material Library as a person opens it: command search on a computer, the dock tab at the iPad's right edge,
+  // the Layers sheet on the phone (the library sits under the layers).
+  const treeShown = async () => !!(await find(page, "[role=treeitem]", "Two passes"))?.hit;
+  if (j.d.kind === "phone") {
+    await phoneTab(page, "Layers");
+    if (!(await sheetOpen(page))) await phoneTab(page, "Layers");
+    await sheetTo(page, "full");
+    await page.evaluate(() => document.querySelector('[data-dock="library"]')?.scrollIntoView({ block: "start" }));
+    await sleep(400);
+    if (!(await treeShown())) await pressFind(page, '[data-dock="library"] button', "Material Library");
+  } else if (j.d.kind === "tablet") {
+    await pressFind(page, "button, [role=tab]", "Material Library");
+  } else {
+    await pressFind(page, "button", "Command search");
+    await sleep(400);
+    await page.type("Material Library");
+    await sleep(400);
+    await page.key("Enter");
+  }
+  await sleep(900);
+  await page.evaluate(() => [...document.querySelectorAll("[role=treeitem]")].find((e) => /Two passes/.test(e.textContent))?.scrollIntoView({ block: "center" }));
+  await sleep(300);
+  await pressFind(page, "[role=treeitem]", "Two passes");
+  await sleep(400);
+  await j.shot("library-preset-picked");
+  await pressFind(page, "button", "Edit Cut");
+  await sleep(600);
+  j.note("pause boxes", await page.evaluate(() => [...document.querySelectorAll("[role=dialog] label")].map((l) => [l.textContent.trim(), !!l.querySelector("input:checked")]).filter(([t]) => /^Pause/.test(t))));
+  await j.shot("edit-cut-sub-layer-pause");
+  await pressFind(page, "[role=dialog] label", "Pause before this layer");
+  await sleep(300);
+  await j.shot("edit-cut-layer-pause-on");
+  await pressFind(page, "[role=dialog] button", "OK");
+  await sleep(1200);
+  const tree = await api(url, `/api/library/${lib}`);
+  const entries = (tree?.tree ?? tree)?.materials?.flatMap((m) => m.groups.flatMap((g) => g.entries)) ?? [];
+  const s = entries.find((e) => e.path === "Steel/Finish/Two passes")?.summary;
+  j.note("saved pauses", { operator_pause: s?.operator_pause, sub_layer_pauses: s?.sub_layer_pauses });
+  if (!(s?.operator_pause === true && JSON.stringify(s?.sub_layer_pauses) === "[0]")) throw new Error(`the pauses were not saved: ${JSON.stringify(s)}`);
+  await j.shot("edit-cut-saved");
+  await escape(page);
+  await api(url, "/api/library/unload", json({ name: lib, discard: true }));
+}
 
 async function grblJourney(j) {
   const { page, d } = j;

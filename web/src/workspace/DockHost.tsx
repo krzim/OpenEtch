@@ -37,6 +37,7 @@ import {
   type SideArea,
 } from "./layout.ts";
 import { reloadLayout, LAYOUT_KEY } from "./layout.ts";
+import { getPrefs, updatePrefs } from "./prefs.ts";
 import { useFullscreen } from "./fullscreen.ts";
 import { hintFor } from "./hotkeys.ts";
 import { usePrefs, useT } from "./usePrefs.ts";
@@ -557,6 +558,8 @@ export function SidePanel(p: SidePanelProps) {
     (id: string, by: "click" | "hover") => {
       const group = placeOf(getLayout(), id).group;
       if (group) updateLayout((l) => setActiveTab(l, group, id));
+      // A tapped or clicked rail tab names the window to see: expand it if it was folded (a hover only peeks).
+      else if (by === "click" && getPrefs().docks[id] !== false) updatePrefs((cur) => ({ docks: { ...cur.docks, [id]: false } }));
       byHover.current = by === "hover";
       onOverlay(true);
     },

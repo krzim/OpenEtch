@@ -98,7 +98,8 @@ export const libsApi = {
   entryCreate: (name: string, layer: string, meta: EntryMetaBody) =>
     call("POST", `${lib(name)}/entries`, { layer, material: meta.material, thickness_mm: meta.thickness_mm, title: meta.title, description: meta.description }),
   entryUpdateFromLayer: (name: string, id: string, layer: string) => call("PUT", entry(name, id), { from_layer: layer }),
-  entryEditCut: (name: string, id: string, settings: Record<string, unknown>) => call("PUT", entry(name, id), { settings }),
+  /** Edit Cut: `body` from model.ts editCutBody (settings and the pauses for the operator). */
+  entryEditCut: (name: string, id: string, body: { settings: Record<string, unknown>; operator_pause: boolean; sub_layer_pauses: number[] }) => call("PUT", entry(name, id), body),
   entryEditMeta: (name: string, id: string, meta: EntryMetaBody) => call("PUT", entry(name, id), { meta }),
   entryDuplicate: (name: string, id: string) => call("POST", `${entry(name, id)}/duplicate`, {}),
   entryDelete: (name: string, id: string) => call("DELETE", entry(name, id)),

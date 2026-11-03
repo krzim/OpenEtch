@@ -163,11 +163,14 @@ impl EntryMeta {
 
 fn entry_json(id: EntryId, material: &str, e: &LibEntry, finish: Option<&Finish>) -> Value {
     let summary = preset_of(e).ok().map(|p| {
+        let p = p.with_pauses(finish);
         let s = &p.settings;
+        // The pauses for the operator come from OpenEtch's data beside the `.clb` (module `finish`), for Edit Cut.
+        let (operator_pause, sub_layer_pauses) = pauses_of(s, &p.sub_layers);
         json!({
             "mode": s.mode, "power_pct": s.power_pct, "speed_mm_s": s.speed_mm_s, "frequency_khz": s.frequency_khz,
             "pulse_width_ns": s.pulse_width_ns, "passes": s.passes, "interval_mm": s.hatch.interval_mm,
-            "sub_layers": p.sub_layers.len(),
+            "sub_layers": p.sub_layers.len(), "operator_pause": operator_pause, "sub_layer_pauses": sub_layer_pauses,
         })
     });
     json!({
