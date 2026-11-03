@@ -250,7 +250,9 @@ test("eventInitOf builds what the app handlers test", () => {
 test("resolveKey: defaults pass, extras translate, workspace keys run", () => {
   assert.deepEqual(resolveKey("Ctrl+G", {}), { kind: "pass" });
   assert.deepEqual(resolveKey("Ctrl+R", {}), { kind: "translate", action: "tool.rect", to: "R" });
-  assert.deepEqual(resolveKey("F1", {}), { kind: "ws", action: "help.hotkeys" });
+  // F1 opens the user guide; the cheat sheet keeps Shift+?.
+  assert.deepEqual(resolveKey("F1", {}), { kind: "ws", action: "help.guide" });
+  assert.deepEqual(resolveKey("Shift+?", {}), { kind: "ws", action: "help.hotkeys" });
   assert.deepEqual(resolveKey("Ctrl+0", {}), { kind: "ws", action: "view.zoomPage" });
   assert.deepEqual(resolveKey("Ctrl+J", {}), { kind: "pass" }, "unbound keys are left alone");
   // LightBurn 2.0 defaults (UX-041).

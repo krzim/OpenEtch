@@ -68,6 +68,64 @@ and walks the fill-in form, text auto-fit, the font picker's favourites and samp
 contact sheet and New from example on an iPhone, an iPad and a MacBook (screenshots and layout checks under
 `target/ux-evidence/templates/`). It replaces the engine's document, so run it against a simulator engine.
 
+## Guide screenshots
+
+`guide-shots.mjs` (`npm run guide:shots`) takes the user guide's pictures: it reads `docs/guide/shots.json` and writes
+`docs/guide/img/<name>.webp` (WebP at quality 82, at most 1600 px wide unless a shot sets `maxWidth`). Pages show them
+as `![Alt text](img/<name>.webp)`; `npm test` fails when a page uses a picture that is not listed or not taken yet, or a
+listed shot that no page uses.
+
+```sh
+# Let the script start its own simulator engine (temporary --config-dir and --projects-dir, no LightBurn prefs,
+# --approval click, --no-token, 127.0.0.1:7971), from a built web/dist:
+npm run build
+npm run guide:shots -- --engine ../target/debug/openetch [--port 7971] [--only guide-beside-canvas,cuts-layers-coin]
+
+# Or point it at a simulator engine you started (on this computer, never ports 7878 / 7979):
+openetch --config-dir <tmp>/cfg --projects-dir <tmp>/projects --lightburn-prefs <tmp>/none.ini \
+  --listen 127.0.0.1:7971 --approval click --no-token --web-dir web/dist
+npm run guide:shots -- --url http://127.0.0.1:7971
+
+npm run guide:shots -- --check        # validate shots.json only (no browser, no engine)
+```
+
+Public-safe by construction: shots open only the built-in examples (`doc.new {example}`); `--doc`, any path outside the
+repository and engine commands that read or write files are refused; the engine must report itself as a simulator on
+loopback and must not have imported this computer's LightBurn devices; the light theme is the default; the browser's
+clock is fixed at 15 January 2026 10:30 UTC (en-GB, UTC time zone); before the capture the engine's address becomes
+`openetch.local` and home paths become `C:\Users\you` / `/home/you`, and a shot is refused when a home path, a LAN
+address, this computer's name or the login name is still on screen. Times the engine itself makes (job log entries)
+are not fixed: keep those out of pictures.
+
+A shot: `{ "name": "kebab-case", "device": "<devices.mjs id>", "theme"?: "light" | "dark", "example": "<built-in
+example id>", "steps": [...], "crop"?: "<CSS selector>", "maxWidth"?: px, "note"?: "what it shows" }`. Each step is an
+object with exactly one action key:
+
+| Step | What it does |
+|---|---|
+| `{ "exec": "layer.update", "params": { ... } }` | Run an engine command (as the UI, `/api/execute`); file commands are refused |
+| `{ "click": "Accessible name" }` | Press a control by its aria-label, text or title (exact, then prefix, then substring); `"in": ".selector"` narrows it |
+| `{ "click": { "css": "tr.cuts-row", "text": "Rim" } }` | Press an element by selector (and text) |
+| `{ "click": { "object": "Name" } }` | Press a shape on the canvas by its name or id |
+| `{ "dblclick": target }` / `{ "context": target }` | Double-click (two taps), or right-click (long-press); `{ "context": "selection" }` opens the selection's menu |
+| `{ "menu": ["File", "Laser", "Devices"] }` | Open a menu path (desktop ribbon / top bar) |
+| `{ "type": "text", "into"?: target }` | Type into the focused field, or into `into` (its text is selected first) |
+| `{ "key": "Ctrl+Shift+Z" }` | A key with modifiers (`Ctrl`, `Alt`, `Shift`, `Meta`/`Cmd`); `Escape`, `Enter`, `Delete`, arrows, `F1`... |
+| `{ "hash": "#/guide/example#tables" }` | Go to a hash route (the guide, `#/cockpit`) |
+| `{ "wait": ".selector" }` / `{ "wait": 500 }` | Wait for a visible element (up to 10 s), or a number of ms |
+| `{ "select": "all" }`, `"none"` or `["Name", "obj-3"]` | Select shapes (several need a keyboard: desktop only) |
+| `{ "workspace": "design" }` / `"laser"` | Switch workspace (on a phone: the Canvas / Job tab) |
+| `{ "tab": "Layers", "sheet"?: "half" }` | Phone: a bottom tab, its sheet at `peek`, `half`, `full` or `closed` |
+| `{ "escape": true }` | Close menus, dialogs and drawers |
+| `{ "scroll": ".selector" }` | Scroll that element to the top of its scrolling panel |
+
+Every shot starts in a fresh browser context: `doc.new {example}`, the page loaded, the example's notes and the "Use
+as an app" offer closed. Writers who describe a shot in words ("the Cuts / Layers window on a PC, two-tone coin, Rim
+selected") turn it into steps one action at a time: the device and example become `device` and `example`, "open X"
+becomes `click` or `menu` with the label exactly as the UI shows it, "select Y" becomes `select`, "on the phone's
+Layers tab" becomes `tab`, a setting becomes `exec` with the engine command's parameters, "showing just the panel"
+becomes `crop`. `npm test` checks every step's shape; run the shot to check that it works.
+
 ## Files
 
 - `devices.mjs`: the device matrix (CSS viewport, DPR, touch, user agent, safe-area insets, themes, keyboard height).
@@ -90,7 +148,7 @@ contact sheet and New from example on an iPhone, an iPad and a MacBook (screensh
 
   Intended layers (the allowlist): menus, list boxes, popovers, ribbon flyouts, tooltips and modal dialogs may cover
   anything; the phone's bottom sheet and the tablet's dock overlays may cover the canvas and its overlays; modal
-  backdrops are not panels; the history marker sits on the timeline; a ribbon flyout's dropdown menu may overlap the
+  backdrops are not panels; the canvas viewport is the page at any size (the user guide beside it can make it small); the history marker sits on the timeline; a ribbon flyout's dropdown menu may overlap the
   flyout's edge. A covered control that pokes out above its cover is still reported. What a toast covers is reported one step lower (medium): it goes away by itself. A pinch that zooms the whole page
   is reported as `page-zoom` (critical when STOP leaves the visible area), and the harness then resets the zoom.
 - `scenarios.mjs`: the flows. Every device: first visit, empty document, heavy document fitted, a selection, the
@@ -116,6 +174,10 @@ contact sheet and New from example on an iPhone, an iPad and a MacBook (screensh
   from the phone, context menus at the screen edges, a large UI scale, a desktop window resized mid-session, the iPad
   turned with the keyboard up, undo past the import and redo, ruler guides and the corner's Clear guides. The layout
   check passing is not the verdict: look at the screenshots.
+
+- `guide-shots.mjs`, `guideSteps.mjs`: the guide's screenshots and their step language (above). `scenarios.mjs`'s
+  `guide-*` steps (`--steps guide`) open the guide on every device (F1, More > User guide, the phone's More tab), search
+  it, open a result and close it.
 
 - `history.mjs` (`node e2e/history.mjs --url ... [--doc ...] [--devices ...]`): runs a few jobs on the simulator
   (the owner's file if given, a variable-text tag and a generated 3D Sliced coin), marks them OK / scrap, then on a

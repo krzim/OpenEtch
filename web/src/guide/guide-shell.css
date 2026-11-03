@@ -1,0 +1,107 @@
+/* The user guide's frames (GuideHost.tsx) and the "?" help button (HelpLink.tsx): in the main bundle, as they show
+   before the viewer chunk (guide.css) has loaded. Tokens from tokens.css and styles.css, both themes. */
+
+/* Beside the canvas: a column of .app > .main after the right dock (its width is reserved in App.tsx's dock policy). */
+.guide-pane {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+}
+
+/* A right dock opened from its rail lies over the canvas, left of the guide (not over it). */
+.app[data-guide] .panel-right[data-mode="rail"] {
+  right: calc(var(--dock-rail-w) + var(--guide-w, 0px));
+}
+
+/* Phones and narrow tablets: the whole screen under the top bar (STOP stays in view), over the tab bar, clear of the
+   home indicator's band (like the app's own rows). */
+.guide-sheet {
+  position: fixed;
+  top: calc(var(--safe-top) + var(--bar-top));
+  left: 0;
+  right: 0;
+  bottom: var(--safe-bottom);
+  /* Above a modal dialog, so a "?" inside one shows the guide; Close returns to the dialog. Menus, toasts and STOP
+     stay above it. */
+  z-index: calc(var(--z-modal) + 1);
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  padding: 0 var(--safe-right) 0 var(--safe-left);
+}
+
+/* `?guide`: the guide alone in its tab. */
+.guide-standalone {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  color: var(--text);
+  padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
+}
+
+.guide-loading {
+  padding: var(--sp-5) var(--sp-4);
+  color: var(--text-2);
+  font-size: var(--fs-md);
+}
+
+.guide-loading-actions {
+  display: flex;
+  gap: var(--sp-2);
+}
+
+/* The "?" button: a small circle on a desktop (with a 24 px hit area), 44 px on touch. */
+.help-link {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.help-link > span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: var(--fw-semibold);
+  line-height: 1;
+}
+
+.help-link:hover > span {
+  background: var(--accent-soft);
+}
+
+.help-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: var(--r-md);
+}
+
+:root[data-density="touch"] .help-link {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+:root[data-density="touch"] .help-link > span {
+  width: 22px;
+  height: 22px;
+  font-size: 14px;
+}

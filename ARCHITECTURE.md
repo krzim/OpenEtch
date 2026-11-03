@@ -1175,6 +1175,18 @@ Production tools (see "Production"): `production_status`, `production_events {af
 `serial_ledger {limit?, run_id?}`, `hour_meter` (read-only) and `serial_remark_request {run_id, time_unix_s?, slot}`
 (a pending run).
 
+## User guide
+
+`docs/guide/*.md` is the user guide, one page per file with front matter (`title`, `order`, `section`, `needs: design |
+machine`, `summary`) and an explicit `{#anchor}` on every `##` / `###` heading (format: `docs/guide/README.md`). The
+same files read on GitHub and are bundled into the web UI by Vite (`import.meta.glob`, `web/src/guide/content.ts`) as
+a lazy chunk; the pictures in `docs/guide/img/` are WebP files that `web/e2e/guide-shots.mjs` takes from
+`docs/guide/shots.json` with a simulator engine and the built-in examples only. The app's "?" buttons (`HelpLink`) open
+the viewer at `page#anchor`; `npm test` checks every link, anchor, picture and help target. The guide is static
+content served with the web UI: it calls no engine API endpoint.
+
+To add a page or a screenshot, see `web/README.md` ("User guide") and `web/e2e/README.md` ("Guide screenshots").
+
 ## File formats
 
 - **`.openetch`** (native project): UTF-8 JSON `{"format": "openetch", "version": 1, "document": <doc::Document>}`

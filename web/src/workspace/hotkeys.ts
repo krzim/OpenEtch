@@ -198,7 +198,9 @@ export const ACTIONS: HotkeyAction[] = [
   ws("window.sidePanels", "view", "Toggle side panels", []),
   ws("window.newTab", "file", "New document tab", []),
 
-  ws("help.hotkeys", "help", "Keyboard shortcuts", ["F1", "Shift+?"]),
+  // F1 opens the user guide (docs/guide, src/guide/); the cheat sheet keeps Shift+?.
+  ws("help.guide", "help", "User guide", ["F1"]),
+  ws("help.hotkeys", "help", "Keyboard shortcuts", ["Shift+?"]),
 ];
 
 export const ACTION_BY_ID: ReadonlyMap<string, HotkeyAction> = new Map(ACTIONS.map((a) => [a.id, a]));

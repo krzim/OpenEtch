@@ -18,6 +18,7 @@ import { ES_RIBBON } from "./es-ribbon.ts";
 import { ES_SHELL } from "./es-shell.ts";
 import { ES_TOUCH } from "./es-touch.ts";
 import { ES_TEMPLATES } from "./es-templates.ts";
+import { ES_GUIDE } from "./es-guide.ts";
 
 export const ES_MACHINE_TRANSLATED = true;
 
@@ -38,6 +39,8 @@ export const ES: Messages = {
   ...ES_TEMPLATES,
   // The job ledger and the 3D relief preview (es-history.ts).
   ...ES_HISTORY,
+  // The user guide viewer (es-guide.ts).
+  ...ES_GUIDE,
   "common.cancel": "Cancelar",
   "common.close": "Cerrar",
   "common.loading": "Cargando…",

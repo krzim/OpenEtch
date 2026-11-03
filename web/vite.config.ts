@@ -33,7 +33,11 @@ function precompress(): Plugin {
     name: "openetch-precompress",
     apply: "build",
     enforce: "post",
-    async generateBundle(_options, bundle) {
+    // `order: "post"`: after Vite's own generateBundle hooks, which still rewrite the chunks (the dynamic-import
+    // preload helper's `__VITE_PRELOAD__` marker): a copy made earlier would hold the unfinished code.
+    generateBundle: {
+      order: "post",
+      async handler(_options, bundle) {
       // A computed specifier keeps TypeScript from looking for Node's types; Vite runs this config in Node.
       const zlib = (await import(/* @vite-ignore */ ["node", "zlib"].join(":"))) as Zlib;
       for (const out of Object.values(bundle)) {
@@ -46,6 +50,7 @@ function precompress(): Plugin {
         if (br.byteLength < raw.byteLength) this.emitFile({ type: "asset", fileName: `${out.fileName}.br`, source: br });
         if (gz.byteLength < raw.byteLength) this.emitFile({ type: "asset", fileName: `${out.fileName}.gz`, source: gz });
       }
+      },
     },
   };
 }
@@ -61,6 +66,9 @@ export default defineConfig({
   define: { __OPENETCH_VERSION__: JSON.stringify(pkg.version) },
   server: {
     host: true,
+    // The user guide's pages and pictures live in ../docs/guide (src/guide/content.ts imports them): the dev server
+    // may read that folder as well as the web root.
+    fs: { allow: [".", "../docs/guide"] },
     proxy: {
       "/api": { target: ENGINE, changeOrigin: true, ws: true },
       "/mcp": { target: ENGINE, changeOrigin: true, ws: true },

@@ -1,0 +1,487 @@
+/* The user guide viewer (GuideViewer.tsx, render.tsx): part of the lazy guide chunk. A readable column of text in
+   the app's tokens (both themes): 15 px body text, 1.55 line height, about 70 characters a line at most. */
+
+.guide {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  color: var(--text);
+  background: var(--panel);
+}
+
+.guide-head {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-1) var(--sp-2) var(--sp-2);
+  background: var(--chrome);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.guide-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: var(--hit);
+}
+
+.guide-bar-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: 0;
+  padding-left: var(--sp-1);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.guide-bar .icon-btn {
+  flex: none;
+  text-decoration: none;
+}
+
+.guide-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.guide-search .icon {
+  position: absolute;
+  left: 8px;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.guide-search input {
+  width: 100%;
+  min-height: var(--ctl-h);
+  padding: 0 var(--sp-2) 0 30px;
+  border: 1px solid var(--input-border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-md);
+}
+
+/* 16 px on touch: iOS Safari zooms the page into smaller fields. */
+:root[data-density="touch"] .guide-search input {
+  font-size: 16px;
+}
+
+.guide-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.guide-columns {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 760px);
+  gap: var(--sp-6);
+  justify-content: center;
+  padding: 0 var(--sp-4);
+}
+
+.guide-columns > .guide-toc {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  max-height: 100%;
+  overflow-y: auto;
+}
+
+/* --- page ------------------------------------------------------------------------------------------------------ */
+
+.guide-page {
+  max-width: 760px;
+  padding: var(--sp-3) var(--sp-4) var(--sp-6);
+}
+
+.guide-page-tags {
+  margin: 0 0 calc(-1 * var(--sp-2));
+}
+
+.guide-md {
+  font-size: 15px;
+  line-height: 1.55;
+  overflow-wrap: break-word;
+}
+
+.guide-md h1,
+.guide-md h2,
+.guide-md h3,
+.guide-md h4 {
+  line-height: 1.25;
+  font-weight: var(--fw-semibold);
+  scroll-margin-top: var(--sp-3);
+}
+
+.guide-md h1 {
+  font-size: 22px;
+  margin: var(--sp-3) 0 var(--sp-3);
+}
+
+.guide-md h2 {
+  font-size: 18px;
+  margin: var(--sp-6) 0 var(--sp-2);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border-soft);
+}
+
+.guide-md h3 {
+  font-size: 15px;
+  margin: var(--sp-5) 0 var(--sp-1);
+}
+
+.guide-md h4 {
+  font-size: 14px;
+  margin: var(--sp-4) 0 var(--sp-1);
+}
+
+.guide-md :is(h1, h2, h3, h4):focus {
+  outline: none;
+}
+
+.guide-md :is(h1, h2, h3, h4):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.guide-md p,
+.guide-md ul,
+.guide-md ol,
+.guide-md blockquote,
+.guide-md pre,
+.guide-md .guide-table-wrap,
+.guide-md .guide-callout {
+  margin: 0 0 var(--sp-3);
+}
+
+.guide-md ul,
+.guide-md ol {
+  padding-left: 1.5em;
+}
+
+.guide-md li + li {
+  margin-top: var(--sp-1);
+}
+
+.guide-md li > ul,
+.guide-md li > ol {
+  margin: var(--sp-1) 0 0;
+}
+
+.guide-md li > p {
+  margin-bottom: var(--sp-2);
+}
+
+.guide-md a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.guide-md a:hover {
+  color: var(--accent-hover);
+}
+
+.guide-md a.guide-ext::after {
+  content: " ↗";
+  font-size: 0.85em;
+}
+
+.guide-md code {
+  padding: 1px 4px;
+  border-radius: var(--r-md);
+  background: var(--chrome-2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.88em;
+}
+
+.guide-md pre.guide-code {
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-md);
+  background: var(--chrome-2);
+  overflow-x: auto;
+  line-height: 1.45;
+}
+
+.guide-md pre.guide-code code {
+  padding: 0;
+  background: none;
+  font-size: 13px;
+}
+
+.guide-md blockquote {
+  padding: 0 var(--sp-3);
+  border-left: 3px solid var(--border);
+  color: var(--text-2);
+}
+
+.guide-md hr {
+  border: 0;
+  border-top: 1px solid var(--border-soft);
+  margin: var(--sp-5) 0;
+}
+
+.guide-md .guide-img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: var(--sp-2) 0;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-md);
+}
+
+.guide-img-missing {
+  display: inline-block;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px dashed var(--border);
+  border-radius: var(--r-md);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.guide-badlink {
+  text-decoration: underline dotted;
+}
+
+/* Callouts: > **Note:** / **Tip:** / **Warning:** */
+.guide-callout {
+  padding: var(--sp-2) var(--sp-3);
+  border-left: 4px solid var(--accent);
+  border-radius: var(--r-md);
+  background: var(--accent-soft);
+}
+
+.guide-callout > :last-child {
+  margin-bottom: 0;
+}
+
+.guide-callout-tip {
+  border-left-color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 12%, var(--panel));
+}
+
+.guide-callout-warning {
+  border-left-color: var(--warn);
+  background: var(--warn-bg);
+}
+
+.guide-callout-warning strong:first-child {
+  color: var(--warn-text);
+}
+
+.guide-table-wrap {
+  overflow-x: auto;
+}
+
+.guide-table {
+  border-collapse: collapse;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.guide-table th,
+.guide-table td {
+  padding: 6px 10px;
+  border: 1px solid var(--border-soft);
+  text-align: left;
+  vertical-align: top;
+}
+
+.guide-table th {
+  background: var(--chrome);
+  font-weight: var(--fw-semibold);
+}
+
+.guide-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* --- tags, previous / next --------------------------------------------------------------------------------------- */
+
+.guide-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border: 1px solid var(--warn);
+  border-radius: 999px;
+  color: var(--warn-text);
+  background: var(--warn-bg);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+}
+
+.guide-prevnext {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--sp-3);
+  margin-top: var(--sp-6);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border-soft);
+}
+
+.guide-prevnext a {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: var(--hit);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-md);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.guide-prevnext a:hover {
+  border-color: var(--accent);
+}
+
+.guide-next {
+  text-align: right;
+  align-items: flex-end;
+  grid-column: 2;
+}
+
+.guide-pn-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.guide-pn-title {
+  color: var(--accent);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-medium);
+}
+
+/* --- contents and search results ----------------------------------------------------------------------------------- */
+
+.guide-toc {
+  padding: var(--sp-2) var(--sp-4) var(--sp-5);
+}
+
+.guide-toc-section {
+  margin: var(--sp-4) 0 var(--sp-1);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  text-transform: uppercase;
+  letter-spacing: var(--caption-ls);
+}
+
+.guide-toc ul,
+.guide-results ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.guide-toc li {
+  margin: 0 0 2px;
+}
+
+.guide-toc-link {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: var(--hit);
+  padding: 4px var(--sp-2);
+  border-radius: var(--r-md);
+  color: var(--text);
+  text-decoration: none;
+  font-size: var(--fs-md);
+}
+
+.guide-toc-link:hover {
+  background: var(--surface-hover);
+}
+
+.guide-toc-link.current {
+  background: var(--accent-fill);
+  color: var(--accent);
+  font-weight: var(--fw-medium);
+}
+
+.guide-toc-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.guide-toc-summary {
+  display: block;
+  padding: 0 var(--sp-2) var(--sp-2);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+}
+
+.guide-results {
+  padding: var(--sp-2) var(--sp-3) var(--sp-5);
+}
+
+.guide-hit {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: var(--hit);
+  padding: var(--sp-2);
+  border-radius: var(--r-md);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.guide-hit:hover,
+.guide-hit:focus-visible {
+  background: var(--surface-hover);
+}
+
+.guide-hit-title {
+  color: var(--accent);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-medium);
+}
+
+.guide-hit-snippet {
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+}
+
+.guide-empty {
+  color: var(--text-2);
+  font-size: var(--fs-md);
+}
+
+/* The guide alone in a wide tab: a little more room for the bar. */
+.guide-mode-page .guide-head,
+.guide-wide .guide-head {
+  padding-left: var(--sp-4);
+  padding-right: var(--sp-4);
+}
+
+.guide-wide .guide-search {
+  max-width: 480px;
+}

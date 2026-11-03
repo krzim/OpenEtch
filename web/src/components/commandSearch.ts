@@ -20,6 +20,7 @@ export interface Command {
 export const ALIASES: Readonly<Record<string, readonly string[]>> = {
   "app.preferences": ["settings", "options", "config"],
   "help.hotkeys": ["shortcuts", "keys", "keyboard", "cheat sheet"],
+  "help.guide": ["help", "manual", "documentation", "docs", "how to", "instructions"],
   "edit.delete": ["remove", "erase"],
   "edit.duplicate": ["clone", "copy"],
   "edit.selectAll": ["everything"],

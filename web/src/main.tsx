@@ -9,6 +9,8 @@ import { initAuthToken } from "./api/client.ts";
 import { App } from "./App.tsx";
 import { ConnectGate } from "./app/ConnectScreen.tsx";
 import { CrashScreen } from "./app/CrashScreen.tsx";
+import { GuideStandalone } from "./guide/GuideHost.tsx";
+import { isStandalone } from "./guide/route.ts";
 import { getPrefs } from "./workspace/prefs.ts";
 import { resolveTheme } from "./workspace/theme.ts";
 import "./styles.css";
@@ -26,7 +28,17 @@ try {
 }
 
 const root = document.getElementById("root");
-if (root) {
+if (root && isStandalone()) {
+  // `?guide` (the guide's Open in new tab): the user guide alone, without the engine connection or the canvas.
+  document.title = "OpenEtch user guide";
+  createRoot(root).render(
+    <StrictMode>
+      <CrashScreen>
+        <GuideStandalone />
+      </CrashScreen>
+    </StrictMode>,
+  );
+} else if (root) {
   createRoot(root).render(
     <StrictMode>
       <CrashScreen>

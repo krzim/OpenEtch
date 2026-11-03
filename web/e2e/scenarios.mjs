@@ -582,6 +582,48 @@ function stepsFor(d) {
       }
     }
   });
+  // The user guide (src/guide/): opened as a person would (F1 on a desktop, More > User guide on a tablet, the More
+  // tab's Help section on a phone), then a search, a result with its anchor, and Close.
+  add("guide-open", async ({ page }) => {
+    await escape(page);
+    if (d.kind === "phone") {
+      await moreSheet(page);
+      await openSection(page, "Help");
+      await pressFind(page, ".phone-more button, .phone-more [role=menuitem]", "User guide");
+    } else if (d.kind === "tablet") {
+      await pressFind(page, "button", "More");
+      await sleep(350);
+      await pressFind(page, "[role=menuitem], .menu-item", "User guide");
+    } else {
+      const c = await canvasCenter(page);
+      await page.mouse("mouseMoved", c.x, c.y, { button: "none" });
+      await page.key("F1", { code: "F1" });
+    }
+    if (!(await page.waitFor(".guide-md h1", { timeout: 8000 }))) throw new Error("the guide did not open");
+  });
+  add("guide-search", async ({ page }) => {
+    const f = await find(page, ".guide-search input");
+    if (!f) throw new Error("no guide search field");
+    await page.press(f.x, f.y);
+    await page.type("energy density");
+    await sleep(300);
+    await page.evaluate(() => document.activeElement?.blur?.());
+    if (!(await page.waitFor(".guide-hit", { timeout: 3000 }))) throw new Error("no search results");
+  });
+  add("guide-page", async ({ page }) => {
+    await pressFind(page, ".guide-hit", "Energy density");
+    if (!(await page.waitFor(".guide-table", { timeout: 4000 }))) throw new Error("the example page did not show");
+    await sleep(300);
+  });
+  add("guide-contents", async ({ page }) => {
+    await pressFind(page, ".guide-bar button", "Contents");
+    if (!(await page.waitFor(".guide-toc", { timeout: 3000 }))) throw new Error("no contents");
+  });
+  add("guide-close", async ({ page }) => {
+    await pressFind(page, ".guide-bar button", "Close the guide");
+    await sleep(400);
+    if (await page.evaluate(() => !!document.querySelector(".guide"))) throw new Error("the guide is still open");
+  });
   add("keyboard-input", async ({ page, ctx }) => {
     // A focused numeric field with the on-screen keyboard up (the visual viewport shrinks by the keyboard height).
     const f = await find(page, "button", "Fit field");

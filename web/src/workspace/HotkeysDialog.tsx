@@ -1,4 +1,4 @@
-// Keyboard shortcuts: the cheat sheet (F1 or "?") and, in Edit mode, LightBurn's Edit Hotkeys: click "+" and press
+// Keyboard shortcuts: the cheat sheet ("?", Shift+?; F1 is the user guide) and, in Edit mode, LightBurn's Edit Hotkeys: click "+" and press
 // a key to add it, x removes a key, the reset arrow restores an action's defaults. A key used by another action moves
 // to this one (the dialog says so). Bindings are stored in this browser (Preferences).
 
@@ -16,6 +16,7 @@ import {
   unbindChord,
   type HotkeyAction,
 } from "./hotkeys.ts";
+import { HelpLink } from "../guide/HelpLink.tsx";
 import { translateDynamic, type MsgKey } from "./i18n.ts";
 import { updatePrefs } from "./prefs.ts";
 import { setKeyCapture } from "./useKeymap.ts";
@@ -99,6 +100,8 @@ export function HotkeysDialog(p: { onClose: () => void; edit?: boolean }) {
       <div className="hk-top">
         <input className="hk-search" autoFocus type="search" placeholder={t("hotkeys.search")} value={filter} onChange={(e) => setFilter(e.target.value)} aria-label={t("hotkeys.search")} />
         <span className="hint">{edit ? t("hotkeys.editHint") : t("hotkeys.viewHint")}</span>
+        {/* The user guide's "?" (src/guide/HelpLink.tsx): the one demo placement; more go in as the pages land. */}
+        <HelpLink to="index#keyboard-shortcuts" topic={t("hotkeys.title")} />
       </div>
       {note && (
         <p className="hk-note" role="status">

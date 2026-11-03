@@ -1,4 +1,4 @@
-// Top bar extras: the Help menu (keyboard shortcuts, documentation links, About with versions and the MCP address),
+// Top bar extras: the Help menu (the user guide, keyboard shortcuts, documentation links, About with versions and the MCP address),
 // the Preferences button and a quick theme switch (Light / Dark / Match system). In the compact layouts and below they
 // fold, with the Window menu, into one ⋯ overflow menu (docs/ux/ui-plan-2026-11.md 1.1).
 
@@ -6,6 +6,8 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { MachineStatus } from "../api/types.ts";
 import { openAppModeDialog, useAppModeOffered } from "../app/AppModeDialog.tsx";
 import { Icon } from "../components/ui.tsx";
+import { prefetchGuide } from "../guide/GuideHost.tsx";
+import { openGuide } from "../guide/route.ts";
 import { hintFor } from "./hotkeys.ts";
 import { updatePrefs, type ThemePref } from "./prefs.ts";
 import { usePrefs, useT } from "./usePrefs.ts";
@@ -73,6 +75,21 @@ export function HelpItems(p: { close: () => void; onHotkeys: () => void; onAbout
   );
   return (
     <>
+      {/* The user guide (docs/guide), beside the canvas or as a sheet (src/guide/GuideHost.tsx). */}
+      <button
+        role="menuitem"
+        className="menu-item"
+        data-action-id="help.guide"
+        onPointerEnter={prefetchGuide}
+        onFocus={prefetchGuide}
+        onClick={() => {
+          p.close();
+          openGuide();
+        }}
+      >
+        <span>{t("help.guide")}</span>
+        <span className="menu-hint">{hintFor("help.guide", prefs.hotkeys)}</span>
+      </button>
       <button
         role="menuitem"
         className="menu-item"

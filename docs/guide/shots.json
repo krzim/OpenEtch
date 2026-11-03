@@ -1,0 +1,26 @@
+[
+  {
+    "name": "guide-beside-canvas",
+    "device": "macbook-air-1470",
+    "example": "two-tone-coin",
+    "note": "The guide open beside the canvas on a MacBook, at the start page's Find a topic section.",
+    "steps": [{ "hash": "#/guide#find-a-topic" }, { "wait": ".guide-md h2" }, { "wait": 600 }],
+    "maxWidth": 1470
+  },
+  {
+    "name": "cuts-layers-coin",
+    "device": "win-1920",
+    "example": "two-tone-coin",
+    "note": "The Cuts / Layers window with the two-tone coin's layers, cropped to the right dock.",
+    "steps": [{ "wait": "tr.cuts-row" }],
+    "crop": ".panel-right"
+  },
+  {
+    "name": "phone-layers-sheet",
+    "device": "iphone15-portrait",
+    "example": "palette-coin",
+    "note": "The phone's Layers tab with its sheet at half height.",
+    "steps": [{ "tab": "Layers", "sheet": "half" }],
+    "maxWidth": 786
+  }
+]

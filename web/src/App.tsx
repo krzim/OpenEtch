@@ -73,6 +73,8 @@ import { Icon } from "./components/ui.tsx";
 import { Viewport, type PreviewOptions, type SnapSettings, type Tool, type ViewStyle } from "./components/Viewport.tsx";
 import { CutsLayers } from "./workspace/CutsLayers.tsx";
 import { AboutDialog, HelpItems, TopActions } from "./workspace/HelpMenu.tsx";
+import { GuidePane, GuideSheet, useGuideRoute } from "./guide/GuideHost.tsx";
+import { guideMode, guidePaneWidth, openGuide } from "./guide/route.ts";
 import { PHONE_SEARCH_EVENT, PhoneShell } from "./workspace/PhoneShell.tsx";
 import { LaserDock, machineState } from "./workspace/LaserDock.tsx";
 import { NumericBar } from "./workspace/NumericBar.tsx";
@@ -388,7 +390,12 @@ export function App() {
   const view = useWindowSize();
   const fullscreen = useFullscreen();
   // What each side is now: pinned, a rail, or hidden (closed with its toggle, empty, Focus canvas, or a phone).
-  const policy = dockPolicy(view.w, dockLayout.sizes, { layout, modes: dockLayout.areaMode, reserved: layout === "tablet" ? 52 : 0 });
+  // The user guide (src/guide/): beside the canvas where there is room for it (its width is reserved, so the docks
+  // rail before the canvas gets too narrow), else a full-screen sheet; the production cockpit always gets the sheet.
+  const guideRoute = useGuideRoute();
+  const guideShow = guideRoute ? (prodUi.cockpitOpen ? "sheet" : guideMode(layout, view.w)) : null;
+  const guideW = guideShow === "pane" ? guidePaneWidth(view.w) : 0;
+  const policy = dockPolicy(view.w, dockLayout.sizes, { layout, modes: dockLayout.areaMode, reserved: (layout === "tablet" ? 52 : 0) + guideW });
   const sideMode = (side: SideArea): AreaMode => {
     const has = side === "left" ? leftHasWindows : rightHasWindows;
     const open = side === "left" ? leftOpen : rightOpen;
@@ -1135,6 +1142,7 @@ export function App() {
     handlers: {
       "app.preferences": () => ws.open("prefs"),
       "help.hotkeys": () => ws.open("hotkeys"),
+      "help.guide": () => openGuide(),
       // Ctrl+R / Ctrl+E and rebound tool keys pick the tool even when R/E/C would align a multi-selection.
       "tool.rect": () => (workspace === "design" ? setTool("rect") : false),
       "tool.ellipse": () => (workspace === "design" ? setTool("ellipse") : false),
@@ -1747,6 +1755,7 @@ export function App() {
         {!toastDialog && toastButtons}
       </div>
       {about && <AboutDialog machine={machine} onClose={() => setAbout(false)} />}
+      {guideRoute && guideShow === "sheet" && <GuideSheet route={guideRoute} newTab={layout !== "phone"} />}
     </>
   );
 
@@ -1932,6 +1941,7 @@ export function App() {
     "--dock-left-size": `${dockLayout.sizes.left}px`,
     "--dock-right-size": `${dockLayout.sizes.right}px`,
     "--dock-bottom-size": `${dockLayout.sizes.bottom}px`,
+    ...(guideW ? { "--guide-w": `${guideW}px` } : {}),
   } as CSSProperties;
   // Tablet: a selection's settings open on request, from a pill over the canvas (selecting never opens a drawer).
   const propertiesPill = layout === "tablet" && workspace === "design" && rightMode === "rail" && overlay !== "right" && (selection.objects.length > 0 || selection.stock) && (
@@ -1944,7 +1954,7 @@ export function App() {
   );
 
   return (
-    <div className={`app ws-${workspace}`} style={sizeVars} data-focus={focus ? "" : undefined}>
+    <div className={`app ws-${workspace}`} style={sizeVars} data-focus={focus ? "" : undefined} data-guide={guideW ? "" : undefined}>
       {topBar()}
       <ConnectionBanner />
       {tabs.bar && <div className="doc-tabs-row">{tabs.bar}</div>}
@@ -1985,6 +1995,7 @@ export function App() {
           <DockAreaHost area="right" />
           {rightContent}
         </SidePanel>
+        {guideRoute && guideShow === "pane" && <GuidePane route={guideRoute} width={guideW} />}
       </div>
       <div className="bottom-row" data-bottom={row}>
         {timeline}

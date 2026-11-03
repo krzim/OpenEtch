@@ -27,6 +27,25 @@ If the engine requires a token, open the UI once as `http://host:port/?token=...
 the `/api/events` WebSocket carries it as `?token=` (browsers cannot set headers there); the engine refuses `?token=`
 anywhere else.
 
+## User guide
+
+The user guide's pages are markdown in `../docs/guide/` (the source of truth, also read on GitHub; the page format is
+in `docs/guide/README.md`). `src/guide/` shows them in the app: `markdown.ts` parses them (no dependency, no HTML:
+render.tsx builds React elements), `pages.ts` holds the contents, previous / next and search, `route.ts` the
+`#/guide/<page>#<anchor>` routes, and `GuideHost.tsx` shows the viewer beside the canvas (desktop, MacBook, iPad
+landscape) or as a full-screen sheet (phone, iPad portrait). The viewer and the pages are one lazy chunk
+(`GuideViewer.tsx`, ~12 KB gzip plus the pictures, which load only when shown), so start-up does not grow by them;
+the main bundle carries only the route, the frame and the strings (~3 KB gzip). Help > User guide, `F1` and command
+search open it; `?guide` in the address shows the guide alone (Open in new tab). `VITE_OPENETCH_DESIGN_ONLY=1` leaves
+out the pages with `needs: machine` (the future design-only build).
+
+To add a page: write `docs/guide/<slug>.md` with its front matter, give every `##` / `###` heading an `{#anchor}`,
+run `npm run guide:index` (the contents list at the end of index.md) and `npm test`. To add a screenshot: list it in
+`docs/guide/shots.json` (the step language is in `e2e/README.md`, "Guide screenshots"), reference it as
+`![Alt](img/<name>.webp)` and run `npm run guide:shots`. To link a panel to the guide:
+`<HelpLink to="page#anchor" topic={t("...")} />` (`src/guide/HelpLink.tsx`); `src/guide/helpLinks.test.ts` fails when
+the page or the anchor does not exist.
+
 ## How it works
 
 - **No local document edits.** Every change is `POST /api/execute` (or `/api/batch`) with `origin: "ui"`. The UI

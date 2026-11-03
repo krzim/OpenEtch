@@ -112,6 +112,8 @@ export function checkLayout(opts) {
     // Big absolutely placed surfaces (the canvas, a docked column) are the page, not floating panels; cover layers
     // (sheets, dialogs, menus) count at any size.
     if (r.width * r.height > 0.4 * vw * vh && !el.matches(ALLOWED_COVERS)) continue;
+    // The canvas viewport is the page at any size (with the user guide beside it, it can be under 40 % of the window).
+    if (el.matches(".viewport")) continue;
     add(el, "panel");
   }
 

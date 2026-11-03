@@ -7,6 +7,7 @@ import { EN_FILES } from "./en-files.ts";
 import { EN_FILL } from "./en-fill.ts";
 import { EN_JIGS } from "./en-jigs.ts";
 import { EN_GANTRY } from "./en-gantry.ts";
+import { EN_GUIDE } from "./en-guide.ts";
 import { EN_HISTORY } from "./en-history.ts";
 import { EN_JOB } from "./en-job.ts";
 import { EN_LASER } from "./en-laser.ts";
@@ -27,6 +28,8 @@ import { EN_WS } from "./en-ws.ts";
 export const EN = {
   // Text, barcodes and variable text (src/text/).
   ...EN_TEXT,
+  // The user guide viewer and the "?" help buttons (src/guide/).
+  ...EN_GUIDE,
   // Font favourites and samples, text auto-fit, the contact sheet, templates and examples (src/templates/).
   ...EN_TEMPLATES,
   // Laser window job controls, framing, preview timeline, device settings, calibration, rotary, cut options.
@@ -100,7 +103,7 @@ export const EN = {
   "hotkeys.title": "Keyboard shortcuts",
   "hotkeys.editTitle": "Edit hotkeys",
   "hotkeys.search": "Search actions or keys",
-  "hotkeys.viewHint": "LightBurn's default keys. Press F1 or ? to open this list.",
+  "hotkeys.viewHint": "LightBurn's default keys. Press ? (Shift+?) to open this list; F1 opens the user guide.",
   "hotkeys.editHint": "Click + and press a key to add it; × removes a key. Saved in this browser.",
   "hotkeys.edit": "Edit…",
   "hotkeys.done": "Done editing",
