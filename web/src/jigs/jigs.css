@@ -1,0 +1,268 @@
+/* Jigs and placement (src/jigs/): the canvas layer, pocket labels, HUD bars, the Jigs window and the pre-flight
+   warnings next to Start. Colours from tokens.css. */
+
+/* ---- canvas ---- */
+.jig-layer .jig-plate {
+  fill: none;
+  stroke: var(--muted);
+  opacity: 0.6;
+}
+.jig-layer .jig-pocket-outline {
+  fill: var(--accent-soft);
+  fill-opacity: 0.25;
+  stroke: var(--accent);
+}
+.jig-layer .jig-pocket-outline.off {
+  fill: none;
+  stroke: var(--muted);
+}
+.jig-layer .jig-keepout {
+  fill: url(#jig-hatch);
+  stroke: var(--danger);
+}
+.jig-layer .jig-keepout.off {
+  fill: none;
+  stroke-dasharray: 2 2;
+  opacity: 0.5;
+}
+.jig-layer .jig-hatch-line {
+  stroke: var(--danger);
+  opacity: 0.45;
+}
+.jig-layer .jig-datum line {
+  stroke: var(--muted);
+}
+.rm-region {
+  fill: var(--warn-bg);
+  fill-opacity: 0.35;
+  stroke: var(--warn);
+}
+.rm-region.draft {
+  fill-opacity: 0.15;
+}
+
+.jig-labels {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.jig-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  min-width: 20px;
+  height: 20px;
+  padding: 0 4px;
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+  opacity: 0.9;
+}
+.jig-label.off {
+  border-style: dashed;
+  border-color: var(--muted);
+  color: var(--muted);
+  text-decoration: line-through;
+}
+.jig-label.button {
+  pointer-events: auto;
+  cursor: pointer;
+  min-width: 32px;
+  height: 32px;
+  border-radius: 16px;
+  font-size: 14px;
+  line-height: 30px;
+  opacity: 1;
+}
+@media (pointer: coarse) {
+  .jig-label.button {
+    min-width: 44px;
+    height: 44px;
+    border-radius: 22px;
+    line-height: 42px;
+    font-size: 16px;
+  }
+}
+:root[data-density="touch"] .jig-label.button {
+  min-width: 44px;
+  height: 44px;
+  border-radius: 22px;
+  line-height: 42px;
+}
+
+/* ---- HUD bars ---- */
+.jig-bar {
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.jig-seg-small {
+  margin: 0;
+}
+.jig-seg-small button {
+  white-space: nowrap;
+  min-height: 28px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+.rm-warn {
+  color: var(--warn-text);
+  font-weight: 600;
+}
+
+/* ---- the Jigs window ---- */
+.jig-top {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.jig-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.jig-section {
+  border-top: 1px solid var(--border);
+  margin-top: 10px;
+  padding-top: 8px;
+}
+.jig-section h4 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+}
+.jig-pockets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.jig-pocket {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--accent);
+  border-radius: 18px;
+  background: var(--accent-soft);
+}
+.jig-pocket.off {
+  border-style: dashed;
+  border-color: var(--border);
+  background: var(--surface);
+}
+.jig-pocket-toggle {
+  min-width: 40px;
+  min-height: 36px;
+  border: 0;
+  background: transparent;
+  font-weight: 600;
+  cursor: pointer;
+}
+.jig-pocket.off .jig-pocket-toggle {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+@media (pointer: coarse) {
+  .jig-pocket-toggle {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+.jig-two {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0 12px;
+}
+.jig-seg {
+  flex: 1;
+  margin: 0;
+}
+.jig-zones {
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 0;
+}
+.jig-zones li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.jig-serial {
+  margin-top: 6px;
+}
+.jig-delete {
+  margin-right: auto;
+}
+
+/* ---- pre-flight next to Start ---- */
+.pf-notes {
+  padding: 6px 8px;
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+  background: var(--warn-bg);
+  font-size: var(--fs-sm, 12px);
+  line-height: 1.35;
+}
+.pf-head {
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.pf-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pf-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 2px 6px;
+}
+.pf-item > svg {
+  margin-top: 1px;
+  color: var(--warn-text);
+}
+.pf-item > .pf-mute {
+  grid-column: 2;
+  justify-self: start;
+}
+.pf-item-refused > svg {
+  color: var(--danger);
+}
+.pf-item-refused .pf-text {
+  font-weight: 600;
+}
+.pf-text {
+  min-width: 0;
+}
+.pf-mute,
+.pf-restore {
+  font-size: var(--fs-sm, 12px);
+}
+.pf-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--warn);
+  border-radius: 999px;
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  font-size: var(--fs-sm, 12px);
+  font-weight: 600;
+  padding: 2px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.pf-pill-refused {
+  border-color: var(--danger);
+  background: var(--danger-bg);
+  color: var(--danger-dark);
+}

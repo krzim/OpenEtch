@@ -9,6 +9,7 @@
 import type { Messages } from "../i18n.ts";
 import { ES_APP } from "./es-app.ts";
 import { ES_DESIGN } from "./es-design.ts";
+import { ES_JIGS } from "./es-jigs.ts";
 import { ES_LASER } from "./es-laser.ts";
 import { ES_RIBBON } from "./es-ribbon.ts";
 import { ES_SHELL } from "./es-shell.ts";
@@ -19,6 +20,8 @@ export const ES_MACHINE_TRANSLATED = true;
 export const ES: Messages = {
   // The design-engine UI and later additions (es-design.ts).
   ...ES_DESIGN,
+  // Jigs and placement (es-jigs.ts).
+  ...ES_JIGS,
   // The UX plan's packages (docs/ux/ui-plan-2026-11.md).
   ...ES_SHELL,
   ...ES_RIBBON,

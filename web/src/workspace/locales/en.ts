@@ -5,6 +5,7 @@ import { EN_APP } from "./en-app.ts";
 import { EN_DESIGN } from "./en-design.ts";
 import { EN_FILES } from "./en-files.ts";
 import { EN_FILL } from "./en-fill.ts";
+import { EN_JIGS } from "./en-jigs.ts";
 import { EN_GANTRY } from "./en-gantry.ts";
 import { EN_JOB } from "./en-job.ts";
 import { EN_LASER } from "./en-laser.ts";
@@ -34,6 +35,8 @@ export const EN = {
   ...EN_TOOLS,
   // The Fill Region tool (src/fill/).
   ...EN_FILL,
+  // Jigs and placement: Fit to stock, jigs, Re-mark region, pre-flight warnings (src/jigs/).
+  ...EN_JIGS,
   // The design-engine UI: Shape Properties, Edit / Tools menus, Art Library, Move / Grid array dialogs (src/design/).
   ...EN_DESIGN,
   // Material library, defaults, test generators, approval gates, laser tools, camera, Help additions (src/libs/).

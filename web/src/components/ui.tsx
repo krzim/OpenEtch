@@ -408,6 +408,32 @@ export function CheckField(props: { label: string; checked: boolean; onChange: (
 // coloured by currentColor. Sizes: 20 px toolbar, 16 px menus and inspector, 24 px touch HUD.
 // L = Lucide, T = Tabler, with the source icon's name in brackets.
 const ICONS: Record<string, ReactNode> = {
+  // L [layout-grid]: a jig's pockets
+  jig: (
+    <>
+      <rect width="7" height="7" x="3" y="3" rx="1" />
+      <rect width="7" height="7" x="14" y="3" rx="1" />
+      <rect width="7" height="7" x="14" y="14" rx="1" />
+      <rect width="7" height="7" x="3" y="14" rx="1" />
+    </>
+  ),
+  // L [scaling]: Fit to stock
+  fitStock: (
+    <>
+      <path d="M21 3 9 15" />
+      <path d="M12 3H3v18h18v-9" />
+      <path d="M16 3h5v5" />
+      <path d="M14 15H9v-5" />
+    </>
+  ),
+  // L [lasso]: Re-mark region
+  lasso: (
+    <>
+      <path d="M7 22a5 5 0 0 1-2-4" />
+      <path d="M3.3 14A6.8 6.8 0 0 1 2 10c0-4.4 4.5-8 10-8s10 3.6 10 8-4.5 8-10 8a12 12 0 0 1-5-1" />
+      <path d="M5 18a2 2 0 1 0 0-4 2 2 0 0 0 0 4z" />
+    </>
+  ),
   // L [box]
   stock: (
     <>
