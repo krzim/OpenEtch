@@ -10,7 +10,11 @@ publish.workspace = true
 
 [features]
 # Native font discovery: installed system fonts (fontdb), font folders, and the clock for date/time variable text.
-system = ["dep:fontdb", "chrono/clock"]
+system = ["dep:fontdb", "clock"]
+# The clock for date/time variable text (`Moment::now`).
+clock = ["chrono/clock"]
+# The clock in a browser (wasm32-unknown-unknown): chrono reads JS `Date` for the time and the local time zone.
+wasm-clock = ["clock", "chrono/wasmbind"]
 
 [dependencies]
 doc = { workspace = true }
@@ -20,7 +24,7 @@ thiserror = { workspace = true }
 # Glyph outlines (MIT OR Apache-2.0) and text shaping, a HarfBuzz port (MIT).
 skrifa = "0.44"
 harfrust = "0.12"
-# Date/time variable text (MIT OR Apache-2.0); the clock only with `system`.
+# Date/time variable text (MIT OR Apache-2.0); the clock only with `clock` (or `system` / `wasm-clock`).
 chrono = { version = "0.4", default-features = false, features = ["alloc"] }
 # Barcode encoding, a ZXing port (Apache-2.0): encoders only.
 rxing = { version = "0.9.3", default-features = false, features = ["encoders", "encoding_rs", "qrcode", "datamatrix", "aztec", "pdf417", "oned"] }

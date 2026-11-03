@@ -299,11 +299,8 @@ mod tests {
         // xref offsets point at objects.
         let xref_at: usize = text.rsplit("startxref\n").next().unwrap().lines().next().unwrap().parse().unwrap();
         assert!(pdf[xref_at..].starts_with(b"xref"));
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let parsed = lopdf::Document::load_mem(pdf).unwrap();
-            assert_eq!(parsed.get_pages().len(), 1);
-        }
+        let parsed = lopdf::Document::load_mem(pdf).unwrap();
+        assert_eq!(parsed.get_pages().len(), 1);
     }
 
     #[test]

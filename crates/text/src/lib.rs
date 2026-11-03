@@ -11,7 +11,8 @@
 //! - Variable text ([`vars`]): serial numbers, date/time, CSV merge and cut-setting codes, as LightBurn formats them.
 //! - Barcodes ([`barcode`]).
 //!
-//! Everything but font discovery and the clock is pure and builds for wasm32.
+//! Everything but font discovery is pure and builds for wasm32; the clock comes from JS `Date` there (feature
+//! `wasm-clock`), and fonts the browser has are added as data ([`registry::add_font_data`]).
 
 pub mod barcode;
 pub mod codes;

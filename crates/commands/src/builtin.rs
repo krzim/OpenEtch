@@ -9,7 +9,6 @@ mod art_library;
 mod array;
 pub(crate) use array::sync_virtual_arrays;
 mod document;
-#[cfg(not(target_arch = "wasm32"))]
 mod dxf;
 mod file;
 mod group;
@@ -135,7 +134,6 @@ pub(crate) fn register_all(r: &mut Registry) {
     r.register::<job_settings::SetOptimization>();
     r.register::<job_settings::SetCutProperties>();
     r.register::<job_settings::SetRotary>();
-    #[cfg(not(target_arch = "wasm32"))]
     r.register::<dxf::ImportDxf>();
     register_geometry(r);
     register_design(r);
@@ -163,7 +161,6 @@ fn register_tools(r: &mut Registry) {
 fn register_files(r: &mut Registry) {
     r.register::<files::DocExport>();
     r.register::<files::DocPrint>();
-    #[cfg(not(target_arch = "wasm32"))]
     r.register::<files::ImportPdf>();
     r.register::<files::ImportAi>();
     r.register::<files::ImportEps>();

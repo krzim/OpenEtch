@@ -81,9 +81,17 @@ pub fn with_registry<T>(f: impl FnOnce(&mut Registry) -> T) -> T {
 }
 
 /// Add an in-memory font (TrueType/OpenType, `.shx` or `.jsf` bytes, detected from the data). `family` names a
-/// single-line font; a TrueType font is named by its own family name. Returns the family names added.
+/// single-line font; a TrueType font is named by its own family name. Returns the family names added. Adding a face
+/// again (same family, kind, weight and slant) replaces the one added before, so a browser can add its stored fonts
+/// at every start.
 pub fn add_font_data(family: &str, data: Vec<u8>) -> Result<Vec<String>, String> {
     with_registry(|r| r.add_data(family, data.into()))
+}
+
+/// Remove the fonts added with [`add_font_data`] under `family` (any kind; case does not matter). Bundled, system
+/// and font-folder fonts stay. Returns how many faces were removed.
+pub fn remove_font_data(family: &str) -> usize {
+    with_registry(|r| r.remove_data(family))
 }
 
 /// Add a folder of fonts (native builds). Fonts already known are kept.
@@ -128,24 +136,45 @@ impl Registry {
             self.cache.clear();
             return Ok(vec![family.to_string()]);
         }
-        let mut added = Vec::new();
+        let mut faces = Vec::new();
         for index in 0..64u32 {
             let Ok(f) = OutlineFont::from_data(data.clone(), index) else { break };
-            let family = if f.family.is_empty() { family.to_string() } else { f.family.clone() };
-            added.push(family.clone());
-            self.faces.push(Face {
-                family,
+            faces.push(Face {
+                family: if f.family.is_empty() { family.to_string() } else { f.family.clone() },
                 kind: FontKind::System,
                 weight: f.weight.round().clamp(1.0, 1000.0) as u16,
                 italic: f.italic,
                 source: Source::Data(data.clone(), index),
             });
         }
-        if added.is_empty() {
+        if faces.is_empty() {
             return Err(format!("{family}: not a TrueType/OpenType, SHX or JSF font"));
         }
+        self.faces.retain(|old| {
+            !(matches!(old.source, Source::Data(..))
+                && faces.iter().any(|f| {
+                    f.kind == old.kind && f.weight == old.weight && f.italic == old.italic && f.family.eq_ignore_ascii_case(&old.family)
+                }))
+        });
+        let mut added: Vec<String> = Vec::new();
+        for f in &faces {
+            if !added.iter().any(|a| a.eq_ignore_ascii_case(&f.family)) {
+                added.push(f.family.clone());
+            }
+        }
+        self.faces.extend(faces);
         self.cache.clear();
         Ok(added)
+    }
+
+    fn remove_data(&mut self, family: &str) -> usize {
+        let before = self.faces.len();
+        self.faces.retain(|f| !(matches!(f.source, Source::Data(..)) && f.family.eq_ignore_ascii_case(family.trim())));
+        let n = before - self.faces.len();
+        if n > 0 {
+            self.cache.clear();
+        }
+        n
     }
 
     #[cfg(feature = "system")]
@@ -352,5 +381,28 @@ mod tests {
         let got = r.resolve(&FontSpec { family: "testj".into(), kind: FontKind::Jsf }, false, false).unwrap();
         assert!(matches!(got.font, Font::Stroke(f) if f.glyph('A').is_some()));
         assert!(r.add_data("junk", b"junk".to_vec().into()).is_err());
+    }
+
+    /// A generated TrueType font (tests/fixtures/ttf, made by make-box-font.mjs there).
+    const BOX_TTF: &[u8] = include_bytes!("../tests/fixtures/ttf/openetch-box.ttf");
+
+    #[test]
+    fn in_memory_truetype_fonts_are_listed_replaced_and_removed() {
+        let mut r = Registry::with_bundled();
+        let n = r.faces.len();
+        // Named by the font's own family, whatever the caller calls it.
+        assert_eq!(r.add_data("upload.ttf", BOX_TTF.to_vec().into()).unwrap(), ["OpenEtch Box"]);
+        let listed: Vec<_> = r.families().into_iter().filter(|f| f.family == "OpenEtch Box").collect();
+        assert_eq!(listed, [FamilyInfo { family: "OpenEtch Box".into(), kind: FontKind::System, bold: false, italic: false }]);
+        let got = r.resolve(&FontSpec::system("openetch box"), false, false).unwrap();
+        assert!(matches!(&got.font, Font::Outline(f) if f.family == "OpenEtch Box"));
+        // Adding the same face again (a browser adding its stored fonts at every start) replaces it.
+        r.add_data("again", BOX_TTF.to_vec().into()).unwrap();
+        assert_eq!(r.faces.len(), n + 1);
+        // Removing takes the added faces only.
+        assert_eq!(r.remove_data("Hershey Sans"), 0);
+        assert_eq!(r.remove_data(" openetch BOX "), 1);
+        assert_eq!(r.faces.len(), n);
+        assert!(r.resolve(&FontSpec::system("OpenEtch Box"), false, false).is_err());
     }
 }

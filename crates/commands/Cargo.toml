@@ -24,12 +24,18 @@ text = { workspace = true }
 fileio = { path = "../fileio" }
 plan = { workspace = true }
 roxmltree = { workspace = true }
-
-# DXF reading needs a random source for ids (uuid), which wasm32 lacks; art.import_dxf is native only.
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# DXF reading (art.import_dxf, DXF jigs).
 dxf = { workspace = true }
+
 # Installed fonts, font folders and the clock for date/time variable text.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 text = { workspace = true, features = ["system"] }
+
+# In the browser: the clock from JS `Date` (chrono's wasmbind), and a random source for the ids dxf makes (uuid's
+# WebCrypto backend; wasm32-unknown-unknown has no other). Both MIT OR Apache-2.0, already in the tree natively.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+text = { workspace = true, features = ["wasm-clock"] }
+uuid = { version = "1", default-features = false, features = ["js"] }
 
 [dev-dependencies]
 image = { workspace = true }

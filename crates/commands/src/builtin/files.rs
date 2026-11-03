@@ -569,10 +569,8 @@ pub struct ImportPdfInput {
 }
 
 /// `art.import_pdf`.
-#[cfg(not(target_arch = "wasm32"))]
 pub struct ImportPdf;
 
-#[cfg(not(target_arch = "wasm32"))]
 impl Command for ImportPdf {
     type Input = ImportPdfInput;
     const ID: &'static str = "art.import_pdf";
@@ -616,16 +614,8 @@ impl Command for ImportAi {
         let bytes = base64_bytes(id, &i.data_base64, MAX_FILE_BYTES)?;
         let pdf = bytes.windows(5).take(1024).any(|w| w == b"%PDF-");
         let art = if pdf {
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                fileio::pdf_in::parse(&bytes, &fileio::pdf_in::PdfImportOptions { page: i.page, hidden_layers: i.hidden_layers })
-                    .map_err(file_err(id))?
-            }
-            #[cfg(target_arch = "wasm32")]
-            {
-                let _ = (i.page, i.hidden_layers);
-                return Err(invalid(id, "PDF-based Illustrator files are read by the engine only"));
-            }
+            fileio::pdf_in::parse(&bytes, &fileio::pdf_in::PdfImportOptions { page: i.page, hidden_layers: i.hidden_layers })
+                .map_err(file_err(id))?
         } else {
             fileio::postscript::parse(&bytes).map_err(file_err(id))?
         };

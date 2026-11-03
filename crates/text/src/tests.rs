@@ -219,3 +219,16 @@ fn truetype_fonts_render_filled_outlines() {
     b.bold = true;
     assert!(render(&b).outline.elements().len() > 4);
 }
+
+#[test]
+fn an_added_truetype_font_lays_out_without_system_fonts() {
+    // The generated box font: one box per non-space character, 0.7 em tall.
+    let data = include_bytes!("../tests/fixtures/ttf/openetch-box.ttf").to_vec();
+    assert_eq!(registry::add_font_data("box", data).unwrap(), ["OpenEtch Box"]);
+    let mut t = Text::new("OE 12", FontSpec::system("OpenEtch Box"), 10.0);
+    t.welded = false;
+    let r = render(&t);
+    let boxes = r.outline.elements().iter().filter(|e| matches!(e, kurbo::PathEl::MoveTo(_))).count();
+    assert_eq!(boxes, 4);
+    assert!((bounds(&r.outline).height() - 7.0).abs() < 1e-6, "{:?}", bounds(&r.outline));
+}

@@ -1,5 +1,5 @@
 //! File formats and image tools beyond the native and LightBurn projects (ARCHITECTURE.md "Files and image tools").
-//! Pure and wasm-ok, except PDF reading ([`pdf_in`], native only: its parser needs a random source).
+//! Pure and wasm-ok (PDF reading too: in the browser lopdf takes its random source from WebCrypto).
 //!
 //! - Exports of a [`doc::Document`] (or a selection of it): [`svg_out`] (SVG, also print-ready), [`dxf_out`] (DXF
 //!   R12), [`pdf_out`] (PDF, also print-ready and the PDF-compatible Adobe Illustrator `.ai`).
@@ -30,7 +30,6 @@ pub mod lbart;
 pub mod lbrn_legacy;
 pub mod mesh;
 pub mod pdf_out;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod pdf_in;
 pub mod postscript;
 pub mod rd_in;
