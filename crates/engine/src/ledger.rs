@@ -218,7 +218,8 @@ impl Ledger {
     /// Every note, the newest per id.
     pub fn notes(&self) -> HashMap<String, Note> {
         let Some(path) = self.path(NOTES_FILE, "") else { return HashMap::new() };
-        let text = std::fs::read_to_string(path).unwrap_or_default();
+        // A damaged byte loses its own line, never every verdict.
+        let text = String::from_utf8_lossy(&std::fs::read(path).unwrap_or_default()).into_owned();
         let mut out = HashMap::new();
         for n in text.lines().filter_map(|l| serde_json::from_str::<Note>(l).ok()) {
             out.insert(n.id.clone(), n);
@@ -232,11 +233,7 @@ impl Ledger {
             std::fs::create_dir_all(dir).map_err(|e| EngineError::Internal(format!("cannot create {}: {e}", dir.display())))?;
         }
         let line = serde_json::to_string(n).map_err(|e| EngineError::Internal(e.to_string()))?;
-        std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .and_then(|mut f| writeln!(f, "{line}"))
+        crate::production::ledger::append_line(&path, &line)
             .map_err(|e| EngineError::Internal(format!("cannot write {}: {e}", path.display())))
     }
 

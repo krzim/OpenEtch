@@ -7,7 +7,6 @@
 //! share of the time, the serial number and CSV row and each variable text's value, the run options and the
 //! estimate. Older lines without these fields still read (every new field has a default).
 
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -177,7 +176,8 @@ impl JobLog {
             Ok(l) => l,
             Err(err) => return tracing::warn!(error = %err, "job log: cannot encode the entry"),
         };
-        let written = std::fs::OpenOptions::new().create(true).append(true).open(path).and_then(|mut f| writeln!(f, "{line}"));
+        // A last line cut short (a crash, a full disk) gets its line break first (module `production::ledger`).
+        let written = crate::production::ledger::append_line(path, &line);
         if let Err(err) = written {
             tracing::warn!(path = %path.display(), error = %err, "job log: cannot append");
         }
@@ -195,7 +195,8 @@ impl JobLog {
                 f.read_to_end(&mut buf).map_err(|e| EngineError::Internal(e.to_string()))?;
                 String::from_utf8_lossy(&buf).into_owned()
             }
-            Ok(_) => std::fs::read_to_string(path).map_err(|e| EngineError::Internal(e.to_string()))?,
+            // A damaged byte loses its own line, never the whole log (and with it the job ledger).
+            Ok(_) => String::from_utf8_lossy(&std::fs::read(path).map_err(|e| EngineError::Internal(e.to_string()))?).into_owned(),
             Err(_) => return Ok(Vec::new()),
         };
         let all: Vec<JobLogEntry> = text.lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
@@ -303,6 +304,7 @@ fn trim(v: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write as _;
 
     fn entry(n: u64) -> JobLogEntry {
         JobLogEntry {
@@ -329,7 +331,9 @@ mod tests {
         for n in 1..=5 {
             log.append(&entry(n));
         }
-        std::fs::OpenOptions::new().append(true).open(log.path().unwrap()).unwrap().write_all(b"not json\n").unwrap();
+        // A line that is not JSON, a byte that is not UTF-8 and a line cut short without its line break: each loses
+        // only itself.
+        std::fs::OpenOptions::new().append(true).open(log.path().unwrap()).unwrap().write_all(b"not json\n\xff\n{\"time_").unwrap();
         log.append(&entry(6));
         let last = log.read(3).unwrap();
         assert_eq!(last.iter().map(|e| e.time_unix_s).collect::<Vec<_>>(), [4, 5, 6]);

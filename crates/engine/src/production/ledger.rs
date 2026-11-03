@@ -20,6 +20,8 @@ pub const LEDGER_FILE: &str = "serial-ledger.jsonl";
 pub const MAX_READ: usize = 10_000;
 /// Largest ledger that is read back (older lines beyond it are skipped).
 const MAX_READ_BYTES: u64 = 32 * 1024 * 1024;
+/// What a short read takes from the end of the file first.
+const TAIL_BYTES: u64 = 1024 * 1024;
 
 /// One slot of a ledger entry.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -133,34 +135,33 @@ impl Ledger {
             Ok(l) => l,
             Err(err) => return tracing::warn!(error = %err, "serial ledger: cannot encode the entry"),
         };
-        let written = std::fs::OpenOptions::new().create(true).append(true).open(&path).and_then(|mut f| writeln!(f, "{line}"));
+        let written = append_line(&path, &line);
         if let Err(err) = written {
             tracing::warn!(path = %path.display(), error = %err, "serial ledger: cannot append");
         }
     }
 
-    /// The newest `limit` entries, oldest first (lines that do not parse are skipped).
+    /// The newest `limit` entries, oldest first (lines that do not parse, or are not UTF-8, are skipped). Only the
+    /// end of the file is read: [`TAIL_BYTES`] for a short read (the cockpit's last runs, read on every refresh) unless
+    /// that holds fewer entries, at most [`MAX_READ_BYTES`].
     pub fn read(&self, limit: usize) -> Result<Vec<LedgerEntry>, EngineError> {
         let n = limit.min(MAX_READ);
         let Some(path) = self.path() else {
             let m = self.memory.read().unwrap_or_else(std::sync::PoisonError::into_inner);
             return Ok(m[m.len().saturating_sub(n)..].to_vec());
         };
-        let text = match std::fs::metadata(&path) {
-            Ok(m) if m.len() > MAX_READ_BYTES => {
-                use std::io::{Read, Seek, SeekFrom};
-                let mut f = std::fs::File::open(&path).map_err(|e| EngineError::Internal(e.to_string()))?;
-                #[allow(clippy::cast_possible_wrap)]
-                f.seek(SeekFrom::End(-(MAX_READ_BYTES as i64))).map_err(|e| EngineError::Internal(e.to_string()))?;
-                let mut buf = Vec::new();
-                f.read_to_end(&mut buf).map_err(|e| EngineError::Internal(e.to_string()))?;
-                String::from_utf8_lossy(&buf).into_owned()
-            }
-            Ok(_) => std::fs::read_to_string(&path).map_err(|e| EngineError::Internal(e.to_string()))?,
+        let len = match std::fs::metadata(&path) {
+            Ok(m) => m.len(),
             Err(_) => return Ok(Vec::new()),
         };
-        let all: Vec<LedgerEntry> = text.lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
-        Ok(all[all.len().saturating_sub(n)..].to_vec())
+        let mut window = if n <= 100 { TAIL_BYTES.min(MAX_READ_BYTES) } else { MAX_READ_BYTES };
+        loop {
+            let all = tail_entries(&path, len, window)?;
+            if all.len() >= n || window >= len || window >= MAX_READ_BYTES {
+                return Ok(all[all.len().saturating_sub(n)..].to_vec());
+            }
+            window = MAX_READ_BYTES;
+        }
     }
 
     /// The entry of run `run_id` (the newest, should there be several: run ids start again when the engine
@@ -207,6 +208,35 @@ pub fn to_csv(entries: &[LedgerEntry]) -> String {
         }
     }
     out
+}
+
+/// Append `line` and a line break to the JSON-lines file at `path` (created when missing). A last line cut short by a
+/// crash or a full disk gets its line break first, so it never swallows the new line.
+pub(crate) fn append_line(path: &Path, line: &str) -> std::io::Result<()> {
+    use std::io::{Read as _, Seek as _, SeekFrom};
+    let mut f = std::fs::OpenOptions::new().create(true).read(true).append(true).open(path)?;
+    let mut last = [b'\n'];
+    if f.metadata()?.len() > 0 {
+        f.seek(SeekFrom::End(-1))?;
+        f.read_exact(&mut last)?;
+    }
+    let sep = if last[0] == b'\n' { "" } else { "\n" };
+    writeln!(f, "{sep}{line}")
+}
+
+/// The entries in the last `window` bytes of the ledger file of `len` bytes (a first line cut by the window is
+/// skipped as it does not parse).
+fn tail_entries(path: &Path, len: u64, window: u64) -> Result<Vec<LedgerEntry>, EngineError> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path).map_err(|e| EngineError::Internal(e.to_string()))?;
+    f.seek(SeekFrom::Start(len.saturating_sub(window))).map_err(|e| EngineError::Internal(e.to_string()))?;
+    let mut buf = Vec::new();
+    f.take(window).read_to_end(&mut buf).map_err(|e| EngineError::Internal(e.to_string()))?;
+    Ok(buf
+        .split(|b| *b == b'\n')
+        .filter_map(|l| std::str::from_utf8(l).ok())
+        .filter_map(|l| serde_json::from_str(l.trim_end_matches('\r')).ok())
+        .collect())
 }
 
 #[cfg(test)]
@@ -273,6 +303,26 @@ mod tests {
         let m = Ledger::default();
         m.append(&entry(9));
         assert_eq!(m.read(5).unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_damaged_ledger_still_reads_and_appends() {
+        let dir = std::env::temp_dir().join(format!("openetch-ledger-damaged-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let l = Ledger::default();
+        l.open(&dir);
+        l.append(&entry(1));
+        // A byte that is not UTF-8 and a line cut short (a crash mid-write), with no line break after it.
+        let path = dir.join(LEDGER_FILE);
+        let mut bytes = std::fs::read(&path).unwrap();
+        bytes.extend_from_slice(b"\xff\xfe garbage\n{\"time_unix_s\": 2, \"run_");
+        std::fs::write(&path, bytes).unwrap();
+        l.append(&entry(3));
+        let all = l.read(100).unwrap();
+        assert_eq!(all.iter().map(|e| e.time_unix_s).collect::<Vec<_>>(), [1, 3], "the damaged lines are skipped, the rest kept");
+        assert_eq!(l.find("run-3", None).unwrap().unwrap().time_unix_s, 3);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
