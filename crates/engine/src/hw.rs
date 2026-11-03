@@ -25,10 +25,10 @@ use machine::grbl::{
 };
 use machine::ruida::{OfflineRuida, RuidaController, RuidaLink, RuidaPoll, RuidaProfile, RuidaSnapshot, SimRuida, SimRuidaHandle, SimRuidaReport};
 use machine::{
-    AbortHandle, AxisRole, BoardInfo, Controller, ControllerError, ControllerState, Driver, DriverKind, FiberKind, InitSettings,
+    AbortHandle, BoardInfo, Controller, ControllerError, ControllerState, Driver, DriverKind, FiberKind, InitSettings,
     InputSamples, Link, LinkError, MachineDriver, MachineProfile, PollConfig, Reply, RunControl, RunProgress, SimLink,
 };
-use plan::{GcodeSettings, Target};
+use plan::Target;
 use serde_json::{Value, json};
 
 use crate::EngineError;
@@ -46,74 +46,8 @@ pub enum LinkKind {
     Usb,
 }
 
-/// The planning target for a machine profile. Hard limits come only from the profile; so do the open-MO delay,
-/// the lens correction, whether pulse widths are sent (Q-pulse enabled on a MOPA) and which extension axis the board
-/// drives.
-pub fn target_from_profile(p: &MachineProfile) -> Target {
-    Target {
-        field_mm: p.field_mm,
-        field_height_mm: p.field_height_mm,
-        curve_tolerance_mm: p.curve_tolerance_mm,
-        swap_xy: p.swap_xy,
-        negate_x: p.negate_x,
-        negate_y: p.negate_y,
-        max_power_pct: p.max_power_pct,
-        pulse_widths_ns: p.pulse_widths_ns.clone(),
-        timing: doc::GalvoTiming {
-            laser_on_delay_us: p.timing.laser_on_delay_us,
-            laser_off_delay_us: p.timing.laser_off_delay_us,
-            polygon_delay_us: p.timing.polygon_delay_us,
-            end_delay_us: p.timing.end_delay_us,
-            jump_speed_mm_s: p.timing.jump_speed_mm_s,
-            min_jump_delay_us: p.timing.jump_delay_min_us,
-            max_jump_delay_us: p.timing.jump_delay_max_us,
-            jump_distance_limit_mm: p.timing.jump_distance_limit_mm,
-        },
-        open_mo_delay_us: p.open_mo_delay_us,
-        motion_time_scale: p.motion_time_scale,
-        calibration: p.calibration,
-        pulse_width_enabled: p.pulse_width_enabled && p.fiber_kind == FiberKind::Mopa,
-        z_axis: p.axis.as_ref().is_some_and(|a| a.role == AxisRole::Z),
-        rotary_axis: p.axis.as_ref().is_some_and(|a| a.role == AxisRole::Rotary),
-        port_outputs: p.io.run_outputs(),
-        gantry: false,
-    }
-}
-
-/// G-code output settings for a GRBL profile.
-pub fn gcode_settings(g: &GrblProfile) -> GcodeSettings {
-    let (mirror_x, mirror_y) = g.mirror();
-    GcodeSettings {
-        work_area_mm: g.work_area_mm,
-        mirror_x,
-        mirror_y,
-        s_max: g.s_max,
-        max_power_pct: g.max_power_pct,
-        max_feed_mm_min: g.max_feed_mm_min,
-        dynamic_power: g.dynamic_power,
-    }
-}
-
-/// The planning target for a GRBL profile: the bed, its power limit, no galvo transform.
-pub fn target_from_grbl(g: &GrblProfile) -> Target {
-    gcode_settings(g).target()
-}
-
-/// The planning target for a Ruida profile: the bed (as for GRBL), its power limit, its speed limit for rapid-move
-/// time estimates.
-pub fn target_from_ruida(r: &RuidaProfile) -> Target {
-    let (mirror_x, mirror_y) = r.mirror();
-    GcodeSettings {
-        work_area_mm: r.work_area_mm,
-        mirror_x,
-        mirror_y,
-        s_max: 1000.0,
-        max_power_pct: r.max_power_pct,
-        max_feed_mm_min: r.max_speed_mm_s * 60.0,
-        dynamic_power: false,
-    }
-    .target()
-}
+// The planning targets of machine profiles (shared with the browser core).
+pub use appcore::preview::{gcode_settings, target_from_grbl, target_from_profile, target_from_ruida};
 
 /// What the simulated board has been sent, for the status page and for tests that prove nothing fired.
 #[derive(Debug, Default)]
@@ -981,6 +915,7 @@ pub fn serial_ports() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use machine::AxisRole;
 
     #[test]
     fn target_takes_limits_from_profile() {

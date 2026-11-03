@@ -15,8 +15,7 @@ use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::routing::get;
 use axum::{Json, Router};
-use doc::FontKind;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::security::has_mcp_marker;
@@ -25,56 +24,11 @@ use crate::{AppState, EngineError};
 
 /// The file in the config directory.
 pub const FONT_PREFS_FILE: &str = "font-prefs.json";
-/// Most fonts in each list.
-pub const MAX_FONTS: usize = 2000;
+// The lists and their rules (shared with the browser core).
+pub use appcore::fonts::{FontPrefs, FontRef, MAX_FONTS};
 
 /// Serialises read-modify-write of the file.
 static WRITE: Mutex<()> = Mutex::new(());
-
-/// A font as `font.list` names it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct FontRef {
-    pub family: String,
-    #[serde(default)]
-    pub kind: FontKind,
-}
-
-/// The stored lists.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct FontPrefs {
-    pub favourites: Vec<FontRef>,
-    pub hidden: Vec<FontRef>,
-}
-
-impl FontPrefs {
-    /// Trimmed names, no duplicates (ignoring case), nothing in both lists (a favourite wins), within the limits.
-    fn clean(mut self) -> Result<FontPrefs, EngineError> {
-        let fix = |list: &mut Vec<FontRef>, what: &str| -> Result<(), EngineError> {
-            if list.len() > MAX_FONTS {
-                return Err(EngineError::BadRequest(format!("at most {MAX_FONTS} {what}")));
-            }
-            let mut out: Vec<FontRef> = Vec::with_capacity(list.len());
-            for f in list.drain(..) {
-                let family = f.family.trim().to_string();
-                if family.is_empty() || family.chars().count() > 200 || family.contains(char::is_control) {
-                    return Err(EngineError::BadRequest(format!("{what}: '{}' is not a font name", f.family)));
-                }
-                if !out.iter().any(|o| o.kind == f.kind && o.family.eq_ignore_ascii_case(&family)) {
-                    out.push(FontRef { family, kind: f.kind });
-                }
-            }
-            *list = out;
-            Ok(())
-        };
-        fix(&mut self.favourites, "favourites")?;
-        fix(&mut self.hidden, "hidden fonts")?;
-        let fav = self.favourites.clone();
-        self.hidden.retain(|h| !fav.iter().any(|f| f.kind == h.kind && f.family.eq_ignore_ascii_case(&h.family)));
-        Ok(self)
-    }
-}
 
 fn path(st: &AppState) -> Result<std::path::PathBuf, EngineError> {
     Ok(st.files.config_dir()?.join(FONT_PREFS_FILE))

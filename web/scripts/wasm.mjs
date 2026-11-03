@@ -5,6 +5,9 @@
 //   node scripts/wasm.mjs           release: cargo --profile wasm-release, wasm-bindgen, then wasm-opt -Oz
 //   node scripts/wasm.mjs --dev     quick: cargo's dev profile, no wasm-opt (for `npm run dev`)
 //   node scripts/wasm.mjs --tools   install the pinned tools into <repo>/target/tools (once per checkout)
+//   node scripts/wasm.mjs --design  the design-only build's core (webcore feature `design`: the document API in the
+//                                   browser), cargo --profile wasm-design (sized for the download), into
+//                                   web/src/standalone/pkg; with --dev, cargo's dev profile
 //
 // Tools, all pinned:
 // - wasm-bindgen-cli: exactly the wasm-bindgen version in Cargo.lock (the generated glue must match the crate).
@@ -27,7 +30,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 const web = resolve(here, "..");
 const repo = resolve(web, "..");
 const tools = join(repo, "target", "tools");
-const out = join(web, "src", "wasm", "pkg");
+const argv = process.argv.slice(2);
+const dev = argv.includes("--dev");
+const design = argv.includes("--design");
+const out = design ? join(web, "src", "standalone", "pkg") : join(web, "src", "wasm", "pkg");
 const exe = process.platform === "win32" ? ".exe" : "";
 
 const BINARYEN = "version_133";
@@ -45,9 +51,6 @@ const WASM_OPT_FLAGS = [
   "--strip-debug",
   "--strip-producers",
 ];
-
-const argv = process.argv.slice(2);
-const dev = argv.includes("--dev");
 
 function log(msg) {
   console.log(`[wasm] ${msg}`);
@@ -131,14 +134,15 @@ function sha256(file) {
 function build() {
   const want = lockedBindgen();
   const bindgen = findBindgen(want);
-  const profile = dev ? "dev" : "wasm-release";
+  const profile = dev ? "dev" : design ? "wasm-design" : "wasm-release";
   const targetDir = process.env.CARGO_TARGET_DIR ? resolve(process.env.CARGO_TARGET_DIR) : join(repo, "target");
-  log(`cargo build -p webcore (${profile})`);
-  run("cargo", ["build", "-p", "webcore", "--target", "wasm32-unknown-unknown", "--profile", profile, "--locked"], { cwd: repo });
-  const built = join(targetDir, "wasm32-unknown-unknown", dev ? "debug" : "wasm-release", "webcore.wasm");
+  log(`cargo build -p webcore (${profile}${design ? ", feature design" : ""})`);
+  const features = design ? ["--features", "design"] : [];
+  run("cargo", ["build", "-p", "webcore", "--target", "wasm32-unknown-unknown", "--profile", profile, "--locked", ...features], { cwd: repo });
+  const built = join(targetDir, "wasm32-unknown-unknown", dev ? "debug" : profile, "webcore.wasm");
   // Unchanged input and tools: keep the last output (cargo already did nothing).
   const stampFile = join(out, ".stamp");
-  const stamp = JSON.stringify({ input: sha256(built), bindgen: want, dev, binaryen: BINARYEN });
+  const stamp = JSON.stringify({ input: sha256(built), bindgen: want, dev, design, binaryen: BINARYEN });
   if (existsSync(stampFile) && readFileSync(stampFile, "utf8") === stamp && existsSync(join(out, "webcore_bg.wasm"))) {
     log("up to date");
     return;

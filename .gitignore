@@ -2,6 +2,7 @@
 /web/node_modules
 /web/dist
 /web/src/wasm/pkg
+/web/src/standalone/pkg
 
 # Never commit: build caches, secrets and keys, the engine's token and PIN files, private LightBurn files
 __pycache__/

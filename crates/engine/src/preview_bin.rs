@@ -73,35 +73,8 @@ impl BinOptions {
     }
 }
 
-/// The header members `GET /api/preview` and this format share: the preview without its segments, each layer with
-/// the LightBurn settings it will not execute (LAY-034).
-pub fn summary(doc: &Document, p: &Preview, layers: Option<&[String]>) -> Value {
-    let mut layer_list: Vec<&plan::LayerPreview> = p.layers.iter().collect();
-    if let Some(keep) = layers {
-        layer_list.retain(|l| keep.contains(&l.layer_id));
-    }
-    let mut v = json!({
-        "stats": p.stats,
-        "passes": p.passes,
-        "layers": layer_list,
-        "warnings": p.warnings,
-    });
-    add_unsupported(doc, &mut v);
-    v
-}
-
-/// Each layer entry of a preview's JSON gets the LightBurn settings it will not execute, where there are some.
-pub fn add_unsupported(doc: &Document, v: &mut Value) {
-    if let Some(layers) = v.get_mut("layers").and_then(Value::as_array_mut) {
-        for l in layers {
-            let Some(layer) = l["layer_id"].as_str().and_then(|id| doc.layer(id)) else { continue };
-            let u = lbrn::unexecuted_settings(layer);
-            if !u.is_empty() {
-                l["unsupported"] = json!(u);
-            }
-        }
-    }
-}
+/// The header members `GET /api/preview` and this format share (`appcore::preview`).
+pub use appcore::preview::{add_unsupported, summary};
 
 /// One segment as the encoder sees it.
 #[derive(Clone)]

@@ -10,11 +10,18 @@
 //! The wasm interface ([`Core`]) takes JSON strings in (the engine's `GET /api/document` and
 //! `GET /api/preview/context`) and gives the preview back as flat typed arrays ([`preview::Packed`]) that the worker
 //! transfers to the page without copying.
+//!
+//! The design-only build (docs/design-only/plan.md) also runs the engine's document API here ([`backend`]): the
+//! worker hosts one [`backend::Backend`] and answers every `/api/...` request of the web app with
+//! [`handle`] (or the [`Backend`] class). Its preview is planned from its own document ([`Backend::preview`]), so
+//! the design build needs no second worker.
 
 #![forbid(unsafe_code)]
 
 #[cfg(feature = "design")]
-pub mod design;
+pub mod backend;
+#[cfg(feature = "design")]
+pub mod fonts;
 pub mod fill;
 pub mod preview;
 
@@ -39,7 +46,7 @@ pub struct Core {
 #[wasm_bindgen]
 #[derive(Debug, Default)]
 pub struct PackedPreview {
-    packed: Packed,
+    pub(crate) packed: Packed,
 }
 
 #[wasm_bindgen]
@@ -142,3 +149,8 @@ impl Core {
         }
     }
 }
+
+#[cfg(feature = "design")]
+mod design;
+#[cfg(feature = "design")]
+pub use design::{Backend, handle, init};

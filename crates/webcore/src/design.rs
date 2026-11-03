@@ -1,111 +1,122 @@
-//! The design-only build's entry points that are not HTTP routes (feature `design`; docs/design-only/plan.md, WP3):
-//! fonts the browser has, and a plain command session.
-//!
-//! - [`add_font`] / [`remove_font`]: TrueType/OpenType (`.ttf`, `.otf`, `.ttc`), `.shx` and `.jsf` bytes that the
-//!   worker shell keeps in IndexedDB (uploads from the Font picker, Local Font Access) and adds at every start, so
-//!   `font.list` lists them and text can use them. The bundled Hershey fonts are always there.
-//! - [`Commands`]: one [`commands::Session`] run by command id and JSON params, the same calls the engine's
-//!   `POST /api/commands` makes. The WP2 router (`handle`) supersedes it; until then it is how Node tests reach the
-//!   command core in wasm (`web/scripts/wasm-design-test.mjs`).
-//!
-//! The clock for `{date}` / `{time}` variable text needs no call: on wasm32 crates/commands builds text with
-//! `wasm-clock`, which reads JS `Date` (the time and the browser's time zone).
+//! The wasm exports of the design-only build's backend (feature `design`): [`init`], [`handle`] and the
+//! [`Backend`] class. See [`crate::backend`].
 
-use commands::{Invocation, Origin, Session};
-use doc::Document;
-use serde_json::{Value, json};
 use wasm_bindgen::prelude::*;
 
-/// Add a font from its bytes. `family` names a single-line `.shx` / `.jsf` font (TrueType/OpenType fonts are named
-/// by their own family name). Adding a face again replaces it. Returns `{"families": [...]}` (the family names
-/// added) or `{"error": ...}`.
-#[wasm_bindgen]
-pub fn add_font(family: &str, bytes: Vec<u8>) -> String {
-    match text::registry::add_font_data(family, bytes) {
-        Ok(families) => json!({ "families": families }),
-        Err(e) => json!({ "error": e }),
+use crate::backend;
+use crate::preview;
+use crate::{Core, PackedPreview};
+
+/// A [`backend::Reply`] as the plain JS object the worker shell posts back: `{status: number, headers: [[name,
+/// value]], body: Uint8Array, events: [JSON string], writes: [{store, key, value: string | null}]}`.
+fn reply_object(r: backend::Reply) -> js_sys::Object {
+    let set = |o: &js_sys::Object, k: &str, v: &JsValue| {
+        let _ = js_sys::Reflect::set(o, &JsValue::from_str(k), v);
+    };
+    let o = js_sys::Object::new();
+    set(&o, "status", &JsValue::from(r.status));
+    let headers = js_sys::Array::new();
+    for (k, v) in &r.headers {
+        headers.push(&js_sys::Array::of2(&JsValue::from_str(k), &JsValue::from_str(v)));
     }
-    .to_string()
-}
-
-/// Remove the fonts added under `family` (any kind, any case); returns how many faces went. Bundled fonts stay.
-#[wasm_bindgen]
-pub fn remove_font(family: &str) -> u32 {
-    u32::try_from(text::registry::remove_font_data(family)).unwrap_or(u32::MAX)
-}
-
-/// A command session on one document.
-#[wasm_bindgen]
-pub struct Commands {
-    session: Session,
-}
-
-impl Default for Commands {
-    fn default() -> Self {
-        Commands { session: Session::new(Document::default()) }
+    set(&o, "headers", &headers);
+    set(&o, "body", &js_sys::Uint8Array::from(r.body.as_slice()));
+    let events = js_sys::Array::new();
+    for e in &r.events {
+        events.push(&JsValue::from_str(e));
     }
+    set(&o, "events", &events);
+    let writes = js_sys::Array::new();
+    for w in &r.writes {
+        let wo = js_sys::Object::new();
+        set(&wo, "store", &JsValue::from_str(&w.store));
+        set(&wo, "key", &JsValue::from_str(&w.key));
+        set(&wo, "value", &w.value.as_deref().map_or(JsValue::NULL, JsValue::from_str));
+        writes.push(&wo);
+    }
+    set(&o, "writes", &writes);
+    o
+}
+
+fn parse_init(init: &str) -> Result<backend::Init, JsError> {
+    if init.trim().is_empty() {
+        return Ok(backend::Init::default());
+    }
+    serde_json::from_str(init).map_err(|e| JsError::new(&format!("init: {e}")))
+}
+
+/// The design build's backend as a JS class (the worker keeps one).
+#[wasm_bindgen]
+pub struct Backend {
+    inner: backend::Backend,
 }
 
 #[wasm_bindgen]
-impl Commands {
-    /// A session on an empty document.
+impl Backend {
+    /// `init`: `{stores: [{store, key, value}], epoch?}` as JSON (`""` for a first start).
     #[wasm_bindgen(constructor)]
-    pub fn new() -> Commands {
-        Commands::default()
+    pub fn new(init: &str) -> Result<Backend, JsError> {
+        Ok(Backend { inner: backend::Backend::new(parse_init(init)?) })
     }
 
-    /// Run one command (`id`, params as JSON; empty means `{}`), as the user would. Returns `{"result", "revision"}`
-    /// or `{"error": ...}`.
-    pub fn run(&mut self, id: &str, params: &str) -> String {
-        let params: Value = if params.trim().is_empty() {
-            json!({})
-        } else {
-            match serde_json::from_str(params) {
-                Ok(v) => v,
-                Err(e) => return json!({ "error": format!("params: {e}") }).to_string(),
-            }
-        };
-        match self.session.execute(Invocation { id: id.into(), params }, Origin::Ui) {
-            Ok(o) => json!({ "result": o.result, "revision": o.revision }),
-            Err(e) => json!({ "error": e.to_string() }),
+    /// Answer one request (see [`handle`]).
+    pub fn handle(&mut self, method: &str, path: &str, query: &str, body: Vec<u8>, since: Option<String>) -> js_sys::Object {
+        reply_object(self.inner.handle(method, path, query, body, since.as_deref()))
+    }
+
+    /// Problems with stored records found at start, as a JSON array of text.
+    pub fn notes(&self) -> String {
+        serde_json::to_string(&self.inner.notes).unwrap_or_else(|_| "[]".into())
+    }
+
+    /// The display preview of the active document, packed (as [`Core::preview`], without a copy of the document).
+    pub fn preview(&self) -> PackedPreview {
+        let ctx = preview::Context::from(self.inner.preview_context());
+        PackedPreview { packed: Core::packed(self.inner.document(), &ctx) }
+    }
+
+    /// The preview's summary only, as JSON, or `{"error": ...}` (as [`Core::stats`]).
+    pub fn stats(&self) -> String {
+        let ctx = preview::Context::from(self.inner.preview_context());
+        match preview::plan_preview(self.inner.document(), &ctx) {
+            Ok(p) => preview::summary(self.inner.document(), p),
+            Err(e) => preview::error_meta(&e),
         }
         .to_string()
     }
 
-    /// The document, as the engine's `GET /api/document` JSON.
-    pub fn document(&self) -> String {
-        serde_json::to_string(self.session.document()).unwrap_or_else(|e| json!({ "error": e.to_string() }).to_string())
-    }
-
-    /// The ids of every command this build has, as a JSON array (the design UI disables what is missing).
-    pub fn ids(&self) -> String {
-        json!(self.session.registry().specs().map(|c| c.id).collect::<Vec<_>>()).to_string()
+    /// The active document's revision (what [`Backend::preview`] is of).
+    pub fn revision(&self) -> f64 {
+        #[allow(clippy::cast_precision_loss)]
+        let r = self.inner.document().revision as f64;
+        r
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+thread_local! {
+    /// The backend of [`init`] and [`handle`].
+    static BACKEND: std::cell::RefCell<Option<backend::Backend>> = const { std::cell::RefCell::new(None) };
+}
 
-    #[test]
-    fn fonts_and_commands_natively() {
-        let added: Value = serde_json::from_str(&add_font("x", include_bytes!("../../text/tests/fixtures/ttf/openetch-box.ttf").to_vec())).unwrap();
-        assert_eq!(added, json!({ "families": ["OpenEtch Box"] }));
-        let bad: Value = serde_json::from_str(&add_font("junk", b"junk".to_vec())).unwrap();
-        assert!(bad["error"].as_str().unwrap().contains("not a TrueType"), "{bad}");
+/// Start (or restart) the worker's backend from the stored records: `init` is `{stores: [{store, key, value}],
+/// epoch?}` as JSON. Returns the problems found with the records (a JSON array of text).
+#[wasm_bindgen]
+pub fn init(init: &str) -> Result<String, JsError> {
+    let b = backend::Backend::new(parse_init(init)?);
+    let notes = serde_json::to_string(&b.notes).unwrap_or_else(|_| "[]".into());
+    BACKEND.with(|cell| *cell.borrow_mut() = Some(b));
+    Ok(notes)
+}
 
-        let mut c = Commands::new();
-        let ids: Vec<String> = serde_json::from_str(&c.ids()).unwrap();
-        for id in ["art.import_dxf", "art.import_pdf", "art.import_ai", "font.list", "shape.text"] {
-            assert!(ids.iter().any(|i| i == id), "{id} missing");
-        }
-        let list: Value = serde_json::from_str(&c.run("font.list", "")).unwrap();
-        assert!(list["result"].as_array().unwrap().iter().any(|f| f["family"] == "OpenEtch Box"), "{list}");
-        let r: Value = serde_json::from_str(&c.run("shape.text", r#"{"text": "OE", "font": {"family": "OpenEtch Box"}, "height_mm": 10}"#)).unwrap();
-        assert!(r["result"]["created"][0].is_string(), "{r}");
-        assert!(c.document().contains("OpenEtch Box"));
-        let e: Value = serde_json::from_str(&c.run("nope.nope", "{}")).unwrap();
-        assert!(e["error"].as_str().unwrap().contains("unknown command"), "{e}");
-        assert_eq!(remove_font("OpenEtch Box"), 1);
-    }
+/// Answer one `/api/...` (or shell `/core/...`) request: `method`, `path`, `query` (without `?`), the body bytes and
+/// the optional `X-OpenEtch-Since` value. Returns `{status, headers: [[k, v]], body: Uint8Array, events: [JSON
+/// string], writes: [{store, key, value | null}]}`. Starts an empty backend if [`init`] was not called.
+#[wasm_bindgen]
+pub fn handle(method: &str, path: &str, query: &str, body: Vec<u8>, since: Option<String>) -> js_sys::Object {
+    let reply = BACKEND.with(|cell| {
+        let mut cell = cell.borrow_mut();
+        let b = cell.get_or_insert_with(|| backend::Backend::new(backend::Init::default()));
+        b.handle(method, path, query, body, since.as_deref())
+    });
+    reply_object(reply)
 }

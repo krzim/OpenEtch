@@ -5,68 +5,14 @@ use std::sync::Arc;
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::response::Response;
-use commands::Origin;
-use serde::Serialize;
 use tokio::sync::broadcast;
 
 use crate::AppState;
-use crate::runs::RunState;
 
 /// Capacity of the event channel. A slow client that falls further behind skips events (and refetches).
 pub const EVENT_CAPACITY: usize = 256;
 
-/// One event, serialised as `{"type": "...", ...}`.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum Event {
-    /// The document changed (edit, undo or redo, or another open document became the active one). `origin` is who
-    /// made the change (an undo/redo from the UI is `ui`, from MCP `agent`); `document_id` the open document (see
-    /// `GET /api/documents`; `default` for the first one).
-    DocumentChanged { revision: u64, origin: Origin, document_id: String },
-    /// Machine status changed: `event` is "framing", "frame_stopped", "run_approved", "awaiting_confirm",
-    /// "run_started", "run_finished", "stopped", "error" (or "lagged"); clients refetch `GET /api/machine`.
-    Machine {
-        event: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        detail: Option<String>,
-    },
-    /// A run is waiting for approval in the UI.
-    RunPending { run_id: String, origin: Origin, summary: String },
-    /// An approved run ended: `state` is `finished`, `failed`, `aborted` or `cancelled`; `error` is `null` when
-    /// `ok`.
-    RunFinished { id: String, ok: bool, state: RunState, error: Option<String> },
-    /// Too many wrong operator PINs: approvals are locked until `until_unix_s` (Unix seconds). Each further lockout
-    /// is twice as long (see the `pin` module).
-    ApprovalLocked { until_unix_s: u64 },
-    /// The document `document_id` was saved as project `name` at `revision` (clients refetch `GET /api/project`).
-    ProjectSaved { name: String, revision: u64, document_id: String },
-    /// The timeline changed (a step was recorded, deleted or replayed, or the marker moved by undo, redo or goto):
-    /// `marker` is the index of the last applied step (0 = none), `steps` how many there are. Clients refetch
-    /// `GET /api/history`.
-    HistoryChanged { marker: usize, steps: usize, revision: u64, document_id: String },
-    /// A document was opened, closed or made active (`POST /api/documents`, `.../{id}/activate`, `.../{id}/close`):
-    /// `active` is the active document's id. Clients refetch `GET /api/documents`; when `active` changed, everything
-    /// about the document (the engine also sends `document_changed` and `history_changed` for it).
-    DocumentsChanged { active: String },
-    /// Device `id` was made active (`POST /api/devices/{id}/activate`): the machine profile and workspace changed.
-    /// Clients refetch `GET /api/devices` and `GET /api/machine`.
-    DeviceChanged { id: String },
-    /// Devices were imported or removed; clients refetch `GET /api/devices`.
-    DevicesChanged,
-    /// An Art Library changed (items added, renamed, removed) or, with `library: null`, the list of libraries did;
-    /// clients refetch `GET /api/art/libraries` (and the library).
-    ArtLibraryChanged { library: Option<String> },
-    /// While a job holds the machine, every 500 ms: `status` is `GET /api/job`'s answer (iteration, packets sent,
-    /// paused, time remaining, count).
-    JobProgress { status: serde_json::Value },
-}
-
-impl Event {
-    /// A [`Event::Machine`] event.
-    pub fn machine(event: &str, detail: Option<String>) -> Self {
-        Event::Machine { event: event.to_owned(), detail }
-    }
-}
+pub use appcore::event::Event;
 
 /// A new event channel.
 pub fn channel() -> broadcast::Sender<Event> {
@@ -130,6 +76,8 @@ async fn pump(mut socket: WebSocket, mut rx: broadcast::Receiver<Event>, mut clo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runs::RunState;
+    use commands::Origin;
 
     #[test]
     fn events_serialise_with_type_tag() {

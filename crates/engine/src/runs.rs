@@ -145,36 +145,7 @@ impl RunOptions {
     }
 }
 
-/// Where a run is in its life: `pending` -> `approved` -> (`awaiting_confirm` ->) `running` -> `finished` |
-/// `failed` | `aborted` (stopped while streaming), or `cancelled` (stopped or refused before streaming).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RunState {
-    /// Waiting for a person to approve it (the operator PIN in the UI, or Start in the app without a PIN).
-    Pending,
-    /// Approved; about to start (or about to wait for the physical input).
-    Approved,
-    /// Approved; waiting for the physical confirmation input (see `pin::PhysicalConfirm`).
-    AwaitingConfirm,
-    /// Being streamed to the board.
-    Running,
-    /// Ran to the end.
-    Finished,
-    /// The board or link failed; the abort sequence was sent.
-    Failed,
-    /// Stopped by a stop request while `running` (streaming); the abort sequence was sent.
-    Aborted,
-    /// Never streamed: stop pressed while pending, approved or awaiting confirmation, the document changed, or the
-    /// physical input was not pressed in time.
-    Cancelled,
-}
-
-impl RunState {
-    /// True once the run can no longer change.
-    pub fn is_final(self) -> bool {
-        matches!(self, RunState::Finished | RunState::Failed | RunState::Aborted | RunState::Cancelled)
-    }
-}
+pub use appcore::event::RunState;
 
 /// A planned, encoded job.
 #[derive(Debug, Clone)]

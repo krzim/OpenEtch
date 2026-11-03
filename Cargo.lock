@@ -68,6 +68,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "appcore"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "commands",
+ "doc",
+ "kurbo",
+ "lbrn",
+ "machine",
+ "plan",
+ "resvg",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "arrayref"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -808,6 +825,7 @@ dependencies = [
 name = "engine"
 version = "0.1.0"
 dependencies = [
+ "appcore",
  "axum",
  "base64 0.22.1",
  "brotli",
@@ -3280,15 +3298,26 @@ dependencies = [
 name = "webcore"
 version = "0.1.0"
 dependencies = [
+ "appcore",
+ "axum",
+ "base64 0.22.1",
  "commands",
  "doc",
+ "engine",
+ "fileio",
  "geom",
+ "http-body-util",
+ "image",
+ "js-sys",
  "kurbo",
  "lbrn",
+ "machine",
  "plan",
  "serde",
  "serde_json",
  "text",
+ "tokio",
+ "tower",
  "wasm-bindgen",
 ]
 

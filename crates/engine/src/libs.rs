@@ -429,50 +429,15 @@ pub fn spawn_io_watch(st: Arc<AppState>) -> tokio::task::JoinHandle<()> {
 /// defaults; `doc.new` without `layer_settings` gets the default for the new layer's colour when "load defaults on
 /// New" is on, and without `optimization` the saved optimization defaults.
 pub(crate) fn fill_defaults(st: &AppState, invs: &mut [commands::Invocation]) {
-    if !invs.iter().any(|i| matches!(i.id.as_str(), "layer.add" | "doc.new")) {
+    if !appcore::prefs::wants_defaults(invs) {
         return;
     }
     let device = st.active_device().id;
     let p = lock(&st.libs.prefs).device(&device);
-    for inv in invs.iter_mut() {
-        if inv.params.is_null() && inv.id == "doc.new" {
-            inv.params = serde_json::json!({});
-        }
-        if let Some(params) = inv.params.as_object_mut() {
-            fill_one(&inv.id, params, &p);
-        }
-    }
+    appcore::prefs::fill_defaults(&p, invs);
 }
 
-fn fill_one(id: &str, params: &mut serde_json::Map<String, serde_json::Value>, p: &crate::prefs::DevicePrefs) {
-    match id {
-        "layer.add" if !params.contains_key("defaults") && !p.layer_defaults.is_empty() => {
-            let map: std::collections::BTreeMap<&String, &doc::CutSettings> = p.layer_defaults.iter().map(|(k, v)| (k, &v.settings)).collect();
-            if let Ok(v) = serde_json::to_value(map) {
-                params.insert("defaults".into(), v);
-            }
-        }
-        "doc.new" => {
-            if p.load_defaults_on_new
-                && !params.contains_key("layer_settings")
-                && let Some(d) = p.layer_default(NEW_LAYER_COLOR)
-                && let Ok(v) = serde_json::to_value(&d.settings)
-            {
-                params.insert("layer_settings".into(), v);
-            }
-            if !params.contains_key("optimization")
-                && let Some(o) = &p.optimization_defaults
-                && let Ok(v) = serde_json::to_value(o)
-            {
-                params.insert("optimization".into(), v);
-            }
-        }
-        _ => {}
-    }
-}
-
-/// The colour of a new document's layer (`doc::Document::default`).
-pub const NEW_LAYER_COLOR: &str = "#1f77b4";
+pub use appcore::prefs::NEW_LAYER_COLOR;
 
 /// Select the active device's library when it is loaded (LightBurn loads the library saved with a device when the
 /// device is selected).

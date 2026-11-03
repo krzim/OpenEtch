@@ -1,6 +1,6 @@
 [package]
 name = "webcore"
-description = "In-browser core (WebAssembly, in a Web Worker): the display preview and its stats, Fill Region hover"
+description = "In-browser core (WebAssembly, in a Web Worker): the display preview and its stats, Fill Region hover, and the design-only build's backend (the engine's document API in memory)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -13,8 +13,15 @@ publish.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [features]
-# The design-only build's font and command entry points (src/design.rs): the whole command core and text.
-design = ["dep:commands", "dep:text"]
+# The design-only build's backend (module `backend`, the wasm exports `init`, `handle` and `Backend`): the engine's
+# document API in the browser, plus the fonts the shell adds (module `fonts`). Off by default, so the full app's preview worker keeps its small wasm.
+design = ["dep:appcore", "dep:commands", "dep:text", "dep:machine", "dep:fileio", "dep:base64", "dep:js-sys"]
+# Project thumbnails as PNG inside the core (resvg). Off: the worker shell rasterises the SVG.
+png = ["design", "appcore/png"]
+
+[[test]]
+name = "parity"
+required-features = ["design"]
 
 [dependencies]
 doc = { workspace = true }
@@ -27,9 +34,28 @@ serde_json = { workspace = true }
 # Exactly the version in Cargo.lock: the wasm-bindgen CLI that generates the JS glue must match it
 # (web/scripts/wasm.mjs checks).
 wasm-bindgen = "=0.2.130"
+# The design backend (feature `design`): the engine's document glue (the same JSON as the engine, tests/parity.rs),
+# the commands, design devices (default features: no USB, no serial), legacy LightBurn templates (.lbt).
+appcore = { path = "../appcore", optional = true }
 commands = { workspace = true, optional = true }
+# Fonts the shell adds (add_font / remove_font).
 text = { workspace = true, optional = true }
+machine = { workspace = true, optional = true }
+fileio = { path = "../fileio", optional = true }
+base64 = { workspace = true, optional = true }
+# The backend's reply as a plain JS object (no serde-wasm-bindgen; MIT OR Apache-2.0, already in Cargo.lock).
+js-sys = { version = "=0.3.107", optional = true }
 
 [dev-dependencies]
 # Fill Region parity: the engine's own `path.fill_region_preview` command.
 commands = { workspace = true }
+# The parity test (tests/parity.rs) sends the same requests to the engine's router.
+engine = { path = "../engine" }
+appcore = { path = "../appcore" }
+machine = { workspace = true }
+tokio = { workspace = true }
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+axum = { workspace = true }
+# A small PNG for the image upload of the parity test.
+image = { workspace = true }

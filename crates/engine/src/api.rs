@@ -313,26 +313,8 @@ async fn attach_sync(State(st): State<Arc<AppState>>, req: Request<Body>, next: 
     }
 }
 
-/// `object` (JSON text of an object) with member `name: value` added at the end, or `None` when it is not an object.
-pub fn splice_member(object: &[u8], name: &str, value: &[u8]) -> Option<Vec<u8>> {
-    let start = object.iter().position(|b| !b.is_ascii_whitespace())?;
-    let end = object.iter().rposition(|b| !b.is_ascii_whitespace())?;
-    if object[start] != b'{' || object[end] != b'}' || end == start {
-        return None;
-    }
-    let empty = object[start + 1..end].iter().all(u8::is_ascii_whitespace);
-    let mut out = Vec::with_capacity(object.len() + value.len() + name.len() + 6);
-    out.extend_from_slice(&object[..end]);
-    if !empty {
-        out.push(b',');
-    }
-    out.push(b'"');
-    out.extend_from_slice(name.as_bytes());
-    out.extend_from_slice(b"\":");
-    out.extend_from_slice(value);
-    out.push(b'}');
-    Some(out)
-}
+/// `object` (JSON text of an object) with member `name: value` added at the end (`appcore::http`).
+pub use appcore::http::splice_member;
 
 /// Compression of API answers (gzip or brotli, as the client accepts) at a fast level: a large document or preview
 /// is mostly repeated keys and numbers, a tenth of its size or less compressed, and Wi-Fi to a Raspberry Pi moves a
@@ -605,25 +587,7 @@ fn file_query(q: FileQuery, allowed: &[&str]) -> Result<HashMap<String, String>,
 /// `name` made safe for a `Content-Disposition` header: an ASCII `filename` (other characters become `_`) and an
 /// RFC 5987 `filename*` with the full UTF-8 name.
 fn content_disposition(stem: &str, ext: &str) -> String {
-    let stem: String = stem.chars().filter(|c| !c.is_control() && !matches!(c, '/' | '\\')).collect();
-    let stem = match stem.trim() {
-        "" => "Untitled",
-        s => s,
-    };
-    let file = format!("{stem}.{ext}");
-    let ascii: String = file
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, ' ' | '-' | '_' | '.' | '(' | ')') { c } else { '_' })
-        .collect();
-    let mut encoded = String::new();
-    for b in file.bytes() {
-        if b.is_ascii_alphanumeric() || b"!#$&+-.^_`|~".contains(&b) {
-            encoded.push(char::from(b));
-        } else {
-            encoded.push_str(&format!("%{b:02X}"));
-        }
-    }
-    format!("attachment; filename=\"{ascii}\"; filename*=UTF-8''{encoded}")
+    appcore::http::disposition("attachment", stem, ext)
 }
 
 /// `GET /api/document/download?format=openetch|lbrn2` (default openetch): the document as a file. A LightBurn
@@ -646,13 +610,9 @@ async fn download(State(st): State<Arc<AppState>>, q: FileQuery) -> Result<Respo
     Ok((headers, file.content).into_response())
 }
 
-/// A finite number from a query parameter. `parse` accepts "NaN" and "inf", which would become JSON null (the
-/// command's default) downstream, so they are refused.
+/// A finite number from a query parameter (`appcore::http::finite_param`).
 fn finite_param(name: &str, v: &str) -> Result<f64, EngineError> {
-    match v.parse::<f64>() {
-        Ok(f) if f.is_finite() => Ok(f),
-        _ => Err(EngineError::BadRequest(format!("{name} '{v}' is not a finite number"))),
-    }
+    Ok(appcore::http::finite_param(name, v)?)
 }
 
 /// `POST /api/document/upload?format=openetch|lbrn2|svg|dxf|image[&mode=replace|merge][&field_mm=150][&layer=..]
