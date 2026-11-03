@@ -12,6 +12,7 @@ import { ES_DESIGN } from "./es-design.ts";
 import { ES_JIGS } from "./es-jigs.ts";
 import { ES_LASER } from "./es-laser.ts";
 import { ES_PRODUCTION } from "./es-production.ts";
+import { ES_MATERIALS } from "./es-materials.ts";
 import { ES_RIBBON } from "./es-ribbon.ts";
 import { ES_SHELL } from "./es-shell.ts";
 import { ES_TOUCH } from "./es-touch.ts";
@@ -30,6 +31,8 @@ export const ES: Messages = {
   ...ES_APP,
   ...ES_LASER,
   ...ES_PRODUCTION,
+  // MOPA materials (es-materials.ts).
+  ...ES_MATERIALS,
   "common.cancel": "Cancelar",
   "common.close": "Cerrar",
   "common.loading": "Cargando…",

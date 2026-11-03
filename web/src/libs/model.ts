@@ -5,6 +5,7 @@
 
 import type { GDocument, Layer, MachineStatus, Vec2 } from "../api/types.ts";
 import type { NodeList } from "../nodes.ts";
+import { parseFinish, type EntryFinish } from "../materials/model.ts";
 
 const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
@@ -35,6 +36,8 @@ export interface LibEntry {
   /** LightBurn's LinkPath: `material/thickness or title/description`. */
   path: string;
   summary: EntrySummary | null;
+  /** The entry's finish (result photo, colour, surface, notes, lot: materials/model.ts), null when it has none. */
+  finish?: EntryFinish | null;
 }
 
 export interface LibGroup {
@@ -100,6 +103,7 @@ export function parseTree(raw: unknown): LibMaterial[] {
             description: str(eo.description),
             path: str(eo.path),
             summary: parseSummary(eo.summary),
+            finish: parseFinish(eo.finish),
           },
         ];
       });

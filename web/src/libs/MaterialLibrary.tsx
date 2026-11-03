@@ -6,8 +6,11 @@
 // Routes: crates/engine/src/api_libs.rs. Linked layers show a link badge in Cuts / Layers and Properties.
 // Touch: a long-press on an entry is its right-click (every entry action also has a button below the tree), and Load
 // has no `accept` on iOS (checked after the pick, touch/filePick.ts).
+// MOPA finishes (src/materials/): each entry's result photo / colour shows in the tree, the picked entry has Finish…
+// (photo from the camera, colour, surface, lens, focus, lot), Warmer / Cooler and Bracket test…, the Palette view lists
+// the presets by result colour and surface, and Manage Library downloads or imports the finish data (the sidecar).
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { GDocument, Layer } from "../api/types.ts";
 import { ContextMenu, type MenuItem } from "../components/ContextMenu.tsx";
 import { CheckField, Icon, NumberField } from "../components/ui.tsx";
@@ -38,6 +41,10 @@ import {
 } from "./model.ts";
 import { takeLibraryView, useLibrary } from "./store.ts";
 import { ConfirmDialog, DropMenu, FilePick, NameDialog, errText, saveDownload } from "./ui.tsx";
+import { materialsApi } from "../materials/api.ts";
+import { FinishSwatch, HueControls } from "../materials/FinishDialog.tsx";
+import { PalettePanel } from "../materials/PalettePanel.tsx";
+import { openMaterials, pickedEntry, resultColors, setResultColors } from "../materials/store.ts";
 import "./libs.css";
 
 type Notify = (msg: string, kind?: "info" | "error") => void;
@@ -70,6 +77,9 @@ export function LibraryDock(p: { doc: GDocument | null; activeLayer: string | nu
     setMenu({ x, y, entry: e });
   });
   const [layerId, setLayerId] = useState<string | null>(null);
+  const [mode, setMode] = useState<"tree" | "palette">("tree");
+  const result = resultColors.use();
+  const sidecarRef = useRef<HTMLInputElement>(null);
 
   // The target layer follows the selected layer; the dropdown overrides it until the selection changes.
   useEffect(() => setLayerId(null), [p.activeLayer]);
@@ -84,6 +94,11 @@ export function LibraryDock(p: { doc: GDocument | null; activeLayer: string | nu
   const names = view?.libraries.map((l) => l.name) ?? [];
   const link = layerLink(layer);
   const speed = (v: number) => formatSpeed(v, speedUnit);
+
+  // The menus' Bracket test works on the picked preset.
+  useEffect(() => {
+    pickedEntry.set(selected && entry ? { library: selected, id: entry.id } : null);
+  }, [selected, entry]);
 
   // An entry id names a position; after edits the same path is picked again.
   const pickPath = (path: string | null | undefined, fallback?: string | null) => {
@@ -155,6 +170,9 @@ export function LibraryDock(p: { doc: GDocument | null; activeLayer: string | nu
     { label: t("lib.editDescription"), action: () => setDlg({ kind: "meta", entry: e }) },
     { label: t("lib.duplicate"), action: () => duplicate(e) },
     { sep: true },
+    { label: t("mat.finish"), disabled: !selected, action: () => selected && openMaterials({ kind: "finish", library: selected, id: e.id }) },
+    { label: t("mat.bracket"), disabled: !selected || !e.summary, action: () => selected && openMaterials({ kind: "bracket", library: selected, id: e.id }) },
+    { sep: true },
     { label: t("lib.delete"), action: () => setDlg({ kind: "delete", entry: e }) },
   ];
 
@@ -224,8 +242,36 @@ export function LibraryDock(p: { doc: GDocument | null; activeLayer: string | nu
               disabled: !selected,
               action: () => selected && void saveDownload(libsApi.libraryDownload(selected), `${selected}.clb`).catch(p.report),
             },
+            {
+              label: t("mat.sidecarDownload"),
+              disabled: !selected,
+              action: () => selected && void saveDownload(materialsApi.sidecarDownload(selected), `${selected}.oefinish.json`).catch(p.report),
+            },
+            { label: t("mat.sidecarImport"), disabled: !selected, action: () => sidecarRef.current?.click() },
           ]}
         />
+        <input
+          ref={sidecarRef}
+          type="file"
+          accept=".json,application/json"
+          hidden
+          onChange={(ev) => {
+            const f = ev.target.files?.[0];
+            ev.target.value = "";
+            if (!f || !selected) return;
+            void actEntry(() => materialsApi.sidecarImport(selected, f), (r) => t("mat.sidecarImported", { imported: Number(r.imported ?? 0), skipped: Number(r.skipped ?? 0) }));
+          }}
+        />
+        <button
+          type="button"
+          className={`mini-btn${result ? " active" : ""}`}
+          aria-pressed={result}
+          aria-label={t("mat.resultColors")}
+          title={t("mat.resultColorsTitle", { state: result ? t("tb.on") : t("tb.off") })}
+          onClick={() => setResultColors(!result)}
+        >
+          <Icon name="palette" size={16} />
+        </button>
       </div>
       {info && (
         <p className="hint lx-lib-info">
@@ -234,9 +280,22 @@ export function LibraryDock(p: { doc: GDocument | null; activeLayer: string | nu
         </p>
       )}
       {selected && (
-        <input className="lx-search" type="search" placeholder={t("lib.search")} aria-label={t("lib.search")} value={query} onChange={(e) => setQuery(e.target.value)} />
+        <div className="mt-lib-bar">
+          <span className="mt-seg" role="tablist" aria-label={t("mat.viewPalette")}>
+            <button type="button" role="tab" aria-selected={mode === "tree"} className={mode === "tree" ? "on" : undefined} onClick={() => setMode("tree")}>
+              {t("mat.viewTree")}
+            </button>
+            <button type="button" role="tab" aria-selected={mode === "palette"} className={mode === "palette" ? "on" : undefined} onClick={() => setMode("palette")}>
+              <Icon name="palette" size={14} /> {t("mat.viewPalette")}
+            </button>
+          </span>
+          {mode === "tree" && <input className="lx-search" type="search" placeholder={t("lib.search")} aria-label={t("lib.search")} value={query} onChange={(e) => setQuery(e.target.value)} />}
+        </div>
       )}
-      <div className="lx-tree" role="tree" aria-label={t("lib.tree")}>
+      {selected && mode === "palette" && (
+        <PalettePanel library={selected} tree={view?.tree ?? []} picked={picked} press={entryPress} onPick={setPicked} onAssign={(e) => assign(e, false)} />
+      )}
+      <div className="lx-tree" role="tree" aria-label={t("lib.tree")} style={selected && mode === "palette" ? { display: "none" } : undefined}>
         {!selected && <p className="hint">{t("lib.empty")}</p>}
         {selected && tree.length === 0 && <p className="hint">{query ? t("lib.noMatch") : t("lib.noEntries")}</p>}
         {tree.map((m) => {
@@ -277,6 +336,7 @@ export function LibraryDock(p: { doc: GDocument | null; activeLayer: string | nu
                               onClick={() => setPicked(e.id)}
                               onDoubleClick={() => assign(e, false)}
                             >
+                              {(e.finish?.color || e.finish?.photo) && selected && <FinishSwatch library={selected} entry={e} />}
                               <span className="lx-entry-name">{e.description}</span>
                               {users.length > 0 && (
                                 <span className="lx-link-badge" title={t("lib.linkedTo", { layers: users.map((l) => l.name).join(", ") })}>
@@ -316,8 +376,36 @@ export function LibraryDock(p: { doc: GDocument | null; activeLayer: string | nu
 
       {entry && (
         <div className="lx-entry">
-          <div className="lx-entry-path">{entry.path}</div>
-          <div className="muted lx-entry-sum">{entrySummaryText(entry.summary, speed)}</div>
+          <div className="mt-entry-head">
+            {selected && <FinishSwatch library={selected} entry={entry} size="large" />}
+            <div>
+              <div className="lx-entry-path">{entry.path}</div>
+              <div className="muted lx-entry-sum">{entrySummaryText(entry.summary, speed)}</div>
+              {entry.finish && (
+                <div className="muted mt-entry-finish">
+                  {[
+                    entry.finish.surface ? t(`mat.surface.${entry.finish.surface}`) : "",
+                    entry.finish.lot || entry.finish.date ? t("mat.lotDate", { lot: entry.finish.lot || "–", date: entry.finish.date || "–" }) : "",
+                    entry.finish.lens,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </div>
+              )}
+              {entry.finish?.photoStale && <div className="mt-warn">{t("mat.photoStale")}</div>}
+            </div>
+          </div>
+          {selected && (
+            <div className="lx-btns mt-entry-btns">
+              <button className="btn small" disabled={busy} onClick={() => openMaterials({ kind: "finish", library: selected, id: entry.id })}>
+                <Icon name="camera" size={14} /> {t("mat.finish")}
+              </button>
+              <button className="btn small" disabled={busy || !entry.summary} onClick={() => openMaterials({ kind: "bracket", library: selected, id: entry.id })}>
+                <Icon name="grid" size={14} /> {t("mat.bracket")}
+              </button>
+            </div>
+          )}
+          {selected && <HueControls library={selected} entry={entry} notify={p.notify} report={p.report} compact />}
         </div>
       )}
       <div className="lx-btns">

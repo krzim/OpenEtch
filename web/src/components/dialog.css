@@ -12,7 +12,7 @@
   box-shadow: var(--shadow-dialog, 0 12px 40px rgba(0, 0, 0, 0.28));
 }
 
-.oe-dialog-sm {
+.modal.oe-dialog-sm {
   width: min(360px, 100%);
 }
 
@@ -20,12 +20,13 @@
   width: min(480px, 100%);
 }
 
-.oe-dialog-lg,
+/* `.modal` (styles.css, loaded later) sets 420 px: these sizes need its specificity plus one class. */
+.modal.oe-dialog-lg,
 .oe-dialog-lg.modal-wide {
   width: min(720px, 100%);
 }
 
-.oe-dialog-xl,
+.modal.oe-dialog-xl,
 .oe-dialog-xl.modal-wide {
   width: min(960px, 100%);
 }

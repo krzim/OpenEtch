@@ -175,6 +175,11 @@ export const ACTIONS: HotkeyAction[] = [
   // Production (src/production/useProductionUi.tsx): the operator's cockpit and the serial ledger.
   ws("production.cockpit", "laser", "Production cockpit", []),
   ws("production.ledger", "laser", "Serial ledger", []),
+  // MOPA materials (src/materials/useMaterialsUi.tsx): no default keys.
+  ws("view.resultColors", "view", "Result colours (draw layers in their expected colours)", []),
+  ws("laser.bracketTest", "laser", "Bracket test of a preset", []),
+  ws("image.colorSeparate", "tools", "Colour separation", []),
+  ws("laser.hueModel", "laser", "Hue step model", []),
   // Design tools (src/design/useDesignUi.tsx); LightBurn gives these no default keys.
   ws("tools.warp", "tools", "Warp selection", []),
   ws("tools.deform", "tools", "Deform selection", []),

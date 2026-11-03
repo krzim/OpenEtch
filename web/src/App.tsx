@@ -51,6 +51,7 @@ import { ShutdownBadge, SimPinBadge } from "./libs/JobSafety.tsx";
 import { LaserExtras } from "./libs/LaserExtras.tsx";
 import { useLibsUi } from "./libs/useLibsUi.tsx";
 import { useProductionUi } from "./production/useProductionUi.tsx";
+import { useMaterialsUi } from "./materials/useMaterialsUi.tsx";
 import { useToolsUi } from "./tools/useToolsUi.tsx";
 import { useJigsUi } from "./jigs/useJigsUi.tsx";
 import { useFillRegionTool } from "./fill/useFillRegionTool.tsx";
@@ -315,6 +316,8 @@ export function App() {
   });
   // The production cockpit (#/cockpit), serial ledger, layer pause HUD, maintenance chip (src/production/).
   const prodUi = useProductionUi({ notify, report, revision: doc?.revision ?? null });
+  // MOPA materials: finishes, bracket test, colour separation, Result colours view (src/materials/).
+  const materialsUi = useMaterialsUi({ doc, selection: selection.objects, design: workspace === "design", notify, report, selectIds });
   // Tabs, dogbone, Resize Slots, Multi-File Trace and the Web Tools (User Tools) menu (src/tools/).
   const toolsUi = useToolsUi({
     doc,
@@ -1060,6 +1063,7 @@ export function App() {
     ...edit.menuItems,
     ...filesUi.contextItems,
     ...libsUi.menuItems,
+    ...materialsUi.menuItems,
     ...designUi.menuItems,
     ...jigsUi.menuItems,
     ...(text.menuItems.length ? [{ sep: true } as const, ...text.menuItems] : []),
@@ -1121,7 +1125,7 @@ export function App() {
   });
   // Workspace hotkeys (workspace/hotkeys.ts); App's own keys stay in the handler above.
   ws.keymap.current = {
-    blocked: () => !!dialog || fileModalOpen || devicesOpen || filesUi.modalOpen || libsUi.modalOpen || toolsUi.modalOpen || designUi.modalOpen || jigsUi.modalOpen || appModeDialogOpen(),
+    blocked: () => !!dialog || fileModalOpen || devicesOpen || filesUi.modalOpen || libsUi.modalOpen || toolsUi.modalOpen || designUi.modalOpen || jigsUi.modalOpen || materialsUi.modalOpen || appModeDialogOpen(),
     modalOpen: () => ws.dialog !== null,
     handlers: {
       "app.preferences": () => ws.open("prefs"),
@@ -1151,6 +1155,7 @@ export function App() {
       ...filesUi.handlers,
       ...libsUi.handlers,
       ...prodUi.handlers,
+      ...materialsUi.handlers,
       ...designUi.handlers,
       ...jigsUi.handlers,
       ...edit.handlers,
@@ -1394,6 +1399,7 @@ export function App() {
           {fillTool.toolbar}
           {designUi.toolbar}
           {libsUi.toolbar}
+          {materialsUi.toolbar}
           {toolsUi.toolbar}
           {jigsUi.toolbar}
         </>
@@ -1585,7 +1591,7 @@ export function App() {
   const canvasStage = (
     <div className="center-stage">
       <Viewport
-        doc={doc}
+        doc={materialsUi.viewDoc}
         workspaceMm={workspaceMm}
         galvo={device ? isGalvo(device.kind) : undefined}
         selection={selection}
@@ -1697,6 +1703,8 @@ export function App() {
       {filesUi.dialogs}
       {libsUi.dialogs}
       {prodUi.dialogs}
+      {materialsUi.dialogs}
+      {materialsUi.hud}
       {toolsUi.dialogs}
       {jigsUi.dialogs}
       {designUi.dialogs}
@@ -1797,6 +1805,8 @@ export function App() {
             <div className="phone-palette">
               <PaletteBar doc={doc} selected={selection.objects} run={run} report={report} notify={notify} has={has} />
             </div>
+            {/* The Material Library (finishes: photos from the phone camera, Palette, Warmer / Cooler, bracket test). */}
+            {libsUi.dock}
           </>
         }
         jobSheet={workspace === "laser" ? rightContent : null}

@@ -49,7 +49,7 @@ impl TestParam {
         }
     }
 
-    fn set(self, s: &mut CutSettings, v: f64) {
+    pub(super) fn set(self, s: &mut CutSettings, v: f64) {
         match self {
             TestParam::Power => s.power_pct = v,
             TestParam::Speed => s.speed_mm_s = v,

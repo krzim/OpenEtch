@@ -24,6 +24,7 @@ pub use builtin::testgen_presets;
 /// Production slots (serial ledger, empty pockets, Stop at End): what a run marks and the document it plans.
 pub use builtin::slots::{Slot, SlotPlan, SlotValue, apply_slot_plan, slot_plan};
 pub use builtin::camera_markers;
+pub use builtin::{bracket, finish};
 pub use session::{HistoryEntry, HistoryStep, HistoryView, MAX_STEPS, MarkerMove, Session, StepState};
 
 /// What a command can affect. Machine actions (`Pointer`, `Emit`) are not document commands; they are listed here so

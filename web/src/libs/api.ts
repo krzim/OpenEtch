@@ -25,7 +25,7 @@ function parse(text: string): unknown {
   }
 }
 
-async function call<T = unknown>(method: string, path: string, body?: unknown, raw?: { body: BodyInit; type: string }): Promise<T> {
+export async function call<T = unknown>(method: string, path: string, body?: unknown, raw?: { body: BodyInit; type: string }): Promise<T> {
   let res: Response;
   try {
     res = await fetch(path, {
@@ -48,7 +48,7 @@ async function call<T = unknown>(method: string, path: string, body?: unknown, r
 }
 
 /** A file from the engine (with its Content-Disposition name), fetched with the Authorization header. */
-async function download(path: string): Promise<{ blob: Blob; filename: string | null }> {
+export async function download(path: string): Promise<{ blob: Blob; filename: string | null }> {
   let res: Response;
   try {
     res = await fetch(path, { headers: headers("*/*") });

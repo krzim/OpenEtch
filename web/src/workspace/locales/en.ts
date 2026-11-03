@@ -11,6 +11,7 @@ import { EN_JOB } from "./en-job.ts";
 import { EN_LASER } from "./en-laser.ts";
 import { EN_PRODUCTION } from "./en-production.ts";
 import { EN_LIBS } from "./en-libs.ts";
+import { EN_MATERIALS } from "./en-materials.ts";
 import { EN_REST } from "./en-rest.ts";
 import { EN_RIBBON } from "./en-ribbon.ts";
 import { EN_RUIDA } from "./en-ruida.ts";
@@ -42,6 +43,8 @@ export const EN = {
   ...EN_DESIGN,
   // Material library, defaults, test generators, approval gates, laser tools, camera, Help additions (src/libs/).
   ...EN_LIBS,
+  // MOPA materials: finish library, palette, Result colours, hue steps, bracket test, colour separation (src/materials/).
+  ...EN_MATERIALS,
   // Document tabs, dockable windows and the Window menu, docking, UI scale (src/workspace/).
   ...EN_WS,
   // The older components' strings: Properties, File menu, Toolbar, Edit tools, top bar, dialogs.

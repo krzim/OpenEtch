@@ -106,6 +106,11 @@ function labelFor(cmd: string, summary: string, t: T): StepLabel | null {
     case "image.trace_many":
     case "image.trace_files":
       return { text: t("tlx.trace"), icon: "image" };
+    // MOPA materials (src/materials/).
+    case "image.color_separate":
+      return { text: t("mat.tlSeparate"), icon: "palette" };
+    case "generate.bracket_test":
+      return { text: t("mat.tlBracket"), icon: "grid" };
     case "doc.new":
       return { text: t("tlx.newDoc"), icon: "file" };
     case "doc.rename":

@@ -50,6 +50,10 @@ mod preset;
 mod targets;
 pub mod camera_markers;
 mod testgen;
+// MOPA materials: bracket test, hue steps and result colours, colour separation.
+pub mod bracket;
+mod color_separate;
+pub mod finish;
 pub mod testgen_presets;
 // Files and image tools (crate fileio): exports, further imports, trace, masks, pages, notes.
 pub(crate) mod files;
@@ -195,6 +199,13 @@ fn register_libs(r: &mut Registry) {
     r.register::<targets::SetStartPoint>();
     r.register::<targets::ClearStartPoint>();
     r.register::<targets::AlignTargets>();
+    // MOPA materials (finish library, bracket test, hue steps, colour separation).
+    r.register::<bracket::BracketTest>();
+    r.register::<finish::HueStep>();
+    r.register::<finish::HueNudge>();
+    r.register::<finish::SetResultColor>();
+    r.register::<color_separate::ColorSeparate>();
+    r.register::<color_separate::SeparatePreview>();
 }
 
 /// The geometry commands (booleans, offsets, path and node tools, generators, arrays, arrange), after the rest.

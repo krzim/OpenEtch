@@ -4,6 +4,10 @@
 //! from a layer, edit the cut settings, edit the description, duplicate, delete; save, save as, new, merge, rename,
 //! unload. Edits stay in memory until saved, as in LightBurn. Applying presets to layers (assign, link, and keeping
 //! linked layers in step) is in `api_libs`, which turns entries into `layer.apply_preset` invocations.
+//!
+//! Each library also has its finish data (`crate::finish`: result photo, colour, notes, lens, focus, lot, surface),
+//! kept by LinkPath in an OpenEtch sidecar next to the `.clb`, saved, renamed and merged with it; and the store keeps
+//! the per-device hue step models.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -14,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::EngineError;
+use crate::finish::{self, Finish};
 use crate::prefs::write_atomic;
 
 pub const LIBRARIES_DIR: &str = "libraries";
@@ -30,6 +35,25 @@ pub struct LoadedLibrary {
     pub lib: Library,
     /// Changed since it was loaded or saved.
     pub dirty: bool,
+    /// The finish of each entry by LinkPath (`crate::finish`; written to the sidecar on save).
+    pub finish: BTreeMap<String, Finish>,
+}
+
+impl LoadedLibrary {
+    fn new(name: &str, lib: Library, dirty: bool) -> LoadedLibrary {
+        LoadedLibrary { name: name.to_string(), lib, dirty, finish: BTreeMap::new() }
+    }
+
+    /// Keep only the finishes of paths the library has (a sidecar left from an older library of the same name).
+    fn keep_known_finishes(&mut self) {
+        let paths = self.paths();
+        self.finish.retain(|k, _| paths.contains(k));
+    }
+
+    /// Every entry's LinkPath.
+    pub fn paths(&self) -> std::collections::BTreeSet<String> {
+        self.lib.materials.iter().flat_map(|m| m.entries.iter().map(move |e| e.link_path(m.name()))).collect()
+    }
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -120,7 +144,7 @@ impl EntryMeta {
     }
 }
 
-fn entry_json(id: EntryId, material: &str, e: &LibEntry) -> Value {
+fn entry_json(id: EntryId, material: &str, e: &LibEntry, finish: Option<&Finish>) -> Value {
     let summary = preset_of(e).ok().map(|p| {
         let s = &p.settings;
         json!({
@@ -132,11 +156,13 @@ fn entry_json(id: EntryId, material: &str, e: &LibEntry) -> Value {
     json!({
         "id": entry_id(id), "material": material, "thickness_mm": e.thickness(), "title": e.title(),
         "group": e.group_title(), "description": e.description(), "path": e.link_path(material), "summary": summary,
+        "finish": finish.filter(|f| !f.is_empty()).map(Finish::summary),
     })
 }
 
-/// The browse tree of `lib`: materials, then the thickness/title groups, then the entries.
-pub fn tree(lib: &Library) -> Value {
+/// The browse tree of `lib`: materials, then the thickness/title groups, then the entries (each with its finish
+/// summary from `finish`, by LinkPath).
+pub fn tree(lib: &Library, finish: &BTreeMap<String, Finish>) -> Value {
     let materials: Vec<Value> = lib
         .materials
         .iter()
@@ -145,7 +171,7 @@ pub fn tree(lib: &Library) -> Value {
             let mut groups: Vec<(String, Vec<Value>)> = Vec::new();
             for (ei, e) in m.entries.iter().enumerate() {
                 let g = e.group_title();
-                let v = entry_json((mi, ei), m.name(), e);
+                let v = entry_json((mi, ei), m.name(), e, finish.get(&e.link_path(m.name())));
                 match groups.iter_mut().find(|(k, _)| *k == g) {
                     Some((_, list)) => list.push(v),
                     None => groups.push((g, vec![v])),
@@ -164,6 +190,8 @@ pub struct LibraryStore {
     dir: Option<PathBuf>,
     pub loaded: Vec<LoadedLibrary>,
     pub selected: Option<String>,
+    /// The hue step model of each device (`crate::finish::HUE_MODELS_FILE`).
+    pub hue: BTreeMap<String, commands::finish::HueModel>,
 }
 
 fn not_loaded(name: &str) -> EngineError {
@@ -182,10 +210,18 @@ impl LibraryStore {
             }),
             Err(_) => Index::default(),
         };
-        let mut store = LibraryStore { dir: Some(dir), loaded: Vec::new(), selected: None };
+        let hue = finish::read_hue_models(&dir);
+        let mut store = LibraryStore { dir: Some(dir), loaded: Vec::new(), selected: None, hue };
         for name in index.loaded {
             match store.read_file(&name) {
-                Ok(lib) => store.loaded.push(LoadedLibrary { name, lib, dirty: false }),
+                Ok(lib) => {
+                    let mut l = LoadedLibrary::new(&name, lib, false);
+                    match store.read_finish(&name) {
+                        Ok(f) => l.finish = f,
+                        Err(e) => notes.push(format!("library \"{name}\" finishes: {e}")),
+                    }
+                    store.loaded.push(l);
+                }
                 Err(e) => notes.push(format!("library \"{name}\": {e}")),
             }
         }
@@ -202,6 +238,76 @@ impl LibraryStore {
         let path = self.file(name).ok_or_else(|| not_loaded(name))?;
         let bytes = std::fs::read(&path).map_err(|e| EngineError::NotFound(format!("{}: {e}", path.display())))?;
         parse(&bytes)
+    }
+
+    fn read_finish(&self, name: &str) -> Result<BTreeMap<String, Finish>, EngineError> {
+        match &self.dir {
+            Some(d) => finish::read_sidecar(d, name),
+            None => Ok(BTreeMap::new()),
+        }
+    }
+
+    /// The hue step model of `device` (xTool's published one until it is set).
+    pub fn hue_model(&self, device: &str) -> commands::finish::HueModel {
+        self.hue.get(device).cloned().unwrap_or_default()
+    }
+
+    /// Set (`None`: reset) the hue step model of `device`, saved at once.
+    pub fn set_hue_model(&mut self, device: &str, model: Option<commands::finish::HueModel>) -> Result<(), EngineError> {
+        if let Some(p) = model.as_ref().and_then(commands::finish::HueModel::problem) {
+            return Err(EngineError::BadRequest(format!("hue model: {p}")));
+        }
+        let mut next = self.hue.clone();
+        match model {
+            Some(m) => next.insert(device.to_string(), m),
+            None => next.remove(device),
+        };
+        if let Some(d) = &self.dir {
+            finish::write_hue_models(d, &next)?;
+        }
+        self.hue = next;
+        Ok(())
+    }
+
+    /// The finish of the entry at `path` in library `name` (empty when none).
+    pub fn finish_of(&self, name: &str, path: &str) -> Result<Finish, EngineError> {
+        Ok(self.get(name)?.finish.get(path).cloned().unwrap_or_default())
+    }
+
+    /// Change the finish of the entry at `path` (it must exist) with `f`; marks the library unsaved.
+    pub fn edit_finish<R>(&mut self, name: &str, path: &str, f: impl FnOnce(&mut Finish) -> Result<R, EngineError>) -> Result<R, EngineError> {
+        let l = self.get_mut(name)?;
+        if l.lib.find_path(path).is_none() {
+            return Err(EngineError::NotFound(format!("library \"{}\" has no preset \"{path}\"", l.name)));
+        }
+        let mut cur = l.finish.get(path).cloned().unwrap_or_default();
+        let r = f(&mut cur)?;
+        if cur.is_empty() {
+            l.finish.remove(path);
+        } else {
+            l.finish.insert(path.to_string(), cur);
+        }
+        l.dirty = true;
+        Ok(r)
+    }
+
+    /// Import a finish sidecar into library `name`: the finishes of paths it has replace theirs; returns `(imported,
+    /// skipped)` (skipped: paths the library does not have).
+    pub fn import_finish(&mut self, name: &str, bytes: &[u8]) -> Result<(usize, usize), EngineError> {
+        let incoming = finish::parse_sidecar(bytes)?;
+        let l = self.get_mut(name)?;
+        let paths = l.paths();
+        let (mut imported, mut skipped) = (0, 0);
+        for (k, f) in incoming {
+            if paths.contains(&k) {
+                l.finish.insert(k, f);
+                imported += 1;
+            } else {
+                skipped += 1;
+            }
+        }
+        l.dirty |= imported > 0;
+        Ok((imported, skipped))
     }
 
     fn save_index(&self) -> Result<(), EngineError> {
@@ -234,7 +340,7 @@ impl LibraryStore {
             .iter()
             .map(|l| json!({ "name": l.name, "entries": l.lib.entry_count(), "materials": l.lib.materials.len(), "dirty": l.dirty }))
             .collect();
-        let tree = self.selected.as_deref().and_then(|s| self.find(s)).map(|l| tree(&l.lib));
+        let tree = self.selected.as_deref().and_then(|s| self.find(s)).map(|l| tree(&l.lib, &l.finish));
         json!({ "selected": self.selected, "libraries": list, "tree": tree })
     }
 
@@ -257,7 +363,7 @@ impl LibraryStore {
         if self.loaded.len() >= MAX_LOADED {
             return Err(EngineError::Conflict(format!("at most {MAX_LOADED} libraries can be loaded; unload one first")));
         }
-        self.loaded.push(LoadedLibrary { name: name.to_string(), lib, dirty });
+        self.loaded.push(LoadedLibrary::new(name, lib, dirty));
         if self.selected.is_none() {
             self.selected = Some(name.to_string());
         }
@@ -273,6 +379,12 @@ impl LibraryStore {
         {
             self.loaded.retain(|l| l.name != name);
             return Err(e);
+        }
+        // The finishes kept for a library of this name (loaded before and unloaded), where it still has the path.
+        if let Ok(f) = self.read_finish(name) {
+            let l = self.get_mut(name)?;
+            l.finish = f;
+            l.keep_known_finishes();
         }
         self.selected = Some(name.to_string());
         self.save_index()
@@ -315,11 +427,13 @@ impl LibraryStore {
         let target = match new_name {
             Some(n) => {
                 let lib = self.get(name)?.lib.clone();
+                let finishes = self.get(name)?.finish.clone();
                 crate::projects::validate_name(n)?;
                 if self.find(n).is_none() {
                     self.refuse_unloaded_file(n)?;
                 }
                 self.add(n, lib, true)?;
+                self.get_mut(n)?.finish = finishes;
                 self.selected = Some(n.to_string());
                 n.to_string()
             }
@@ -328,6 +442,10 @@ impl LibraryStore {
         let text = lbrn::write_clb(&self.get(&target)?.lib);
         if let Some(path) = self.file(&target) {
             write_atomic(&path, text.as_bytes())?;
+        }
+        if let Some(d) = &self.dir {
+            let l = self.get(&target)?;
+            finish::write_sidecar(d, &l.name, &l.finish)?;
         }
         self.get_mut(&target)?.dirty = false;
         self.save_index()?;
@@ -351,6 +469,12 @@ impl LibraryStore {
         {
             std::fs::rename(&from, &to).map_err(|e| EngineError::Internal(format!("cannot rename {}: {e}", from.display())))?;
         }
+        if let Some(d) = &self.dir {
+            let (from, to) = (d.join(format!("{old}{}", finish::SIDECAR_SUFFIX)), d.join(format!("{new_name}{}", finish::SIDECAR_SUFFIX)));
+            if from.is_file() {
+                std::fs::rename(&from, &to).map_err(|e| EngineError::Internal(format!("cannot rename {}: {e}", from.display())))?;
+            }
+        }
         self.get_mut(&old)?.name = new_name.to_string();
         if self.selected.as_deref() == Some(old.as_str()) {
             self.selected = Some(new_name.to_string());
@@ -362,9 +486,19 @@ impl LibraryStore {
     /// Merge Library With: add `from`'s entries to `name` (entries already there are skipped).
     pub fn merge(&mut self, name: &str, from: &str) -> Result<usize, EngineError> {
         let other = self.get(from)?.lib.clone();
+        let other_finish = self.get(from)?.finish.clone();
         let l = self.get_mut(name)?;
         let added = l.lib.merge(&other).map_err(|e| EngineError::BadRequest(e.to_string()))?;
-        l.dirty |= added > 0;
+        // Finishes come along for the paths that have none here.
+        let paths = l.paths();
+        let mut took = 0;
+        for (k, f) in other_finish {
+            if paths.contains(&k) && !l.finish.contains_key(&k) {
+                l.finish.insert(k, f);
+                took += 1;
+            }
+        }
+        l.dirty |= added > 0 || took > 0;
         Ok(added)
     }
 
@@ -410,15 +544,31 @@ impl LibraryStore {
         let l = self.get_mut(name)?;
         let m = l.lib.materials.get_mut(id.0).ok_or_else(|| no_entry(id))?;
         let mut e = m.entries.get(id.1).ok_or_else(|| no_entry(id))?.clone();
+        let old_path = e.link_path(m.name());
+        let moves = m.name() != meta.material;
+        // Refused before anything changes (the library stays as it was, saved or not).
+        if moves {
+            refuse_new_material(&l.lib, &meta.material)?;
+        }
         e.set_meta(meta.thickness_mm, &meta.title, &meta.description);
-        e.set_link_path(&e.link_path(&meta.material));
+        let new_path = e.link_path(&meta.material);
+        e.set_link_path(&new_path);
         l.dirty = true;
-        if m.name() == meta.material {
+        // The finish follows the entry (copied when a duplicate still has the old path).
+        if old_path != new_path
+            && let Some(f) = l.finish.get(&old_path).cloned()
+        {
+            let shared = l.lib.materials.iter().map(|m| m.entries.iter().filter(|x| x.link_path(m.name()) == old_path).count()).sum::<usize>() > 1;
+            if !shared {
+                l.finish.remove(&old_path);
+            }
+            l.finish.insert(new_path, f);
+        }
+        let m = l.lib.materials.get_mut(id.0).ok_or_else(|| no_entry(id))?;
+        if !moves {
             m.entries[id.1] = e;
             return Ok(id);
         }
-        refuse_new_material(&l.lib, &meta.material)?;
-        let m = l.lib.materials.get_mut(id.0).ok_or_else(|| no_entry(id))?;
         m.entries.remove(id.1);
         let target = l.lib.material_mut(&meta.material);
         target.entries.push(e);
@@ -446,6 +596,9 @@ impl LibraryStore {
         m.entries.remove(id.1);
         if m.entries.is_empty() {
             l.lib.materials.remove(id.0);
+        }
+        if l.lib.find_path(&path).is_none() {
+            l.finish.remove(&path);
         }
         l.dirty = true;
         Ok(path)
@@ -516,7 +669,7 @@ mod tests {
         assert_eq!(copy, (1, 1));
         assert_eq!(s.delete("steel", copy).unwrap(), "Titanium/Colors/Gold");
         assert!(s.find("steel").unwrap().dirty);
-        let t = tree(&s.get("steel").unwrap().lib);
+        let t = tree(&s.get("steel").unwrap().lib, &BTreeMap::new());
         assert_eq!(t["materials"][1]["groups"][0]["entries"][0]["path"], "Titanium/Colors/Gold");
         assert_eq!(t["materials"][0]["groups"][0]["entries"][0]["summary"]["power_pct"], 38.0);
         s.save("steel", None).unwrap();

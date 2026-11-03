@@ -265,7 +265,7 @@ pub(crate) fn schema<T: JsonSchema>() -> Arc<JsonObject> {
     Arc::new(Map::new())
 }
 
-fn tool<T: JsonSchema>(name: &'static str, title: &str, description: &'static str, read_only: bool) -> Tool {
+pub(crate) fn tool<T: JsonSchema>(name: &'static str, title: &str, description: &'static str, read_only: bool) -> Tool {
     Tool::new(name, description, schema::<T>())
         .with_title(title)
         .with_annotations(ToolAnnotations::with_title(title).read_only(read_only))
@@ -282,7 +282,7 @@ fn err_result(e: EngineError) -> CallToolResult {
     CallToolResult::error(vec![ContentBlock::text(text)])
 }
 
-fn args<T: DeserializeOwned>(tool: &str, a: JsonObject) -> Result<T, EngineError> {
+pub(crate) fn args<T: DeserializeOwned>(tool: &str, a: JsonObject) -> Result<T, EngineError> {
     serde_json::from_value(Value::Object(a))
         .map_err(|e| EngineError::BadRequest(format!("bad arguments for {tool}: {e}")))
 }
@@ -296,7 +296,7 @@ impl GalvoMcp {
         Origin::Agent(MCP_AGENT.into())
     }
 
-    /// Every tool definition, in [`TOOL_NAMES`] order.
+    /// Every tool definition, in [`TOOL_NAMES`] order, then the material tools (`crate::mcp_materials::NAMES`).
     pub fn tools() -> Vec<Tool> {
         let mut tools = vec![
             tool::<NoArgs>(
@@ -465,6 +465,7 @@ impl GalvoMcp {
             ),
         ];
         tools.extend(crate::production::mcp::tools());
+        tools.extend(crate::mcp_materials::tools());
         tools
     }
 
@@ -590,9 +591,18 @@ impl GalvoMcp {
                 v["machine"] = st.lightburn.machine_json(&st.machine.profile());
                 Ok(ok_json(v))
             }
+            // Material tools (module `mcp_materials`), then production tools (module `production::mcp`).
+            other if crate::mcp_materials::NAMES.contains(&other) => match crate::mcp_materials::dispatch(st, other, a, Self::origin()).await {
+                Some(r) => r,
+                None => Err(EngineError::NotFound(format!("unknown tool '{other}'"))),
+            },
             other => match crate::production::mcp::dispatch(st, other, a).await {
                 Some(r) => r,
-                None => Err(EngineError::NotFound(format!("unknown tool '{other}' (tools: {})", TOOL_NAMES.join(", ")))),
+                None => Err(EngineError::NotFound(format!(
+                    "unknown tool '{other}' (tools: {}, {})",
+                    TOOL_NAMES.join(", "),
+                    crate::mcp_materials::NAMES.join(", ")
+                ))),
             },
         }
     }
@@ -630,7 +640,7 @@ impl ServerHandler for GalvoMcp {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("OpenEtch", env!("CARGO_PKG_VERSION")))
-            .with_instructions(INSTRUCTIONS)
+            .with_instructions(format!("{INSTRUCTIONS}{}", crate::mcp_materials::INSTRUCTIONS))
     }
 
     async fn list_tools(
@@ -682,7 +692,8 @@ mod tests {
     fn tool_list_is_complete() {
 
         let names: Vec<String> = GalvoMcp::tools().iter().map(|t| t.name.to_string()).collect();
-        assert_eq!(names, TOOL_NAMES.map(String::from).to_vec());
+        let all: Vec<String> = TOOL_NAMES.iter().chain(crate::mcp_materials::NAMES.iter()).map(|n| n.to_string()).collect();
+        assert_eq!(names, all);
         for t in GalvoMcp::tools() {
             assert_eq!(t.input_schema.get("type"), Some(&json!("object")), "{}", t.name);
             assert!(t.description.as_deref().is_some_and(|d| !d.is_empty()));

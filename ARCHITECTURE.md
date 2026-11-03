@@ -1086,7 +1086,7 @@ whose name differs only in case, needs `overwrite: true`, default false; returns
 `lightburn_devices` (`GET /api/lightburn` plus `machine`: the `lightburn` part of `GET /api/machine`) and
 `devices_list` (`GET /api/devices`, read-only: activating, importing and removing devices change the machine, so they
 are UI-only, and the server instructions say so; design-only devices refuse `frame_start` and `job_request_run`), and
-`documents_list` / `document_activate {id}` (the open documents; every other tool works on the active one). The
+`documents_list` / `document_activate {id}` (the open documents; every other tool works on the active one). The MOPA materials tools (`material_*`) follow, see "MOPA materials". The
 `doc.import_lbrn2` description and the server instructions state the field-size rule.
 Project tools take names, never paths.
 File contents go through `execute` with `doc.save`, `doc.load`, `doc.import_lbrn2` and `doc.export_lbrn2`. The MCP
@@ -1178,7 +1178,59 @@ Production tools (see "Production"): `production_status`, `production_events {af
   text, changed ones in the file's style). Material → Entry `Thickness` (`-1.0000` = none) / `Desc` / `NoThickTitle`
   → `CutSetting` (the project tags) with `LinkPath` `material/title/description`. `cut_setting_from_layer` and
   `LibEntry::to_layer` convert. `lbrn::parse_library` (flat entries) stays for the older callers. LightBurn's
-  `Offset Fill` cut type maps to mode `offset_fill`.
+  `Offset Fill` cut type maps to mode `offset_fill`. OpenEtch's finish data of a library's entries lives beside it in
+  `<name>.oefinish.json` (see "MOPA materials"); the `.clb` itself never carries it.
+
+## MOPA materials
+
+The finish library, the bracket test, hue steps and colour separation (short list #6 and #7 of the Nov 2026 review;
+`crates/engine/src/{finish,api_materials,mcp_materials}.rs`, `crates/commands/src/builtin/{bracket,finish,
+color_separate}.rs`, `crates/fileio/src/colorsep.rs`, `web/src/materials/`). Design and library data only: nothing here
+frames, runs or approves; a test grid is burned like any job, approved by a person.
+
+- **Finish of a library entry** (`engine::finish`): result photo (PNG / JPEG / WebP, at most 3 MB; the web app scales
+  camera shots to 1280 px JPEG), expected result colour (`#rrggbb`; by default the average of the photo's middle half,
+  in linear light, until one is picked), the surface it was made for (mill, brushed, polished, mirror), lens,
+  focus / defocus mm, supplier, lot, date, notes, and when a hue step or a bracket pick last changed the settings (a
+  photo older than that shows as stale). Kept by LinkPath in `<config-dir>/libraries/<name>.oefinish.json`
+  (`{"format": "openetch-finish", "version": 1, "entries": {path: Finish}}`), in memory with the library's other
+  edits until Save Library, renamed, saved as, merged (paths without a finish take the other's) and carried through
+  Edit Description (copied while a duplicate keeps the old path) with the library; a deleted entry's finish goes when
+  no entry has its path. Loading a `.clb` picks up a sidecar of the same name for the paths it has. Download and
+  import the sidecar on their own (`/api/library/{name}/finish/...`). Assigning or linking a preset gives the layer
+  its colour (`layer.set_result_color`, layer `extras` `finish.color`; a preset without one clears it).
+- **Result colours view** (web, per browser): the canvas and the toolpath preview draw each layer in the colour it
+  should come out: a linked layer its preset's current colour, else its `finish.color`, else its own colour. The
+  document is not changed.
+- **Palette**: `GET /api/materials/palette?library=&surface=&material=`, the Library dock's Palette view (swatches by
+  surface with lot and date), MCP `material_palette`.
+- **Hue steps** (`commands::finish`): `material.hue_step` (Query) and `layer.hue_nudge` (Edit; refused on a linked
+  layer) move settings by hues: positive steps are warmer (less energy: power down, speed up, frequency up), via auto
+  (frequency at or above 500 kHz for jumps under 4 hues, else power), power, speed or frequency, plus a surface
+  change (the model's power offset). The model per device (`libraries/hue-models.json`; `GET /api/materials/hue-model`,
+  `PUT` UI only) starts as xTool's published one (0.5 % power, 100 mm/s, 150 kHz per hue above 500 kHz, pulse width
+  of 20 ns or more, polished +1 %, mirror +2 %; https://support.xtool.com/article/2196) and is unverified on the B6;
+  `POST /api/materials/hue-model/calibrate {best, other, hues}` (UI only) sets the step of the one setting two
+  bracket boxes differ in. `POST /api/materials/nudge` computes or applies (`apply`) it for an entry or a layer with
+  the device's model.
+- **Bracket test**: `generate.bracket_test` is the material test generator around one complete preset (default power
+  x speed, ±10 %, 5 x 5; every box layer the whole preset, sub-layers and kept LightBurn values included, with the two
+  values changed; group `extras` `bracket.library` / `bracket.path` / `bracket.rows` / `bracket.columns`, box layer
+  `bracket.cell` = `"<row %>,<column %>"`). `POST /api/materials/bracket` makes it in a new document (activated,
+  named "Bracket <description>"); `POST /api/materials/bracket/pick {layer}` writes a box back to its preset. The
+  canvas HUD bar (top centre) lists the boxes as a tappable grid (the boxes are grouped, so a tap on the canvas
+  selects them all); Use this box writes it back and opens the entry's finish dialog with the camera.
+- **Colour separation** (`fileio::colorsep`, `image.color_separate` + `_preview`): the image (scaled to 1200 px on its
+  long side by default) reduced to N colours by k-means in CIELAB (an image with N or fewer colours keeps them
+  exactly; fixed seed), specks under `min_speck_px` merged into the colour around them, the border colour left out as
+  background (`auto`, `none` or a colour), each colour traced like Trace Image into one path on a new fill layer, all
+  grouped, one undo step. Swatches (the library's entries with a result colour, from `POST /api/materials/separate`)
+  give each layer the preset nearest by ΔE (CIE76, within 30 by default), linked or copied; layers keep `finish.color`
+  and `finish.target` (the image's colour). Neighbouring colours share pixel edges, so their outlines meet within the
+  trace tolerance (0.5 + `optimize` px).
+- **MCP**: `material_library`, `material_palette`, `material_finish_update` (no photos), `material_hue_nudge`,
+  `material_bracket_test`, `material_bracket_pick`, `material_color_separate` (`crate::mcp_materials`, listed after the
+  other tools). Library edits stay unsaved until a person saves the library; the hue model is UI only.
 
 ## Jigs and placement
 
