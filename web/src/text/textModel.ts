@@ -21,6 +21,8 @@ export const TXT = {
   previewRow: "var.preview_row",
   barcode: "shape.barcode",
   fontList: "font.list",
+  fontPreview: "font.preview",
+  contactSheet: "var.contact_sheet",
 } as const;
 
 export type TextObject = DocObject & { geometry: TextGeometry };
@@ -112,6 +114,8 @@ export interface TextFields {
   ignore_empty_vars?: boolean;
   variable?: { mode: TextMode; offset?: number };
   path_offset_mm?: number;
+  /** Auto-fit; `{shape: "none"}` turns it off. */
+  fit?: { shape: "none" | "box" | "circle"; width_mm?: number; height_mm?: number; mode?: "contain" | "stretch" | "shrink" };
 }
 
 /** What new text starts with (LightBurn's Text Options while the Text tool is active); kept in this browser. */

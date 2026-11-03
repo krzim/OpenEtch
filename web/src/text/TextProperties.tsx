@@ -9,6 +9,7 @@ import { CheckField, NumberField } from "../components/ui.tsx";
 import { useT } from "../workspace/usePrefs.ts";
 import { BarcodeForm } from "./Barcode.tsx";
 import { FontPicker } from "./FontPicker.tsx";
+import { FitSection } from "./TextFit.tsx";
 import {
   TEXT_MODES,
   applyPath,
@@ -92,8 +93,9 @@ export function MissingFont(p: { family: string }) {
   );
 }
 
-/** The text (several lines) with a commit on blur or Ctrl+Enter. */
-function TextBody(p: { value: string; onCommit: (v: string) => void; label: string }) {
+/** The text (several lines) with a commit on blur or Ctrl+Enter. The browser's spell check is on for plain text
+ * (Fider #817); a variable-text format (serial and date codes) is not words, so it is off there. */
+function TextBody(p: { value: string; onCommit: (v: string) => void; label: string; spellCheck: boolean }) {
   const [text, setText] = useState(p.value);
   const editing = useRef(false);
   useEffect(() => {
@@ -106,7 +108,7 @@ function TextBody(p: { value: string; onCommit: (v: string) => void; label: stri
         className="tx-area"
         rows={Math.min(6, Math.max(2, text.split("\n").length))}
         value={text}
-        spellCheck={false}
+        spellCheck={p.spellCheck}
         onFocus={() => (editing.current = true)}
         onChange={(e) => setText(e.target.value)}
         onBlur={() => {
@@ -180,7 +182,7 @@ export function TextSection(p: TextPropsCommon & { o: TextObject }) {
         {mode !== "normal" && <span className="tx-badge">{t("text.variableBadge")}</span>}
       </h3>
       {missing && <MissingFont family={g.font.family} />}
-      <TextBody label={mode === "normal" ? t("text.text") : t("text.format")} value={g.text} onCommit={(text) => void up({ text })} />
+      <TextBody label={mode === "normal" ? t("text.text") : t("text.format")} value={g.text} spellCheck={mode === "normal"} onCommit={(text) => void up({ text })} />
       {g.shown && g.shown !== g.text && (
         <p className="tx-shown">
           <span className="field-label">{t("text.shows")}</span> <span className="tx-shown-v">{shownText(g)}</span>
@@ -193,7 +195,7 @@ export function TextSection(p: TextPropsCommon & { o: TextObject }) {
       </div>
       <div className="field">
         <span className="field-label">{t("text.font")}</span>
-        <FontPicker value={g.font} fonts={p.fonts} onPick={(font) => void up({ font })} onReload={p.onReloadFonts} />
+        <FontPicker value={g.font} fonts={p.fonts} sample={mode === "normal" ? shownText(g) : undefined} onPick={(font) => void up({ font })} onReload={p.onReloadFonts} />
       </div>
       <NumberField label={t("text.height")} unit="mm" value={g.height_mm} min={0.01} max={10000} digits={3} onCommit={(v) => v !== null && v > 0 && void up({ height_mm: v })} />
       <div className="field-grid">
@@ -225,6 +227,8 @@ export function TextSection(p: TextPropsCommon & { o: TextObject }) {
         <NumberField label={t("text.maxWidth")} unit="mm" value={g.max_width_mm} min={0} digits={3} placeholder={t("text.none")} onCommit={(v) => v !== null && void up({ max_width_mm: v })} />
         <CheckField label={t("text.squeeze")} checked={g.squeeze} onChange={(squeeze) => void up({ squeeze })} />
       </div>
+
+      <FitSection o={o} doc={p.doc} run={run} report={report} onWarnings={(r) => warnFrom(r, notify)} />
 
       <h4>{t("text.pathHead")}</h4>
       {g.path ? (

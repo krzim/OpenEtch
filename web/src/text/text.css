@@ -422,3 +422,299 @@
   flex: none;
   overflow: visible;
 }
+
+/* ---- font picker: favourites, hidden fonts, live samples (FontPicker.tsx) ---- */
+.tx-font-pop {
+  width: max(100%, 300px);
+}
+.tx-font-tools {
+  display: flex;
+  gap: 6px;
+  padding: 0 6px 6px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.tx-font-tools .tx-font-sample-in {
+  flex: 1;
+  min-width: 0;
+  min-height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font-size: calc(12px * var(--ui-scale, 1));
+}
+.tx-font-tools .btn.on {
+  background: var(--accent-soft);
+}
+.tx-font-error {
+  margin: 6px 10px 0;
+}
+.tx-font-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.tx-font-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: 4px;
+}
+.tx-font-row.sel {
+  background: var(--accent-soft);
+}
+.tx-font-row.is-hidden .tx-font-item {
+  opacity: 0.55;
+}
+.tx-font-row .tx-font-item {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  font-size: calc(12px * var(--ui-scale, 1));
+}
+.tx-font-row.sel .tx-font-item {
+  background: transparent;
+}
+.tx-font-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+}
+.tx-sample {
+  display: block;
+  width: 100%;
+  height: calc(22px * var(--ui-scale, 1));
+  fill: currentColor;
+  stroke: none;
+}
+.tx-sample.stroke {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.3px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+.tx-sample-wait {
+  display: block;
+  height: calc(22px * var(--ui-scale, 1));
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--border-soft), transparent);
+  opacity: 0.6;
+}
+.tx-sample-none {
+  color: var(--muted);
+  font-size: calc(11px * var(--ui-scale, 1));
+  line-height: calc(22px * var(--ui-scale, 1));
+}
+.tx-fav,
+.tx-hide {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.tx-fav:hover,
+.tx-hide:hover,
+.tx-fav:focus-visible,
+.tx-hide:focus-visible {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.tx-hide {
+  opacity: 0;
+}
+.tx-font-row:hover .tx-hide,
+.tx-font-row:focus-within .tx-hide,
+.tx-hide.on {
+  opacity: 1;
+}
+.tx-fav.on {
+  color: #c08a00;
+}
+.tx-fav.on svg path {
+  fill: currentColor;
+}
+@media (pointer: coarse) {
+  .tx-fav,
+  .tx-hide {
+    width: 44px;
+    height: 44px;
+    opacity: 1;
+  }
+  .tx-font-row .tx-font-item {
+    min-height: 44px;
+  }
+}
+:root[data-density="touch"] .tx-fav,
+:root[data-density="touch"] .tx-hide {
+  width: 44px;
+  height: 44px;
+  opacity: 1;
+}
+
+/* The selected text's auto-fit area (useTextTools.tsx FitFrame). */
+.tx-fit-frame {
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  overflow: visible;
+}
+.tx-fit-frame polygon {
+  pointer-events: none;
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+  opacity: 0.85;
+}
+.tx-fit-shape {
+  margin: 4px 0 6px;
+}
+
+/* ---- the contact sheet (ContactSheet.tsx) ---- */
+.sheet-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.sheet-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  font-size: calc(12px * var(--ui-scale, 1));
+  font-variant-numeric: tabular-nums;
+}
+.sheet-chip.ok {
+  background: var(--ok-fill);
+  color: var(--ok);
+}
+.sheet-chip.error,
+.sheet-chip.overflow {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+.sheet-filter {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  margin-left: auto;
+}
+.sheet-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 8px;
+}
+.sheet-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  min-width: 0;
+}
+.sheet-card.bad {
+  border-color: var(--danger);
+}
+.sheet-card-head {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  min-width: 0;
+}
+.sheet-value {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+.sheet-shown {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.sheet-art {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  border-radius: 3px;
+  background: var(--surface-hover);
+}
+.sheet-art path {
+  vector-effect: non-scaling-stroke;
+  stroke-width: 1px;
+  fill: none;
+}
+.sheet-stock {
+  stroke: var(--border);
+}
+.sheet-base {
+  stroke: currentColor;
+  opacity: 0.55;
+}
+.sheet-base.tool {
+  stroke-dasharray: 3 2;
+  opacity: 0.8;
+}
+.sheet-base.fill {
+  fill: currentColor;
+  fill-rule: evenodd;
+  fill-opacity: 0.25;
+}
+.sheet-var {
+  stroke: var(--accent);
+  stroke-width: 1.4px;
+}
+.sheet-var.bad {
+  stroke: var(--danger);
+  stroke-width: 1.8px;
+}
+.sheet-flags {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: calc(11px * var(--ui-scale, 1));
+  color: var(--warn-text);
+}
+.sheet-flag.error,
+.sheet-flag.overflow {
+  color: var(--danger);
+}
+.sheet-goto {
+  align-self: flex-start;
+}
+@media (pointer: coarse) {
+  .sheet-goto {
+    min-height: 44px;
+  }
+}
+/* In Properties the Font box sits at the panel's right: the list opens leftwards from its right edge so it stays in
+   the window (the options bar's compact box keeps it left-aligned). */
+.tx-font:not(.compact) .tx-font-pop {
+  left: auto;
+  right: 0;
+}

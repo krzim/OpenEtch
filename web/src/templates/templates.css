@@ -1,0 +1,265 @@
+/* Templates with fill-in fields and the example projects (templates/*.tsx). Touch: every control of the fill-in form
+   is a 44 px target on a coarse pointer or with Density = Touch (the form is what the phone and the iPad use). */
+
+/* ---- the fill-in form ---- */
+.tpl-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.tpl-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.tpl-field .hint,
+.tpl-field .form-error {
+  margin: 0;
+}
+.tpl-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 600;
+}
+.tpl-count {
+  color: var(--muted);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.tpl-field.bad .tpl-input {
+  border-color: var(--danger);
+}
+.tpl-input {
+  min-height: var(--ctl-h);
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  width: 100%;
+  box-sizing: border-box;
+}
+textarea.tpl-input {
+  resize: vertical;
+}
+.tpl-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.tpl-row .tpl-input {
+  flex: 1;
+  min-width: 0;
+}
+.tpl-num {
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.tpl-step {
+  min-width: var(--hit);
+}
+.tpl-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.tpl-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--ctl-h);
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+.tpl-choice.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  font-weight: 600;
+}
+.tpl-swatch {
+  display: inline-block;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+}
+.tpl-warn {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  margin: 4px 0;
+  color: var(--warn-text);
+}
+.tpl-report {
+  margin-top: 12px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: var(--warn-bg);
+}
+.tpl-locked {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.tpl-edit-fields {
+  margin-right: auto;
+}
+@media (pointer: coarse) {
+  .tpl-input,
+  .tpl-choice,
+  .tpl-row .btn,
+  .tpl-step {
+    min-height: 44px;
+  }
+}
+:root[data-density="touch"] .tpl-input,
+:root[data-density="touch"] .tpl-choice,
+:root[data-density="touch"] .tpl-row .btn {
+  min-height: 44px;
+}
+
+/* ---- the canvas HUD's Fill in button ---- */
+.tpl-hud {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: var(--shadow-pop);
+}
+@media (pointer: coarse) {
+  .tpl-hud {
+    min-height: 44px;
+  }
+}
+
+/* ---- template fields (the designer's dialog) ---- */
+.tpl-lock {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 8px 0;
+}
+.tpl-list {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+}
+.tpl-list-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+}
+.tpl-list-row + .tpl-list-row {
+  border-top: 1px solid var(--border-soft);
+}
+.tpl-list-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: baseline;
+}
+.tpl-list-targets {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.tpl-list-btns {
+  display: flex;
+  gap: 2px;
+}
+.tpl-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin: 10px 0;
+}
+.tpl-editor {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.tpl-editor h4 {
+  margin: 0 0 8px;
+}
+.tpl-targets {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.tpl-target {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.tpl-opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 6px 0;
+}
+.tpl-small {
+  width: 5em;
+}
+.tpl-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  align-self: flex-start;
+}
+
+/* ---- examples ---- */
+.tpl-examples {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.tpl-example {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.tpl-example-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.tpl-example-head h4 {
+  margin: 0;
+}
+.tpl-example p {
+  margin: 6px 0;
+}
+.tpl-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.tpl-steps {
+  margin: 6px 0 0;
+  padding-left: 1.4em;
+}
+.tpl-steps li + li {
+  margin-top: 4px;
+}

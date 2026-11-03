@@ -14,6 +14,7 @@ import { EN_RIBBON } from "./en-ribbon.ts";
 import { EN_RUIDA } from "./en-ruida.ts";
 import { EN_SHELL } from "./en-shell.ts";
 import { EN_TEXT } from "./en-text.ts";
+import { EN_TEMPLATES } from "./en-templates.ts";
 import { EN_TOOLS } from "./en-tools.ts";
 import { EN_TOUCH } from "./en-touch.ts";
 import { EN_UI } from "./en-ui.ts";
@@ -22,6 +23,8 @@ import { EN_WS } from "./en-ws.ts";
 export const EN = {
   // Text, barcodes and variable text (src/text/).
   ...EN_TEXT,
+  // Font favourites and samples, text auto-fit, the contact sheet, templates and examples (src/templates/).
+  ...EN_TEMPLATES,
   // Laser window job controls, framing, preview timeline, device settings, calibration, rotary, cut options.
   ...EN_JOB,
   // Files, project and image tools (src/files/).

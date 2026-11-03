@@ -6,7 +6,7 @@
 import type { MenuItem } from "./Menu.tsx";
 
 /** Where a contributed File menu entry goes. */
-export type FileSection = "export" | "project" | "lightburn" | "laser" | "settings" | "top";
+export type FileSection = "new" | "export" | "project" | "lightburn" | "laser" | "settings" | "top";
 
 export const FILE_MENU_MAX_TOP = 14;
 
@@ -78,6 +78,8 @@ export function buildFileMenu(i: FileMenuInput): MenuItem[] {
   const settingsRow: MenuItem | null = settings.length === 1 ? settings[0] : sub(L.settings, settings, "modify");
   const rows: (MenuItem | null)[] = [
     { label: L.new, actionId: "file.new", disabled: d, action: i.newDocument },
+    // New from example (templates/useTemplateUi.tsx), right under New.
+    ...parts("new"),
     { label: L.open, actionId: "file.open", disabled: d, action: i.open },
     i.recent ? { label: L.openRecent, icon: "history", submenu: [i.recent] } : null,
     { sep: true },
