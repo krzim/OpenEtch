@@ -258,6 +258,7 @@ pub fn variables_from_xml(xml: &str) -> Option<doc::VariableState> {
         advance_by: num("Increment").unwrap_or(d.advance_by),
         auto_advance: num("AutoAdvance").is_some_and(|v| v != 0),
         csv: None,
+        ..d
     })
 }
 

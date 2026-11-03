@@ -35,12 +35,12 @@ pub fn now() -> Option<text::Moment> {
 }
 
 /// The device name the cut-setting `L` code shows: the LightBurn device the document came from, if any.
-fn laser_name(doc: &Document) -> String {
+pub(crate) fn laser_name(doc: &Document) -> String {
     doc.extras.get("lbrn2._root_attrs").and_then(|r| super::lbrn2_device_name(r)).unwrap_or_default()
 }
 
 /// A barcode object's kept settings.
-fn barcode_params(o: &doc::Object) -> Option<BarcodeInput> {
+pub(crate) fn barcode_params(o: &doc::Object) -> Option<BarcodeInput> {
     serde_json::from_str(o.extras.get(BARCODE_KEY)?).ok()
 }
 
@@ -214,7 +214,7 @@ pub struct VarInput {
     pub offset: i64,
 }
 
-fn var_of(v: &VarInput) -> Option<VarText> {
+pub(crate) fn var_of(v: &VarInput) -> Option<VarText> {
     let mode = match v.mode {
         ModeInput::Normal => return None,
         ModeInput::DateTime => VarMode::DateTime,
@@ -691,6 +691,13 @@ pub struct SetSerialInput {
     pub advance_by: Option<i64>,
     /// Advance after every finished run.
     pub auto_advance: Option<bool>,
+    /// Stop at `end` instead of wrapping to `start`: slots whose value would pass `end` are not marked, and runs are
+    /// refused once every value is used (`current > end`) until the counter is reset or `end` raised.
+    pub stop_at_end: Option<bool>,
+    /// The slots (variable-text offsets) whose pockets are empty: left out of runs, the other slots take
+    /// consecutive values and the counter moves on only by what was marked. `[]` marks every slot loaded again.
+    /// `var.slots` lists the slots.
+    pub empty_slots: Option<Vec<i64>>,
     /// Set `current` back to `start` (LightBurn's Reset), after the other fields.
     #[serde(default)]
     pub reset: bool,
@@ -700,7 +707,7 @@ fn variables_json(doc: &Document) -> Value {
     let v = &doc.variables;
     json!({
         "start": v.start, "end": v.end, "current": v.current, "advance_by": v.advance_by,
-        "auto_advance": v.auto_advance,
+        "auto_advance": v.auto_advance, "stop_at_end": v.stop_at_end, "empty_slots": v.empty_slots,
         "csv": v.csv.as_ref().map(|c| json!({ "name": c.name, "rows": c.rows.len() })),
     })
 }
@@ -714,7 +721,9 @@ impl Command for SetSerial {
     const TITLE: &'static str = "Variable text settings";
     const DESCRIPTION: &'static str = "Set the document's serial number / CSV row counter (LightBurn's Variable Text \
         window): start, end, current, advance_by, auto_advance (advance after every finished run), reset (current = \
-        start). Every variable text is rendered again. Returns `variables` and the refreshed ids.";
+        start); production options: stop_at_end (stop at end instead of wrapping) and empty_slots (slot offsets whose \
+        pockets are empty; var.slots lists the slots). Every variable text is rendered again. Returns `variables` and \
+        the refreshed ids.";
     const RISK: Risk = Risk::Edit;
 
     fn apply(doc: &mut Document, i: SetSerialInput) -> Result<(Value, String)> {
@@ -726,6 +735,15 @@ impl Command for SetSerial {
             v.current = i.current.unwrap_or(v.current);
             v.advance_by = i.advance_by.unwrap_or(v.advance_by);
             v.auto_advance = i.auto_advance.unwrap_or(v.auto_advance);
+            v.stop_at_end = i.stop_at_end.unwrap_or(v.stop_at_end);
+            if let Some(mut empty) = i.empty_slots {
+                if empty.len() > super::slots::MAX_SLOTS {
+                    return Err(invalid(cmd, format!("at most {} empty slots", super::slots::MAX_SLOTS)));
+                }
+                empty.sort_unstable();
+                empty.dedup();
+                v.empty_slots = empty;
+            }
             if v.start > v.end {
                 return Err(invalid(cmd, format!("start {} is after end {}", v.start, v.end)));
             }

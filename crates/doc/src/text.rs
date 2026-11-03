@@ -220,6 +220,10 @@ impl Text {
     }
 }
 
+fn is_false(v: &bool) -> bool {
+    !*v
+}
+
 /// The document's variable-text state (LightBurn's Variable Text window; `<VariableText>` in `.lbrn2`). One serial
 /// number / CSV row counter shared by every variable text of the document.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -235,6 +239,15 @@ pub struct VariableState {
     pub advance_by: i64,
     /// Advance `current` after every finished run (LightBurn: on Start / Send).
     pub auto_advance: bool,
+    /// Stop at `end` instead of wrapping back to `start` (OpenEtch's production option): a slot whose value would
+    /// pass `end` is not marked, and once every value is used (`current > end`) runs that need the counter are
+    /// refused until the counter is reset or `end` raised. Left out of JSON while off.
+    #[serde(skip_serializing_if = "is_false")]
+    pub stop_at_end: bool,
+    /// Slots (the variable-text offsets, LightBurn's per-text Offset) whose pockets are empty: their objects are
+    /// left out of runs and the other slots take consecutive values (see `commands::slots`). Left out while empty.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub empty_slots: Vec<i64>,
     /// The loaded CSV file for merge mode, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub csv: Option<CsvData>,
@@ -242,7 +255,16 @@ pub struct VariableState {
 
 impl Default for VariableState {
     fn default() -> Self {
-        VariableState { start: 0, end: 999, current: 0, advance_by: 1, auto_advance: false, csv: None }
+        VariableState {
+            start: 0,
+            end: 999,
+            current: 0,
+            advance_by: 1,
+            auto_advance: false,
+            stop_at_end: false,
+            empty_slots: Vec::new(),
+            csv: None,
+        }
     }
 }
 
@@ -255,6 +277,12 @@ impl VariableState {
     /// Next / Previous do).
     pub fn advanced(&self, steps: i64) -> i64 {
         let (lo, hi) = if self.start <= self.end { (self.start, self.end) } else { (self.end, self.start) };
+        if self.stop_at_end {
+            // No wrap: forward ends one past `end` (every value used), back stops at `start`.
+            let moved = i128::from(self.current) + i128::from(steps) * i128::from(self.advance_by);
+            let clamped = moved.clamp(i128::from(lo), i128::from(hi) + 1);
+            return i64::try_from(clamped).unwrap_or(hi);
+        }
         let span = i128::from(hi) - i128::from(lo) + 1;
         let moved = i128::from(self.current) + i128::from(steps) * i128::from(self.advance_by);
         let wrapped = (moved - i128::from(lo)).rem_euclid(span) + i128::from(lo);
@@ -272,6 +300,18 @@ pub struct CsvData {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stop_at_end_never_wraps() {
+        let v = VariableState { start: 1, end: 5, current: 4, advance_by: 1, stop_at_end: true, ..VariableState::default() };
+        assert_eq!(v.advanced(1), 5);
+        assert_eq!(v.advanced(2), 6, "one past End: every value is used");
+        assert_eq!(v.advanced(9), 6);
+        assert_eq!(v.advanced(-9), 1);
+        let back: VariableState = serde_json::from_value(serde_json::to_value(&v).unwrap()).unwrap();
+        assert_eq!(back, v);
+        assert!(serde_json::to_value(VariableState::default()).unwrap().get("stop_at_end").is_none());
+    }
 
     #[test]
     fn counter_wraps_both_ways() {
