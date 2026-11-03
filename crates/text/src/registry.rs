@@ -389,7 +389,8 @@ mod tests {
     #[test]
     fn in_memory_truetype_fonts_are_listed_replaced_and_removed() {
         let mut r = Registry::with_bundled();
-        let n = r.faces.len();
+        // Counted by source: families() also scans the system fonts when feature `system` is on.
+        let added = |r: &Registry| r.faces.iter().filter(|f| matches!(f.source, Source::Data(..))).count();
         // Named by the font's own family, whatever the caller calls it.
         assert_eq!(r.add_data("upload.ttf", BOX_TTF.to_vec().into()).unwrap(), ["OpenEtch Box"]);
         let listed: Vec<_> = r.families().into_iter().filter(|f| f.family == "OpenEtch Box").collect();
@@ -398,11 +399,11 @@ mod tests {
         assert!(matches!(&got.font, Font::Outline(f) if f.family == "OpenEtch Box"));
         // Adding the same face again (a browser adding its stored fonts at every start) replaces it.
         r.add_data("again", BOX_TTF.to_vec().into()).unwrap();
-        assert_eq!(r.faces.len(), n + 1);
+        assert_eq!(added(&r), 1);
         // Removing takes the added faces only.
         assert_eq!(r.remove_data("Hershey Sans"), 0);
         assert_eq!(r.remove_data(" openetch BOX "), 1);
-        assert_eq!(r.faces.len(), n);
+        assert_eq!(added(&r), 0);
         assert!(r.resolve(&FontSpec::system("OpenEtch Box"), false, false).is_err());
     }
 }
