@@ -300,7 +300,7 @@ impl Board {
         let pins = if self.door { "|Pn:D" } else { "" };
         let s = self.planner.front().map_or(0.0, |b| if b.spindle != 0 { b.s } else { 0.0 });
         // GRBL adds the work coordinate offset to the first report and then every 10th (no offsets here: G54 = 0).
-        let wco = if self.report_wco && self.reports % 10 == 0 { "|WCO:0.000,0.000,0.000" } else { "" };
+        let wco = if self.report_wco && self.reports.is_multiple_of(10) { "|WCO:0.000,0.000,0.000" } else { "" };
         self.reports = self.reports.wrapping_add(1);
         let line = format!(
             "<{}|MPos:{},{},0.000|FS:{},{}{pins}{wco}>",
