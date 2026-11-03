@@ -3594,6 +3594,12 @@ html {
   min-height: 44px;
 }
 
+/* iOS Safari replaces a native select's min-height with its own (29 px for 16 px text) and keeps only an explicit
+   height: every single-line select is 44 px high by height on touch screens (a min-height alone stays 29 px there). */
+:root[data-density="touch"] select:not([multiple]):not([size]) {
+  height: 44px;
+}
+
 :root[data-density="touch"] .field-input :is(input:not([type="checkbox"]):not([type="radio"]), select) {
   min-height: 44px;
 }

@@ -49,3 +49,8 @@ test("safari: fields keep 16 px on touch screens (iOS zooms the page into a smal
   const coarse = all.find(([sel, body]) => /^input, select, textarea$/.test(sel) && /font-size\s*:\s*max\(16px/.test(body));
   assert.ok(coarse, "the (pointer: coarse) rule giving input, select and textarea at least 16 px is gone");
 });
+
+test("safari: touch screens give selects an explicit height (iOS keeps a native select's own min-height)", () => {
+  const rule = all.find(([sel, body]) => sel === ':root[data-density="touch"] select:not([multiple]):not([size])' && /(^|[;\s])height\s*:\s*44px/.test(body));
+  assert.ok(rule, "a select's min-height alone stays 29 px in Mobile Safari");
+});

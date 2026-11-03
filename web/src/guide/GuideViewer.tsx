@@ -92,6 +92,12 @@ export default function GuideViewer(p: GuideViewerProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [p.route.slug, p.route.anchor, nonce, toc]);
 
+  // A new search shows its first results: the list replaces the page in the same scroller, which kept the page's
+  // scroll position (a search typed half way down a page opened on its third hit, the first ones scrolled away).
+  useEffect(() => {
+    if (q.trim() && scroller.current) scroller.current.scrollTop = 0;
+  }, [q]);
+
   const ctx: RenderCtx = {
     slug: p.route.slug,
     go,

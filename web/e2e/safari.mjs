@@ -103,13 +103,15 @@ function pickSim(sims, key) {
   return c.sort((x, y) => y.runtime.localeCompare(x.runtime, undefined, { numeric: true }))[0];
 }
 
-/** One SSH connection: safaridriver on the Mac, its port forwarded here and the engine's port forwarded there. */
+/** One SSH connection: safaridriver on the Mac, its port forwarded here and the engine's port forwarded there.
+ *  `caffeinate -i` keeps the Mac from idle sleep while safaridriver runs (an assertion that ends with it, no setting
+ *  changes): a Mac set to sleep after a minute otherwise drops off the network mid-run. */
 export async function openTunnel(a) {
   const running = mac(a.mac, "pgrep -fl safaridriver || true").trim();
   if (running) throw new Error(`safaridriver already runs on the Mac (one WebDriver session at a time):\n${running}`);
   const proc = spawn(
     "ssh",
-    [...SSH, "-o", "ExitOnForwardFailure=yes", "-o", "ServerAliveInterval=15", "-L", `${a.driverPort}:127.0.0.1:${a.driverPort}`, "-R", `${a.port}:127.0.0.1:${a.port}`, a.mac, `exec safaridriver -p ${a.driverPort}`],
+    [...SSH, "-o", "ExitOnForwardFailure=yes", "-o", "ServerAliveInterval=15", "-L", `${a.driverPort}:127.0.0.1:${a.driverPort}`, "-R", `${a.port}:127.0.0.1:${a.port}`, a.mac, `exec caffeinate -i safaridriver -p ${a.driverPort}`],
     { stdio: ["ignore", "ignore", "pipe"] },
   );
   let err = "";
@@ -426,9 +428,16 @@ export class SafariPage {
     await this.wd.cmd("DELETE", "/actions").catch(() => undefined);
   }
 
+  /** Taps and long presses are real simulator touches. A finger that moves is dispatched in the page: Mobile Safari's
+   *  WebDriver reports the lift (pointerup / touchend) at 0,0 whatever the action says, so a drawn rectangle ran to the
+   *  top-left corner and a flick ended under the status bar. `--input native` sends those as real touches anyway. */
   async gesture(frames, opts = {}) {
     if (!this.device.touch) return this.mouseGesture(frames, opts);
-    if (this.input === "synthetic") return this.evaluate((f, o) => window.__oeSynth.gesture(f, o), frames, opts);
+    const moves = frames.some((f) => f.some(([x, y], i) => x !== frames[0][i][0] || y !== frames[0][i][1]));
+    if (this.input === "synthetic" || (moves && this.input !== "native-all")) {
+      await this.evaluate(installSynth);
+      return this.evaluate((f, o) => window.__oeSynth.gesture(f, o), frames, opts);
+    }
     return this.touchActions(frames, opts);
   }
 
@@ -957,10 +966,24 @@ async function runDevice(a, key, dir) {
     ? { browserName: "safari" }
     : { browserName: "safari", platformName: "iOS", "safari:useSimulator": true, "safari:deviceUDID": sim.udid };
   const t0 = Date.now();
-  try {
-    notes.caps = await wd.start(caps);
-  } catch (e) {
-    return { device: key, name: sim ? `${sim.name} iOS ${sim.runtime}` : "macOS Safari", error: String(e.message ?? e), results };
+  // A cold simulator takes longer to boot than safaridriver waits for Safari: boot it first, and wait until it is up.
+  if (sim && sim.state !== "Booted") {
+    mac(a.mac, `xcrun simctl boot ${sim.udid}`, { allowFail: true });
+    mac(a.mac, `xcrun simctl bootstatus ${sim.udid} -b`, { allowFail: true });
+  }
+  for (let attempt = 1; ; attempt++) {
+    try {
+      notes.caps = await wd.start(caps);
+      break;
+    } catch (e) {
+      if (attempt < 3 && /timed out|paired/.test(String(e.message))) {
+        // Safari in the simulator still starting, or holding a session that ended badly: start it afresh.
+        if (sim) mac(a.mac, `xcrun simctl terminate ${sim.udid} com.apple.mobilesafari`, { allowFail: true });
+        await sleep(3000);
+        continue;
+      }
+      return { device: key, name: sim ? `${sim.name} iOS ${sim.runtime}` : "macOS Safari", udid: sim?.udid, error: String(e.message ?? e), results };
+    }
   }
   notes.sessionSeconds = Math.round((Date.now() - t0) / 1000);
   const page = new SafariPage(wd, { touch: !desktop, kind: "auto" });
@@ -977,7 +1000,8 @@ async function runDevice(a, key, dir) {
       sessionStorage.clear();
     });
     await page.goto(`${url}/?first=${Date.now()}`, { waitFor: ".btn-stop" });
-    await sleep(2000);
+    // The "Use as an app" offer comes 1.5 s after a first touch visit (AppModeDialog.tsx).
+    notes.appOffer = await page.waitFor(`[...document.querySelectorAll("[role=dialog]")].some((e) => /as an app/i.test(e.textContent))`, { expr: true, timeout: 6000 });
     const layout = await page.evaluate(() => document.documentElement.dataset.layout);
     page.device.kind = layout === "phone" ? "phone" : layout === "tablet" ? "tablet" : "desktop";
     notes.layout = layout;
@@ -1035,13 +1059,13 @@ function markdown(runs) {
       L.push(`Session failed: ${r.error}`, "");
       continue;
     }
-    L.push(`Layout ${r.notes.layout}, input ${r.notes.input}${r.notes.nativeTouch ? ` (WebDriver touch probe: ${r.notes.nativeTouch.detail})` : ""}`, "");
+    L.push(`Layout ${r.notes.layout}, "Use as an app" offer ${r.notes.appOffer ? "shown" : "not shown"}, input ${r.notes.input}${r.notes.nativeTouch ? ` (WebDriver touch probe: ${r.notes.nativeTouch.detail})` : ""}`, "");
     for (const s of r.results) {
       const probs = (s.problems ?? []).filter((p) => p.type !== "small");
       const small = (s.problems ?? []).find((p) => p.type === "small");
       const sf = s.safari ?? {};
       L.push(
-        `- **${s.step}** \`${s.shot}\`${s.error ? ` ERROR: ${s.error}` : ""}${small ? ` (${small.count} small targets)` : ""} - inner ${sf.inner?.join("x")}, visual ${sf.visual?.join("/")}, safe ${sf.env ? Object.values(sf.env).join("/") : "-"}`,
+        `- **${s.step}** \`${s.shot}\`${s.error ? ` ERROR: ${s.error}` : ""}${small ? ` (${small.count} small targets)` : ""} - inner ${sf.inner?.join("x")}, visual ${sf.visual?.join("/")}, safe t/r/b/l ${sf.env ? [sf.env.top, sf.env.right, sf.env.bottom, sf.env.left].join("/") : "-"}`,
       );
       if (s.notes) L.push(`  - notes: ${JSON.stringify(s.notes).slice(0, 300)}`);
       for (const p of probs) L.push(`  - ${p.severity} ${p.type}: ${p.detail}`);

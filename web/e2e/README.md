@@ -199,6 +199,61 @@ Every script that checks a touch device sets the `--safe-*` tokens to its insets
 page; without them the layout check reports the bottom rows as inside the safe-area band although the app would pad
 them out of it.
 
+## Real Safari
+
+`safari.mjs` (`npm run e2e:safari -- --port <engine port>`) walks the app in Mobile Safari in a Mac's iOS simulators,
+over W3C WebDriver (`safaridriver`, part of macOS), with the same layout check (`overlap.mjs`, injected through
+WebDriver's execute script) and the same step helpers as `scenarios.mjs` (`find`, `pressFind`, `phoneTab`, `sheetTo`,
+`moreSheet`, `canvasPoint`, ...), which take its WebDriver page as they take a CDP page. A screenshot after every step,
+`report.json` and `report.md` under `target/ux-evidence/safari-<time>/` (or `--out`).
+
+```sh
+# A simulator engine on this computer (loopback; the flows frame, start a run with click approval and press Continue).
+openetch --config-dir <tmp>/cfg --projects-dir <tmp>/projects --lightburn-prefs <tmp>/none.ini   --listen 127.0.0.1:7965 --no-token --approval click --web-dir web/dist --profile fixtures/b6-mopa-60w.toml
+
+cd web
+npm run e2e:safari -- --port 7965 [--mac my-mac.local] [--devices iphone,ipad,iphone-pro,ipad-mini]
+  [--steps guide,cockpit] [--driver-port 4479] [--input native|native-all|synthetic] [--desktop] [--keep-booted]
+```
+
+- The Mac: key-based `ssh` (`ssh -o BatchMode=yes <mac>` must work), Xcode with iOS simulator runtimes. Nothing is
+  installed or changed there: the script opens one SSH connection that runs `caffeinate -i safaridriver -p
+  <driver-port>` (the Mac stays awake while it runs), forwards that port here (`-L`) and the engine's port to the Mac
+  (`-R`), so Safari in the simulator opens `http://127.0.0.1:<port>/`. It refuses to start when a safaridriver already
+  runs there (one WebDriver session at a time). At the end it closes the session, stops its safaridriver (by its port)
+  and the forwards, and shuts down the simulators it booted (`--keep-booted` leaves them).
+- Devices: `iphone` (iPhone 17e, iOS 26), `iphone-pro` (iPhone 16 Pro, iOS 18), `iphone-16e`, `ipad` (iPad Pro 11-inch
+  M4, iOS 18), `ipad-13`, `ipad-mini` (iOS 26), or `"Simulator name@iOS version"`. A cold simulator is booted first
+  (`simctl boot` and `bootstatus`); a Safari that still holds an old session is restarted (`simctl terminate`).
+- The steps (by the layout the page picks): an example loaded, the Design workspace, a selection, the Rectangle tool with
+  the touch modifier bar and a rectangle drawn, the Line tool, a long-press context menu, a text typed with the Text
+  tool, a numeric field focused (the page must not zoom in), the tablet rail's More, the phone's Layers and More sheets
+  at half and full and a flick in the list, Preferences with its "?" (the guide over the dialog, Close keeps the dialog),
+  Devices, the Laser workspace's preview, framing started and stopped, the production cockpit (Start with click
+  approval, the layer pause, Continue, its "?"), the guide (Help > User guide, its pictures loaded, a link to another
+  page, a search and a result), and the bottom rows against the home indicator.
+- Each check adds Safari's own numbers to the report: the layout and visual viewport, `100vh` against `100dvh`, the real
+  `env(safe-area-inset-*)` (passed to the layout check as the device's bands), fields under 16 px (iOS zooms into them
+  on focus), a zoomed or scrolled page, and `.app` not filling the window. The app's console errors are collected in
+  the page (WebDriver has no console).
+- `--desktop` adds macOS Safari, which needs "Allow Remote Automation" (Safari's Develop menu) and `sudo safaridriver
+  --enable` once, by the Mac's owner; without them that session fails and the report says so.
+
+WebDriver limits in Mobile Safari, and what the script does about them:
+
+- Taps and long presses are real simulator touches (W3C pointer actions, `pointerType: "touch"`). A finger that moves
+  (drags, flicks, pinches) is dispatched in the page as pointer events: Safari's WebDriver reports the lift (pointerup)
+  at 0,0 whatever the action says, which drew a rectangle to the top-left corner and dropped a flick under the status
+  bar. Synthetic moves do not scroll natively (a flick does not scroll a list) and do not zoom the page.
+  `--input native-all` sends them as real touches anyway; `--input synthetic` makes taps synthetic too (for a Mac whose
+  simulator does not take WebDriver's touches).
+- Named keys arrive as other characters (Escape as "?"): on iOS the script dispatches key events in the page.
+- No orientation endpoint, and the Simulator's Rotate menu needs Accessibility access for the SSH session: the
+  simulators run in portrait.
+- With the Simulator's hardware keyboard connected (its default) no on-screen keyboard comes up: the visual viewport does
+  not shrink. Text typed with WebDriver's send keys goes in as from a keyboard.
+- Each step takes several round trips over SSH: a full phone walk takes about 20 minutes, a tablet about 10.
+
 ## Emulation limits
 
 - Safe areas: headless Chromium reports `env(safe-area-inset-*)` as 0. The app reads them only through the `--safe-*`

@@ -396,6 +396,11 @@
   overflow-x: auto;
   min-width: 0;
 }
+/* The canvas hint's light-on-dark colours stayed on the strip's light background: the draw tools' hint was white on
+   pale grey there, unreadable in the light theme. The strip's own hint colour (.cs-hint). */
+.context-strip-slot .vp-overlay.hint {
+  color: var(--text-2);
+}
 .context-strip-slot .et-bar > span {
   overflow: hidden;
   text-overflow: ellipsis;
