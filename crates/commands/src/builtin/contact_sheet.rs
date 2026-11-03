@@ -183,8 +183,21 @@ fn csv_columns(format: &str) -> Vec<usize> {
     out
 }
 
-fn flag(kind: &str, message: impl Into<String>) -> Value {
-    json!({ "kind": kind, "message": message.into() })
+/// One problem: its `kind` (the chip it counts under), a `code` and `params` the app words in its language, and the
+/// English `message` (agents and the fallback).
+fn flag(kind: &str, code: &str, params: Value, message: impl Into<String>) -> Value {
+    json!({ "kind": kind, "code": code, "params": params, "message": message.into() })
+}
+
+/// The `code` and `params` of a text render warning (a missing glyph names its font and character).
+fn render_warning(m: &str) -> (&'static str, &'static str, Value) {
+    if let Some((font, rest)) = m.strip_prefix('"').and_then(|r| r.split_once("\" has no glyph for '"))
+        && let Some(c) = rest.strip_suffix('\'')
+    {
+        return ("missing_glyph", "missing_glyph", json!({ "font": font, "char": c }));
+    }
+    let kind = if m.contains("has no glyph") { "missing_glyph" } else { "warning" };
+    (kind, "render_warning", json!({ "detail": m }))
 }
 
 /// The workspace rectangle (field frame), if the document has one.
@@ -195,18 +208,23 @@ fn workspace(doc: &Document) -> Option<Rect> {
 /// The empty-field checks of a CSV text or barcode format at counter `value`.
 fn empty_fields(doc: &Document, format: &str, value: i64, flags: &mut Vec<Value>) {
     let Some(csv) = doc.variables.csv.as_ref() else {
-        flags.push(flag("empty", "no CSV file is loaded"));
+        flags.push(flag("empty", "no_csv", json!({}), "no CSV file is loaded"));
         return;
     };
     let Some(row) = text::vars::csv_row(Some(csv), value) else {
-        flags.push(flag("empty", format!("row {value} is not in the CSV file ({} rows)", csv.rows.len())));
+        flags.push(flag(
+            "empty",
+            "csv_row_missing",
+            json!({ "row": value, "rows": csv.rows.len() }),
+            format!("row {value} is not in the CSV file ({} rows)", csv.rows.len()),
+        ));
         return;
     };
     for c in csv_columns(format) {
         match row.get(c) {
             Some(v) if !v.trim().is_empty() => {}
-            Some(_) => flags.push(flag("empty", format!("column %{c} is empty in row {value}"))),
-            None => flags.push(flag("empty", format!("row {value} has no column %{c}"))),
+            Some(_) => flags.push(flag("empty", "csv_cell_empty", json!({ "column": c, "row": value }), format!("column %{c} is empty in row {value}"))),
+            None => flags.push(flag("empty", "csv_no_column", json!({ "column": c, "row": value }), format!("row {value} has no column %{c}"))),
         }
     }
 }
@@ -216,27 +234,27 @@ fn check_row(work: &mut Document, t: &Target, value: i64, ws: Option<Rect>) -> (
     let cmd = ContactSheet::ID;
     let mut flags = Vec::new();
     let moment = now();
-    let Some(o) = work.object(&t.id).cloned() else { return (None, String::new(), vec![flag("error", "the object is gone")]) };
+    let Some(o) = work.object(&t.id).cloned() else { return (None, String::new(), vec![flag("error", "gone", json!({}), "the object is gone")]) };
     let (path, shown) = if t.barcode {
-        let Some(b) = barcode_params(&o) else { return (None, String::new(), vec![flag("error", "barcode settings are unreadable")]) };
+        let Some(b) = barcode_params(&o) else { return (None, String::new(), vec![flag("error", "barcode_unreadable", json!({}), "barcode settings are unreadable")]) };
         let data = barcode_data(work, &o.layer, &b, moment.as_ref());
         let offset = b.variable.as_ref().map_or(0, |v| v.offset);
         if t.mode == VarMode::Csv {
             empty_fields(work, &b.data, value.saturating_add(offset), &mut flags);
         }
         if data.trim().is_empty() {
-            flags.push(flag("empty", "the barcode has no data"));
+            flags.push(flag("empty", "barcode_no_data", json!({}), "the barcode has no data"));
             return (None, data, flags);
         }
         match draw_barcode(cmd, &b, &data) {
             Ok(d) => (Some(o.transform * d.path), data),
             Err(e) => {
-                flags.push(flag("error", e.to_string()));
+                flags.push(flag("error", "barcode_error", json!({ "detail": e.to_string() }), e.to_string()));
                 return (None, data, flags);
             }
         }
     } else {
-        let Geometry::Text(tx) = &o.geometry else { return (None, String::new(), vec![flag("error", "not a text")]) };
+        let Geometry::Text(tx) = &o.geometry else { return (None, String::new(), vec![flag("error", "not_text", json!({}), "not a text")]) };
         let offset = tx.variable.as_ref().map_or(0, |v| v.offset);
         if t.mode == VarMode::Csv {
             empty_fields(work, &tx.text, value.saturating_add(offset), &mut flags);
@@ -246,12 +264,12 @@ fn check_row(work: &mut Document, t: &Target, value: i64, ws: Option<Rect>) -> (
         match rerender(cmd, work, &t.id, moment.as_ref()) {
             Ok(w) => {
                 for m in w {
-                    let kind = if m.contains("has no glyph") { "missing_glyph" } else { "warning" };
-                    flags.push(flag(kind, m));
+                    let (kind, code, params) = render_warning(&m);
+                    flags.push(flag(kind, code, params, m));
                 }
             }
             Err(e) => {
-                flags.push(flag("error", e.to_string()));
+                flags.push(flag("error", "render_error", json!({ "detail": e.to_string() }), e.to_string()));
                 return (None, String::new(), flags);
             }
         }
@@ -259,10 +277,10 @@ fn check_row(work: &mut Document, t: &Target, value: i64, ws: Option<Rect>) -> (
         let Geometry::Text(nt) = &o.geometry else { unreachable!("still a text") };
         let shown = nt.shown.clone().unwrap_or_else(|| nt.text.clone());
         if shown == "bad serial format" {
-            flags.push(flag("error", "the serial number format is not valid"));
+            flags.push(flag("error", "bad_serial_format", json!({}), "the serial number format is not valid"));
         }
         if shown.trim().is_empty() {
-            flags.push(flag("empty", "the text shows nothing"));
+            flags.push(flag("empty", "shows_nothing", json!({}), "the text shows nothing"));
         }
         if scaled && !shown.trim().is_empty() {
             // How tall it came out against how tall the same text is without max width and fit.
@@ -275,20 +293,26 @@ fn check_row(work: &mut Document, t: &Target, value: i64, ws: Option<Rect>) -> (
             {
                 let k = (now_b.height() / b.height()).min(if b.width() > 1e-9 { now_b.width() / b.width() } else { f64::INFINITY });
                 if k < SHRUNK_BELOW {
-                    flags.push(flag("shrunk", format!("drawn at {:.0} % of its {height} mm height", k * 100.0)));
+                    let pct = (k * 100.0).round();
+                    flags.push(flag(
+                        "shrunk",
+                        "shrunk",
+                        json!({ "pct": pct, "height_mm": height }),
+                        format!("drawn at {pct:.0} % of its {height} mm height"),
+                    ));
                 }
             }
         }
         (Some(o.field_path()), shown)
     };
     if let Some(p) = &path {
-        flags.extend(leaves(p, &t.container, ws).into_iter().map(|m| flag("overflow", m)));
+        flags.extend(leaves(p, &t.container, ws).into_iter().map(|(code, params, m)| flag("overflow", code, params, m)));
     }
     (path, shown, flags)
 }
 
 /// How field-frame outline `p` leaves `container` and the workspace `ws`, if it does.
-fn leaves(p: &BezPath, container: &Container, ws: Option<Rect>) -> Vec<String> {
+fn leaves(p: &BezPath, container: &Container, ws: Option<Rect>) -> Vec<(&'static str, Value, String)> {
     let mut out = Vec::new();
     let off = match container {
         Container::Object { path: c, .. } | Container::Stock(c) => sample(p).iter().any(|q| !inside(c, *q)),
@@ -296,14 +320,14 @@ fn leaves(p: &BezPath, container: &Container, ws: Option<Rect>) -> Vec<String> {
     };
     if off {
         out.push(match container {
-            Container::Object { name, .. } => format!("runs outside \"{name}\""),
-            _ => "runs outside the stock".to_string(),
+            Container::Object { name, .. } => ("outside_object", json!({ "name": name }), format!("runs outside \"{name}\"")),
+            _ => ("outside_stock", json!({}), "runs outside the stock".to_string()),
         });
     }
     if let (Some(w), Some(b)) = (ws, geom::bounds(p))
         && (b.x0 < w.x0 || b.y0 < w.y0 || b.x1 > w.x1 || b.y1 > w.y1)
     {
-        out.push("runs outside the workspace".into());
+        out.push(("outside_workspace", json!({}), "runs outside the workspace".into()));
     }
     out
 }
@@ -312,7 +336,7 @@ fn leaves(p: &BezPath, container: &Container, ws: Option<Rect>) -> Vec<String> {
 /// workspace; empty when it fits. Used after a template fill.
 pub(crate) fn overflow_of(doc: &Document, id: &str) -> Vec<String> {
     let Some(o) = doc.object(id) else { return Vec::new() };
-    leaves(&o.field_path(), &container_of(doc, id, &[id.to_string()]), workspace(doc))
+    leaves(&o.field_path(), &container_of(doc, id, &[id.to_string()]), workspace(doc)).into_iter().map(|(_, _, m)| m).collect()
 }
 
 /// Most variable shapes the pre-flight row check draws (each is one text render).
@@ -324,6 +348,9 @@ pub(crate) struct RowProblem {
     pub name: String,
     /// `overflow`, `missing_glyph`, `shrunk`, `empty` (a serial text that shows nothing), `error` or `warning`.
     pub kind: String,
+    /// What the app words in its language (`no_csv`, `outside_object`, `shrunk`, ...) with its `params`.
+    pub code: String,
+    pub params: Value,
     pub message: String,
 }
 
@@ -350,7 +377,14 @@ pub(crate) fn next_run_problems(doc: &Document) -> (Vec<RowProblem>, bool) {
             if kind == "empty" && mode == VarMode::Csv {
                 continue;
             }
-            out.push(RowProblem { id: id.clone(), name: name.clone(), kind, message: f["message"].as_str().unwrap_or_default().to_string() });
+            out.push(RowProblem {
+                id: id.clone(),
+                name: name.clone(),
+                kind,
+                code: f["code"].as_str().unwrap_or("render_warning").to_string(),
+                params: f["params"].clone(),
+                message: f["message"].as_str().unwrap_or_default().to_string(),
+            });
         }
     }
     (out, more)
@@ -536,6 +570,12 @@ mod tests {
         assert!(r["view_box"].is_array());
         // Hershey Sans has no ë: a missing glyph.
         assert!(kinds(&rows[3]).contains(&"missing_glyph".to_string()), "{:?}", rows[3]);
+        // Each flag also as a code with its values (the app words it in its language).
+        let glyph = rows[3]["texts"][0]["flags"].as_array().unwrap().iter().find(|f| f["kind"] == "missing_glyph").unwrap();
+        assert_eq!((&glyph["code"], &glyph["params"]["char"], &glyph["params"]["font"]), (&json!("missing_glyph"), &json!("ë"), &json!("Hershey Sans")), "{glyph}");
+        let out = rows[1]["texts"][0]["flags"].as_array().unwrap().iter().find(|f| f["kind"] == "overflow").unwrap();
+        assert_eq!((&out["code"], &out["params"]["name"]), (&json!("outside_object"), &json!("Tag")), "{out}");
+        assert_eq!(rows[2]["texts"][0]["flags"][0]["code"], "csv_cell_empty", "{}", rows[2]);
         assert!(r["summary"]["problems"]["overflow"].as_u64().unwrap() >= 1);
         // Only the problems, and paging.
         let p = sheet(&d, json!({"problems_only": true}));

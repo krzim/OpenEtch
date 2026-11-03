@@ -5,6 +5,7 @@
 
 import type { BezPathJson, DocObject, GDocument, Geometry, Vec2, Affine } from "../api/types.ts";
 import type { Invocation } from "../api/client.ts";
+import { problemText, type CodedProblem } from "../text/flagText.ts";
 import { apply, flattenCmds, geometryCmds, mul, rotate, translate, type Box, type PathCmd } from "../geometry.ts";
 
 /** doc::jig::PocketShape. */
@@ -295,6 +296,16 @@ export function parsePreflight(v: unknown): PreflightResult {
   };
 }
 
+/**
+ * The row check's problems in the app's language: each from its code and values (`params.problems`), else the
+ * engine's English `message` (an engine that sends no codes).
+ */
+function rowProblems(p: Record<string, unknown>): string {
+  const list = Array.isArray(p.problems) ? (p.problems as CodedProblem[]) : [];
+  if (list.length === 0 || list.some((x) => !x || typeof x.code !== "string")) return String(p.message ?? "");
+  return list.map((x) => problemText(x)).join("; ");
+}
+
 /** The message key and values for a finding (the engine's English text is the fallback). */
 export function preflightKey(w: PreflightWarning): { key: string; vars: Record<string, string | number> } {
   const p = w.params ?? {};
@@ -326,7 +337,7 @@ export function preflightKey(w: PreflightWarning): { key: string; vars: Record<s
     case "contact_sheet":
       // The contact sheet's checks of the next run's row (engine `contact_sheet::next_run_problems`).
       if (p.kind === "partial") return { key: "pf.rowPartial", vars: { n: n("checked") } };
-      return { key: "pf.rowCheck", vars: { name: s("name"), value: n("value"), message: s("message") } };
+      return { key: "pf.rowCheck", vars: { name: s("name"), value: n("value"), message: rowProblems(p) } };
   }
   return { key: "", vars: {} };
 }

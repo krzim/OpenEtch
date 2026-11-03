@@ -14,6 +14,7 @@
 
 import type { MachineStatus, Vec2 } from "../api/types.ts";
 import { activeRuns, noPinMode } from "../api/runs.ts";
+import { jobStatus, stopAtReached } from "../api/job.ts";
 import type { Workspace } from "../components/TopBar.tsx";
 import { getRunOptions } from "../components/jobStore.ts";
 import { getPrefs } from "../workspace/prefs.ts";
@@ -64,7 +65,7 @@ export interface StartState {
   label: string;
 }
 
-export type StartBlock = "offline" | "loading" | "shutdown" | "noLaser" | "designOnly" | "running" | "framing" | "empty" | "checklist";
+export type StartBlock = "offline" | "loading" | "shutdown" | "noLaser" | "designOnly" | "running" | "framing" | "stopAt" | "empty" | "checklist";
 export type StartDecision = "blocked" | "openChecklist" | "openLaserAndFire" | "fire";
 
 /** The checklist sources that show it inline next to Start (an unticked list disables Start there). */
@@ -102,6 +103,8 @@ export function startBlock(ctx: StartCtx): StartBlock | null {
   if (m.connected === false) return "noLaser";
   if (runUnderWay(m)) return "running";
   if (m.framing === true) return "framing";
+  // The job counter reached Stop At: the engine refuses every approval until the count is reset or Stop At raised.
+  if (stopAtReached(jobStatus(m.job))) return "stopAt";
   // An empty document: Start was enabled and only the engine's refusal said why.
   if (ctx.docEmpty === true) return "empty";
   if (checklistIncomplete(ctx)) return "checklist";
@@ -125,6 +128,10 @@ export function blockReason(b: StartBlock, ctx: StartCtx): string {
       return tr("lz.whyRunning");
     case "framing":
       return tr("lz.whyFraming");
+    case "stopAt": {
+      const j = jobStatus(ctx.machine?.job);
+      return tr("lz.whyStopAt", { count: j.count, target: j.stop_at ?? 0 });
+    }
     case "empty":
       return tr("lz.whyEmpty");
     case "checklist":

@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { preflightKey, type PreflightWarning } from "./jigs/jigModel.ts";
+import { problemText } from "./text/flagText.ts";
 import { parseEntry } from "./ledger/ledgerModel.ts";
 import { ledgerRows, slotBadge, slotLabel, slotLine, type LedgerEntry, type Slot } from "./production/model.ts";
 import { EN } from "./workspace/locales/en.ts";
@@ -59,4 +60,26 @@ test("pre-flight findings from the contact sheet and Stop at End have their own 
   assert.equal(preflightKey(w("contact_sheet", { kind: "partial", checked: 200 })).key, "pf.rowPartial");
   assert.equal(preflightKey(w("unfilled_variable", { kind: "stop_at_end", names: "\"Tags P3\"", end: 100 })).key, "pf.stopAtEnd");
   for (const k of ["pf.rowCheck", "pf.rowPartial", "pf.stopAtEnd", "pf.check.contact_sheet"]) assert.ok(k in EN && k in ES, k);
+});
+
+test("the row check's problems are worded from their codes in the app's language, the engine's English the fallback", () => {
+  const problems = [
+    { kind: "overflow", code: "outside_object", params: { name: "Tag" } },
+    { kind: "missing_glyph", code: "missing_glyph", params: { font: "Hershey Sans", char: "ë" } },
+    { kind: "shrunk", code: "shrunk", params: { pct: 40, height_mm: 4 } },
+  ];
+  const message = "runs outside \"Tag\"; \"Hershey Sans\" has no glyph for 'ë'; drawn at 40 % of its 4 mm height";
+  const w = { check: "contact_sheet", text: "", params: { kind: "overflow", name: "SN", value: 5, message, problems }, layers: [], objects: [] } as PreflightWarning;
+  assert.equal(preflightKey(w).vars.message, message, "English from the codes reads as the engine's text");
+  const es = problems.map((p) => problemText(p, "es")).join("; ");
+  assert.equal(es, "se sale de \"Tag\"; \"Hershey Sans\" no tiene glifo para 'ë'; dibujado al 40 % de su altura de 4 mm");
+  // An unknown code falls back to the engine's message; an engine without codes keeps its message.
+  assert.equal(problemText({ code: "new_thing", message: "something new" }, "es"), "something new");
+  const old = { ...w, params: { kind: "overflow", name: "SN", value: 5, message: "runs outside \"Tag\"" } } as PreflightWarning;
+  assert.equal(preflightKey(old).vars.message, "runs outside \"Tag\"");
+  // Every code the engine sends has English and Spanish words.
+  for (const code of ["gone", "barcode_unreadable", "no_csv", "csv_row_missing", "csv_cell_empty", "csv_no_column", "barcode_no_data", "barcode_error", "not_text", "missing_glyph", "render_warning", "render_error", "bad_serial_format", "shows_nothing", "shrunk", "outside_object", "outside_stock", "outside_workspace"]) {
+    const k = `sheet.code.${code}`;
+    assert.ok(k in EN && k in ES, k);
+  }
 });

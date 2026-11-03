@@ -23,6 +23,7 @@ export const ES_LASER: Messages = {
   "lz.whyNoLaser": "No hay ningún láser conectado.",
   "lz.whyRunning": "Hay un trabajo en marcha. Espere o pulse STOP.",
   "lz.whyFraming": "Encuadrando: detenga primero el encuadre (Detener encuadre o Esc).",
+  "lz.whyStopAt": "Objetivo alcanzado ({count} / {target}): reinicie el contador o suba Detener en para seguir.",
   "lz.whyEmpty": "Nada que grabar: el documento está vacío.",
   "lz.whyChecklist": "Marque primero todos los puntos de la lista de comprobación.",
   "lz.whyChecklistOpen": "Marque primero la lista de comprobación: Iniciar la abre.",
@@ -103,6 +104,10 @@ export const ES_LASER: Messages = {
   "lz.stepFrameHint": "Encuadre el trabajo con el puntero rojo y compruebe dónde cae.",
   "lz.stepStartHint": "¿Carcasa cerrada y gafas puestas? Entonces, Iniciar.",
   "lz.stepRunningHint": "Grabando. STOP o Ctrl+. (⌘.) lo detiene.",
+  "apir.jobFinished": "Trabajo terminado.",
+  "apir.jobAborted": "Trabajo detenido antes del final.",
+  "apir.jobCancelled": "Trabajo cancelado antes de empezar.",
+  "apir.jobFailed": "El trabajo falló.",
   "lz.stopTitle":
     "Parada de emergencia: termina cualquier trabajo o encuadre y cancela las ejecuciones pendientes. Siempre permitida. Teclas: Ctrl+Pausa, o Ctrl+. (⌘.) mientras corre un trabajo.",
 };

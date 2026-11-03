@@ -21,11 +21,11 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::text::{barcode_params, laser_name, var_of};
+use super::text::{barcode_params, laser_name};
 use crate::{BARCODE_KEY, Command, Result, Risk};
 
 /// Most slots a document may mark empty (and most slots listed).
-pub const MAX_SLOTS: usize = 1000;
+pub const MAX_SLOTS: usize = doc::slots::MAX_SLOTS;
 
 /// One value a slot shows: a serial-number or CSV text or barcode.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -128,118 +128,43 @@ fn mode_name(m: VarMode) -> Option<&'static str> {
     }
 }
 
-/// One counted variable object: `(object id, its variable settings, its format)`.
-type Counted = (ObjectId, VarText, String);
-
-/// The variable objects of `doc` that count (serial-number and CSV texts and barcodes).
-fn counted(doc: &Document) -> Vec<Counted> {
-    let mut out = Vec::new();
-    for o in &doc.objects {
-        match &o.geometry {
-            Geometry::Text(t) => {
-                if let Some(v) = t.variable.as_ref().filter(|v| mode_name(v.mode).is_some()) {
-                    out.push((o.id.clone(), v.clone(), t.text.clone()));
-                }
-            }
-            _ => {
-                if let Some(b) = barcode_params(o)
-                    && let Some(v) = b.variable.as_ref().and_then(var_of).filter(|v| mode_name(v.mode).is_some())
-                {
-                    out.push((o.id.clone(), v, b.data.clone()));
-                }
-            }
-        }
-    }
-    out
-}
-
-/// The group chain of `obj` from its own group outward.
-fn chain(doc: &Document, obj: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut g = doc.object(obj).and_then(|o| o.group.clone());
-    while let Some(id) = g {
-        if out.contains(&id) || out.len() > 64 {
-            break;
-        }
-        g = doc.group(&id).and_then(|gr| gr.parent.clone());
-        out.push(id);
-    }
-    out
-}
-
-/// The slots of `doc` and what the next run marks.
+/// The slots of `doc` and what the next run marks (their structure: `doc::slots`, shared with the browser preview).
 pub fn slot_plan(doc: &Document) -> SlotPlan {
     let v = &doc.variables;
-    let vars = counted(doc);
-    // Each group's variable offsets, to find the pockets (groups whose variable texts all share one offset).
-    let mut group_offsets: BTreeMap<String, BTreeSet<i64>> = BTreeMap::new();
-    for (id, var, _) in &vars {
-        for g in chain(doc, id) {
-            group_offsets.entry(g).or_default().insert(var.offset);
-        }
-    }
-    let mut by_offset: BTreeMap<i64, (Vec<Counted>, BTreeSet<String>)> = BTreeMap::new();
-    for (id, var, format) in vars {
-        // The highest enclosing group whose variable texts all have this offset.
-        let pocket = chain(doc, &id)
-            .into_iter()
-            .take_while(|g| group_offsets.get(g).is_some_and(|s| s.len() == 1))
-            .last();
-        let e = by_offset.entry(var.offset).or_default();
-        if let Some(p) = pocket {
-            e.1.insert(p);
-        }
-        e.0.push((id, var, format));
-    }
-    let offsets: Vec<i64> = by_offset.keys().copied().take(MAX_SLOTS).collect();
-    let empty: BTreeSet<i64> = v.empty_slots.iter().copied().collect();
+    let layouts = doc::slots::slot_layouts(doc);
+    let offsets: Vec<i64> = layouts.iter().map(|l| l.offset).collect();
     let laser = laser_name(doc);
-    // Jig pockets (module docs of `doc::jig`): a slot whose variable texts all sit in one pocket, alone among the
-    // slots, takes that pocket's objects too.
-    let places = doc::jig::object_pockets(doc);
-    let slot_pocket = |members: &[Counted]| -> Option<doc::jig::PocketPlace> {
-        let mut it = members.iter().map(|(id, _, _)| places.get(id));
-        let first = it.next()??;
-        it.all(|p| p == Some(first)).then(|| first.clone())
-    };
-    let pocket_of: Vec<Option<doc::jig::PocketPlace>> = offsets.iter().map(|o| slot_pocket(&by_offset[o].0)).collect();
     let mut slots = Vec::new();
-    let mut position = 0usize;
-    for (n, offset) in offsets.iter().enumerate() {
-        let (members, pockets) = &by_offset[offset];
-        let is_empty = empty.contains(offset);
-        // Marked slots take the offsets of the first slots in order (compaction past empty slots).
-        let eff = if is_empty { *offset } else { offsets[position] };
-        if !is_empty {
-            position += 1;
-        }
-        let value = v.current.saturating_add(eff);
-        let past_end = !is_empty && v.stop_at_end && value > v.end;
-        let jig_pocket = pocket_of[n].clone().filter(|p| pocket_of.iter().filter(|q| q.as_ref() == Some(p)).count() == 1);
-        let mut objects: Vec<ObjectId> = Vec::new();
-        for o in &doc.objects {
-            let in_pocket = o.group.is_some() && chain(doc, &o.id).iter().any(|g| pockets.contains(g));
-            let in_jig_pocket = jig_pocket.as_ref().is_some_and(|p| places.get(&o.id) == Some(p));
-            if in_pocket || in_jig_pocket || members.iter().any(|(id, _, _)| *id == o.id) {
-                objects.push(o.id.clone());
-            }
-        }
-        let label = pockets
+    for (n, l) in layouts.into_iter().enumerate() {
+        let eff = l.effective_offset;
+        let label = l
+            .pockets
             .iter()
             .filter_map(|g| doc.group(g).map(|gr| gr.name.clone()))
             .find(|n| !n.trim().is_empty())
-            .or_else(|| pocket_of[n].as_ref().map(|p| format!("{} P{}", p.jig_name, p.number)))
-            .or_else(|| members.iter().filter_map(|(id, _, _)| doc.object(id).map(|o| o.name.clone())).find(|n| !n.trim().is_empty()))
+            .or_else(|| l.jig_pocket.as_ref().map(|p| format!("{} P{}", p.jig_name, p.number)))
+            .or_else(|| l.members.iter().filter_map(|c| doc.object(&c.object).map(|o| o.name.clone())).find(|n| !n.trim().is_empty()))
             .unwrap_or_else(|| format!("Slot {}", n + 1));
-        let values = members
+        let values = l
+            .members
             .iter()
-            .map(|(id, var, format)| {
-                let layer = doc.object(id).map(|o| o.layer.clone()).unwrap_or_default();
-                let shown = text::vars::evaluate(doc, &layer, format, &VarText { mode: var.mode, offset: eff }, None, &laser);
-                SlotValue { object: id.clone(), mode: mode_name(var.mode).unwrap_or("serial").into(), shown }
+            .map(|c| {
+                let layer = doc.object(&c.object).map(|o| o.layer.clone()).unwrap_or_default();
+                let shown = text::vars::evaluate(doc, &layer, &c.format, &VarText { mode: c.var.mode, offset: eff }, None, &laser);
+                SlotValue { object: c.object.clone(), mode: mode_name(c.var.mode).unwrap_or("serial").into(), shown }
             })
             .collect();
-        slots.push(Slot { number: n + 1, offset: *offset, label, objects, empty: is_empty, past_end, value, values, pocket: pocket_of[n].clone() });
+        slots.push(Slot {
+            number: n + 1,
+            offset: l.offset,
+            label,
+            objects: l.objects,
+            empty: l.empty,
+            past_end: l.past_end,
+            value: v.current.saturating_add(eff),
+            values,
+            pocket: l.jig_pocket,
+        });
     }
     let marked = slots.iter().filter(|s| s.marks()).count();
     let advance = if marked == slots.len() {

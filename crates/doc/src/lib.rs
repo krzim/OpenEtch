@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod file;
 pub mod jig;
+pub mod slots;
 pub mod job;
 pub mod text;
 

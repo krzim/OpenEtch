@@ -2,7 +2,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { collapseOrder, fitGroups, sameSet, samePos, type GroupFit } from "./ribbonModel.ts";
+import { collapseOrder, fitGroups, railOverflow, sameSet, samePos, type GroupFit, type RailFit } from "./ribbonModel.ts";
 
 /** The Design ribbon, roughly as measured in the compact layout. */
 const DESIGN: GroupFit[] = [
@@ -67,4 +67,23 @@ test("samePos: a flyout's position is set once, then left alone while it does no
   const placed = { left: 52, top: 404, maxHeight: 300 };
   assert.equal(samePos(placed, r), true);
   assert.equal(samePos(placed, { ...r, top: 410 }), false);
+});
+
+test("the tablet rail moves its lowest-priority groups into More until the rest fits", () => {
+  // The Design rail on an iPad: Create's tools inline (pinned), the other groups as 46 px buttons.
+  const rail: RailFit[] = [
+    { id: "create", height: 9 * 46, priority: 100, pinned: true },
+    { id: "modify", height: 46, priority: 60 },
+    { id: "arrange", height: 46, priority: 80 },
+    { id: "insert", height: 46, priority: 40 },
+    { id: "inspect", height: 46, priority: 30 },
+    { id: "laserTools", height: 46, priority: 20 },
+  ];
+  assert.equal(railOverflow(rail, 14 * 46, 46).size, 0, "everything fits");
+  // One button short: two groups go, since More itself takes a button.
+  assert.deepEqual([...railOverflow(rail, 13 * 46, 46)], ["laserTools", "inspect"]);
+  assert.deepEqual([...railOverflow(rail, 12 * 46, 46)], ["laserTools", "inspect", "insert"]);
+  const all = railOverflow(rail, 100, 46);
+  assert.ok(!all.has("create"), "the pinned Create group stays on the rail");
+  assert.equal(all.size, 5);
 });

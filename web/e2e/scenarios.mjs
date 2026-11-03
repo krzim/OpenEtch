@@ -393,8 +393,28 @@ function stepsFor(d) {
   for (const g of ["Modify", "Arrange", "Insert", "Inspect", "Laser Tools"])
     add(`rail-${g.toLowerCase().replace(/\s+/g, "-")}`, async ({ page }) => {
       await escape(page);
-      await pressFind(page, ".ribbon-group-btn", g);
+      // A group that does not fit the rail's height is in its More flyout (Ribbon.tsx useRailOverflow).
+      if (await find(page, ".ribbon-group-btn:not(.ribbon-more-btn)", g)) {
+        await pressFind(page, ".ribbon-group-btn:not(.ribbon-more-btn)", g);
+        return;
+      }
+      await pressFind(page, ".ribbon-more-btn");
+      await sleep(300);
+      if (!(await find(page, ".ribbon-more-group", g))) throw new Error(`"${g}" is neither on the rail nor in its More flyout`);
     }, ["tablet"]);
+  // Tablet: every rail control inside the window (the rail is taller than an iPad in landscape without More).
+  add("rail-fits", async ({ page }) => {
+    await escape(page);
+    const cut = await page.evaluate(() => {
+      const rail = document.querySelector(".ribbon-vertical");
+      if (!rail) return [];
+      const bottom = Math.min(rail.getBoundingClientRect().bottom, innerHeight);
+      return [...rail.querySelectorAll("button")]
+        .filter((b) => b.getBoundingClientRect().height > 0 && b.getBoundingClientRect().bottom > bottom + 0.5)
+        .map((b) => b.getAttribute("aria-label") ?? b.textContent);
+    });
+    if (cut.length) throw new Error(`rail controls below the window: ${cut.join(", ")}`);
+  }, ["tablet"]);
   for (const o of ["Cuts / Layers", "Shape Properties"])
     add(`overlay-${o.toLowerCase().replace(/[^a-z]+/g, "-")}`, async ({ page }) => {
       await escape(page);

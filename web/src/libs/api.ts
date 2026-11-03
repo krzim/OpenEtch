@@ -47,8 +47,11 @@ export async function call<T = unknown>(method: string, path: string, body?: unk
   return data as T;
 }
 
-/** A file from the engine (with its Content-Disposition name), fetched with the Authorization header. */
-export async function download(path: string): Promise<{ blob: Blob; filename: string | null }> {
+/**
+ * A file from the engine (with its Content-Disposition name), fetched with the Authorization header. `warnings`: the
+ * engine's `x-openetch-warnings` count (what the file has no place for, e.g. a `.clb`'s pauses for the operator).
+ */
+export async function download(path: string): Promise<{ blob: Blob; filename: string | null; warnings: number }> {
   let res: Response;
   try {
     res = await fetch(path, { headers: headers("*/*") });
@@ -61,7 +64,11 @@ export async function download(path: string): Promise<{ blob: Blob; filename: st
     const msg = data && typeof data === "object" && "error" in data ? String((data as { error: unknown }).error) : text || res.statusText;
     throw new ApiError(`GET ${path}: ${res.status} ${msg}`, res.status, { detail: msg });
   }
-  return { blob: await res.blob(), filename: contentDispositionName(res.headers.get("Content-Disposition")) };
+  return {
+    blob: await res.blob(),
+    filename: contentDispositionName(res.headers.get("Content-Disposition")),
+    warnings: Number(res.headers.get("x-openetch-warnings") ?? 0) || 0,
+  };
 }
 
 const enc = encodeURIComponent;

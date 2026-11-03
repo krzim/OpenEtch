@@ -240,7 +240,17 @@ export function LibraryDock(p: { doc: GDocument | null; activeLayer: string | nu
             {
               label: t("lib.download"),
               disabled: !selected,
-              action: () => selected && void saveDownload(libsApi.libraryDownload(selected), `${selected}.clb`).catch(p.report),
+              action: () => {
+                if (!selected) return;
+                const dl = libsApi.libraryDownload(selected);
+                // A .clb has no place for a preset's pause for the operator: say so (it stays in OpenEtch's library).
+                void saveDownload(dl, `${selected}.clb`)
+                  .then(async () => {
+                    const n = (await dl).warnings;
+                    if (n > 0) p.notify(t("lib.clbPauseLost", { n }));
+                  })
+                  .catch(p.report);
+              },
             },
             {
               label: t("mat.sidecarDownload"),

@@ -1167,6 +1167,13 @@ impl AppState {
         let correction = f64::from_bits(key.correction);
         let shared = self.previews.clone();
         Ok(tokio::task::spawn_blocking(move || {
+            // As a run plans it: the pockets of empty and past-End slots left out (module `doc::slots`; webcore's
+            // browser preview does the same).
+            let trimmed = match doc::slots::without_skipped_slots(&doc) {
+                std::borrow::Cow::Owned(d) => Some(d),
+                std::borrow::Cow::Borrowed(_) => None,
+            };
+            let doc = trimmed.unwrap_or(doc);
             let preview = match design_only {
                 // Still a result, so the SVG preview renders the document.
                 Some(reason) => Err(PlanError::Target(reason)),

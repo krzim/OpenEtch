@@ -244,17 +244,22 @@ fn stop_at_end(plan: &super::super::slots::SlotPlan, out: &mut Vec<Finding>) {
 /// The contact sheet's checks of the next run's row (`contact_sheet::next_run_problems`), one finding per shape.
 fn row_check(doc: &Document, out: &mut Vec<Finding>) {
     let (problems, more) = super::super::contact_sheet::next_run_problems(doc);
-    let mut by_object: BTreeMap<String, (String, Vec<(String, String)>)> = BTreeMap::new();
+    let mut by_object: BTreeMap<String, (String, Vec<super::super::contact_sheet::RowProblem>)> = BTreeMap::new();
     for p in problems {
-        by_object.entry(p.id).or_insert_with(|| (p.name, Vec::new())).1.push((p.kind, p.message));
+        by_object.entry(p.id.clone()).or_insert_with(|| (p.name.clone(), Vec::new())).1.push(p);
     }
     for (id, (name, list)) in by_object {
-        let kinds: Vec<&str> = list.iter().map(|(k, _)| k.as_str()).collect();
-        let message = list.iter().map(|(_, m)| m.as_str()).collect::<Vec<_>>().join("; ");
+        let kinds: Vec<&str> = list.iter().map(|p| p.kind.as_str()).collect();
+        let message = list.iter().map(|p| p.message.as_str()).collect::<Vec<_>>().join("; ");
+        // Each problem as a code and its values, which the app words in its own language (`message` is English).
+        let problems: Vec<Value> = list.iter().map(|p| json!({ "kind": p.kind, "code": p.code, "params": p.params })).collect();
         out.push(Finding {
             check: "contact_sheet",
             text: format!("\"{name}\" at {}: {message}. File \u{203a} Laser \u{203a} Check every row shows every row.", doc.variables.current),
-            params: json!({ "kind": kinds.first().copied().unwrap_or("warning"), "kinds": kinds, "name": name, "value": doc.variables.current, "message": message }),
+            params: json!({
+                "kind": kinds.first().copied().unwrap_or("warning"), "kinds": kinds, "name": name, "value": doc.variables.current,
+                "message": message, "problems": problems,
+            }),
             layers: vec![],
             objects: vec![id],
         });

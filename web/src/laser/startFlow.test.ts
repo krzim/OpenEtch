@@ -58,6 +58,12 @@ test("gate matrix: the first blocking gate, in the order a person fixes them", (
   assert.equal(startBlock(ctx({ machine: machine({ job: { active: true } }) })), "running");
   assert.equal(startBlock(ctx({ machine: machine({ runs: [{ id: "r1", state: "running" }] }) })), "running");
   assert.equal(startBlock(ctx({ machine: machine({ framing: true }) })), "framing");
+  // The job counter at Stop At: the engine refuses every approval, so Start is disabled and says why.
+  const atTarget = ctx({ machine: machine({ job: { active: false, count: 5, stop_at: 5 } }) });
+  assert.equal(startBlock(atTarget), "stopAt");
+  assert.equal(startState(atTarget).enabled, false);
+  assert.match(startState(atTarget).reason ?? "", /5 \/ 5/);
+  assert.equal(startBlock(ctx({ machine: machine({ job: { active: false, count: 4, stop_at: 5 } }) })), null);
   assert.equal(startBlock(ctx({ checklistIncomplete: true })), "checklist");
   // Offline beats everything else; running beats framing.
   assert.equal(startBlock(ctx({ online: false, machine: machine({ running: true, framing: true }) })), "offline");

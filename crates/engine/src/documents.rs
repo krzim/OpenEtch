@@ -223,6 +223,10 @@ impl AppState {
         activate: bool,
         origin: Origin,
     ) -> Result<Value, EngineError> {
+        if activate {
+            // Before anything is opened: the activation at the end would be refused (module `production::lock`).
+            crate::production::lock::check_timeline(self)?;
+        }
         if let Some(name) = &project {
             if !activate {
                 return Err(EngineError::BadRequest("a project opens into the active document: leave activate out".into()));

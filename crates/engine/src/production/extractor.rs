@@ -294,26 +294,30 @@ pub async fn set(st: &Arc<AppState>, on: bool, off_at: Option<u64>) -> Result<()
 }
 
 /// Before a run is armed: the gate (with `auto` and the gate "switched on", the extractor is switched on first, so
-/// a failed switch refuses the Start).
-pub(crate) async fn before_run(st: &Arc<AppState>) -> Result<(), EngineError> {
+/// a failed switch refuses the Start). `true`: it was off and this call switched it on (the caller switches it off
+/// again if the approval is refused after all).
+pub(crate) async fn before_run(st: &Arc<AppState>) -> Result<bool, EngineError> {
     let device = st.active_device().id;
     let config = st.production.extractor.config(&device);
+    let mut switched_on = false;
     if config.auto && config.output != Output::None && config.gate == Gate::SwitchedOn {
+        let was_on = st.production.extractor.state().on;
         set(st, true, None).await?;
+        switched_on = !was_on;
     }
     match config.gate {
-        Gate::None => Ok(()),
+        Gate::None => Ok(false),
         Gate::SwitchedOn => {
             let s = st.production.extractor.state();
             if s.on && s.last_error.is_none() {
-                Ok(())
+                Ok(switched_on)
             } else {
                 Err(EngineError::Conflict("the extractor is not switched on: switch it on in the cockpit, then Start".into()))
             }
         }
         Gate::Input { bit, active_low } => {
             if st.machine.is_gantry() {
-                return Ok(());
+                return Ok(false);
             }
             let port = machine::InputPort { bit, active_low };
             let read = st
@@ -327,7 +331,7 @@ pub(crate) async fn before_run(st: &Arc<AppState>) -> Result<(), EngineError> {
                 .await?;
             match read {
                 None => Err(EngineError::Conflict("another run is in progress".into())),
-                Some(Ok(bits)) if port.active(bits) => Ok(()),
+                Some(Ok(bits)) if port.active(bits) => Ok(false),
                 Some(Ok(_)) => Err(EngineError::Conflict(format!(
                     "the extractor is not running (input {bit} reads off): switch it on, then Start"
                 ))),

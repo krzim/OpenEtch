@@ -14,7 +14,9 @@ import { createPortal } from "react-dom";
 import { installEscape, layers } from "./dialogStack.ts";
 import { isInMenu } from "./Menu.tsx";
 import { placeMenu } from "./menuModel.ts";
-import { fitGroups, sameSet, samePos, type GroupFit } from "./ribbonModel.ts";
+import { safeInsets } from "../hud/safeInsets.ts";
+import { fitGroups, railOverflow, sameSet, samePos, type GroupFit, type RailFit } from "./ribbonModel.ts";
+import { tr } from "../workspace/tr.ts";
 import { Icon } from "./ui.tsx";
 import "./ribbon.css";
 
@@ -34,6 +36,11 @@ export interface RibbonProps {
 interface RibbonCtx {
   orientation: RibbonOrientation;
   collapsed: ReadonlySet<string>;
+  /** Vertical rail: the groups that live in its More flyout (railOverflow), and the open flyout's body. */
+  overflow: ReadonlySet<string>;
+  moreBody: HTMLElement | null;
+  reportRail: (id: string, fit: Omit<RailFit, "id">) => void;
+  forgetRail: (id: string) => void;
   /** The element a group's slot content renders into (its inline body, or its open flyout), by group id. */
   target: (id: string) => HTMLElement | null;
   setTarget: (id: string, el: HTMLElement | null) => void;
@@ -112,9 +119,95 @@ export function useRibbonOverflow(ref: { current: HTMLElement | null }, enabled:
   return { collapsed, report };
 }
 
+/** The More button's height on the rail when it has not been measured yet (the touch target). */
+const DEFAULT_MORE_H = 46;
+
+/**
+ * The tablet rail's fit (vertical orientation): measure the rail's height and its groups' and move the lowest-priority
+ * groups into the More flyout until the rest fits (ribbonModel.ts `railOverflow`). A group's height is the one last
+ * seen on the rail, so a group in More keeps its place in the sum.
+ */
+export function useRailOverflow(ref: { current: HTMLElement | null }, enabled: boolean) {
+  const fits = useRef(new Map<string, RailFit>());
+  const [overflow, setOverflow] = useState<ReadonlySet<string>>(new Set());
+  const live = useRef(overflow);
+  live.current = overflow;
+  const on = useRef(enabled);
+  on.current = enabled;
+  const frame = useRef(0);
+  const compute = useRef(() => {
+    cancelAnimationFrame(frame.current);
+    frame.current = requestAnimationFrame(() => {
+      const el = ref.current;
+      if (!el || !on.current) {
+        if (live.current.size) setOverflow(new Set());
+        return;
+      }
+      const cs = getComputedStyle(el);
+      const pad = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+      const gap = parseFloat(cs.rowGap) || 0;
+      // Everything on the rail that is not a group (the panel toggles, search) takes its height; the spacer and the
+      // More button do not count (More is added by railOverflow once a group moves).
+      let fixed = 0;
+      let n = 0;
+      let moreH = DEFAULT_MORE_H;
+      for (const c of Array.from(el.children) as HTMLElement[]) {
+        if (c.classList.contains("ribbon-more")) {
+          moreH = c.offsetHeight || moreH;
+          continue;
+        }
+        if (c.classList.contains("ribbon-group") || getComputedStyle(c).display === "none") continue;
+        // The spacer may shrink to nothing, but its gaps stay.
+        if (!c.classList.contains("tool-spacer")) fixed += c.offsetHeight;
+        n++;
+      }
+      // Each item takes its height and one gap (one gap too many in all, given back here).
+      const groups = [...fits.current.values()].map((g) => ({ ...g, height: g.height + gap }));
+      const available = el.clientHeight - pad - fixed - gap * n + gap - 1;
+      const next = railOverflow(groups, available, moreH + gap);
+      if (!sameSet(next, live.current)) setOverflow(next);
+    });
+  }).current;
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(compute);
+    ro.observe(el);
+    compute();
+    return () => {
+      ro.disconnect();
+      cancelAnimationFrame(frame.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled]);
+
+  const report = useRef((id: string, f: Omit<RailFit, "id">) => {
+    const cur = fits.current.get(id);
+    // A group in More reports no height (it is not on the rail): keep the last one seen.
+    const next: RailFit = { id, priority: f.priority, pinned: f.pinned, height: f.height > 0 ? f.height : (cur?.height ?? 0) };
+    if (cur && cur.height === next.height && cur.priority === next.priority && cur.pinned === next.pinned) return;
+    fits.current.set(id, next);
+    compute();
+  }).current;
+  // A group that unmounts (the workspace switched) leaves the sum.
+  const forget = useRef((id: string) => {
+    if (fits.current.delete(id)) compute();
+  }).current;
+  return { overflow, report, forget };
+}
+
 export function Ribbon(p: RibbonProps) {
   const ref = useRef<HTMLDivElement>(null);
   const ov = useRibbonOverflow(ref, p.orientation === "horizontal");
+  const rail = useRailOverflow(ref, p.orientation === "vertical");
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [moreBody, setMoreBody] = useState<HTMLElement | null>(null);
+  const moreBtn = useRef<HTMLButtonElement>(null);
+  const hasMore = p.orientation === "vertical" && rail.overflow.size > 0;
+  useEffect(() => {
+    if (!hasMore) setMoreOpen(false);
+  }, [hasMore]);
   const targets = useRef(new Map<string, HTMLElement | null>());
   const [version, setVersion] = useState(0);
   const setTarget = useRef((id: string, el: HTMLElement | null) => {
@@ -126,13 +219,17 @@ export function Ribbon(p: RibbonProps) {
     () => ({
       orientation: p.orientation,
       collapsed: ov.collapsed,
+      overflow: p.orientation === "vertical" ? rail.overflow : EMPTY,
+      moreBody: moreOpen ? moreBody : null,
+      reportRail: rail.report,
+      forgetRail: rail.forget,
       target: (id) => targets.current.get(id) ?? null,
       setTarget,
       report: ov.report,
       version,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [p.orientation, ov.collapsed, version],
+    [p.orientation, ov.collapsed, rail.overflow, moreOpen, moreBody, version],
   );
   return (
     <Ctx.Provider value={ctx}>
@@ -149,10 +246,33 @@ export function Ribbon(p: RibbonProps) {
         }}
       >
         {p.children}
+        {hasMore && (
+          <div className="ribbon-more">
+            <button
+              ref={moreBtn}
+              type="button"
+              className={`tool-btn ribbon-group-btn ribbon-more-btn${moreOpen ? " active" : ""}`}
+              title={tr("shell.more")}
+              aria-label={tr("shell.more")}
+              aria-haspopup="true"
+              aria-expanded={moreOpen}
+              onClick={() => setMoreOpen((v) => !v)}
+            >
+              <Icon name="more" size={20} />
+            </button>
+            {moreOpen && (
+              <RibbonFlyout anchor={moreBtn.current} side="right" label={tr("shell.more")} onClose={() => setMoreOpen(false)} openSingle={false}>
+                <div ref={setMoreBody} className="ribbon-more-body" />
+              </RibbonFlyout>
+            )}
+          </div>
+        )}
       </div>
     </Ctx.Provider>
   );
 }
+
+const EMPTY: ReadonlySet<string> = new Set();
 
 export interface RibbonGroupProps {
   /** Stable id ("create", "modify", "arrange", "insert", "inspect", "laser"). */
@@ -176,22 +296,36 @@ export function RibbonGroup(p: RibbonGroupProps) {
   const orientation = ctx?.orientation ?? "horizontal";
   // Vertical rail: pinned groups inline, the rest behind a button. Horizontal: as the overflow rule says.
   const collapsed = orientation === "vertical" ? !p.pinned : orientation === "horizontal" ? !!ctx?.collapsed.has(p.id) : false;
+  // Vertical rail: a group that does not fit lives in the rail's More flyout (useRailOverflow).
+  const overflowed = orientation === "vertical" && !!ctx?.overflow.has(p.id);
   const report = ctx?.report;
+  const reportRail = orientation === "vertical" ? ctx?.reportRail : undefined;
+  const forgetRail = ctx?.forgetRail;
 
   useEffect(() => {
     report?.(p.id, { priority: p.priority, pinned: p.pinned });
   }, [report, p.id, p.priority, p.pinned]);
 
-  // Measure: the inline width while inline, the button's while collapsed.
+  useEffect(() => () => forgetRail?.(p.id), [forgetRail, p.id]);
+
+  // Measure: the inline width while inline, the button's while collapsed; on the rail, the height it takes there.
   useLayoutEffect(() => {
     const el = box.current;
-    if (!el || !report || typeof ResizeObserver === "undefined") return;
-    const measure = () => report(p.id, collapsed ? { collapsedWidth: el.offsetWidth } : { width: el.offsetWidth });
+    if (!report || typeof ResizeObserver === "undefined") return;
+    if (!el) {
+      // In More: off the rail, keeping the height last seen there.
+      reportRail?.(p.id, { height: 0, priority: p.priority, pinned: p.pinned });
+      return;
+    }
+    const measure = () => {
+      report(p.id, collapsed ? { collapsedWidth: el.offsetWidth } : { width: el.offsetWidth });
+      reportRail?.(p.id, { height: el.offsetHeight, priority: p.priority, pinned: p.pinned });
+    };
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     measure();
     return () => ro.disconnect();
-  }, [collapsed, report, p.id]);
+  }, [collapsed, overflowed, report, reportRail, p.id, p.priority, p.pinned]);
 
   useEffect(() => {
     if (!collapsed) setOpen(false);
@@ -201,6 +335,24 @@ export function RibbonGroup(p: RibbonGroupProps) {
   const body = useCallback((el: HTMLDivElement | null) => setTarget?.(p.id, el), [setTarget, p.id]);
 
   if (!ctx) return <>{p.children}</>;
+
+  if (overflowed) {
+    // Its tools in the open More flyout, under its name (nothing on the rail).
+    const host = ctx.moreBody;
+    if (!host) return null;
+    return createPortal(
+      <section className={`ribbon-more-group rg-${p.id}`} data-group={p.id} role="group" aria-label={p.label}>
+        <div className="ribbon-more-title">
+          <Icon name={p.icon} size={16} />
+          <span>{p.label}</span>
+        </div>
+        <div ref={body} className="ribbon-group-body ribbon-flyout-body">
+          {p.children}
+        </div>
+      </section>,
+      host,
+    );
+  }
 
   if (!collapsed) {
     return (
@@ -243,7 +395,7 @@ export function RibbonGroup(p: RibbonGroupProps) {
 }
 
 /** A collapsed group's tools, beside or under its button; closes on an outside press, Esc, or after a tool is picked. */
-function RibbonFlyout(p: { anchor: HTMLElement | null; side: "right" | "below"; label: string; onClose: () => void; children: ReactNode }) {
+function RibbonFlyout(p: { anchor: HTMLElement | null; side: "right" | "below"; label: string; onClose: () => void; children: ReactNode; openSingle?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<CSSProperties>({ left: -10000, top: -10000, visibility: "hidden" });
   const P = useRef(p);
@@ -252,7 +404,12 @@ function RibbonFlyout(p: { anchor: HTMLElement | null; side: "right" | "below"; 
     const el = ref.current;
     const a = p.anchor?.getBoundingClientRect();
     if (!el || !a) return;
-    const r = placeMenu(a, { width: el.offsetWidth, height: el.scrollHeight }, { width: window.innerWidth, height: window.innerHeight }, p.side);
+    // Inside the safe area, as menus are (Menu.tsx): the rail's More flyout is tall enough to reach the home indicator.
+    const safe = safeInsets();
+    const view = { width: Math.max(0, window.innerWidth - safe.left - safe.right), height: Math.max(0, window.innerHeight - safe.top - safe.bottom) };
+    const shifted = { left: a.left - safe.left, top: a.top - safe.top, right: a.right - safe.left, bottom: a.bottom - safe.top };
+    const placed = placeMenu(shifted, { width: el.offsetWidth, height: el.scrollHeight }, view, p.side);
+    const r = { ...placed, left: placed.left + safe.left, top: placed.top + safe.top };
     // Runs after every render: set the position only when it moved, or each render would schedule another one
     // (React error #185, the whole page gone the moment a group flyout opened on the tablet rail).
     setPos((old) => (samePos(old, r) ? old : { left: r.left, top: r.top, maxHeight: r.maxHeight }));
@@ -287,8 +444,10 @@ function RibbonFlyout(p: { anchor: HTMLElement | null; side: "right" | "below"; 
   }, []);
   // A group whose only tool is a dropdown (Modify, Edit, Arrange on the tablet rail): open that dropdown at once, so
   // its commands are two taps away (rail button, item) rather than three. The slots portal in a render later, hence
-  // the short retry.
+  // the short retry. Not for the rail's More flyout (several groups under their names).
+  const single = p.openSingle !== false;
   useEffect(() => {
+    if (!single) return;
     let tries = 0;
     let timer = 0;
     const openSingle = () => {
@@ -300,7 +459,7 @@ function RibbonFlyout(p: { anchor: HTMLElement | null; side: "right" | "below"; 
     };
     timer = window.setTimeout(openSingle, 0);
     return () => window.clearTimeout(timer);
-  }, []);
+  }, [single]);
   return createPortal(
     <div ref={ref} className="ribbon-flyout" role="group" aria-label={p.label} style={pos}>
       {p.children}

@@ -1,8 +1,13 @@
 //! The production cockpit's design lock: while a cockpit is open (it renews a lease every few seconds,
 //! `POST /api/production/lock`), document edits are refused for everyone (the app on other devices, scripts, MCP
 //! agents) with 409 and the reason, so the job the foot switch burns stays the one on the jig. Allowed while locked:
-//! queries, the variable-text counter (`var.*`: the cockpit marks slots empty, the engine moves the counter on after a
-//! run) and everything that is not a document edit: Stop, Pause and Resume, framing, Start, approvals. The lease ends
+//! queries, the variable-text counter ([`COUNTER_COMMANDS`]: the cockpit marks slots empty, the engine moves the
+//! counter on after a run; loading or clearing a CSV file changes what is burned and is refused) and everything that
+//! is not a document edit: Stop, Pause and Resume, framing, Start, approvals. Every path that changes the active
+//! document is gated: edit commands (every batch, whatever route or tool sent it: uploads, project open, imports,
+//! presets, art), undo, redo and timeline moves, switching documents, and the routes that open a document and then
+//! make it the active one (`POST /api/documents`, the job ledger's open and re-run), refused before they open
+//! anything. The lease ends
 //! [`LEASE`] after the last renewal (a closed tab or a lost connection unlocks by itself), when the cockpit closes,
 //! or when someone unlocks it in the app (UI only; agents cannot).
 
@@ -87,15 +92,19 @@ impl EditLock {
     }
 }
 
+/// The edit commands allowed while locked: the serial counter and its empty slots.
+pub const COUNTER_COMMANDS: [&str; 2] = ["var.set_serial", "var.advance"];
+
 /// Refuse the edit command `id` while the cockpit holds the lock (called for every `Edit` command of a batch).
 pub(crate) fn check_edit(st: &AppState, id: &str) -> Result<(), EngineError> {
-    if id.starts_with("var.") {
+    if COUNTER_COMMANDS.contains(&id) {
         return Ok(());
     }
     st.production.lock.refusal().map_or(Ok(()), Err)
 }
 
-/// Refuse undo, redo, timeline moves and switching the active document while the cockpit holds the lock.
+/// Refuse undo, redo, timeline moves, switching the active document and opening a document that becomes the active
+/// one while the cockpit holds the lock.
 pub(crate) fn check_timeline(st: &AppState) -> Result<(), EngineError> {
     st.production.lock.refusal().map_or(Ok(()), Err)
 }

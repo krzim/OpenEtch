@@ -466,8 +466,41 @@
   }
 }
 
-/* The toasts: the cockpit has no timeline, status bar or tab bar, so they sit at its foot (--bar-bottom would hold them
-   up over the counter's controls on a phone). */
-.cockpit .toasts {
-  bottom: calc(var(--safe-bottom) + 18px);
+/* The toasts: the cockpit has no canvas HUD to place them, so App portals them into this strip at its foot
+   (components/useToastHost.ts), in the cockpit's own flow: the grid above gives up the room, and a toast never lies over
+   Reset count, a slot or Start (a fixed toast did, on phones). Empty, it takes no room. Held to a third of the screen,
+   it shows the newest toasts. */
+.cockpit-toasts {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  max-height: 33vh;
+  max-height: 33dvh;
+  overflow: hidden;
+}
+.cockpit-toasts > .toasts-dialog {
+  flex: none;
+  padding: 8px var(--sp-4, 16px);
+  border-top: 1px solid var(--border-soft);
+  background: var(--panel);
+  align-items: center;
+}
+/* As wide as the floating toasts elsewhere (styles.css .toasts), centred. */
+.cockpit-toasts > .toasts-dialog > .toast {
+  width: min(520px, 100%);
+}
+@media (max-width: 600px) {
+  .cockpit-toasts > .toasts-dialog {
+    padding: 6px 8px;
+  }
+}
+/* A phone in landscape: only the newest toast (none cut in half), so Start keeps most of the height. */
+@media (max-height: 500px) {
+  .cockpit-toasts > .toasts-dialog {
+    padding: 4px 8px;
+  }
+  .cockpit-toasts > .toasts-dialog > .toast:not(:last-child) {
+    display: none;
+  }
 }

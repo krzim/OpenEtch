@@ -11,6 +11,7 @@ import { Dialog } from "../components/Dialog.tsx";
 import { Icon } from "../components/ui.tsx";
 import { useT } from "../workspace/usePrefs.ts";
 import { FLAG_KINDS, appendPage, parseSheet, rowKinds, rowTitle, sheetRequest, type FlagKind, type Sheet, type SheetRow } from "./contactSheet.ts";
+import { problemText } from "./flagText.ts";
 
 const FLAG_KEY = {
   overflow: "sheet.flag.overflow",
@@ -126,7 +127,7 @@ function SheetCard(p: { row: SheetRow; sheet: Sheet; onGoto?: (value: number) =>
           {row.texts.flatMap((x) =>
             x.flags.map((f, i) => (
               <li key={`${x.id}-${i}`} className={`sheet-flag ${f.kind}`}>
-                <b>{t(FLAG_KEY[f.kind] ?? "sheet.flag.warning")}</b> {f.message}
+                <b>{t(FLAG_KEY[f.kind] ?? "sheet.flag.warning")}</b> {problemText(f)}
               </li>
             )),
           )}

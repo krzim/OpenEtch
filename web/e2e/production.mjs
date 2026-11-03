@@ -149,6 +149,19 @@ async function main() {
         await press(".cockpit .btn-stop");
         await api(a.url, "/api/sim/inputs", json({ bits: pedal.released }));
         await sleep(500);
+        // Stop At reached: Start is disabled, its reason shown (the engine would refuse it).
+        const count = (await api(a.url, "/api/job")).count ?? 1;
+        await api(a.url, "/api/job/settings", put({ stop_at: count }));
+        await sleep(1200);
+        await shot("cockpit-target-reached");
+        const start = await page.evaluate(() => {
+          const b = document.querySelector(".cockpit .btn-start");
+          return { disabled: !!b?.disabled, reason: document.querySelector(".cockpit .start-reason")?.textContent ?? "" };
+        });
+        report.push({ device: d.id, step: "target-disables-start", ok: start.disabled && /Stop At/.test(start.reason), start });
+        if (!start.disabled) console.error(`${d.id}: Start is not disabled at Stop At (${JSON.stringify(start)})`);
+        await api(a.url, "/api/job/settings", put({ stop_at: 12 }));
+        await sleep(500);
         await press(".cockpit-exit");
         await sleep(800);
         // The Laser workspace: the Production window (on the phone, in the Job sheet).

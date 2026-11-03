@@ -10,7 +10,7 @@ use axum::http::StatusCode;
 use rmcp::model::{ContentBlock, JsonObject};
 use serde_json::{Value, json};
 
-use crate::approve::tests::{PEDAL, browser, pedal_profile, req, send, set_inputs, state, wait_final};
+use crate::approve::tests::{PEDAL, browser, pedal_profile, pending_run, req, send, set_inputs, state, wait_final};
 use crate::mcp::GalvoMcp;
 use crate::pin::ApprovalMode;
 use crate::runs::RunState;
@@ -208,6 +208,43 @@ async fn the_cockpit_lock_refuses_edits_but_never_stop_or_the_counter() {
     let mcp = GalvoMcp::new(st.clone());
     let r = mcp.call("execute", obj(json!({"id": "shape.rect", "params": {"width_mm": 2, "height_mm": 2}}))).await;
     assert_eq!(r.is_error, Some(true));
+    // Every other path that changes the active document: a batch, an upload, a CSV file, undo's siblings, opening a
+    // new active document (refused before it opens one), switching documents.
+    let locked = |s: StatusCode, v: &Value| {
+        assert_eq!(s, StatusCode::CONFLICT, "{v}");
+        assert!(v["error"].as_str().unwrap_or_default().contains("locked by the production cockpit"), "{v}");
+    };
+    let rect = json!({"id": "shape.rect", "params": {"width_mm": 2, "height_mm": 2}});
+    let (s, v) = send(&app, req("POST", "/api/batch", Some(json!({"commands": [rect], "origin": "ui"})))).await;
+    locked(s, &v);
+    let (s, v) = send(&app, req("POST", "/api/execute", Some(json!({"id": "var.load_csv", "params": {"content": "a\nb"}, "origin": "ui"})))).await;
+    locked(s, &v);
+    let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="10mm" height="10mm"><rect width="5" height="5"/></svg>"#;
+    let upload = axum::http::Request::builder()
+        .method("POST")
+        .uri("/api/document/upload?format=svg&name=a.svg")
+        .header("host", "localhost:7878")
+        .body(axum::body::Body::from(svg))
+        .unwrap();
+    let (s, v) = send(&app, upload).await;
+    locked(s, &v);
+    for (uri, body) in [("/api/redo", json!({})), ("/api/history/goto", json!({"marker": 0}))] {
+        let (s, v) = send(&app, req("POST", uri, Some(body))).await;
+        locked(s, &v);
+    }
+    let docs = |app: &Router| {
+        let app = app.clone();
+        async move { send(&app, req("GET", "/api/documents", None)).await.1["documents"].as_array().map_or(0, Vec::len) }
+    };
+    let open = docs(&app).await;
+    let (s, v) = send(&app, req("POST", "/api/documents", Some(json!({"origin": "ui"})))).await;
+    locked(s, &v);
+    assert_eq!(docs(&app).await, open, "nothing was opened");
+    let (s, v) = send(&app, req("POST", "/api/documents", Some(json!({"activate": false, "origin": "ui"})))).await;
+    assert_eq!(s, StatusCode::CREATED, "a document opened beside the active one changes nothing burned: {v}");
+    let other = v["id"].as_str().unwrap().to_owned();
+    let (s, v) = send(&app, req("POST", &format!("/api/documents/{other}/activate"), Some(json!({"origin": "ui"})))).await;
+    locked(s, &v);
     // The counter, queries, framing and Stop still work.
     exec(&app, "var.set_serial", json!({"current": 3})).await;
     exec(&app, "doc.inspect", json!({})).await;
@@ -285,6 +322,38 @@ async fn the_busy_output_runs_on_after_the_job() {
     assert!(st.production.extractor.state().off_at_unix_s.is_some());
     wait_for("the run-on to end", || !st.production.extractor.state().on).await;
     assert!(st.production.extractor.state().last_error.is_none(), "{:?}", st.production.extractor.state());
+}
+
+#[tokio::test]
+async fn a_refused_approval_leaves_the_extractor_off() {
+    let mut profile = pedal_profile();
+    profile.io.busy_light = Some(3);
+    let st = state(profile, ApprovalMode::Click).await;
+    let app = api::router(st.clone(), None);
+    exec(&app, "shape.rect", json!({"width_mm": 5, "height_mm": 5})).await;
+    let config = json!({"config": {"output": {"kind": "lmc_busy"}, "auto": true, "gate": {"kind": "switched_on"}}, "origin": "ui"});
+    let (s, v) = send(&app, req("PUT", "/api/production/extractor", Some(config))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let approve = |id: &str| browser(req("POST", &format!("/api/runs/{id}/approve"), Some(json!({"origin": "ui"}))));
+    // A stale run: refused by the run checks before the extractor is touched.
+    let id = pending_run(&app, None).await;
+    exec(&app, "shape.rect", json!({"width_mm": 2, "height_mm": 2})).await;
+    let (s, v) = send(&app, approve(&id)).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+    assert!(!st.production.extractor.state().on, "{:?}", st.production.extractor.state());
+    // Refused after the gate switched it on (the machine is taken): switched off again.
+    let id = pending_run(&app, None).await;
+    assert!(st.machine.try_begin_run());
+    let (s, v) = send(&app, approve(&id)).await;
+    st.machine.end_run();
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+    assert!(v["error"].as_str().unwrap().contains("another run"), "{v}");
+    assert!(!st.production.extractor.state().on, "{:?}", st.production.extractor.state());
+    // Approved: switched on for the job.
+    let (s, v) = send(&app, approve(&id)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert!(st.production.extractor.state().on);
+    assert_eq!(wait_final(&st, &id).await.state, RunState::Finished);
 }
 
 #[tokio::test]

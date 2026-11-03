@@ -952,7 +952,9 @@ undocumented and not read.
   smallest closed shape holding its origin, else the stock, else the workspace; auto-fit texts only the workspace),
   `missing_glyph`, `empty` (blank, an empty CSV cell it uses, a row past the CSV), `shrunk` (under half its set height)
   and `error`; `outlines` adds SVG paths (mm, y down) and the rest of the design by layer for the grid
-  (`web/src/text/ContactSheet.tsx`, File > Laser > Check every row…, the Variable Text window). Agents run it as a
+  (`web/src/text/ContactSheet.tsx`, File > Laser > Check every row…, the Variable Text window). Each flag is `{kind, code,
+  params, message}`: the app words it from `code` and `params` in its language (`web/src/text/flagText.ts`, also for
+  the `contact_sheet` pre-flight finding's `params.problems`), `message` is English. Agents run it as a
   check before asking for a run.
 
 **Templates with fill-in fields** (`crates/commands/src/builtin/template.rs`, competitor-gaps item 5, on UX-049's
@@ -1093,8 +1095,8 @@ continue, start, approve or switch anything. Stop is never gated.
   maintenance due and the last ledger runs with a re-mark per slot. STOP is in the cockpit's own bar; the cockpit
   makes no stacking context, so STOP's `--z-stop` stays above its dialogs. While it is open it holds the **design
   lock** (`POST /api/production/lock {on, holder, label}`, a 45 s lease renewed every 15 s, released on close or
-  `pagehide`): every document edit, undo, redo, timeline move and document switch is refused (409, saying where the
-  cockpit is) for every client, MCP agents included, except the counter (`var.*`, so the cockpit can mark slots empty
+  `pagehide`): every document edit, undo, redo, timeline move, document switch and opening a document into the active one (a project, a job ledger entry, a re-run) is refused (409, saying where the
+  cockpit is) for every client, MCP agents included, except the counter (`var.set_serial` and `var.advance`, so the cockpit can mark slots empty
   and the engine can move the counter on). Unlock in the Production window releases another device's lock (UI only).
   `GET /api/production` is the cockpit's state (MCP `production_status`).
 - **Pause at a layer** (`CutOptions.operator_pause`, `layer.update settings.options.operator_pause`, a check box
@@ -1109,13 +1111,15 @@ continue, start, approve or switch anything. Stop is never gated.
   run at the pause, and a pause waits at most an hour. `GET /api/job` reports `waiting_at_layer` and `waiting_layer`
   (the clock stands still, a staged job's progress follows the clock). Galvo jobs only: rotary jobs and GRBL / Ruida
   jobs leave the pause out and say so in the run summary; a pause before the job's first pass is ignored. Tested on
-  the simulator only.
+  the simulator only. A material-library preset saved from a paused layer keeps the pause in the library's OpenEtch
+  sidecar (`finish::Finish.operator_pause` / `sub_layer_pauses`, a `.clb` has no place for it) and gives it back when
+  applied; the `.clb` download counts it in `X-OpenEtch-Warnings` and the app says LightBurn will not pause.
 - **Serial slots and the ledger.** A slot is one variable-text offset (serial-number or CSV texts and barcodes) and
   its pocket, the highest group around it whose variable texts all share that offset (`var.slots`). `var.set_serial`
   takes `empty_slots` (offsets whose pockets are empty: their objects are left out of the run and the slots after them
   take consecutive values) and `stop_at_end` (no wrap: slots past End are not marked, the counter stops one past End
   and runs are refused once every value is used). The run is planned from the document with those slots applied
-  (`commands::apply_slot_plan`, before `prepare_output`); after a finished run the counter moves on by what was marked
+  (`commands::apply_slot_plan`, before `prepare_output`), and both previews (`GET /api/preview` and the browser's webcore) leave out the same pockets (`doc::slots::without_skipped_slots`), so their segments and time match the run; after a finished run the counter moves on by what was marked
   (unchanged when every slot marks: `var.advance`). The canvas still shows the document's own offsets; the cockpit
   shows the values the run marks. Every run that streamed with slots appends a line to
   `<config-dir>/serial-ledger.jsonl` (`{time_unix_s, run_id, state, device, project, document, completed, counter,

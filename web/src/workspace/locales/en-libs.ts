@@ -91,6 +91,8 @@ export const EN_LIBS = {
   "lib.createdToast": "Created the library \"{name}\".",
   "lib.loadedToast": "Loaded \"{name}\".",
   "lib.savedToast": "Saved \"{name}\".",
+  "lib.clbPauseLost":
+    "Downloaded the .clb. {n} preset(s) pause for the operator before their layer: a .clb has no place for that, so LightBurn will not pause. OpenEtch's own library keeps the pause.",
   "lib.renamedToast": "Renamed the library to \"{name}\".",
   "lib.mergedToast": "Added {count} presets from \"{from}\" to \"{into}\".",
   "lib.unloadedToast": "Unloaded \"{name}\".",

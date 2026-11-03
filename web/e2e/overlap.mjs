@@ -8,7 +8,7 @@
 // - offscreen:  a control or floating panel partly or wholly outside the viewport (after its scroll containers clip it:
 //               a row scrolled out of a list is not reported);
 // - safe-area:  a control or panel inside the safe-area bands the device reports (phones: notch, home indicator);
-// - small:      on touch devices, a control smaller than 44 x 44 CSS px (Apple HIG / WCAG 2.5.5).
+// - small:      on touch devices, an enabled control smaller than 44 x 44 CSS px (Apple HIG / WCAG 2.5.5).
 //
 // "Intended layers" (documented allowlist): an open menu, context menu, list box, popover, tooltip, modal dialog or its
 // backdrop, the phone's bottom sheet and a tablet dock overlay may cover anything below them, as long as the covered
@@ -233,10 +233,10 @@ export function checkLayout(opts) {
         if (lr && lr.width * lr.height > r.width * r.height) r = lr;
       }
       // A control scrolled half out of its list keeps its real size: measure the element, not the clipped box.
-      if (r.width < o.minTarget - 0.5 || r.height < o.minTarget - 0.5) {
-        const disabled = it.el.disabled || it.el.getAttribute("aria-disabled") === "true";
-        small.push({ a: it.label, box: rnd(r), disabled });
-      }
+      // A disabled control is not a target (nothing happens on a tap), so its size is not a problem: the ruler corner,
+      // for one, is only the unit label until there are guides to clear, and grows to 44 px once it is enabled.
+      const disabled = it.el.disabled || it.el.getAttribute("aria-disabled") === "true";
+      if (!disabled && (r.width < o.minTarget - 0.5 || r.height < o.minTarget - 0.5)) small.push({ a: it.label, box: rnd(r) });
     }
   }
   if (small.length)
@@ -245,7 +245,7 @@ export function checkLayout(opts) {
       severity: "low",
       count: small.length,
       detail: `${small.length} touch target(s) under ${o.minTarget} px`,
-      items: small.slice(0, 60).map((s) => `${s.a} ${s.box.w}x${s.box.h}${s.disabled ? " (disabled)" : ""}`),
+      items: small.slice(0, 60).map((s) => `${s.a} ${s.box.w}x${s.box.h}`),
     });
 
   return {
