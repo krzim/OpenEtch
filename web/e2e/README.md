@@ -176,7 +176,9 @@ becomes `crop`. `npm test` checks every step's shape; run the shot to check that
   in the app, Beginner Mode, a very long project name, warnings and toasts together, framing in the iPad's Laser
   workspace, a MacBook at 1280 x 720 with every dock open, iPad split view and Slide Over, a job run on the simulator
   from the phone, context menus at the screen edges, a large UI scale, a desktop window resized mid-session, the iPad
-  turned with the keyboard up, undo past the import and redo, ruler guides and the corner's Clear guides. The layout
+  turned with the keyboard up, undo past the import and redo, ruler guides and the corner's Clear guides, and the Material Library's Edit Cut changing a preset's pauses for the
+  operator on an iPhone, an iPad, a MacBook and a PC (`library-edit-cut-<device>`, a generic library it loads and
+  unloads). The layout
   check passing is not the verdict: look at the screenshots.
 
 - `guide-shots.mjs`, `guideSteps.mjs`: the guide's screenshots and their step language (above). `scenarios.mjs`'s
