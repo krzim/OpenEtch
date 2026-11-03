@@ -333,17 +333,18 @@ fn serial_tags(doc: &mut Document, _finishes: &[ExampleFinish]) -> Result<()> {
     let text_layer = layer_with(doc, true, "Serial", "#0000ff", line(55.0, 900.0, 40.0))?;
     let code_layer = layer_with(doc, false, "QR code", "#ff0000", fill(Fill { cross: false, ..MARK }))?;
     let pocket_layer = created(&step::<layer::LayerTool>(doc, json!({ "tool": "T1" }))?)?;
-    // One tag, centred on the first pocket at the lower left; the array fills the other five.
+    // One tag, centred on the first pocket at the top left; the array fills the other five in reading order (rows
+    // downwards), the order a grid jig numbers its pockets in (Jigs > New jig), so tag n sits in pocket n.
     let (w, h, gap) = (30.0, 12.0, 4.0);
     let x0 = -(w + gap) / 2.0;
-    let y0 = -(h + gap);
+    let y0 = h + gap;
     let pocket = created(&step::<shape::ShapeRect>(doc, json!({ "width_mm": w, "height_mm": h, "corner_radius_mm": 3, "center": [x0, y0], "layer": pocket_layer, "name": "Pocket" }))?)?;
     let serial = created(&step::<text::ShapeText>(doc, json!({ "text": "SN 0dddd", "font": hershey("Hershey Sans"), "height_mm": 3.6,
         "center": [x0 + 5.0, y0], "layer": text_layer, "name": "Serial", "variable": { "mode": "serial" } }))?)?;
     let qr = created(&step::<text::ShapeBarcode>(doc, json!({ "kind": "qr", "data": "SN 0dddd", "module_mm": 0.35, "variable": { "mode": "serial" },
         "center": [x0 - 9.0, y0], "layer": code_layer, "name": "QR code" }))?)?;
     step::<text::SetSerial>(doc, json!({ "start": 1, "end": 60, "current": 1, "advance_by": 6, "auto_advance": true }))?;
-    step::<array::Array>(doc, json!({ "ids": [pocket, serial, qr], "rows": 3, "cols": 2, "pitch_x_mm": w + gap, "pitch_y_mm": h + gap, "auto_increment": 1 }))?;
+    step::<array::Array>(doc, json!({ "ids": [pocket, serial, qr], "rows": 3, "cols": 2, "pitch_x_mm": w + gap, "pitch_y_mm": -(h + gap), "auto_increment": 1 }))?;
     step::<template::SetField>(doc, json!({ "field": { "id": "first", "label": "First serial number", "kind": "serial",
         "hint": "The six tags show this number and the five after it." } }))?;
     Ok(())
@@ -579,6 +580,14 @@ mod tests {
         for n in 1..=6 {
             assert!(shown.contains(&format!("SN {n:04}")), "{shown:?}");
         }
+        // Reading order, as a grid jig numbers its pockets: 1 2 on the top row, 5 6 at the bottom.
+        let at = |n: i64| {
+            let o = tags.objects.iter().find(|o| matches!(&o.geometry, Geometry::Text(t) if t.shown.as_deref() == Some(format!("SN {n:04}").as_str()))).unwrap();
+            let b = o.bounds();
+            ((b.x0 + b.x1) / 2.0, (b.y0 + b.y1) / 2.0)
+        };
+        let (p1, p2, p5) = (at(1), at(2), at(5));
+        assert!(p1.0 < p2.0 && (p1.1 - p2.1).abs() < 0.01 && p1.1 > p5.1, "{p1:?} {p2:?} {p5:?}");
         let mut s = crate::Session::new(tags);
         let r = s.execute(crate::Invocation { id: "var.contact_sheet".into(), params: json!({ "count": 500 }) }, crate::Origin::Ui).unwrap();
         assert_eq!(r.result["summary"]["problems"], json!({}), "every tag number fits its pocket");
