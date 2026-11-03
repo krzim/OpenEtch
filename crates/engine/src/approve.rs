@@ -414,7 +414,9 @@ async fn execute(st: &Arc<AppState>, job: Job<'_>) -> Outcome {
             Once::Done(report) => {
                 learn_run_time(st, &job, &report);
                 completed += 1;
-                let measured = report.mark_time_s();
+                // The board's mark time covers only its last list: a job of several (layer pause stages, rotary or Z
+                // parts) counts its estimate on the hour meter instead.
+                let measured = report.mark_time_s().filter(|_| matches!(&job.parts, DriverJob::Lmc(p) if p.len() == 1));
                 last = Some(report);
                 let count = st.job.increment(job.device);
                 // The hour meter and Stop At reached (module `production`).
