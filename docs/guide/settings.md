@@ -188,10 +188,10 @@ To restore one:
 A bundle moves your settings, devices and material libraries to another computer.
 
 1. Under **User bundles**, tick what to include: **Preferences**, **Devices**, **Material libraries**, **Material test presets (LightBurn bundles)**, **Image presets (LightBurn bundles)** and **Art libraries (LightBurn bundles)**.
-2. Click **Export bundle** for an OpenEtch bundle (`.oebundle`), or **Export LightBurn bundle (.lbzip)** for LightBurn. A LightBurn bundle has no preferences or hotkeys.
+2. Click **Export bundle** for an OpenEtch bundle (`.oebundle`), or **Export LightBurn bundle (.lbzip)** for LightBurn. With **Preferences** ticked, a LightBurn bundle holds the hotkeys you changed in this browser; it holds no other preferences.
 3. On the other computer, open the same dialog, tick what to take, click **Import bundle…**, pick the file and click **Continue**.
 
-Imported devices are added as new devices and keep the receiving machine's limits. Import also reads LightBurn bundles (`.lbzip`): their settings (only the ones OpenEtch has), devices, material libraries, material test presets, image presets and art libraries, but not hotkeys. A summary shows what was imported and what was skipped.
+Imported devices are added as new devices and keep the receiving machine's limits. Import also reads LightBurn bundles (`.lbzip`): their settings (only the ones OpenEtch has), hotkeys, devices, material libraries, material test presets, image presets and art libraries. A device that had a material library linked in LightBurn uses that library here too. A summary shows what was imported and what was skipped.
 
 ## Import options
 

@@ -109,9 +109,15 @@ export const filesApi = {
   importPrefs: (file: Blob) => upload<unknown>(`/api/prefs/import?origin=${UI_ORIGIN}`, file, "application/json"),
   prefsBackups: () => json<unknown>("GET", "/api/prefs/backups"),
   restorePrefs: (file: string) => json<unknown>("POST", "/api/prefs/backups/restore", { file, origin: UI_ORIGIN }),
-  /** OpenEtch's `.oebundle`, or a LightBurn `.lbzip` (devices, material libraries, material test and image presets, art libraries). */
-  exportBundle: (parts: string[], format: "oebundle" | "lbzip" = "oebundle") =>
-    download(`/api/bundle/export?parts=${encodeURIComponent(parts.join(","))}${!DESIGN_ONLY && format === "lbzip" ? "&format=lbzip" : ""}`),
+  /**
+   * OpenEtch's `.oebundle`, or a LightBurn `.lbzip` (devices, material libraries, material test and image presets, art
+   * libraries, and with the prefs part `hotkeys`: this browser's changed keys as LightBurn's, exportLightBurnHotkeys).
+   */
+  exportBundle: (parts: string[], format: "oebundle" | "lbzip" = "oebundle", hotkeys?: Record<string, string>) => {
+    const lbzip = !DESIGN_ONLY && format === "lbzip";
+    const keys = lbzip && hotkeys && Object.keys(hotkeys).length > 0 ? `&hotkeys=${encodeURIComponent(JSON.stringify(hotkeys))}` : "";
+    return download(`/api/bundle/export?parts=${encodeURIComponent(parts.join(","))}${lbzip ? "&format=lbzip" : ""}${keys}`);
+  },
   importBundle: (parts: string[], file: Blob) => upload<unknown>(`/api/bundle/import?parts=${encodeURIComponent(parts.join(","))}&origin=${UI_ORIGIN}`, file, "application/zip"),
 };
 

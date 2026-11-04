@@ -394,7 +394,7 @@ async fn lightburn_bundles_import_and_export() {
         ("import-materialtestpresets", "material_test_presets.lbmt", "Material Test Presets", lbmt),
         ("import-device", "aBcD1234.lbdev", "Bed", lbdev),
         ("import-artlib", "clips.lbart", "clips", lbart),
-        ("import-hotkeys", "hotkeys.lbkeys", "Hotkeys", b"{}".to_vec()),
+        ("import-hotkeys", "hotkeys.json", "Hotkeys", br#"{"actionGroup": "Ctrl+Shift+G"}"#.to_vec()),
         ("import-artlib", "../escape.lbart", "escape", b"x".to_vec()),
         ("import-artlib", "missing.lbart", "missing", b"x".to_vec()),
     ]);
@@ -411,7 +411,8 @@ async fn lightburn_bundles_import_and_export() {
     assert_eq!(v["imported"]["devices"].as_array().unwrap().len(), 1, "{v}");
     assert_eq!(v["imported"]["art"], json!(["clips"]), "{v}");
     let skipped = v["skipped"].to_string();
-    assert!(skipped.contains("import-hotkeys") && skipped.contains("not a plain file name") && skipped.contains("missing from the bundle"), "{v}");
+    assert!(skipped.contains("not a plain file name") && skipped.contains("missing from the bundle"), "{v}");
+    assert_eq!(v["hotkeys"], json!({"actionGroup": "Ctrl+Shift+G"}), "the hotkeys go to the browser: {v}");
     assert!(!v.to_string().contains("secret") && !v.to_string().contains("never read"), "other keys are never echoed: {v}");
     // Again: the art library's name is taken, so it loads as "<name> (bundle)"; parts can be chosen.
     let (_, _, b) = raw(&app2, req("POST", "/api/bundle/import?parts=art", Body::from(bundle), false)).await;
@@ -446,8 +447,8 @@ async fn lightburn_bundles_import_and_export() {
 }
 
 /// UX-068: material libraries (`import-cutlib`) and Adjust Image presets (`import-imagepresets`) travel in `.lbzip`
-/// bundles both ways, with the manifest fields inferred from LightBurn 2.2's executable (`crate::lbzip`'s docs);
-/// a library name taken loads as "<name> (bundle)"; hotkeys and tool libraries are skipped with their reasons.
+/// bundles both ways, with the manifest fields LightBurn 2.2 writes (`crate::lbzip`'s docs); a library name taken
+/// loads as "<name> (bundle)"; tool libraries are skipped with their reason.
 #[tokio::test]
 async fn lightburn_bundles_carry_material_libraries_and_image_presets() {
     let st = configured_state("lbzip-lib-a").await;
@@ -458,7 +459,7 @@ async fn lightburn_bundles_carry_material_libraries_and_image_presets() {
     let (s, v) = json(&app, "PUT", "/api/image-adjust/presets/Slate%20photo", Some(body)).await;
     assert_eq!(s, StatusCode::OK, "{v}");
 
-    // Export: the inferred items, Application first, then devices, then libraries.
+    // Export: LightBurn's items, Application first, then devices, then libraries.
     let (s, _, zip) = raw(&app, req("GET", "/api/bundle/export?format=lbzip", Body::empty(), false)).await;
     assert_eq!(s, StatusCode::OK);
     let manifest: Value = serde_json::from_slice(&fileio::zip::read_one(&zip, "LightBurnSoftware.json").unwrap().unwrap()).unwrap();
@@ -495,7 +496,7 @@ async fn lightburn_bundles_carry_material_libraries_and_image_presets() {
     assert!(v["skipped"].to_string().contains("already here"), "{v}");
 
     // A different library of a taken name loads as "<name> (bundle)"; a name that is not a plain one falls back to the
-    // file's; hotkeys and tool libraries are skipped with their reasons.
+    // file's; a tool library is skipped with its reason.
     let clb2 = clb.replace("Steel", "Brass");
     let bundle = lightburn_bundle(&[
         ("import-cutlib", "Fiber 60W.clb", "Fiber 60W", clb2.clone().into_bytes()),
@@ -507,8 +508,105 @@ async fn lightburn_bundles_carry_material_libraries_and_image_presets() {
     let v: Value = serde_json::from_slice(&b).unwrap();
     assert_eq!(v["imported"]["libraries"], json!(["Fiber 60W (bundle)", "Other"]), "{v}");
     let skipped = v["skipped"].to_string();
-    assert!(skipped.contains("hotkeys.json is not documented") && skipped.contains("gantry/CNC tool library"), "{v}");
+    assert!(skipped.contains("gantry/CNC tool library"), "{v}");
+    assert_eq!(v["hotkeys"], json!({}), "{v}");
     assert!(text(&other, "Fiber 60W").contains("Steel") && text(&other, "Fiber 60W (bundle)").contains("Brass"));
+}
+
+/// Percent-encode a query value.
+fn enc(s: &str) -> String {
+    s.bytes().map(|b| if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect()
+}
+
+/// UX-068: a device's linked material library (`link-filename` / `link-name`, as LightBurn 2.2 writes them) becomes
+/// the device's library on import, under the name the library got, and is written on export; LightBurn's
+/// `hotkeys.json` goes to the browser (with the prefs part) and the browser's comes back in an export, checked.
+#[tokio::test]
+async fn lightburn_bundles_carry_hotkeys_and_device_library_links() {
+    let clb = r#"<?xml version="1.0" encoding="UTF-8"?><LightBurnLibrary><Material name="Steel"><Entry Thickness="-1.0000" Desc="Mark" NoThickTitle="Finish"><CutSetting type="Scan"><index Value="0"/><name Value=""/><maxPower Value="20"/><speed Value="1000"/></CutSetting></Entry></Material></LightBurnLibrary>"#;
+    let lbdev = include_str!("../../machine/tests/fixtures/gantry.lbdev").as_bytes().to_vec();
+    let hotkeys = b"{\n    \"actionDistribute_Horizontal_Centered\": \"Ctrl+Alt+Shift+D\"\n}\n".to_vec();
+    let item = |action: &str, file: &str, group: &str, name: &str, size: usize| {
+        json!({"action": action, "filename": file, "group": group, "icon": "filetype:x", "name": name, "size": size, "source": file})
+    };
+    let mut device = item("import-device", "dev1.lbdev", "Devices", "Bed", lbdev.len());
+    device["link-filename"] = json!("Mats.clb");
+    device["link-name"] = json!("Mats");
+    let items = vec![
+        item("import-hotkeys", "hotkeys.json", "Application", "Hotkeys", hotkeys.len()),
+        device,
+        item("import-cutlib", "Mats.clb", "Material Libraries", "Mats", clb.len()),
+    ];
+    let bundle = |items: &[Value]| {
+        fileio::zip::write(&[
+            fileio::zip::Entry { name: "hotkeys.json".into(), data: hotkeys.clone() },
+            fileio::zip::Entry { name: "dev1.lbdev".into(), data: lbdev.clone() },
+            fileio::zip::Entry { name: "Mats.clb".into(), data: clb.as_bytes().to_vec() },
+            fileio::zip::Entry { name: crate::lbzip::MANIFEST.into(), data: crate::lbzip::manifest_text(items).into_bytes() },
+        ])
+        .unwrap()
+    };
+
+    let st = configured_state("lbzip-link-a").await;
+    let app = app(&st);
+    // A library of the same name already here: the bundle's loads as "Mats (bundle)", and the device links that.
+    crate::libs::lock(&st.libs.library).load("Mats", clb.replace("Steel", "Brass").as_bytes()).unwrap();
+    let (s, _, b) = raw(&app, req("POST", "/api/bundle/import", Body::from(bundle(&items)), false)).await;
+    let v: Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["hotkeys"], json!({"actionDistribute_Horizontal_Centered": "Ctrl+Alt+Shift+D"}), "{v}");
+    assert_eq!(v["imported"]["libraries"], json!(["Mats (bundle)"]), "{v}");
+    let id = v["imported"]["devices"][0].as_str().unwrap().to_owned();
+    assert_eq!(v["imported"]["links"], json!([{"device": id, "library": "Mats (bundle)"}]), "{v}");
+    assert_eq!(crate::libs::lock(&st.libs.prefs).device(&id).library.as_deref(), Some("Mats (bundle)"));
+
+    // Without the prefs part no hotkeys; without the libraries part no link.
+    let other = configured_state("lbzip-link-b").await;
+    let app2 = app_of(&other);
+    let (_, _, b) = raw(&app2, req("POST", "/api/bundle/import?parts=devices", Body::from(bundle(&items)), false)).await;
+    let v: Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!((v["hotkeys"].clone(), v["imported"]["links"].clone()), (Value::Null, json!([])), "{v}");
+    // A hotkeys file that is not LightBurn's is refused whole and reported.
+    let mut bad = items.clone();
+    bad[0]["filename"] = json!("hotkeys.json");
+    let evil = fileio::zip::write(&[
+        fileio::zip::Entry { name: "hotkeys.json".into(), data: br#"{"rm -rf": "Ctrl+A"}"#.to_vec() },
+        fileio::zip::Entry { name: crate::lbzip::MANIFEST.into(), data: crate::lbzip::manifest_text(&bad[..1]).into_bytes() },
+    ])
+    .unwrap();
+    let (_, _, b) = raw(&app2, req("POST", "/api/bundle/import", Body::from(evil), false)).await;
+    let v: Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(v["hotkeys"], Value::Null, "{v}");
+    assert!(v["skipped"].to_string().contains("is not a LightBurn action name"), "{v}");
+
+    // Export: the browser's hotkeys first (Qt's JSON), the device linked to its library in the bundle.
+    let keys = r#"{"actionGroup":"Ctrl+Shift+G","actionUngroup":""}"#;
+    let uri = format!("/api/bundle/export?format=lbzip&parts=prefs,devices,libraries&hotkeys={}", enc(keys));
+    let (s, _, zip) = raw(&app, req("GET", &uri, Body::empty(), false)).await;
+    assert_eq!(s, StatusCode::OK);
+    let file = String::from_utf8(fileio::zip::read_one(&zip, "hotkeys.json").unwrap().unwrap()).unwrap();
+    assert_eq!(file, "{\n    \"actionGroup\": \"Ctrl+Shift+G\",\n    \"actionUngroup\": \"\"\n}\n");
+    let manifest: Value = serde_json::from_slice(&fileio::zip::read_one(&zip, "LightBurnSoftware.json").unwrap().unwrap()).unwrap();
+    let list = manifest["LightBurnSoftware"]["manifest"].as_array().unwrap().clone();
+    assert_eq!(json!([list[0]["action"], list[0]["icon"], list[0]["name"]]), json!(["import-hotkeys", "filetype:hotkeys", "Hotkeys"]));
+    let dev = list.iter().find(|i| i["action"] == "import-device" && i["filename"].as_str().unwrap().starts_with(&id)).unwrap();
+    assert_eq!((dev["link-filename"].clone(), dev["link-name"].clone()), (json!("Mats (bundle).clb"), json!("Mats (bundle)")), "{dev}");
+    assert!(list.iter().any(|i| i["action"] == "import-cutlib" && i["filename"] == "Mats (bundle).clb"), "{list:?}");
+    // And back: the export imports with its link and hotkeys.
+    let (_, _, b) = raw(&app2, req("POST", "/api/bundle/import", Body::from(zip), false)).await;
+    let v: Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(v["hotkeys"], serde_json::from_str::<Value>(keys).unwrap(), "{v}");
+    assert!(v["imported"]["links"].as_array().is_some_and(|l| l.iter().any(|x| x["library"] == "Mats (bundle)")), "{v}");
+    // Hotkeys are refused in an .oebundle, when they are not JSON or not LightBurn's.
+    for uri in [
+        format!("/api/bundle/export?hotkeys={}", enc(keys)),
+        "/api/bundle/export?format=lbzip&hotkeys=%7B".to_string(),
+        format!("/api/bundle/export?format=lbzip&hotkeys={}", enc(r#"{"group": "Ctrl+G"}"#)),
+        format!("/api/bundle/export?format=lbzip&hotkeys={}", enc(r#"{"actionGroup": 3}"#)),
+    ] {
+        let (s, _, _) = raw(&app, req("GET", &uri, Body::empty(), false)).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{uri}");
+    }
 }
 
 /// The owner's own LightBurn bundle (`OPENETCH_LBRN_SAMPLES`, see the samples' README), imported into a scratch
@@ -540,6 +638,16 @@ async fn real_lightburn_bundle_imports() {
         v["imported"]["art"],
         v["skipped"].as_array().map_or(0, Vec::len)
     );
+    // LightBurn's full export (every kind of item): its hotkeys, image preset, library and the device's link.
+    let Some(full) = std::env::split_paths(&dirs).map(|d| d.join("bundle-full.lbzip")).find(|p| p.is_file()) else { return };
+    let st = configured_state("lbzip-real-full").await;
+    let (s, _, b) = raw(&app_of(&st), req("POST", "/api/bundle/import", Body::from(std::fs::read(full).unwrap()), false)).await;
+    let v: Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(v["hotkeys"].as_object().map(serde_json::Map::len), Some(1));
+    assert_eq!(v["imported"]["libraries"].as_array().map(Vec::len), Some(1));
+    assert_eq!(v["imported"]["images"].as_array().map(Vec::len), Some(1));
+    assert_eq!(v["imported"]["links"].as_array().map(Vec::len), Some(1));
 }
 
 /// A hostile `.lbzip` whose manifest lists one file many times imports it once (the rest are reported as skipped).

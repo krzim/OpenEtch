@@ -195,16 +195,22 @@ test("engine lists: backups, prefs backups, templates, settings, bundles", () =>
     art: [],
     skipped: ["x"],
     browser: null,
+    hotkeys: null,
+    hotkeysApplied: 0,
+    links: 0,
   });
   // A LightBurn .lbzip: material libraries, presets, image presets, art libraries and the settings' browser part.
   const lb = bundleResult({
     ok: true,
     lightburn: true,
-    imported: { prefs: true, devices: [], libraries: ["Fiber"], presets: ["Steel"], images: ["Slate"], art: ["clips"] },
+    imported: { prefs: true, devices: ["d1"], libraries: ["Fiber"], presets: ["Steel"], images: ["Slate"], art: ["clips"], links: [{ device: "d1", library: "Fiber" }] },
     browser: { units: "mm" },
+    hotkeys: { actionGroup: "Ctrl+Shift+G" },
     skipped: [],
   });
   assert.deepEqual([lb.libraries, lb.presets, lb.images, lb.art, lb.browser], [["Fiber"], ["Steel"], ["Slate"], ["clips"], { units: "mm" }]);
+  assert.deepEqual([lb.hotkeys, lb.links], [{ actionGroup: "Ctrl+Shift+G" }, 1]);
+  assert.equal(bundleResult({ hotkeys: ["not", "an", "object"] }).hotkeys, null);
 });
 
 test("recent templates: most recent first, case-insensitive, only existing ones", () => {

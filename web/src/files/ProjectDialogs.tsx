@@ -26,6 +26,8 @@ import { planLightBurnPrefs } from "./lightburnPrefs.ts";
 import { errorText } from "../api/errorText.ts";
 import { HelpLink } from "../guide/HelpLink.tsx";
 import { DESIGN_ONLY } from "../mode.ts";
+import { getPrefs, updatePrefs } from "../workspace/prefs.ts";
+import { exportLightBurnHotkeys, importLightBurnHotkeys } from "../workspace/lightburnHotkeys.ts";
 
 type Notify = (msg: string, kind?: "info" | "error") => void;
 
@@ -332,6 +334,13 @@ export function PrefsBundlesDialog(p: { onClose: () => void; notify: Notify; rep
                   const res = bundleResult(r);
                   // A LightBurn bundle's settings: this browser's part, as Import LightBurn preferences applies it.
                   if (res.browser) applyLightBurnPrefs(planLightBurnPrefs(res.browser));
+                  // Its hotkeys: onto this browser's key map (File > Edit hotkeys).
+                  if (res.hotkeys) {
+                    const h = importLightBurnHotkeys(res.hotkeys, getPrefs().hotkeys);
+                    if (h.applied.length > 0) updatePrefs({ hotkeys: h.overrides });
+                    res.hotkeysApplied = h.applied.length;
+                    res.skipped = [...res.skipped, ...h.skipped.map((s) => t("files.hotkeySkipped", { why: s }))];
+                  }
                   setResult(res);
                   p.notify(t("files.bundleImported"));
                   backups.reload();
@@ -391,9 +400,11 @@ export function PrefsBundlesDialog(p: { onClose: () => void; notify: Notify; rep
         {!DESIGN_ONLY && (
           <button
             className="btn"
-            disabled={!chosen.some((k) => k !== "prefs")}
+            disabled={chosen.length === 0}
             title={t("files.exportLbzipTitle")}
-            onClick={() => dl(filesApi.exportBundle(chosen, "lbzip"), "openetch-bundle.lbzip")}
+            onClick={() =>
+              dl(filesApi.exportBundle(chosen, "lbzip", chosen.includes("prefs") ? exportLightBurnHotkeys(getPrefs().hotkeys) : undefined), "openetch-bundle.lbzip")
+            }
           >
             {t("files.exportLbzip")}
           </button>
@@ -411,6 +422,7 @@ export function PrefsBundlesDialog(p: { onClose: () => void; notify: Notify; rep
               {t("files.bundleResultLb", { presets: result.presets.length, images: result.images.length, art: result.art.join(", ") || "0" })}
             </div>
           )}
+          {(result.hotkeysApplied > 0 || result.links > 0) && <div>{t("files.bundleResultKeys", { hotkeys: result.hotkeysApplied, links: result.links })}</div>}
           {result.skipped.length > 0 && (
             <ul className="warn-list">
               {result.skipped.map((s) => (

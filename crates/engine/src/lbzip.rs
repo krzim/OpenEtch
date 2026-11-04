@@ -22,22 +22,19 @@
 //!
 //! (The sample's device `size` was smaller than its file, so `size` is informational; OpenEtch reads the file.)
 //!
-//! **Inferred, not seen in a bundle** (the owner's bundle had no material library loaded and no hotkeys or image
-//! presets): three more items. LightBurn 2.2's executable holds, next to the actions above and in this order, the
-//! strings `import-settings`, `Hotkeys`, `import-hotkeys`, `/presets/image_presets.lbimg`, `Image Presets`,
-//! `import-imagepresets`, `/presets/material_test_presets.lbmt`, `Material Test Presets`,
-//! `import-materialtestpresets`, `Material Libraries`, `import-cutlib`, `Art Libraries`, `import-artlib`, `Devices`,
-//! `.lbdev`, `import-device`, plus `hotkeys.json`, `image_presets.lbimg` and the icons `filetype:hotkeys`,
-//! `filetype:image-presets` and `filetype:material-library`. Following the pattern of the items seen (only the
-//! names, actions and the image presets path are in the bundle strings themselves; `hotkeys.json` and the icons are
-//! elsewhere in the executable, and `<library>.clb` is not in it at all: it follows the art libraries'
-//! `<library>.lbart`):
+//! A bundle with every kind of item (LightBurn 2.2.00, 2026-11-03) adds, in this order after the settings:
 //!
 //! | Part | group | name | action | filename | icon |
 //! |---|---|---|---|---|---|
 //! | Hotkeys | Application | Hotkeys | `import-hotkeys` | `hotkeys.json` | `filetype:hotkeys` |
 //! | Image presets | Application | Image Presets | `import-imagepresets` | `image_presets.lbimg` | `filetype:image-presets` |
 //! | Material libraries | Material Libraries | the library's name | `import-cutlib` | `<library>.clb` | `filetype:material-library` |
+//!
+//! with the material test presets after the image presets, then the devices, then the material libraries. A device
+//! that has a material library linked (Device Settings) carries `"link-filename": "<library>.clb"` and
+//! `"link-name": "<library>"`, naming the `import-cutlib` item of that library. `hotkeys.json` is Qt's indented JSON
+//! of the actions whose keys were changed, LightBurn's Qt action name to a Qt key text
+//! (`{"actionDistribute_Horizontal_Centered": "Ctrl+Alt+Shift+D"}`; an empty text is an action with no key).
 //!
 //! `import-toollib` (`filetype:tool-library`) and the operation libraries (`filetype:operation-library`) are
 //! LightBurn's gantry/CNC tool and operation libraries: nothing on a galvo uses them, so they are skipped.
@@ -51,24 +48,24 @@
 //! `import-materialtestpresets` → `presets` (renamed "<name> (2)" when taken), `import-artlib` → `art` (a new Art
 //! Library; "<name> (bundle)" when the name is taken), `import-cutlib` → `libraries` (the `.clb` loaded as a
 //! material library, as from an `.oebundle`: the same content is skipped, a name taken loads as "<name> (bundle)"),
-//! `import-imagepresets` → `images` (the `.lbimg` added to the Adjust Image presets, "<name> (2)" when taken).
-//! `import-hotkeys` is skipped: the layout of LightBurn's `hotkeys.json` is not documented (LightBurn's docs only say
-//! the Hotkey Editor exports and imports it), and OpenEtch keeps its key map in the browser. Other actions are listed
-//! as skipped. The archive is read by `fileio::zip` (sizes capped, overlapping entries refused); entries are matched
+//! `import-imagepresets` → `images` (the `.lbimg` added to the Adjust Image presets, "<name> (2)" when taken),
+//! `import-hotkeys` → `hotkeys` with the `prefs` part (checked by [`hotkeys_of`] and returned for the browser, which
+//! keeps OpenEtch's key map and maps LightBurn's action names onto it). A device's `link-filename` makes the
+//! library imported from that file (under the name it got) the device's material library, as loading it with the
+//! device active would. Other actions are listed as skipped. The archive is read by `fileio::zip` (sizes capped, overlapping entries refused); entries are matched
 //! by exact name, never written to disk by their names, and a file listed more than once is imported once. One
 //! settings, one material test presets and one image presets file is read (LightBurn writes one of each), and at most
 //! `library::MAX_LOADED` material libraries; the rest are listed as skipped.
 //!
 //! # Export
 //!
-//! The same layout with the parts OpenEtch can give LightBurn, Application items first, then devices and libraries
-//! as in LightBurn's own bundle: `images` (`image_presets.lbimg`), `presets` (`material_test_presets.lbmt`),
-//! `devices` (every device as `.lbdev`, `machine::to_lbdev`), `libraries` (each loaded material library as
-//! `<name>.clb`, its current content), `art` (each Art Library as `.lbart`). Where material libraries sit among
-//! devices and Art Libraries in LightBurn's own manifest is not known (the importer does not depend on the order).
-//! OpenEtch writes no `settings.lbprefs` (its preferences are a small subset of LightBurn's, and importing a partial
-//! file could reset the rest of LightBurn's settings) and no hotkeys (see Import). Whether LightBurn imports an
-//! OpenEtch bundle has not been tried.
+//! The same layout with the parts OpenEtch can give LightBurn, in LightBurn's order: `prefs` (only the hotkeys the
+//! browser passes, `hotkeys.json`), `images` (`image_presets.lbimg`), `presets` (`material_test_presets.lbmt`),
+//! `devices` (every device as `.lbdev`, `machine::to_lbdev`, linked to its material library when that library is in
+//! the bundle), `libraries` (each loaded material library as `<name>.clb`, its current content), `art` (each Art
+//! Library as `.lbart`). OpenEtch writes no `settings.lbprefs` (its preferences are a small subset of LightBurn's,
+//! and importing a partial file could reset the rest of LightBurn's settings). LightBurn 2.2 imports OpenEtch's
+//! devices since they carry a `GUID` (tried 2026-11-03; without one it lists them as "error").
 
 use serde_json::{Value, json};
 
@@ -90,6 +87,8 @@ struct Item {
     action: String,
     filename: String,
     name: String,
+    /// A device's linked material library: the `filename` of its `import-cutlib` item.
+    link_filename: String,
 }
 
 fn manifest(entries: &[fileio::zip::Entry]) -> Result<Vec<Item>, EngineError> {
@@ -108,7 +107,7 @@ fn manifest(entries: &[fileio::zip::Entry]) -> Result<Vec<Item>, EngineError> {
     Ok(list
         .iter()
         .take(fileio::zip::MAX_ENTRIES)
-        .map(|i| Item { action: text(&i["action"]), filename: text(&i["filename"]), name: text(&i["name"]) })
+        .map(|i| Item { action: text(&i["action"]), filename: text(&i["filename"]), name: text(&i["name"]), link_filename: text(&i["link-filename"]) })
         .collect())
 }
 
@@ -121,21 +120,54 @@ fn part_of(action: &str) -> Option<&'static str> {
         "import-artlib" => Some("art"),
         "import-cutlib" => Some("libraries"),
         "import-imagepresets" => Some("images"),
+        "import-hotkeys" => Some("hotkeys"),
         _ => None,
     }
+}
+
+/// The part a manifest part is chosen with: the hotkeys come with the settings (both are LightBurn's Application
+/// items, and both live in OpenEtch's browser).
+fn chosen_with(part: &str) -> &str {
+    if part == "hotkeys" { "prefs" } else { part }
+}
+
+/// Most hotkeys read or written (LightBurn 2.2 has fewer than 400 actions).
+pub const MAX_HOTKEYS: usize = 500;
+
+/// LightBurn hotkeys (`hotkeys.json`, or the browser's for an export): an object of at most [`MAX_HOTKEYS`] Qt
+/// action names (`action` and up to 80 letters, digits and `_`) to key texts (at most 40 printable characters,
+/// empty for no key). Anything else is refused whole.
+pub fn hotkeys_of(v: &Value) -> Result<serde_json::Map<String, Value>, String> {
+    let o = v.as_object().ok_or("hotkeys must be an object of LightBurn action names and keys")?;
+    if o.len() > MAX_HOTKEYS {
+        return Err(format!("more than {MAX_HOTKEYS} hotkeys"));
+    }
+    let name_ok = |k: &str| {
+        k.len() <= 86 && k.strip_prefix("action").is_some_and(|r| !r.is_empty() && r.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
+    };
+    for (k, val) in o {
+        if !name_ok(k) {
+            return Err(format!("\"{}\" is not a LightBurn action name", k.chars().take(40).collect::<String>()));
+        }
+        let key = val.as_str().ok_or_else(|| format!("{k}: the key must be text"))?;
+        if key.chars().count() > 40 || key.chars().any(char::is_control) {
+            return Err(format!("{k}: not a key"));
+        }
+    }
+    Ok(o.clone())
 }
 
 /// Why an action OpenEtch does not import is skipped.
 fn skip_reason(action: &str) -> String {
     match action {
-        "import-hotkeys" => "LightBurn's \"import-hotkeys\" is not imported: the layout of LightBurn's hotkeys.json is not documented, and OpenEtch's key map is set in File > Edit hotkeys".into(),
         "import-toollib" => "LightBurn's \"import-toollib\" is a gantry/CNC tool library, not used on a galvo".into(),
         a => format!("LightBurn's \"{a}\" is not imported by OpenEtch"),
     }
 }
 
 /// Import the `parts` of a LightBurn bundle. Returns `{ok, lightburn: true, imported: {prefs, devices, libraries,
-/// presets, images, art}, browser?, skipped: [text]}`.
+/// presets, images, art, links}, browser?, hotkeys?, skipped: [text]}` (`hotkeys`: LightBurn's, checked, for the
+/// browser to map onto its key map; `links`: `[{device, library}]`, the devices now linked to an imported library).
 pub fn import(st: &AppState, entries: &[fileio::zip::Entry], parts: &[String]) -> Result<Value, EngineError> {
     let items = manifest(entries)?;
     let wanted = |p: &str| parts.iter().any(|x| x == p);
@@ -143,6 +175,10 @@ pub fn import(st: &AppState, entries: &[fileio::zip::Entry], parts: &[String]) -
     let (mut prefs, mut browser) = (false, Value::Null);
     let (mut devices, mut presets, mut art) = (Vec::<String>::new(), Vec::<String>::new(), Vec::<String>::new());
     let (mut libraries, mut images) = (Vec::<String>::new(), Vec::<String>::new());
+    let mut hotkeys = Value::Null;
+    // Devices that link a library (their ids, the library's file) and the name each library file was imported as.
+    let mut wants_link: Vec<(Vec<String>, String)> = Vec::new();
+    let mut library_names = std::collections::HashMap::<String, String>::new();
     // A file listed again (LightBurn lists each once) is imported once: a hostile manifest repeating one entry
     // thousands of times must not import it thousands of times.
     let mut seen = std::collections::HashSet::new();
@@ -153,7 +189,7 @@ pub fn import(st: &AppState, entries: &[fileio::zip::Entry], parts: &[String]) -
             skipped.push(format!("{label}: {}", skip_reason(&it.action)));
             continue;
         };
-        if !wanted(part) {
+        if !wanted(chosen_with(part)) {
             continue;
         }
         if !seen.insert((part, it.filename.clone())) {
@@ -170,7 +206,7 @@ pub fn import(st: &AppState, entries: &[fileio::zip::Entry], parts: &[String]) -
         };
         // LightBurn writes one settings, one material test presets and one image presets file. Each further one would
         // be parsed and checked in full only to find the presets full (500 image presets cost seconds to check).
-        if matches!(part, "prefs" | "presets" | "images") && !single.insert(part) {
+        if matches!(part, "prefs" | "presets" | "images" | "hotkeys") && !single.insert(part) {
             skipped.push(format!("{label}: a bundle holds one {part} file; this one is not read"));
             continue;
         }
@@ -192,6 +228,9 @@ pub fn import(st: &AppState, entries: &[fileio::zip::Entry], parts: &[String]) -
             "devices" => {
                 let r = st.import_devices(&text()?, &crate::devices::ImportFilter::All).map_err(|e| e.to_string())?;
                 devices.extend(r.added.iter().chain(&r.updated).cloned());
+                if !it.link_filename.is_empty() {
+                    wants_link.push((r.added.iter().chain(&r.updated).cloned().collect(), it.link_filename.clone()));
+                }
                 skipped.extend(r.skipped.iter().map(|s| format!("device \"{}\": {}", s.name, s.reason)));
                 Ok(())
             }
@@ -217,7 +256,23 @@ pub fn import(st: &AppState, entries: &[fileio::zip::Entry], parts: &[String]) -
             "libraries" => {
                 let stem = it.filename.strip_suffix(".clb").unwrap_or(&it.filename);
                 let base = if crate::projects::validate_name(it.name.trim()).is_ok() { it.name.trim() } else { stem };
-                libraries.push(crate::userfiles::import_library(st, base, &e.data)?);
+                match crate::userfiles::import_library(st, base, &e.data) {
+                    Ok(name) => {
+                        library_names.insert(it.filename.clone(), name.clone());
+                        libraries.push(name);
+                        Ok(())
+                    }
+                    // The same library is already here: a device can still link it.
+                    Err(why) if why == crate::userfiles::LIBRARY_ALREADY_HERE => {
+                        library_names.insert(it.filename.clone(), base.to_owned());
+                        Err(why)
+                    }
+                    Err(why) => Err(why),
+                }
+            }
+            "hotkeys" => {
+                let v: Value = serde_json::from_slice(e.data.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&e.data)).map_err(|_| "hotkeys.json is not JSON".to_string())?;
+                hotkeys = Value::Object(hotkeys_of(&v)?);
                 Ok(())
             }
             "images" => {
@@ -232,11 +287,28 @@ pub fn import(st: &AppState, entries: &[fileio::zip::Entry], parts: &[String]) -
             skipped.push(format!("{label}: {why}"));
         }
     }
+    let mut links = Vec::new();
+    if !wants_link.is_empty() {
+        let mut p = crate::libs::lock(&st.libs.prefs);
+        for (ids, file) in &wants_link {
+            let Some(library) = library_names.get(file) else { continue };
+            for id in ids {
+                p.device_mut(id).library = Some(library.clone());
+                links.push(json!({ "device": id, "library": library }));
+            }
+        }
+        if !links.is_empty()
+            && let Err(e) = p.save()
+        {
+            skipped.push(format!("the devices' material libraries are not saved: {e}"));
+        }
+    }
     Ok(json!({
         "ok": true,
         "lightburn": true,
-        "imported": { "prefs": prefs, "devices": devices, "libraries": libraries, "presets": presets, "images": images, "art": art },
+        "imported": { "prefs": prefs, "devices": devices, "libraries": libraries, "presets": presets, "images": images, "art": art, "links": links },
         "browser": browser,
+        "hotkeys": hotkeys,
         "skipped": skipped,
     }))
 }
@@ -265,11 +337,15 @@ fn file_stem(s: &str) -> String {
 
 /// The manifest text (Qt's indented JSON: 4 spaces, sorted keys, a final line break).
 pub fn manifest_text(items: &[Value]) -> String {
-    let v = json!({ "LightBurnSoftware": {
+    qt_json(&json!({ "LightBurnSoftware": {
         "guid": guid(),
         "manifest": items,
         "version": { "Bundle": "1.0", "LightBurn": LIGHTBURN_VERSION },
-    }});
+    }}))
+}
+
+/// `v` as Qt writes JSON: indented by 4 spaces, keys sorted (serde_json's maps are), a final line break.
+fn qt_json(v: &Value) -> String {
     let mut out = Vec::new();
     let mut ser = serde_json::Serializer::with_formatter(&mut out, serde_json::ser::PrettyFormatter::with_indent(b"    "));
     serde::Serialize::serialize(&v, &mut ser).unwrap_or(());
@@ -278,9 +354,10 @@ pub fn manifest_text(items: &[Value]) -> String {
     s
 }
 
-/// A LightBurn bundle of `parts` (`images`, `presets`, `devices`, `libraries`, `art`; `prefs` is not written, see
-/// the module docs). Returns the zip and how many parts were left out.
-pub fn export(st: &AppState, parts: &[String]) -> Result<(Vec<u8>, usize), EngineError> {
+/// A LightBurn bundle of `parts` (`prefs` writes only `hotkeys`, the browser's LightBurn hotkeys checked by
+/// [`hotkeys_of`]; `images`, `presets`, `devices`, `libraries`, `art`; see the module docs). Returns the zip and how
+/// many parts were left out.
+pub fn export(st: &AppState, parts: &[String], hotkeys: &serde_json::Map<String, Value>) -> Result<(Vec<u8>, usize), EngineError> {
     let wanted = |p: &str| parts.iter().any(|x| x == p);
     let mut entries: Vec<fileio::zip::Entry> = Vec::new();
     let mut items: Vec<Value> = Vec::new();
@@ -298,7 +375,12 @@ pub fn export(st: &AppState, parts: &[String]) -> Result<(Vec<u8>, usize), Engin
         entries.push(fileio::zip::Entry { name: file, data });
     };
     if wanted("prefs") {
-        left_out += 1;
+        if hotkeys.is_empty() {
+            left_out += 1;
+        } else {
+            let text = qt_json(&Value::Object(hotkeys.clone()));
+            add(&mut entries, "hotkeys.json".into(), text.into_bytes(), "import-hotkeys", "Application", "filetype:hotkeys".into(), "Hotkeys".into());
+        }
     }
     // Application items in the order LightBurn's executable lists them (image presets before material test presets).
     if wanted("images")
@@ -313,6 +395,8 @@ pub fn export(st: &AppState, parts: &[String]) -> Result<(Vec<u8>, usize), Engin
         let name = "material_test_presets.lbmt".to_owned();
         add(&mut entries, name, text.into_bytes(), "import-materialtestpresets", "Application", "filetype:materialtest-presets".into(), "Material Test Presets".into());
     }
+    // Device items (their index in `items`, the device id), linked to their libraries once those are added.
+    let mut device_items: Vec<(usize, String)> = Vec::new();
     if wanted("devices") {
         let list: Vec<(String, String, String, String)> = {
             let reg = st.devices();
@@ -327,6 +411,8 @@ pub fn export(st: &AppState, parts: &[String]) -> Result<(Vec<u8>, usize), Engin
         for (id, controller, display, text) in list {
             let controller = if controller.trim().is_empty() { "JCZFiber".to_owned() } else { controller };
             add(&mut entries, format!("{}.lbdev", file_stem(&id)), text.into_bytes(), "import-device", "Devices", format!("protocol:{controller}"), display);
+            // `add` pushes one entry and one manifest item together, so they share an index.
+            device_items.push((entries.len() - 1, id));
         }
     }
     if wanted("libraries") {
@@ -352,6 +438,18 @@ pub fn export(st: &AppState, parts: &[String]) -> Result<(Vec<u8>, usize), Engin
             }
             let (bytes, _) = crate::artlib::library_to_lbart(&file)?;
             add(&mut entries, format!("{}.lbart", file_stem(&n)), bytes, "import-artlib", "Art Libraries", "filetype:art-library".into(), n);
+        }
+    }
+    // A device whose material library is in the bundle links it, as LightBurn's own export does.
+    if !device_items.is_empty() {
+        let p = crate::libs::lock(&st.libs.prefs);
+        for (i, id) in &device_items {
+            let Some(library) = p.device(id).library else { continue };
+            let file = items.iter().find(|it| it["action"] == "import-cutlib" && it["name"] == library.as_str()).and_then(|it| it["filename"].as_str().map(str::to_owned));
+            if let (Some(file), Some(item)) = (file, items.get_mut(*i).and_then(Value::as_object_mut)) {
+                item.insert("link-filename".into(), json!(file));
+                item.insert("link-name".into(), json!(library));
+            }
         }
     }
     entries.push(fileio::zip::Entry { name: MANIFEST.into(), data: manifest_text(&items).into_bytes() });

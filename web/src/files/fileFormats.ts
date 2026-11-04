@@ -539,8 +539,10 @@ export function templateNameOf(fileName: string): string {
 }
 
 /**
- * POST /api/bundle/import's answer, for the result list. A LightBurn `.lbzip` adds `presets`, `images` and `art` (names) and
- * `browser`: its settings' browser part, for applyLightBurnPrefs (null when none).
+ * POST /api/bundle/import's answer, for the result list. A LightBurn `.lbzip` adds `presets`, `images` and `art` (names),
+ * `browser`: its settings' browser part, for applyLightBurnPrefs (null when none), `hotkeys`: LightBurn's hotkeys.json,
+ * for importLightBurnHotkeys (null when none), and `links`: how many devices now use an imported material library.
+ * `hotkeysApplied` is filled in once the hotkeys are applied.
  */
 export function bundleResult(res: unknown): {
   prefs: boolean;
@@ -551,6 +553,9 @@ export function bundleResult(res: unknown): {
   art: string[];
   skipped: string[];
   browser: unknown;
+  hotkeys: unknown;
+  hotkeysApplied: number;
+  links: number;
 } {
   const o = res && typeof res === "object" ? (res as Record<string, unknown>) : {};
   const imp = o.imported && typeof o.imported === "object" ? (o.imported as Record<string, unknown>) : {};
@@ -565,6 +570,9 @@ export function bundleResult(res: unknown): {
     art: strs(imp.art),
     skipped: strs(o.skipped),
     browser,
+    hotkeys: o.hotkeys && typeof o.hotkeys === "object" && !Array.isArray(o.hotkeys) ? o.hotkeys : null,
+    hotkeysApplied: 0,
+    links: Array.isArray(imp.links) ? imp.links.length : 0,
   };
 }
 

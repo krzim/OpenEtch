@@ -44,6 +44,12 @@ Things to know:
 - **Reset all to LightBurn defaults** puts every key back.
 - Hotkeys are saved in this browser only.
 
+### Bring your LightBurn hotkeys
+
+Hotkeys you changed in LightBurn come across in a LightBurn bundle. In LightBurn, choose **File > Bundles > Export Bundle** and tick **Hotkeys**. In OpenEtch, choose **File > LightBurn > Preferences and bundles…**, tick **Preferences** and click **Import bundle…** (see [User bundles](settings.md#user-bundles)).
+
+Each LightBurn hotkey is set on the OpenEtch action that does the same thing. Hotkeys for actions OpenEtch does not have, keys the browser keeps, and STOP are left as they are, and the summary lists them. The other way, **Export LightBurn bundle (.lbzip)** with **Preferences** ticked takes your changed hotkeys to LightBurn.
+
 ## Keys browsers keep
 
 Browsers keep some keys for themselves, so a web page never sees them: `Ctrl+W`, `Ctrl+T`, `Ctrl+Tab`, `Ctrl+Shift+Tab`, `Ctrl+Shift+N`, `Ctrl+Shift+T`, `Ctrl+Shift+W`, `Alt+F4`, `F11` and `F12`. You cannot assign them.

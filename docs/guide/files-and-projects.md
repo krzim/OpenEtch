@@ -431,14 +431,16 @@ Theme, units and hotkeys are kept in your browser, not in these files.
 Tick the parts you want: **Preferences**, **Devices**, **Material libraries**, and for LightBurn bundles **Material test presets (LightBurn bundles)**, **Image presets (LightBurn bundles)** and **Art libraries (LightBurn bundles)**.
 
 - **Export bundle** downloads an `.oebundle` file.
-- **Export LightBurn bundle (.lbzip)** downloads a bundle that LightBurn can import (**File > Bundles > Import Bundle** in LightBurn). It holds devices, material libraries, material test presets, image presets and art libraries, but not preferences or hotkeys.
+- **Export LightBurn bundle (.lbzip)** downloads a bundle that LightBurn can import (**File > Bundles > Import Bundle** in LightBurn). It holds devices (each linked to its material library), material libraries, material test presets, image presets and art libraries. With **Preferences** ticked it also holds the hotkeys you changed in this browser, but no other preferences.
 - **Import bundle…** reads an `.oebundle` or a LightBurn `.lbzip`.
 
 When you import a bundle:
 
 - Devices are added as new devices and keep this machine's limits. A device that is already there, unchanged, is skipped.
 - A material library whose name exists with other content loads as "name (bundle)", so nothing is overwritten.
-- From a LightBurn bundle, only the settings OpenEtch has are used. Hotkeys are not imported.
+- From a LightBurn bundle, only the settings OpenEtch has are used.
+- A LightBurn bundle's hotkeys (with **Preferences** ticked) are set in this browser for the actions OpenEtch has. Each one replaces that action's keys and is taken from any action that had it. STOP keeps its keys. The summary lists the hotkeys it could not use.
+- A device that had a material library linked in LightBurn uses that library here too, under the name it was imported as.
 
 ### Import LightBurn preferences
 

@@ -5,6 +5,8 @@
 
 export const EN_LBZIP = {
   "files.exportLbzip": "Export LightBurn bundle (.lbzip)",
-  "files.exportLbzipTitle": "A bundle for LightBurn (File > Bundles > Import Bundle): devices, material libraries, material test presets, image presets and art libraries. Preferences and hotkeys are not included.",
-  "files.bundlesHint": "Moves your settings, devices and material libraries to another computer. Imported devices are added as new devices and keep this machine's limits. Import also reads LightBurn bundles (.lbzip): their settings (only the ones OpenEtch has), devices, material libraries, material test presets, image presets and art libraries (not hotkeys).",
+  "files.exportLbzipTitle": "A bundle for LightBurn (File > Bundles > Import Bundle): devices (with their material library), material libraries, material test presets, image presets and art libraries, and with Preferences the hotkeys you changed. Other preferences are not included.",
+  "files.bundleResultKeys": "Hotkeys set: {hotkeys} · devices linked to their material library: {links}",
+  "files.hotkeySkipped": "Hotkey {why}",
+  "files.bundlesHint": "Moves your settings, devices and material libraries to another computer. Imported devices are added as new devices and keep this machine's limits. Import also reads LightBurn bundles (.lbzip): their settings (only the ones OpenEtch has), devices, material libraries, material test presets, image presets, art libraries and hotkeys (onto this browser's key map), and links each device to its material library.",
 } as const;

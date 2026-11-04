@@ -24,7 +24,7 @@
 //! | POST | `/api/prefs/import_lightburn` | a LightBurn `.lbprefs` / `prefs.ini` as the body (UI only unless `?preview=1`): the keys OpenEtch has (`crate::lbprefs`); autosave and the active device's Optimization defaults are applied (current preferences backed up first), the browser-side ones returned as `browser` for the UI to apply; `{ok, preview, device, engine, browser, used, rejected, other_keys}` |
 //! | GET | `/api/prefs/backups` | `[{file, saved_unix_s, size}]` newest first (at most 50 kept; made at start and before every import) |
 //! | POST | `/api/prefs/backups/restore` | `{file, origin?}` (UI only) |
-//! | GET | `/api/bundle/export` | `?parts=prefs,devices,libraries` (default all): a user bundle `.oebundle` (zip); `format=lbzip` (parts `devices,libraries,presets,images,art`): a LightBurn bundle (`crate::lbzip`) |
+//! | GET | `/api/bundle/export` | `?parts=prefs,devices,libraries` (default all): a user bundle `.oebundle` (zip); `format=lbzip` (parts `prefs,devices,libraries,presets,images,art`; `hotkeys=<JSON>` the browser's LightBurn hotkeys, written with `prefs`): a LightBurn bundle (`crate::lbzip`) |
 //! | POST | `/api/bundle/import` | `?parts=` + a bundle (UI only) → `{ok, imported: {prefs, devices: [id], libraries: [name]}, skipped: [text]}`; devices are always added as new devices (an identical one is skipped), a library whose name exists with other content is loaded as "<name> (bundle)", as LightBurn keeps what is there. A LightBurn `.lbzip` (`crate::lbzip`; parts `prefs,devices,libraries,presets,images,art`) → `{ok, lightburn: true, imported: {prefs, devices, libraries, presets, images, art}, browser, skipped}` (`browser`: the LightBurn settings for the web UI to apply) |
 
 use std::collections::HashMap;
@@ -968,11 +968,14 @@ pub(crate) fn too_many_libraries() -> String {
 /// Load a bundle's material library (`.clb` bytes) as `name`: one with the same content is skipped ("already here");
 /// a name taken, by a loaded library or by a file in the libraries folder that is not loaded (`load` would overwrite
 /// it), loads as "<name> (bundle)", as LightBurn keeps what is there. Returns the name it loaded as, or why not.
+/// `import_library`'s refusal when the same library is already loaded.
+pub(crate) const LIBRARY_ALREADY_HERE: &str = "already here";
+
 pub(crate) fn import_library(st: &AppState, name: &str, data: &[u8]) -> Result<String, String> {
     crate::projects::validate_name(name).map_err(|e| e.to_string())?;
     let mut lib = crate::libs::lock(&st.libs.library);
     if lib.text(name).ok().map(|(_, t)| t.into_bytes()).as_deref() == Some(data) {
-        return Err("already here".into());
+        return Err(LIBRARY_ALREADY_HERE.into());
     }
     let lib_dir = st.files.config_dir().ok().map(|d| d.join(crate::library::LIBRARIES_DIR));
     let taken = |n: &str| lib.find(n).is_some() || lib_dir.as_ref().is_some_and(|d| d.join(format!("{n}.clb")).exists());
@@ -1101,12 +1104,23 @@ pub fn unbundle(st: &AppState, bytes: &[u8], parts: &[String]) -> Result<Value, 
 }
 
 async fn bundle_export(State(st): State<Arc<AppState>>, q: Q) -> Result<Response, EngineError> {
-    let q = query(q, &["parts", "format"])?;
+    let q = query(q, &["parts", "format", "hotkeys"])?;
     let parts = parts(&q)?;
+    // The browser's key map as LightBurn hotkeys (`{actionName: key}`), written with the prefs part of an `.lbzip`.
+    let hotkeys = match q.get("hotkeys") {
+        None => serde_json::Map::new(),
+        Some(_) if q.get("format").map(String::as_str) != Some("lbzip") => {
+            return Err(EngineError::BadRequest("hotkeys are written only into a LightBurn bundle (format=lbzip)".into()));
+        }
+        Some(text) => {
+            let v: Value = serde_json::from_str(text).map_err(|_| EngineError::BadRequest("hotkeys is not JSON".into()))?;
+            crate::lbzip::hotkeys_of(&v).map_err(EngineError::BadRequest)?
+        }
+    };
     match q.get("format").map(String::as_str) {
         None | Some("oebundle") => {}
         Some("lbzip") => {
-            let (bytes, skipped) = st.blocking(move |st| crate::lbzip::export(st, &parts)).await?;
+            let (bytes, skipped) = st.blocking(move |st| crate::lbzip::export(st, &parts, &hotkeys)).await?;
             return Ok(file_response("attachment", "openetch-bundle", "lbzip", "application/zip", bytes, skipped));
         }
         Some(f) => return Err(EngineError::BadRequest(format!("format must be oebundle or lbzip (got '{f}')"))),
