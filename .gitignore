@@ -19,5 +19,11 @@ operator-pin
 access-token
 *.lbprefs
 *.lbzip
+*.clb
+*.lbmt
+*.lbart
+*.lbimg
+*.ezd
+service.env
 /Test files/
 /laser files/

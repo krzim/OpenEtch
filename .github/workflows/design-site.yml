@@ -1,13 +1,9 @@
-# OpenEtch Design (the browser-only editor, docs/design-only/plan.md section 3): build the static site and check it.
+# OpenEtch Design (the browser-only editor, docs/design-only/plan.md section 3): build the static site, check it and
+# publish it with GitHub Pages at <owner>.github.io/OpenEtch/ (hosting option A of plan section 3.2: the repository
+# is public and Pages is served from Actions; Settings > Pages > Source: GitHub Actions).
 #
-# Started by hand only (Actions > Design site > Run workflow). It never runs on push and it publishes nothing: the
-# built site is kept as a workflow artifact (private to the repository, deleted after 7 days) for a look before any
-# hosting is chosen. The deploy job is left out until the owner picks the hosting (plan section 3.2):
-#   A. make this repository public and serve it with GitHub Pages from Actions (actions/deploy-pages);
-#   B. keep it private on GitHub Pro and serve Pages from it (the site itself is still public);
-#   C. (recommended) push the built site to a separate public repository's gh-pages branch with a deploy key
-#      (a secret such as OPENETCH_WEB_DEPLOY_KEY), keeping the source private.
-# Commented templates for A/B and C are at the end of this file.
+# Runs on a push to main that changes the app, or by hand (Actions > Design site > Run workflow, which can also
+# change the base path and the size budget).
 #
 # Third-party actions are pinned by commit SHA (check them against the tags named in the comments before the first
 # run). The Rust tools come from rustup and `cargo install --locked`; binaryen is downloaded by web/scripts/wasm.mjs,
@@ -16,6 +12,14 @@
 name: Design site
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "web/**"
+      - "docs/guide/**"
+      - "Cargo.lock"
+      - ".github/workflows/design-site.yml"
   workflow_dispatch:
     inputs:
       base:
@@ -40,7 +44,7 @@ jobs:
     timeout-minutes: 60
     env:
       CARGO_TERM_COLOR: always
-      VITE_BASE: ${{ inputs.base }}
+      VITE_BASE: ${{ inputs.base || '/OpenEtch/' }}
     steps:
       - name: Check out
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -99,7 +103,7 @@ jobs:
       - name: Size gate
         working-directory: web
         env:
-          BUDGET: ${{ inputs.wasm_gzip_budget }}
+          BUDGET: ${{ inputs.wasm_gzip_budget || '4200000' }}
         run: |
           node --input-type=module -e '
             import { readdirSync, readFileSync } from "node:fs";
@@ -126,38 +130,21 @@ jobs:
           cp LICENSE-MIT LICENSE-APACHE ATTRIBUTION.md web/dist-design/
           touch web/dist-design/.nojekyll
 
-      - name: Keep the built site (workflow artifact, not published)
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - name: Hand the site to Pages
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
         with:
-          name: design-site
           path: web/dist-design
-          retention-days: 7
-          if-no-files-found: error
 
-# ---- Deploy: left for the owner's hosting choice (plan section 3.2). Nothing below runs. -----------------------
-#
-# Option A or B (Pages from this repository; Settings > Pages > Source: GitHub Actions). Replace the upload step
-# above with actions/upload-pages-artifact, then:
-#
-#  deploy:
-#    needs: build
-#    runs-on: ubuntu-24.04
-#    permissions: { pages: write, id-token: write }
-#    environment: { name: github-pages, url: "${{ steps.deploy.outputs.page_url }}" }
-#    steps:
-#      - id: deploy
-#        uses: actions/deploy-pages@<sha> # v4
-#
-# Option C (recommended: a separate public repository serves the built files from its gh-pages branch). Add a write
-# deploy key to that repository and its private half as the secret OPENETCH_WEB_DEPLOY_KEY here, then:
-#
-#  deploy:
-#    needs: build
-#    runs-on: ubuntu-24.04
-#    steps:
-#      - uses: actions/download-artifact@<sha> # v4
-#        with: { name: design-site, path: site }
-#      - name: Push to <owner>/openetch-web gh-pages (one commit, no history)
-#        env: { DEPLOY_KEY: "${{ secrets.OPENETCH_WEB_DEPLOY_KEY }}" }
-#        run: |
-#          ... ssh-agent with DEPLOY_KEY, git init in site/, commit, git push --force to gh-pages ...
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
