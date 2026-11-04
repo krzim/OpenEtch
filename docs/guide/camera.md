@@ -63,7 +63,7 @@ The Lens state then reads "calibrated", with the remaining error in pixels. Smal
 
 Alignment tells OpenEtch where each camera pixel is in the galvo field. You burn a few marks at known places, capture them, and match them up.
 
-> **Warning:** Alignment marks are real burns. Wear eye protection rated for your laser's wavelength, run the fume extraction and stay with the job. Work out the energy density of the layer first: J/mm² = power W ÷ (speed mm/s × line interval mm). On stainless with a 60 W MOPA, roughly 2 to 15 J/mm² marks without melting; more can melt or warp thin stock. Use settings you have tested on scrap.
+> **Warning:** Alignment marks are real burns. Wear eye protection rated for your laser's wavelength, run the fume extraction and stay with the job. Work out the energy density of the layer first: J/mm² = power W ÷ (speed mm/s × line interval mm). On stainless with a 60 W MOPA, roughly 2 to 15 J/mm² marked without melting on the reference machine (yours may differ); more can melt or warp thin stock. Use settings you have tested on scrap.
 
 ### With camera markers
 

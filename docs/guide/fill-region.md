@@ -72,6 +72,6 @@ J/mm² = power in W ÷ (speed in mm/s × line interval in mm)
 
 For example, the Two-tone MOPA coin's Gold ring uses 28 % of a 60 W source (16.8 W) at 500 mm/s and a 0.01 mm interval: 16.8 ÷ (500 × 0.01) = 3.4 J/mm². Cross hatch runs the area twice, so double the figure.
 
-On stainless steel with a 60 W MOPA, roughly 2 to 15 J/mm² marks without melting. Higher can melt or warp thin stock. Test on scrap first: see [Test grids](test-grids.md) and [Safety](safety.md).
+On stainless steel with a 60 W MOPA, roughly 2 to 15 J/mm² marked without melting on the reference machine (yours may differ). Higher can melt or warp thin stock. Test on scrap first: see [Test grids](test-grids.md) and [Safety](safety.md).
 
 > **Warning:** Wear eye protection rated for your laser's wavelength, run the fume extraction, and never leave a job unattended.

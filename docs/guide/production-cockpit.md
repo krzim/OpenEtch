@@ -20,7 +20,7 @@ Check the job on scrap before you mark the first real part.
 
 1. Mark one piece of scrap of the same material with the same settings.
 2. Work out the energy density of every fill layer. The formula is: J/mm² = power (W) ÷ (speed (mm/s) × line interval (mm)). If a layer shows power as a percentage, multiply it by the laser's rated power first (50 % of 60 W is 30 W).
-3. Check the result. For example, 30 W at 1000 mm/s with a 0.005 mm line interval gives 30 ÷ (1000 × 0.005) = 6 J/mm². On stainless steel with a 60 W MOPA, roughly 2 to 15 J/mm² marks without melting. Much higher can melt or warp thin stock.
+3. Check the result. For example, 30 W at 1000 mm/s with a 0.005 mm line interval gives 30 ÷ (1000 × 0.005) = 6 J/mm². On stainless steel with a 60 W MOPA, roughly 2 to 15 J/mm² marked without melting on the reference machine (yours may differ). Much higher can melt or warp thin stock.
 4. Frame the job on the jig and check that it lines up.
 5. Set **Stop at** to the number of pieces you want (see [The Done card](#the-done-card)).
 
@@ -299,7 +299,7 @@ AI agents connected through MCP can:
 - prepare production with design commands, such as layer pauses, Stop at End and empty slots;
 - request a re-mark (`serial_remark_request`), which only creates a run that waits for approval.
 
-Agents can never approve or start a burn. They cannot press Continue, switch the extractor, unlock the cockpit, or change notification, maintenance or extractor settings. While the cockpit is open, their design edits are refused like everyone else's; only Variable Text commands (the counter, empty slots, Stop at End) still work. See [AI agents](ai-agents.md).
+MCP gives agents no way to approve or start a burn. They cannot press Continue, switch the extractor, unlock the cockpit, or change notification, maintenance or extractor settings. While the cockpit is open, their design edits are refused like everyone else's; only Variable Text commands (the counter, empty slots, Stop at End) still work. See [AI agents](ai-agents.md).
 
 ## Common problems
 

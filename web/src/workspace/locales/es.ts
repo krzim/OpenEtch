@@ -66,6 +66,8 @@ export const ES: Messages = {
   "help.issues": "Informar de un problema",
   "help.about": "Acerca de OpenEtch",
   "help.aboutTitle": "Acerca de OpenEtch",
+  "help.disclaimer":
+    "Úsalo bajo tu propia responsabilidad. OpenEtch se ofrece tal cual, sin ninguna garantía. No es un sistema de seguridad ni está certificado para ningún uso. Los láseres pueden causar ceguera, quemaduras e incendios: eres responsable de usar tu láser de forma segura y de seguir las instrucciones del fabricante.",
 
   "prefs.title": "Preferencias",
   "prefs.reset": "Restablecer preferencias",
@@ -99,7 +101,7 @@ export const ES: Messages = {
   "top.laserConnected": "Láser conectado",
   "top.noLaser": "Sin láser",
   "top.stop": "PARAR",
-  "top.stopTitle": "Parada de emergencia: cancela cualquier trabajo o encuadre y las ejecuciones pendientes. Siempre disponible.",
+  "top.stopTitle": "Parada: cancela cualquier trabajo o encuadre y las ejecuciones pendientes. Es una parada por software: ten a mano la parada de emergencia física de tu máquina.",
 
   // File menu
   "fm.file": "Archivo",

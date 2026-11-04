@@ -123,4 +123,4 @@ To mark again only an area of the design rather than a whole pocket, see [Re-mar
 
 ## What AI agents can do
 
-AI agents connected through MCP can read the serial ledger (`serial_ledger`). They can also request a re-mark (`serial_remark_request`). That only creates a run that waits for approval. A person must approve it in the app. Agents can never approve or start a burn. See [AI agents](ai-agents.md).
+AI agents connected through MCP can read the serial ledger (`serial_ledger`). They can also request a re-mark (`serial_remark_request`). That only creates a run that waits for approval. A person must approve it in the app. MCP gives agents no way to approve or start a burn. See [AI agents](ai-agents.md).

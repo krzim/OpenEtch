@@ -52,7 +52,7 @@ Here is the energy density of the example fills on a 60 W source, worked out as 
 | Star (medallion), cross hatch | 55 % (33 W) | 900 mm/s | 0.03 mm | 1.2 J/mm² per direction |
 | Images (dither sample) | 35 % (21 W) | 1500 mm/s | 0.05 mm | 0.28 J/mm² at full black |
 
-On stainless steel with a 60 W MOPA, roughly 2 to 15 J/mm² marks without melting. Below about 2 J/mm² a fill may barely mark.
+On stainless steel with a 60 W MOPA, roughly 2 to 15 J/mm² marked without melting on the reference machine (yours may differ). Below about 2 J/mm² a fill may barely mark.
 
 > **Warning:** The Black finish adds up to about 17 J/mm² with its cross hatch, above that range. On a thin coin it can melt or warp the metal. Test it on scrap first, and lower the power or turn off cross hatch if it overheats.
 
@@ -118,4 +118,4 @@ The engine keeps the templates. The fields are saved with the project and with t
 
 ## AI agents
 
-An AI agent connected over MCP can list a template's fields and fill them in, as a design edit. It can never approve or start a burn: a person does that at the machine. See [AI agents](ai-agents.md).
+An AI agent connected over MCP can list a template's fields and fill them in, as a design edit. MCP gives it no way to approve or start a burn: a person does that at the machine. See [AI agents](ai-agents.md).

@@ -43,6 +43,8 @@ Plain English, British spelling (colour, centre, optimise), short sentences, sec
 
 Laser safety where it matters: eye protection rated for the wavelength, fume extraction, never leave a job unattended, and the energy density of every test before you run it (power ÷ (speed × line interval), in J/mm²).
 
+Never promise safety. OpenEtch is not a safety system: describe what a feature does ("approval is refused while the door input is open"), not that it keeps anyone safe, and avoid "never", "always" and "guarantee" about the laser. Energy figures are one machine's results, not limits. The use-at-your-own-risk warning sits at the top of index.md, safety.md and getting-started.md's first-burn section; keep it there.
+
 ## Screenshots
 
 `shots.json` lists every picture: its name, the emulated device, the built-in example it opens and the steps that get the screen ready. `npm run guide:shots` (in web/) takes them with a simulator engine and writes `img/<name>.webp`. The step language and the commands are in [web/e2e/README.md](../../web/e2e/README.md#guide-screenshots). Pictures show only the built-in examples or shapes drawn fresh, never your own files.

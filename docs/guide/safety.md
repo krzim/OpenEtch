@@ -3,12 +3,14 @@ title: Laser safety
 order: 18
 section: Running jobs
 needs: machine
-summary: Eye protection, fume extraction, energy density checks, the STOP button, the safety checks OpenEtch makes before a burn, and what AI agents can and cannot do.
+summary: Eye protection, fume extraction, energy density checks, the STOP button, the checks OpenEtch makes before a burn, and what AI agents can and cannot do.
 ---
 
 # Laser safety
 
-A fibre laser can blind you and start a fire in a fraction of a second. OpenEtch adds checks around every burn, but it cannot make the machine safe on its own. Read this page before your first job.
+A fibre laser can blind you and start a fire in a fraction of a second. OpenEtch adds checks around a burn, but it is not a safety system and cannot make the machine safe. Read this page before your first job.
+
+> **Warning:** **Use at your own risk.** OpenEtch is provided as is, with no warranty of any kind. It is not a safety system and is not certified for any use. Lasers can cause blindness, burns and fires. You are responsible for using your laser safely, following its manufacturer's instructions and the rules where you are. The safety notes in this guide are general reminders, not complete safety advice.
 
 > **Warning:** OpenEtch is new software. Many features have only run on the simulator so far. Treat every setting and every number in this guide as a starting point to test on scrap, not as a guarantee.
 
@@ -74,7 +76,7 @@ For example, 30 W at 1000 mm/s with a 0.01 mm interval gives 30 ÷ (1000 × 0.01
 | 30 W (50 %) | 300 mm/s | 0.01 mm | 10 J/mm² | Heavy end of the range |
 | 48 W (80 %) | 500 mm/s | 0.005 mm | 19.2 J/mm² | Too high: can melt or warp thin stock |
 
-As a rough guide, on stainless steel with a 60 W MOPA laser, about 2 to 15 J/mm² marks without melting. Higher values can melt or warp thin stock. Other materials need other ranges, so start low and work up.
+As a rough guide, on stainless steel with a 60 W MOPA laser, about 2 to 15 J/mm² marked without melting on the reference machine (yours may differ). Higher values can melt or warp thin stock. Other materials need other ranges, so start low and work up.
 
 Things that change the result:
 
@@ -91,7 +93,7 @@ For a test grid, check the corner with the highest power, the lowest speed and t
 
 ## The STOP button
 
-**STOP** ends any job or frame at once, ends the foot switch loop, and cancels every run that is waiting for approval. It is always allowed: nothing in OpenEtch, not even a pause at a layer or the production cockpit's lock, can hold it up.
+**STOP** ends any job or frame at once, ends the foot switch loop, and cancels every run that is waiting for approval. OpenEtch is built to accept it at any time, even during a pause at a layer or while the production cockpit is locked. It is still software, and software can fail: see the warning below.
 
 Where to find it:
 
@@ -109,7 +111,7 @@ Keyboard shortcuts:
 
 After a stop, a message says what happened: **Stop sent.**, followed by how many runs were cancelled before they started, if any. With no laser connected it says **No laser connected; nothing to stop.**
 
-> **Warning:** STOP is a software stop. It needs the engine to be reachable. Your machine's hardware emergency stop or key switch is the real guarantee. Make sure you can reach it at all times.
+> **Warning:** STOP is a software stop. It needs the engine to be reachable. Rely on your machine's hardware emergency stop or key switch, not on OpenEtch. Make sure you can reach it at all times.
 
 ### When the connection is lost
 
@@ -117,7 +119,7 @@ If the app loses touch with the OpenEtch engine, a banner appears at the top: **
 
 While you see this banner, assume STOP in the app will not work. Use the hardware emergency stop if anything is wrong.
 
-## Safety checks before a burn
+## Checks before a burn
 
 Every burn has to be approved by a person in the OpenEtch app (or with the foot switch). OpenEtch checks these things each time, whichever way the burn was started:
 
@@ -154,7 +156,7 @@ A run an agent prepares shows under **Waiting for approval** in the **Laser** wi
 
 ## Simulator and status badges
 
-- **Ready (simulator)** in the **Laser** window, or **Idle (simulator)** on the status chip, means the engine drives a simulated laser. Nothing fires.
+- **Ready (simulator)** in the **Laser** window, or **Idle (simulator)** on the status chip, means the engine drives a simulated laser, not a real one.
 - **SIMULATOR TEST PIN** means the engine was started with a test PIN for the simulator. It is refused on a real laser.
 - **ENGINE SHUTTING DOWN** means the engine is stopping or restarting. Nothing new starts until it is back; a running job is left to finish, and STOP still works.
 - **ENGINE ABORTING JOB** means the engine is shutting down and is aborting the running job.

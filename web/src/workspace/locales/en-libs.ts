@@ -141,7 +141,7 @@ export const EN_LIBS = {
   "ltest.create": "Create",
   "ltest.createRun": "Create and request run",
   "ltest.createRunTitle": "Add the test and request a run of only the test (it still needs the PIN)",
-  "ltest.previewHint": "Numbers show LightBurn's safe burn order: highest speed, lowest power, lowest interval and fewest passes first. Stronger shading marks a harder burn.",
+  "ltest.previewHint": "Numbers show the burn order, gentlest first as in LightBurn: highest speed, lowest power, lowest interval and fewest passes first. Stronger shading marks a harder burn.",
   "ltest.rows": "Rows",
   "ltest.columns": "Columns",
   "ltest.param": "Param",

@@ -109,5 +109,5 @@ export const EN_LASER = {
   "lz.stepFrameHint": "Frame the job with the red pointer and check where it lands.",
   "lz.stepStartHint": "Enclosure closed and eyewear on? Then Start.",
   "lz.stepRunningHint": "Burning. STOP or Ctrl+. (⌘.) stops it.",
-  "lz.stopTitle": "Emergency stop: ends any job or frame and cancels pending runs. Always allowed. Keys: Ctrl+Pause, or Ctrl+. (⌘.) while a job runs.",
+  "lz.stopTitle": "Stop: ends any job or frame and cancels pending runs. A software stop: keep your machine's hardware emergency stop within reach. Keys: Ctrl+Pause, or Ctrl+. (⌘.) while a job runs.",
 };

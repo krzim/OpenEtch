@@ -226,6 +226,6 @@ J/mm² = power in W ÷ (speed in mm/s × line interval in mm)
 
 The power in watts is the layer's power % of your source's rating. For example, the Image and dither sample example uses 35 % of a 60 W source (21 W) at 1500 mm/s and a 0.05 mm interval: 21 ÷ (1500 × 0.05) = 0.28 J/mm².
 
-On stainless steel with a 60 W MOPA, roughly 2 to 15 J/mm² marks without melting; much more can melt or warp thin stock. Image settings often sit lower, because the dots overlap. Run a test on scrap first: see [Test grids](test-grids.md) and [Safety](safety.md).
+On stainless steel with a 60 W MOPA, roughly 2 to 15 J/mm² marked without melting on the reference machine (yours may differ); much more can melt or warp thin stock. Image settings often sit lower, because the dots overlap. Run a test on scrap first: see [Test grids](test-grids.md) and [Safety](safety.md).
 
 > **Warning:** Wear eye protection rated for your laser's wavelength, run the fume extraction, and never leave a job unattended.

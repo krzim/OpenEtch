@@ -252,7 +252,7 @@ Jig pockets carry through to production:
 - The [serial ledger](serial-ledger.md) records which pocket got which value.
 - A [re-mark](serial-ledger.md#re-mark-a-slot) marks one pocket again.
 
-AI agents can make, edit and place jigs with the same commands the Jigs menu uses. They can never start a burn. See [AI agents](ai-agents.md).
+AI agents can make, edit and place jigs with the same commands the Jigs menu uses. MCP gives them no way to start a burn. See [AI agents](ai-agents.md).
 
 ## Common mistakes
 

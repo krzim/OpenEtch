@@ -270,6 +270,9 @@ function AboutDialogBody(p: { machine: MachineStatus | null; onClose: () => void
           </dd>
         </dl>
         <p className="hint">{DESIGN_ONLY ? t("dm.notAffiliated") : t("help.aboutNote")}</p>
+        <p className="about-disclaimer" role="note">
+          {t("help.disclaimer")}
+        </p>
       </div>
     </WsModal>
   );

@@ -23,7 +23,7 @@ The mode is chosen when the engine starts (`--approval pin` or `--approval click
 
 The engine can also be started with a physical confirmation input (`--confirm-input`). Then every approved run also waits for a press of that input; see [Operator PIN approval](#operator-pin-approval).
 
-> **Note:** An AI agent connected over MCP can prepare a run, but can never approve or start one. See [What AI agents can and cannot do](safety.md#what-ai-agents-can-and-cannot-do).
+> **Note:** An AI agent connected over MCP can prepare a run, but MCP gives it no way to approve or start one. See [What AI agents can and cannot do](safety.md#what-ai-agents-can-and-cannot-do).
 
 ## The Laser window
 
@@ -163,7 +163,7 @@ The **Laser** window shows what the next press does, for example **Foot switch (
 4. When the burn ends, framing starts again by itself on the design as it is then (with a serial number moved on, if the job has one).
 5. Load the next part and press to burn again.
 
-Safety rules the engine follows:
+Checks the engine makes:
 
 - Only the framed design burns. If the design or the device changed since the frame started, the press frames the new design instead, and a message says so.
 - A foot switch burn is always the whole job, once. It ignores **Repeat**, **Run continuously**, **Cut selected graphics** and **Selection only**.
@@ -210,7 +210,7 @@ When a job ends, a message says how: **Job finished.**, **Job stopped before the
 
 ## Pause, resume and stop
 
-- **Pause** holds the job where it is. It is always allowed. Find it in the **Laser** window, on the status chip, or press `Pause`.
+- **Pause** holds the job where it is. Find it in the **Laser** window, on the status chip, or press `Pause`.
 - **Resume** continues a paused job. It is in the same places, and `Pause` toggles it. Only a person in the app can resume; an agent cannot.
 - **STOP** ends the job at once and cancels any runs waiting. A stopped job cannot be resumed. See [The STOP button](safety.md#the-stop-button).
 

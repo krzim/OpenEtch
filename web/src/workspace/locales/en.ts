@@ -107,6 +107,8 @@ export const EN = {
   "help.notReported": "not reported by this engine",
   "help.mcp": "MCP server",
   "help.source": "Source",
+  "help.disclaimer":
+    "Use at your own risk. OpenEtch is provided as is, with no warranty of any kind. It is not a safety system and is not certified for any use. Lasers can cause blindness, burns and fires: you are responsible for using your laser safely and following its manufacturer's instructions.",
   "help.aboutNote": "Agents connect to the MCP address above; every change they make appears in the timeline like yours.",
 
   "hotkeys.title": "Keyboard shortcuts",
@@ -307,7 +309,7 @@ export const EN = {
   "laser.resume": "Resume",
   "laser.notYet": "Not supported by the engine yet",
   "laser.stop": "STOP",
-  "laser.stopTitle": "Emergency stop: abort any run or frame and cancel pending runs. Always allowed.",
+  "laser.stopTitle": "Stop: abort any run or frame and cancel pending runs. A software stop: keep your machine's hardware emergency stop within reach.",
   "laser.progress": "Progress",
   "laser.runningNoProgress": "running",
 

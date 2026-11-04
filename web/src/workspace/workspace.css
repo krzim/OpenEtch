@@ -750,6 +750,17 @@ a.menu-item {
   font-weight: 600;
 }
 
+.about-disclaimer {
+  margin: 12px 0 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--warn);
+  border-radius: 4px;
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  font-size: calc(12px * var(--ui-scale, 1));
+  line-height: 1.45;
+}
+
 .about code {
   font-size: calc(12px * var(--ui-scale, 1));
   word-break: break-all;

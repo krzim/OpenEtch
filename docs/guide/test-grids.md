@@ -42,13 +42,13 @@ Worked examples on a 60 W MOPA:
 | 100 %, 500 mm/s, 0.05 mm | 60 ÷ (500 × 0.05) | 2.4 J/mm²: the strongest box of the default material test |
 | 100 %, 100 mm/s, 0.01 mm | 60 ÷ (100 × 0.01) | 60 J/mm²: far too high, likely to melt |
 
-On stainless steel with a 60 W MOPA, roughly 2 to 15 J/mm² marks without melting. Below about 2 the mark is often faint. Above about 15, thin stock can melt or warp. These are rough guides, not limits. Frequency and pulse width change how the energy arrives (and so the colour), but not this sum.
+On stainless steel with a 60 W MOPA, roughly 2 to 15 J/mm² marked without melting on the reference machine (yours may differ). Below about 2 the mark is often faint. Above about 15, thin stock can melt or warp. These are rough guides, not limits. Frequency and pulse width change how the energy arrives (and so the colour), but not this sum.
 
 > **Tip:** Check the strongest corner of the grid: the highest power with the lowest speed, lowest interval and most passes. If that box is in range, the rest are lower.
 
 ## Material Test
 
-A material test varies two settings across a grid. Each box gets its own layer, in a safe burn order. Labels mark the values beside the grid, in a single-line font on their own layer.
+A material test varies two settings across a grid. Each box gets its own layer, burned gentlest first. Labels mark the values beside the grid, in a single-line font on their own layer.
 
 To open it:
 

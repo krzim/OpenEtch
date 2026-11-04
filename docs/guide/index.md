@@ -12,6 +12,8 @@ OpenEtch is open-source software for designing jobs and running them on galvo fi
 
 This guide shows you how to use the app on a PC, a MacBook, an iPad and a phone.
 
+> **Warning:** **Use at your own risk.** OpenEtch is provided as is, with no warranty of any kind. It is not a safety system and is not certified for any use. Lasers can cause blindness, burns and fires. You are responsible for using your laser safely, following its manufacturer's instructions and the rules where you are. The safety notes in this guide are general reminders, not complete safety advice.
+
 New to OpenEtch? Follow [Your first job](getting-started.md#your-first-job): one job from opening an example to the finished burn, step by step.
 
 ## Find a topic
@@ -56,7 +58,7 @@ New to OpenEtch? Follow [Your first job](getting-started.md#your-first-job): one
 
 **Running jobs**
 
-- [Laser safety](safety.md): Eye protection, fume extraction, energy density checks, the STOP button, the safety checks OpenEtch makes before a burn, and what AI agents can and cannot do. (Needs a laser)
+- [Laser safety](safety.md): Eye protection, fume extraction, energy density checks, the STOP button, the checks OpenEtch makes before a burn, and what AI agents can and cannot do. (Needs a laser)
 - [Preview and framing](preview-and-framing.md): Check the toolpath and the time estimate in the Laser workspace, play the burn order, and trace the job on the work with the red pointer before you burn.
 - [Running a job](running-a-job.md): Start or approve a burn, use the foot switch to frame then burn, pause, resume and stop, pause at a layer, repeat jobs and use the job counter. (Needs a laser)
 - [Pre-flight warnings and keep-out zones](preflight-and-keep-out.md): The warnings OpenEtch shows next to Start, how to fix or mute them, objects outside the field, and keep-out zones that the laser must never mark. (Needs a laser)
@@ -77,7 +79,7 @@ New to OpenEtch? Follow [Your first job](getting-started.md#your-first-job): one
 - [Devices and calibration](devices-and-calibration.md): Add and switch laser devices, import them from LightBurn or EzCad, edit device settings, load a lens correction file, calibrate the galvo lens and the red dot, and set up a rotary. (Needs a laser)
 - [Settings](settings.md): Preferences for display, units, snapping and input, layer and optimisation defaults, importing LightBurn preferences, and preference backups and bundles.
 - [Camera](camera.md): Use a camera over the work area to see the stock under your design: capture a frame, calibrate the camera lens, align it to the galvo field and show the overlay. (Needs a laser)
-- [AI agents](ai-agents.md): Connect an AI agent to OpenEtch over MCP, what tools it gets, why it can never approve or start a burn, and how to ask it for good work.
+- [AI agents](ai-agents.md): Connect an AI agent to OpenEtch over MCP, what tools it gets, why it has no way to approve or start a burn, and how to ask it for good work.
 - [Keyboard shortcuts](keyboard-shortcuts.md): Every keyboard shortcut in OpenEtch, how to open the list, how to change a key, and which keys browsers keep for themselves.
 - [Troubleshooting](troubleshooting.md): Fixes for common problems: cannot connect, access token, no laser, refused starts, slow preview, missing fonts after a LightBurn import, wrong field size, bug reports, logs and updates.
 
@@ -109,7 +111,7 @@ OpenEtch has two parts.
 
 Every browser connected to the same engine shows the same live design. A change you make on the iPad appears on the PC straight away.
 
-AI agents can connect to the engine too, through its MCP endpoint. An agent can design with the same commands you use, and each change it makes appears in the timeline with the agent's name. An agent can also frame with the red pointer and prepare a run, but it can never approve or start a burn. Only a person can: with the operator PIN in the app or, when the engine runs with `--approval click`, with **Start** in the app or the foot switch. See [AI agents](ai-agents.md).
+AI agents can connect to the engine too, through its MCP endpoint. An agent can design with the same commands you use, and each change it makes appears in the timeline with the agent's name. An agent can also frame with the red pointer and prepare a run, but MCP gives it no way to approve or start a burn. Only a person can: with the operator PIN in the app or, when the engine runs with `--approval click`, with **Start** in the app or the foot switch. See [AI agents](ai-agents.md).
 
 > **Note:** Many features have so far only run on the engine's simulator, not on a real laser. Settings in this guide are starting points to test on your own material, never guaranteed results.
 

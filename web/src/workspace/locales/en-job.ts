@@ -77,7 +77,7 @@ export const EN_JOB = {
   "frame.live": "Live framing",
   "frame.liveTitle": "The frame follows every edit; while framing, the keys move, scale and rotate the framed shapes",
   "frame.liveKeys": "While framing: arrows move 5 mm (Shift 20, Ctrl 0.5), Page Up/Down scale, . and , rotate 15° (Shift 1.5°, Ctrl 45°). Acts on the selection, else on every shape.",
-  "frame.lightOnly": "Framing only moves the pointer: it can never fire the laser.",
+  "frame.lightOnly": "Framing only moves the pointer: it does not switch on the marking laser.",
   "frame.toast": "Framing with the pointer.",
   "frame.liveToast": "Live framing: edits move the frame.",
   "frame.stoppedToast": "Framing stopped. Pending runs are kept.",

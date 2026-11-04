@@ -218,4 +218,4 @@ When you start a job, the pre-flight check warns about variable text that would 
 
 ## AI agents
 
-An AI agent connected over MCP can set up variable text, change the counter and run the same row check. It can never approve or start a burn: a person does that at the machine. See [AI agents](ai-agents.md).
+An AI agent connected over MCP can set up variable text, change the counter and run the same row check. MCP gives it no way to approve or start a burn: a person does that at the machine. See [AI agents](ai-agents.md).

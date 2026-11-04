@@ -102,7 +102,7 @@ Right-click a step (or tap or long-press it on a touch screen) for **Roll marker
 
 In the compact and tablet layouts the timeline shares the bottom row with the status bar. In the compact layout, click **Pin the timeline open** to keep it showing. On the phone, the timeline is a list under **More > History**.
 
-> **Note:** AI agents connected over MCP edit the same design, and their steps appear on the timeline like yours. Agents can design, but they can never approve or start a burn. See [AI agents](ai-agents.md).
+> **Note:** AI agents connected over MCP edit the same design, and their steps appear on the timeline like yours. Agents can design, but MCP gives them no way to approve or start a burn. See [AI agents](ai-agents.md).
 
 ![The left end of the timeline: New document, Rectangle, Ellipse and a grey Move step after the marker](img/timeline.webp)
 

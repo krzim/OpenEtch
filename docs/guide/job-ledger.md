@@ -115,4 +115,4 @@ The window shows how much is kept now. Lowering a limit deletes the oldest kept 
 
 ## What agents can do with the ledger
 
-An AI agent connected over MCP can search the job log, read a run, mark a run OK or scrap with a note (recorded as an agent's note, and only meant for when you have told it how the part came out), and open a stored job. It can then prepare a run, but never approve or start it. See [What AI agents can and cannot do](safety.md#what-ai-agents-can-and-cannot-do).
+An AI agent connected over MCP can search the job log, read a run, mark a run OK or scrap with a note (recorded as an agent's note, and only meant for when you have told it how the part came out), and open a stored job. It can then prepare a run, but MCP gives it no way to approve or start it. See [What AI agents can and cannot do](safety.md#what-ai-agents-can-and-cannot-do).

@@ -3,14 +3,14 @@ title: AI agents
 order: 33
 section: Setup and reference
 needs: design
-summary: Connect an AI agent to OpenEtch over MCP, what tools it gets, why it can never approve or start a burn, and how to ask it for good work.
+summary: Connect an AI agent to OpenEtch over MCP, what tools it gets, why it has no way to approve or start a burn, and how to ask it for good work.
 ---
 
 # AI agents
 
 OpenEtch has an MCP server, so an AI agent (an AI assistant that can use tools) can design with you. The agent works on the same live document you see. Its edits appear in the timeline like yours, and you can undo them.
 
-An agent can design, preview, frame with the red pointer and prepare a run. **It can never approve or start a burn.** A person always does that, in the app or with the foot switch.
+An agent can design, preview, frame with the red pointer and prepare a run. **MCP gives it no way to approve or start a burn.** A person does that, in the app or with the foot switch.
 
 ## What an agent can and cannot do
 
@@ -23,7 +23,7 @@ An agent **can**:
 - switch between open documents (you see the switch);
 - frame the job with the red pointer (on a galvo), and stop framing;
 - create a **pending** run, which waits for a person;
-- press Stop (always allowed);
+- press Stop;
 - read the machine status, the devices and the production cockpit;
 - search the job ledger, open a burned job as a new document, and record a verdict when you tell it how a part came out;
 - read the material libraries, edit a preset's finish data, suggest hue nudges and make bracket test grids (library changes stay unsaved until you save the library).
@@ -126,15 +126,15 @@ Tips:
 - For LightBurn files, tell the agent the field size the file was made for if it is not your active device's.
 - Ask the agent to say what it changed. You can always undo.
 
-> **Warning:** Check any settings an agent suggests before you burn, including every box of a bracket test grid. Work out the energy density yourself: J/mm² = power W ÷ (speed mm/s × line interval mm). On stainless with a 60 W MOPA, roughly 2 to 15 J/mm² marks without melting; more can melt or warp thin stock. Wear eye protection rated for your laser's wavelength, run the fume extraction and never leave a job unattended.
+> **Warning:** Check any settings an agent suggests before you burn, including every box of a bracket test grid. Work out the energy density yourself: J/mm² = power W ÷ (speed mm/s × line interval mm). On stainless with a 60 W MOPA, roughly 2 to 15 J/mm² marked without melting on the reference machine (yours may differ); more can melt or warp thin stock. Wear eye protection rated for your laser's wavelength, run the fume extraction and never leave a job unattended.
 
-## Keep it safe
+## What these limits do not cover
 
-The MCP tools cannot fire the laser. That protection does not cover a program that runs on the engine's own computer with your user rights, such as an agent with a shell or one that controls a browser. Such a program could act like the app.
+The MCP tools have no command that fires the laser. That does not cover a program that runs on the engine's own computer with your user rights, such as an agent with a shell or one that controls a browser. Such a program could act like the app.
 
 - Use the operator PIN mode (the default) when agents with shell or browser control run on the laser's computer and nobody is watching.
 - On an engine without a PIN, any program on the engine's computer can press Start the way the app does. Prefer the PIN mode there.
-- The hardware E-stop and key switch are the real safety system.
+- OpenEtch is not a safety system. Rely on your machine's hardware E-stop and key switch.
 
 ## Troubleshooting agents
 

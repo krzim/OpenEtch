@@ -214,7 +214,7 @@ Photos, colours and notes are kept beside the library, not inside the `.clb`. To
 
 ## AI agents and colour
 
-An AI agent connected through MCP can list presets and their finishes, edit finish notes and colours (not photos), compute or apply hue steps on a preset or a layer, make a bracket test, write back the box you tell it is best, and run colour separation. It cannot change the hue step model, cannot save the library, and can never approve or start a burn. A run it asks for waits until a person approves it in the app. See [AI agents](ai-agents.md).
+An AI agent connected through MCP can list presets and their finishes, edit finish notes and colours (not photos), compute or apply hue steps on a preset or a layer, make a bracket test, write back the box you tell it is best, and run colour separation. It cannot change the hue step model, cannot save the library, and has no way to approve or start a burn. A run it asks for waits until a person approves it in the app. See [AI agents](ai-agents.md).
 
 ## Common mistakes
 

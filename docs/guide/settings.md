@@ -127,7 +127,7 @@ The **Defaults** button's tooltip says whether a default is saved for this colou
 
 A layer linked to a Material Library preset shows **Linked**. Its settings follow the preset and cannot be edited here; click **Unlink** to edit them, or **Library…** to open the [Material Library](material-libraries.md).
 
-> **Warning:** A saved default is used on every new layer of that colour. Check the energy density of the settings before you save them: J/mm² = power W ÷ (speed mm/s × line interval mm). On stainless with a 60 W MOPA, roughly 2 to 15 J/mm² marks without melting. Treat these as starting points to test.
+> **Warning:** A saved default is used on every new layer of that colour. Check the energy density of the settings before you save them: J/mm² = power W ÷ (speed mm/s × line interval mm). On stainless with a 60 W MOPA, roughly 2 to 15 J/mm² marked without melting on the reference machine (yours may differ). Treat these as starting points to test.
 
 ## Optimisation defaults
 
@@ -191,7 +191,7 @@ A bundle moves your settings, devices and material libraries to another computer
 2. Click **Export bundle** for an OpenEtch bundle (`.oebundle`), or **Export LightBurn bundle (.lbzip)** for LightBurn. A LightBurn bundle has no preferences or hotkeys.
 3. On the other computer, open the same dialog, tick what to take, click **Import bundle…**, pick the file and click **Continue**.
 
-Imported devices are added as new devices and keep the receiving machine's safety limits. Import also reads LightBurn bundles (`.lbzip`): their settings (only the ones OpenEtch has), devices, material libraries, material test presets, image presets and art libraries, but not hotkeys. A summary shows what was imported and what was skipped.
+Imported devices are added as new devices and keep the receiving machine's limits. Import also reads LightBurn bundles (`.lbzip`): their settings (only the ones OpenEtch has), devices, material libraries, material test presets, image presets and art libraries, but not hotkeys. A summary shows what was imported and what was skipped.
 
 ## Import options
 

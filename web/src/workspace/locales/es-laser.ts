@@ -109,5 +109,5 @@ export const ES_LASER: Messages = {
   "apir.jobCancelled": "Trabajo cancelado antes de empezar.",
   "apir.jobFailed": "El trabajo falló.",
   "lz.stopTitle":
-    "Parada de emergencia: termina cualquier trabajo o encuadre y cancela las ejecuciones pendientes. Siempre permitida. Teclas: Ctrl+Pausa, o Ctrl+. (⌘.) mientras corre un trabajo.",
+    "Parada: termina cualquier trabajo o encuadre y cancela las ejecuciones pendientes. Es una parada por software: ten a mano la parada de emergencia física de tu máquina. Teclas: Ctrl+Pausa, o Ctrl+. (⌘.) mientras corre un trabajo.",
 };

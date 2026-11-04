@@ -116,7 +116,7 @@ export const EN_UI = {
   "top.redoTitle": "Redo (Ctrl+Shift+Z)",
   "top.redo": "Redo",
   "top.cmdMissing": "{n} cmd missing",
-  "top.stopTitle": "Emergency stop: abort any run or frame and cancel pending runs. Always allowed.",
+  "top.stopTitle": "Stop: abort any run or frame and cancel pending runs. A software stop: keep your machine's hardware emergency stop within reach.",
   "top.stop": "STOP",
   "fm.unsavedNamed": "\"{name}\" has unsaved changes.",
   "fm.notSaved": "This document has not been saved.",

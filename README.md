@@ -3,7 +3,7 @@
 Open-source design and control software for galvo fibre lasers with BJJCZ (LMC, EzCad2-family) boards. It works
 much like LightBurn: draw or import a design, put shapes on layers with cut settings, preview and frame the job,
 then burn it. A Rust engine runs beside the laser, on a Raspberry Pi or a PC. You use the app in a browser on a PC,
-Mac, iPad or phone. AI agents can design over MCP, but only a person can approve or start a burn.
+Mac, iPad or phone. AI agents can design over MCP; approving and starting a burn is left to a person in the app.
 
 The reference machine is a ComMarker B6 MOPA 60 W.
 
@@ -12,9 +12,10 @@ and nothing uploaded.
 
 ![The Design workspace on a desktop browser, with a two-tone coin open](docs/guide/img/workspace-desktop-design.webp)
 
-> **Status:** early and under active development. Burning has been tested only on the B6 MOPA. GRBL and Ruida
-> gantries can be added by hand, but their support is untested on real hardware. Read
-> [Laser safety](docs/guide/safety.md) before you connect a laser.
+> [!WARNING]
+> **Use at your own risk.** OpenEtch is early, experimental software, provided "as is" with no warranty of any
+> kind (see [Disclaimer](#disclaimer)). It is not a safety system. Burning has been tested only on the B6 MOPA, and
+> GRBL and Ruida support is untested on real hardware.
 
 ## What it does
 
@@ -25,15 +26,15 @@ and nothing uploaded.
   passes, sub-layers and burn order), LightBurn `.clb` material libraries, MOPA colour notes and preview, test grids
   with an energy-density check, and a 3D relief preview.
 - **Run jobs:** toolpath preview with a time estimate, red-dot framing, operator-PIN approval, foot switch, pause at a
-  layer, repeat and job counter, a production cockpit for batch work, a serial ledger and a job log. A **STOP**
-  button is on every screen.
+  layer, repeat and job counter, a production cockpit for batch work, a serial ledger and a job log. A software
+  **STOP** button is on every screen; it does not replace your machine's hardware emergency stop.
 - **Files:** open SVG, DXF, PDF, AI, EPS, images, HPGL, G-code, Gerber, 3D models (as depth maps), EzCad `.ezd`,
   RDWorks `.rd` and LightBurn `.lbrn2` / `.lbrn` / `.lbt` files. Export SVG, DXF, PDF and LightBurn, and move
   settings with LightBurn `.lbzip` bundles.
 - **Devices:** import devices from LightBurn or EzCad, lens correction files, galvo and red-dot calibration, rotary.
 - **Any screen:** a Fusion 360-style workspace on a desktop, with iPad and phone layouts. It installs as a web app.
 - **AI agents:** an MCP server at `/mcp` gives agents the same design commands as the app. They can draw, edit and
-  check a job, but never approve or start a burn. See [AI agents](docs/guide/ai-agents.md).
+  check a job, but MCP gives them no way to approve or start a burn. See [AI agents](docs/guide/ai-agents.md).
 - **Add-ins:** send drawings from [Autodesk Fusion](tools/fusion360-addin/README.md) and
   [Inkscape](tools/inkscape-extension/README.md).
 
@@ -87,6 +88,18 @@ or pair a phone, see [Getting started](docs/guide/getting-started.md).
 Bug reports and pull requests are welcome. Before you send a change, run `cargo test --workspace` and
 `cargo clippy --workspace --all-targets`, and in `web` run `npm test` and `npm run typecheck`. Never test against a real
 laser from a test or a script: use the simulator.
+
+## Disclaimer
+
+OpenEtch is provided "as is", without warranty of any kind, express or implied, as set out in its licences. It is
+not a safety system and is not certified or tested for any purpose. Lasers can cause blindness, serious burns and
+fires, and a software fault, a wrong setting or a lost connection can make a laser do something you did not expect.
+
+You use OpenEtch at your own risk. You are responsible for operating your laser safely: follow its manufacturer's
+instructions and the safety rules and laws where you are, wear eye protection rated for your laser, and never leave a
+running laser unattended. The safety notes in the [user guide](docs/guide/safety.md) are general reminders, not
+complete or professional safety advice. The authors and contributors are not liable for any injury, damage or loss
+from using OpenEtch.
 
 ## Licence
 

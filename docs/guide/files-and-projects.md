@@ -436,7 +436,7 @@ Tick the parts you want: **Preferences**, **Devices**, **Material libraries**, a
 
 When you import a bundle:
 
-- Devices are added as new devices and keep this machine's safety limits. A device that is already there, unchanged, is skipped.
+- Devices are added as new devices and keep this machine's limits. A device that is already there, unchanged, is skipped.
 - A material library whose name exists with other content loads as "name (bundle)", so nothing is overwritten.
 - From a LightBurn bundle, only the settings OpenEtch has are used. Hotkeys are not imported.
 

@@ -169,7 +169,7 @@ On Linux, `XDG_CONFIG_HOME` and `XDG_DATA_HOME` change these when they are set.
 
 Open the engine's address in a browser. On the engine's own computer that is `http://localhost:7878`. On another device use the engine computer's network address and port, `http://<engine address>:7878`.
 
-To use a name such as `http://openetch.local:7878`, start the engine with `--allow-host openetch.local`. The engine refuses host names it does not know, to protect you from other websites. Plain IP addresses always work.
+To use a name such as `http://openetch.local:7878`, start the engine with `--allow-host openetch.local`. The engine refuses host names it does not know, to block requests from other websites. Plain IP addresses always work.
 
 The app picks its layout from the screen size and whether you use a mouse or a finger. You can change it in **Preferences**. See [The workspace](the-workspace.md#layouts-at-a-glance).
 
@@ -221,7 +221,7 @@ If a token may have leaked, make a new one:
 
 On a network you trust completely, you can start the engine with `--no-token`. Anyone who can reach the port can then use the app and the MCP endpoint without a token. They can edit designs, frame with the red pointer and request runs.
 
-A burn still needs a person at the app or the machine: the operator PIN typed in the app or, with `--approval click`, **Start** in the app or the foot switch. An AI agent can never approve one.
+A burn still needs a person at the app or the machine: the operator PIN typed in the app or, with `--approval click`, **Start** in the app or the foot switch. MCP gives AI agents no way to approve one.
 
 > **Warning:** Do not use `--no-token` on a shared, guest or public network.
 
@@ -296,7 +296,11 @@ The example opens as a new, unsaved document laid out for your active laser. The
 
 ## Before you burn anything
 
-OpenEtch is safe to explore on the simulator. Before your first real burn:
+You can explore OpenEtch on the simulator, with no laser connected.
+
+> **Warning:** **Use at your own risk.** OpenEtch is provided as is, with no warranty of any kind. It is not a safety system and is not certified for any use. Lasers can cause blindness, burns and fires. You are responsible for using your laser safely, following its manufacturer's instructions and the rules where you are. The safety notes in this guide are general reminders, not complete safety advice.
+
+Before your first real burn:
 
 1. Read [Laser safety](safety.md). Wear eye protection rated for your laser's wavelength (1064 nm for a fibre laser). Run fume extraction. Never leave a running job unattended. Know where the laser's hardware emergency stop is.
 2. Set how burns are approved: the operator PIN (`openetch set-pin`, then restart the engine) or `--approval click`. Without a PIN, and without `--approval click`, no run can be approved. The foot switch starts burns only with `--approval click`. See [Running a job](running-a-job.md).
@@ -314,11 +318,11 @@ For power, use the laser's rated power times the power percentage. For example, 
 
 30 ÷ (300 × 0.02) = 30 ÷ 6 = **5 J/mm²**
 
-On stainless steel with a 60 W MOPA, roughly 2 to 15 J/mm² marks without melting. Higher values can melt or warp thin stock. Slower speed, a finer interval or more power all raise the energy. Treat these numbers as a guide and test on scrap first.
+On stainless steel with a 60 W MOPA, roughly 2 to 15 J/mm² marked without melting on the reference machine (yours may differ). Higher values can melt or warp thin stock. Slower speed, a finer interval or more power all raise the energy. Treat these numbers as a guide and test on scrap first.
 
 ## Your first job
 
-This walks you through one job from start to finish with the Two-tone MOPA coin example. Try it on the simulator first: nothing fires there.
+This walks you through one job from start to finish with the Two-tone MOPA coin example. Try it on the simulator first: it drives no laser.
 
 1. Choose **File > New from example…** and open the **Two-tone MOPA coin**. See [Open an example project](#open-an-example-project).
 2. Open the **Cuts / Layers** window (on a phone, the **Layers** tab) and look at each layer's power, speed and line interval. See [Layers and cut settings](layers-and-settings.md).

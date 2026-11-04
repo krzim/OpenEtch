@@ -298,7 +298,7 @@ The **Calibrate galvo lens** wizard marks a test square, asks you to measure it,
 
 You need: a device you can edit (not the built-in one) that is the active device, calipers, and a scrap piece of your test material. **Calibrate lens…** stays off until the device is active.
 
-> **Warning:** Before you mark the pattern, work out the energy density of its layer. Energy density in J/mm² = power in watts ÷ (speed in mm/s × line interval in mm). Power in watts is your source's rated power times the power percentage. For example, 40 % of a 60 W source is 24 W; at 400 mm/s and a 0.02 mm interval that is 24 ÷ (400 × 0.02) = 3 J/mm². On stainless steel with a 60 W MOPA, about 2 to 15 J/mm² marks without melting; more can melt or warp thin stock. The lens pattern is thin lines, so use a layer whose settings you have already tested on that material. These numbers are starting points to test, not guarantees.
+> **Warning:** Before you mark the pattern, work out the energy density of its layer. Energy density in J/mm² = power in watts ÷ (speed in mm/s × line interval in mm). Power in watts is your source's rated power times the power percentage. For example, 40 % of a 60 W source is 24 W; at 400 mm/s and a 0.02 mm interval that is 24 ÷ (400 × 0.02) = 3 J/mm². On stainless steel with a 60 W MOPA, about 2 to 15 J/mm² marked without melting on the reference machine (yours may differ); more can melt or warp thin stock. The lens pattern is thin lines, so use a layer whose settings you have already tested on that material. These numbers are starting points to test, not guarantees.
 
 To calibrate:
 

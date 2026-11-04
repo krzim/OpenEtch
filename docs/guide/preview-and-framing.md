@@ -112,7 +112,7 @@ Time spent waiting at a layer pause is not part of the estimate. When the estima
 
 ## Frame the job
 
-Framing traces the job's outline on the work with the red pointer, so you can see where it will burn. Framing only moves the pointer: it can never fire the laser.
+Framing traces the job's outline on the work with the red pointer, so you can see where it will burn. Framing only moves the pointer: it does not switch on the marking laser.
 
 To frame the job:
 

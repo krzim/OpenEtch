@@ -197,5 +197,5 @@ On the phone you can add text and set its font, height, spacing, alignment and s
 ## Before you burn
 
 - Put filled fonts on a **Fill** layer and single-line fonts on a **Line** layer. See [Layers and settings](layers-and-settings.md).
-- Small text on a fill layer needs a fine line interval. Work out the energy density before testing a new setting: J/mm² = power in W ÷ (speed in mm/s × line interval in mm). On stainless with a 60 W MOPA, roughly 2 to 15 J/mm² marks without melting. See [Test grids](test-grids.md).
+- Small text on a fill layer needs a fine line interval. Work out the energy density before testing a new setting: J/mm² = power in W ÷ (speed in mm/s × line interval in mm). On stainless with a 60 W MOPA, roughly 2 to 15 J/mm² marked without melting on the reference machine (yours may differ). See [Test grids](test-grids.md).
 - Frame the job to check the text sits where you expect: [Preview and framing](preview-and-framing.md).
