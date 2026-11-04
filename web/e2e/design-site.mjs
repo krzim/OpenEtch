@@ -15,6 +15,7 @@
 //   npm run build:design   (with VITE_BASE=/OpenEtch/ for the github.io base path)
 //   node e2e/design-site.mjs [--dir dist-design] [--base /OpenEtch/] [--port 7976] [--devices iphone15-portrait,...]
 //     [--out dir] [--cdp-port 9336] [--theme dark|light] [--headful] [--serve-only]
+//   node e2e/design-site.mjs --url https://<owner>.github.io/OpenEtch/ [...]   (the published site; nothing is served)
 //
 // Results: <out>/<device>-<theme>/NN-step.png, report.json and report.md (default out: the system temp folder).
 
@@ -46,6 +47,7 @@ function args(argv) {
     else if (k === "--cdp-port") a.cdpPort = Number(v());
     else if (k === "--headful") a.headful = true;
     else if (k === "--serve-only") a.serveOnly = true;
+    else if (k === "--url") a.url = v();
   }
   a.out = resolve(a.out ?? join(tmpdir(), `oe-design-site-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}`));
   return a;
@@ -478,7 +480,7 @@ async function runDevice(browser, d, theme, ctx) {
 }
 
 function markdown(runs, ctx) {
-  const lines = ["# OpenEtch Design site on the device matrix", "", `Site: ${ctx.url} (static files from ${ctx.dir})`, ""];
+  const lines = ["# OpenEtch Design site on the device matrix", "", ctx.dir === ctx.url ? `Site: ${ctx.url} (published)` : `Site: ${ctx.url} (static files from ${ctx.dir})`, ""];
   for (const r of runs) {
     lines.push(`## ${r.name} (${r.device}, ${r.theme})`, "");
     for (const s of r.results) {
@@ -497,7 +499,12 @@ function markdown(runs, ctx) {
 
 async function main() {
   const a = args(process.argv.slice(2));
-  const site = await serveSite({ dir: a.dir, port: a.port, base: a.base });
+  if (a.url) {
+    if (!a.url.endsWith("/")) a.url += "/";
+    a.base = new URL(a.url).pathname;
+    a.dir = a.url;
+  }
+  const site = a.url ? { url: a.url, close: async () => {} } : await serveSite({ dir: a.dir, port: a.port, base: a.base });
   if (a.serveOnly) {
     console.log(`serving ${a.dir} at ${site.url} (Ctrl+C to stop)`);
     return;

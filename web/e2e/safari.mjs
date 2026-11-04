@@ -9,6 +9,7 @@
 //                       [--desktop] [--keep-booted]
 //
 //   node e2e/safari.mjs --design --port 7976 --mac <host> [--dir dist-design] [--base /OpenEtch/] [--devices ...]
+//   node e2e/safari.mjs --url https://<owner>.github.io/OpenEtch/ --mac <host> [--devices ...]   (the published site)
 //
 // --design: OpenEtch Design, the published static site (web/dist-design, `npm run build:design`), served here under
 // its base path (e2e/static.mjs) and reverse-forwarded the same way; no engine. The walk is the design one
@@ -76,8 +77,14 @@ function args(argv) {
     else if (k === "--design") a.design = true;
     else if (k === "--dir") a.dir = v();
     else if (k === "--base") a.base = v();
+    else if (k === "--url") {
+      a.siteUrl = v().replace(/\/?$/, "/");
+      a.design = true;
+    }
     else if (k === "--help" || k === "-h") a.help = true;
   }
+  // A published site needs no local port; the tunnel still forwards one (nothing listens on it).
+  if (a.siteUrl) a.port ??= 7976;
   return a;
 }
 
@@ -1330,7 +1337,9 @@ async function main() {
     return;
   }
   let site = null;
-  if (a.design) {
+  if (a.siteUrl) {
+    // OpenEtch Design as published (--url): nothing to serve, no engine.
+  } else if (a.design) {
     // OpenEtch Design: the static site, served here; no engine.
     site = await serveSite({ dir: a.dir ?? join(here, "..", "dist-design"), port: a.port, base: a.base ?? "/OpenEtch/" });
     a.siteUrl = site.url;

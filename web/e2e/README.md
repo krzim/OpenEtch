@@ -165,7 +165,10 @@ is logged: anything outside the site's own files is an error. Screenshots and th
 cd web
 node e2e/design-site.mjs [--dir dist-design] [--base /OpenEtch/] [--port 7976] [--devices iphone15-portrait,...] [--out dir]
 node e2e/static.mjs --dir dist-design --base /OpenEtch/ --port 7976     # just serve it
+node e2e/design-site.mjs --url https://<owner>.github.io/OpenEtch/        # the published site
 ```
+
+Both `design-site.mjs` and `safari.mjs` take `--url` to walk the published site instead of a local build.
 
 `safari.mjs --design` runs the same kind of walk in real Mobile Safari (see "Real Safari").
 
