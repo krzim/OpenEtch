@@ -9,8 +9,8 @@ Work goes in batches. Each batch is built against a written contract, verified e
 swapped into the running server. Every finished item gets its tracker line updated in the same commit
 (`python -I docs/parity/set_status.py ID STATUS EVIDENCE [NOTE]`).
 
-Audit of 2026-11-02 (after the B6 hardware session, the gantry merge and the GRBL UI): 315 galvo items, **311 done,
-1 partial, 0 missing, 3 n/a** (343 items in all: 315 done, 9 partial, 4 missing, 15 n/a). Every batch below is done; what is left of each is listed under
+Count of 2026-11-04 (UX-068 tried in LightBurn): 315 galvo items, **312 done, 0 partial, 0 missing, 3 n/a** (343 items
+in all: 325 done, 4 partial, 0 missing, 14 n/a). The audit of 2026-11-02 had 311 galvo items done and 1 partial. Every batch below is done; what is left of each is listed under
 [Remaining galvo items](#remaining-galvo-items). UX-061 (language) counts as done because every UI string is in the
 message tables and the language switches live; only English is complete (the machine-translated Spanish covers 568
 of 2807 keys), and more languages are translation content, not code.
@@ -24,7 +24,7 @@ of 2807 keys), and more languages are translation content, not code.
 | 5 | Running jobs and the machine: pause/resume, progress, counter, repeat, run continuously, start/stop inputs, cut selected; framing modes, live framing, red dot, blanking, focus light; galvo calibration and lens wizard; device editor, .lbdev, markcfg, add-galvo wizard; Z axis; rotary; preview slider, play, start here; camera | JOB-007..084, OTH-005..030 | done |
 | 6 | Cut order and per-layer options | JOB-008..018, LAY-001..066 | done |
 | 7 | Layers, libraries and workspace: Cuts/Layers window, defaults, material library, material/interval/focus tests, Laser window, numeric toolbar, docks, hotkeys, units, theme, preferences, i18n, help, logs | LAY-037..071, UX-041..074 | done |
-| 8 | Files: exports, print, autosave and backups, notes, thumbnails, several documents, system clipboard, AI/PDF/EPS/HPGL/TIFF imports, import options, legacy .lbrn, templates, art library, .ezd, Gerber, 3D models, trace, masks, 3D sliced, print and cut, pages, CAD "send to laser" | UX-002..049, DES-019..074, LAY-031, JOB-006..007, OTH-002..028 | done; UX-045, UX-068 left; OTH-002 n/a (owner's choice) |
+| 8 | Files: exports, print, autosave and backups, notes, thumbnails, several documents, system clipboard, AI/PDF/EPS/HPGL/TIFF imports, import options, legacy .lbrn, templates, art library, .ezd, Gerber, 3D models, trace, masks, 3D sliced, print and cut, pages, CAD "send to laser" | UX-002..049, DES-019..074, LAY-031, JOB-006..007, OTH-002..028 | done; OTH-002 n/a (owner's choice) |
 
 Items that need hardware the B6 lacks (galvo camera, rotary, Z axis, focus light, foot pedal inputs) are built and
 tested on the simulator and marked "unverified on hardware" in their notes until someone runs them on a machine.
@@ -56,9 +56,8 @@ None: DES-055 (barcode types) was the last one; ArUco MIP 36h11 is now done (the
 2026-11-01: the owner's LightBurn 2.2 samples (`Test files/lightburn-samples`) settled DES-045, UX-045, OTH-022 and DES-055 and most of UX-068; DES-051 was closed with two OFL 1.1 SHX fonts found online. Before that: the 26 sample projects in the sample folders hold only Path, Rect, Ellipse, Text, Group and
 Bitmap shapes (no Polygon), every Enhance value in them is 0, and no .lbart, .lbzip or .shx file is on the computer.
 
-| Item | File needed | Then |
-|---|---|---|
-| UX-068 .lbzip (every item LightBurn 2.2 writes is read and written, checked against its full export of 2026-11-03: hotkeys, image presets, material libraries and the device's library link) | The owner importing OpenEtch's own `.lbzip` in LightBurn with hotkeys and a linked library | Tick hotkeys and the library link off as tried in LightBurn (devices import since 1509c99) |
+None. UX-068 (.lbzip) was the last: LightBurn 2.2 imported OpenEtch's own bundle on 2026-11-04 with its hotkeys and a
+device linked to its material library.
 
 ### Needs other hardware (n/a for the B6)
 
