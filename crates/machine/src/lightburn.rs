@@ -927,13 +927,15 @@ pub fn profile_from_lightburn(dev: &LightBurnDevice, base: &MachineProfile) -> (
 /// was made from (`lightburn`, may be empty), overridden by the values of `profile` where OpenEtch has them (field,
 /// axes, correction file name, timing, speeds, frequency range, pulse width, open-MO delay, start-mark bit, frame
 /// speed, lens corrections). Nothing else is written: no paths, macros or secrets. Galvo 2 is written as field X
-/// (see the module docs).
-pub fn to_lbdev(display_name: &str, lightburn: Option<&LightBurnDevice>, profile: Option<&MachineProfile>) -> String {
+/// (see the module docs). `id` (the OpenEtch device id) makes the `GUID`, which LightBurn needs to import the file
+/// (without one it lists the device as "error"); the imported GUID is never kept.
+pub fn to_lbdev(id: &str, display_name: &str, lightburn: Option<&LightBurnDevice>, profile: Option<&MachineProfile>) -> String {
     use serde_json::{Map, json};
     let lb = lightburn.cloned().unwrap_or_default();
     let mut dev = Map::new();
     let name = if lb.name.is_empty() { "JCZFiber".to_owned() } else { lb.name.clone() };
     dev.insert("Name".into(), json!(name));
+    dev.insert("GUID".into(), json!(lbdev_guid(id)));
     dev.insert("DisplayName".into(), json!(display_name));
     dev.insert("Type".into(), json!(if lb.kind.is_empty() { "LibUSB" } else { lb.kind.as_str() }));
     let width = profile.map(|p| p.field_mm).or(lb.width_mm);
@@ -1028,6 +1030,12 @@ pub fn to_lbdev(display_name: &str, lightburn: Option<&LightBurnDevice>, profile
     dev.insert("Settings".into(), Value::Object(set));
     let file = json!({ "DeviceList": [Value::Object(dev)] });
     serde_json::to_string_pretty(&file).unwrap_or_default()
+}
+
+/// A device's LightBurn `GUID`: "oe" and the FNV-1a hash of its OpenEtch id, so exporting it again gives the same one.
+fn lbdev_guid(id: &str) -> String {
+    let hash = id.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3));
+    format!("oe{hash:016x}")
 }
 
 /// The diffs as a plain-text table (`field | profile | LightBurn | note`).
@@ -1184,8 +1192,12 @@ mod tests {
         base.timing.laser_on_delay_us = -150.0;
         base.start_mark_input_bit = Some(14);
         base.negate_y = true;
-        let text = to_lbdev("My galvo", None, Some(&base));
+        let text = to_lbdev("my-galvo", "My galvo", None, Some(&base));
         assert!(!text.contains("Secret") && !text.contains(":\\\\"), "{text}");
+        // LightBurn refuses a device without a GUID; it is the same on every export and differs between devices.
+        let guid = lbdev_guid("my-galvo");
+        assert!(text.contains(&format!("\"GUID\": \"{guid}\"")), "{text}");
+        assert_eq!((guid.len(), guid == lbdev_guid("my-galvo-2")), (18, false));
         let prefs = parse_lbdev(&text).unwrap();
         let d = &prefs.devices[0];
         assert_eq!((d.name.as_str(), d.display_name.as_str(), d.width_mm), ("JCZFiber", "My galvo", Some(base.field_mm)));
@@ -1203,7 +1215,7 @@ mod tests {
         assert_eq!((p.field_mm, p.field_height_mm), (200.0, Some(120.0)));
         assert!(diffs.iter().any(|d| d.field == "field_height_mm"), "{diffs:?}");
         assert_eq!(p.field_transform().height_mm(), 120.0);
-        let text = to_lbdev("Wide", None, Some(&p));
+        let text = to_lbdev("wide", "Wide", None, Some(&p));
         let back = &parse_lbdev(&text).unwrap().devices[0];
         assert_eq!((back.width_mm, back.height_mm), (Some(200.0), Some(120.0)));
         // A square LightBurn field (to its 0.1 mm display) stays square.
@@ -1222,10 +1234,10 @@ mod tests {
         assert_eq!((p.start_mark_input_bit, p.start_mark_active_low), (Some(14), true));
         assert!(diffs.iter().any(|d| d.field == "start_mark_active_low" && d.note.contains("active low")), "{diffs:?}");
         // Written back as LightBurn has it, also when the profile changed the level.
-        let lbdev = to_lbdev("x", Some(&d), Some(&p));
+        let lbdev = to_lbdev("x", "x", Some(&d), Some(&p));
         assert!(lbdev.contains("\"StartMarkBitHigh\": false"), "{lbdev}");
         let high = MachineProfile { start_mark_active_low: false, ..p.clone() };
-        assert!(to_lbdev("x", Some(&d), Some(&high)).contains("\"StartMarkBitHigh\": true"));
+        assert!(to_lbdev("x", "x", Some(&d), Some(&high)).contains("\"StartMarkBitHigh\": true"));
         d.settings.start_mark_bit_high = Some(true);
         let p = profile_from_lightburn(&d, &MachineProfile::generic_jcz_galvo()).0;
         assert_eq!((p.start_mark_input_bit, p.start_mark_active_low), (Some(14), false));

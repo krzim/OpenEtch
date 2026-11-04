@@ -319,7 +319,7 @@ pub fn export(st: &AppState, parts: &[String]) -> Result<(Vec<u8>, usize), Engin
             reg.list()
                 .iter()
                 .map(|d| {
-                    let text = machine::to_lbdev(&d.display_name, d.lightburn.as_ref(), d.profile.as_ref());
+                    let text = machine::to_lbdev(&d.id, &d.display_name, d.lightburn.as_ref(), d.profile.as_ref());
                     (d.id.clone(), d.name.clone(), d.display_name.clone(), text)
                 })
                 .collect()

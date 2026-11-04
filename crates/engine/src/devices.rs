@@ -504,7 +504,7 @@ impl DeviceRegistry {
     /// `GET /api/devices/{id}/lbdev`: the device as a LightBurn `.lbdev` and a file name for it.
     pub fn lbdev(&self, id: &str) -> Result<(String, String), EngineError> {
         let d = self.get(id).ok_or_else(|| EngineError::NotFound(format!("no device with id '{id}'")))?;
-        let text = machine::to_lbdev(&d.display_name, d.lightburn.as_ref(), d.profile.as_ref());
+        let text = machine::to_lbdev(&d.id, &d.display_name, d.lightburn.as_ref(), d.profile.as_ref());
         Ok((format!("{}.lbdev", d.id), text))
     }
 
