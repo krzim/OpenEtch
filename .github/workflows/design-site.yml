@@ -47,7 +47,7 @@ jobs:
       VITE_BASE: ${{ inputs.base || '/OpenEtch/' }}
     steps:
       - name: Check out
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -57,7 +57,7 @@ jobs:
           rustup default 1.95.0
 
       - name: Cache cargo and target
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -68,7 +68,7 @@ jobs:
           restore-keys: design-${{ runner.os }}-
 
       - name: Node 22
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
@@ -83,8 +83,10 @@ jobs:
         run: node scripts/wasm.mjs --tools
 
       - name: Licence gate (cargo-deny, deny.toml)
+        # The cache restores ~/.cargo/bin but not cargo's install records, so a plain `cargo install` of a cached
+        # binary stops with "already exists": install only when that version is missing.
         run: |
-          cargo install cargo-deny --version 0.18.2 --locked
+          cargo deny --version 2>/dev/null | grep -qx "cargo-deny 0.18.2" || cargo install cargo-deny --version 0.18.2 --locked --force
           cargo deny check licenses
 
       - name: Browser core tests (native)
@@ -131,7 +133,7 @@ jobs:
           touch web/dist-design/.nojekyll
 
       - name: Hand the site to Pages
-        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: web/dist-design
 
@@ -147,4 +149,4 @@ jobs:
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - id: deploy
-        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
