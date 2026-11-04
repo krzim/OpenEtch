@@ -123,6 +123,19 @@ object with exactly one action key:
 | `{ "escape": true }` | Close menus, dialogs and drawers |
 | `{ "scroll": ".selector" }` | Scroll that element to the top of its scrolling panel |
 
+A shot with `"record": { "pause"?: ms, "hold"?: ms, "glide"?: ms }` is recorded instead of captured (desktop devices,
+no crop): the steps run with a visible pointer that glides to each target (`glide`, 450 ms) and a ring on each press,
+a `pause` after every step that is not a wait (900 ms) and a `hold` at the end (2000 ms), and the screencast frames are
+written with their times to `<out>/<name>.frames/` (`frames.json` and JPEGs). `web/e2e/frames-to-gif.py` (Pillow:
+`pip install pillow`) turns them into an animated GIF or WebP, resampled at a fixed frame rate with one shared palette.
+The README's pictures are shots like these, listed in `docs/readme/shots.json`:
+
+```sh
+npm run guide:shots -- --engine ../target/release/openetch --shots ../docs/readme/shots.json --out ../docs/readme --only hero-light,hero-dark
+npm run guide:shots -- --engine ../target/release/openetch --shots ../docs/readme/shots.json --out ../target/readme --only workflow
+python e2e/frames-to-gif.py ../target/readme/workflow.frames ../docs/readme/workflow.webp --width 1280 --fps 12
+```
+
 Every shot starts in a fresh browser context: `doc.new {example}`, the page loaded, the example's notes and the "Use
 as an app" offer closed. Writers who describe a shot in words ("the Cuts / Layers window on a PC, two-tone coin, Rim
 selected") turn it into steps one action at a time: the device and example become `device` and `example`, "open X"

@@ -256,8 +256,18 @@ async function selected(page, id) {
   }, id);
 }
 
-async function pressTarget(page, d, target, within, how) {
+/** Where to press `target`. While recording, the mouse glides there first and the target is found again: the page
+ * can move during the glide (a toast going away re-centres a dialog). */
+async function aim(page, target, within) {
   const c = await locate(page, target, within);
+  if (!page.recording || c.candidates) return c;
+  await page.mouse("mouseMoved", c.x, c.y, { button: "none" });
+  await page.settle(150);
+  return locate(page, target, within);
+}
+
+async function pressTarget(page, d, target, within, how) {
+  const c = await aim(page, target, within);
   const points = c.candidates ?? [c];
   for (const p of points) {
     if (how === "dbl") {
@@ -326,7 +336,7 @@ async function runStep(page, d, step) {
   } else if ("menu" in step) await menuPath(page, step.menu);
   else if ("type" in step) {
     if (step.into) {
-      const c = await locate(page, step.into);
+      const c = await aim(page, step.into);
       await page.press(c.x, c.y);
       await sleep(150);
       await page.evaluate(() => document.activeElement?.select?.());
@@ -398,6 +408,66 @@ async function runStep(page, d, step) {
   await sleep(250);
 }
 
+/** A visible pointer for recordings (headless Chrome draws none): an arrow that follows the mouse events the steps
+ * send, with a ring on each press. */
+const CURSOR_SCRIPT = `addEventListener("DOMContentLoaded", () => {
+  const c = document.createElement("div");
+  c.setAttribute("aria-hidden", "true");
+  c.style.cssText = "position:fixed;left:0;top:0;width:22px;height:22px;z-index:2147483647;pointer-events:none;transform:translate(-100px,-100px);transition:none";
+  c.innerHTML = '<svg width="22" height="22" viewBox="0 0 22 22"><path d="M2 1.5 L2 17 L6.2 13 L9 19.5 L11.6 18.4 L8.9 12 L14.6 12 Z" fill="#111" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/></svg>';
+  document.documentElement.appendChild(c);
+  const move = (e) => { c.style.transform = "translate(" + e.clientX + "px," + e.clientY + "px)"; };
+  addEventListener("mousemove", move, true);
+  addEventListener("pointerdown", (e) => {
+    move(e);
+    const r = document.createElement("div");
+    r.setAttribute("aria-hidden", "true");
+    r.style.cssText = "position:fixed;z-index:2147483646;pointer-events:none;width:34px;height:34px;border-radius:50%;border:3px solid rgba(25,118,210,.85);left:" + (e.clientX - 17) + "px;top:" + (e.clientY - 17) + "px;transition:transform .45s ease-out,opacity .45s ease-out;transform:scale(.4);opacity:1";
+    document.documentElement.appendChild(r);
+    requestAnimationFrame(() => { r.style.transform = "scale(1.3)"; r.style.opacity = "0"; });
+    setTimeout(() => r.remove(), 600);
+  }, true);
+});`;
+
+/** Record a shot as timed frames (Page.startScreencast): the mouse glides between targets, and each step is followed
+ * by a pause so a viewer can follow. Returns stop(), which resolves to the frames (`{data, t}`, JPEG base64, t in s). */
+async function startRecording(page, d, rec) {
+  const frames = [];
+  const off = page.conn.on((m) => {
+    if (m.sessionId !== page.sessionId || m.method !== "Page.screencastFrame") return;
+    frames.push({ data: m.params.data, t: m.params.metadata.timestamp });
+    page.send("Page.screencastFrameAck", { sessionId: m.params.sessionId }).catch(() => {});
+  });
+  const glide = rec.glide ?? 450;
+  const orig = page.mouse.bind(page);
+  let last = { x: d.width * 0.55, y: d.height * 0.6 };
+  await orig("mouseMoved", last.x, last.y, { button: "none" });
+  page.mouse = async (type, x, y, extra = {}) => {
+    const dist = Math.hypot(x - last.x, y - last.y);
+    if (type !== "mouseReleased" && dist > 4 && glide > 0) {
+      const n = Math.max(6, Math.round(glide / 16));
+      for (let k = 1; k < n; k++) {
+        const e = 0.5 - Math.cos((Math.PI * k) / n) / 2;
+        await orig("mouseMoved", last.x + (x - last.x) * e, last.y + (y - last.y) * e, { button: "none", modifiers: extra.modifiers ?? 0 });
+        await sleep(glide / n);
+      }
+    }
+    last = { x, y };
+    return orig(type, x, y, extra);
+  };
+  page.recording = true;
+  await page.send("Page.startScreencast", { format: "jpeg", quality: 92, maxWidth: Math.round(d.width * d.dpr), maxHeight: Math.round(d.height * d.dpr), everyNthFrame: 1 });
+  await sleep(rec.pause ?? 900);
+  return async () => {
+    await sleep(rec.hold ?? 2000);
+    await page.send("Page.stopScreencast").catch(() => {});
+    off();
+    page.mouse = orig;
+    page.recording = false;
+    return frames;
+  };
+}
+
 async function shoot(browser, shot, o) {
   const d = DEVICES.find((x) => x.id === shot.device);
   const page = await browser.newPage();
@@ -410,6 +480,7 @@ async function shoot(browser, shot, o) {
     await page.send("Page.addScriptToEvaluateOnNewDocument", {
       source: `addEventListener("DOMContentLoaded", () => { const s = document.createElement("style"); s.textContent = "*{caret-color:transparent!important}"; document.head.appendChild(s); });`,
     });
+    if (shot.record && !d.touch) await page.send("Page.addScriptToEvaluateOnNewDocument", { source: CURSOR_SCRIPT });
     // The simulator idle: no frame and no run left over from the shot before (one that started a job or waits at a
     // layer pause).
     await api(o.url, "/api/machine/frame/stop", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ origin: "ui" }) }).catch(() => {});
@@ -420,12 +491,35 @@ async function shoot(browser, shot, o) {
     if (d.safe && Object.values(d.safe).some((v) => v > 0)) await applySafeArea(page, d.safe);
     await sleep(1500);
     await closeDialogs(page, d);
+    let stop = null;
+    if (shot.record) {
+      const left = await page.evaluate(scrubPage, { origin: o.url, host: o.host, private: o.privateWords });
+      if (left.length) throw new Error(`refused: something private is on screen (${left.join(", ")})`);
+      stop = await startRecording(page, d, shot.record);
+    }
     for (const [i, step] of shot.steps.entries()) {
       try {
         await runStep(page, d, step);
       } catch (e) {
         throw new Error(`step ${i + 1} ${JSON.stringify(step)}: ${e.message ?? e}`);
       }
+      if (stop && !("wait" in step)) await sleep(shot.record.pause ?? 900);
+    }
+    if (stop) {
+      const left = await page.evaluate(scrubPage, { origin: o.url, host: o.host, private: o.privateWords });
+      if (left.length) throw new Error(`refused: something private is on screen (${left.join(", ")})`);
+      const frames = await stop();
+      if (frames.length < 2) throw new Error("record: no frames came back from the screencast");
+      const dir = join(o.out, `${shot.name}.frames`);
+      rmSync(dir, { recursive: true, force: true });
+      mkdirSync(dir, { recursive: true });
+      const list = frames.map((f, k) => {
+        const file = `${String(k).padStart(4, "0")}.jpg`;
+        writeFileSync(join(dir, file), Buffer.from(f.data, "base64"));
+        return { file, t: f.t - frames[0].t };
+      });
+      writeFileSync(join(dir, "frames.json"), JSON.stringify(list));
+      return { file: dir, bytes: list.length, size: `${list.length} frames, ${list.at(-1).t.toFixed(1)} s` };
     }
     await page.evaluate(() => document.activeElement instanceof HTMLElement && !document.activeElement.matches("input, textarea") && document.activeElement.blur());
     if (!("hover" in (shot.steps.at(-1) ?? {}))) await page.mouse("mouseMoved", 1, 1, { button: "none" }).catch(() => {});

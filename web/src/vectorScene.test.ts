@@ -193,6 +193,8 @@ test("look: the old SVG layer's colours and opacities", () => {
   assert.equal(n.fillAlpha, 0.15);
   assert.ok(Math.abs(n.movingFillAlpha - 0.14) < 1e-9, "a moving fill sits in the no-output group: 35 % x 40 %");
   assert.equal(groupLook(line, "light", true, false).fill, null, "line layers are not filled");
+  const result = { layer: layer("R", { color: "#c9a227", settings: cut("fill"), shownAsResult: true }) };
+  assert.equal(groupLook(result, "light", true, false).fillAlpha, 0.9, "Result colours view: the finish, filled nearly solid");
   assert.equal(groupLook(out, "light", false, false).fill, null, "wireframe view");
   const dim = groupLook(noOut, "light", true, true);
   assert.ok(Math.abs(dim.strokeAlpha - 0.12) < 1e-9 && Math.abs(dim.fillAlpha - 0.045) < 1e-9, "the preview dims to 30 %");

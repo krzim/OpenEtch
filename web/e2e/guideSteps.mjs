@@ -32,7 +32,8 @@ function strings(v, out = []) {
   return out;
 }
 
-const SHOT_KEYS = ["name", "device", "theme", "example", "steps", "crop", "cropWidth", "cropPad", "maxWidth", "note"];
+const SHOT_KEYS = ["name", "device", "theme", "example", "steps", "crop", "cropWidth", "cropPad", "maxWidth", "note", "record"];
+const RECORD_KEYS = ["pause", "hold", "glide"];
 const SNAPS = ["peek", "half", "full"];
 
 /** A click target: an accessible name, { css, text? } or { object: name or id } (a shape on the canvas). */
@@ -129,6 +130,15 @@ export function shotsProblems(shots, { devices, examples }) {
     if (s.crop !== undefined && !(typeof s.crop === "string" && s.crop.trim())) out.push(`${at}: crop must be a CSS selector`);
     if (s.maxWidth !== undefined && !(Number.isInteger(s.maxWidth) && s.maxWidth >= 200 && s.maxWidth <= 3000)) out.push(`${at}: maxWidth must be 200-3000 px`);
     if (s.cropPad !== undefined && !(Number.isInteger(s.cropPad) && s.cropPad >= 0 && s.cropPad <= 32 && s.crop)) out.push(`${at}: cropPad must be 0-32 CSS px, with a crop`);
+    if (s.record !== undefined) {
+      if (typeof s.record !== "object" || s.record === null || Array.isArray(s.record)) out.push(`${at}: record must be an object`);
+      else {
+        for (const k of Object.keys(s.record)) if (!RECORD_KEYS.includes(k)) out.push(`${at}: record: unknown key "${k}"`);
+        for (const k of RECORD_KEYS)
+          if (s.record[k] !== undefined && !(Number.isInteger(s.record[k]) && s.record[k] >= 0 && s.record[k] <= 10000)) out.push(`${at}: record.${k} must be 0-10000 ms`);
+      }
+      if (s.crop) out.push(`${at}: a recorded shot is the whole screen (no crop)`);
+    }
     if (s.cropWidth !== undefined && !(Number.isInteger(s.cropWidth) && s.cropWidth >= 100 && s.cropWidth <= 3000 && s.crop)) out.push(`${at}: cropWidth must be 100-3000 CSS px, with a crop`);
     if (s.note !== undefined && typeof s.note !== "string") out.push(`${at}: note must be text`);
   });

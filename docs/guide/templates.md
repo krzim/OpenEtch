@@ -24,6 +24,7 @@ The example opens as a new, unsaved document laid out for the active device, wit
 
 | Example | What it shows | Read more |
 |---|---|---|
+| **Make something, share it** | A 50 mm stainless medallion: a rainbow of five MOPA colour layers rising behind a sun, rays made with a circular array, waves round a QR code that opens OpenEtch Design, and a line of text round each half of the rim. A template: change both lines | [Result colours](mopa-colour.md#result-colours), [Circular array](arranging-and-arrays.md#circular-array), [Text on a path](text.md#text-on-a-path) |
 | **Two-tone MOPA coin** | A 40 mm coin with a coloured ring made with Fill Region, a name that fits itself into the centre, and a date. A template: fill in the name, date, font and ring colour | [Fill Region](fill-region.md), [Auto-fit](text.md#fit-text-into-a-box-or-circle), [MOPA colour](mopa-colour.md) |
 | **Serial-numbered tags for a jig** | Six tags in a 2 x 3 jig: each pocket's outline on tool layer T1, a serial number and a QR code that count up per tag and per run | [Variable text](variable-text-and-barcodes.md), [Jigs](jigs.md) |
 | **Text-on-a-circle medallion** | A 50 mm medallion with text along the top and bottom of a circle, both reading upright, and a star | [Text on a path](text.md#text-on-a-path) |

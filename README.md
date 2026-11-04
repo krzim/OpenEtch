@@ -10,12 +10,28 @@ The reference machine is a ComMarker B6 MOPA 60 W.
 **[Try OpenEtch Design in your browser](https://krzim.github.io/OpenEtch/)**: the editor with no install, no laser
 and nothing uploaded.
 
-![The Design workspace on a desktop browser, with a two-tone coin open](docs/guide/img/workspace-desktop-design.webp)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme/hero-dark.webp">
+  <img alt="OpenEtch's Design workspace with the Make something, share it medallion open: a rainbow of five MOPA colour layers rising behind a sun, waves round a QR code, and a line of text round each half of the rim" src="docs/readme/hero-light.webp">
+</picture>
 
 > [!WARNING]
 > **Use at your own risk.** OpenEtch is early, experimental software, provided "as is" with no warranty of any
 > kind (see [Disclaimer](#disclaimer)). It is not a safety system. Burning has been tested only on the B6 MOPA, and
 > GRBL and Ruida support is untested on real hardware.
+
+## See it work
+
+The first example, **Make something, share it**, is a 50 mm stainless medallion made to show off what OpenEtch can
+do. It has a rainbow of five MOPA colour layers, a sun whose rays are a circular array, a QR code that opens OpenEtch
+Design, and two lines of text that follow the rim. Open it from **File > New from example…**, or try it in
+[the browser](https://krzim.github.io/OpenEtch/). In this recording, **Result colours** shows the colours the
+medallion aims for, **Fill in** changes the top line (which follows its arc), and the Laser workspace plays the burn
+order layer by layer.
+
+![Command search turns on Result colours, Fill in changes the top line to MADE WITH OPENETCH, then the Laser workspace plays the burn order band by band](docs/readme/workflow.webp)
+
+The colour settings in the examples are starting points, not tested values: run a material test on your own stock.
 
 ## What it does
 
@@ -37,8 +53,6 @@ and nothing uploaded.
   check a job, but MCP gives them no way to approve or start a burn. See [AI agents](docs/guide/ai-agents.md).
 - **Add-ins:** send drawings from [Autodesk Fusion](tools/fusion360-addin/README.md) and
   [Inkscape](tools/inkscape-extension/README.md).
-
-![The Laser workspace with a job ready to start and a pre-flight warning](docs/guide/img/workspace-laser.webp)
 
 ## Quick start
 

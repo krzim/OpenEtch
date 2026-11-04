@@ -1,0 +1,161 @@
+[
+  {
+    "name": "hero-light",
+    "device": "win-1920",
+    "theme": "light",
+    "example": "share-it-medallion",
+    "steps": [
+      {
+        "click": "Search"
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "type": "Result colours"
+      },
+      {
+        "wait": 400
+      },
+      {
+        "key": "Enter"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "key": "Ctrl+="
+      },
+      {
+        "key": "Ctrl+="
+      },
+      {
+        "key": "Ctrl+="
+      },
+      {
+        "key": "Ctrl+="
+      },
+      {
+        "wait": 2500
+      }
+    ],
+    "note": "The README's picture: the showcase medallion in the Design workspace with Result colours on (light theme)."
+  },
+  {
+    "name": "hero-dark",
+    "device": "win-1920",
+    "theme": "dark",
+    "example": "share-it-medallion",
+    "steps": [
+      {
+        "click": "Search"
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "type": "Result colours"
+      },
+      {
+        "wait": 400
+      },
+      {
+        "key": "Enter"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "key": "Ctrl+="
+      },
+      {
+        "key": "Ctrl+="
+      },
+      {
+        "key": "Ctrl+="
+      },
+      {
+        "key": "Ctrl+="
+      },
+      {
+        "wait": 2500
+      }
+    ],
+    "note": "The README's picture: the showcase medallion in the Design workspace with Result colours on (dark theme)."
+  },
+  {
+    "name": "workflow",
+    "device": "macbook-air-1470",
+    "example": "share-it-medallion",
+    "record": {
+      "pause": 800,
+      "hold": 2000,
+      "glide": 450
+    },
+    "steps": [
+      {
+        "key": "Ctrl+="
+      },
+      {
+        "key": "Ctrl+="
+      },
+      {
+        "key": "Ctrl+="
+      },
+      {
+        "click": "Search"
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "type": "Result colours"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "key": "Enter"
+      },
+      {
+        "click": "Fill in"
+      },
+      {
+        "wait": ".oe-dialog"
+      },
+      {
+        "type": "MADE WITH OPENETCH",
+        "into": "Top line"
+      },
+      {
+        "click": "Apply",
+        "in": ".oe-dialog"
+      },
+      {
+        "workspace": "laser"
+      },
+      {
+        "wait": 1200
+      },
+      {
+        "key": "Ctrl+="
+      },
+      {
+        "key": "Ctrl+="
+      },
+      {
+        "set": "25",
+        "into": {
+          "css": ".pv-timeline select"
+        }
+      },
+      {
+        "click": "Play the job at the chosen speed"
+      },
+      {
+        "wait": 9500
+      }
+    ],
+    "note": "The README's animation: Result colours, a template filled in, then the burn order played in the Laser workspace."
+  }
+]

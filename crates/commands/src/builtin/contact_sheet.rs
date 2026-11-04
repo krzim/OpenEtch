@@ -125,6 +125,14 @@ fn container_of(doc: &Document, id: &str, skip: &[ObjectId]) -> Container {
     if matches!(&o.geometry, Geometry::Text(t) if t.fit.is_some()) {
         return Container::Workspace;
     }
+    // Text on a path follows its path wherever it goes: whatever shape covers its origin says nothing about where it
+    // may run, so it is checked against the stock (or the workspace).
+    if matches!(&o.geometry, Geometry::Text(t) if t.path.is_some()) {
+        return match &doc.stock {
+            Some(s) => Container::Stock(s.outline()),
+            None => Container::Workspace,
+        };
+    }
     let at = o.transform * Point::ORIGIN;
     let best = doc
         .objects

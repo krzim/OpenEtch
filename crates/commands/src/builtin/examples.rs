@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 
 use super::util::invalid;
 use super::{
-    array, fill_region, generate, image, layer, pages, place, shape, stock, template, text,
+    array, arrays, fill_region, generate, image, layer, pages, place, shape, stock, template, text,
 };
 use crate::{Command, CommandError, Result, Risk};
 
@@ -104,6 +104,28 @@ fn colour_choices(doc: &mut Document, layer: &str, finishes: &[ExampleFinish], b
 
 /// The examples, in the order the picker shows them.
 pub const EXAMPLES: &[Example] = &[
+    Example {
+        id: "share-it-medallion",
+        title: "Make something, share it",
+        summary: "A 50 mm stainless medallion: a rainbow of five MOPA colours rising behind a sun, waves round a QR \
+            code that opens OpenEtch Design, and a line of text round each half of the rim. A template: change both \
+            lines.",
+        tags: &["template", "MOPA colour", "result colours", "circular array", "text on a path", "barcode"],
+        steps: &[
+            "Turn on Materials > Result colours to see the colours the medallion aims for instead of the layer colours.",
+            "Each rainbow band is a filled half ring on its own layer (Amber, Gold, Teal, Blue and Violet), so each \
+             colour has its own settings. The sun and its rays share the Gold layer.",
+            "The rays are one triangle and a circular array (Arrange > Circular array…): seven copies over 150°, \
+             turned with the circle.",
+            "The QR code (Create > Barcode) opens OpenEtch Design. Scan it on screen with your phone.",
+            "The two lines of text follow arcs on the \"Path guide\" layer (output off): the top line sits on its \
+             arc, the bottom one hangs from its arc, so both read upright. Fill in template changes them.",
+            "The colour settings are starting points, not tested values. Work out each layer's energy density, run \
+             Laser Tools > Material Test on your own stock and save the finishes you like as presets.",
+            "Open the Laser workspace to preview the burn order and the time estimate before you frame it.",
+        ],
+        build: share_it_medallion,
+    },
     Example {
         id: "two-tone-coin",
         title: "Two-tone MOPA coin",
@@ -232,6 +254,8 @@ struct Fill {
 const GOLD: Fill = Fill { power: 28.0, speed: 500.0, khz: 250.0, ns: 200.0, interval: 0.01, cross: false };
 const BLUE: Fill = Fill { power: 22.0, speed: 300.0, khz: 450.0, ns: 200.0, interval: 0.01, cross: false };
 const PURPLE: Fill = Fill { power: 24.0, speed: 350.0, khz: 400.0, ns: 200.0, interval: 0.01, cross: false };
+const AMBER: Fill = Fill { power: 30.0, speed: 600.0, khz: 200.0, ns: 200.0, interval: 0.01, cross: false };
+const TEAL: Fill = Fill { power: 20.0, speed: 280.0, khz: 500.0, ns: 200.0, interval: 0.01, cross: false };
 const BLACK: Fill = Fill { power: 35.0, speed: 250.0, khz: 600.0, ns: 200.0, interval: 0.01, cross: true };
 const FROST: Fill = Fill { power: 80.0, speed: 2500.0, khz: 40.0, ns: 200.0, interval: 0.03, cross: false };
 const MARK: Fill = Fill { power: 55.0, speed: 900.0, khz: 60.0, ns: 200.0, interval: 0.03, cross: true };
@@ -297,6 +321,92 @@ fn arc(r: f64, a0: f64, a1: f64, start: bool) -> String {
         ));
     }
     s
+}
+
+/// SVG data of the polyline `points` (open).
+fn polyline(points: &[(f64, f64)]) -> String {
+    let mut s = String::new();
+    for (k, (x, y)) in points.iter().enumerate() {
+        s.push_str(&format!("{}{} {x:.4} {y:.4}", if k == 0 { "" } else { " " }, if k == 0 { "M" } else { "L" }));
+    }
+    s
+}
+
+fn share_it_medallion(doc: &mut Document, _finishes: &[ExampleFinish]) -> Result<()> {
+    step::<stock::StockDefine>(doc, json!({ "name": "50 mm medallion", "shape": { "kind": "circle", "diameter_mm": 50 }, "thickness_mm": 1.5, "material": "stainless steel" }))?;
+    // The rainbow, inside to outside, each band a colour layer drawn in the colour it aims for.
+    let bands: [(&str, Fill, &str); 5] =
+        [("Violet", PURPLE, "#6a3d9a"), ("Blue", BLUE, "#2a5db0"), ("Teal", TEAL, "#1f8f8a"), ("Gold", GOLD, "#c9a227"), ("Amber", AMBER, "#c4661f")];
+    let mut layers = Vec::new();
+    for (k, (name, f, colour)) in bands.iter().enumerate() {
+        let id = layer_with(doc, k == 0, name, colour, fill(*f))?;
+        if let Some(l) = doc.layer_mut(&id) {
+            l.extras.insert(super::finish::RESULT_COLOR_KEY.into(), colour.to_string());
+        }
+        layers.push(id);
+    }
+    let gold = layers[3].clone();
+    let qr_layer = layer_with(doc, false, "QR code", "#1a1a1a", fill(Fill { cross: false, ..MARK }))?;
+    let lines = layer_with(doc, false, "Lines", "#000000", line(60.0, 1000.0, 40.0))?;
+    let text_layer = layer_with(doc, false, "Text", "#0000ff", line(55.0, 800.0, 40.0))?;
+    let guide = layer_with(doc, false, "Path guide", "#00a000", line(10.0, 1000.0, 40.0))?;
+    step::<layer::LayerUpdate>(doc, json!({ "id": guide, "output": false }))?;
+
+    // The sky is drawn about the origin, then moved down onto the horizon.
+    let horizon = -3.0;
+    let mut sky = Vec::new();
+    let (inner, width, gap) = (10.2, 1.6, 0.3);
+    for (k, (name, ..)) in bands.iter().enumerate() {
+        let r0 = inner + (width + gap) * k as f64;
+        let d = format!("{} {} Z", arc(r0 + width, 0.0, 180.0, true), arc(r0, 180.0, 0.0, false));
+        sky.push(created(&step::<shape::ShapePath>(doc, json!({ "svg_path_data": d, "layer": layers[k], "name": format!("{name} band") }))?)?);
+    }
+    let sun = created(&step::<shape::ShapePath>(doc, json!({ "svg_path_data": format!("{} Z", arc(5.0, 0.0, 180.0, true)), "layer": gold, "name": "Sun" }))?)?;
+    sky.push(sun);
+    // One ray at 15°, then a circular array of seven over 150° makes the fan.
+    let (a, half) = (15f64.to_radians(), 0.55);
+    let (c, s) = (a.cos(), a.sin());
+    let ray = polyline(&[(6.0 * c + half * s, 6.0 * s - half * c), (8.9 * c, 8.9 * s), (6.0 * c - half * s, 6.0 * s + half * c)]) + " Z";
+    let ray = created(&step::<shape::ShapePath>(doc, json!({ "svg_path_data": ray, "layer": gold, "name": "Ray" }))?)?;
+    let fan = step::<arrays::CircularArray>(doc, json!({ "ids": [ray], "count": 7, "center": [0, 0], "angle_deg": 150, "rotate_copies": true }))?;
+    sky.push(ray);
+    if let Some(ids) = fan["created"].as_array() {
+        sky.extend(ids.iter().filter_map(|v| v.as_str().map(str::to_string)));
+    }
+    step::<super::object::Transform>(doc, json!({ "ids": sky, "translate": [0, horizon] }))?;
+
+    // Below the horizon: the QR code, and waves either side of it.
+    step::<text::ShapeBarcode>(doc, json!({ "kind": "qr", "data": "https://krzim.github.io/OpenEtch/", "module_mm": 0.3,
+        "center": [0, -11.6], "layer": qr_layer, "name": "QR code" }))?;
+    step::<shape::ShapePath>(doc, json!({ "svg_path_data": polyline(&[(-20.4, horizon), (20.4, horizon)]), "layer": lines, "name": "Horizon" }))?;
+    for (k, y) in [-6.6, -9.8, -13.0].into_iter().enumerate() {
+        let reach = (21f64 * 21.0 - (y - 0.6) * (y - 0.6)).sqrt() - 1.2;
+        for side in [-1.0, 1.0] {
+            let pts: Vec<(f64, f64)> = (0..=((reach - 6.0) / 0.2) as usize)
+                .map(|i| {
+                    let x = 6.0 + 0.2 * i as f64;
+                    (side * x, y + 0.45 * (x * std::f64::consts::TAU / 3.2 + k as f64).sin())
+                })
+                .collect();
+            step::<shape::ShapePath>(doc, json!({ "svg_path_data": polyline(&pts), "layer": lines, "name": "Wave" }))?;
+        }
+    }
+    step::<shape::ShapeEllipse>(doc, json!({ "rx_mm": 24.7, "ry_mm": 24.7, "layer": lines, "name": "Outer rim" }))?;
+    step::<shape::ShapeEllipse>(doc, json!({ "rx_mm": 21, "ry_mm": 21, "layer": lines, "name": "Inner rim" }))?;
+
+    // The rim text between the rims (21 to 24.7 mm), both lines reading upright: the top line stands on its arc and
+    // the bottom line hangs from its arc, so each grows outwards from it (as in the medallion example).
+    let top = created(&step::<shape::ShapePath>(doc, json!({ "svg_path_data": arc(21.8, 180.0, 0.0, true), "layer": guide, "name": "Top arc" }))?)?;
+    let bottom = created(&step::<shape::ShapePath>(doc, json!({ "svg_path_data": arc(22.1, 180.0, 360.0, true), "layer": guide, "name": "Bottom arc" }))?)?;
+    let t1 = created(&step::<text::ShapeText>(doc, json!({ "text": "MAKE SOMETHING", "font": hershey("Hershey Serif Medium"), "height_mm": 2.0,
+        "align_v": "bottom", "layer": text_layer, "name": "Top line" }))?)?;
+    step::<text::ApplyPath>(doc, json!({ "id": t1, "path": top }))?;
+    let t2 = created(&step::<text::ShapeText>(doc, json!({ "text": "SHARE IT WITH THE WORLD", "font": hershey("Hershey Serif Medium"), "height_mm": 2.0,
+        "align_v": "top", "layer": text_layer, "name": "Bottom line" }))?)?;
+    step::<text::ApplyPath>(doc, json!({ "id": t2, "path": bottom }))?;
+    step::<template::SetField>(doc, json!({ "field": { "id": "top", "label": "Top line", "kind": "text", "targets": [t1], "max_chars": 22 } }))?;
+    step::<template::SetField>(doc, json!({ "field": { "id": "bottom", "label": "Bottom line", "kind": "text", "targets": [t2], "max_chars": 30, "required": false } }))?;
+    Ok(())
 }
 
 fn two_tone_coin(doc: &mut Document, finishes: &[ExampleFinish]) -> Result<()> {
@@ -439,6 +549,12 @@ fn palette_coin(doc: &mut Document, finishes: &[ExampleFinish]) -> Result<()> {
     step::<stock::StockDefine>(doc, json!({ "name": "40 mm coin", "shape": { "kind": "circle", "diameter_mm": 40 }, "thickness_mm": 1.5, "material": "stainless steel" }))?;
     let frost = layer_with(doc, true, "Frost", "#7f7f7f", fill(FROST))?;
     let black = layer_with(doc, false, "Black", "#000000", fill(BLACK))?;
+    // What frost and black look like, for the Result colours view (the colour sector gets its finish's colour below).
+    for (id, colour) in [(&frost, "#d4d7db"), (&black, "#262626")] {
+        if let Some(l) = doc.layer_mut(id) {
+            l.extras.insert(super::finish::RESULT_COLOR_KEY.into(), colour.to_string());
+        }
+    }
     let colour = layer_with(doc, false, "Colour", "#c08a00", fill(GOLD))?;
     let labels = layer_with(doc, false, "Labels", "#0000ff", line(55.0, 900.0, 40.0))?;
     let r = 19.0;
@@ -513,6 +629,23 @@ mod tests {
         s.execute(crate::Invocation { id: "doc.new".into(), params: json!({ "example": id }) }, crate::Origin::Ui)
             .unwrap_or_else(|e| panic!("{id}: {e}"));
         s.document().clone()
+    }
+
+    #[test]
+    fn the_medallions_rim_lines_fill_in_without_overflow() {
+        let mut s = crate::Session::new(Document { field_mm: Some(110.0), ..Document::default() });
+        s.execute(crate::Invocation { id: "doc.new".into(), params: json!({ "example": "share-it-medallion" }) }, crate::Origin::Ui).unwrap();
+        let all = |d: &Document| d.bounds_of(&d.objects.iter().map(|o| o.id.clone()).collect::<Vec<_>>()).unwrap();
+        let before = all(s.document());
+        let r = s
+            .execute(crate::Invocation { id: "template.fill".into(), params: json!({ "values": { "top": "MADE WITH OPENETCH" } }) }, crate::Origin::Ui)
+            .unwrap();
+        // The rim lines follow their arcs: the sun under their origin is not their container.
+        assert_eq!(r.result["overflow"], json!([]), "{}", r.result);
+        let after = all(s.document());
+        assert!((after.x0 - before.x0).abs() < 0.5 && (after.y1 - before.y1).abs() < 0.5, "{before:?} -> {after:?}");
+        let top = s.document().objects.iter().find(|o| o.name == "Top line").unwrap();
+        assert!(matches!(&top.geometry, Geometry::Text(t) if t.text == "MADE WITH OPENETCH" && t.path.is_some()));
     }
 
     #[test]

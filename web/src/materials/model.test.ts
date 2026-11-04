@@ -147,6 +147,13 @@ test("Result colours: linked layers follow their preset, others keep the colour 
     shown.layers.map((l) => l.color),
     ["#2040c0", "#c08040", "#0000ff"],
   );
+  assert.deepEqual(
+    shown.layers.map((l) => l.shownAsResult ?? false),
+    [true, true, false],
+    "layers in a result colour are marked, so the canvas fills them solid",
+  );
+  const same = withResultColors(doc([layer("e", "#c08040", { "finish.color": "#C08040" })]), lookup);
+  assert.equal(same.layers[0].shownAsResult, true, "marked even when the result colour is the layer colour");
   assert.equal(d.layers[0].color, "#ff0000", "the document itself is not changed");
   const none = doc([plain]);
   assert.equal(withResultColors(none, lookup), none, "nothing to change: the same object");

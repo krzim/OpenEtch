@@ -63,6 +63,9 @@ export interface Layer {
   extras?: Record<string, string>;
   /** LightBurn's tool layer T1 / T2 (never outputs, framed with the job); absent for an ordinary layer. */
   tool?: "T1" | "T2" | null;
+  /** Client only, never sent: the canvas draws this layer in its result colour (Result colours view,
+   * `withResultColors`), so its fills are drawn nearly solid. */
+  shownAsResult?: boolean;
 }
 
 /** One kurbo `PathEl` as serde derives it, e.g. `{"MoveTo":{"x":0,"y":0}}` or `"ClosePath"`. */

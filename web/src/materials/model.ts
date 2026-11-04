@@ -234,16 +234,17 @@ export function resultColorOf(layer: Layer, linkedColor: (library: string, path:
 }
 
 /**
- * The document as the canvas draws it in Result colours view: each layer that has a result colour drawn in it (its
- * identity colour elsewhere is unchanged). The same object when nothing changes.
+ * The document as the canvas draws it in Result colours view: each layer that has a result colour drawn in it and
+ * marked `shownAsResult` (its fills are then drawn nearly solid, the finish rather than a tint); its identity colour
+ * elsewhere is unchanged. The same object when no layer has a result colour.
  */
 export function withResultColors(doc: GDocument, linkedColor: (library: string, path: string) => string | null): GDocument {
   let changed = false;
   const layers = doc.layers.map((l) => {
     const c = resultColorOf(l, linkedColor);
-    if (!c || c === l.color.toLowerCase()) return l;
+    if (!c) return l;
     changed = true;
-    return { ...l, color: c };
+    return { ...l, color: c, shownAsResult: true };
   });
   return changed ? { ...doc, layers } : doc;
 }

@@ -73,7 +73,7 @@ If no preset has a colour yet, the view says "No preset has a result colour yet.
 
 ## Result colours
 
-Layer colours are for telling layers apart. **Result colours** draws each layer in the colour it should come out instead, so you can check a coloured design before you burn it.
+Layer colours are for telling layers apart. **Result colours** draws each layer in the colour it should come out instead, so you can check a coloured design before you burn it. Filled layers in a result colour are drawn nearly solid, the way the finish should look, rather than as a light tint.
 
 To turn it on or off, use any of these:
 

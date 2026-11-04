@@ -337,7 +337,8 @@ export function groupLook(g: Pick<SceneGroup, "layer">, theme: Theme, filled: bo
     stroke,
     strokeAlpha: (noOut ? 0.4 : 1) * dim,
     fill: fills && l ? canvasColor(l.color, theme) : null,
-    fillAlpha: (l?.output ? 0.35 : 0.15) * dim,
+    // A layer in its result colour (Result colours view) shows the finish, so it is filled nearly solid.
+    fillAlpha: (l?.output ? (l.shownAsResult ? 0.9 : 0.35) : 0.15) * dim,
     movingFillAlpha: 0.35 * (noOut ? 0.4 : 1) * dim,
   };
 }
